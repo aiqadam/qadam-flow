@@ -1,0 +1,76 @@
+import {
+  AppConnectionValueForAuthProperty,
+  createTrigger,
+} from '@aiqadam/qadams-framework';
+import { TriggerStrategy } from '@aiqadam/qadams-framework';
+import {
+  DedupeStrategy,
+  Polling,
+  pollingHelper,
+} from '@aiqadam/qadams-common';
+
+import dayjs from 'dayjs';
+import { googleDriveAuth } from '../auth';
+import { common } from '../common';
+
+const polling: Polling<
+  AppConnectionValueForAuthProperty<typeof googleDriveAuth>,
+  { parentFolder?: any,include_team_drives?:boolean }
+> = {
+  strategy: DedupeStrategy.TIMEBASED,
+  items: async ({ auth, propsValue, lastFetchEpochMS }) => {
+    const currentValues =
+      (await common.getFolders(auth, {
+        parent: propsValue.parentFolder,
+        createdTime: lastFetchEpochMS,
+        includeTeamDrive:propsValue.include_team_drives
+      })) ?? [];
+    const items = currentValues.map((item: any) => ({
+      epochMilliSeconds: dayjs(item.createdTime).valueOf(),
+      data: item,
+    }));
+    return items;
+  },
+};
+
+export const newFolder = createTrigger({
+  auth: googleDriveAuth,
+  name: 'new_folder',
+  displayName: 'New Folder',
+  description: 'Trigger when a new folder is created or uploaded.',
+  aiMetadata: {
+    description: 'Fires when a new folder is created in Google Drive, optionally scoped to a specific parent folder. Each event represents one newly created folder and its metadata.',
+  },
+  props: {
+    parentFolder: common.properties.parentFolder,
+    include_team_drives: common.properties.include_team_drives,
+  },
+  type: TriggerStrategy.POLLING,
+  onEnable: async (context) => {
+    await pollingHelper.onEnable(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: context.propsValue,
+    });
+  },
+  onDisable: async (context) => {
+    await pollingHelper.onDisable(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: context.propsValue,
+    });
+  },
+  run: async (context) => {
+    return await pollingHelper.poll(polling, context);
+  },
+  test: async (context) => {
+    return await pollingHelper.test(polling, context);
+  },
+
+  sampleData: {
+    kind: 'drive#file',
+    mimeType: 'application/vnd.google-apps.folder',
+    id: '1aMEtTqIYn5651wdK7WLxaK_SDim4mvXW',
+    name: 'New Folder WOOOO',
+  },
+});

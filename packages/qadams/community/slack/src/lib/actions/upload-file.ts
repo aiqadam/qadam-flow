@@ -1,0 +1,41 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { slackAuth } from '../auth';
+import { WebClient } from '@slack/web-api';
+import {
+  slackChannel,
+} from '../common/props';
+import { getBotToken, SlackAuthValue } from '../common/auth-helpers';
+
+export const uploadFile = createAction({
+  auth: slackAuth,
+  name: 'uploadFile',
+  displayName: 'Upload file',
+  description: 'Upload file without sharing it to a channel or user',
+  audience: 'both',
+  aiMetadata: { description: 'Upload a file to Slack, optionally sharing it into a channel and setting a title and filename. Each call creates a new file, so it is not idempotent. To attach a file inline with a message instead, use the attachment option on Send Message To A Channel.', idempotent: false },
+  props: {
+    file: Property.File({
+      displayName: 'Attachment',
+      required: true,
+    }),
+    title: Property.ShortText({
+      displayName: 'Title',
+      required: false,
+    }),
+    filename: Property.ShortText({
+      displayName: 'Filename',
+      required: false,
+    }),
+    channel: slackChannel(false),
+  },
+  async run(context) {
+    const token = getBotToken(context.auth as SlackAuthValue);
+    const { file, title, filename, channel } = context.propsValue;
+    const client = new WebClient(token);
+    return await client.files.uploadV2({
+      file_uploads: [{ file: file.data, filename: filename || file.filename }],
+      title: title,
+      channel_id: channel,
+    });
+  },
+});

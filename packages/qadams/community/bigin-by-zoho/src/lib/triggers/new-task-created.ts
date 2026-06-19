@@ -1,0 +1,69 @@
+import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { ZOHO_WEBHOOK_TOKEN } from '../common/constants';
+import { biginAuth } from '../auth';
+import { biginApiService } from '../common/request';
+
+const CACHE_KEY = 'bigin_new_task_created_trigger';
+
+export const newTaskCreated = createTrigger({
+  auth: biginAuth,
+  name: 'newTaskCreated',
+  displayName: 'New Task Created',
+  description: 'Triggers when a new task is created',
+  aiMetadata: {
+    description: 'Fires when a new task is created in Bigin CRM, via a Tasks.create webhook. Represents a newly added piece of follow-up work.',
+  },
+  props: {},
+  sampleData: {},
+  type: TriggerStrategy.WEBHOOK,
+  async onEnable(context) {
+    try {
+      const channel_id = Date.now().toString();
+      const { api_domain } = context.auth.data;
+
+      const webhookData = {
+        watch: [
+          {
+            channel_id,
+            events: ['Tasks.create'],
+            notify_url: context.webhookUrl,
+            token: ZOHO_WEBHOOK_TOKEN,
+          },
+        ],
+      };
+
+      await biginApiService.createWebhook(
+        context.auth.access_token,
+        webhookData,
+        api_domain
+      );
+
+      await context.store.put(CACHE_KEY, channel_id);
+    } catch (error) {
+      console.error('Failed to enable Zoho webhook');
+    }
+  },
+  async onDisable(context) {
+    const channel_id = (await context.store.get(CACHE_KEY)) as string;
+    if (!channel_id) return;
+
+    const { api_domain } = context.auth.data;
+
+    await biginApiService.deleteWebhook(
+      context.auth.access_token,
+      api_domain,
+      channel_id
+    );
+
+    await context.store.delete(CACHE_KEY);
+  },
+  async run(context) {
+    const { token } = context.payload.body as any;
+
+    if (token !== ZOHO_WEBHOOK_TOKEN) {
+      throw new Error('Invalid webhook token');
+    }
+
+    return [context.payload.body];
+  },
+});

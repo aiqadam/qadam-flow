@@ -1,0 +1,27 @@
+import { HttpMethod, getAccessTokenOrThrow } from '@aiqadam/qadams-common';
+import { clickupCommon, callClickUpApi } from '../../common';
+import { clickupAuth } from '../../auth';
+import { createAction } from '@aiqadam/qadams-framework';
+
+export const getClickupSpaces = createAction({
+  auth: clickupAuth,
+  name: 'get_spaces',
+  description: 'Gets spaces in a ClickUp workspace',
+  audience: 'both',
+  aiMetadata: { description: 'Read-only: list all spaces in a ClickUp workspace (team). Use to discover available spaces and their IDs before drilling into a specific space, folder, or list. Safe to call repeatedly.', idempotent: true },
+  displayName: 'Get Spaces',
+  props: {
+    team_id: clickupCommon.workspace_id(),
+  },
+  async run(configValue) {
+    const { team_id } = configValue.propsValue;
+    const response = await callClickUpApi(
+      HttpMethod.GET,
+      `team/${team_id}/space`,
+      getAccessTokenOrThrow(configValue.auth),
+      {}
+    );
+
+    return response.body;
+  },
+});

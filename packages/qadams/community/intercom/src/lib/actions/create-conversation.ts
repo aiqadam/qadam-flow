@@ -1,0 +1,88 @@
+import { intercomAuth } from '../auth';
+import {
+	createAction,
+	DropdownOption,
+	Property,
+} from '@aiqadam/qadams-framework';
+import { intercomClient, IntercomAuthValue } from '../common';
+
+export const createConversationAction = createAction({
+	auth: intercomAuth,
+	name: 'create-conversation',
+	displayName: 'Create Conversation',
+	description: 'Creates a new conversation from a contact.',
+	audience: 'both',
+	aiMetadata: {
+		description:
+			'Start a new Intercom conversation on behalf of an existing contact by sending an initial message body from that contact. Pick this to open a fresh thread tied to a known user or lead; it does not reply to or search existing conversations. Requires a valid contact ID and the matching contact type (user or lead). Not idempotent — each call creates a separate conversation.',
+		idempotent: false,
+	},
+	props: {
+		contactType: Property.StaticDropdown({
+			displayName: 'Contact Type',
+			required: true,
+			defaultValue: 'user',
+			options: {
+				disabled: false,
+				options: [
+					{ value: 'user', label: 'User' },
+					{ value: 'lead', label: 'Lead' },
+				],
+			},
+		}),
+		contactId: Property.Dropdown({
+			auth: intercomAuth,
+			displayName: 'Contact ID',
+			required: true,
+			refreshers: ['contactType'],
+			options: async ({ auth, contactType }) => {
+				if (!auth || !contactType) {
+					return {
+						options: [],
+						disabled: true,
+						placeholder: 'Please connect your account first.',
+					};
+				}
+
+				const type = contactType as 'user' | 'lead';
+				const authValue = auth as IntercomAuthValue;
+				const client = intercomClient(authValue);
+
+				const response = await client.contacts.list();
+				const options: DropdownOption<string>[] = [];
+
+				for await (const contact of response) {
+					if (contact.role === type) {
+						options.push({
+							value: contact.id,
+							label: `${contact.name ?? ''}, ${contact.email}, ${contact.external_id ?? ''}`,
+						});
+					}
+				}
+				return {
+					disabled: false,
+					options,
+				};
+			},
+		}),
+		body: Property.LongText({
+			displayName: 'Message Body',
+			required: true,
+		}),
+	},
+	async run(context) {
+		const { contactId, body, contactType } = context.propsValue;
+
+		const client = intercomClient(context.auth);
+
+		const response = await client.conversations.create({
+			body,
+			from: {
+				type: contactType as 'lead' | 'user' | 'contact',
+				id: contactId,
+			},
+		});
+
+		return response;
+	},
+});

@@ -1,0 +1,105 @@
+import { createCustomApiCallAction } from '@aiqadam/qadams-common';
+import { createQadam } from '@aiqadam/qadams-framework';
+import { QadamCategory } from '@aiqadam/shared';
+import { clearSheetAction } from './lib/actions/clear-sheet';
+import { deleteRowAction } from './lib/actions/delete-row.action';
+import { findRowByNumAction } from './lib/actions/find-row-by-num';
+import { findRowsAction } from './lib/actions/find-rows';
+import { getRowsAction } from './lib/actions/get-rows';
+import { insertRowAction } from './lib/actions/insert-row.action';
+import { updateRowAction } from './lib/actions/update-row';
+import {
+	getAccessToken,
+	googleSheetsAuth,
+	GoogleSheetsAuthValue,
+	googleSheetsCommon,
+} from './lib/common/common';
+import { newRowAddedTrigger } from './lib/triggers/new-row-added-webhook';
+import { newOrUpdatedRowTrigger } from './lib/triggers/new-or-updated-row.trigger';
+import { insertMultipleRowsAction } from './lib/actions/insert-multiple-rows.action';
+import { createWorksheetAction } from './lib/actions/create-worksheet';
+import { createSpreadsheetAction } from './lib/actions/create-spreadsheet';
+import { findSpreadsheets } from './lib/actions/find-spreadsheets';
+import { newSpreadsheetTrigger } from './lib/triggers/new-spreadsheet';
+import { newWorksheetTrigger } from './lib/triggers/new-worksheet';
+import { findWorksheetAction } from './lib/actions/find-worksheet';
+import { copyWorksheetAction } from './lib/actions/copy-worksheet';
+import { updateMultipleRowsAction } from './lib/actions/update-multiple-rows';
+import { createColumnAction } from './lib/actions/create-column';
+import { exportSheetAction } from './lib/actions/export-sheet';
+import { getManyRowsAction } from './lib/actions/get-many-rows';
+import { renameWorksheetAction } from './lib/actions/rename-worksheet';
+import { deleteWorksheetAction } from './lib/actions/delete-worksheet';
+import { formatRowAction } from './lib/actions/format-spreadsheet-row';
+import { findOrCreateRowAction } from './lib/actions/find-or-create-row';
+import { findOrCreateWorksheetAction } from './lib/actions/find-or-create-worksheet';
+import { insertRowAtTopAction } from './lib/actions/insert-row-at-top';
+import { clearRowsAction } from './lib/actions/clear-rows';
+import { readDataRangeAction } from './lib/actions/read-data-range';
+import { deleteMultipleRowsAction } from './lib/actions/delete-multiple-rows';
+
+export const googleSheets = createQadam({
+	minimumSupportedRelease: '0.71.4',
+	logoUrl: '/assets/qadams/google-sheets.png',
+	categories: [QadamCategory.PRODUCTIVITY],
+	authors: [
+		'ShayPunter',
+		'Ozak93',
+		'Abdallah-Alwarawreh',
+		'Salem-Alaa',
+		'kishanprmr',
+		'MoShizzle',
+		'AbdulTheActivePiecer',
+		'khaledmashaly',
+		'abuaboud',
+		'geekyme',
+	],
+	actions: [
+		insertRowAction,
+		insertRowAtTopAction,
+		insertMultipleRowsAction,
+		updateRowAction,
+		updateMultipleRowsAction,
+		deleteRowAction,
+		deleteMultipleRowsAction,
+		findRowsAction,
+		findOrCreateRowAction,
+		createSpreadsheetAction,
+		createWorksheetAction,
+		findOrCreateWorksheetAction,
+		clearSheetAction,
+		clearRowsAction,
+		deleteWorksheetAction,
+		renameWorksheetAction,
+		formatRowAction,
+		findRowByNumAction,
+		getRowsAction,
+		getManyRowsAction,
+		readDataRangeAction,
+		findSpreadsheets,
+		findWorksheetAction,
+		copyWorksheetAction,
+		createColumnAction,
+		exportSheetAction,
+		createCustomApiCallAction({
+			auth: googleSheetsAuth,
+			baseUrl: () => {
+				return googleSheetsCommon.baseUrl;
+			},
+			authMapping: async (auth) => {
+				return {
+					Authorization: `Bearer ${await getAccessToken(auth as GoogleSheetsAuthValue)}`,
+				};
+			},
+		}),
+	],
+	displayName: 'Google Sheets',
+	description: 'Create, edit, and collaborate on spreadsheets online',
+	triggers: [
+		newOrUpdatedRowTrigger,
+		newRowAddedTrigger,
+		newSpreadsheetTrigger,
+		newWorksheetTrigger,
+	],
+	auth: googleSheetsAuth,
+});

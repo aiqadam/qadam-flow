@@ -1,0 +1,43 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import {
+  httpClient,
+  HttpMethod,
+  AuthenticationType,
+} from '@aiqadam/qadams-common';
+import { dropboxAuth } from '../auth';
+
+export const dropboxGetFileLink = createAction({
+  auth: dropboxAuth,
+  name: 'get_dropbox_file_link',
+  description: 'Get a temporary file link',
+  audience: 'both',
+  aiMetadata: { description: 'Returns a temporary, directly downloadable URL for the file at the given Dropbox path. Use when an agent needs a shareable or fetchable link to file contents rather than downloading the bytes into the flow. Read-only lookup; safe to repeat, though the returned URL is short-lived.', idempotent: true },
+  displayName: 'Get temporary file link',
+  props: {
+    path: Property.ShortText({
+      displayName: 'Path',
+      description: 'The path of the file (e.g. /folder1/file.txt)',
+      required: true,
+    }),
+  },
+  async run(context) {
+    const params = {
+      path: context.propsValue.path,
+    };
+
+    const result = await httpClient.sendRequest({
+      method: HttpMethod.POST,
+      url: `https://api.dropboxapi.com/2/files/get_temporary_link`,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: { path: context.propsValue.path },
+      authentication: {
+        type: AuthenticationType.BEARER_TOKEN,
+        token: context.auth.access_token,
+      },
+    });
+
+    return result.body;
+  },
+});

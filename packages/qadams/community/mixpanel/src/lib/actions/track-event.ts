@@ -1,0 +1,73 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import {
+  httpClient,
+  HttpMethod,
+  AuthenticationType,
+} from '@aiqadam/qadams-common';
+import { mixpanelAuth } from '../auth';
+
+const API_URL = 'https://api.mixpanel.com';
+
+export const trackEvent = createAction({
+  name: 'track_event',
+  auth: mixpanelAuth,
+  displayName: 'Track Event',
+  description: 'Send an Event to Mixpanel.',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Record a product-analytics event in Mixpanel by name (e.g. "Payment Made"), optionally tying it to a user via a distinct ID and attaching arbitrary event properties as key-value pairs. Use to log user actions or behavior for analytics. Not idempotent: each call appends a new event stamped with the current time, so repeating it records duplicates.',
+    idempotent: false,
+  },
+  props: {
+    event: Property.ShortText({
+      displayName: 'Event',
+      description:
+        "A name for this Event. For example, 'Brand Mentioned in Tweet' or 'Payment Made'.",
+      required: true,
+    }),
+    distinct_id: Property.ShortText({
+      displayName: 'Distinct ID (Profile ID)',
+      description:
+        'A way to uniquely identify your users (or more generally, profiles). If you are sending Profiles to Mixpanel in addition to events, this property value should be identical to the Distinct ID property attached to the Profile so that you can connect events to people records.',
+      required: false,
+    }),
+    event_properties: Property.Object({
+      displayName: 'Event Properties',
+      description:
+        "Event Properties are bits of extra information that you send along with your Events describing the details of that action. They are usually specific to the Event they’re describing and don’t apply universally to other Events. Leveraging Event Properties allows you to conduct deeper analysis to better understand user behavior for a specific action. For example, a 'Song Added to Playlist' event could have 'Artist' and 'Playlist' as the properties. Properties are sent as key-value pairs where the key is the property name and the value is the property value.",
+      required: false,
+    }),
+  },
+  async run(context) {
+    const projectToken = context.auth;
+    const { event, distinct_id, event_properties } = context.propsValue;
+
+    const eventPayload = [
+      {
+        event,
+        properties: {
+          time: Math.floor(Date.now() / 1000),
+          distinct_id,
+          ...event_properties,
+        },
+      },
+    ];
+
+    const response = await httpClient.sendRequest({
+      method: HttpMethod.POST,
+      url: `${API_URL}/import`,
+      body: eventPayload,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      authentication: {
+        type: AuthenticationType.BASIC,
+        username: projectToken.secret_text,
+        password: '',
+      },
+    });
+
+    return response;
+  },
+});

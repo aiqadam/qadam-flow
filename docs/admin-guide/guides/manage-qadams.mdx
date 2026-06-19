@@ -1,0 +1,92 @@
+---
+title: "How to Manage Qadams"
+description: "Control which integrations are available to your users"
+icon: "puzzle-qadam"
+---
+
+<Snippet file="enterprise-feature.mdx" />
+
+## Overview
+
+**Qadams** are the building blocks of Qadam Flow — they are integrations and connectors (like Google Sheets, Slack, OpenAI, etc.) that users can use in their automation flows.
+
+As a platform administrator, you have full control over which qadams are available to your users. This allows you to:
+
+- **Enforce security policies** by restricting access to certain integrations
+- **Simplify the user experience** by showing only relevant qadams for your use case
+- **Deploy custom/private qadams** that are specific to your organization
+
+There are **two levels** of qadam management:
+
+| Level | Who Can Manage | Scope |
+|-------|----------------|-------|
+| **Platform Level** | Platform Admin | Install and remove across the entire platform |
+| **Project Level** | Project Admin | Show/hide specific qadams for specfic project |
+
+<Note>
+Qadams are standard npm packages — official qadams are **auto-synced from the registry hourly**, so you don't need to upgrade the server to get new versions. Each step in a flow is pinned to a specific qadam version, and drafts can be upgraded from the builder. See [Qadam Syncing & Versioning](/install/architecture/qadam-syncing) for the full pipeline.
+</Note>
+
+---
+
+## Platform-Level Management
+
+Platform administrators can manage qadams for the entire Qadam Flow instance from **Platform Admin → Setup → Qadams**.
+
+## Project-Level Management
+
+Project administrators can further restrict which qadams are available within their specific project. This is useful when different teams or projects need access to different integrations.
+
+### Show/Hide Qadams in a Project
+
+<Steps>
+  <Step title="Open Project Settings">
+    Navigate to your project and go to **Settings → Qadams**.
+  </Step>
+  <Step title="Configure Visibility">
+    You'll see a list of all qadams installed on the platform. Toggle the visibility for each qadam:
+    - **Enabled**: Users in this project can use the qadam
+    - **Disabled**: The qadam is hidden from users in this project
+  </Step>
+  <Step title="Save Changes">
+    Changes take effect immediately — users will only see the enabled qadams when building their flows.
+  </Step>
+</Steps>
+
+![Manage Qadams](/resources/screenshots/manage-qadams.png)
+![Manage Qadams](/resources/screenshots/manage-qadams-2.png)
+
+<Note>
+Project-level settings can only **hide** qadams that are installed at the platform level. You cannot add qadams at the project level that aren't already installed on the platform.
+</Note>
+
+
+### Install Private Qadams
+
+<Tip>
+For detailed instructions on building custom qadams, check the [Building Qadams](/build-qadams/building-qadams/overview) documentation.
+</Tip>
+
+
+If you've built a custom qadam for your organization, you can upload it directly as a tarball (`.tgz`) file.
+
+<Steps>
+  <Step title="Build Your Qadam">
+    Build your qadam using the Qadam Flow CLI:
+    ```bash
+    npm run qadams -- build --name=your-qadam-name
+    ```
+    This generates a tarball in `dist/packages/qadams/your-qadam-name`.
+  </Step>
+  <Step title="Navigate to Qadams Settings">
+    Go to **Platform Admin → Setup → Qadams** and click **Install Qadam**.
+  </Step>
+  <Step title="Select File Upload">
+    Choose **Upload File** as the installation source.
+  </Step>
+  <Step title="Upload the Tarball">
+    Select the `.tgz` file from your build output and upload it.
+  </Step>
+</Steps>
+
+![Install Qadam](/resources/screenshots/install-qadam.png)

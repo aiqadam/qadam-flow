@@ -1,0 +1,483 @@
+{
+   "$schema": "https://mintlify.com/docs.json",
+   "theme": "mint",
+   "name": "Qadam Flow",
+   "colors": {
+      "primary": "#9675FF",
+      "light": "#9675FF",
+      "dark": "#9675FF"
+   },
+   "navbar": {
+      "links": [
+         {
+            "label": "GitHub",
+            "href": "https://github.com/aiqadam/qadam-flow"
+         },
+         {
+            "label": "Roadmap",
+            "href": "https://github.com/aiqadam/qadam-flow/blob/main/ROADMAP.md"
+         }
+      ],
+      "primary": {
+         "type": "button",
+         "label": "Get Started",
+         "href": "https://github.com/aiqadam/qadam-flow#quick-start"
+      }
+   },
+   "redirects": [
+      {
+         "source": "/getting-started/introduction",
+         "destination": "/overview/welcome"
+      }
+   ],
+   "background": {
+      "color": {
+         "light": "#ffffff",
+         "dark": "#090d0d"
+      }
+   },
+   "favicon": "/favicon.svg",
+   "navigation": {
+      "tabs": [
+         {
+            "tab": "Overview",
+            "groups": [
+               {
+                  "group": "Overview",
+                  "pages": [
+                     "overview/welcome"
+                  ]
+               },
+               {
+                  "group": "Flows",
+                  "pages": [
+                     "flows/building-flows",
+                     "flows/passing-data",
+                     "flows/using-formulas",
+                     "flows/formula-reference",
+                     "flows/publishing-flows",
+                     "flows/debugging-runs",
+                     "flows/versioning",
+                     "flows/known-limits"
+                  ]
+               },
+               {
+                  "group": "MCP Server",
+                  "pages": [
+                     "mcp/overview",
+                     "mcp/tools"
+                  ]
+               },
+               {
+                  "group": "About",
+                  "pages": [
+                     "about/i18n",
+                     "about/changelog",
+                     "about/license"
+                  ]
+               }
+            ]
+         },
+         {
+            "tab": "Admin Guide",
+            "groups": [
+               {
+                  "group": "Guides",
+                  "pages": [
+                    "admin-guide/guides/structure-projects",
+                    "admin-guide/guides/manage-qadams",
+                    "admin-guide/guides/sso",
+                  {
+                     "group": "SCIM",
+                     "icon": "users",
+                     "pages": [
+                        "admin-guide/guides/scim/overview",
+                        "admin-guide/guides/scim/providers/okta",
+                        "admin-guide/guides/scim/providers/microsoft-entra-id"
+                     ]
+                  },
+                    "admin-guide/guides/manage-oauth2",
+                    "admin-guide/guides/setup-ai-providers",
+                    {
+                      "group": "Secret Managers",
+                      "icon": "key",
+                      "pages": [
+                        "admin-guide/guides/secret-managers/overview",
+                        "admin-guide/guides/secret-managers/aws",
+                        "admin-guide/guides/secret-managers/hashicorp",
+                        "admin-guide/guides/secret-managers/cyberark-conjur",
+                        "admin-guide/guides/secret-managers/onepassword"
+                      ]
+                    },
+                    "admin-guide/guides/permissions",
+                    "admin-guide/guides/event-streaming",
+                    "admin-guide/guides/project-releases",
+                    "admin-guide/guides/manage-concurrency"
+                  ]
+               },
+               {
+                  "group": "Security",
+                  "pages": [
+                     "admin-guide/security/practices",
+                     {
+                        "group": "Audit Logs",
+                        "icon": "book",
+                        "pages": [
+                           "admin-guide/security/audit-logs/overview",
+                           "admin-guide/security/audit-logs/flow-created",
+                           "admin-guide/security/audit-logs/flow-updated",
+                           "admin-guide/security/audit-logs/flow-deleted",
+                           "admin-guide/security/audit-logs/flow-published",
+                           "admin-guide/security/audit-logs/flow-activated",
+                           "admin-guide/security/audit-logs/flow-deactivated",
+                           "admin-guide/security/audit-logs/connection-upserted",
+                           "admin-guide/security/audit-logs/connection-deleted",
+                           "admin-guide/security/audit-logs/flow-run-started",
+                           "admin-guide/security/audit-logs/flow-run-finished",
+                           "admin-guide/security/audit-logs/folder-created",
+                           "admin-guide/security/audit-logs/folder-updated",
+                           "admin-guide/security/audit-logs/folder-deleted",
+                           "admin-guide/security/audit-logs/user-signed-in",
+                           "admin-guide/security/audit-logs/user-signed-up",
+                           "admin-guide/security/audit-logs/user-email-verified",
+                           "admin-guide/security/audit-logs/user-password-reset",
+                           "admin-guide/security/audit-logs/signing-key-created"
+                        ]
+                     }
+                  ]
+               }
+            ]
+         },
+         {
+            "tab": "Deploy",
+            "groups": [
+               {
+                  "group": "Get Started",
+                  "pages": [
+                     "install/overview",
+                     "install/options/docker",
+                     "install/options/docker-compose"
+                  ]
+               },
+               {
+                  "group": "Configuration",
+                  "pages": [
+                     "install/configuration/overview",
+                     "install/configuration/environment-variables",
+                     "install/configuration/hardware",
+                     "install/configuration/breaking-changes",
+                     "install/configuration/telemetry"
+                  ]
+               },
+               {
+                  "group": "Guides",
+                  "pages": [
+                     "install/guides/setup-ssl",
+                     "install/guides/setup-opentelemetry",
+                     "install/guides/setup-s3",
+                     "install/guides/separate-workers",
+                     "install/guides/setup-app-webhooks",
+                     "install/guides/rollback"
+                  ]
+               },
+               {
+                  "group": "Troubleshooting",
+                  "pages": [
+                     "install/troubleshooting/bullboard",
+                     "install/troubleshooting/reset-password",
+                     "install/troubleshooting/truncated-logs",
+                     "install/troubleshooting/websocket-issues"
+                  ]
+               },
+               {
+                  "group": "Architecture",
+                  "pages": [
+                     "install/architecture/overview",
+                     "install/architecture/workers",
+                     "install/architecture/sandboxing",
+                     "install/architecture/durable-execution",
+                     "install/architecture/waitpoints",
+                     "install/architecture/network-security",
+                     "install/architecture/qadam-syncing",
+                     "install/architecture/benchmark"
+                  ]
+               }
+            ]
+         },
+         {
+            "tab": "Embedding",
+            "groups": [
+               {
+                  "group": "Essentials",
+                  "pages": [
+                     "embedding/overview",
+                     "embedding/configure-embedding",
+                     "embedding/provision-users",
+                     "embedding/embed-builder"
+                  ]
+               },
+               {
+                  "group": "Misc",
+                  "pages": [
+                     "embedding/customize-qadams",
+                     "embedding/embed-connections",
+                     "embedding/navigation",
+                     "embedding/predefined-connection",
+                     "embedding/sdk-changelog",
+                     "embedding/sdk-server-requests"
+                  ]
+               }
+            ]
+         },
+         {
+            "tab": "Build Pieces",
+            "description": "Learn how to build, test, and publish your own custom pieces in Activepieces.",
+            "groups": [
+               {
+                  "group": "Build a Piece",
+                  "pages": [
+                     "build-qadams/building-qadams/overview",
+                     "build-qadams/building-qadams/start-building",
+                     "build-qadams/building-qadams/setup-fork",
+                     "build-qadams/building-qadams/development-setup",
+                     "build-qadams/building-qadams/qadam-definition",
+                     "build-qadams/building-qadams/qadam-authentication",
+                     "build-qadams/building-qadams/create-action",
+                     "build-qadams/building-qadams/create-trigger",
+                     {
+                        "group": "Sharing Pieces",
+                        "icon": "circle-7",
+                        "pages": [
+                           "build-qadams/sharing-qadams/overview",
+                           "build-qadams/sharing-qadams/contribute",
+                           "build-qadams/sharing-qadams/community",
+                           "build-qadams/sharing-qadams/private"
+                        ]
+                     }
+                  ]
+               },
+               {
+                  "group": "Piece Reference",
+                  "pages": [
+                     "build-qadams/qadam-reference/authentication",
+                     {
+                        "group": "Triggers",
+                        "icon": "bolt",
+                        "pages": [
+                           "build-qadams/qadam-reference/triggers/overview",
+                           "build-qadams/qadam-reference/triggers/polling-trigger",
+                           "build-qadams/qadam-reference/triggers/webhook-trigger"
+                        ]
+                     },
+                     "build-qadams/qadam-reference/properties",
+                     "build-qadams/qadam-reference/properties-validation",
+                     "build-qadams/qadam-reference/flow-control",
+                     "build-qadams/qadam-reference/persistent-storage",
+                     "build-qadams/qadam-reference/files",
+                     "build-qadams/qadam-reference/external-libraries",
+                     "build-qadams/qadam-reference/qadam-versioning",
+                     "build-qadams/qadam-reference/examples",
+                     "build-qadams/qadam-reference/custom-api-calls",
+                     "build-qadams/qadam-reference/i18n"
+                  ]
+               },
+               {
+                  "group": "Misc",
+                  "pages": [
+                     "build-qadams/misc/build-qadam",
+                     "build-qadams/misc/publish-qadam",
+                     "build-qadams/misc/qadams-ci-cd",
+                     "build-qadams/misc/migrate-nx-to-turbo",
+                     "build-qadams/misc/private-fork",
+                     "build-qadams/misc/testing-qadams",
+                     "build-qadams/misc/dev-container",
+                     "build-qadams/misc/codespaces"
+                  ]
+               }
+            ]
+         },
+         {
+            "tab": "API Reference",
+            "groups": [
+               {
+                  "group": "Get Started",
+                  "pages": [
+                     "endpoints/overview"
+                  ]
+               },
+               {
+                  "group": "Endpoints",
+                  "pages": [
+                     {
+                        "group": "Projects",
+                        "icon": "building",
+                        "pages": [
+                           "endpoints/projects/schema",
+                           "endpoints/projects/create",
+                           "endpoints/projects/update",
+                           "endpoints/projects/list",
+                           "endpoints/projects/delete"
+                        ]
+                     },
+                     {
+                        "group": "Users",
+                        "icon": "user",
+                        "pages": [
+                           "endpoints/users/schema",
+                           "endpoints/users/update",
+                           "endpoints/users/list",
+                           "endpoints/users/delete"
+                        ]
+                     },
+                     {
+                        "group": "User Invitations",
+                        "icon": "paper-plane",
+                        "pages": [
+                           "endpoints/user-invitations/schema",
+                           "endpoints/user-invitations/upsert",
+                           "endpoints/user-invitations/list",
+                           "endpoints/user-invitations/delete"
+                        ]
+                     },
+                     {
+                        "group": "Project Members",
+                        "icon": "user",
+                        "pages": [
+                           "endpoints/project-members/schema",
+                           "endpoints/project-members/list",
+                           "endpoints/project-members/delete"
+                        ]
+                     },
+                     {
+                        "group": "Connections",
+                        "icon": "link",
+                        "pages": [
+                           "endpoints/connections/schema",
+                           "endpoints/connections/upsert",
+                           "endpoints/connections/list",
+                           "endpoints/connections/delete"
+                        ]
+                     },
+                     {
+                        "group": "Flows",
+                        "icon": "bolt",
+                        "pages": [
+                           "endpoints/flows/schema",
+                           "endpoints/flows/create",
+                           "endpoints/flows/update",
+                           "endpoints/flows/get",
+                           "endpoints/flows/list",
+                           "endpoints/flows/delete"
+                        ]
+                     },
+                     {
+                        "group": "Flow Runs",
+                        "icon": "play",
+                        "pages": [
+                           "endpoints/flow-runs/schema",
+                           "endpoints/flow-runs/get",
+                           "endpoints/flow-runs/list"
+                        ]
+                     },
+                     {
+                        "group": "Sample Data",
+                        "icon": "database",
+                        "pages": [
+                           "endpoints/sample-data/get"
+                        ]
+                     },
+                     {
+                        "group": "Pieces",
+                        "icon": "plug",
+                        "pages": [
+                           "endpoints/qadams/schema",
+                           "endpoints/qadams/install"
+                        ]
+                     },
+                     {
+                        "group": "Project Releases",
+                        "icon": "cube",
+                        "pages": [
+                           "endpoints/project-releases/schema",
+                           "endpoints/project-releases/create"
+                        ]
+                     },
+                     {
+                        "group": "Global Connections",
+                        "icon": "globe",
+                        "pages": [
+                           "endpoints/global-connections/schema",
+                           "endpoints/global-connections/upsert",
+                           "endpoints/global-connections/update",
+                           "endpoints/global-connections/list",
+                           "endpoints/global-connections/delete"
+                        ]
+                     },
+                     {
+                        "group": "Git Sync",
+                        "icon": "git",
+                        "pages": [
+                           "endpoints/git-repos/schema",
+                           "endpoints/git-repos/configure"
+                        ]
+                     },
+                     {
+                        "group": "Folders",
+                        "icon": "folder",
+                        "pages": [
+                           "endpoints/folders/schema",
+                           "endpoints/folders/create",
+                           "endpoints/folders/update",
+                           "endpoints/folders/get",
+                           "endpoints/folders/list",
+                           "endpoints/folders/delete"
+                        ]
+                     },
+                     {
+                        "group": "Templates",
+                        "icon": "copy",
+                        "pages": [
+                           "endpoints/templates/schema",
+                           "endpoints/templates/create",
+                           "endpoints/templates/delete",
+                           "endpoints/templates/get",
+                           "endpoints/templates/list"
+                        ]
+                     },
+                     {
+                        "group": "Worker Machines",
+                        "icon": "server",
+                        "pages": [
+                           "endpoints/worker-machines/queue-metrics"
+                        ]
+                     },
+                     {
+                        "group": "Embedding",
+                        "icon": "code",
+                        "pages": [
+                           "endpoints/embedding/add-allowed-embed-origins"
+                        ]
+                     }
+                  ]
+               }
+            ]
+         }
+      ],
+      "global": {}
+   },
+   "logo": {
+      "light": "./resources/logo/light.svg",
+      "dark": "./resources/logo/dark.svg",
+      "href": "https://github.com/aiqadam/qadam-flow"
+   },
+   "api": {
+      "openapi": [
+         "openapi.json"
+      ]
+   },
+   "footer": {
+      "socials": {
+         "github": "https://github.com/aiqadam/qadam-flow"
+      }
+   }
+}

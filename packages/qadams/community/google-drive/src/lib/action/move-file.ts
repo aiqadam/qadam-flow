@@ -1,0 +1,46 @@
+import { googleDriveAuth, createGoogleClient } from '../auth';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { common } from '../common';
+import { google } from 'googleapis';
+
+export const moveFileAction = createAction({
+  auth: googleDriveAuth,
+  name: 'google-drive-move-file',
+  displayName: 'Move File',
+  description: 'Moves a file from one folder to another.',
+  audience: 'both',
+  aiMetadata: { description: 'Relocates a Drive file to a target folder, detaching it from its current parents and attaching it to the new one. Use to reorganize a file once you know its ID and the destination folder ID. Idempotent: repeating with the same destination leaves the file in the same folder.', idempotent: true },
+  props: {
+    fileId: Property.ShortText({
+      displayName: 'File ID',
+      description: 'You can use **Search Folder/File** action to retrieve ID.',
+      required: true,
+    }),
+    include_team_drives: common.properties.include_team_drives,
+    folderId: common.properties.parentFolder,
+  },
+  async run(context) {
+    const fileId = context.propsValue.fileId;
+    const folderId = context.propsValue.folderId;
+
+    const authClient = await createGoogleClient(context.auth);
+
+    const drive = google.drive({ version: 'v3', auth: authClient });
+
+    const file = await drive.files.get({
+      fileId,
+      supportsAllDrives: context.propsValue.include_team_drives,
+      fields: 'id,parents',
+    });
+
+    const response = await drive.files.update({
+      fileId: fileId,
+      fields: '*',
+      removeParents: file.data.parents?.join(','),
+      addParents: folderId,
+      supportsAllDrives: context.propsValue.include_team_drives,
+    });
+
+    return response.data;
+  },
+});

@@ -1,0 +1,65 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import {
+  httpClient,
+  HttpMethod,
+  AuthenticationType,
+} from '@aiqadam/qadams-common';
+import { dropboxAuth } from '../auth';
+
+export const dropboxMoveFile = createAction({
+  auth: dropboxAuth,
+  name: 'move_dropbox_file',
+  description: 'Move a file',
+  audience: 'both',
+  aiMetadata: { description: 'Moves (or renames) the file at the source path to a new destination path within Dropbox; optionally autorenames on conflict. Use to relocate or rename a single file. Not idempotent: after a successful move the source no longer exists, so repeating the call fails or, with autorename, can produce a differently named copy.', idempotent: false },
+  displayName: 'Move file',
+  props: {
+    from_path: Property.ShortText({
+      displayName: 'From Path',
+      description: 'The current path of the file (e.g. /folder1/oldfile.txt)',
+      required: true,
+    }),
+    to_path: Property.ShortText({
+      displayName: 'To Path',
+      description: 'The new path for the file (e.g. /folder2/newfile.txt)',
+      required: true,
+    }),
+    autorename: Property.Checkbox({
+      displayName: 'Auto Rename',
+      description:
+        "If there's a conflict, have the Dropbox server try to autorename the file to avoid conflict.",
+      defaultValue: false,
+      required: false,
+    }),
+    allow_ownership_transfer: Property.Checkbox({
+      displayName: 'Allow Ownership Transfer',
+      description:
+        'Allows moves by owner even if it would result in an ownership transfer.',
+      defaultValue: false,
+      required: false,
+    }),
+  },
+  async run(context) {
+    const params = {
+      from_path: context.propsValue.from_path,
+      to_path: context.propsValue.to_path,
+      autorename: context.propsValue.autorename,
+      allow_ownership_transfer: context.propsValue.allow_ownership_transfer,
+    };
+
+    const result = await httpClient.sendRequest({
+      method: HttpMethod.POST,
+      url: `https://api.dropboxapi.com/2/files/move_v2`,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: params,
+      authentication: {
+        type: AuthenticationType.BEARER_TOKEN,
+        token: context.auth.access_token,
+      },
+    });
+
+    return result.body;
+  },
+});

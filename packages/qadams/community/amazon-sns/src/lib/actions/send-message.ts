@@ -1,0 +1,59 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { createSNS } from '../common';
+import { amazonSnsAuth } from '../..';
+import { ListTopicsCommand, PublishCommand } from "@aws-sdk/client-sns";
+
+export const sendMessageAction = createAction({
+  auth: amazonSnsAuth,
+  name: 'send-message',
+  displayName: 'Send Message',
+  description: 'Sends a message to an Amazon SNS topic.',
+  audience: 'both',
+  aiMetadata: { description: 'Publishes a message to an Amazon SNS topic, fanning it out to that topic\'s subscribers (email, SMS, HTTP/S, SQS, Lambda, etc.). Use to send a notification or alert through a pre-existing SNS topic; you must supply the target topic\'s ARN and the message body. Not idempotent — each call publishes a new message and delivers it again.', idempotent: false },
+  props: {
+    topic: Property.Dropdown({
+        auth: amazonSnsAuth,
+        displayName: 'Topic',
+        description: 'Select a topic',
+        required: true,
+        refreshers: ['auth'],
+        options: async ({ auth }) => {
+            if (!auth) {
+                return {
+                    disabled: true,
+                    options: [],
+                    placeholder: 'Please authenticate first',
+                };
+            }
+            const sns = await createSNS(auth.props);
+            const topics = await sns.send(new ListTopicsCommand({}));
+            if (topics.Topics) {
+                return {
+                    options: topics.Topics.map((topic) =>(
+                        {
+                            label: topic.TopicArn?.split(':').pop() as string,
+                            value: topic.TopicArn as string,
+                        }
+                    )),
+                };
+            } else {
+                return {
+                    options: [],
+                    placeholder: 'No topics found',
+                };
+            }
+        },
+    }),
+    message: Property.LongText({
+      displayName: 'Message',
+      required: true,
+    }),
+  },
+  async run(context) {
+      const { topic, message } = context.propsValue;
+      const sns = createSNS(context.auth.props);
+      const response = await sns.send(new PublishCommand({ TopicArn: topic, Message: message }));
+
+      return response;
+  },
+});

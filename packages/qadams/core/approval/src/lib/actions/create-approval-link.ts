@@ -1,0 +1,37 @@
+import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
+import { MarkdownVariant } from '@aiqadam/shared';
+
+export const createApprovalLink = createAction({
+  auth: QadamAuth.None(),
+  name: 'create_approval_links',
+  displayName: 'Create Approval Links',
+  description:
+    'Create links only without pausing the flow, use wait for approval to pause',
+  props: {
+    markdown: Property.MarkDown({
+      variant: MarkdownVariant.WARNING,
+      value: 'Please use Manual Task feature instead from 0.48.0 and above',
+    }),
+  },
+  errorHandlingOptions: {
+    continueOnFailure: {
+      hide: true,
+    },
+    retryOnFailure: {
+      hide: true,
+    },
+  },
+  async run(ctx) {
+    const waitpoint = await ctx.run.createWaitpoint({
+      type: 'WEBHOOK',
+    });
+    return {
+      approvalLink: waitpoint.buildResumeUrl({
+        queryParams: { action: 'approve' },
+      }),
+      disapprovalLink: waitpoint.buildResumeUrl({
+        queryParams: { action: 'disapprove' },
+      }),
+    };
+  },
+});

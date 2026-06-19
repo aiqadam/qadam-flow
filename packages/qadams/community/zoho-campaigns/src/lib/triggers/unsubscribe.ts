@@ -1,0 +1,81 @@
+import {
+  DedupeStrategy,
+  Polling,
+  pollingHelper,
+} from '@aiqadam/qadams-common';
+import {
+  AppConnectionValueForAuthProperty,
+  createTrigger,
+  StaticPropsValue,
+  TriggerStrategy,
+} from '@aiqadam/qadams-framework';
+import dayjs from 'dayjs';
+import { zohoCampaignsAuth, zohoCampaignsCommon } from '../common';
+
+// replace auth with piece auth variable
+const polling: Polling<
+  AppConnectionValueForAuthProperty<typeof zohoCampaignsAuth>,
+  StaticPropsValue<any>
+> = {
+  strategy: DedupeStrategy.TIMEBASED,
+  items: async ({ auth, propsValue }) => {
+    const { listkey, status = 'unsub' } = propsValue;
+    const location = auth.props?.['location'] as string || 'zoho.com';
+    const accessToken = auth.access_token;
+
+    if (!listkey) {
+      throw new Error('Mailing list is required');
+    }
+
+    const items = await zohoCampaignsCommon.listContacts({
+      accessToken,
+      location,
+      listkey,
+      sort: 'desc',
+      status,
+    });
+    return items.map((item) => ({
+      epochMilliSeconds: dayjs(item.added_time).valueOf(),
+      data: item,
+    }));
+  },
+};
+
+export const unsubscribe = createTrigger({
+  auth: zohoCampaignsAuth,
+  name: 'unsubscribe',
+  displayName: 'Unsubscribe',
+  description:
+    'Fires when a contact is removed from a mailing list or unsubscribed.',
+  aiMetadata: {
+    description:
+      'Fires when a contact in the selected mailing list reaches the unsubscribed status, representing a subscriber who has opted out or been removed. Polls the list for contacts with that status.',
+  },
+  props: zohoCampaignsCommon.unsubscribeProperties(),
+  sampleData: {
+    contact_email: 'unsubscribed@example.com',
+    firstname: 'John',
+    lastname: 'Doe',
+    phone: '+1-555-123-4567',
+    companyname: 'Acme Corp',
+    zuid: '12345678',
+    added_time: '1699123456789',
+  },
+  type: TriggerStrategy.POLLING,
+  async test(context) {
+    return await pollingHelper.test(polling, context);
+  },
+  async onEnable(context) {
+    const { store, auth, propsValue } = context;
+    await pollingHelper.onEnable(polling, { store, auth, propsValue });
+  },
+
+  async onDisable(context) {
+    const { store, auth, propsValue } = context;
+    await pollingHelper.onDisable(polling, { store, auth, propsValue });
+  },
+
+  async run(context) {
+    return await pollingHelper.poll(polling, context);
+  },
+});

@@ -1,0 +1,37 @@
+import { propsValidation } from '@aiqadam/qadams-common';
+import { createAction } from '@aiqadam/qadams-framework';
+import { zohoCampaignsAuth, zohoCampaignsCommon } from '../common';
+
+export const unsubscribeContact = createAction({
+  auth: zohoCampaignsAuth,
+  name: 'unsubscribeContact',
+  displayName: 'Unsubscribe Contact',
+  description: 'Remove a contact from a mailing list.',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Unsubscribes a contact (matched by email) from a specified mailing list, optionally scoped to a particular topic. Use to opt a subscriber out of a list or topic. Idempotent: an already-unsubscribed contact stays unsubscribed on repeat calls.',
+    idempotent: true,
+  },
+  props: zohoCampaignsCommon.unsubscribeContactProperties(),
+  async run({ auth, propsValue }) {
+    const location = auth.props?.['location'] as string || 'zoho.com';
+    const accessToken = auth.access_token;
+    await propsValidation.validateZod(
+      propsValue,
+      zohoCampaignsCommon.unsubscribeContactSchema
+    );
+    const { additionalFields, ...baseFields } = propsValue.contactinfo;
+
+    return await zohoCampaignsCommon.unsubscribeContact({
+      accessToken,
+      location,
+      listkey: String(propsValue.listkey),
+      contactinfo: {
+        ...baseFields,
+        ...additionalFields,
+      },
+      ...(propsValue.topic_id && { topic_id: propsValue.topic_id }),
+    });
+  },
+});

@@ -1,0 +1,38 @@
+import { httpClient, HttpError, HttpMethod } from '@aiqadam/qadams-common';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { telegramBotAuth } from '../..';
+import { telegramCommons } from '../common';
+
+export const telegramGetChatMemberAction = createAction({
+  auth: telegramBotAuth,
+  name: 'get_chat_member',
+  description: 'Get member info (or null) for the provided chat id and user id',
+  audience: 'both',
+  aiMetadata: { description: 'Looks up a specific user\'s membership in a chat by chat_id and user_id, returning their role and status (member, administrator, left, kicked, etc.). Use to check whether a user belongs to a chat or what permissions they hold before acting. Idempotent: read-only lookup with no side effects.', idempotent: true },
+  displayName: 'Get Chat Member',
+  props: {
+    instructions: telegramCommons.chatIdInstructions(),
+    chat_id: telegramCommons.chatIdProp(),
+    user_id: Property.ShortText({
+      displayName: 'User Id',
+      description: 'Unique identifier for the user',
+      required: true,
+    }),
+  },
+  async run(ctx) {
+    try {
+      const response = await httpClient.sendRequest<never>({
+        method: HttpMethod.POST,
+        url: telegramCommons.getApiUrl(ctx.auth, 'getChatMember'),
+        headers: {},
+        body: {
+          chat_id: ctx.propsValue.chat_id,
+          user_id: ctx.propsValue.user_id,
+        },
+      });
+      return response.body;
+    } catch (error) {
+      return (error as HttpError).errorMessage().response.body;
+    }
+  },
+});

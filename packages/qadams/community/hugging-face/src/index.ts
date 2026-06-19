@@ -1,0 +1,33 @@
+import { createQadam } from '@aiqadam/qadams-framework';
+import { QadamCategory } from '@aiqadam/shared';
+import { documentQuestionAnswering } from './lib/actions/document-question-answering';
+import { languageTranslation } from './lib/actions/language-translation';
+import { textClassification } from './lib/actions/text-classification';
+import { textSummarization } from './lib/actions/text-summarization';
+import { chatCompletion } from './lib/actions/chat-completion';
+import { createImage } from './lib/actions/create-image';
+import { objectDetection } from './lib/actions/object-detection';
+import { imageClassification } from './lib/actions/image-classification';
+import { huggingFaceAuth } from './lib/auth';
+
+export const huggingface = createQadam({
+  displayName: 'Hugging Face',
+  description:
+    'Run inference on 100,000+ open ML models for NLP, vision, and audio tasks',
+  auth: huggingFaceAuth,
+  minimumSupportedRelease: '0.36.1',
+  logoUrl: '/assets/qadams/huggingface.svg',
+  categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
+  authors: ['Ani-4x'],
+  actions: [
+    documentQuestionAnswering,
+    languageTranslation,
+    textClassification,
+    textSummarization,
+    chatCompletion,
+    createImage,
+    objectDetection,
+    imageClassification,
+  ],
+  triggers: [],
+});

@@ -1,0 +1,28 @@
+<!-- Keep title and favicon in one line, so the github actions remove them correctly -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <base href="/" />
+  <title><%= apTitle %></title>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/logo-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/logo-180.png">
+  <link rel="icon" type="image/x-icon" href="<%= apFavicon %>">
+  <meta property="og:title" content="Qadam Flow" />
+  <meta property="og:description" content="Open-source AI-first workflow automation. An AI Qadam Build project." />
+  <meta property="og:image" content="/og-image.png" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

@@ -1,0 +1,422 @@
+import { QadamAuth, Property } from '@aiqadam/qadams-framework'
+import { propsProcessor } from '../../src/lib/variables/props-processor'
+describe('Property Validation', () => {
+    describe('required properties', () => {
+        it('should validate required string property', async () => {
+            const props = {
+                text: Property.ShortText({
+                    displayName: 'Text',
+                    required: true,
+                }),
+            }
+
+            const { errors: validErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { text: 'valid text' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validErrors).toEqual({})
+
+            const { errors: nullErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { text: null },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(nullErrors).toEqual({
+                text: ['Expected string, received: null'],
+            })
+
+            const { errors: undefinedErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { text: undefined },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(undefinedErrors).toEqual({
+                text: ['Expected string, received: undefined'],
+            })
+        })
+
+        it('should validate required number property', async () => {
+            const props = {
+                number: Property.Number({
+                    displayName: 'Number',
+                    required: true,
+                }),
+            }
+
+            const { errors: validErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { number: 42 },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validErrors).toEqual({})
+
+            const { errors: nullErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { number: null },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(nullErrors).toEqual({
+                number: ['Expected number, received: null'],
+            })
+
+            const { errors: typeErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { number: 'not a number' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(typeErrors).toEqual({
+                number: ['Expected number, received: not a number'],
+            })
+        })
+
+        it('should validate required datetime property', async () => {
+            const props = {
+                date: Property.DateTime({
+                    displayName: 'DateTime',
+                    required: true,
+                }),
+            }
+
+            const { errors: validErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { date: '2024-03-14T12:00:00.000Z' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validErrors).toEqual({})
+
+            const { errors: invalidErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { date: 'not a date' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(invalidErrors).toEqual({
+                date: ['Invalid datetime format. Expected ISO format (e.g. 2024-03-14T12:00:00.000Z), received: not a date'],
+            })
+        })
+
+        it('should validate required array property', async () => {
+            const props = {
+                array: Property.Array({
+                    displayName: 'Array',
+                    required: true,
+                }),
+            }
+
+            const { errors: validErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { array: [1, 2, 3] },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validErrors).toEqual({})
+
+            const { errors: typeErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { array: 'not an array' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(typeErrors).toEqual({
+                array: ['Expected array, received: not an array'],
+            })
+        })
+
+        it('should validate required json property', async () => {
+            const props = {
+                json: Property.Json({
+                    displayName: 'JSON',
+                    required: true,
+                }),
+            }
+
+            const { errors: validErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: { key: 'value' } },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validErrors).toEqual({})
+
+            const { errors: validJsonStringErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: '{"key": "value"}' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validJsonStringErrors).toEqual({})
+
+            const { errors: validArrayErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: [1, 2, 3] },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validArrayErrors).toEqual({})
+
+            const { errors: validArrayStringErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: '[1, 2, 3]' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validArrayStringErrors).toEqual({})
+
+            const { errors: invalidJsonErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: 'not a json object' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(invalidJsonErrors).toEqual({
+                json: ['Expected JSON, received: not a json object'],
+            })
+
+            const { errors: nullErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: null },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(nullErrors).toEqual({
+                json: ['Expected JSON, received: null'],
+            })
+
+            const { errors: emptyStringErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: '' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(emptyStringErrors).toEqual({
+                json: ['Expected JSON, received: '],
+            })
+
+            const { errors: invalidTextErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: 'asd' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(invalidTextErrors).toEqual({
+                json: ['Expected JSON, received: asd'],
+            })
+        })
+
+        it('should validate optional json property with invalid value', async () => {
+            const props = {
+                json: Property.Json({
+                    displayName: 'JSON',
+                    required: false,
+                }),
+            }
+
+            const { errors: validNullErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: null },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validNullErrors).toEqual({})
+
+            const { errors: validUndefinedErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: undefined },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validUndefinedErrors).toEqual({})
+
+            const { errors: emptyStringErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: '' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(emptyStringErrors).toEqual({})
+
+            const { errors: invalidJsonErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: 'not a json object' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(invalidJsonErrors).toEqual({
+                json: ['Expected JSON, received: not a json object'],
+            })
+
+            const { errors: invalidTextErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { json: 'asd' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(invalidTextErrors).toEqual({
+                json: ['Expected JSON, received: asd'],
+            })
+        })
+        it('should validate required object property', async () => {
+            const props = {
+                object: Property.Object({
+                    displayName: 'Object',
+                    required: true,
+                }),
+            }
+
+            const { errors: validErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { object: { key: 'value' } },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(validErrors).toEqual({})
+
+            const { errors: nullErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { object: null },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(nullErrors).toEqual({
+                object: ['Expected object, received: null'],
+            })
+
+            const { errors: typeErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { object: 'not an object' },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(typeErrors).toEqual({
+                object: ['Expected object, received: not an object'],
+            })
+
+            const { errors: jsonStringErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { object: JSON.stringify({ key: 'value' }) },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(jsonStringErrors).toEqual({})
+
+            const { errors: undefinedErrors } = await propsProcessor.applyProcessorsAndValidators(
+                { object: { key: 'value' } },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(undefinedErrors).toEqual({})
+        })
+    })
+
+    describe('optional properties', () => {
+        it('should validate optional properties', async () => {
+            const props = {
+                text: Property.ShortText({
+                    displayName: 'Text',
+                    required: false,
+                }),
+                number: Property.Number({
+                    displayName: 'Number',
+                    required: false,
+                }),
+            }
+
+            const { errors } = await propsProcessor.applyProcessorsAndValidators(
+                {
+                    text: null,
+                    number: undefined,
+                },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+            expect(errors).toEqual({})
+        })
+    })
+
+    describe('type validation', () => {
+        it('should validate property types', async () => {
+            const props = {
+                string: Property.ShortText({
+                    displayName: 'Text',
+                    required: true,
+                }),
+                number: Property.Number({
+                    displayName: 'Number',
+                    required: true,
+                }),
+                boolean: Property.Checkbox({
+                    displayName: 'Checkbox',
+                    required: true,
+                }),
+                array: Property.Array({
+                    displayName: 'Array',
+                    required: true,
+                }),
+                object: Property.Object({
+                    displayName: 'Object',
+                    required: true,
+                }),
+            }
+
+            const { errors } = await propsProcessor.applyProcessorsAndValidators(
+                {
+                    string: 42,
+                    number: 'not a number',
+                    boolean: 'not a boolean',
+                    array: 'not an array',
+                    object: 'not an object',
+                },
+                props,
+                QadamAuth.None(),
+                false,
+                {},
+            )
+
+            expect(errors).toEqual({
+                number: ['Expected number, received: not a number'],
+                boolean: ['Expected boolean, received: not a boolean'],
+                array: ['Expected array, received: not an array'],
+                object: ['Expected object, received: not an object'],
+            })
+        })
+    })
+})

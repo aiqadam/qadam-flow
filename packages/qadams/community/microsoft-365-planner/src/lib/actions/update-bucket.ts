@@ -1,0 +1,40 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { microsoft365PlannerAuth, microsoft365PlannerCommon } from '../common';
+import {
+  BucketDropdown,
+  OrderHintProperty,
+  PlanDropdown,
+} from '../common/properties';
+
+export const updateBucket = createAction({
+  auth: microsoft365PlannerAuth,
+  name: 'updateBucket',
+  displayName: 'Update Bucket',
+  description: 'Modify bucket’s name or properties.',
+  audience: 'both',
+  aiMetadata: {
+    description: 'Updates an existing bucket\'s name and/or order hint, identified by bucket ID within a plan. Use to rename or reorder a bucket. Idempotent: applying the same field values repeatedly leaves the bucket in the same end state.',
+    idempotent: true,
+  },
+  props: {
+    planId: PlanDropdown({ required: true }),
+    id: BucketDropdown({ required: true }),
+    name: Property.ShortText({
+      displayName: 'Name',
+      description: 'The new name of the bucket',
+      required: false,
+    }),
+    orderHint: OrderHintProperty({ required: false }),
+  },
+  async run({ auth, propsValue }) {
+    const { planId, id, ...updateParams } = propsValue;
+    if (!id) {
+      throw new Error('Bucket ID is required to update a bucket.');
+    }
+    return await microsoft365PlannerCommon.updateBucket({
+      auth,
+      id,
+      ...updateParams,
+    });
+  },
+});

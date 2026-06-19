@@ -1,0 +1,49 @@
+import { HttpMethod } from '@aiqadam/qadams-common';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { sendpulseApiCall } from '../common/client';
+import { sendpulseAuth } from '../common/auth';
+
+export const deleteContactAction = createAction({
+  auth: sendpulseAuth,
+  name: 'delete-contact',
+  displayName: 'Delete Contact',
+  description: 'Permanently delete contact from all mailing lists',
+  audience: 'both',
+  aiMetadata: { description: 'Permanently removes a contact, identified by email, from every SendPulse mailing list (address book) in the account at once. Use to fully purge a contact rather than unsubscribe from a single list. Destructive but idempotent — once deleted, repeating the call leaves the contact absent.', idempotent: true },
+  props: {
+    email: Property.ShortText({
+      displayName: 'Email Address',
+      description: 'Email address to delete from all mailing lists',
+      required: true,
+    }),
+  },
+
+  async run(context) {
+    const { email } = context.propsValue;
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      throw new Error(`Invalid email format: ${email}`);
+    }
+
+    try {
+      const result = await sendpulseApiCall<{ result: boolean }>({
+        method: HttpMethod.DELETE,
+        auth: context.auth.props,
+        resourceUri: `/emails/${encodeURIComponent(email)}`,
+      });
+
+      if (result.result) {
+        return {
+          success: true,
+          message: `Contact ${email} deleted from all mailing lists`,
+          email,
+        };
+      }
+
+      throw new Error('SendPulse API returned failure');
+    } catch (error: any) {
+      throw new Error(`Failed to delete contact: ${error.message || 'Unknown error'}`);
+    }
+  },
+});

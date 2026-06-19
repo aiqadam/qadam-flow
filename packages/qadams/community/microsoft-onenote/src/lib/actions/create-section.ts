@@ -1,0 +1,74 @@
+import { Property, createAction, OAuth2PropertyValue } from '@aiqadam/qadams-framework';
+import { getGraphBaseUrl } from '../common/microsoft-cloud';
+import { getNotebooksDropdown } from '../common';
+import { oneNoteAuth } from '../auth';
+import { Client } from '@microsoft/microsoft-graph-client';
+
+export const createSection = createAction({
+	auth: oneNoteAuth,
+	name: 'create_section',
+	displayName: 'Create Section',
+	description: 'Creates a new section in notebook.',
+	audience: 'both',
+	aiMetadata: { description: 'Creates a new section inside a chosen OneNote notebook, given a display name. Use to organize a notebook before adding pages; the name must be unique within the notebook, under 50 characters, and avoid characters such as ?*/:<>|&#\'%~. Not idempotent: each call attempts to create another section.', idempotent: false },
+	props: {
+		notebook_id: Property.Dropdown({
+			auth: oneNoteAuth,
+			displayName: 'Notebook',
+			description: 'The notebook to create the section in.',
+			required: true,
+			refreshers: [],
+			options: async ({ auth }) => {
+				if (!(auth as OAuth2PropertyValue)?.access_token) {
+					return {
+						disabled: true,
+						placeholder: 'Connect your account first',
+						options: [],
+					};
+				}
+				return await getNotebooksDropdown(auth as OAuth2PropertyValue);
+			},
+		}),
+		displayName: Property.ShortText({
+			displayName: 'Section Name',
+			description: 'The name of the section. Must be unique within the notebook and cannot contain more than 50 characters or the following characters: ?*/:<>|&#\'\'%~',
+			required: true,
+		}),
+	},
+	async run(context) {
+		const { auth, propsValue } = context;
+		const { notebook_id, displayName } = propsValue;
+
+		const authValue = auth as OAuth2PropertyValue;
+		const cloud = authValue.props?.['cloud'] as string | undefined;
+		const client = Client.initWithMiddleware({
+			authProvider: {
+				getAccessToken: () => Promise.resolve(authValue.access_token),
+			},
+			baseUrl: getGraphBaseUrl(cloud),
+		});
+
+		const sectionBody = {
+			displayName,
+		};
+
+		try {
+			const response = await client.api(`/me/onenote/notebooks/${notebook_id}/sections`).post(sectionBody);
+
+			return {
+				id: response.id,
+				displayName: response.displayName,
+				isDefault: response.isDefault,
+				pagesUrl: response.pagesUrl,
+				createdDateTime: response.createdDateTime,
+				lastModifiedDateTime: response.lastModifiedDateTime,
+				createdBy: response.createdBy,
+				lastModifiedBy: response.lastModifiedBy,
+				links: response.links,
+				self: response.self,
+			};
+		} catch (error: any) {
+			throw new Error(`Failed to create section: ${error.message || 'Unknown error'}`);
+		}
+	},
+});

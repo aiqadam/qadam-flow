@@ -1,0 +1,86 @@
+import { createTrigger, TriggerStrategy } from '@aiqadam/qadams-framework';
+import { githubApiCall, githubCommon } from '../common';
+import { githubAuth } from '../auth';
+import { HttpMethod } from '@aiqadam/qadams-common';
+
+export const githubRegisterTrigger = ({
+  name,
+  displayName,
+  description,
+  sampleData,
+}: {
+  name: string;
+  displayName: string;
+  description: string;
+  sampleData: object;
+}) =>
+  createTrigger({
+    auth: githubAuth,
+    name: `trigger_${name}`,
+    displayName,
+    description,
+    aiMetadata: {
+      description:
+        'Fires on activity for a configured GitHub event type on a chosen repository (one of: pull request, star, issue, push, discussion, or discussion comment, depending on which trigger variant is used). Represents a repository webhook event delivering the raw GitHub event payload.',
+    },
+    props: {
+      repository: githubCommon.repositoryDropdown,
+    },
+    sampleData,
+    type: TriggerStrategy.WEBHOOK,
+    async onEnable(context) {
+      const { repo, owner } = context.propsValue.repository!;
+
+      const response = await githubApiCall<{ id: number }>({
+        auth: context.auth,
+        method: HttpMethod.POST,
+        resourceUri: `/repos/${owner}/${repo}/hooks`,
+        body: {
+          name: 'web',
+          active: true,
+          events: [name],
+          config: {
+            url: context.webhookUrl,
+            content_type: 'json',
+            insecure_ssl: '0',
+          },
+        },
+      });
+
+      await context.store.put<WebhookInformation>(`github_${name}_trigger`, {
+        webhookId: response.body.id,
+        owner: owner,
+        repo: repo,
+      });
+    },
+    async onDisable(context) {
+      const response = await context.store.get<WebhookInformation>(
+        `github_${name}_trigger`
+      );
+      if (response !== null && response !== undefined) {
+        await githubApiCall({
+          auth: context.auth,
+          method: HttpMethod.DELETE,
+          resourceUri: `/repos/${response.owner}/${response.repo}/hooks/${response.webhookId}`,
+        });
+      }
+    },
+    async run(context) {
+      console.debug('payload received', context.payload.body);
+
+      if (isVerificationCall(context.payload.body as Record<string, unknown>)) {
+        return [];
+      }
+      return [context.payload.body];
+    },
+  });
+
+function isVerificationCall(payload: Record<string, any>) {
+  return payload['zen'] !== undefined;
+}
+
+interface WebhookInformation {
+  webhookId: number;
+  repo: string;
+  owner: string;
+}

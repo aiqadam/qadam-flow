@@ -1,0 +1,1 @@
+export const feedbackUrl = 'https://t.me/aiqadamflow'

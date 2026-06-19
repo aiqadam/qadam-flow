@@ -1,0 +1,55 @@
+import { propsValidation } from '@aiqadam/qadams-common';
+import { createAction } from '@aiqadam/qadams-framework';
+import { zohoCampaignsAuth, zohoCampaignsCommon } from '../common';
+
+export const findCampaign = createAction({
+  auth: zohoCampaignsAuth,
+  name: 'findCampaign',
+  displayName: 'Find Campaign',
+  description: 'Locate an existing campaign by campaign name.',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Searches recent campaigns in the account and returns those whose name contains the supplied value (case-insensitive partial match); an empty name effectively returns all campaigns, optionally filtered by status and paginated. Use to resolve a campaign key or browse campaigns. Read-only and idempotent; throws if no campaign matches.',
+    idempotent: true,
+  },
+  props: zohoCampaignsCommon.findCampaignProperties(),
+  async run({ auth, propsValue }) {
+       const location = auth.props?.['location'] as string || 'zoho.com';
+    const accessToken = auth.access_token
+    await propsValidation.validateZod(
+      propsValue,
+      zohoCampaignsCommon.findCampaignSchema
+    );
+    const { campaignName, status, sort, fromindex, range } = propsValue;
+
+    const searchParams: any = {
+      accessToken,
+    };
+
+    if (status) searchParams.status = status;
+    if (sort) searchParams.sort = sort;
+    if (fromindex) searchParams.fromindex = fromindex;
+    if (range) searchParams.range = range;
+
+    const campaigns = await zohoCampaignsCommon.listCampaigns({
+      ...searchParams,
+      location
+    });
+    const needle = (campaignName ?? '').trim().toLowerCase();
+
+    // Try to find case-insensitive and partial match
+    const matchingCampaigns = campaigns.filter((campaign) =>
+      (campaign.campaign_name ?? '').toLowerCase().includes(needle)
+    );
+
+    if (matchingCampaigns.length === 0) {
+      const statusText = status ? ` with status "${status}"` : '';
+      throw new Error(
+        `No campaign found with a name containing "${campaignName}"${statusText} in the selected account.`
+      );
+    }
+
+    return matchingCampaigns;
+  },
+});

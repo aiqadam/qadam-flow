@@ -1,0 +1,30 @@
+import { QadamAuth, Property } from '@aiqadam/qadams-framework';
+
+export const graphqlCommon = {
+  connectionType: "graphql",
+  auth: QadamAuth.CustomAuth({
+    required: true,
+    props: {
+      proxyBaseUrl: Property.ShortText({
+        displayName: 'AnyHook Server URL',
+        description: 'The URL of your AnyHook server',
+        required: true,
+        defaultValue: 'http://10.0.0.101:3001'
+      }),
+    },
+  }),
+  apiCall: async function (
+    url: string,
+    method: string,
+    data: object | undefined = undefined
+  ) {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    return response.json();
+  },
+};

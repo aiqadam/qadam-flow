@@ -1,0 +1,51 @@
+import { HttpMethod } from '@aiqadam/qadams-common';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { clockifyAuth } from '../auth';
+import { clockifyApiCall } from '../common/client';
+import { projectId, workspaceId } from '../common/props';
+
+export const findTaskAction = createAction({
+	auth: clockifyAuth,
+	name: 'find-task',
+	displayName: 'Find Task',
+	description: 'Finds an existing task in a specific project.',
+	audience: 'both',
+	aiMetadata: {
+		description:
+			'Searches for tasks by name within a specific Clockify project and returns matches. Toggle Exact Match for strict name matching versus a looser substring search. Use to resolve a task id or confirm a task exists before creating time entries. Read-only and idempotent.',
+		idempotent: true,
+	},
+	props: {
+		workspaceId: workspaceId({
+			displayName: 'Workspace',
+			required: true,
+		}),
+		projectId: projectId({
+			displayName: 'Project',
+			required: true,
+		}),
+		name: Property.ShortText({
+			displayName: 'Task Name',
+			required: true,
+		}),
+		exactMatch: Property.Checkbox({
+			displayName: 'Exact Match ?',
+			required: false,
+		}),
+	},
+	async run(context) {
+		const { workspaceId, projectId, name, exactMatch } = context.propsValue;
+
+		const response = await clockifyApiCall({
+			apiKey: context.auth.secret_text,
+			method: HttpMethod.GET,
+			resourceUri: `/workspaces/${workspaceId}/projects/${projectId}/tasks`,
+			query: {
+				name,
+				'strict-name-search': exactMatch ? 'true' : 'false',
+			},
+		});	
+
+		return response;
+	},
+});

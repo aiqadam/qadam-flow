@@ -1,0 +1,58 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { githubAuth } from '../auth';
+import { githubApiCall, githubCommon } from '../common';
+import { HttpMethod } from '@aiqadam/qadams-common';
+
+export const githubCreateIssueAction = createAction({
+  auth: githubAuth,
+  name: 'github_create_issue',
+  displayName: 'Create Issue',
+  description: 'Create Issue in GitHub Repository',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Opens a new issue in a GitHub repository with a title and optional body, labels, and assignees. Use to file a bug, task, or request in a specified repo. Not idempotent: each call creates a separate issue even with identical input.',
+    idempotent: false,
+  },
+  props: {
+    repository: githubCommon.repositoryDropdown,
+    title: Property.ShortText({
+      displayName: 'Title',
+      description: 'The title of the issue',
+      required: true,
+    }),
+    description: Property.LongText({
+      displayName: 'Description',
+      description: 'The description of the issue',
+      required: false,
+    }),
+    labels: githubCommon.labelDropDown(),
+    assignees: githubCommon.assigneeDropDown(),
+  },
+  async run({ auth, propsValue }) {
+    const { title, assignees, labels, description } = propsValue;
+    const { owner, repo } = propsValue.repository!;
+
+    const issueFields: Record<string, any> = {
+      title,
+      body: description,
+    };
+
+    if (labels) {
+      issueFields['labels'] = labels;
+    }
+
+    if (assignees) {
+      issueFields['assignees'] = assignees;
+    }
+
+    const response = await githubApiCall({
+      auth,
+      method: HttpMethod.POST,
+      resourceUri: `/repos/${owner}/${repo}/issues`,
+      body: issueFields,
+    });
+
+    return response;
+  },
+});

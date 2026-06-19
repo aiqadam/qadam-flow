@@ -1,0 +1,36 @@
+import { createAction } from '@aiqadam/qadams-framework';
+import { propsValidation } from '@aiqadam/qadams-common';
+import { googleChatApiAuth, googleChatCommon } from '../common';
+import { peoplesDropdown, spacesDropdown } from '../common/props';
+import { googleChatAPIService } from '../common/requests';
+
+export const addASpaceMember = createAction({
+  auth: googleChatApiAuth,
+  name: 'addASpaceMember',
+  displayName: 'Add a Space Member',
+  description: 'Add a user to a Google Chat space.',
+  audience: 'both',
+  aiMetadata: {
+    description: 'Adds a user as a member of a Google Chat space, identified by the space ID and the person to add. Use to grant someone access to a space. Not idempotent in effect—creating the membership again for an existing member fails or errors.',
+    idempotent: false,
+  },
+  props: {
+    spaceId: spacesDropdown({ refreshers: ['auth'], required: true }),
+    personId: peoplesDropdown(['auth']),
+  },
+  async run({ auth, propsValue }) {
+    await propsValidation.validateZod(propsValue, googleChatCommon.addSpaceMemberSchema);
+
+    const { spaceId, personId } = propsValue;
+
+    const userId = (personId as string).replace('people', 'users');
+
+    const response = await googleChatAPIService.AddASpaceMember({
+      accessToken: auth.access_token,
+      spaceId: spaceId as string,
+      userId: userId as string
+    })
+
+    return response;
+  },
+});

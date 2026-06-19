@@ -1,0 +1,80 @@
+import { Property, createAction } from '@aiqadam/qadams-framework';
+import { google } from 'googleapis';
+import { googleDriveAuth, createGoogleClient } from '../auth';
+import { common } from '../common';
+
+export const duplicateFileAction = createAction({
+  displayName: 'Duplicate File',
+  auth: googleDriveAuth,
+  name: 'duplicate_file',
+  description: 'Duplicate a file from Google Drive. Returns the new file ID.',
+  audience: 'both',
+  aiMetadata: { description: 'Copies an existing Drive file into a target folder under a new name, optionally converting it to a Google Sheet or Google Doc. Use to clone a file or create an editable Google-format copy. Requires the source file ID and destination folder ID. Not idempotent: each call creates a new copy.', idempotent: false },
+  props: {
+    fileId: Property.ShortText({
+      displayName: 'File ID',
+      description: 'The ID of the file to duplicate',
+      required: true,
+    }),
+    name: Property.ShortText({
+      displayName: 'Name',
+      description: 'The name of the new file',
+      required: true,
+    }),
+    folderId: Property.ShortText({
+      displayName: 'Folder ID',
+      description: 'The ID of the folder where the file will be duplicated',
+      required: true,
+    }),
+    mimeType: Property.StaticDropdown({
+      displayName: 'Duplicate as',
+      description: 'If left unselected the file will be duplicated as it is',
+      required: false,
+      options: {
+        options: [
+          {
+            label: 'Google Sheets',
+            value: 'application/vnd.google-apps.spreadsheet',
+          },
+          {
+            label: 'Google Docs',
+            value: 'application/vnd.google-apps.document',
+          }
+        ],
+      },
+    }),
+    include_team_drives: common.properties.include_team_drives,
+  },
+  async run(context) {
+    const authClient = await createGoogleClient(context.auth);
+
+    const fileId = context.propsValue.fileId;
+    const nameForNewFile = context.propsValue.name;
+    const parentFolderId = context.propsValue.folderId;
+    const mimeType = context.propsValue.mimeType;
+
+    const drive = google.drive({ version: 'v3', auth: authClient });
+
+    const requestBody: any = {
+      name: nameForNewFile,
+      parents: [parentFolderId],
+    };
+
+    if (mimeType) {
+      requestBody.mimeType = mimeType;
+    }
+
+    const response = await drive.files.copy({
+      fileId,
+      auth: authClient,
+      requestBody,
+      supportsAllDrives: context.propsValue.include_team_drives,
+    });
+
+    if (response.status !== 200) {
+      throw new Error('Error duplicating file');
+    }
+
+    return response.data;
+  },
+});

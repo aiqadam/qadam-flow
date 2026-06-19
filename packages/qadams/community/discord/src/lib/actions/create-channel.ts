@@ -1,0 +1,55 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import {
+  HttpRequest,
+  HttpMethod,
+  httpClient,
+} from '@aiqadam/qadams-common';
+import { discordAuth } from '../auth';
+import { discordCommon } from '../common';
+
+export const discordCreateChannel = createAction({
+  auth: discordAuth,
+  name: 'create_channel',
+  description: 'create a channel',
+  audience: 'both',
+  aiMetadata: { description: 'Creates a new channel in a guild with the given name and optional topic, identified by guild ID. Use to provision a channel before posting to it. Requires the bot to have Manage Channels permission; not idempotent, since each call creates a separate channel even with the same name.', idempotent: false },
+  displayName: 'Create channel',
+  props: {
+    guild_id: discordCommon.guilds,
+    name: Property.ShortText({
+      displayName: 'Name',
+      description: 'The name of the new channel',
+      required: true,
+    }),
+    topic: Property.LongText({
+      displayName: 'Topic',
+      description: 'The topic of the new channel',
+      required: false,
+    }),
+  },
+
+  async run(configValue) {
+    const request: HttpRequest = {
+      method: HttpMethod.POST,
+      url: `https://discord.com/api/v9/guilds/${configValue.propsValue.guild_id}/channels`,
+      body: {
+        name: configValue.propsValue.name,
+        topic: configValue.propsValue.topic,
+      },
+      headers: {
+        authorization: `Bot ${configValue.auth.secret_text}`,
+        'Content-Type': 'application/json',
+      },
+    };
+
+    const res = await httpClient.sendRequest(request);
+
+    return {
+      success: res.status === 201,
+      channel: {
+        id: res.body.id,
+        name: res.body.name,
+      },
+    };
+  },
+});

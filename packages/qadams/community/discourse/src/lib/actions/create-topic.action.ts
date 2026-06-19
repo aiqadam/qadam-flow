@@ -1,0 +1,81 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { HttpMethod, httpClient } from '@aiqadam/qadams-common';
+import { discourseAuth } from '../auth';
+import { Property, createAction } from '@aiqadam/qadams-framework';
+
+export const createTopic = createAction({
+  auth: discourseAuth,
+  name: 'create_topic',
+  description: 'Create a new topic in Discourse',
+  audience: 'both',
+  aiMetadata: { description: 'Start a new Discourse topic (thread) with a title and body, optionally filed under a category ID. Use when an agent needs to open a new discussion rather than reply to an existing thread (use Create Post for replies). Each call creates a new topic, so it is not idempotent.', idempotent: false },
+  displayName: 'Create Topic',
+  props: {
+    title: Property.ShortText({
+      description: 'Title of the Topic',
+      displayName: 'Post Title',
+      required: true,
+    }),
+    raw: Property.LongText({
+      description: 'Content of the topic',
+      displayName: 'Topic Content',
+      required: true,
+    }),
+    category: Property.Dropdown({
+      description: 'ID of the category to post in',
+      displayName: 'Category ID',
+      required: false,
+      auth: discourseAuth,
+      options: async ({ auth }) => {
+        if (!auth) {
+          return {
+            disabled: true,
+            options: [],
+            placeholder: 'Please connect your discourse account',
+          };
+        }
+        const response = await httpClient.sendRequest({
+          method: HttpMethod.GET,
+          url: `${auth.props.website_url.trim()}/categories.json`,
+          headers: {
+            'Api-Key': auth.props.api_key,
+            'Api-Username': auth.props.api_username,
+          },
+        });
+        const options = response.body['category_list']['categories'].map(
+          (res: { name: any; id: any }) => {
+            return {
+              label: res.name,
+              value: res.id,
+            };
+          }
+        );
+
+        return {
+          options: options,
+          disabled: false,
+        };
+      },
+      refreshers: [],
+    }),
+  },
+  async run(context) {
+    const { title, raw, category } = context.propsValue;
+
+    console.log('new post action');
+
+    return await httpClient.sendRequest({
+      method: HttpMethod.POST,
+      url: `${context.auth.props.website_url.trim()}/posts.json`,
+      headers: {
+        'Api-Key': context.auth.props.api_key,
+        'Api-Username': context.auth.props.api_username,
+      },
+      body: {
+        title: title,
+        raw: raw,
+        category: category,
+      },
+    });
+  },
+});

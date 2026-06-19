@@ -1,0 +1,56 @@
+import { ExecutionMode } from '@aiqadam/shared'
+import { DatabaseType } from './database-type'
+import { RedisType } from './redis-type'
+
+const ENV_VAR_NAMES = {
+    EXECUTION_MODE: 'AP_EXECUTION_MODE',
+    REDIS_TYPE: 'AP_REDIS_TYPE',
+    DB_TYPE: 'AP_DB_TYPE',
+    QUEUE_MODE: 'AP_QUEUE_MODE',
+}
+
+const LEGACY_QADAM_ALIASES: Record<string, string> = {
+    AP_DEV_QADAMS: 'AP_DEV_PIECES',
+    AP_QADAMS_SYNC_MODE: 'AP_PIECES_SYNC_MODE',
+    AP_LOAD_TRANSLATIONS_FOR_DEV_QADAMS: 'AP_LOAD_TRANSLATIONS_FOR_DEV_PIECES',
+}
+
+for (const [newName, oldName] of Object.entries(LEGACY_QADAM_ALIASES)) {
+    if (process.env[newName] === undefined && process.env[oldName] !== undefined) {
+        process.env[newName] = process.env[oldName]
+        console.warn(`[env-migrations] ${oldName} is deprecated; please rename to ${newName}`)
+    }
+}
+
+export const environmentMigrations = {
+    migrate(): Record<string, string | undefined> {
+        return {
+            ...process.env,
+            [ENV_VAR_NAMES.EXECUTION_MODE]: migrateExecutionMode(process.env[ENV_VAR_NAMES.EXECUTION_MODE]),
+            [ENV_VAR_NAMES.REDIS_TYPE]: migrateRedisType(process.env[ENV_VAR_NAMES.REDIS_TYPE]),
+            [ENV_VAR_NAMES.DB_TYPE]: migrateDbType(process.env[ENV_VAR_NAMES.DB_TYPE]),
+        }
+    },
+}
+
+function migrateRedisType(currentRedisType: string | undefined): string | undefined {
+    const queueMode = process.env[ENV_VAR_NAMES.QUEUE_MODE]
+    if (queueMode === 'MEMORY') {
+        return RedisType.MEMORY
+    }
+    return currentRedisType
+}
+
+function migrateExecutionMode(currentExecutionMode: string | undefined): string | undefined {
+    if (currentExecutionMode === 'SANDBOXED') {
+        return ExecutionMode.SANDBOX_PROCESS
+    }
+    return currentExecutionMode
+}
+
+function migrateDbType(currentDbType: string | undefined): string | undefined {
+    if (currentDbType === 'SQLITE3') {
+        return DatabaseType.PGLITE
+    }
+    return currentDbType
+}

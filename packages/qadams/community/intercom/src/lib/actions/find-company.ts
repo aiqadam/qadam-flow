@@ -1,0 +1,46 @@
+import { intercomAuth } from '../auth';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { intercomClient } from '../common';
+
+export const findCompanyAction = createAction({
+    auth: intercomAuth,
+    name: 'find-company',
+    displayName: 'Find Company',
+    description: 'Finds an existing company.',
+    audience: 'both',
+    aiMetadata: { description: 'Look up a single existing company by either its name or its company ID (choose the search field). Read-only and repeatable; returns the first match plus a found flag. Use to resolve a company before tagging it or attaching it to a ticket.', idempotent: true },
+    props: {
+        searchField: Property.StaticDropdown({
+            displayName: 'Search Field',
+            required: true,
+            options: {
+                disabled: false,
+                options: [
+                    { label: 'Name', value: 'name' },
+                    { label: 'Company ID', value: 'company_id' },
+                ],
+            },
+        }),
+        searchValue: Property.ShortText({
+            displayName: 'Search Value',
+            required: true,
+        }),
+    },
+    async run(context) {
+        const { searchField, searchValue } = context.propsValue;
+
+        const client = intercomClient(context.auth);
+
+        const companyResponse = await client.companies.retrieve({
+            company_id: searchField === 'company_id' ? searchValue : undefined,
+            name: searchField === 'name' ? searchValue : undefined,
+            per_page:1
+
+        })
+
+        return {
+            found: companyResponse.data.length > 0,
+            user: companyResponse.data.length > 0 ? companyResponse.data[0] : {},
+        };
+    },
+});

@@ -1,0 +1,66 @@
+import { businessCentralAuth } from '../auth';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { commonProps, formatRecordFields } from '../common';
+import { makeClient } from '../common/client';
+import { ACTION_ENTITY_DROPDOWN_OPTIONS } from '../common/constants';
+
+export const updateRecordAction = createAction({
+  auth: businessCentralAuth,
+  name: 'update-record',
+  displayName: 'Update Record',
+  description: 'Updates an existing record.',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Updates fields on an existing record of a chosen entity type in a Microsoft Dynamics 365 Business Central company, identified by company id, record type, and record id (line entities like salesInvoiceLines/salesOrderLines also need the parent record id in their fields). Use to modify existing business data. Effectively idempotent — re-sending the same field values leaves the record in the same state.',
+    idempotent: true,
+  },
+  props: {
+    company_id: commonProps.company_id,
+    record_type: Property.StaticDropdown({
+      displayName: 'Record Type',
+      required: true,
+      options: {
+        disabled: false,
+        options: ACTION_ENTITY_DROPDOWN_OPTIONS,
+      },
+    }),
+    record_id: commonProps.record_id,
+    record_fields: commonProps.record_fields,
+  },
+  async run(context) {
+    const companyId = context.propsValue.company_id;
+    const recordType = context.propsValue.record_type;
+    const recordId = context.propsValue.record_id;
+    const recordFields = context.propsValue.record_fields;
+
+    const formattedRecordFields = formatRecordFields(recordFields, recordType);
+
+    const client = makeClient(context.auth);
+    let endpoint;
+
+    switch (recordType) {
+      case 'itemVariants':
+        endpoint = `/companies(${companyId})/items(${recordFields['itemId']})/${recordType}(${recordId})`;
+        delete formattedRecordFields['itemId'];
+        break;
+      case 'salesInvoiceLines':
+        endpoint = `/companies(${companyId})/salesInvoices(${recordFields['salesInvoiceId']})/${recordType}(${recordId})`;
+        delete formattedRecordFields['salesInvoiceId'];
+        break;
+      case 'salesOrderLines':
+        endpoint = `/companies(${companyId})/salesOrders(${recordFields['salesOrderId']})/${recordType}(${recordId})`;
+        delete formattedRecordFields['salesOrderId'];
+        break;
+      case 'salesQuoteLines':
+        endpoint = `/companies(${companyId})/salesQuotes(${recordFields['salesQuoteId']})/${recordType}(${recordId})`;
+        delete formattedRecordFields['salesQuoteId'];
+        break;
+      default:
+        endpoint = `/companies(${companyId})/${recordType}(${recordId})`;
+        break;
+    }
+
+    return await client.updateRecord(endpoint, formattedRecordFields);
+  },
+});

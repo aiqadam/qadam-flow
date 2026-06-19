@@ -1,0 +1,70 @@
+import { biginAuth } from '../auth';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { biginApiService } from '../common/request';
+
+export const searchUser = createAction({
+  auth: biginAuth,
+  name: 'searchUser',
+  displayName: 'Search User',
+  description: 'Locate users by email.',
+  audience: 'both',
+  aiMetadata: { description: 'Finds Bigin CRM org users whose email contains the given term (case-insensitive substring match), filtering client-side over the user list; an optional user-type filter (e.g. active, admin, current user) and pagination narrow the fetched set. Use to resolve a user id for assigning records as owner. Idempotent: read-only, repeating the search returns the same matches.', idempotent: true },
+  props: {
+    email: Property.ShortText({
+      displayName: 'Email',
+      description: 'User email address (full or partial, case-insensitive match)',
+      required: true,
+    }),
+    type: Property.StaticDropdown({
+      displayName: 'User Type (optional)',
+      required: false,
+      options: {
+        options: [
+          { label: 'All Users', value: 'AllUsers' },
+          { label: 'Active Users', value: 'ActiveUsers' },
+          { label: 'Deactive Users', value: 'DeactiveUsers' },
+          { label: 'Confirmed Users', value: 'ConfirmedUsers' },
+          { label: 'Not Confirmed Users', value: 'NotConfirmedUsers' },
+          { label: 'Deleted Users', value: 'DeletedUsers' },
+          { label: 'Active Confirmed Users', value: 'ActiveConfirmedUsers' },
+          { label: 'Admin Users', value: 'AdminUsers' },
+          { label: 'Active Confirmed Admins', value: 'ActiveConfirmedAdmins' },
+          { label: 'Current User', value: 'CurrentUser' },
+        ],
+      },
+    }),
+    page: Property.Number({
+      displayName: 'Page',
+      required: false,
+      description: 'Page index (default 1)',
+    }),
+    per_page: Property.Number({
+      displayName: 'Per Page',
+      required: false,
+      description: 'Records per page (max 200, default 200)',
+    }),
+  },
+  async run({ auth, propsValue }) {
+    const { access_token, data } = auth;
+    const api_domain = data['api_domain'];
+    const emailTerm = String(propsValue.email || '').toLowerCase();
+
+    const params: any = {};
+    if (propsValue.type) params.type = propsValue.type as string;
+    if (propsValue.page) params.page = Number(propsValue.page);
+    if (propsValue.per_page) params.per_page = Number(propsValue.per_page);
+
+    const resp = await biginApiService.fetchUsers(access_token, api_domain, params);
+
+    const users = Array.isArray(resp.users) ? resp.users : [];
+    const filtered = users.filter((u: any) => String(u.email || '').toLowerCase().includes(emailTerm));
+
+    return {
+      message: 'User search completed successfully',
+      count: filtered.length,
+      data: filtered,
+    };
+  },
+});
+
+

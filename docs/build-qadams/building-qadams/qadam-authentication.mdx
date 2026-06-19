@@ -1,0 +1,38 @@
+---
+title: 'Add Qadam Authentication'
+icon: 'circle-4'
+description: ''
+---
+
+
+### Qadam Authentication
+
+Qadam Flow supports multiple forms of authentication, you can check those forms [here](../qadam-reference/authentication)
+
+Now, let's establish authentication for this qadam, which necessitates the inclusion of an API Key in the headers.
+
+Modify `src/index.ts` file to add authentication,
+
+```ts
+import { PieceAuth, createPiece } from '@aiqadam/qadams-framework';
+
+export const gelatoAuth = PieceAuth.SecretText({
+  displayName: 'API Key',
+  required: true,
+  description: 'Please use **test-key** as value for API Key',
+});
+
+export const gelato = createPiece({
+  displayName: 'Gelato',
+  logoUrl: 'https://cdn.activepieces.com/pieces/gelato.png',
+  auth: gelatoAuth,
+  authors: [],
+  actions: [],
+  triggers: [],
+});
+```
+
+<Note>
+  Use the value **test-key** as the API key when testing actions or triggers for
+  Gelato.
+</Note>

@@ -1,0 +1,65 @@
+import { HttpMethod } from '@aiqadam/qadams-common';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { clockifyAuth } from '../auth';
+import { clockifyApiCall } from '../common/client';
+import { projectId, tagIds, taskId, workspaceId } from '../common/props';
+
+export const startTimerAction = createAction({
+	auth: clockifyAuth,
+	name: 'start-timer',
+	displayName: 'Start Timer',
+	description: 'Starts a new time entry.',
+	audience: 'both',
+	aiMetadata: {
+		description:
+			'Starts a live, currently-running timer on a Clockify workspace from the current moment, optionally tied to a project, task, tags, and billable flag. Use to begin tracking ongoing work; use Stop Timer to end it and Create Time Entry to log a finished interval. Not idempotent: each call starts a new running entry.',
+		idempotent: false,
+	},
+	props: {
+		workspaceId: workspaceId({
+			displayName: 'Workspace',
+			required: true,
+		}),
+		description: Property.LongText({
+			displayName: 'Entry Description',
+			required: false,
+		}),
+		projectId: projectId({
+			displayName: 'Project',
+			required: false,
+		}),
+		taskId: taskId({
+			displayName: 'Task',
+			required: false,
+		}),
+		billable: Property.Checkbox({
+			displayName: 'Billable',
+			required: false,
+		}),
+		tagIds: tagIds({
+			displayName: 'Tags',
+			required: false,
+		}),
+	},
+	async run(context) {
+		const { workspaceId, projectId, description, billable, taskId } = context.propsValue;
+		const tagIds = context.propsValue.tagIds ?? [];
+
+		const response = await clockifyApiCall({
+			apiKey: context.auth.secret_text,
+			method: HttpMethod.POST,
+			resourceUri: `/workspaces/${workspaceId}/time-entries`,
+			body: {
+				billable,
+				description,
+				start: new Date().toISOString(),
+				projectId,
+				taskId,
+				tagIds,
+				type: 'REGULAR',
+			},
+		});
+
+		return response;
+	},
+});

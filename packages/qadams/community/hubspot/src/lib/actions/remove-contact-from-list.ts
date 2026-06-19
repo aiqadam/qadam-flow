@@ -1,0 +1,57 @@
+import { hubspotAuth } from '../auth';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { staticListsDropdown } from '../common/props';
+import { HttpMethod } from '@aiqadam/qadams-common';
+import { Client } from '@hubspot/api-client';
+import { FilterOperatorEnum, HubSpotAddContactsToListResponse } from '../common/types';
+
+export const removeContactFromListAction = createAction({
+	auth: hubspotAuth,
+	name: 'remove-contact-from-list',
+	displayName: 'Remove Contact from List',
+	description: 'Remove a contact from a specific list.',
+	audience: 'both',
+	aiMetadata: {
+		description:
+			'Remove a contact, identified by email, from a specific static HubSpot list (this only works on static lists, not active/dynamic ones). Use to revoke list membership; it first resolves the email to a contact and errors if no such contact exists or if the contact was not a member of the list.',
+		idempotent: false,
+	},
+	props: {
+		listId: staticListsDropdown,
+		email: Property.ShortText({
+			displayName: 'Contact Email',
+			required: true,
+		}),
+	},
+	async run(context) {
+		const { listId, email } = context.propsValue;
+
+		const client = new Client({ accessToken: context.auth.access_token });
+
+		const contact = await client.crm.contacts.searchApi.doSearch({
+			limit: 1,
+			filterGroups: [
+				{ filters: [{ propertyName: 'email', operator: FilterOperatorEnum.Eq, value: email }] },
+			],
+		});
+		if (contact.results.length === 0) {
+			throw new Error(
+				`No contact with email '${email}' was found. Unable to remove unknown contact from list.`,
+			);
+		}
+		const apiResponse = await client.apiRequest({
+			path: `/contacts/v1/lists/${listId}/remove`,
+			method: HttpMethod.POST,
+			body: { vids: [contact.results[0].id] },
+			defaultJson: true,
+		});
+
+		const parsedResponse =(await apiResponse.json()) as HubSpotAddContactsToListResponse;
+		if(parsedResponse.updated.length === 0) {
+			throw new Error(
+				`Contact with email '${email}' wasn't a member of list with id '${listId}'.`,
+			);
+		}
+        return parsedResponse;
+	},
+});

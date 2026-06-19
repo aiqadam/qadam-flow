@@ -1,0 +1,48 @@
+import { createCustomApiCallAction } from '@aiqadam/qadams-common';
+import { createQadam } from '@aiqadam/qadams-framework';
+import { QadamCategory } from '@aiqadam/shared';
+import { createVideoFromTemplateAction } from './lib/actions/create-a-video-from-template';
+import { retrieveTranslatedVideoStatus } from './lib/actions/retrieve-a-translated-video-status';
+import { retrieveVideoStatusAction } from './lib/actions/retrieve-a-video-status';
+import { retrieveSharableVideoUrlAction } from './lib/actions/retrieve-shareable-link-for-a-video';
+import { uploadAssetAction } from './lib/actions/upload-an-asset';
+import { translateVideoAction } from './lib/actions/translate-a-video';
+import { listAvatarsAction } from './lib/actions/list-avatars';
+import { listVoicesAction } from './lib/actions/list-voices';
+import { listVideosAction } from './lib/actions/list-videos';
+import { videoGenerationCompletedTrigger } from './lib/triggers/video-generation-completed';
+import { videoGenerationFailedTrigger } from './lib/triggers/video-generation-failed';
+
+import { heygenAuth } from './lib/common/auth';
+import { BASE_URL_V1 } from './lib/common/client';
+
+export const heygen = createQadam({
+  displayName: 'HeyGen',
+  description: 'Generate and manage AI avatar videos using HeyGen.',
+  auth: heygenAuth,
+  minimumSupportedRelease: '0.36.1',
+  logoUrl: '/assets/qadams/heygen.jpg',
+  authors: ['krushnarout', 'Angelebeats'],
+  categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
+  actions: [
+    createVideoFromTemplateAction,
+    retrieveTranslatedVideoStatus,
+    retrieveVideoStatusAction,
+    retrieveSharableVideoUrlAction,
+    uploadAssetAction,
+    translateVideoAction,
+    listAvatarsAction,
+    listVoicesAction,
+    listVideosAction,
+    createCustomApiCallAction({
+      auth: heygenAuth,
+      baseUrl: () => BASE_URL_V1,
+      authMapping: async (auth) => {
+        return {
+            'X-Api-Key': auth.secret_text,
+        };
+      },
+    }),
+  ],
+  triggers: [videoGenerationCompletedTrigger, videoGenerationFailedTrigger],
+});

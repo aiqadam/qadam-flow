@@ -1,0 +1,117 @@
+import {
+  DedupeStrategy,
+  HttpMethod,
+  HttpRequest,
+  Polling,
+  httpClient,
+  pollingHelper,
+} from '@aiqadam/qadams-common';
+import {
+  AppConnectionValueForAuthProperty,
+  createTrigger,
+  Property,
+  TriggerStrategy,
+} from '@aiqadam/qadams-framework';
+import dayjs from 'dayjs';
+import { discordAuth } from '../auth';
+
+interface Member {
+  user: {
+    id: string;
+    username: string;
+    discriminator: string;
+    avatar: string | null;
+  };
+  joined_at: string;
+}
+
+const polling: Polling<AppConnectionValueForAuthProperty<typeof discordAuth>, { guildId: string | undefined; limit: number }> =
+  {
+    strategy: DedupeStrategy.TIMEBASED,
+    items: async ({ auth, propsValue: { guildId, limit } }) => {
+      if (!guildId) return [];
+
+      const request: HttpRequest = {
+        method: HttpMethod.GET,
+        url: `https://discord.com/api/v9/guilds/${guildId}/members?limit=${limit}`,
+        headers: {
+           Authorization: 'Bot ' + auth.secret_text,
+        },
+      };
+
+      const res = await httpClient.sendRequest<Member[]>(request);
+
+      const items = res.body;
+      return items.map((item) => ({
+        epochMilliSeconds: dayjs(item.joined_at).valueOf(),
+        data: item,
+      }));
+    },
+  };
+
+export const newMember = createTrigger({
+  auth: discordAuth,
+  name: 'new_member',
+  displayName: 'New Member',
+  description: 'Triggers when a new member joins a guild',
+  aiMetadata: {
+    description: 'Fires when a new member joins the specified Discord guild (server), emitting one event per joining member with their user details. Polls the guild member list periodically, so detection is near-real-time rather than instant.',
+  },
+  type: TriggerStrategy.POLLING,
+  props: {
+    limit: Property.Number({
+      displayName: 'Limit',
+      description: 'The number of members to fetch (max 1000)',
+      required: false,
+      defaultValue: 50,
+    }),
+    guildId: Property.ShortText({
+      displayName: 'Guild ID',
+      description: 'The ID of the Discord guild (server)',
+      required: true,
+    }),
+  },
+  sampleData: {},
+  onEnable: async (context) => {
+    await pollingHelper.onEnable(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: {
+        guildId: context.propsValue.guildId,
+        limit: context.propsValue.limit ?? 50,
+      },
+    });
+  },
+  onDisable: async (context) => {
+    await pollingHelper.onDisable(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: {
+        guildId: context.propsValue.guildId,
+        limit: context.propsValue.limit ?? 50,
+      },
+    });
+  },
+  run: async (context) => {
+    return await pollingHelper.poll(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: {
+        guildId: context.propsValue.guildId,
+        limit: context.propsValue.limit ?? 50,
+      },
+      files: context.files,
+    });
+  },
+  test: async (context) => {
+    return await pollingHelper.test(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: {
+        guildId: context.propsValue.guildId,
+        limit: context.propsValue.limit ?? 50,
+      },
+      files: context.files,
+    });
+  },
+});

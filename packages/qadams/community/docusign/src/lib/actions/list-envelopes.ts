@@ -1,0 +1,77 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { docusignAuth } from '../auth';
+import { createApiClient } from '../common';
+import { Envelope, EnvelopesApi, EnvelopesInformation } from 'docusign-esign';
+
+export const listEnvelopes = createAction({
+  // auth: check https://flow.aiqadam.org/docs/developers/qadam-reference/authentication,
+  name: 'listEnvelopes',
+  displayName: 'Search Signing Requests',
+  description:
+    'Find and list signing requests with optional filters like status, date range, or keyword.',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Lists DocuSign envelopes (signing requests) for an account, auto-paginating through all results. Filters are optional: with no filters it returns all envelopes, otherwise it narrows by status, sender/received date range, or a search keyword. Use to find envelopes by criteria before acting on them; requires the account ID. Read-only and idempotent.',
+    idempotent: true,
+  },
+  auth: docusignAuth,
+  props: {
+    accountId: Property.ShortText({
+      displayName: 'Account ID',
+      required: true,
+    }),
+    fromDate: Property.DateTime({
+      displayName: 'From date',
+      required: false,
+    }),
+    toDate: Property.DateTime({
+      displayName: 'To date',
+      required: false,
+    }),
+    searchText: Property.ShortText({
+      displayName: 'Search text',
+      required: false,
+    }),
+    status: Property.ShortText({
+      displayName: 'Status',
+      required: false,
+    }),
+    include: Property.Array({
+      displayName: 'Include (e.g. recipients)',
+      required: false,
+    }),
+  },
+  async run({ auth, propsValue }) {
+    const apiClient = await createApiClient(auth);
+    const envelopeApiClient = new EnvelopesApi(apiClient);
+
+    const getPage = async (startPosition: number) => {
+      return await envelopeApiClient.listStatusChanges(propsValue.accountId, {
+        count: '100',
+        startPosition: startPosition.toString(),
+        fromDate: propsValue.fromDate,
+        toDate: propsValue.toDate,
+        searchText: propsValue.searchText,
+        status: propsValue.status,
+        include: propsValue.include?.join(','),
+      });
+    };
+    let startPosition = 0;
+    const envelopes: Envelope[] = [];
+    let page: EnvelopesInformation | null = null;
+    do {
+      page = await getPage(startPosition);
+      if (page.envelopes) {
+        envelopes.push(...page.envelopes);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      startPosition = parseInt(page.endPosition!) + 1;
+    } while (
+      page.endPosition &&
+      page.totalSetSize &&
+      parseInt(page.endPosition) + 1 < parseInt(page.totalSetSize)
+    );
+    return envelopes;
+  },
+});

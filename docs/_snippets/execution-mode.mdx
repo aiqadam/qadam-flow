@@ -1,0 +1,6 @@
+| Name                          | Supports NPM in Code Qadam | Requires Docker to be Privileged | Performance           | Secure for Multi Tenant | Reusable Workers | Environment Variable                      |
+|-------------------------------|----------------------------|----------------------------------|-----------------------|-------------------------|------------------|-------------------------------------------|
+| V8/Code Sandboxing  | ❌                         | No                               | Fast & Lightweight    | ✅                       | ✅               | Set `AP_EXECUTION_MODE` to `SANDBOX_CODE_ONLY` |
+| No Sandboxing | ✅                         | No                               | Fast & Lightweight    | ❌                       | ✅               | Set `AP_EXECUTION_MODE` to `UNSANDBOXED`       |
+| Kernel Namespaces Sandboxing  | ✅                         | Yes                              | Slow & CPU Intensive  | ✅                       | ❌               | Set `AP_EXECUTION_MODE` to `SANDBOX_PROCESS`         |
+| Combined Sandboxing | ❌                         | Yes                              | Medium & CPU Intensive | ✅                      | ✅               | Set `AP_EXECUTION_MODE` to `SANDBOX_CODE_AND_PROCESS` |

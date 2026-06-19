@@ -1,0 +1,34 @@
+---
+title: "Private"
+description: "Learn how to share your qadams privately."
+---
+
+<Snippet file="enterprise-feature.mdx" />
+
+This guide assumes you have already created a qadam and created a private fork of our repository, and you would like to package it as a file and upload it.
+
+<Tip>
+Friendly Tip: There is a CLI to easily upload it to your platform. Please check out [Publish Custom Qadams](../misc/publish-qadam).
+</Tip>
+
+
+
+<Steps>
+    <Step title="Build Qadam">
+        Build the qadam using the following command. Make sure to replace `${name}` with your qadam folder name.
+
+        ```bash
+        npm run qadams -- build --name=${name}
+        ```
+
+        <Info>
+        More information about building qadams can be found [here](../misc/build-qadam).
+        </Info>
+    </Step>
+    <Step title="Upload Tarball">
+        Upload the generated tarball inside `dist/packages/qadams/${name}`from Qadam Flow Platform Admin -> Qadams
+    
+        ![Manage Qadams](/resources/screenshots/install-qadam.png)
+
+    </Step>
+</Steps>

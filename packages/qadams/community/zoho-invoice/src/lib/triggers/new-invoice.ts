@@ -1,0 +1,80 @@
+import {
+  AppConnectionValueForAuthProperty,
+  TriggerStrategy,
+  createTrigger,
+} from '@aiqadam/qadams-framework';
+import {
+  DedupeStrategy,
+  Polling,
+  pollingHelper,
+} from '@aiqadam/qadams-common';
+
+import { common } from '../common';
+
+import dayjs from 'dayjs';
+import { zohoAuth } from '../..';
+
+const polling: Polling<
+  AppConnectionValueForAuthProperty<typeof zohoAuth>,
+  Record<string, never>
+> = {
+  strategy: DedupeStrategy.TIMEBASED,
+  items: async ({ auth, lastFetchEpochMS }) => {
+    const currentValues =
+      (await common.getInvoices(auth, {
+        createdSince: dayjs(lastFetchEpochMS).format('YYYY-MM-DD'),
+      })) ?? [];
+    const items = (currentValues as any[]).map(
+      (item: { created_time: string }) => ({
+        epochMilliSeconds: dayjs(item.created_time).valueOf(),
+        data: item,
+      })
+    );
+    return items;
+  },
+};
+
+export const newInvoice = createTrigger({
+  auth: zohoAuth,
+  name: 'new_invoice',
+  displayName: 'New Invoice',
+  description: 'Trigger when a new invoice is received.',
+  aiMetadata: {
+    description:
+      'Fires when a new invoice is created in Zoho Invoice. Polls periodically for invoices created since the last check and emits each newly created invoice, with the invoice record as the event payload.',
+  },
+  props: {},
+  type: TriggerStrategy.POLLING,
+  onEnable: async (context) => {
+    await pollingHelper.onEnable(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: context.propsValue,
+    });
+  },
+  onDisable: async (context) => {
+    await pollingHelper.onDisable(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: context.propsValue,
+    });
+  },
+  run: async (context) => {
+    return await pollingHelper.poll(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: context.propsValue,
+      files: context.files,
+    });
+  },
+  test: async (context) => {
+    return await pollingHelper.test(polling, {
+      auth: context.auth,
+      store: context.store,
+      propsValue: context.propsValue,
+      files: context.files,
+    });
+  },
+
+  sampleData: {},
+});

@@ -1,0 +1,91 @@
+import { Property, createAction } from '@aiqadam/qadams-framework';
+import { shopifyAuth } from '../..';
+import { updateCustomer } from '../common';
+import { z } from 'zod';
+import { propsValidation } from '@aiqadam/qadams-common';
+
+export const updateCustomerAction = createAction({
+  auth: shopifyAuth,
+  name: 'update_customer',
+  displayName: 'Update Customer',
+  description: 'Update an existing customer.',
+  audience: 'both',
+  aiMetadata: { description: 'Update fields on an existing Shopify customer identified by customer ID (email, name, phone, tags, marketing consent). Pick this to edit a known customer rather than Create Customer; the customer ID is required and only supplied fields are changed. Sets absolute field values, so re-running with the same input is idempotent.', idempotent: true },
+  props: {
+    customerId: Property.ShortText({
+      displayName: 'Customer ID',
+      required: true,
+    }),
+    email: Property.ShortText({
+      displayName: 'Email',
+      required: false,
+    }),
+    verifiedEmail: Property.Checkbox({
+      displayName: 'Verified Email',
+      description: 'Whether the customer has verified their email.',
+      required: false,
+      defaultValue: true,
+    }),
+    sendEmailInvite: Property.Checkbox({
+      displayName: 'Send Email Invite',
+      required: false,
+      defaultValue: false,
+    }),
+    firstName: Property.ShortText({
+      displayName: 'First Name',
+      required: false,
+    }),
+    lastName: Property.ShortText({
+      displayName: 'Last Name',
+      required: false,
+    }),
+    phoneNumber: Property.ShortText({
+      displayName: 'Phone Number',
+      required: false,
+    }),
+    tags: Property.ShortText({
+      displayName: 'Tags',
+      description: 'A string of comma-separated tags for filtering and search',
+      required: false,
+    }),
+    acceptsMarketing: Property.Checkbox({
+      displayName: 'Accepts Marketing ?',
+      required: false,
+    }),
+  },
+  async run({ auth, propsValue }) {
+    const {
+      customerId,
+      email,
+      verifiedEmail,
+      sendEmailInvite,
+      firstName,
+      lastName,
+      phoneNumber,
+      tags,
+      acceptsMarketing
+    } = propsValue;
+
+    await propsValidation.validateZod(propsValue, {
+      email: z.string().email().optional(),
+    });
+
+    return await updateCustomer(
+      customerId,
+      {
+        email,
+        verified_email: verifiedEmail,
+        send_email_invite: sendEmailInvite,
+        first_name: firstName,
+        last_name: lastName,
+        phone: phoneNumber,
+        tags,
+           email_marketing_consent:{
+          state:acceptsMarketing?'subscribed':'unsubscribed',
+          opt_in_level:"unknown"
+        }
+      },
+      auth
+    );
+  },
+});

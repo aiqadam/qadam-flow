@@ -1,0 +1,88 @@
+import {
+  createAction,
+  DynamicPropsValue,
+  Property,
+} from '@aiqadam/qadams-framework';
+import { Client } from '@notionhq/client';
+import { NotionFieldMapping } from '../common/models';
+import { notionAuth } from '../auth';
+import { getNotionToken, notionCommon } from '../common';
+
+export const createDatabaseItem = createAction({
+  auth: notionAuth,
+  name: 'create_database_item',
+  displayName: 'Create Database Item',
+  description:
+    'Add a new item to a Notion database with custom field values and optional content. Ideal for creating tasks, records, or entries in structured databases.',
+  audience: 'both',
+  aiMetadata: {
+    description:
+      'Creates a new row (page) in a specific Notion database, setting its property fields and optionally appending body content. Use when an agent must add a structured record (task, contact, ticket) to a known database; requires the target database_id and field values matching that database schema. Not idempotent: each call creates a separate item, so guard against duplicates.',
+    idempotent: false,
+  },
+  props: {
+    database_id: notionCommon.database_id,
+    databaseFields: notionCommon.databaseFields,
+    content: Property.LongText({
+      displayName: 'Content',
+      description: 'The content you want to append to your item.',
+      required: false,
+    }),
+  },
+  async run(context) {
+    const database_id = context.propsValue.database_id;
+    const databaseFields = context.propsValue.databaseFields;
+    const content = context.propsValue.content;
+    const notionFields: DynamicPropsValue = {};
+    const notion = new Client({
+      auth: getNotionToken(context.auth),
+      notionVersion: '2022-02-22',
+    });
+    const { properties } = await notion.databases.retrieve({
+      database_id: database_id as unknown as string,
+    });
+
+    Object.keys(databaseFields).forEach((key) => {
+      const value = databaseFields[key];
+      if (
+        value !== '' &&
+        value !== undefined &&
+        value !== null &&
+        !(Array.isArray(value) && value.length === 0)
+      ) {
+        const fieldType: string = properties[key]?.type;
+        if (fieldType) {
+          notionFields[key] =
+            NotionFieldMapping[fieldType].buildNotionType(value);
+        }
+      }
+    });
+
+    const children: any[] = [];
+    // Add content to page
+    if (content)
+      children.push({
+        object: 'block',
+        type: 'paragraph',
+        paragraph: {
+          rich_text: [
+            {
+              type: 'text',
+              text: {
+                content: content,
+              },
+            },
+          ],
+        },
+      });
+
+    return await notion.pages.create({
+      parent: {
+        type: 'database_id',
+        database_id: database_id as string,
+      },
+      properties: notionFields,
+      children: children,
+    });
+  },
+});

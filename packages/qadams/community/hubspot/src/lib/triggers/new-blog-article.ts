@@ -1,0 +1,138 @@
+import {
+	AuthenticationType,
+	DedupeStrategy,
+	httpClient,
+	HttpMethod,
+	Polling,
+	pollingHelper,
+	QueryParams,
+} from '@aiqadam/qadams-common';
+import { hubspotAuth } from '../auth';
+import {
+	createTrigger,
+
+	Property,
+	TriggerStrategy,
+} from '@aiqadam/qadams-framework';
+import dayjs from 'dayjs';
+
+type Props = {
+	articleState: string;
+};
+
+type ListBlogPostsResponse = {
+	results: Array<Record<string, any>>;
+	paging?: {
+		next?: {
+			after: string;
+		};
+	};
+};
+import { AppConnectionValueForAuthProperty } from '@aiqadam/qadams-framework';
+
+const polling: Polling<AppConnectionValueForAuthProperty<typeof hubspotAuth>, Props> = {
+	strategy: DedupeStrategy.TIMEBASED,
+	async items({ auth, propsValue, lastFetchEpochMS }) {
+		const articleState = propsValue.articleState;
+		const isTestMode = lastFetchEpochMS === 0;
+
+		const qs: QueryParams = { limit: '100', sort: '-createdAt' };
+		if (articleState !== 'BOTH') {
+			qs.state = articleState;
+		}
+		if (!isTestMode) {
+			if(articleState === 'PUBLISHED') {
+                qs['publishDate__gt']=lastFetchEpochMS.toString();
+            }
+            else
+            {
+                qs['createdAt__gt']=lastFetchEpochMS.toString();
+            }
+		}
+
+		const items = [];
+
+		let after;
+
+		do {
+			const response = await httpClient.sendRequest<ListBlogPostsResponse>({
+				method: HttpMethod.GET,
+				url: 'https://api.hubapi.com/cms/v3/blogs/posts',
+				queryParams: qs,
+				authentication: { type: AuthenticationType.BEARER_TOKEN, token: auth.access_token },
+			});
+
+			after = response.body.paging?.next?.after;
+			if(response.body.paging?.next?.after){
+				qs.after = response.body.paging?.next?.after;
+			}
+			items.push(...response.body.results);
+			if (isTestMode) {
+				break;
+			}
+		} while (after);
+
+		return items.map((item) => {
+			return {
+				epochMilliSeconds: articleState === 'PUBLISHED' ? dayjs(item.publishDate).valueOf() : dayjs(item.createdAt).valueOf(),
+				data: item,
+			}
+		});
+	},
+};
+
+export const newBlogArticleTrigger = createTrigger({
+	auth: hubspotAuth,
+	name: 'new-blog-article',
+	displayName: 'New COS Blog Article',
+	description: 'Triggers when a new article is added to your COS blog.',
+	aiMetadata: {
+		description:
+			'Fires when a blog post is added to your HubSpot COS (CMS) blog. The configured article state (Published only, Draft only, or Both) determines which posts qualify; published posts are tracked by publish date and drafts by creation date. Each event represents one blog post with its full CMS metadata.',
+	},
+	type: TriggerStrategy.POLLING,
+	props: {
+		articleState: Property.StaticDropdown({
+			displayName: 'Article State',
+			required: true,
+			options: {
+				disabled: false,
+				options: [
+					{
+						label: 'Published Only',
+						value: 'PUBLISHED',
+					},
+					{
+						label: 'Draft Only',
+						value: 'DRAFT',
+					},
+					{
+						label: 'Both',
+						value: 'BOTH',
+					},
+				],
+			},
+		}),
+	},
+	async onEnable(context) {
+		await pollingHelper.onEnable(polling, {
+			auth: context.auth,
+			store: context.store,
+			propsValue: context.propsValue,
+		});
+	},
+	async onDisable(context) {
+		await pollingHelper.onDisable(polling, {
+			auth: context.auth,
+			store: context.store,
+			propsValue: context.propsValue,
+		});
+	},
+	async test(context) {
+		return await pollingHelper.test(polling, context);
+	},
+	async run(context) {
+		return await pollingHelper.poll(polling, context);
+	},
+	sampleData: {},
+});

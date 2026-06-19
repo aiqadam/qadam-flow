@@ -1,0 +1,3 @@
+For any outbound HTTP in `packages/server/{api,worker,utils}`, use `safeHttp.axios` or `safeHttp.createAxios({ ... })` from `@aiqadam/server-utils`. These wrap `request-filtering-agent` to reject private, loopback, link-local, and cloud-metadata IPs (configurable via `AP_SSRF_ALLOW_LIST`).
+Never call raw `fetch(...)` or `axios.create(...)` for URLs sourced from user input, admin config, OAuth token/refresh endpoints, or third-party integrations — they bypass SSRF protection and close the DNS-lookup-to-connect TOCTOU window the filtering agent handles.
+Hardcoded calls to trusted Qadam Flow endpoints (e.g. `api.aiqadam.org`) must also go through `safeHttp.axios` / `safeHttp.createAxios({ ... })` — there is no separate `apAxios` helper.

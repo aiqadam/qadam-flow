@@ -1,0 +1,145 @@
+import { hubspotAuth } from '../auth';
+import { DedupeStrategy, Polling, pollingHelper } from '@aiqadam/qadams-common';
+import {
+	createTrigger,
+	DynamicPropsValue,
+	Property,
+	TriggerStrategy,
+} from '@aiqadam/qadams-framework';
+import { MarkdownVariant, isNil } from '@aiqadam/shared';
+import { customObjectDropdown, customObjectPropertiesDropdown } from '../common/props';
+import { Client } from '@hubspot/api-client';
+import { FilterOperatorEnum } from '../common/types';
+import { MAX_SEARCH_PAGE_SIZE, MAX_SEARCH_TOTAL_RESULTS } from '../common/constants';
+import dayjs from 'dayjs';
+
+type Props = {
+	customObjectType?: string;
+	additionalPropertiesToRetrieve?: DynamicPropsValue;
+};
+
+import { AppConnectionValueForAuthProperty } from '@aiqadam/qadams-framework';
+const polling: Polling<AppConnectionValueForAuthProperty<typeof hubspotAuth>, Props> = {
+	strategy: DedupeStrategy.TIMEBASED,
+	async items({ auth, propsValue, lastFetchEpochMS }) {
+		const client = new Client({ accessToken: auth.access_token, numberOfApiCallRetries: 3 });
+
+		const customObjectType = propsValue.customObjectType as string;
+		const additionalPropertiesToRetrieve = propsValue.additionalPropertiesToRetrieve?.['values'];
+
+		let propertiesToRetrieve;
+		try {
+			if (Array.isArray(additionalPropertiesToRetrieve)) {
+				propertiesToRetrieve = additionalPropertiesToRetrieve;
+			}
+			if (typeof additionalPropertiesToRetrieve === 'string') {
+				propertiesToRetrieve = JSON.parse(additionalPropertiesToRetrieve as string);
+			}
+		} catch (error) {
+			propertiesToRetrieve = [];
+		}
+
+		const items = [];
+		let after: string | undefined;
+
+		do {
+			const isTest = lastFetchEpochMS === 0;
+			const response = await client.crm.objects.searchApi.doSearch(customObjectType, {
+				limit: isTest ? 10 : MAX_SEARCH_PAGE_SIZE,
+				after,
+				properties: propertiesToRetrieve,
+				sorts: ['-hs_createdate'],
+				filterGroups: isTest
+					? []
+					: [
+							{
+								filters: [
+									{
+										propertyName: 'hs_createdate',
+										operator: FilterOperatorEnum.Gt,
+										value: lastFetchEpochMS.toString(),
+									},
+								],
+							},
+					  ],
+			});
+			after = response.paging?.next?.after;
+			items.push(...response.results);
+
+			// Stop fetching if it's a test
+			if (isTest) break;
+
+			// Stop fetching if it exceeds max search results or will encounter 400 status
+			if (
+				!isNil(after) &&
+				parseInt(after) + MAX_SEARCH_PAGE_SIZE > MAX_SEARCH_TOTAL_RESULTS
+			) {
+				break;
+			}
+		} while (after);
+
+		return items.map((item) => ({
+			epochMilliSeconds: dayjs(item.properties['hs_createdate']).valueOf(),
+			data: item,
+		}));
+	},
+};
+
+export const newCustomObjectTrigger = createTrigger({
+	auth: hubspotAuth,
+	name: 'new-custom-object',
+	displayName: 'New Custom Object',
+	description: 'Triggers when new custom object is available.',
+	aiMetadata: {
+		description:
+			'Fires when a new record of the selected HubSpot custom object type is created. Each event represents one custom-object record with the properties chosen to retrieve plus standard fields like object ID and create date. Polls by creation date; does not fire on updates to existing records.',
+	},
+	props: {
+		customObjectType: customObjectDropdown,
+		markdown: Property.MarkDown({
+			variant: MarkdownVariant.INFO,
+			value: `### Properties to retrieve:
+                                                    
+                    hs_object_id, hs_lastmodifieddate, hs_createdate   
+                        
+                    **Specify here a list of additional properties to retrieve**`,
+		}),
+		additionalPropertiesToRetrieve: customObjectPropertiesDropdown(
+			'Additional Properties to Retrieve',
+			false,
+		),
+	},
+	type: TriggerStrategy.POLLING,
+	async onEnable(context) {
+		await pollingHelper.onEnable(polling, {
+			auth: context.auth,
+			store: context.store,
+			propsValue: context.propsValue,
+		});
+	},
+	async onDisable(context) {
+		await pollingHelper.onDisable(polling, {
+			auth: context.auth,
+			store: context.store,
+			propsValue: context.propsValue,
+		});
+	},
+	async test(context) {
+		return await pollingHelper.test(polling, context);
+	},
+	async run(context) {
+		return await pollingHelper.poll(polling, context);
+	},
+	sampleData: {
+		createdAt: '2024-12-22T15:20:16.121Z',
+		archived: false,
+		id: '21583829313',
+		properties: {
+			hs_createdate: '2024-12-22T15:20:16.121Z',
+			hs_lastmodifieddate: '2024-12-22T15:20:16.818Z',
+			hs_object_id: '21583829313',
+			pet_name: 'Oreo',
+		},
+		updatedAt: '2024-12-22T15:20:16.818Z',
+	},
+});

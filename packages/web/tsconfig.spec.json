@@ -1,0 +1,47 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../dist/out-tsc",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@aiqadam/shared": [
+        "../../packages/shared/src"
+      ],
+      "@aiqadam/qadams-framework": [
+        "../../packages/qadams/framework/src"
+      ],
+      "@aiqadam/qadam-ai": [
+        "../../packages/qadams/community/ai/src"
+      ]
+    },
+    "types": [
+      "vite/client",
+      "vitest/globals",
+      "node"
+    ]
+  },
+  "include": [
+    "vitest.config.ts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.tsx",
+    "src/**/*.test.js",
+    "src/**/*.spec.js",
+    "src/**/*.test.jsx",
+    "src/**/*.spec.jsx",
+    "src/**/*.d.ts",
+    "test/**/*.test.ts",
+    "test/**/*.spec.ts",
+    "test/**/*.test.tsx",
+    "test/**/*.spec.tsx",
+    "test/**/*.test.js",
+    "test/**/*.spec.js",
+    "test/**/*.test.jsx",
+    "test/**/*.spec.jsx"
+  ]
+}

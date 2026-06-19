@@ -1,0 +1,744 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2015",
+    "module": "esnext",
+    "lib": [
+      "es2022",
+      "dom"
+    ],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@aiqadam/engine": [
+        "packages/server/engine/src/main.ts"
+      ],
+      "@aiqadam/qadam-activepieces": [
+        "packages/qadams/community/activepieces/src/index.ts"
+      ],
+      "@aiqadam/qadam-add-event": [
+        "packages/qadams/community/add-event/src/index.ts"
+      ],
+      "@aiqadam/qadam-airtable": [
+        "packages/qadams/community/airtable/src/index.ts"
+      ],
+      "@aiqadam/qadam-amazon-s3": [
+        "packages/qadams/community/amazon-s3/src/index.ts"
+      ],
+      "@aiqadam/qadam-amazon-sns": [
+        "packages/qadams/community/amazon-sns/src/index.ts"
+      ],
+      "@aiqadam/qadam-amazon-sqs": [
+        "packages/qadams/community/amazon-sqs/src/index.ts"
+      ],
+      "@aiqadam/qadam-amazon-textract": [
+        "packages/qadams/community/amazon-textract/src/index.ts"
+      ],
+      "@aiqadam/qadam-anyhook-graphql": [
+        "packages/qadams/community/anyhook-graphql/src/index.ts"
+      ],
+      "@aiqadam/qadam-anyhook-websocket": [
+        "packages/qadams/community/anyhook-websocket/src/index.ts"
+      ],
+      "@aiqadam/qadam-apify": [
+        "packages/qadams/community/apify/src/index.ts"
+      ],
+      "@aiqadam/qadam-approval": [
+        "packages/qadams/core/approval/src/index.ts"
+      ],
+      "@aiqadam/qadam-asana": [
+        "packages/qadams/community/asana/src/index.ts"
+      ],
+      "@aiqadam/qadam-assemblyai": [
+        "packages/qadams/community/assemblyai/src/index.ts"
+      ],
+      "@aiqadam/qadam-azure-ad": [
+        "packages/qadams/community/azure-ad/src/index.ts"
+      ],
+      "@aiqadam/qadam-azure-communication-services": [
+        "packages/qadams/community/azure-communication-services/src/index.ts"
+      ],
+      "@aiqadam/qadam-azure-devops": [
+        "packages/qadams/community/azure-devops/src/index.ts"
+      ],
+      "@aiqadam/qadam-azure-openai": [
+        "packages/qadams/community/azure-openai/src/index.ts"
+      ],
+      "@aiqadam/qadam-baserow": [
+        "packages/qadams/community/baserow/src/index.ts"
+      ],
+      "@aiqadam/qadam-bigin-by-zoho": [
+        "packages/qadams/community/bigin-by-zoho/src/index.ts"
+      ],
+      "@aiqadam/qadam-binance": [
+        "packages/qadams/community/binance/src/index.ts"
+      ],
+      "@aiqadam/qadam-bitly": [
+        "packages/qadams/community/bitly/src/index.ts"
+      ],
+      "@aiqadam/qadam-bluesky": [
+        "packages/qadams/community/bluesky/src/index.ts"
+      ],
+      "@aiqadam/qadam-box": [
+        "packages/qadams/community/box/src/index.ts"
+      ],
+      "@aiqadam/qadam-browserless": [
+        "packages/qadams/community/browserless/src/index.ts"
+      ],
+      "@aiqadam/qadam-cal-com": [
+        "packages/qadams/community/cal-com/src/index.ts"
+      ],
+      "@aiqadam/qadam-calendly": [
+        "packages/qadams/community/calendly/src/index.ts"
+      ],
+      "@aiqadam/qadam-canva": [
+        "packages/qadams/community/canva/src/index.ts"
+      ],
+      "@aiqadam/qadam-chargebee": [
+        "packages/qadams/community/chargebee/src/index.ts"
+      ],
+      "@aiqadam/qadam-chatwoot": [
+        "packages/qadams/community/chatwoot/src/index.ts"
+      ],
+      "@aiqadam/qadam-clarifai": [
+        "packages/qadams/community/clarifai/src/index.ts"
+      ],
+      "@aiqadam/qadam-claude": [
+        "packages/qadams/community/claude/src/index.ts"
+      ],
+      "@aiqadam/qadam-clicksend": [
+        "packages/qadams/community/clicksend/src/index.ts"
+      ],
+      "@aiqadam/qadam-clickup": [
+        "packages/qadams/community/clickup/src/index.ts"
+      ],
+      "@aiqadam/qadam-clockify": [
+        "packages/qadams/community/clockify/src/index.ts"
+      ],
+      "@aiqadam/qadam-cohere": [
+        "packages/qadams/community/cohere/src/index.ts"
+      ],
+      "@aiqadam/qadam-cloudconvert": [
+        "packages/qadams/community/cloudconvert/src/index.ts"
+      ],
+      "@aiqadam/qadam-cloudinary": [
+        "packages/qadams/community/cloudinary/src/index.ts"
+      ],
+      "@aiqadam/qadam-confluence": [
+        "packages/qadams/community/confluence/src/index.ts"
+      ],
+      "@aiqadam/qadam-connections": [
+        "packages/qadams/core/connections/src/index.ts"
+      ],
+      "@aiqadam/qadam-contentful": [
+        "packages/qadams/community/contentful/src/index.ts"
+      ],
+      "@aiqadam/qadam-crypto": [
+        "packages/qadams/core/crypto/src/index.ts"
+      ],
+      "@aiqadam/qadam-csv": [
+        "packages/qadams/core/csv/src/index.ts"
+      ],
+      "@aiqadam/qadam-data-mapper": [
+        "packages/qadams/core/data-mapper/src/index.ts"
+      ],
+      "@aiqadam/qadam-data-summarizer": [
+        "packages/qadams/core/data-summarizer/src/index.ts"
+      ],
+      "@aiqadam/qadam-datadog": [
+        "packages/qadams/community/datadog/src/index.ts"
+      ],
+      "@aiqadam/qadam-date-helper": [
+        "packages/qadams/core/date-helper/src/index.ts"
+      ],
+      "@aiqadam/qadam-deepgram": [
+        "packages/qadams/community/deepgram/src/index.ts"
+      ],
+      "@aiqadam/qadam-deepl": [
+        "packages/qadams/community/deepl/src/index.ts"
+      ],
+      "@aiqadam/qadam-deepseek": [
+        "packages/qadams/community/deepseek/src/index.ts"
+      ],
+      "@aiqadam/qadam-delay": [
+        "packages/qadams/core/delay/src/index.ts"
+      ],
+      "@aiqadam/qadam-discord": [
+        "packages/qadams/community/discord/src/index.ts"
+      ],
+      "@aiqadam/qadam-discourse": [
+        "packages/qadams/community/discourse/src/index.ts"
+      ],
+      "@aiqadam/qadam-docusign": [
+        "packages/qadams/community/docusign/src/index.ts"
+      ],
+      "@aiqadam/qadam-dropbox": [
+        "packages/qadams/community/dropbox/src/index.ts"
+      ],
+      "@aiqadam/qadam-elevenlabs": [
+        "packages/qadams/community/elevenlabs/src/index.ts"
+      ],
+      "@aiqadam/qadam-facebook-leads": [
+        "packages/qadams/community/facebook-leads/src/index.ts"
+      ],
+      "@aiqadam/qadam-facebook-pages": [
+        "packages/qadams/community/facebook-pages/src/index.ts"
+      ],
+      "@aiqadam/qadam-figma": [
+        "packages/qadams/community/figma/src/index.ts"
+      ],
+      "@aiqadam/qadam-file-helper": [
+        "packages/qadams/core/file-helper/src/index.ts"
+      ],
+      "@aiqadam/qadam-firecrawl": [
+        "packages/qadams/community/firecrawl/src/index.ts"
+      ],
+      "@aiqadam/qadam-flow-helper": [
+        "packages/qadams/community/flow-helper/src/index.ts"
+      ],
+      "@aiqadam/qadam-flowlu": [
+        "packages/qadams/community/flowlu/src/index.ts"
+      ],
+      "@aiqadam/qadam-forms": [
+        "packages/qadams/core/forms/src/index.ts"
+      ],
+      "@aiqadam/qadam-freshdesk": [
+        "packages/qadams/community/freshdesk/src/index.ts"
+      ],
+      "@aiqadam/qadam-freshservice": [
+        "packages/qadams/community/freshservice/src/index.ts"
+      ],
+      "@aiqadam/qadam-freshsales": [
+        "packages/qadams/community/freshsales/src/index.ts"
+      ],
+      "@aiqadam/qadam-gcloud-pubsub": [
+        "packages/qadams/community/gcloud-pubsub/src/index.ts"
+      ],
+      "@aiqadam/qadam-getresponse": [
+        "packages/qadams/community/getresponse/src/index.ts"
+      ],
+      "@aiqadam/qadam-github": [
+        "packages/qadams/community/github/src/index.ts"
+      ],
+      "@aiqadam/qadam-gitlab": [
+        "packages/qadams/community/gitlab/src/index.ts"
+      ],
+      "@aiqadam/qadam-gmail": [
+        "packages/qadams/community/gmail/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-bigquery": [
+        "packages/qadams/community/google-bigquery/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-calendar": [
+        "packages/qadams/community/google-calendar/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-contacts": [
+        "packages/qadams/community/google-contacts/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-docs": [
+        "packages/qadams/community/google-docs/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-drive": [
+        "packages/qadams/community/google-drive/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-forms": [
+        "packages/qadams/community/google-forms/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-gemini": [
+        "packages/qadams/community/google-gemini/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-my-business": [
+        "packages/qadams/community/google-my-business/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-search-console": [
+        "packages/qadams/community/google-search-console/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-sheets": [
+        "packages/qadams/community/google-sheets/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-slides": [
+        "packages/qadams/community/google-slides/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-tasks": [
+        "packages/qadams/community/google-tasks/src/index.ts"
+      ],
+      "@aiqadam/qadam-googlechat": [
+        "packages/qadams/community/googlechat/src/index.ts"
+      ],
+      "@aiqadam/qadam-graphql": [
+        "packages/qadams/core/graphql/src/index.ts"
+      ],
+      "@aiqadam/qadam-grok-xai": [
+        "packages/qadams/community/grok-xai/src/index.ts"
+      ],
+      "@aiqadam/qadam-groq": [
+        "packages/qadams/community/groq/src/index.ts"
+      ],
+      "@aiqadam/qadam-hackernews": [
+        "packages/qadams/community/hackernews/src/index.ts"
+      ],
+      "@aiqadam/qadam-heygen": [
+        "packages/qadams/community/heygen/src/index.ts"
+      ],
+      "@aiqadam/qadam-http": [
+        "packages/qadams/core/http/src/index.ts"
+      ],
+      "@aiqadam/qadam-http-oauth2": [
+        "packages/qadams/community/http-oauth2/src/index.ts"
+      ],
+      "@aiqadam/qadam-hubspot": [
+        "packages/qadams/community/hubspot/src/index.ts"
+      ],
+      "@aiqadam/qadam-hugging-face": [
+        "packages/qadams/community/hugging-face/src/index.ts"
+      ],
+      "@aiqadam/qadam-image-helper": [
+        "packages/qadams/core/image-helper/src/index.ts"
+      ],
+      "@aiqadam/qadam-imap": [
+        "packages/qadams/community/imap/src/index.ts"
+      ],
+      "@aiqadam/qadam-instagram-business": [
+        "packages/qadams/community/instagram-business/src/index.ts"
+      ],
+      "@aiqadam/qadam-intercom": [
+        "packages/qadams/community/intercom/src/index.ts"
+      ],
+      "@aiqadam/qadam-jina-ai": [
+        "packages/qadams/community/jina-ai/src/index.ts"
+      ],
+      "@aiqadam/qadam-jira-cloud": [
+        "packages/qadams/community/jira-cloud/src/index.ts"
+      ],
+      "@aiqadam/qadam-jira-data-center": [
+        "packages/qadams/community/jira-data-center/src/index.ts"
+      ],
+      "@aiqadam/qadam-jotform": [
+        "packages/qadams/community/jotform/src/index.ts"
+      ],
+      "@aiqadam/qadam-json": [
+        "packages/qadams/community/json/src/index.ts"
+      ],
+      "@aiqadam/qadam-kommo": [
+        "packages/qadams/community/kommo/src/index.ts"
+      ],
+      "@aiqadam/qadam-linear": [
+        "packages/qadams/community/linear/src/index.ts"
+      ],
+      "@aiqadam/qadam-linkedin": [
+        "packages/qadams/community/linkedin/src/index.ts"
+      ],
+      "@aiqadam/qadam-localai": [
+        "packages/qadams/community/localai/src/index.ts"
+      ],
+      "@aiqadam/qadam-mailchimp": [
+        "packages/qadams/community/mailchimp/src/index.ts"
+      ],
+      "@aiqadam/qadam-mailgun": [
+        "packages/qadams/community/mailgun/src/index.ts"
+      ],
+      "@aiqadam/qadam-manychat": [
+        "packages/qadams/community/manychat/src/index.ts"
+      ],
+      "@aiqadam/qadam-math-helper": [
+        "packages/qadams/core/math-helper/src/index.ts"
+      ],
+      "@aiqadam/qadam-matomo": [
+        "packages/qadams/community/matomo/src/index.ts"
+      ],
+      "@aiqadam/qadam-matrix": [
+        "packages/qadams/community/matrix/src/index.ts"
+      ],
+      "@aiqadam/qadam-mattermost": [
+        "packages/qadams/community/mattermost/src/index.ts"
+      ],
+      "@aiqadam/qadam-mautic": [
+        "packages/qadams/community/mautic/src/index.ts"
+      ],
+      "@aiqadam/qadam-mcp": [
+        "packages/qadams/community/mcp/src/index.ts"
+      ],
+      "@aiqadam/qadam-messagebird": [
+        "packages/qadams/community/messagebird/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-365-people": [
+        "packages/qadams/community/microsoft-365-people/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-365-planner": [
+        "packages/qadams/community/microsoft-365-planner/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-excel-365": [
+        "packages/qadams/community/microsoft-excel-365/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-onedrive": [
+        "packages/qadams/community/microsoft-onedrive/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-onenote": [
+        "packages/qadams/community/microsoft-onenote/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-outlook": [
+        "packages/qadams/community/microsoft-outlook/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-outlook-calendar": [
+        "packages/qadams/community/microsoft-outlook-calendar/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-power-bi": [
+        "packages/qadams/community/microsoft-power-bi/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-teams": [
+        "packages/qadams/community/microsoft-teams/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-todo": [
+        "packages/qadams/community/microsoft-todo/src/index.ts"
+      ],
+      "@aiqadam/qadam-mistral-ai": [
+        "packages/qadams/community/mistral-ai/src/index.ts"
+      ],
+      "@aiqadam/qadam-mixpanel": [
+        "packages/qadams/community/mixpanel/src/index.ts"
+      ],
+      "@aiqadam/qadam-monday": [
+        "packages/qadams/community/monday/src/index.ts"
+      ],
+      "@aiqadam/qadam-mongodb": [
+        "packages/qadams/community/mongodb/src/index.ts"
+      ],
+      "@aiqadam/qadam-mysql": [
+        "packages/qadams/community/mysql/src/index.ts"
+      ],
+      "@aiqadam/qadam-netlify": [
+        "packages/qadams/community/netlify/src/index.ts"
+      ],
+      "@aiqadam/qadam-nocodb": [
+        "packages/qadams/community/nocodb/src/index.ts"
+      ],
+      "@aiqadam/qadam-notion": [
+        "packages/qadams/community/notion/src/index.ts"
+      ],
+      "@aiqadam/qadam-ntfy": [
+        "packages/qadams/community/ntfy/src/index.ts"
+      ],
+      "@aiqadam/qadam-odoo": [
+        "packages/qadams/community/odoo/src/index.ts"
+      ],
+      "@aiqadam/qadam-okta": [
+        "packages/qadams/community/okta/src/index.ts"
+      ],
+      "@aiqadam/qadam-open-router": [
+        "packages/qadams/community/open-router/src/index.ts"
+      ],
+      "@aiqadam/qadam-openai": [
+        "packages/qadams/community/openai/src/index.ts"
+      ],
+      "@aiqadam/qadam-pandadoc": [
+        "packages/qadams/community/pandadoc/src/index.ts"
+      ],
+      "@aiqadam/qadam-pagerduty": [
+        "packages/qadams/community/pagerduty/src/index.ts"
+      ],
+      "@aiqadam/qadam-pdf": [
+        "packages/qadams/core/pdf/src/index.ts"
+      ],
+      "@aiqadam/qadam-perplexity-ai": [
+        "packages/qadams/community/perplexity-ai/src/index.ts"
+      ],
+      "@aiqadam/qadam-pinecone": [
+        "packages/qadams/community/pinecone/src/index.ts"
+      ],
+      "@aiqadam/qadam-pipedrive": [
+        "packages/qadams/community/pipedrive/src/index.ts"
+      ],
+      "@aiqadam/qadam-postgres": [
+        "packages/qadams/community/postgres/src/index.ts"
+      ],
+      "@aiqadam/qadam-posthog": [
+        "packages/qadams/community/posthog/src/index.ts"
+      ],
+      "@aiqadam/qadam-qdrant": [
+        "packages/qadams/community/qdrant/src/index.ts"
+      ],
+      "@aiqadam/qadam-qrcode": [
+        "packages/qadams/core/qrcode/src/index.ts"
+      ],
+      "@aiqadam/qadam-queue": [
+        "packages/qadams/community/queue/src/index.ts"
+      ],
+      "@aiqadam/qadam-rabbitmq": [
+        "packages/qadams/community/rabbitmq/src/index.ts"
+      ],
+      "@aiqadam/qadam-read-file": [
+        "packages/qadams/read-file/src/index.ts"
+      ],
+      "@aiqadam/qadam-reddit": [
+        "packages/qadams/community/reddit/src/index.ts"
+      ],
+      "@aiqadam/qadam-resend": [
+        "packages/qadams/community/resend/src/index.ts"
+      ],
+      "@aiqadam/qadam-rss": [
+        "packages/qadams/community/rss/src/index.ts"
+      ],
+      "@aiqadam/qadam-runway": [
+        "packages/qadams/community/runway/src/index.ts"
+      ],
+      "@aiqadam/qadam-salesforce": [
+        "packages/qadams/community/salesforce/src/index.ts"
+      ],
+      "@aiqadam/qadam-schedule": [
+        "packages/qadams/core/schedule/src/index.ts"
+      ],
+      "@aiqadam/qadam-segment": [
+        "packages/qadams/community/segment/src/index.ts"
+      ],
+      "@aiqadam/qadam-sendgrid": [
+        "packages/qadams/community/sendgrid/src/index.ts"
+      ],
+      "@aiqadam/qadam-sendinblue": [
+        "packages/qadams/community/sendinblue/src/index.ts"
+      ],
+      "@aiqadam/qadam-sendpulse": [
+        "packages/qadams/community/sendpulse/src/index.ts"
+      ],
+      "@aiqadam/qadam-serp-api": [
+        "packages/qadams/community/serp-api/src/index.ts"
+      ],
+      "@aiqadam/qadam-service-now": [
+        "packages/qadams/community/service-now/src/index.ts"
+      ],
+      "@aiqadam/qadam-sftp": [
+        "packages/qadams/core/sftp/src/index.ts"
+      ],
+      "@aiqadam/qadam-shopify": [
+        "packages/qadams/community/shopify/src/index.ts"
+      ],
+      "@aiqadam/qadam-slack": [
+        "packages/qadams/community/slack/src/index.ts"
+      ],
+      "@aiqadam/qadam-smtp": [
+        "packages/qadams/core/smtp/src/index.ts"
+      ],
+      "@aiqadam/qadam-soap": [
+        "packages/qadams/community/soap/src/index.ts"
+      ],
+      "@aiqadam/qadam-stability-ai": [
+        "packages/qadams/community/stability-ai/src/index.ts"
+      ],
+      "@aiqadam/qadam-stable-diffusion-webui": [
+        "packages/qadams/community/stable-diffusion-webui/src/index.ts"
+      ],
+      "@aiqadam/qadam-store": [
+        "packages/qadams/core/store/src/index.ts"
+      ],
+      "@aiqadam/qadam-stripe": [
+        "packages/qadams/community/stripe/src/index.ts"
+      ],
+      "@aiqadam/qadam-subflows": [
+        "packages/qadams/core/subflows/src/index.ts"
+      ],
+      "@aiqadam/qadam-supabase": [
+        "packages/qadams/community/supabase/src/index.ts"
+      ],
+      "@aiqadam/qadam-tables": [
+        "packages/qadams/core/tables/src/index.ts"
+      ],
+      "@aiqadam/qadam-tags": [
+        "packages/qadams/core/tags/src/index.ts"
+      ],
+      "@aiqadam/qadam-tavily": [
+        "packages/qadams/community/tavily/src/index.ts"
+      ],
+      "@aiqadam/qadam-telegram-bot": [
+        "packages/qadams/community/telegram-bot/src/index.ts"
+      ],
+      "@aiqadam/qadam-telnyx": [
+        "packages/qadams/community/telnyx/src/index.ts"
+      ],
+      "@aiqadam/qadam-text-helper": [
+        "packages/qadams/core/text-helper/src/index.ts"
+      ],
+      "@aiqadam/qadam-ticktick": [
+        "packages/qadams/community/ticktick/src/index.ts"
+      ],
+      "@aiqadam/qadam-todoist": [
+        "packages/qadams/community/todoist/src/index.ts"
+      ],
+      "@aiqadam/qadam-toggl-track": [
+        "packages/qadams/community/toggl-track/src/index.ts"
+      ],
+      "@aiqadam/qadam-trello": [
+        "packages/qadams/community/trello/src/index.ts"
+      ],
+      "@aiqadam/qadam-twilio": [
+        "packages/qadams/community/twilio/src/index.ts"
+      ],
+      "@aiqadam/qadam-twitter": [
+        "packages/qadams/community/twitter/src/index.ts"
+      ],
+      "@aiqadam/qadam-twenty": [
+        "packages/qadams/community/twenty/src/index.ts"
+      ],
+      "@aiqadam/qadam-typeform": [
+        "packages/qadams/community/typeform/src/index.ts"
+      ],
+      "@aiqadam/qadam-umami": [
+        "packages/qadams/community/umami/src/index.ts"
+      ],
+      "@aiqadam/qadam-uptimerobot": [
+        "packages/qadams/community/uptimerobot/src/index.ts"
+      ],
+      "@aiqadam/qadam-webflow": [
+        "packages/qadams/community/webflow/src/index.ts"
+      ],
+      "@aiqadam/qadam-webhook": [
+        "packages/qadams/core/webhook/src/index.ts"
+      ],
+      "@aiqadam/qadam-whatsapp": [
+        "packages/qadams/community/whatsapp/src/index.ts"
+      ],
+      "@aiqadam/qadam-woocommerce": [
+        "packages/qadams/community/woocommerce/src/index.ts"
+      ],
+      "@aiqadam/qadam-wordpress": [
+        "packages/qadams/community/wordpress/src/index.ts"
+      ],
+      "@aiqadam/qadam-xml": [
+        "packages/qadams/core/xml/src/index.ts"
+      ],
+      "@aiqadam/qadam-youtube": [
+        "packages/qadams/community/youtube/src/index.ts"
+      ],
+      "@aiqadam/qadam-youtrack": [
+        "packages/qadams/community/youtrack/src/index.ts"
+      ],
+      "@aiqadam/qadam-zendesk": [
+        "packages/qadams/community/zendesk/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-bookings": [
+        "packages/qadams/community/zoho-bookings/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-books": [
+        "packages/qadams/community/zoho-books/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-campaigns": [
+        "packages/qadams/community/zoho-campaigns/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-crm": [
+        "packages/qadams/community/zoho-crm/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-desk": [
+        "packages/qadams/community/zoho-desk/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-invoice": [
+        "packages/qadams/community/zoho-invoice/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoho-mail": [
+        "packages/qadams/community/zoho-mail/src/index.ts"
+      ],
+      "@aiqadam/qadam-zoom": [
+        "packages/qadams/community/zoom/src/index.ts"
+      ],
+      "@aiqadam/qadams-common": [
+        "packages/qadams/common/src/index.ts"
+      ],
+      "@aiqadam/qadams-framework": [
+        "packages/qadams/framework/src/index.ts"
+      ],
+      "@aiqadam/server-utils": [
+        "packages/server/utils/src/index.ts"
+      ],
+      "@aiqadam/shared": [
+        "packages/shared/src/index.ts"
+      ],
+      "activepieces/piece-microsoft-dynamics-365-business-central": [
+        "packages/qadams/community/microsoft-dynamics-365-business-central/src/index.ts"
+      ],
+      "activepieces/piece-microsoft-dynamics-crm": [
+        "packages/qadams/community/microsoft-dynamics-crm/src/index.ts"
+      ],
+      "activepieces/piece-microsoft-sharepoint": [
+        "packages/qadams/community/microsoft-sharepoint/src/index.ts"
+      ],
+      "activepieces/piece-snowflake": [
+        "packages/qadams/community/snowflake/src/index.ts"
+      ],
+      "ui-feature-forms": [
+        "packages/ui/features-forms/src/index.ts"
+      ],
+      "@aiqadam/qadam-webex": [
+        "packages/qadams/community/webex/src/index.ts"
+      ],
+      "@aiqadam/qadam-tableau": [
+        "packages/qadams/community/tableau/src/index.ts"
+      ],
+      "@aiqadam/qadam-flow-parser": [
+        "packages/qadams/community/flow-parser/src/index.ts"
+      ],
+      "@aiqadam/qadam-couchbase": [
+        "packages/qadams/community/couchbase/src/index.ts"
+      ],
+      "@aiqadam/qadam-ai": [
+        "packages/qadams/community/ai/src/index.ts"
+      ],
+      "@aiqadam/qadam-azure-blob-storage": [
+        "packages/qadams/community/azure-blob-storage/src/index.ts"
+      ],
+      "@aiqadam/qadam-duckdb": [
+        "packages/qadams/community/duckdb/src/index.ts"
+      ],
+      "@aiqadam/qadam-lokalise": [
+        "packages/qadams/community/lokalise/src/index.ts"
+      ],
+      "@aiqadam/qadam-digital-ocean": [
+        "packages/qadams/community/digital-ocean/src/index.ts"
+      ],
+      "@aiqadam/qadam-hashi-corp-vault": [
+        "packages/qadams/community/hashi-corp-vault/src/index.ts"
+      ],
+      "@aiqadam/qadam-time-ops": [
+        "packages/qadams/community/time-ops/src/index.ts"
+      ],
+      "@aiqadam/qadam-plausible": [
+        "packages/qadams/community/plausible/src/index.ts"
+      ],
+      "@aiqadam/qadam-manual-trigger": [
+        "packages/qadams/core/manual-trigger/src/index.ts"
+      ],
+      "@aiqadam/qadam-google-search": [
+        "packages/qadams/community/google-search/src/index.ts"
+      ],
+      "@aiqadam/qadam-microsoft-copilot": [
+        "packages/qadams/community/microsoft-copilot/src/index.ts"
+      ],
+      "@aiqadam/qadam-algolia": [
+        "packages/qadams/community/algolia/src/index.ts"
+      ],
+      "@aiqadam/qadam-amazon-bedrock": [
+        "packages/qadams/community/amazon-bedrock/src/index.ts"
+      ],
+      "@aiqadam/qadam-brave-search": [
+        "packages/qadams/community/brave-search/src/index.ts"
+      ],
+      "@aiqadam/qadam-amazon-secrets-manager": [
+        "packages/qadams/community/amazon-secrets-manager/src/index.ts"
+      ],
+      "@aiqadam/qadam-pocketbase": [
+        "packages/qadams/community/pocketbase/src/index.ts"
+      ]
+    },
+    "resolveJsonModule": true
+  },
+  "exclude": [
+    "node_modules",
+    "tmp"
+  ]
+}

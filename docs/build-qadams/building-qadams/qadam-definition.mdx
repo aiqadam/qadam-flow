@@ -1,0 +1,51 @@
+---
+title: 'Create Qadam Definition'
+icon: 'circle-3'
+description: ''
+---
+
+
+This tutorial will guide you through the process of creating a Gelato qadam with an action that fetches random icecream flavor and trigger that fetches new icecream flavor created. It assumes that you are familiar with the following:
+
+- [Qadam Flow Local development](./development-setup) Or [GitHub Codespaces](../misc/codespaces).
+- TypeScript syntax.
+
+## Qadam Definition
+
+To get started, let's generate a new qadam for Gelato
+
+```bash
+npm run cli qadams create
+```
+
+You will be asked three questions to define your new qadam:
+
+1. `Qadam Name`: Specify a name for your qadam. This name uniquely identifies your qadam within the Qadam Flow ecosystem.
+2. `Package Name`: Optionally, you can enter a name for the npm package associated with your qadam. If left blank, the default name will be used.
+3. `Qadam Type`: Choose the qadam type based on your intention. It can be either "custom" if it's a tailored solution for your needs, or "community" if it's designed to be shared and used by the broader community.
+
+**Example:**
+
+```bash
+npm run cli qadams create
+
+? Enter the qadam name: gelato
+? Enter the package name: @aiqadam/qadam-gelato
+? Select the qadam type: community
+```
+
+The qadam will be generated at `packages/qadams/community/gelato/`,
+the `src/index.ts` file should contain the following code
+
+```ts
+import { PieceAuth, createPiece } from '@aiqadam/qadams-framework';
+
+export const gelato = createPiece({
+  displayName: 'Gelato',
+  logoUrl: 'https://cdn.activepieces.com/pieces/gelato.png',
+  auth: PieceAuth.None(),
+  authors: [],
+  actions: [],
+  triggers: [],
+});
+```

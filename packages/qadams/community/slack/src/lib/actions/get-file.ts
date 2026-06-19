@@ -1,0 +1,55 @@
+import { slackAuth } from '../auth';
+import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { WebClient } from '@slack/web-api';
+import { getBotToken, SlackAuthValue } from '../common/auth-helpers';
+
+export const getFileAction = createAction({
+	auth: slackAuth,
+	name: 'get-file',
+	displayName: 'Get File',
+	description: 'Return information about a given file ID.',
+	audience: 'both',
+	aiMetadata: {
+		description:
+			'Look up metadata for a single Slack file by its file ID and download its contents. Pick this when you have a file ID (e.g. from a message trigger payload) and need the file details or bytes. Read-only and idempotent; fails if the file has no accessible download URL.',
+		idempotent: true,
+	},
+	props: {
+		fileId: Property.ShortText({
+			displayName: 'File ID',
+			required: true,
+			description: 'You can pass the file ID from the New Message Trigger payload.',
+		}),
+	},
+	async run(context) {
+		const botToken = getBotToken(context.auth as SlackAuthValue);
+		const client = new WebClient(botToken);
+
+		const fileData = await client.files.info({ file: context.propsValue.fileId });
+
+		const fileDownloadUrl = fileData.file?.url_private_download;
+
+		if (!fileDownloadUrl) {
+			throw new Error('Unable to find the download URL.');
+		}
+
+		const response = await httpClient.sendRequest({
+			method: HttpMethod.GET,
+			url: fileDownloadUrl,
+			authentication: {
+				type: AuthenticationType.BEARER_TOKEN,
+				token: botToken,
+			},
+			responseType: 'arraybuffer',
+		});
+
+		return {
+			...fileData.file,
+			data: await context.files.write({
+				fileName: fileData.file?.name || `file`,
+				data: Buffer.from(response.body),
+			}),
+		};
+	},
+});

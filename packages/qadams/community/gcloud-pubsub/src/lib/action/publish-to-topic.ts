@@ -1,0 +1,56 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { common } from '../common';
+import { googlePubsubAuth } from '../..';
+
+export const publishToTopic = createAction({
+  name: 'publish_to_topic',
+  auth: googlePubsubAuth,
+  displayName: 'Publish to topic',
+  description: 'Publish message to topic',
+  audience: 'both',
+  aiMetadata: { description: 'Publishes a message to a Google Cloud Pub/Sub topic, base64-encoding the provided JSON object as the message payload. Use to emit an event or hand data to downstream Pub/Sub subscribers. The topic must already exist (selected from the project), and each call delivers a new message, so it is not idempotent.', idempotent: false },
+  props: {
+    message: Property.Object({
+      displayName: 'Message',
+      required: true,
+    }),
+    topic: Property.Dropdown({
+      displayName: 'Topic',
+      required: true,
+      refreshers: ['auth'], 
+      auth: googlePubsubAuth,
+      options: async ({ auth }) => {
+        if (!auth) {
+          return {
+            disabled: true,
+            options: [],
+            placeholder: 'Please authenticate first',
+          };
+        }
+        const json = auth.props.json;
+        return common.getTopics(json);
+      },
+    }),
+  },
+  async run(context) {
+    const client = common.getClient(context.auth.props.json);
+    const topic = context.propsValue.topic;
+
+    const url = `https://pubsub.googleapis.com/v1/${topic}:publish`;
+    const json = JSON.stringify(context.propsValue.message);
+    const body = JSON.stringify({
+      messages: [{ data: Buffer.from(json).toString('base64') }],
+    });
+
+    const { data } = await client.request<{ messageIds: string[] }>({
+      url,
+      method: 'POST',
+      body,
+    });
+
+    console.debug(
+      `Message sended to topic[${topic}]: ${json}, ack: ${data.messageIds[0]}`
+    );
+    return json;
+  },
+});

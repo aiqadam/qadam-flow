@@ -1,0 +1,74 @@
+import {
+  AppConnectionValueForAuthProperty,
+  StaticPropsValue,
+  TriggerStrategy,
+  createTrigger,
+} from '@aiqadam/qadams-framework';
+import { googleTasksAuth } from '../auth';
+import {
+  DedupeStrategy,
+  Polling,
+  pollingHelper,
+} from '@aiqadam/qadams-common';
+import { getTasks, googleTasksCommon } from '../common';
+
+const props = {
+  tasks_list: googleTasksCommon.tasksList,
+};
+
+const polling: Polling<
+  AppConnectionValueForAuthProperty<typeof googleTasksAuth>,
+  StaticPropsValue<typeof props>
+> = {
+  strategy: DedupeStrategy.TIMEBASED,
+  items: async ({ auth, propsValue, lastFetchEpochMS }) => {
+    const records = await getTasks(auth, propsValue.tasks_list!);
+
+    const filtered_records = records.filter((record) => {
+      const updated = Date.parse(record.updated);
+      return updated > lastFetchEpochMS;
+    });
+
+    return filtered_records.map((record) => ({
+      epochMilliSeconds: Date.parse(record.updated),
+      data: record,
+    }));
+  },
+};
+
+export const newTaskTrigger = createTrigger({
+  auth: googleTasksAuth,
+  name: 'new_task',
+  displayName: 'New Task',
+  description: 'Triggers when a task is created',
+  aiMetadata: {
+    description: 'Fires when a task in the selected Google Tasks list is newly created or updated since the last poll, emitting the task that changed. Use to react to additions or edits in a specific task list.',
+  },
+  type: TriggerStrategy.POLLING,
+  props,
+  sampleData: {},
+  async test(context) {
+    const store = context.store;
+    const auth = context.auth;
+    const propsValue = context.propsValue;
+    return await pollingHelper.test(polling, { store, auth, propsValue, files: context.files });
+  },
+  async onEnable(context) {
+    const store = context.store;
+    const auth = context.auth;
+    const propsValue = context.propsValue;
+    await pollingHelper.onEnable(polling, { store, auth, propsValue });
+  },
+  async onDisable(context) {
+    const store = context.store;
+    const auth = context.auth;
+    const propsValue = context.propsValue;
+    await pollingHelper.onEnable(polling, { store, auth, propsValue });
+  },
+  async run(context) {
+    const store = context.store;
+    const auth = context.auth;
+    const propsValue = context.propsValue;
+    return await pollingHelper.poll(polling, { store, auth, propsValue, files: context.files });
+  },
+});

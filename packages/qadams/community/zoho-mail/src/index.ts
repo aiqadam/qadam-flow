@@ -1,0 +1,50 @@
+import { createCustomApiCallAction } from '@aiqadam/qadams-common';
+import {
+	createQadam,
+	OAuth2PropertyValue,
+	PiecePropValueSchema,
+} from '@aiqadam/qadams-framework';
+import { QadamCategory } from '@aiqadam/shared';
+import { getEmailDetailsAction } from './lib/actions/get-email-details';
+import { markEmailAsReadAction } from './lib/actions/mark-email-as-read';
+import { markEmailAsUnreadAction } from './lib/actions/mark-email-as-unread';
+import { archiveEmailAction } from './lib/actions/archive-email';
+import { unarchiveEmailAction } from './lib/actions/unarchive-email';
+import { moveEmailAction } from './lib/actions/move-email';
+import { sendEmailAction } from './lib/actions/send-email';
+import { zohoMailAuth } from './lib/common/auth';
+import { newEmailReceivedTrigger } from './lib/triggers/new-email-received-trigger';
+
+export const zohoMail = createQadam({
+	displayName: 'Zoho Mail',
+	logoUrl: '/assets/qadams/zoho-mail.png',
+	auth: zohoMailAuth,
+	authors: ['onyedikachi-david', 'kishanprmr', 'kdurek'],
+	description:
+		'Zoho Mail is a powerful email service that allows you to manage your email, contacts, and calendars efficiently.',
+	minimumSupportedRelease: '0.36.1',
+	categories: [QadamCategory.COMMUNICATION],
+	actions: [
+		getEmailDetailsAction,
+		markEmailAsReadAction,
+		markEmailAsUnreadAction,
+		archiveEmailAction,
+		unarchiveEmailAction,
+		moveEmailAction,
+		sendEmailAction,
+		createCustomApiCallAction({
+			auth: zohoMailAuth,
+			baseUrl: (auth) => {
+				const authValue = auth as PiecePropValueSchema<typeof zohoMailAuth>;
+				const location = authValue.props?.['location'] ?? 'zoho.com';
+				return `https://mail.${location}/api`;
+			},
+			authMapping: async (auth) => {
+				return {
+					Authorization: `Zoho-oauthtoken ${(auth as OAuth2PropertyValue).access_token}`,
+				};
+			},
+		}),
+	],
+	triggers: [newEmailReceivedTrigger],
+});

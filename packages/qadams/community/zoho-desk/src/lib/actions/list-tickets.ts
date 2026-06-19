@@ -1,0 +1,48 @@
+import { createAction, Property } from '@aiqadam/qadams-framework';
+import { HttpMethod } from '@aiqadam/qadams-common';
+import { zohoDeskAuth } from '../common/auth';
+import { zohoDeskApiCall } from '../common';
+import { organizationId } from '../common/props';
+
+export const listTicketsAction = createAction({
+	auth: zohoDeskAuth,
+	name: 'list_tickets',
+	description: 'List tickets',
+	audience: 'both',
+	aiMetadata: { description: 'Retrieves tickets from a Zoho Desk organization, optionally expanding related data (contacts, products, departments, team, isRead, assignee) via the include option. Use to browse or page through existing tickets when you do not have a specific ticket ID; requires the organization ID. Read-only and idempotent.', idempotent: true },
+	displayName: 'List tickets.',
+	props: {
+		orgId: organizationId({ displayName: 'Organization', required: true }),
+		include: Property.StaticMultiSelectDropdown({
+			displayName: 'include',
+			required: false,
+			description: 'Additional information related to the tickets.',
+			options: {
+				disabled: false,
+				options: [
+					{ label: 'contacts', value: 'contacts' },
+					{ label: 'products', value: 'products' },
+					{ label: 'departments', value: 'departments' },
+					{ label: 'team', value: 'team' },
+					{ label: 'isRead', value: 'isRead' },
+					{ label: 'assignee', value: 'assignee' },
+				],
+			},
+		}),
+	},
+	async run({ propsValue, auth }) {
+		const queryParams: Record<string, string> = {};
+
+		if (propsValue.include) queryParams['include'] = propsValue.include.join(',');
+
+		const response = await zohoDeskApiCall({
+			auth,
+			method: HttpMethod.GET,
+			resourceUri: '/tickets',
+			orgId: propsValue.orgId,
+			query: queryParams,
+		});
+
+		return response;
+	},
+});
