@@ -30,12 +30,13 @@ The base is in place.
 
 - [x] Fork Activepieces v0.83.0 (MIT core)
 - [x] Strip enterprise-licensed code (all features available to everyone, no paid tiers)
-- [x] 238 qadams curated for the region (211 community + 27 core, down from 715 — kept what the region actually uses)
+- [x] 238 qadams curated for the region (211 community + 27 core — kept what the region actually uses)
 - [x] Domain rename: `Piece` → `Qadam` across code, DB, API, UI, docs
 - [x] Docker Compose deploy (Postgres + Redis + app)
 - [x] Repo governance: LICENSE (MIT), GOVERNANCE, CONTRIBUTING, CODE_OF_CONDUCT
 - [x] Running in production (first real deployment)
-- [x] Rebrand to Qadam Flow — code, UI, docs, API (Phase N: final UI cleanup, zero "Piece"/"Activepieces" in UI)
+- [x] Rebrand to Qadam Flow — code, UI, DB, API (Phase N: final UI cleanup)
+- [ ] Finish docs rebrand — install/embedding/endpoints sections still reference Activepieces (see issues #2, #4, #14)
 - [x] README with manifesto
 - [ ] Brand assets (logo, favicon, OG) — designer track
 - [ ] First `good first issue` set opened
@@ -84,7 +85,7 @@ All free, all in the open — when they're ready, not when a calendar says so.
 
 Where the community could take this:
 
-**Agent-native flows** — first-class MCP support (the core already ships ~400 MCP servers), LLM steps, agent orchestration as pieces.
+**Agent-native flows** — first-class MCP support (any qadam can be exposed as an MCP server — all 238 ready to wire as agent tools), LLM steps, agent orchestration as qadams.
 
 **Chapter infrastructure** — Qadam Flow as the automation backbone for AI Qadam chapters: event registration, speaker pipelines, community notifications. (Build serving the other streams — the whole point of Build.)
 
