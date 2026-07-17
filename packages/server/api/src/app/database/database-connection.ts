@@ -25,6 +25,7 @@ import { McpOAuthTokenEntity } from '../mcp/oauth/token/mcp-oauth-token.entity'
 import { PlatformEntity } from '../platform/platform.entity'
 import { ConcurrencyPoolEntity } from '../project/concurrency-pool-entity'
 import { ProjectEntity } from '../project/project-entity'
+import { ProjectMemberEntity } from '../project/project-member.entity'
 import { ProjectRoleEntity } from '../project/project-role.entity'
 import { QadamMetadataEntity } from '../qadams/metadata/qadam-metadata-entity'
 import { QadamTagEntity } from '../qadams/tags/qadams/qadam-tag.entity'
@@ -61,6 +62,7 @@ function getEntities(): EntitySchema<unknown>[] {
         ProjectEntity,
         ConcurrencyPoolEntity,
         ProjectRoleEntity,
+        ProjectMemberEntity,
         StoreEntryEntity,
         UserEntity,
         AppConnectionEntity,

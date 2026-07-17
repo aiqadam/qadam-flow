@@ -7,10 +7,12 @@ import { domainHelper } from '../helper/domain-helper'
 import { JwtAudience, jwtUtils } from '../helper/jwt-utils'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
+import { ProjectMemberEntity } from '../project/project-member.entity'
 import { userService } from '../user/user-service'
 import { UserInvitationEntity } from './user-invitation.entity'
 
 const repo = repoFactory(UserInvitationEntity)
+const projectMemberRepo = repoFactory(ProjectMemberEntity)
 
 export const userInvitationsService = (log: FastifyBaseLogger) => ({
     async getOneByInvitationTokenOrThrow(invitationToken: string): Promise<UserInvitation> {
@@ -64,6 +66,15 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
                     break
                 }
                 case InvitationType.PROJECT: {
+                    assertNotNullOrUndefined(invitation.projectId, 'projectId')
+                    assertNotNullOrUndefined(invitation.projectRoleId, 'projectRoleId')
+                    await projectMemberRepo().upsert({
+                        id: apId(),
+                        userId: user.id,
+                        projectId: invitation.projectId,
+                        projectRoleId: invitation.projectRoleId,
+                        platformId: invitation.platformId,
+                    }, ['userId', 'projectId'])
                     break
                 }
             }

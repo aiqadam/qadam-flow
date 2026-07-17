@@ -20,11 +20,15 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
+import { repoFactory } from '../core/db/repo-factory'
 import { ProjectResourceType } from '../core/security/authorization/common'
 import { securityAccess } from '../core/security/authorization/fastify-security'
+import { ProjectRoleEntity } from '../project/project-role.entity'
 import { projectService } from '../project/project-service'
 import { userService } from '../user/user-service'
 import { userInvitationsService } from './user-invitation.service'
+
+const projectRoleRepo = repoFactory(ProjectRoleEntity)
 
 export const invitationModule: FastifyPluginAsyncZod = async (app) => {
     await app.register(invitationController, { prefix: '/v1/user-invitations' })
@@ -40,13 +44,17 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
         const platformId = request.principal.platform.id
         const status = await shouldAutoAcceptInvitation(request.principal, request.body, platformId, request.log) ? InvitationStatus.ACCEPTED : InvitationStatus.PENDING
 
+        const projectRoleId = type === InvitationType.PROJECT && request.body.projectRole
+            ? (await projectRoleRepo().findOneByOrFail({ name: request.body.projectRole, platformId })).id
+            : null
+
         const invitation = await userInvitationsService(request.log).create({
             email,
             type,
             platformId,
             platformRole: type === InvitationType.PROJECT ? null : request.body.platformRole,
             projectId: type === InvitationType.PLATFORM ? null : request.body.projectId,
-            projectRoleId: null,
+            projectRoleId,
             invitationExpirySeconds: dayjs.duration(7, 'days').asSeconds(),
             status,
         })

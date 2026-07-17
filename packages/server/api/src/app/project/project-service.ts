@@ -193,6 +193,11 @@ export const projectService = (log: FastifyBaseLogger) => ({
         await projectRepo().update(query, update)
     },
 
+    async softDelete(projectId: ProjectId): Promise<void> {
+        await this.getOneOrThrow(projectId)
+        await projectRepo().update({ id: projectId }, { deleted: new Date().toISOString() })
+    },
+
     async getByPlatformIdAndExternalId({
         platformId,
         externalId,
