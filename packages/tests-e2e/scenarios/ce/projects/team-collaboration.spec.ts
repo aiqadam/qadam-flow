@@ -52,12 +52,13 @@ test.describe('Team project collaboration', () => {
       },
     });
     expect(inviteRes.status()).toBe(201);
-    const invitation = await inviteRes.json();
+    const invitation: { status: string; link?: string } = await inviteRes.json();
     expect(invitation.status).toBe('PENDING');
     expect(invitation.link).toBeTruthy();
+    if (!invitation.link) throw new Error('invitation.link missing');
 
     // Step 4: Accept the invitation via the public endpoint (simulating user2 clicking the link)
-    const invitationToken = new URL(invitation.link as string).searchParams.get('token');
+    const invitationToken = new URL(invitation.link).searchParams.get('token');
     expect(invitationToken).toBeTruthy();
 
     const acceptRes = await request.post('/api/v1/user-invitations/accept', {

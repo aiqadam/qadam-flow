@@ -77,8 +77,9 @@ export default function ProjectsPage() {
 
   const [selectedRows, setSelectedRows] = useState<ProjectWithLimits[]>([]);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editDialogInitialValues, setEditDialogInitialValues] =
-    useState<any>(null);
+  const [editDialogInitialValues, setEditDialogInitialValues] = useState<
+    { projectName?: string; externalId?: string } | undefined
+  >(undefined);
   const [editDialogProjectId, setEditDialogProjectId] = useState<string>('');
   const [editDialogProjectType, setEditDialogProjectType] = useState<
     ProjectType | undefined

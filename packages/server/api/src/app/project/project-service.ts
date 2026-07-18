@@ -193,9 +193,18 @@ export const projectService = (log: FastifyBaseLogger) => ({
         await projectRepo().update(query, update)
     },
 
-    async softDelete(projectId: ProjectId): Promise<void> {
-        await this.getOneOrThrow(projectId)
-        await projectRepo().update({ id: projectId }, { deleted: new Date().toISOString() })
+    async softDelete({ projectId, platformId }: SoftDeleteParams): Promise<void> {
+        const project = await projectRepo().findOneBy({ id: projectId, platformId })
+        if (isNil(project)) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: {
+                    entityId: projectId,
+                    entityType: 'project',
+                },
+            })
+        }
+        await projectRepo().update({ id: projectId, platformId }, { deleted: new Date().toISOString() })
     },
 
     async getByPlatformIdAndExternalId({
@@ -317,6 +326,11 @@ type GetByPlatformIdAndExternalIdParams = {
 type AddProjectToPlatformParams = {
     projectId: ProjectId
     platformId: ApId
+}
+
+type SoftDeleteParams = {
+    projectId: ProjectId
+    platformId: string
 }
 
 type NewProject = Omit<Project, 'created' | 'updated' | 'deleted'>

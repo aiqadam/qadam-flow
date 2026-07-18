@@ -124,5 +124,27 @@ describe('Project endpoints (CE)', () => {
             const response = await ctx.delete('/v1/projects/nonexistent-id')
             expect(response.statusCode).toBe(StatusCodes.NOT_FOUND)
         })
+
+        it('returns 404 when project belongs to a different platform (multi-tenant isolation)', async () => {
+            const platformAOwner = await createTestContext(app!)
+            const platformBOwner = await createTestContext(app!)
+
+            const createResponse = await platformAOwner.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: null,
+            })
+            expect(createResponse.statusCode).toBe(StatusCodes.CREATED)
+            const platformAProject = createResponse.json<ProjectWithLimits>()
+
+            const crossPlatformDeleteResponse = await platformBOwner.delete(`/v1/projects/${platformAProject.id}`)
+            expect(crossPlatformDeleteResponse.statusCode).toBe(StatusCodes.NOT_FOUND)
+
+            const listResponse = await platformAOwner.get('/v1/projects')
+            const body = listResponse.json<SeekPage<ProjectWithLimits>>()
+            const stillThere = body.data.find((p) => p.id === platformAProject.id)
+            expect(stillThere).toBeDefined()
+        })
     })
 })

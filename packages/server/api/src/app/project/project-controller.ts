@@ -44,7 +44,11 @@ export const projectController: FastifyPluginAsyncZod = async (fastify) => {
     })
 
     fastify.delete('/:id', DeleteProjectRequest, async (request, reply) => {
-        await projectService(request.log).softDelete(request.params.id)
+        const user = await userService(request.log).getOneOrFail({ id: request.principal.id })
+        await projectService(request.log).softDelete({
+            projectId: request.params.id,
+            platformId: user.platformId!,
+        })
         return reply.status(StatusCodes.NO_CONTENT).send()
     })
 }
