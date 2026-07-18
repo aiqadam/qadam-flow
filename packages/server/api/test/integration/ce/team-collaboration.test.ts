@@ -136,6 +136,68 @@ describe('Team project collaboration (CE)', () => {
         expect(found).toBeUndefined()
     })
 
+    it('Member of team project A cannot see team project B on the same platform', async () => {
+        const ctx1 = await createTestContext(app!)
+
+        const projectRole = createMockProjectRole({
+            name: DefaultProjectRole.EDITOR,
+            platformId: ctx1.platform.id,
+            permissions: [Permission.READ_FLOW, Permission.WRITE_FLOW],
+            type: RoleType.DEFAULT,
+        })
+        await db.save('project_role', projectRole)
+
+        const user2Identity = createMockUserIdentity({ verified: true })
+        await db.save('user_identity', user2Identity)
+
+        // Owner creates two team projects
+        const projectA = (await ctx1.post('/v1/projects', {
+            displayName: `A ${faker.animal.bird()}`,
+            externalId: null, metadata: null, maxConcurrentJobs: null,
+        })).json<ProjectWithLimits>()
+        const projectB = (await ctx1.post('/v1/projects', {
+            displayName: `B ${faker.animal.fish()}`,
+            externalId: null, metadata: null, maxConcurrentJobs: null,
+        })).json<ProjectWithLimits>()
+
+        // Invite user2 to project A only
+        const inviteRes = await ctx1.post('/v1/user-invitations', {
+            email: user2Identity.email,
+            type: InvitationType.PROJECT,
+            projectId: projectA.id,
+            projectRole: DefaultProjectRole.EDITOR,
+        })
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+        const invitationToken = new URL(invitation.link!).searchParams.get('token')!
+        await app!.inject({
+            method: 'POST',
+            url: '/api/v1/user-invitations/accept',
+            payload: { invitationToken },
+        })
+
+        const user2 = await db.findOneByOrFail<User>('user', {
+            identityId: user2Identity.id,
+            platformId: ctx1.platform.id,
+        })
+        const user2Token = await generateMockToken({
+            id: user2.id,
+            type: PrincipalType.USER,
+            platform: { id: ctx1.platform.id },
+        })
+
+        const listRes = await app!.inject({
+            method: 'GET',
+            url: '/api/v1/projects',
+            headers: { authorization: `Bearer ${user2Token}` },
+        })
+        expect(listRes.statusCode).toBe(StatusCodes.OK)
+        const projects = listRes.json<SeekPage<ProjectWithLimits>>()
+
+        expect(projects.data.find((p) => p.id === projectA.id)).toBeDefined()
+        expect(projects.data.find((p) => p.id === projectB.id)).toBeUndefined()
+        expect(projects.data.find((p) => p.type === ProjectType.PERSONAL)).toBeDefined()
+    })
+
     it('User1 can revoke invitation before User2 accepts', async () => {
         const ctx1 = await createTestContext(app!)
 

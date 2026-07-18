@@ -81,6 +81,7 @@ scratch.md
 /playwright-report/
 packages/tests-e2e/test-results/
 packages/tests-e2e/playwright-report/
+packages/tests-e2e/screenshots/
 /blob-report/
 /playwright/.cache/
 /redis-binaries/

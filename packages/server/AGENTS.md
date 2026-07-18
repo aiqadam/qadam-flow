@@ -49,6 +49,12 @@ To run a single file: `cd packages/server/api && export $(cat .env.tests | xargs
 
 Stop deps when done: `docker compose -f docker-compose.dev.yml down` (or `... down -v` to also drop the DB volume).
 
+## Where a Test Belongs
+
+- **Unit** (`vitest`, per-package `test/unit/`) — pure functions, no I/O.
+- **Integration** (`packages/server/api/test/integration/{ce,ee}/`) — HTTP handlers + real Postgres + real Redis via `setupTestEnvironment()` + `createTestContext(app)`. Fast (~seconds). This is where invitation flows, permission checks, list filters, and other backend contract tests live.
+- **E2E** (`packages/tests-e2e/`) — Playwright driving the real browser. **Only** put a test here if it calls DOM-mutating `page.*` methods (click, fill, select, etc.). See `packages/tests-e2e/AGENTS.md` for the anti-pattern (API-only tests in Playwright) and the environment quirks (single-platform localhost, ungenerated `project_role`).
+
 ## Email Templates
 
 Email templates live in `src/assets/emails/`. When creating or modifying email templates, follow these rules:
