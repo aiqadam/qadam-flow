@@ -21,7 +21,15 @@ packages/tests-e2e/
 
 Rule of thumb: **if the test never calls a `page.*` method that mutates the DOM (click, fill, select, keyboard, drag), it does not belong in this package.** Move it to `packages/server/api/test/integration/ce/` (or `ee/`) where it will run in a fraction of the time.
 
-Concrete example — the original `scenarios/ce/projects/team-collaboration.spec.ts` was this anti-pattern. It was removed and its coverage was ported to `packages/server/api/test/integration/ce/team-collaboration.test.ts` (four cases: happy path invitation flow, same-platform two-project isolation, cross-platform isolation, invitation revoke).
+Concrete example — the original `scenarios/ce/projects/team-collaboration.spec.ts` was this anti-pattern. It has been rewritten as a real UI walkthrough (sign in through the form, click "New Project", fill the dialog, submit, open the row's edit action, switch to the Members tab, fill the invite form, click "Invite", assert the pending row appears). The API-level guarantees it used to check are now covered by `packages/server/api/test/integration/ce/team-collaboration.test.ts` (four cases: happy-path invitation flow, same-platform two-project isolation, cross-platform isolation, invitation revoke) — leaving the Playwright spec free to focus on what only Playwright can see: the DOM.
+
+Screenshots at key points are written to `screenshots/team-collaboration/` (git-ignored) — useful as visual proof when reviewing a PR.
+
+## Selector conventions
+
+- Prefer `getByRole` / `getByTestId` over CSS. `getByText` is fine for asserting content, less fine for clicking (matches too broadly).
+- Filter noisy tables via URL query (`?displayName=…`) instead of walking pagination — the projects and users lists both accept `displayName` as a `useQuery` filter.
+- Icon-only action buttons have no accessible name in this codebase. Reach them via the Lucide class: `row.locator('button:has(svg.lucide-pencil)')`.
 
 ## Running
 
