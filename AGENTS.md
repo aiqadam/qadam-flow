@@ -79,9 +79,12 @@ API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`,
 
 ## Commands
 
-This monorepo uses **turbo** (see `turbo.json`). There is no Nx — never invoke `nx` or `npx nx`.
+This monorepo uses **turbo** (see `turbo.json`) as the task runner and **bun** as the package manager (see `packageManager` in `package.json`). There is no Nx — never invoke `nx` or `npx nx`.
+
+Install dependencies with `bun install`. `npm install` will fail with `TypeError: Cannot read properties of null (reading 'matches')` in npm's arborist during dedup. The `npm run <script>` entries below still work because they only delegate to turbo — but the initial install must be bun.
 
 ```bash
+bun install                                     # Install deps (required — npm install fails)
 npm start                                       # Setup dev + start all
 npm run dev                                     # Frontend + backend
 npm run lint-dev                                # Lint with auto-fix (ALWAYS before done)

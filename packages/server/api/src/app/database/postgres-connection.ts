@@ -7,6 +7,7 @@ import { AppSystemProp } from '../helper/system/system-props'
 import { commonProperties } from './database-connection'
 import { Migration } from './migration'
 import { BaselineQadamFlow1750000000000 } from './migration/postgres/1750000000000-BaselineQadamFlow'
+import { AddProjectMemberTable1784284221314 } from './migration/postgres/1784284221314-AddProjectMemberTable'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -21,6 +22,7 @@ const getSslConfig = (): boolean | TlsOptions => {
 export const getMigrations = (): (new () => Migration)[] => {
     return [
         BaselineQadamFlow1750000000000,
+        AddProjectMemberTable1784284221314,
     ]
 }
 

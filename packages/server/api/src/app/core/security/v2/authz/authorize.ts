@@ -1,4 +1,4 @@
-import { ErrorCode, isNil, PlatformRole, Principal, PrincipalType, QadamFlowError, UserIdentityProvider } from '@aiqadam/shared'
+import { ErrorCode, isNil, PlatformRole, Principal, PrincipalType, ProjectType, QadamFlowError, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { userIdentityService } from '../../../../authentication/user-identity/user-identity-service'
 import { projectService } from '../../../../project/project-service'
@@ -88,15 +88,62 @@ async function assertAccessToProject(principal: Principal, projectSecurity: Proj
     if ('projectId' in principal && principal.projectId === projectSecurity.projectId) {
         return
     }
-    if (principal.type === PrincipalType.USER || principal.type === PrincipalType.SERVICE) {
-        const user = await userService(log).getOneOrFail({ id: principal.id })
-        if (!isNil(user.platformId)) {
-            const project = await projectService(log).getOne(projectSecurity.projectId)
-            if (!isNil(project) && project.platformId === user.platformId) {
-                return
-            }
-        }
+
+    if (principal.type !== PrincipalType.USER && principal.type !== PrincipalType.SERVICE) {
+        throwNoAccess()
     }
+
+    const user = await userService(log).getOneOrFail({ id: principal.id })
+    if (isNil(user.platformId)) {
+        throwNoAccess()
+    }
+
+    const project = await projectService(log).getOne(projectSecurity.projectId)
+    if (isNil(project) || project.platformId !== user.platformId) {
+        throwNoAccess()
+    }
+
+    // SERVICE principals are api-key based and treated as platform-scoped admin.
+    // They bypass per-project membership and permission checks.
+    if (principal.type === PrincipalType.SERVICE) {
+        return
+    }
+
+    // Platform-privileged users (ADMIN/OPERATOR) bypass per-project checks.
+    if (userService(log).isUserPrivileged(user)) {
+        return
+    }
+
+    if (project.type === ProjectType.PERSONAL) {
+        if (project.ownerId === user.id) {
+            return
+        }
+        throwNoAccess()
+    }
+
+    const role = await projectService(log).getProjectRoleForUser({
+        userId: user.id,
+        projectId: project.id,
+        platformId: project.platformId,
+    })
+    if (isNil(role)) {
+        throwNoAccess()
+    }
+
+    if (!isNil(projectSecurity.permission) && !role.permissions.includes(projectSecurity.permission)) {
+        throw new QadamFlowError({
+            code: ErrorCode.PERMISSION_DENIED,
+            params: {
+                userId: user.id,
+                projectId: project.id,
+                projectRole: role,
+                permission: projectSecurity.permission,
+            },
+        })
+    }
+}
+
+function throwNoAccess(): never {
     throw new QadamFlowError({
         code: ErrorCode.AUTHORIZATION,
         params: {

@@ -67,6 +67,8 @@ scratch.md
 
 # environment variables
 .env*
+!packages/server/api/.env.tests
+!.env.dev
 
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
@@ -77,6 +79,9 @@ scratch.md
 # Playwright
 /test-results/
 /playwright-report/
+packages/tests-e2e/test-results/
+packages/tests-e2e/playwright-report/
+packages/tests-e2e/screenshots/
 /blob-report/
 /playwright/.cache/
 /redis-binaries/

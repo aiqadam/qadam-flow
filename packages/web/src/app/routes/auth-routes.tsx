@@ -1,5 +1,6 @@
 import { PageTitle } from '@/app/components/page-title';
 import { VerifyEmail } from '@/features/authentication';
+import { AcceptInvitationPage } from '@/features/invitations/components/accept-invitation-page';
 
 import { ChangePasswordPage } from './change-password';
 import { CreatePlatformPage } from './create-platform';
@@ -53,6 +54,14 @@ export const authRoutes = [
     element: (
       <PageTitle title="Create Platform">
         <CreatePlatformPage />
+      </PageTitle>
+    ),
+  },
+  {
+    path: '/invitation',
+    element: (
+      <PageTitle title="Accept Invitation">
+        <AcceptInvitationPage />
       </PageTitle>
     ),
   },

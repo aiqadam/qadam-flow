@@ -3,22 +3,32 @@ import {
     ApId,
     assertNotNullOrUndefined,
     ColorName,
+    DefaultProjectRole,
     ErrorCode,
     isNil,
     Metadata,
     Project,
     ProjectIcon,
     ProjectId,
+    ProjectRole,
     ProjectType,
     QadamFlowError,
+    rolePermissions,
+    RoleType,
     spreadIfDefined,
     UserId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder } from 'typeorm'
+import { repoFactory } from '../core/db/repo-factory'
 import { userService } from '../user/user-service'
 import { projectHooks, ProjectPostCreateContext } from './project-hooks'
+import { ProjectMemberEntity } from './project-member.entity'
 import { projectRepo } from './project-repo'
+import { ProjectRoleEntity } from './project-role.entity'
+
+const projectRoleRepo = repoFactory(ProjectRoleEntity)
+const projectMemberRepo = repoFactory(ProjectMemberEntity)
 
 export { projectRepo }
 
@@ -32,7 +42,18 @@ export const projectService = (log: FastifyBaseLogger) => ({
             icon,
             releasesEnabled: false,
         }
+        if (params.type === ProjectType.TEAM) {
+            await ensureDefaultProjectRoles(params.platformId, entityManager)
+        }
         const savedProject = await projectRepo(entityManager).save(newProject)
+        if (params.type === ProjectType.TEAM) {
+            await addCreatorAsProjectAdmin({
+                projectId: savedProject.id,
+                userId: params.ownerId,
+                platformId: params.platformId,
+                entityManager,
+            })
+        }
         if (callPostCreateHooks) {
             await this.callProjectPostCreateHooks(savedProject, postCreateContext)
         }
@@ -75,7 +96,15 @@ export const projectService = (log: FastifyBaseLogger) => ({
         })
     },
 
-    async update(projectId: ProjectId, request: UpdateParams, entityManager?: EntityManager): Promise<Project> {
+    async update({ projectId, platformId, userId, isPrivileged, request, entityManager }: UpdateProjectParams): Promise<Project> {
+        const project = await projectRepo(entityManager).findOneBy({ id: projectId, platformId })
+        if (isNil(project) || !(await callerCanAdministerProject({ project, userId, platformId, isPrivileged }))) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: { entityId: projectId, entityType: 'project' },
+            })
+        }
+
         const externalId = request.externalId?.trim() !== '' ? request.externalId : undefined
         await assertExternalIdIsUnique(externalId, projectId)
 
@@ -92,7 +121,7 @@ export const projectService = (log: FastifyBaseLogger) => ({
             ...spreadIfDefined('icon', request.icon),
         } : {}
 
-        await projectRepo(entityManager).update({ id: projectId }, { ...baseUpdate, ...teamUpdate })
+        await projectRepo(entityManager).update({ id: projectId, platformId }, { ...baseUpdate, ...teamUpdate })
         return this.getOneOrThrow(projectId)
     },
 
@@ -193,6 +222,21 @@ export const projectService = (log: FastifyBaseLogger) => ({
         await projectRepo().update(query, update)
     },
 
+    async softDelete({ projectId, platformId, userId, isPrivileged }: SoftDeleteParams): Promise<void> {
+        const project = await projectRepo().findOneBy({ id: projectId, platformId })
+        // Return the same 404 for both "not found" and "not authorized" to avoid ID enumeration.
+        if (isNil(project) || !(await callerCanAdministerProject({ project, userId, platformId, isPrivileged }))) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: {
+                    entityId: projectId,
+                    entityType: 'project',
+                },
+            })
+        }
+        await projectRepo().update({ id: projectId, platformId }, { deleted: new Date().toISOString() })
+    },
+
     async getByPlatformIdAndExternalId({
         platformId,
         externalId,
@@ -211,6 +255,28 @@ export const projectService = (log: FastifyBaseLogger) => ({
     },
     callProjectPostCreateHooks: async (savedProject: Project, context?: ProjectPostCreateContext)=>{
         await projectHooks.get(log).postCreate(savedProject, context)
+    },
+    async getProjectRoleForUser(params: GetProjectRoleForUserParams): Promise<ProjectRole | null> {
+        const { userId, projectId, platformId } = params
+        const row = await projectMemberRepo()
+            .createQueryBuilder('pm')
+            .innerJoin('project_role', 'pr', 'pr.id = pm."projectRoleId"')
+            .select([
+                'pr.id AS id',
+                'pr.name AS name',
+                'pr.permissions AS permissions',
+                'pr."platformId" AS "platformId"',
+                'pr.type AS type',
+                'pr.created AS created',
+                'pr.updated AS updated',
+            ])
+            .where('pm."userId" = :userId AND pm."projectId" = :projectId AND pm."platformId" = :platformId', {
+                userId,
+                projectId,
+                platformId,
+            })
+            .getRawOne<ProjectRole>()
+        return row ?? null
     },
 })
 
@@ -234,6 +300,64 @@ export async function applyProjectsAccessFilters<T extends ObjectLiteral>(
         )
     }))
 }
+async function callerCanAdministerProject(params: CallerCanAdministerProjectParams): Promise<boolean> {
+    const { project, userId, platformId, isPrivileged } = params
+    if (isPrivileged) {
+        return true
+    }
+    if (project.ownerId === userId) {
+        return true
+    }
+    const adminMembership = await projectMemberRepo()
+        .createQueryBuilder('pm')
+        .innerJoin('project_role', 'pr', 'pr.id = pm."projectRoleId"')
+        .where('pm."userId" = :userId AND pm."projectId" = :projectId AND pm."platformId" = :platformId', {
+            userId,
+            projectId: project.id,
+            platformId,
+        })
+        .andWhere('pr.name = :roleName', { roleName: DefaultProjectRole.ADMIN })
+        .getOne()
+    return !isNil(adminMembership)
+}
+
+async function addCreatorAsProjectAdmin(params: AddCreatorAsProjectAdminParams): Promise<void> {
+    const { projectId, userId, platformId, entityManager } = params
+    const adminRole = await projectRoleRepo(entityManager).findOneByOrFail({
+        platformId,
+        name: DefaultProjectRole.ADMIN,
+        type: RoleType.DEFAULT,
+    })
+    await projectMemberRepo(entityManager).upsert({
+        id: apId(),
+        userId,
+        projectId,
+        projectRoleId: adminRole.id,
+        platformId,
+    }, ['userId', 'projectId'])
+}
+
+// TODO: lazy-seeds default roles on first TEAM-project create. A migration that backfills all
+// existing platforms + a hook on platform.create would be cleaner (single source of truth,
+// removes the per-create query), but keeps the fix small and colocated with the feature.
+async function ensureDefaultProjectRoles(platformId: string, entityManager?: EntityManager): Promise<void> {
+    const repo = projectRoleRepo(entityManager)
+    const existing = await repo.find({ where: { platformId, type: RoleType.DEFAULT } })
+    const existingNames = new Set(existing.map(r => r.name))
+    const rows = Object.values(DefaultProjectRole)
+        .filter(name => !existingNames.has(name))
+        .map(name => ({
+            id: apId(),
+            name,
+            permissions: rolePermissions[name],
+            platformId,
+            type: RoleType.DEFAULT,
+        }))
+    if (rows.length > 0) {
+        await repo.insert(rows)
+    }
+}
+
 async function assertExternalIdIsUnique(externalId: string | undefined | null, projectId: ProjectId): Promise<void> {
     if (!isNil(externalId)) {
         const externalIdAlreadyExists = await projectRepo().existsBy({
@@ -314,10 +438,46 @@ type AddProjectToPlatformParams = {
     platformId: ApId
 }
 
+type SoftDeleteParams = {
+    projectId: ProjectId
+    platformId: string
+    userId: string
+    isPrivileged: boolean
+}
+
+type CallerCanAdministerProjectParams = {
+    project: Project
+    userId: string
+    platformId: string
+    isPrivileged: boolean
+}
+
+type GetProjectRoleForUserParams = {
+    userId: string
+    projectId: string
+    platformId: string
+}
+
+type UpdateProjectParams = {
+    projectId: ProjectId
+    platformId: string
+    userId: string
+    isPrivileged: boolean
+    request: UpdateParams
+    entityManager?: EntityManager
+}
+
 type NewProject = Omit<Project, 'created' | 'updated' | 'deleted'>
 
 type ApplyProjectsAccessFiltersParams = {
     platformId: string
     userId: string
     isPrivileged: boolean
+}
+
+type AddCreatorAsProjectAdminParams = {
+    projectId: string
+    userId: string
+    platformId: string
+    entityManager?: EntityManager
 }

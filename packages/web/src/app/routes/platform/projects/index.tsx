@@ -77,9 +77,13 @@ export default function ProjectsPage() {
 
   const [selectedRows, setSelectedRows] = useState<ProjectWithLimits[]>([]);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editDialogInitialValues, setEditDialogInitialValues] =
-    useState<any>(null);
+  const [editDialogInitialValues, setEditDialogInitialValues] = useState<
+    { projectName?: string; externalId?: string } | undefined
+  >(undefined);
   const [editDialogProjectId, setEditDialogProjectId] = useState<string>('');
+  const [editDialogProjectType, setEditDialogProjectType] = useState<
+    ProjectType | undefined
+  >(undefined);
   const { data: allGlobalConnectionsPage } =
     globalConnectionsQueries.useGlobalConnections({
       request: { limit: 9999 },
@@ -316,6 +320,7 @@ export default function ProjectsPage() {
                     projectName: row.displayName,
                   });
                   setEditDialogProjectId(row.id);
+                  setEditDialogProjectType(row.type);
                   setEditDialogOpen(true);
                 }}
               >
@@ -392,6 +397,7 @@ export default function ProjectsPage() {
           }}
           initialValues={editDialogInitialValues}
           projectId={editDialogProjectId}
+          projectType={editDialogProjectType}
         />
       </div>
     </LockedFeatureGuard>

@@ -1,6 +1,7 @@
 import {
   AppConnectionWithoutSensitiveData,
   Permission,
+  ProjectType,
   UpdateProjectPlatformRequest,
   PlatformRole,
 } from '@aiqadam/shared';
@@ -30,7 +31,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { internalErrorToast } from '@/components/ui/sonner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { globalConnectionsQueries } from '@/features/connections/hooks/global-connections-hooks';
+import { ProjectMembersTab } from '@/features/invitations/components/project-members-tab';
 import { projectCollectionUtils } from '@/features/projects/stores/project-collection';
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
@@ -40,6 +43,7 @@ interface EditProjectDialogProps {
   open: boolean;
   onClose: () => void;
   projectId: string;
+  projectType?: ProjectType;
   initialValues?: {
     projectName?: string;
     externalId?: string;
@@ -50,6 +54,7 @@ export function EditProjectDialog({
   open,
   onClose,
   projectId,
+  projectType,
   initialValues,
 }: EditProjectDialogProps) {
   const { platform } = platformHooks.useCurrentPlatform();
@@ -62,27 +67,47 @@ export function EditProjectDialog({
     });
 
   const globalConnections = globalConnectionsPage?.data ?? [];
+  const isTeamProject = projectType === ProjectType.TEAM;
+
+  const formContent =
+    !globalConnectionsEnabled || !isLoadingConnections ? (
+      <EditProjectForm
+        onClose={onClose}
+        projectId={projectId}
+        initialValues={initialValues}
+        globalConnections={globalConnections}
+        globalConnectionsEnabled={globalConnectionsEnabled}
+      />
+    ) : (
+      <SkeletonList numberOfItems={3} className="h-10" />
+    );
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md w-full">
         <DialogHeader>
-          {' '}
           <DialogTitle>
             {t('Edit')} {initialValues?.projectName}
           </DialogTitle>
         </DialogHeader>
 
-        {!globalConnectionsEnabled || !isLoadingConnections ? (
-          <EditProjectForm
-            onClose={onClose}
-            projectId={projectId}
-            initialValues={initialValues}
-            globalConnections={globalConnections}
-            globalConnectionsEnabled={globalConnectionsEnabled}
-          />
+        {isTeamProject ? (
+          <Tabs defaultValue="settings">
+            <TabsList className="w-full">
+              <TabsTrigger value="settings" className="flex-1">
+                {t('General')}
+              </TabsTrigger>
+              <TabsTrigger value="members" className="flex-1">
+                {t('Members')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="settings">{formContent}</TabsContent>
+            <TabsContent value="members">
+              <ProjectMembersTab projectId={projectId} />
+            </TabsContent>
+          </Tabs>
         ) : (
-          <SkeletonList numberOfItems={3} className="h-10" />
+          formContent
         )}
       </DialogContent>
     </Dialog>

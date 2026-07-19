@@ -5,6 +5,7 @@ import {
     InvitationType,
     isNil,
     ListUserInvitationsRequest,
+    Permission,
     Principal,
     PrincipalType,
     QadamFlowError,
@@ -20,11 +21,15 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
+import { repoFactory } from '../core/db/repo-factory'
 import { ProjectResourceType } from '../core/security/authorization/common'
 import { securityAccess } from '../core/security/authorization/fastify-security'
+import { ProjectRoleEntity } from '../project/project-role.entity'
 import { projectService } from '../project/project-service'
 import { userService } from '../user/user-service'
 import { userInvitationsService } from './user-invitation.service'
+
+const projectRoleRepo = repoFactory(ProjectRoleEntity)
 
 export const invitationModule: FastifyPluginAsyncZod = async (app) => {
     await app.register(invitationController, { prefix: '/v1/user-invitations' })
@@ -40,13 +45,17 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
         const platformId = request.principal.platform.id
         const status = await shouldAutoAcceptInvitation(request.principal, request.body, platformId, request.log) ? InvitationStatus.ACCEPTED : InvitationStatus.PENDING
 
+        const projectRoleId = type === InvitationType.PROJECT && request.body.projectRole
+            ? (await projectRoleRepo().findOneByOrFail({ name: request.body.projectRole, platformId })).id
+            : null
+
         const invitation = await userInvitationsService(request.log).create({
             email,
             type,
             platformId,
             platformRole: type === InvitationType.PROJECT ? null : request.body.platformRole,
             projectId: type === InvitationType.PLATFORM ? null : request.body.projectId,
-            projectRoleId: null,
+            projectRoleId,
             invitationExpirySeconds: dayjs.duration(7, 'days').asSeconds(),
             status,
         })
@@ -93,19 +102,31 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
 }
 
 
-async function getProjectIdAndAssertPermission<R extends Principal>(
+async function getProjectIdAndAssertPermission<R extends Principal & { platform: { id: string } }>(
     request: FastifyRequest,
     principal: R,
     requestQuery: ListUserInvitationsRequest,
 ): Promise<string | null> {
-    if (principal.type === PrincipalType.SERVICE) {
-        if (isNil(requestQuery.projectId)) {
-            return null
+    if (requestQuery.type === InvitationType.PLATFORM) {
+        if (principal.type === PrincipalType.USER) {
+            const user = await userService(request.log).getOneOrFail({ id: principal.id })
+            if (!userService(request.log).isUserPrivileged(user)) {
+                throw new QadamFlowError({
+                    code: ErrorCode.PERMISSION_DENIED,
+                    params: { userId: user.id, projectId: '', projectRole: null, permission: undefined },
+                })
+            }
         }
-        await assertPrincipalHasPermissionToProject(request, principal, requestQuery.projectId)
-        return requestQuery.projectId
+        return null
     }
-    return requestQuery.projectId ?? null
+    if (isNil(requestQuery.projectId)) {
+        throw new QadamFlowError({
+            code: ErrorCode.AUTHORIZATION,
+            params: { message: 'projectId is required for project-scoped invitation list' },
+        })
+    }
+    await assertPrincipalHasPermissionToProject(request, principal, requestQuery.projectId)
+    return requestQuery.projectId
 }
 
 async function shouldAutoAcceptInvitation(principal: Principal, request: SendUserInvitationRequest, platformId: string, log: FastifyBaseLogger): Promise<boolean> {
@@ -138,6 +159,39 @@ async function assertPrincipalHasPermissionToProject<R extends Principal & { pla
             code: ErrorCode.AUTHORIZATION,
             params: {
                 message: 'user does not have access to the project',
+            },
+        })
+    }
+    // SERVICE principals are api-key based and treated as platform-scoped admin.
+    if (principal.type === PrincipalType.SERVICE) {
+        return
+    }
+    if (principal.type !== PrincipalType.USER) {
+        throw new QadamFlowError({
+            code: ErrorCode.AUTHORIZATION,
+            params: { message: 'principal cannot manage invitations for this project' },
+        })
+    }
+    const user = await userService(request.log).getOneOrFail({ id: principal.id })
+    if (userService(request.log).isUserPrivileged(user)) {
+        return
+    }
+    if (project.ownerId === user.id) {
+        return
+    }
+    const role = await projectService(request.log).getProjectRoleForUser({
+        userId: user.id,
+        projectId: project.id,
+        platformId: project.platformId,
+    })
+    if (isNil(role) || !role.permissions.includes(Permission.WRITE_INVITATION)) {
+        throw new QadamFlowError({
+            code: ErrorCode.PERMISSION_DENIED,
+            params: {
+                userId: user.id,
+                projectId: project.id,
+                projectRole: role,
+                permission: Permission.WRITE_INVITATION,
             },
         })
     }
