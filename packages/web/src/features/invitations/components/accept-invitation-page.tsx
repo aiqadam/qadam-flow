@@ -1,6 +1,7 @@
+import { useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { CheckCircle, XCircle } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { FullLogo } from '@/components/custom/full-logo';
@@ -9,34 +10,33 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { authenticationSession } from '@/lib/authentication-session';
 
-import { invitationMutations } from '../hooks/invitation-hooks';
+import { invitationApi } from '../api/invitation-api';
 
 export function AcceptInvitationPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get('token');
-  const hasMutated = useRef(false);
-
   const isLoggedIn = authenticationSession.isLoggedIn();
 
-  const { mutate, isPending, isSuccess, isError } =
-    invitationMutations.useAccept();
+  const { data, isPending, isSuccess, isError } = useQuery({
+    queryKey: ['accept-invitation', token],
+    queryFn: () => invitationApi.accept({ invitationToken: token! }),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
 
   useEffect(() => {
-    if (isLoggedIn && token && !hasMutated.current) {
-      mutate({ invitationToken: token });
-      hasMutated.current = true;
+    if (isSuccess && !isLoggedIn && data?.email) {
+      navigate(`/sign-up?email=${encodeURIComponent(data.email)}`, {
+        replace: true,
+      });
     }
-  }, [isLoggedIn, token, mutate]);
+  }, [isSuccess, isLoggedIn, data, navigate]);
 
   if (!token) {
     return <Navigate to="/sign-in" replace />;
-  }
-
-  if (!isLoggedIn) {
-    return (
-      <Navigate to={`/sign-in?redirect=/invitation?token=${token}`} replace />
-    );
   }
 
   return (
@@ -52,7 +52,7 @@ export function AcceptInvitationPage() {
             </div>
           )}
 
-          {isSuccess && (
+          {isSuccess && isLoggedIn && (
             <div className="flex flex-col gap-4">
               <div className="flex flex-row items-center gap-3">
                 <CheckCircle className="size-6 text-success shrink-0" />

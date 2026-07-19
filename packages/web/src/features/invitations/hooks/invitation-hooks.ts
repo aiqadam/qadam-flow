@@ -49,6 +49,9 @@ export const invitationMutations = {
     return useMutation({
       mutationFn: ({ invitationToken }: { invitationToken: string }) =>
         invitationApi.accept({ invitationToken }),
+      onError: () => {
+        // Handled inline by AcceptInvitationPage's isError branch.
+      },
     });
   },
 };

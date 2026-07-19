@@ -1,4 +1,4 @@
-import { apId, assertNotNullOrUndefined, ErrorCode, InvitationStatus, InvitationType, isNil, PlatformRole, QadamFlowError, SeekPage, spreadIfDefined, UserInvitation, UserInvitationWithLink } from '@aiqadam/shared'
+import { apId, assertNotNullOrUndefined, ErrorCode, InvitationStatus, InvitationType, isNil, PlatformRole, QadamFlowError, SeekPage, spreadIfDefined, tryCatch, UserInvitation, UserInvitationWithLink } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { IsNull } from 'typeorm'
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
@@ -16,11 +16,21 @@ const projectMemberRepo = repoFactory(ProjectMemberEntity)
 
 export const userInvitationsService = (log: FastifyBaseLogger) => ({
     async getOneByInvitationTokenOrThrow(invitationToken: string): Promise<UserInvitation> {
-        const decodedToken = await jwtUtils.decodeAndVerify<UserInvitationToken>({
+        const jwtSecret = await jwtUtils.getJwtSecret()
+        const { data: decodedToken, error } = await tryCatch(() => jwtUtils.decodeAndVerify<UserInvitationToken>({
             jwt: invitationToken,
-            key: await jwtUtils.getJwtSecret(),
+            key: jwtSecret,
             audience: JwtAudience.USER_INVITATION,
-        })
+        }))
+        if (error) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: {
+                    entityId: 'invalid-token',
+                    entityType: 'UserInvitation',
+                },
+            })
+        }
         const invitation = await repo().findOneBy({
             id: decodedToken.id,
         })

@@ -21,8 +21,10 @@ function accept({
   invitationToken,
 }: {
   invitationToken: string;
-}): Promise<void> {
-  return api.post<void>('/v1/user-invitations/accept', { invitationToken });
+}): Promise<UserInvitation> {
+  return api.post<UserInvitation>('/v1/user-invitations/accept', {
+    invitationToken,
+  });
 }
 
 function create(
