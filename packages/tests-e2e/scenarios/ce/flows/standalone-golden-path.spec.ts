@@ -53,7 +53,13 @@ async function waitForLatestRunStatus(page: import('@playwright/test').Page, { t
     if (response.ok()) {
       const body = await response.json();
       const status = body?.data?.[0]?.status;
-      if (status && status !== 'RUNNING' && status !== 'SCHEDULED') {
+      if (
+        status &&
+        status !== 'RUNNING' &&
+        status !== 'SCHEDULED' &&
+        status !== 'QUEUED' &&
+        status !== 'PAUSED'
+      ) {
         return status;
       }
     }
