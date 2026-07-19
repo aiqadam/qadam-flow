@@ -23,11 +23,18 @@ export const projectController: FastifyPluginAsyncZod = async (fastify) => {
     })
 
     fastify.post('/:id', UpdateProjectRequest, async (request) => {
+        const user = await userService(request.log).getOneOrFail({ id: request.principal.id })
         const project = await projectService(request.log).getOneOrThrow(request.params.id)
         return toProjectWithLimits(
-            await projectService(request.log).update(request.params.id, {
-                type: project.type,
-                ...request.body,
+            await projectService(request.log).update({
+                projectId: request.params.id,
+                platformId: user.platformId!,
+                userId: user.id,
+                isPrivileged: userService(request.log).isUserPrivileged(user),
+                request: {
+                    type: project.type,
+                    ...request.body,
+                },
             }),
         )
     })
@@ -48,6 +55,8 @@ export const projectController: FastifyPluginAsyncZod = async (fastify) => {
         await projectService(request.log).softDelete({
             projectId: request.params.id,
             platformId: user.platformId!,
+            userId: user.id,
+            isPrivileged: userService(request.log).isUserPrivileged(user),
         })
         return reply.status(StatusCodes.NO_CONTENT).send()
     })

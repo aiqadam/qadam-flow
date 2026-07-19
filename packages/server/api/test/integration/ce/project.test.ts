@@ -1,7 +1,9 @@
-import { ProjectType, ProjectWithLimits, SeekPage } from '@aiqadam/shared'
+import { PlatformRole, PrincipalType, ProjectType, ProjectWithLimits, SeekPage } from '@aiqadam/shared'
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { generateMockToken } from '../../helpers/auth'
+import { mockBasicUser } from '../../helpers/mocks'
 import { createTestContext } from '../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../helpers/test-setup'
 
@@ -144,6 +146,78 @@ describe('Project endpoints (CE)', () => {
             const listResponse = await platformAOwner.get('/v1/projects')
             const body = listResponse.json<SeekPage<ProjectWithLimits>>()
             const stillThere = body.data.find((p) => p.id === platformAProject.id)
+            expect(stillThere).toBeDefined()
+        })
+
+        it('non-admin MEMBER on the same platform cannot update another user\'s project', async () => {
+            const adminCtx = await createTestContext(app!)
+            const createResponse = await adminCtx.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: null,
+            })
+            expect(createResponse.statusCode).toBe(StatusCodes.CREATED)
+            const adminsProject = createResponse.json<ProjectWithLimits>()
+            const originalName = adminsProject.displayName
+
+            const { mockUser: bystander } = await mockBasicUser({
+                user: {
+                    platformId: adminCtx.platform.id,
+                    platformRole: PlatformRole.MEMBER,
+                },
+            })
+            const bystanderToken = await generateMockToken({
+                id: bystander.id,
+                type: PrincipalType.USER,
+                platform: { id: adminCtx.platform.id },
+            })
+
+            const updateRes = await app!.inject({
+                method: 'POST',
+                url: `/api/v1/projects/${adminsProject.id}`,
+                headers: { authorization: `Bearer ${bystanderToken}` },
+                payload: { displayName: 'pwned' },
+            })
+            expect(updateRes.statusCode).toBe(StatusCodes.NOT_FOUND)
+
+            const listAfter = await adminCtx.get('/v1/projects')
+            const stillOriginal = listAfter.json<SeekPage<ProjectWithLimits>>().data.find(p => p.id === adminsProject.id)
+            expect(stillOriginal?.displayName).toBe(originalName)
+        })
+
+        it('non-admin MEMBER on the same platform cannot delete another user\'s project', async () => {
+            const adminCtx = await createTestContext(app!)
+            const createResponse = await adminCtx.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: null,
+            })
+            expect(createResponse.statusCode).toBe(StatusCodes.CREATED)
+            const adminsProject = createResponse.json<ProjectWithLimits>()
+
+            const { mockUser: bystander } = await mockBasicUser({
+                user: {
+                    platformId: adminCtx.platform.id,
+                    platformRole: PlatformRole.MEMBER,
+                },
+            })
+            const bystanderToken = await generateMockToken({
+                id: bystander.id,
+                type: PrincipalType.USER,
+                platform: { id: adminCtx.platform.id },
+            })
+
+            const deleteRes = await app!.inject({
+                method: 'DELETE',
+                url: `/api/v1/projects/${adminsProject.id}`,
+                headers: { authorization: `Bearer ${bystanderToken}` },
+            })
+            expect(deleteRes.statusCode).toBe(StatusCodes.NOT_FOUND)
+
+            const listAfter = await adminCtx.get('/v1/projects')
+            const stillThere = listAfter.json<SeekPage<ProjectWithLimits>>().data.find(p => p.id === adminsProject.id)
             expect(stillThere).toBeDefined()
         })
     })
