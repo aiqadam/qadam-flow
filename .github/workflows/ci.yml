@@ -29,7 +29,12 @@ jobs:
           bun-version: 1.3.3
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: |
+          bun install --frozen-lockfile || {
+            echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
+            rm -rf ~/.bun/install/cache
+            bun install --frozen-lockfile
+          }
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
