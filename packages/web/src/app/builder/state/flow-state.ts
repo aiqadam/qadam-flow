@@ -9,7 +9,6 @@ import {
   isNil,
   StepSettings,
   FlowTriggerType,
-  debounce,
 } from '@aiqadam/shared';
 import { QueryClient } from '@tanstack/react-query';
 import { StoreApi } from 'zustand';
@@ -86,12 +85,31 @@ export const createFlowState = (
   set: StoreApi<BuilderState>['setState'],
 ): FlowState => {
   const flowUpdatesQueue = new PromiseQueue();
-  const debouncedAddToFlowUpdatesQueue = debounce(
-    (updateRequest: () => Promise<void>) => {
+  const pendingDebounces = new Map<
+    string,
+    { timeout: ReturnType<typeof setTimeout>; fn: () => Promise<void> }
+  >();
+  const debouncedAddToFlowUpdatesQueue = (
+    key: string,
+    updateRequest: () => Promise<void>,
+  ) => {
+    const existing = pendingDebounces.get(key);
+    if (existing) clearTimeout(existing.timeout);
+    const timeout = setTimeout(() => {
+      pendingDebounces.delete(key);
       flowUpdatesQueue.add(updateRequest);
-    },
-    1000,
-  );
+    }, 1000);
+    pendingDebounces.set(key, { timeout, fn: updateRequest });
+  };
+  const flushPendingDebounces = () => {
+    for (const [, { timeout, fn }] of pendingDebounces) {
+      clearTimeout(timeout);
+      flowUpdatesQueue.add(fn);
+    }
+    pendingDebounces.clear();
+  };
+  const hasPendingWork = () =>
+    pendingDebounces.size > 0 || flowUpdatesQueue.size() !== 0;
   return {
     saving: false,
     outputSampleData: initialState.outputSampleData,
@@ -206,7 +224,7 @@ export const createFlowState = (
                   id: serverFlowVersion.id,
                   state: serverFlowVersion.state,
                 },
-                saving: flowUpdatesQueue.size() !== 0,
+                saving: hasPendingWork(),
               };
             });
             onSuccess?.();
@@ -249,10 +267,12 @@ export const createFlowState = (
                 outputSampleData,
               };
             });
+            flushPendingDebounces();
             flowUpdatesQueue.add(updateRequest);
             break;
           }
           default: {
+            flushPendingDebounces();
             flowUpdatesQueue.add(updateRequest);
           }
         }
