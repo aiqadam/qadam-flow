@@ -79,10 +79,19 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 # Copy remaining source code (turbo config, etc.)
 COPY . .
 
+# Optional turbo remote cache (populated by CI via dtinth/setup-github-actions-caching-for-turbo).
+# Empty in local builds — turbo silently falls back to local cache only.
+ARG TURBO_API=
+ARG TURBO_TOKEN=
+ARG TURBO_TEAM=
+ENV TURBO_API=$TURBO_API \
+    TURBO_TOKEN=$TURBO_TOKEN \
+    TURBO_TEAM=$TURBO_TEAM
+
 # Build frontend, engine, server API, worker, and all bundled qadams.
 # Qadams must be pre-compiled because the runtime loader scans `<qadam>/dist/`
 # in standalone mode (no cloud registry).
-RUN npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
+RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
 
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\

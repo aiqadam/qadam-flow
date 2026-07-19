@@ -4,7 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [],
+      "outputs": ["dist/**"],
       "inputs": [
         "src/**",
         "tsconfig*.json",
@@ -12,13 +12,11 @@
         "!src/**/*.spec.ts",
         "!src/**/*.test.ts",
         "!vitest.config.*"
-      ],
-      "cache": false
+      ]
     },
     "web#build": {
       "dependsOn": ["^build"],
       "outputs": ["../../dist/packages/web/**"],
-      "cache": false,
       "inputs": [
         "src/**",
         "tsconfig*.json",
@@ -31,7 +29,6 @@
     "api#build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
-      "cache": false,
       "inputs": [
         "src/**",
         "tsconfig*.json",
@@ -43,7 +40,6 @@
     "@aiqadam/engine#build": {
       "dependsOn": [],
       "outputs": ["../../../dist/packages/engine/**"],
-      "cache": false,
       "inputs": [
         "src/**",
         "tsconfig*.json",
