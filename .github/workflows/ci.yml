@@ -54,13 +54,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+          buildkitd-flags: --allow-insecure-entitlement network.host
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: dtinth/setup-github-actions-caching-for-turbo@v1
-
-      - name: Rewrite TURBO_API for BuildKit (host.docker.internal)
-        run: |
-          echo "TURBO_API_BUILDX=$(echo "$TURBO_API" | sed -E 's#(127\.0\.0\.1|localhost)#host.docker.internal#')" >> "$GITHUB_ENV"
 
       - name: Login to GHCR
         if: github.event_name == 'push'
@@ -93,9 +92,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=monolith
           cache-to: type=gha,mode=max,scope=monolith
-          add-hosts: |
-            host.docker.internal:host-gateway
+          allow: |
+            network.host
           build-args: |
-            TURBO_API=${{ env.TURBO_API_BUILDX }}
+            TURBO_API=${{ env.TURBO_API }}
             TURBO_TOKEN=${{ env.TURBO_TOKEN }}
             TURBO_TEAM=${{ env.TURBO_TEAM }}

@@ -91,7 +91,7 @@ ENV TURBO_API=$TURBO_API \
 # Build frontend, engine, server API, worker, and all bundled qadams.
 # Qadams must be pre-compiled because the runtime loader scans `<qadam>/dist/`
 # in standalone mode (no cloud registry).
-RUN npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
+RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
 
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\
