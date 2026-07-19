@@ -4,7 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [],
+      "outputs": ["dist/**"],
       "inputs": [
         "src/**",
         "tsconfig*.json",
@@ -12,8 +12,7 @@
         "!src/**/*.spec.ts",
         "!src/**/*.test.ts",
         "!vitest.config.*"
-      ],
-      "cache": false
+      ]
     },
     "web#build": {
       "dependsOn": ["^build"],
