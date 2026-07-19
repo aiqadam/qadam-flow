@@ -39,7 +39,7 @@ test('should handle webhook with return response', async ({ page }) => {
     .getByTestId('rf__node-trigger')
     .filter({ hasText: 'Select Trigger' })
     .click();
-  await page.getByTestId('pieces-search-input').fill('Catch Webhook');
+  await page.getByTestId('qadams-search-input').fill('Catch Webhook');
   await page.getByText('Catch Webhook').click();
 
   // Grab webhook URL and build test URL
@@ -59,7 +59,7 @@ test('should handle webhook with return response', async ({ page }) => {
 
   // Add return response action
   await page.getByTestId('add-action-button').click();
-  await page.getByTestId('pieces-search-input').fill('Webhook');
+  await page.getByTestId('qadams-search-input').fill('Webhook');
   await page.getByTestId('Webhook').click();
   await page.getByText('Return Response').nth(1).click();
   await page.waitForTimeout(5000);
