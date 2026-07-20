@@ -105,7 +105,10 @@ function buildPutHeaders({ type, fileName, compression, contentLength }: BuildHe
         [FILE_TYPE_HEADER]: type,
     }
     if (fileName) {
-        headers[FILE_NAME_HEADER] = fileName
+        // HTTP headers are ByteStrings — any non-ASCII byte (Cyrillic, CJK,
+        // emoji) crashes undici with "Cannot convert argument to a ByteString".
+        // Percent-encode on the wire; the server calls decodeURIComponent.
+        headers[FILE_NAME_HEADER] = encodeURIComponent(fileName)
     }
     if (compression === FileCompression.ZSTD) {
         headers['Content-Encoding'] = 'zstd'
