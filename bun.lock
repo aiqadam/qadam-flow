@@ -195,7 +195,7 @@
         "intl-messageformat": "10.5.14",
         "ioredis": "5.4.1",
         "ipaddr.js": "2.3.0",
-        "isolated-vm": "6.0.2",
+        "isolated-vm": "7.0.0",
         "js-yaml": "4.1.1",
         "jsdom": "23.0.1",
         "jshint": "2.13.6",
@@ -3433,7 +3433,7 @@
         "fetch-retry": "6.0.0",
         "http-proxy-agent": "7.0.2",
         "https-proxy-agent": "7.0.6",
-        "isolated-vm": "6.0.2",
+        "isolated-vm": "7.0.0",
         "nanoid": "3.3.8",
         "socket.io-client": "4.8.1",
         "tslib": "2.6.2",
@@ -3519,7 +3519,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.94.2",
+      "version": "0.95.1",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",
@@ -7596,7 +7596,7 @@
 
     "isobject": ["isobject@3.0.1", "", {}, "sha512-WhB9zCku7EGTj/HQQRz5aUQEUeoQZH2bWcltRErOpymJ4boYE6wL9Tbr23krRPSZ+C5zqNSrSw+Cc7sZZ4b7vg=="],
 
-    "isolated-vm": ["isolated-vm@6.0.2", "", { "dependencies": { "prebuild-install": "^7.1.3" } }, "sha512-Qw6AJuagG/VJuh2AIcSWmQPsAArti/L+lKhjXU+lyhYkbt3J57XZr+ZjgfTnOr4NJcY1r3f8f0eePS7MRGp+pg=="],
+    "isolated-vm": ["isolated-vm@7.0.0", "", { "dependencies": { "node-gyp-build": "^4.8.4" } }, "sha512-TXlJp9kiSf4AEpkCgB4VIf2M+6MRW3SEzlZUXFmQ6QcRypOnENRvK6RoZuQt/dlLOnqyFGUoZELUfH4ucsG4iw=="],
 
     "isomorphic-fetch": ["isomorphic-fetch@3.0.0", "", { "dependencies": { "node-fetch": "^2.6.1", "whatwg-fetch": "^3.4.1" } }, "sha512-qvUtwJ3j6qwsF3jLxkZ72qCgjMysPzDfeV240JHiGZsANBYd+EEuu35v7dfrJ9Up0Ak07D7GGSkGhCHTqg/5wA=="],
 
