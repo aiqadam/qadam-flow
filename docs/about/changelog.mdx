@@ -4,6 +4,76 @@ description: "A log of all notable changes to Qadam Flow"
 icon: "code-commit"
 ---
 
+<Update label="July 2026" description="v1.1.0 — Team Project Collaboration + Reliability Fixes">
+
+### v1.1.0 — team collaboration and a batch of reliability fixes
+
+First minor release after v1.0.0. The headline is **team project collaboration**; alongside it, four P0 bugs are closed, Node 26 is now supported for local development, and CI/Docker builds are meaningfully faster.
+
+**Docker:**
+
+```bash
+docker pull ghcr.io/aiqadam/qadam-flow:1.1.0
+```
+
+**No breaking changes** — upgrading from v1.0.0 is safe and no schema migrations are required.
+
+#### Team project collaboration
+
+Projects can now be worked on as a team:
+
+- **Invite by email** — every member is assigned a project role that controls what they can see and do.
+- **Self-onboarding** — an invited user signs up straight from the invitation email and lands directly in the project.
+- **Admin dashboard** — manage invitations, roles, and remove members from a single place.
+- Access is enforced at the project scope on every team route; project soft-delete respects the platform boundary.
+
+#### Fixes that affect users
+
+**Template engine**
+
+- **Dot notation with numeric-prefixed keys** — `{{step['output'][0].cells.1eS2ij….value}}` now resolves correctly instead of silently returning an empty string. Critical for the Tables piece's `find-records`, where cell field IDs are auto-generated and often start with a digit. Removes the need for a workaround CODE step.
+- Sliced step-output downloads now use a correct `output.json` filename.
+- `flows.list()` now filters by multiple `externalIds` via repeated query params.
+
+**Files Helper**
+
+- **UTF-8 / Cyrillic filenames in `createFile`** — a file called `ил_1100.doc` no longer crashes the step with `TypeError: Cannot convert argument to a ByteString`. The filename transport header is now percent-encoded on the engine side and decoded on the server, with a raw-string fallback for backward compatibility.
+
+**Flow builder (web)**
+
+- **Debounced saves are flushed before publish** — the last edit is no longer lost when you hit publish immediately after typing.
+- The run timeline correctly fetches sliced agent output, and the download filename is fixed.
+
+**MCP**
+
+- OAuth metadata URLs now preserve non-standard ports (the redirect discovery previously stripped the port).
+
+**Qadams (integrations)**
+
+- **`minimumSupportedRelease` reset to `0.0.0` across all 234 qadams.** Any `package.json.version` below the inherited Activepieces floor (`0.82.0`) used to silently return an empty qadam list from `GET /api/v1/qadams`.
+
+**Auth and invitations**
+
+- Self-onboarding through invitation links is unblocked.
+- Project-level authentication is enforced on team-project and invitation routes.
+
+#### Developer experience
+
+- **`isolated-vm` bumped to 7.0.0** so the v8 code sandbox builds on Node 26 (local development on macOS ARM was broken; the production Docker image on Linux was not affected).
+- **Turbo remote cache in Docker builds** — a GHA-backed shared cache is wired into the verify job and Docker workflow. Warm builds for `web`, `api`, and `engine` now hit the cache and complete noticeably faster.
+- Local worker and flow-builder e2e specs are unblocked and run reliably.
+- `bun install` retries once on transient `isolated-vm` fetch failures.
+- `.env.dev` now generates a valid worker JWT so the dev worker connects out of the box.
+- `release.yml` is synchronised with `ci.yml` for consistent BuildKit entitlements and optimisations.
+- Team-collaboration coverage moved from Playwright e2e to server integration tests — faster and more reliable — with an `AGENTS.md` rule to enforce the split going forward.
+
+#### Compatibility
+
+- **Node 26** is the new baseline for local development. The production Docker image is unchanged.
+- **No breaking API changes.** No database migrations required.
+
+</Update>
+
 <Update label="April 2026" description="Waitpoints — Durable Pause & Resume for Flow Runs">
 
 ### Waitpoints — durable pause and resume for flow runs
