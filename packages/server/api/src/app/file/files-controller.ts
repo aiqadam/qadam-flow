@@ -24,7 +24,7 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
             const token = (request.query as { token: string }).token
             const principal = await verifyEnginePrincipal(token, request.log)
             const fileType = parseFileTypeHeader(request.headers[fileTransportHeaders.TYPE])
-            const fileName = parseStringHeader(request.headers[fileTransportHeaders.NAME])
+            const fileName = decodeFileNameHeader(parseStringHeader(request.headers[fileTransportHeaders.NAME]))
             const contentEncoding = parseStringHeader(request.headers['content-encoding'])
             const compression = contentEncoding === 'zstd' ? FileCompression.ZSTD : FileCompression.NONE
             const contentLength = Number(request.headers['content-length'] ?? 0)
@@ -68,7 +68,7 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
         const { fileId } = request.params
         const principal = await verifyEnginePrincipal(request.query.token, request.log)
         const fileType = parseFileTypeHeader(request.headers[fileTransportHeaders.TYPE])
-        const fileName = parseStringHeader(request.headers[fileTransportHeaders.NAME])
+        const fileName = decodeFileNameHeader(parseStringHeader(request.headers[fileTransportHeaders.NAME]))
         const contentEncoding = parseStringHeader(request.headers['content-encoding'])
         const compression = contentEncoding === 'zstd' ? FileCompression.ZSTD : FileCompression.NONE
 
@@ -206,6 +206,21 @@ function parseFileTypeHeader(value: unknown): FileType {
         })
     }
     return raw as FileType
+}
+
+// Engine percent-encodes fileName to survive the ByteString restriction on HTTP
+// header values. Fall back to the raw string if the client is old / didn't
+// encode, so a stray literal `%` in a legacy filename doesn't 500 the upload.
+function decodeFileNameHeader(value: string | undefined): string | undefined {
+    if (isNil(value)) {
+        return undefined
+    }
+    try {
+        return decodeURIComponent(value)
+    }
+    catch {
+        return value
+    }
 }
 
 function parseStringHeader(value: unknown): string | undefined {
