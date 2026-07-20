@@ -37,11 +37,11 @@ export const AgentTimeline = ({
         <div className="absolute left-2 top-4 bottom-8 w-px bg-border" />
 
         <div className="space-y-7 pb-4">
-          {agentResult.prompt.length > 0 && (
+          {(agentResult.prompt?.length ?? 0) > 0 && (
             <PromptBlock prompt={agentResult.prompt} />
           )}
 
-          {agentResult.steps.map((step, index) => {
+          {(agentResult.steps ?? []).map((step, index) => {
             switch (step.type) {
               case ContentBlockType.MARKDOWN:
                 return <MarkdownBlock key={index} step={step} index={index} />;
