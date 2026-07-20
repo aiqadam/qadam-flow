@@ -331,6 +331,85 @@ describe('Props resolver', () => {
         expect(resolvedInput).toEqual('inner failure')
     })
 
+    test('repro #39: bracket notation with numeric-prefixed key (Tables cell fieldId)', async () => {
+        const stateWithTablesOutput = await FlowExecutorContext.empty().upsertStep('step_1', GenericStepOutput.create({
+            type: FlowActionType.PIECE,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+            output: [
+                {
+                    id: 'rec1',
+                    cells: {
+                        '1eS2ijJLdyl7YPvLZLdl9': { value: 'hello' },
+                    },
+                },
+            ],
+        }))
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: "{{step_1['output'][0]['cells']['1eS2ijJLdyl7YPvLZLdl9']['value']}}",
+            executionState: stateWithTablesOutput,
+        })
+        expect(resolvedInput).toEqual('hello')
+    })
+
+    test('#39: DOT notation with numeric-prefixed key is rewritten to bracket form', async () => {
+        const stateWithTablesOutput = await FlowExecutorContext.empty().upsertStep('step_1', GenericStepOutput.create({
+            type: FlowActionType.PIECE,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+            output: [
+                {
+                    id: 'rec1',
+                    cells: {
+                        '1eS2ijJLdyl7YPvLZLdl9': { value: 'dotfail' },
+                    },
+                },
+            ],
+        }))
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: "{{step_1['output'][0].cells.1eS2ijJLdyl7YPvLZLdl9.value}}",
+            executionState: stateWithTablesOutput,
+        })
+        expect(resolvedInput).toEqual('dotfail')
+    })
+
+    test('repro #39: mixed bracket + dot with numeric-prefixed key', async () => {
+        const stateWithTablesOutput = await FlowExecutorContext.empty().upsertStep('step_1', GenericStepOutput.create({
+            type: FlowActionType.PIECE,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+            output: [
+                {
+                    id: 'rec1',
+                    cells: {
+                        '1eS2ijJLdyl7YPvLZLdl9': { value: 'world' },
+                    },
+                },
+            ],
+        }))
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: "{{step_1['output'][0].cells['1eS2ijJLdyl7YPvLZLdl9'].value}}",
+            executionState: stateWithTablesOutput,
+        })
+        expect(resolvedInput).toEqual('world')
+    })
+
+    test('#39: numeric literal with decimal is preserved (not treated as member access)', async () => {
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: '{{ 1.5 + 2.5 }}',
+            executionState: FlowExecutorContext.empty(),
+        })
+        expect(resolvedInput).toEqual(4)
+    })
+
+    test('#39: numeric literal in exponent form is preserved', async () => {
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: '{{ 1.5e2 }}',
+            executionState: FlowExecutorContext.empty(),
+        })
+        expect(resolvedInput).toEqual(150)
+    })
+
     test('Q5. loop current-iteration item from inside loop subgraph', async () => {
         const stateInsideLoop = (await FlowExecutorContext.empty().upsertStep('step_3', GenericStepOutput.create({
             type: FlowActionType.LOOP_ON_ITEMS,
