@@ -44,7 +44,7 @@ export const qdrant = createQadam({
   displayName: 'Qdrant',
   description: 'Make any action on your qdrant vector database',
   auth: qdrantAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/qdrant.png',
   authors: ["ArmanGiau3","kishanprmr","abuaboud"],
   categories: [QadamCategory.DEVELOPER_TOOLS],

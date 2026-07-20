@@ -9,7 +9,7 @@ import { claudeAuth } from './lib/auth';
 export const claude = createQadam({
   displayName: 'Anthropic Claude',
   auth: claudeAuth,
-  minimumSupportedRelease: '0.63.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/claude.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ['dennisrongo','kishanprmr'],

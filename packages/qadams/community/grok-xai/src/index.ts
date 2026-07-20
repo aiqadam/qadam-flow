@@ -12,7 +12,7 @@ export const grokXai = createQadam({
   displayName: 'Grok by xAI',
   description: 'AI chatbot by xAI that answers questions, generates text, extracts data, and provides real-time insights.',
   auth: grokAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/grok-xai.png',
   categories: [
     QadamCategory.ARTIFICIAL_INTELLIGENCE],

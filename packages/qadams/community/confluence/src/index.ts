@@ -34,7 +34,7 @@ import { newBlogPostTrigger } from './lib/triggers/new-blog-post';
 export const confluence = createQadam({
   displayName: 'Confluence',
   auth: confluenceAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/confluence.png',
   authors: ['geekyme', 'sanket-a11y'],
   categories: [QadamCategory.CONTENT_AND_FILES],

@@ -11,7 +11,7 @@ export const calcomAuth = QadamAuth.SecretText({
 export const calcom = createQadam({
   displayName: 'Cal.com',
   description: 'Open-source alternative to Calendly',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/cal.com.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ["kishanprmr","AbdulTheActivePiecer","khaledmashaly","abuaboud"],

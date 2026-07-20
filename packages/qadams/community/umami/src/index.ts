@@ -14,7 +14,7 @@ import { newSession } from './lib/triggers/new-session';
 export const umami = createQadam({
   displayName: 'Umami',
   description: 'Privacy-focused, open-source web analytics.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/umami.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   auth: umamiAuth,

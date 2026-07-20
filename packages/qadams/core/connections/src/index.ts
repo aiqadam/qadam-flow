@@ -5,7 +5,7 @@ import { readConnection } from './lib/actions/read-connection';
 export const connections = createQadam({
   displayName: 'Connections',
   description: 'Read connections dynamically',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/connections.svg',
   categories: [QadamCategory.CORE],
   auth: QadamAuth.None(),

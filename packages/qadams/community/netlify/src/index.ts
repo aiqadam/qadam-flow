@@ -14,7 +14,7 @@ import { QadamCategory } from "@aiqadam/shared";
     export const netlify = createQadam({
       displayName: "Netlify",
       auth: netlifyAuth,
-      minimumSupportedRelease: '0.36.1',
+      minimumSupportedRelease: '0.0.0',
       description: "Netlify is a platform for building and deploying websites and apps.",
       logoUrl: "/assets/qadams/netlify.png",
       authors: ["sparkybug"],

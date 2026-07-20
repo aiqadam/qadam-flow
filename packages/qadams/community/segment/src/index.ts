@@ -12,7 +12,7 @@ export const segmentAuth = QadamAuth.SecretText({
 export const segment = createQadam({
   displayName: "Segment",
   auth: segmentAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/segment.png",
   authors: ['abuaboud'],
   actions: [identifyUser],

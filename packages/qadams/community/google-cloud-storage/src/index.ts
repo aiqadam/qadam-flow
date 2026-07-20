@@ -21,7 +21,7 @@ export const googleCloudStorage = createQadam({
   displayName: "Google Cloud Storage",
   description: "Automate file storage operations with Google Cloud Storage. Upload, download, manage buckets, set permissions, and monitor changes with real-time triggers.",
   auth: googleCloudStorageAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/google-cloud-storage.png",
   authors: ["sparkybug"],
   categories: [QadamCategory.CONTENT_AND_FILES],

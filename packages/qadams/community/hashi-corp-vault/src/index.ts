@@ -21,7 +21,7 @@ export const hashiCorpVault = createQadam({
   displayName: 'HashiCorp Vault',
   description: 'Securely manage secrets and sensitive data with HashiCorp Vault',
   auth: hashiCorpVaultAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/hashi-corp-vault.png',
   authors: ['onyedikachi-david'],
   categories: [QadamCategory.DEVELOPER_TOOLS],

@@ -16,7 +16,7 @@ import { clockifyAuth } from './lib/auth';
 export const clockify = createQadam({
 	displayName: 'Clockify',
 	auth: clockifyAuth,
-	minimumSupportedRelease: '0.36.1',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/clockify.png',
 	authors: ['rimjhimyadav', 'kishanprmr'],
 	actions: [

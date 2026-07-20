@@ -66,7 +66,7 @@ export const stripe = createQadam({
   displayName: 'Stripe',
   description: 'Online payment processing for internet businesses',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/stripe.png',
   authors: [
     'lldiegon',

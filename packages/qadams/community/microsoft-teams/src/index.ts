@@ -29,7 +29,7 @@ import { newChatMessageTrigger } from './lib/triggers/new-chat-message';
 export const microsoftTeams = createQadam({
   displayName: 'Microsoft Teams',
   auth: microsoftTeamsAuth,
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-teams.png',
   categories: [
     QadamCategory.BUSINESS_INTELLIGENCE,

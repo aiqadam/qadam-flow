@@ -13,7 +13,7 @@ import {
 export const vercel = createQadam({
   displayName: 'Vercel',
   auth: vercelAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/vercel.png',
   description: 'Deploy projects and manage environment variables on Vercel.',
   categories: [QadamCategory.DEVELOPER_TOOLS],

@@ -6,7 +6,7 @@ export const tags = createQadam({
   displayName: 'Tags',
   description: 'Add custom tags to your run for filtration',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/tags.svg',
   categories: [QadamCategory.CORE],
   authors: ["kishanprmr","MoShizzle","abuaboud"],

@@ -71,7 +71,7 @@ export const metabase = createQadam({
   description: 'The simplest way to ask questions and learn from data',
 
   auth: metabaseAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/metabase.png',
   authors: ['AdamSelene', 'abuaboud', 'valentin-mourtialon', 'Kevinyu-alan'],
   actions: [

@@ -22,7 +22,7 @@ export const whatsapp = createQadam({
 	displayName: 'WhatsApp Business',
 	description: 'Manage your WhatsApp business account',
 	auth: whatsappAuth,
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/whatsapp.png',
 	authors: ['LevwTech', 'kishanprmr'],
 	actions: [sendMessage, sendMedia, sendTemplateMessageAction],

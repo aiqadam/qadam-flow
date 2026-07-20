@@ -17,7 +17,7 @@ import { updateSubscriberAction } from './lib/actions/update-subscriber';
 export const sendpulse = createQadam({
   displayName: 'SendPulse',
   auth: sendpulseAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/sendpulse.png',
   authors: ['aryel780', 'onyedikachi-david'],
   actions: [

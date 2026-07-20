@@ -11,7 +11,7 @@ export const zohoBookings = createQadam({
   description:
     'Zoho Bookings is an appointment scheduling software for managing bookings, services, and customer appointments.',
   auth: zohoBookingsAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/zoho-bookings.png',
   authors: ['fortunamide', 'sanket-a11y'],
   actions: [

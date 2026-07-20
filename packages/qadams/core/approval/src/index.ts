@@ -7,7 +7,7 @@ export const approval = createQadam({
   displayName: 'Approval (Legacy)',
   description: 'Build approval process in your workflows',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/approvals.svg',
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud"],
   categories: [QadamCategory.CORE, QadamCategory.FLOW_CONTROL],

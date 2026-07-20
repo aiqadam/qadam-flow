@@ -18,7 +18,7 @@ export const amazonS3 = createQadam({
   description: 'Scalable storage in the cloud',
 
   logoUrl: '/assets/qadams/amazon-s3.png',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ["Willianwg", "kishanprmr", "MoShizzle", "AbdulTheActivePiecer", "khaledmashaly", "abuaboud", "Kevinyu-alan", "hugh-codes"],
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: amazonS3Auth,

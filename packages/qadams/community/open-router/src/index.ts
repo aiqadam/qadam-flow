@@ -17,7 +17,7 @@ export const openRouter = createQadam({
   displayName: 'OpenRouter',
   description: 'Use any AI model to generate code, text, or images via OpenRouter.ai.',
   auth: openRouterAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/open-router.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["Salem-Alaa","kishanprmr","MoShizzle","abuaboud"],

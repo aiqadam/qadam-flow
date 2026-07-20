@@ -9,7 +9,7 @@ export const messagebird = createQadam({
   displayName: 'Bird',
   description: 'Unified CRM for Marketing, Service & Payments',
   auth: birdAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/messagebird.png',
   categories: [QadamCategory.MARKETING, QadamCategory.COMMUNICATION],
   authors: ['kishanprmr', 'geekyme','prasanna2000-max'],

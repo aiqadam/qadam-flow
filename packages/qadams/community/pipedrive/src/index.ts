@@ -50,7 +50,7 @@ export const pipedrive = createQadam({
 	displayName: 'Pipedrive',
 	description: 'Sales CRM and pipeline management software',
 
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/pipedrive.png',
 	categories: [QadamCategory.SALES_AND_CRM],
 	auth: pipedriveAuth,

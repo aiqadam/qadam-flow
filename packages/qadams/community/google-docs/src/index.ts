@@ -15,7 +15,7 @@ export { googleDocsAuth, getAccessToken, GoogleDocsAuthValue } from './lib/auth'
 export const googleDocs = createQadam({
 	displayName: 'Google Docs',
 	description: 'Create and edit documents online',
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/google-docs.png',
 	categories: [QadamCategory.CONTENT_AND_FILES],
 	authors: [

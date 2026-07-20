@@ -13,7 +13,7 @@ export const schedule = createQadam({
   description: 'Trigger flow with fixed schedule',
   categories: [QadamCategory.CORE],
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ["kishanprmr","AbdulTheActivePiecer","khaledmashaly","abuaboud"],
   actions: [],
   triggers: [

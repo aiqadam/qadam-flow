@@ -31,7 +31,7 @@ To obtain a token, follow these steps:
 export const discord = createQadam({
   displayName: 'Discord',
   description: 'Instant messaging and VoIP social platform',
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/discord.png',
   categories: [QadamCategory.COMMUNICATION],
   auth: discordAuth,

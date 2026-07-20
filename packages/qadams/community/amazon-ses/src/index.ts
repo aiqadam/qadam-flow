@@ -13,7 +13,7 @@ import { amazonSesAuth } from './lib/auth';
 export const amazonSes = createQadam({
   displayName: 'Amazon SES',
   auth: amazonSesAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/amazon-ses.png',
   authors: ["fortunamide"],
   actions: [

@@ -22,7 +22,7 @@ export const box = createQadam({
   description: 'Secure content management and collaboration',
 
   auth: boxAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/box.png',
   categories: [QadamCategory.CONTENT_AND_FILES],
   authors: ["kishanprmr","MoShizzle","abuaboud"],

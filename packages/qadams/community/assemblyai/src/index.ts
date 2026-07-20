@@ -9,7 +9,7 @@ export const assemblyai = createQadam({
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   description:
     "Transcribe and extract data from audio using AssemblyAI's Speech AI.",
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/assemblyai.png',
   authors: ['AssemblyAI'],
   actions: [

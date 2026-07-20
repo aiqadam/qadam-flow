@@ -30,7 +30,7 @@ export const httpOauth2Auth = QadamAuth.OAuth2({
 export const httpOauth2ClientCredentials = createQadam({
   displayName: "HTTP (OAuth2)",
   auth: httpOauth2Auth,
-  minimumSupportedRelease: '0.56.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/new-core/http.svg",
   authors: [
     'mhshiba'

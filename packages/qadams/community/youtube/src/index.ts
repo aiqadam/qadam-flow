@@ -12,7 +12,7 @@ export const youtube = createQadam({
   description:
     'Enjoy the videos and music you love, upload original content, and share it all with friends, family, and the world on YouTube',
 
-  minimumSupportedRelease: '0.33.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/youtube.png',
   categories: [QadamCategory.CONTENT_AND_FILES],
   auth: youtubeAuth,

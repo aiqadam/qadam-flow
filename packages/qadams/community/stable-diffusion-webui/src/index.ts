@@ -10,7 +10,7 @@ export const stableDiffusion = createQadam({
   displayName: 'Stable Dffusion web UI',
   description: 'A web interface for Stable Diffusion',
   auth: stableDiffusionAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/stable-diffusion-webui.png',
   authors: ['AdamSelene', 'abuaboud'],
   actions: [textToImage],

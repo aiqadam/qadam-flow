@@ -21,7 +21,7 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 export const lokalise = createQadam({
   displayName: 'Lokalise',
   auth: lokaliseAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/lokalise.png',
   authors: ['sanket-a11y'],
   categories: [QadamCategory.DEVELOPER_TOOLS],

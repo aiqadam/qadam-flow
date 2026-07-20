@@ -13,7 +13,7 @@ export const mistralAi = createQadam({
   displayName: "Mistral AI",
   description: "Mistral AI provides state-of-the-art open-weight and hosted language models for text generation, embeddings, and reasoning tasks.",
   auth: mistralAuth,
-  minimumSupportedRelease: "0.36.1",
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/mistral-ai.png",
   authors: ["sparkybug"],
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],

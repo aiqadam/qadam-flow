@@ -5,7 +5,7 @@ export const hackernews = createQadam({
   displayName: 'Hacker News',
   description: 'A social news website',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/hackernews.png',
   auth: QadamAuth.None(),
   categories: [],

@@ -15,7 +15,7 @@ const description = `Manipulate, format, and extract time units for all your dat
 export const utilityDate = createQadam({
   displayName: 'Date Helper',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.CORE],
   logoUrl: '/assets/qadams/new-core/date-helper.svg',
   authors: [

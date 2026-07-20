@@ -7,7 +7,7 @@ export const cohere = createQadam({
   displayName: 'Cohere',
   description: 'Generate text using Cohere AI language models',
   auth: cohereAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl:
     '/assets/qadams/cohere.png',
   authors: ['AhmadTash'],

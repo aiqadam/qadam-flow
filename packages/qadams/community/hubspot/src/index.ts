@@ -74,7 +74,7 @@ import { hubspotAuth } from './lib/auth';
 export const hubspot = createQadam({
 	displayName: 'HubSpot',
 	description: 'Powerful CRM that offers tools for sales, customer service, and marketing automation.',
-	minimumSupportedRelease: '0.5.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/hubspot.png',
 	authors: ['Salem-Alaa', 'kishanprmr', 'MoShizzle', 'khaledmashaly', 'abuaboud'],
 	categories: [QadamCategory.SALES_AND_CRM],

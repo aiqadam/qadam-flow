@@ -13,7 +13,7 @@ export const zohoCrm = createQadam({
   description: 'Customer relationship management software',
 
   logoUrl: '/assets/qadams/zoho-crm.png',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.SALES_AND_CRM],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud","ikus060"],
   auth: zohoCrmAuth,

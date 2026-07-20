@@ -12,7 +12,7 @@ export const amazonTextract = createQadam({
   description:
     'Extract text, forms, tables, signatures, and structured data from documents using AWS Textract.',
   logoUrl: '/assets/qadams/amazon-textract.png',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ["AhmadTash"],
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: amazonTextractAuth,

@@ -27,7 +27,7 @@ export const mautic = createQadam({
   displayName: 'Mautic',
   description: 'Open-source marketing automation software',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/mautic.png',
   authors: ["bibhuty-did-this","kanarelo","kishanprmr","MoShizzle","khaledmashaly","abuaboud"],
   categories: [QadamCategory.MARKETING],

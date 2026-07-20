@@ -46,7 +46,7 @@ export const deepl = createQadam({
   displayName: 'DeepL',
   description: 'AI-powered language translation',
   auth: deeplAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/deepl.png',
   categories: [],
   authors: ["BBND","kishanprmr","MoShizzle","abuaboud"],

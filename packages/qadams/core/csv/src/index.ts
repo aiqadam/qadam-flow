@@ -7,7 +7,7 @@ import { excelToCsvAction } from './lib/actions/convert-excel-to-csv';
 export const csv = createQadam({
   displayName: 'CSV',
   description: 'Manipulate CSV text',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/csv.svg',
   auth: QadamAuth.None(),
   categories: [QadamCategory.CORE],

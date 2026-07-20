@@ -16,7 +16,7 @@ export const microsoftOneDrive = createQadam({
   displayName: 'Microsoft OneDrive',
   description: 'Cloud storage by Microsoft',
   auth: oneDriveAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/oneDrive.png',
   categories: [QadamCategory.CONTENT_AND_FILES],
   authors: ['BastienMe', 'kishanprmr', 'MoShizzle', 'abuaboud', 'ikus060'],

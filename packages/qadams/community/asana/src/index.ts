@@ -10,7 +10,7 @@ import { asanaAuth } from './lib/auth';
 export const asana = createQadam({
   displayName: 'Asana',
   description: "Work management platform designed to help teams organize, track, and manage their work.",
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/asana.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ["ShayPunter","kishanprmr","MoShizzle","khaledmashaly","abuaboud"],

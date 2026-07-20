@@ -13,7 +13,7 @@ export const bitly = createQadam({
   displayName: 'Bitly',
   description: 'URL shortening and link management platform with analytics.',
   auth: bitlyAuth,
-  minimumSupportedRelease: '0.20.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/bitly.png',
   authors: ['aryel780'],
   categories: [QadamCategory.MARKETING],

@@ -17,7 +17,7 @@ export const textHelper = createQadam({
   displayName: 'Text Helper',
   description: 'Tools for text processing',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/text-helper.svg',
   authors: [
     'joeworkman',

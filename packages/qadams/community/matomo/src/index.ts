@@ -9,7 +9,7 @@ export const matomo = createQadam({
   description: 'Open source alternative to Google Analytics',
 
   auth: matomoAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/matomo.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   authors: ["joeworkman","kishanprmr","MoShizzle","abuaboud"],

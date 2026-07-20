@@ -23,7 +23,7 @@ import { newCalendar } from './lib/triggers/new-calendar';
 export { googleCalendarAuth, getAccessToken, GoogleCalendarAuthValue, createGoogleClient } from './lib/common';
 
 export const googleCalendar = createQadam({
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-calendar.png',
   categories: [QadamCategory.PRODUCTIVITY],
   displayName: 'Google Calendar',

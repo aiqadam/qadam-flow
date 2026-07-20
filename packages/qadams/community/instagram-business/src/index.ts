@@ -7,7 +7,7 @@ import { instagramCommon } from './lib/common';
 export const instagramBusiness = createQadam({
   displayName: 'Instagram for Business',
   description: 'Grow your business on Instagram',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/instagram.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   authors: ["kishanprmr","MoShizzle","abuaboud"],

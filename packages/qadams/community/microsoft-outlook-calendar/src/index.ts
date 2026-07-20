@@ -34,7 +34,7 @@ export const microsoftOutlookCalendar = createQadam({
   displayName: 'Microsoft Outlook Calendar',
   description: 'Calendar software by Microsoft',
   auth: outlookCalendarAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-outlook.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ['antonyvigouret'],

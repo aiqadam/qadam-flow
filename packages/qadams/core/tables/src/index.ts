@@ -15,7 +15,7 @@ export const tables = createQadam({
   displayName: 'Tables',
   logoUrl: '/assets/qadams/new-core/tables.svg',
   categories: [QadamCategory.CORE],
-  minimumSupportedRelease: '0.80.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ['amrdb'],
   auth: QadamAuth.None(),
   actions: [createRecords, deleteRecord, updateRecord, getRecord, findRecords, clearTable, downloadTable],

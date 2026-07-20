@@ -12,7 +12,7 @@ export const filesHelper = createQadam({
   displayName: 'Files Helper',
   description: 'Read file content and return it in different formats.',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/file-helper.svg',
   categories: [QadamCategory.CORE],
   authors: ['kishanprmr', 'MoShizzle', 'abuaboud', 'Seb-C', 'danielpoonwj'],

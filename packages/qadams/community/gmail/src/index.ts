@@ -21,7 +21,7 @@ export {
 } from './lib/auth';
 
 export const gmail = createQadam({
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/gmail.png',
   categories: [
     QadamCategory.COMMUNICATION,

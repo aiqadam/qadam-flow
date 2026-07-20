@@ -9,7 +9,7 @@ import { getWebsitePerformance } from './lib/actions/get-website-performance';
 
 export const browserless = createQadam({
     displayName: 'Browserless',
-    minimumSupportedRelease: '0.36.1',
+    minimumSupportedRelease: '0.0.0',
     logoUrl: '/assets/qadams/browserless.png',
     categories: [QadamCategory.DEVELOPER_TOOLS],
     description: 'Browserless is a headless browser automation tool that allows you to scrape websites, take screenshots, and more.',

@@ -18,7 +18,7 @@ export const googleSearch = createQadam({
   displayName: 'Google Search',
   description: 'Search using Vertex AI Search (Discovery Engine)',
   auth: googleSearchAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-search.png',
   authors: ['onyedikachi-david'],
   actions: [searchAction],

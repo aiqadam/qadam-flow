@@ -6,7 +6,7 @@ import { QadamCategory } from "@aiqadam/shared";
 export const manualTriggerPiece = createQadam({
       displayName: "Manual Trigger",
       auth: QadamAuth.None(),
-      minimumSupportedRelease: '0.78.0',
+      minimumSupportedRelease: '0.0.0',
       logoUrl: "/assets/qadams/new-core/manual-trigger.svg",
       authors: ['AbdulTheActivePiecer'],
       actions: [],

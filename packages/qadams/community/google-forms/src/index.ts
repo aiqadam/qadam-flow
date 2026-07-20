@@ -12,7 +12,7 @@ export const googleForms = createQadam({
   displayName: 'Google Forms',
   description: 'Receive form responses from Google Forms',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-forms.png',
   categories: [QadamCategory.FORMS_AND_SURVEYS],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud","Startouf"],

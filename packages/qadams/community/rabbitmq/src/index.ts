@@ -7,7 +7,7 @@ import { rabbitmqAuth } from './lib/auth';
 export const rabbitmq = createQadam({
   displayName: "RabbitMQ",
   auth: rabbitmqAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/rabbitmq.png",
   authors: [
     "alinperghel"

@@ -10,7 +10,7 @@ export const telnyx = createQadam({
   displayName: 'Telnyx',
   description:
     'Telecom API platform for SMS messaging, voice calls, and messaging webhooks.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/telnyx.png',
   categories: [QadamCategory.COMMUNICATION, QadamCategory.DEVELOPER_TOOLS],
   auth: telnyxAuth,

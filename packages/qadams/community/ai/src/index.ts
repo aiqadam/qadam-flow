@@ -12,7 +12,7 @@ import { runAgent } from "./lib/actions/agents/run-agent";
 export const ai = createQadam({
   displayName: "AI",
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.78.2',
+  minimumSupportedRelease: '0.0.0',
   categories: [
     QadamCategory.ARTIFICIAL_INTELLIGENCE,
     QadamCategory.UNIVERSAL_AI,

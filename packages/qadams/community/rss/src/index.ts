@@ -6,7 +6,7 @@ export const rssFeed = createQadam({
   displayName: 'RSS Feed',
   description: 'Stay updated with RSS feeds',
   authors: ["Abdallah-Alwarawreh","kishanprmr","khaledmashaly","abuaboud", "Kevinyu-alan"],
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/rss.png',
   categories: [],
   auth: QadamAuth.None(),

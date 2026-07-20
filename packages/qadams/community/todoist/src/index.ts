@@ -17,7 +17,7 @@ export const todoistAuth = QadamAuth.OAuth2({
 export const todoist = createQadam({
 	displayName: 'Todoist',
 	description: 'To-do list and task manager',
-	minimumSupportedRelease: '0.5.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/todoist.png',
 	authors: ['MyWay', 'kishanprmr', 'MoShizzle', 'khaledmashaly', 'abuaboud','sanket-a11y'],
 	categories: [QadamCategory.PRODUCTIVITY],

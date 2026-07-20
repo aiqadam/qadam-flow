@@ -169,7 +169,7 @@ export const amazonSqsAuth = QadamAuth.CustomAuth({
 export const awsSqs = createQadam({
   displayName: "Amazon SQS",
   auth: amazonSqsAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/aws-sqs.png",
   authors: ["abuaboud"],
   actions: [sendMessage],

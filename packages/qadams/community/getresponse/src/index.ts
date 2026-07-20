@@ -13,7 +13,7 @@ export const getresponse = createQadam({
   displayName: 'GetResponse',
   description:
     'Email marketing and automation platform for contacts, campaigns, and newsletters.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/getresponse.png',
   categories: [QadamCategory.MARKETING],
   authors: ['veri5ied'],

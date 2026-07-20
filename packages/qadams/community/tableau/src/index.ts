@@ -47,7 +47,7 @@ export const tableau = createQadam({
   displayName: "Tableau",
   description: "Business intelligence and analytics platform for data visualization",
   auth: tableauAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/tableau.png",
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   authors: ["onyedikachi-david"],

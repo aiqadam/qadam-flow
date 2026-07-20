@@ -17,7 +17,7 @@ export const gitea = createQadam({
   displayName: 'Gitea',
   description: 'Self-hosted Git service',
   auth: giteaAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/gitea.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: ['Anmol202005'],

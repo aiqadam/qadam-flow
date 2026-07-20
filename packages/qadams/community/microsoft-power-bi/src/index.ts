@@ -12,7 +12,7 @@ import { microsoftPowerBiAuth } from './lib/auth';
 export const microsoftPowerBi = createQadam({
   displayName: 'Microsoft Power BI',
   description: 'Create and manage Power BI datasets and push data to them',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-power-bi.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   auth: microsoftPowerBiAuth,

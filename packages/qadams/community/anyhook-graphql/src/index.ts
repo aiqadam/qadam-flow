@@ -7,7 +7,7 @@ export const anyHookGraphql = createQadam({
   description:
     'AnyHook GraphQL enables real-time communication through AnyHook proxy server by allowing you to subscribe and listen to GraphQL subscription events',
   auth: graphqlCommon.auth,
-  minimumSupportedRelease: '0.20.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl:
     '/assets/qadams/anyhook-graphql.png',
   authors: ['ahmad-swanblocks'],

@@ -24,7 +24,7 @@ export const chargebee = createQadam({
   displayName: 'Chargebee',
   description:
     'Subscription billing and revenue operations platform for managing customers and subscriptions.',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/chargebee.png',
   authors: ['Harmatta', 'sanket-a11y'],
   categories: [QadamCategory.ACCOUNTING, QadamCategory.PAYMENT_PROCESSING],

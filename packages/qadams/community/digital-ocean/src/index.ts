@@ -18,7 +18,7 @@ import {
 export const digitalOcean = createQadam({
   displayName: 'DigitalOcean',
   auth: digitalOceanAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/digital-ocean.png',
   description: 'Cloud infrastructure provider for developers.',
   categories: [QadamCategory.DEVELOPER_TOOLS],

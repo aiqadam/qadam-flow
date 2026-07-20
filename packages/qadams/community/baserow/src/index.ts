@@ -45,7 +45,7 @@ export const baserow = createQadam({
   displayName: 'Baserow',
   description: 'Open-source online database tool, alternative to Airtable',
   auth: baserowAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/baserow.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ["kishanprmr", "MoShizzle", "abuaboud", 'bst1n', 'sanket-a11y', 'onyedikachi-david'],

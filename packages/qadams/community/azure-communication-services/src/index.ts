@@ -11,7 +11,7 @@ export const azureCommunicationServices = createQadam({
   displayName: 'Azure Communication Services',
   description: 'Communication services from Microsoft Azure',
   auth: azureCommunicationServiceAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl:
     '/assets/qadams/azure-communication-services.png',
   categories: [QadamCategory.COMMUNICATION, QadamCategory.MARKETING],

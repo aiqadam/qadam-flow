@@ -25,7 +25,7 @@ export const notion = createQadam({
   description: 'The all-in-one workspace',
   logoUrl: '/assets/qadams/notion.png',
   categories: [QadamCategory.PRODUCTIVITY],
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: [
     'ShayPunter',
     'kishanprmr',

@@ -68,7 +68,7 @@ export const elevenlabsAuth = QadamAuth.CustomAuth({
 export const elevenlabs = createQadam({
   displayName: 'ElevenLabs',
   auth: elevenlabsAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/elevenlabs.png',
   authors: ['pfernandez98'],
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],

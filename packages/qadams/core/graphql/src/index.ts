@@ -6,7 +6,7 @@ import { QadamCategory } from "@aiqadam/shared";
     export const graphql = createQadam({
       displayName: "GraphQL",
       auth: QadamAuth.None(),
-      minimumSupportedRelease: '0.30.0',
+      minimumSupportedRelease: '0.0.0',
       logoUrl: "/assets/qadams/graphql.svg",
       categories:[QadamCategory.CORE],
       authors: ['mahmuthamet'],

@@ -16,7 +16,7 @@ export { createBlueskyAgent } from './lib/common/client';
 export const bluesky = createQadam({
   displayName: 'Bluesky',
   auth: blueskyAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/bluesky.png',
   authors: ['Sanket6652'],
   categories: [QadamCategory.COMMUNICATION],

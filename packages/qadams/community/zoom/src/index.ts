@@ -28,7 +28,7 @@ export const zoom = createQadam({
   displayName: 'Zoom',
   description: 'Video conferencing, web conferencing, webinars, screen sharing',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/zoom.png',
   categories: [QadamCategory.COMMUNICATION],
   actions: [

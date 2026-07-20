@@ -100,7 +100,7 @@ export const shopify = createQadam({
   logoUrl: '/assets/qadams/shopify.png',
   authors: ["kishanprmr","MoShizzle","AbdulTheActivePiecer","khaledmashaly","abuaboud","ikus060"],
   categories: [QadamCategory.COMMERCE],
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   auth: shopifyAuth,
   actions: [
     adjustInventoryLevelAction,

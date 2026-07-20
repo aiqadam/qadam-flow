@@ -11,7 +11,7 @@ import { QadamCategory } from '@aiqadam/shared';
 export const amazonSecretsManager = createQadam({
   displayName: 'AWS Secrets Manager',
   auth: awsSecretsManagerAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/amazon-secrets-manager.png',
   authors: ['sanket-a11y'],
   categories: [QadamCategory.DEVELOPER_TOOLS],

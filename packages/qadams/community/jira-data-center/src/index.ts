@@ -26,7 +26,7 @@ export const jiraDataCenter = createQadam({
 	description: 'Issue tracking and project management for Jira Data Center and Server',
 
 	auth: jiraDataCenterAuth,
-	minimumSupportedRelease: '0.36.1',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/jira.png',
 	categories: [QadamCategory.PRODUCTIVITY],
 	authors: [],

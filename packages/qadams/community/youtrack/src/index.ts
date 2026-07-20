@@ -57,7 +57,7 @@ export const youtrackAuth = QadamAuth.CustomAuth({
 export const youtrack = createQadam({
   displayName: 'YouTrack',
   description: 'JetBrains project management and issue tracking for agile teams.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/youtrack.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: youtrackAuth,

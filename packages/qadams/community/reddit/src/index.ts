@@ -31,7 +31,7 @@ export const reddit = createQadam({
   displayName: 'Reddit',
   description: 'Interact with Reddit - fetch and submit posts.',
   logoUrl: '/assets/qadams/reddit.png',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.COMMUNICATION],
   authors: ['bhaviksingla1403'],
   auth: redditAuth,

@@ -7,7 +7,7 @@ import { mixpanelAuth } from './lib/auth';
 export const mixpanel = createQadam({
   displayName: 'Mixpanel',
   description: 'Simple and powerful product analytics that helps everyone make better decisions',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/mixpanel.png',
   authors: ["yann120","kishanprmr","MoShizzle","abuaboud"],
   auth: mixpanelAuth,

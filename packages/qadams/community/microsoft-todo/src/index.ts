@@ -30,7 +30,7 @@ export const microsoftTodo = createQadam({
   description: 'Cloud based task management application.',
   categories: [QadamCategory.PRODUCTIVITY],
   auth: microsoftToDoAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-todo.png',
   authors: ['onyedikachi-david', 'david-oluwaseun420'],
   actions: [

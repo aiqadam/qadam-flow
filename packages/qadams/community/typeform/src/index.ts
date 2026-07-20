@@ -17,7 +17,7 @@ export const typeform = createQadam({
   displayName: 'Typeform',
   description: 'Create beautiful online forms and surveys',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/typeform.png',
   categories: [QadamCategory.FORMS_AND_SURVEYS],
   actions: [

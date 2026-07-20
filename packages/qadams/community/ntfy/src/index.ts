@@ -37,7 +37,7 @@ export const ntfy = createQadam({
   description: 'Notification management made easy',
 
   logoUrl: '/assets/qadams/ntfy.png',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.COMMUNICATION],
   auth: ntfyAuth,
   authors: ["MyWay","facferreira","la3rence","kishanprmr","MoShizzle","khaledmashaly","abuaboud"],

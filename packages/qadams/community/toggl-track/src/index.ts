@@ -60,7 +60,7 @@ export const togglTrack = createQadam({
   displayName: 'Toggl Track',
   description: 'Toggl Track is a time tracking application that allows users to track their daily activities across different platforms.',
   auth: togglTrackAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/toggl-track.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ["Pranith124", "onyedikachi-david"],

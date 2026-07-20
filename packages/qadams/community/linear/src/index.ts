@@ -42,7 +42,7 @@ export const linear = createQadam({
   description: 'Issue tracking for modern software teams',
 
   auth: linearAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/linear.png',
   authors: ['lldiegon', 'kishanprmr', 'abuaboud'],
   categories: [QadamCategory.PRODUCTIVITY],

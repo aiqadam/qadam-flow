@@ -23,7 +23,7 @@ export const stabilityAi = createQadam({
   description:
     'Generative AI video model based on the image model Stable Diffusion.',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/stability-ai.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["Willianwg","camilou","kishanprmr","MoShizzle","AbdulTheActivePiecer","khaledmashaly","abuaboud"],

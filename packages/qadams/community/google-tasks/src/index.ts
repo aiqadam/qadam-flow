@@ -10,7 +10,7 @@ import { newTaskTrigger } from './lib/triggers/new-task';
 import { googleTasksAuth } from './lib/auth';
 
 export const googleTasks = createQadam({
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-tasks.png',
   categories: [QadamCategory.PRODUCTIVITY],
   actions: [

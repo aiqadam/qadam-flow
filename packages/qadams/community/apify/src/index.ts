@@ -46,7 +46,7 @@ export const apify = createQadam({
   displayName: 'Apify',
   description: 'Access Apify tools for web scraping, data extraction, and automation.',
   auth: apifyAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/apify.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   authors: ['buttonsbond'],

@@ -99,7 +99,7 @@ export const wordpress = createQadam({
   displayName: 'WordPress',
   description: 'Open-source website creation software',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/wordpress.png',
   categories: [QadamCategory.MARKETING],
   auth: wordpressAuth,

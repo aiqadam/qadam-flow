@@ -74,7 +74,7 @@ export const posthogAuth = QadamAuth.CustomAuth({
 export const posthog = createQadam({
   displayName: 'PostHog',
   description: 'Open-source product analytics',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/posthog.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   auth: posthogAuth,

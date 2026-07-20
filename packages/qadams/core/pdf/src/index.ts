@@ -13,7 +13,7 @@ import { addImageToPdf } from './lib/actions/add-image-to-pdf';
 export const PDF = createQadam({
   displayName: 'PDF',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.34.2',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/pdf.svg',
   authors: [
     'nyamkamunhjin',

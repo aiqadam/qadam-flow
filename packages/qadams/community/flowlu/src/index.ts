@@ -19,7 +19,7 @@ export const flowlu = createQadam({
   displayName: 'Flowlu',
   description: 'Business management software',
   auth: flowluAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/flowlu.png',
   categories: [QadamCategory.SALES_AND_CRM],
   authors: ["kishanprmr","abuaboud"],

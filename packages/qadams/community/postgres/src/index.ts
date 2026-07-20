@@ -86,7 +86,7 @@ export const postgresAuth = QadamAuth.CustomAuth({
 export const postgres = createQadam({
   displayName: 'Postgres',
   description: "The world's most advanced open-source relational database",
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   logoUrl: '/assets/qadams/postgres.png',
   authors: ["AbdullahBitar", "Willianwg", "dentych", "kishanprmr", "AbdulTheActivePiecer", "khaledmashaly", "abuaboud"],

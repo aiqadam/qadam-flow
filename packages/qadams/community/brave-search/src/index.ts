@@ -7,7 +7,7 @@ export const braveSearch = createQadam({
   displayName: 'Brave Search',
   description: 'Privacy-preserving search engine',
   auth: braveSearchAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/brave-search.png',
   authors: ['ErisMorn', 'sanket-a11y'],
   actions: [

@@ -84,7 +84,7 @@ export const twitterAuth = QadamAuth.CustomAuth({
 export const twitter = createQadam({
   displayName: 'Twitter',
   description: 'Social media platform with over 500 million user',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/twitter.png',
   categories: [QadamCategory.COMMUNICATION],
   authors: ["Abdallah-Alwarawreh","Salem-Alaa","kishanprmr","AbdulTheActivePiecer","khaledmashaly","abuaboud"],

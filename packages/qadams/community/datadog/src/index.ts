@@ -13,7 +13,7 @@ export const datadog = createQadam({
   displayName: 'Datadog',
   description: 'Cloud monitoring and analytics platform',
   auth: datadogAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/datadog.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: ['chaimaa-kadaoui'],

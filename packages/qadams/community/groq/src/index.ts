@@ -43,7 +43,7 @@ export const groqAuth = QadamAuth.SecretText({
 export const groq = createQadam({
   displayName: 'Groq',
   description: 'Use Groq\'s fast language models and audio processing capabilities.',
-  minimumSupportedRelease: '0.9.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/groq.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   auth: groqAuth,

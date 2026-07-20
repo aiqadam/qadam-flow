@@ -39,7 +39,7 @@ import { clickupAuth } from './lib/auth';
 export const clickup = createQadam({
   displayName: 'ClickUp',
   description: 'All-in-one productivity platform',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/clickup.png',
   categories: [QadamCategory.PRODUCTIVITY],
   auth: clickupAuth,

@@ -12,7 +12,7 @@ export const imageHelper = createQadam({
   description: 'Tools for image manipulations',
 
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/image-helper.svg',
   authors: ["AbdullahBitar","kishanprmr","abuaboud"],
   categories: [QadamCategory.CORE],

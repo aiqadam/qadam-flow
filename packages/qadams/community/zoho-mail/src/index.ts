@@ -22,7 +22,7 @@ export const zohoMail = createQadam({
 	authors: ['onyedikachi-david', 'kishanprmr', 'kdurek'],
 	description:
 		'Zoho Mail is a powerful email service that allows you to manage your email, contacts, and calendars efficiently.',
-	minimumSupportedRelease: '0.36.1',
+	minimumSupportedRelease: '0.0.0',
 	categories: [QadamCategory.COMMUNICATION],
 	actions: [
 		getEmailDetailsAction,
