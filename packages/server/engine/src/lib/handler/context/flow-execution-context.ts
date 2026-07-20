@@ -234,6 +234,7 @@ async function maybeSliceOutput(value: unknown, engineApi?: EngineApiConfig): Pr
         engineToken: engineApi.engineToken,
         fileId: apId(),
         type: FileType.FLOW_RUN_LOG_SLICE,
+        fileName: 'output.json',
         data,
     })
     return { ref: { fileId, size, url: readUrl } }

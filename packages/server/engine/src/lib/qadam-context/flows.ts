@@ -6,7 +6,9 @@ export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVe
         async list(params: ListFlowsContextParams): Promise<SeekPage<PopulatedFlow>> {
             const queryParams = new URLSearchParams()
             if (params?.externalIds) {
-                queryParams.set('externalIds', params.externalIds.join(','))
+                for (const id of params.externalIds) {
+                    queryParams.append('externalIds', id)
+                }
             }
             const url = `${internalApiUrl}v1/engine/populated-flows?${queryParams.toString()}`
             const response = await fetch(url, {

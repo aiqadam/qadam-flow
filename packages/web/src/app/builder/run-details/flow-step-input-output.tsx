@@ -14,6 +14,7 @@ import {
   RunInternalError,
   tryParseFriendlyQadamError,
 } from '@aiqadam/shared';
+import { useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { Download, Info, ShieldAlert } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -104,6 +105,17 @@ export const FlowStepInputOutput = () => {
     : selectedStepOutput?.errorMessage ??
       selectedStepOutput?.output ??
       'No output';
+
+  const { data: fetchedAgentResult, isLoading: isAgentResultLoading } =
+    useQuery({
+      queryKey: ['sliced-agent-output', slicedOutputRef?.url],
+      queryFn: async () => {
+        const response = await fetch(slicedOutputRef!.url);
+        const text = await response.text();
+        return JSON.parse(text) as AgentResult;
+      },
+      enabled: isAgent && isSlicedOutput && !isNil(slicedOutputRef),
+    });
 
   if (!run) {
     return <></>;
@@ -251,9 +263,17 @@ export const FlowStepInputOutput = () => {
 
           {isAgent && (
             <TabsContent value="timeline">
-              <AgentTimeline
-                agentResult={selectedStepOutput.output as AgentResult}
-              />
+              {isSlicedOutput ? (
+                isAgentResultLoading ? (
+                  <StepOutputSkeleton className="p-4" />
+                ) : (
+                  <AgentTimeline agentResult={fetchedAgentResult} />
+                )
+              ) : (
+                <AgentTimeline
+                  agentResult={selectedStepOutput.output as AgentResult}
+                />
+              )}
             </TabsContent>
           )}
           <TabsContent value="output">
@@ -344,7 +364,7 @@ const SlicedOutputDownload = ({
         href={slicedOutputRef.url}
         target="_blank"
         rel="noopener noreferrer"
-        download
+        download="output.json"
       >
         <Download className="w-4 h-4" />
         {t('Download output')}
