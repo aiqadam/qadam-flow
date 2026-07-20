@@ -1,6 +1,6 @@
 import { isNil, McpServerType, PopulatedMcpServer, TelemetryEventName, tryCatch } from '@aiqadam/shared'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { FastifyBaseLogger, FastifyReply, FastifyRequest } from 'fastify'
+import { FastifyBaseLogger, FastifyReply } from 'fastify'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
 import { domainHelper } from '../../helper/domain-helper'
@@ -48,17 +48,17 @@ function registerMcpEndpoint(app: Parameters<FastifyPluginAsyncZod>[0], scope: M
         const [type, token] = authHeader?.split(' ') ?? []
 
         if (type !== 'Bearer' || isNil(token)) {
-            return unauthorized({ req, reply, scope, message: 'Authorization: Bearer <token> required' })
+            return unauthorized({ reply, scope, message: 'Authorization: Bearer <token> required' })
         }
 
         const identity = await resolveIdentity({ token, scope, log: req.log })
         if (isNil(identity)) {
-            return unauthorized({ req, reply, scope, message: 'Invalid or expired access token', invalidToken: true })
+            return unauthorized({ reply, scope, message: 'Invalid or expired access token', invalidToken: true })
         }
 
         const { mcp, userId } = await resolveMcpAndUser({ identity, log: req.log })
         if (isNil(mcp)) {
-            return unauthorized({ req, reply, scope, message: 'Invalid project or token.', invalidToken: true })
+            return unauthorized({ reply, scope, message: 'Invalid project or token.', invalidToken: true })
         }
 
         const { server } = await mcpServerService(req.log).buildServer({ mcp, userId })
@@ -77,16 +77,14 @@ function registerMcpEndpoint(app: Parameters<FastifyPluginAsyncZod>[0], scope: M
     })
 }
 
-function unauthorized({ req, reply, scope, message, invalidToken }: {
-    req: FastifyRequest
+async function unauthorized({ reply, scope, message, invalidToken }: {
     reply: FastifyReply
     scope: McpServerType
     message: string
     invalidToken?: boolean
-}): FastifyReply {
+}): Promise<FastifyReply> {
     const resourcePath = scope === McpServerType.PLATFORM ? 'mcp/platform' : 'mcp'
-    const resourceMetadataUrl = domainHelper.getPublicUrlFromRequest({
-        req,
+    const resourceMetadataUrl = await domainHelper.getPublicUrl({
         path: `/.well-known/oauth-protected-resource/${resourcePath}`,
     })
     const challenge = invalidToken

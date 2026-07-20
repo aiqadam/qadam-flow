@@ -4,8 +4,8 @@ import { domainHelper } from '../../../helper/domain-helper'
 
 export const mcpOAuthMetadataController: FastifyPluginAsyncZod = async (app) => {
 
-    app.get('/.well-known/oauth-authorization-server', PublicMetadataRequest, async (req, reply) => {
-        const issuer = domainHelper.getPublicUrlFromRequest({ req })
+    app.get('/.well-known/oauth-authorization-server', PublicMetadataRequest, async (_req, reply) => {
+        const issuer = await getPublicOrigin()
         return reply.status(200).header('Access-Control-Allow-Origin', '*').send({
             issuer,
             authorization_endpoint: `${issuer}/authorize`,
@@ -20,21 +20,30 @@ export const mcpOAuthMetadataController: FastifyPluginAsyncZod = async (app) => 
         })
     })
 
-    app.get('/.well-known/oauth-protected-resource/mcp', PublicMetadataRequest, async (req, reply) => {
-        const issuer = domainHelper.getPublicUrlFromRequest({ req })
+    app.get('/.well-known/oauth-protected-resource/mcp', PublicMetadataRequest, async (_req, reply) => {
+        const issuer = await getPublicOrigin()
         return reply.status(200).header('Access-Control-Allow-Origin', '*').send({
             resource: `${issuer}/mcp`,
             authorization_servers: [issuer],
         })
     })
 
-    app.get('/.well-known/oauth-protected-resource/mcp/platform', PublicMetadataRequest, async (req, reply) => {
-        const issuer = domainHelper.getPublicUrlFromRequest({ req })
+    app.get('/.well-known/oauth-protected-resource/mcp/platform', PublicMetadataRequest, async (_req, reply) => {
+        const issuer = await getPublicOrigin()
         return reply.status(200).header('Access-Control-Allow-Origin', '*').send({
             resource: `${issuer}/mcp/platform`,
             authorization_servers: [issuer],
         })
     })
+}
+
+// Use AP_FRONTEND_URL as the canonical source of truth for OAuth metadata URLs.
+// Request-based URL reconstruction (getPublicUrlFromRequest) drops the port when nginx
+// forwards requests with "proxy_set_header Host $host" (strips port), breaking MCP auth
+// on self-hosted deployments that bind on a non-standard port (e.g. 8080).
+async function getPublicOrigin(): Promise<string> {
+    const full = await domainHelper.getPublicUrl({})
+    return full.replace(/\/$/, '')
 }
 
 const PublicMetadataRequest = {
