@@ -169,7 +169,56 @@ async function resolveSingleToken(params: ResolveSingleTokenParams): Promise<unk
     if (variableName.startsWith(CONNECTIONS)) {
         return handleConnection(params)
     }
-    return evalInScope(variableName, { ...currentState }, { flattenNestedKeys })
+    return evalInScope(normalizeInvalidDotKeys(variableName), { ...currentState }, { flattenNestedKeys })
+}
+
+// Rewrites `.<key>` into `['<key>']` when <key> starts with a digit and the dot
+// is in a member-access context. Tables `find-records` returns cells keyed by
+// auto-generated IDs like `1eS2ijJLdyl7YPvLZLdl9` — writing `.1eS2ij...` is a
+// syntax error in JS, so the eval silently returns empty. Rewriting to bracket
+// notation makes the natural dot form work while leaving numeric literals
+// (`1.5`, `1e10`) untouched by only transforming when the preceding char is a
+// letter / `_` / `$` / `]` / `)` — never a digit.
+function normalizeInvalidDotKeys(expr: string): string {
+    let out = ''
+    let i = 0
+    while (i < expr.length) {
+        const ch = expr[i]
+        if (ch === '\'' || ch === '"' || ch === '`') {
+            const quote = ch
+            out += ch
+            i++
+            while (i < expr.length) {
+                if (expr[i] === '\\' && i + 1 < expr.length) {
+                    out += expr[i] + expr[i + 1]
+                    i += 2
+                    continue
+                }
+                out += expr[i]
+                if (expr[i] === quote) {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if (ch === '.' && i + 1 < expr.length && /[0-9]/.test(expr[i + 1])) {
+            const prev = out.length > 0 ? out[out.length - 1] : ''
+            const isMemberAccessContext = prev === ']' || prev === ')' || /[A-Za-z_$]/.test(prev)
+            if (isMemberAccessContext) {
+                let j = i + 1
+                while (j < expr.length && /[A-Za-z0-9_$]/.test(expr[j])) j++
+                const key = expr.slice(i + 1, j)
+                out += `['${key}']`
+                i = j
+                continue
+            }
+        }
+        out += ch
+        i++
+    }
+    return out
 }
 
 async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown> {
