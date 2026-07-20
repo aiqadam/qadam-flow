@@ -30,7 +30,7 @@ export const woocommerce = createQadam({
   logoUrl: '/assets/qadams/woocommerce.png',
   categories: [QadamCategory.COMMERCE],
   auth: wooAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ["TaskMagicKyle","kishanprmr","MoShizzle","khaledmashaly","abuaboud"],
   actions: [
     wooCreateCustomer,

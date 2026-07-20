@@ -16,7 +16,7 @@ import { createCustomApiCallAction } from '@aiqadam/qadams-common';
 export const okta = createQadam({
   displayName: 'Okta',
   auth: oktaAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/okta.png',
   authors: ['Ani-4x', 'sanket-a11y'],
   categories: [QadamCategory.PRODUCTIVITY],

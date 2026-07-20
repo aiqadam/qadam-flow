@@ -11,7 +11,7 @@ export const runway = createQadam({
   displayName: "Runway",
   description: "AI-powered content generation platform for creating high-quality images and videos using text prompts",
   auth: runwayAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/runway.png",
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["sparkybug"],

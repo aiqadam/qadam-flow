@@ -29,7 +29,7 @@ export const github = createQadam({
   description:
     'Developer platform that allows developers to create, store, manage and share their code',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/github.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: githubAuth,

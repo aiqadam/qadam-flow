@@ -8,7 +8,7 @@ export const flows = createQadam({
   displayName: 'Sub Flows',
   description: 'Trigger and call another sub flow.',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.CORE, QadamCategory.FLOW_CONTROL],
   logoUrl: '/assets/qadams/new-core/subflows.svg',
   authors: ['hazemadelkhalel'],

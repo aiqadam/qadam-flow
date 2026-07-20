@@ -90,7 +90,7 @@ const validateAuth = async (auth: PiecePropValueSchema<typeof mongodbAuth>) => {
 export const mongodb = createQadam({
   displayName: 'MongoDB',
   auth: mongodbAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   logoUrl: '/assets/qadams/mongodb.png',
   authors: ['denieler'],

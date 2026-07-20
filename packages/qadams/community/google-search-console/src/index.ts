@@ -18,7 +18,7 @@ export const createAuthClient = (accessToken: string) => {
 
 export const googleSearchConsolePiece = createQadam({
   displayName: 'Google Search Console',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   auth: googleSearchConsoleAuth,
   logoUrl: '/assets/qadams/google-search-console.png',
   authors: ['Gushkool','kishanprmr','itsishant','sanket-a11y'],

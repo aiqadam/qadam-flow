@@ -21,7 +21,7 @@ import { requestApprovalInMail } from './lib/actions/request-approval-send-email
 export const microsoftOutlook = createQadam({
 	displayName: 'Microsoft Outlook',
 	auth: microsoftOutlookAuth,
-	minimumSupportedRelease: '0.82.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/microsoft-outlook.png',
 	categories: [QadamCategory.PRODUCTIVITY],
 	authors: ['lucaslimasouza', 'kishanprmr', 'sanket-a11y'],

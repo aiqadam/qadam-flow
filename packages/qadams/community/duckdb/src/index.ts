@@ -6,7 +6,7 @@ import { QadamCategory } from '@aiqadam/shared';
 export const duckdb = createQadam({
   displayName: 'DuckDB',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/duckdb.png',
   description: 'Run SQL queries on an in-memory DuckDB database.',
   categories: [QadamCategory.DEVELOPER_TOOLS],

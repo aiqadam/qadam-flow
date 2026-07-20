@@ -64,7 +64,7 @@ export const salesforceAuth = QadamAuth.OAuth2({
 export const salesforce = createQadam({
 	displayName: 'Salesforce',
 	description: 'CRM software solutions and enterprise cloud computing',
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/salesforce.png',
 	authors: [
 		'HKudria',

@@ -10,7 +10,7 @@ import { pauseResumeMonitorAction } from './lib/actions/pause-resume-monitor';
 export const uptimeRobot = createQadam({
   displayName: 'UptimeRobot',
   description: 'Monitor your websites, APIs, and servers. Get alerted when things go down.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/uptimerobot.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: uptimeRobotAuth,

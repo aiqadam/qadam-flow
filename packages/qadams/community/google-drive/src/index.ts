@@ -26,7 +26,7 @@ import { googleDriveAuth, getAccessToken, GoogleDriveAuthValue } from './lib/aut
 export { googleDriveAuth, getAccessToken, GoogleDriveAuthValue, createGoogleClient } from './lib/auth';
 
 export const googleDrive = createQadam({
-  minimumSupportedRelease: '0.5.6',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-drive.png',
   categories: [QadamCategory.CONTENT_AND_FILES],
   displayName: 'Google Drive',

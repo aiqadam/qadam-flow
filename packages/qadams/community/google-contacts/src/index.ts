@@ -11,7 +11,7 @@ import { googleContactNewOrUpdatedContact } from './lib/trigger/new-contact';
 import { googleContactsAuth } from './lib/auth';
 
 export const googleContacts = createQadam({
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-contacts.png',
   categories: [QadamCategory.SALES_AND_CRM],
   actions: [

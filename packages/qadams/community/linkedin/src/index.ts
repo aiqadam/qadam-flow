@@ -28,7 +28,7 @@ export const linkedin = createQadam({
   displayName: 'LinkedIn',
   description: 'Connect and network with professionals',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/linkedin.png',
   categories: [QadamCategory.MARKETING],
   authors: ["aasimsani","kishanprmr","MoShizzle","khaledmashaly","abuaboud", "izdrail"],

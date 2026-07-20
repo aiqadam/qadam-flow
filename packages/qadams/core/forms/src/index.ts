@@ -8,7 +8,7 @@ export const forms = createQadam({
   displayName: 'Human Input',
   description: 'Trigger a flow through human input.',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.65.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.CORE],
   logoUrl: '/assets/qadams/new-core/human-input.svg',
   authors: ['anasbarg', 'MoShizzle', 'abuaboud'],

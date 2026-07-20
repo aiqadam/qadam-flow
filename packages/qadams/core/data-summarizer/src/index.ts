@@ -8,7 +8,7 @@ import { QadamCategory } from '@aiqadam/shared';
 export const dataSummarizer = createQadam({
   displayName: 'Data Summarizer',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/data-summarizer.svg',
   authors: ['tahboubali'],
   actions: [calculateAverage, calculateSum, countUniques, getMinMax],

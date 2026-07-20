@@ -8,7 +8,7 @@ import { googleSlidesAuth } from './lib/auth';
 export const googleSlide = createQadam({
   displayName: "Google Slides",
   auth: googleSlidesAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/google-slides.png",
   authors: ["Kevinyu-alan"],
   actions: [

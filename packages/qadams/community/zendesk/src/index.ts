@@ -60,7 +60,7 @@ export const zendesk = createQadam({
   displayName: 'Zendesk',
   description: 'Customer service software and support ticket system',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/zendesk.png',
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud","aryel780","onyedikachi-david","murex971"],
   categories: [QadamCategory.CUSTOMER_SUPPORT],

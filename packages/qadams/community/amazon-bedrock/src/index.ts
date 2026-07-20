@@ -13,7 +13,7 @@ export const awsBedrock = createQadam({
   displayName: 'AWS Bedrock',
   description: 'Build generative AI applications with foundation models',
   auth: awsBedrockAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/amazon-bedrock.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["onyedikachi-david"],

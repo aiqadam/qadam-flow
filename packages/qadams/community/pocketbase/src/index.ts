@@ -101,7 +101,7 @@ export const pocketbase = createQadam({
   description: 'Interact with your PocketBase instance using superuser credentials.',
   auth: pocketbaseAuth,
   categories: [QadamCategory.DEVELOPER_TOOLS],
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/pocketbase.png',
   authors: ["anasaijaz"],
   actions: [getFullList, getList, getRecord, createRecord, updateRecord, deleteRecord],

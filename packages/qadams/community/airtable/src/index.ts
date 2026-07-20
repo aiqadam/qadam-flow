@@ -25,7 +25,7 @@ export const airtable = createQadam({
   displayName: 'Airtable',
   description: 'Low‒code platform to build apps.',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/airtable.png',
   authors: [
     'kanarelo',

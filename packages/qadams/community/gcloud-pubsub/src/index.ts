@@ -53,7 +53,7 @@ export const gcloudPubsub = createQadam({
   displayName: 'GCloud Pub/Sub',
   description: "Google Cloud's event streaming service",
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/gcloud-pubsub.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: googlePubsubAuth,

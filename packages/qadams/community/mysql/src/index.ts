@@ -42,7 +42,7 @@ export const mysql = createQadam({
   displayName: 'MySQL',
   description: "The world's most popular open-source database",
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/mysql.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: ["JanHolger","kishanprmr","khaledmashaly","abuaboud"],

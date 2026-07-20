@@ -15,7 +15,7 @@ export const huggingface = createQadam({
   description:
     'Run inference on 100,000+ open ML models for NLP, vision, and audio tasks',
   auth: huggingFaceAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/huggingface.svg',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ['Ani-4x'],

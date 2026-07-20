@@ -13,7 +13,7 @@ export const oracleDatabase = createQadam({
   displayName: 'Oracle Database',
   description: 'Enterprise-grade relational database',
   auth: oracleDbAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/oracle-database.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: ['Prabhukiran161', 'onyedikachi-david', 'sanket-a11y'],

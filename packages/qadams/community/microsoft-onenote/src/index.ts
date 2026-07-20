@@ -15,7 +15,7 @@ export const microsoftOnenote = createQadam({
     'Microsoft OneNote is a note-taking app that allows you to create, edit, and share notes with others.',
   categories: [QadamCategory.PRODUCTIVITY],
   auth: oneNoteAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-onenote.png',
   authors: ['fortunamide', 'onyedikachi-david'],
   actions: [

@@ -9,7 +9,7 @@ export const serpApi = createQadam({
   displayName: 'SerpApi',
   description: 'Search Google, YouTube, News, and Trends with powerful filtering and analysis capabilities',
   auth: serpApiAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/serp-api.png',
   authors: ['AnkitSharmaOnGithub'],
   actions: [

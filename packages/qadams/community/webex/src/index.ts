@@ -17,7 +17,7 @@ import { BASE_URL } from './lib/common/client';
 export const webex = createQadam({
   displayName: 'Cisco Webex Meetings',
   auth: webexAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/webex.png',
   description: '',
   categories: [QadamCategory.COMMUNICATION],

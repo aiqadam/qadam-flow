@@ -37,7 +37,7 @@ export const facebookPages = createQadam({
   displayName: 'Facebook Pages',
   description: 'Manage your Facebook pages to grow your business',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/facebook.png',
   categories: [QadamCategory.MARKETING],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud"],

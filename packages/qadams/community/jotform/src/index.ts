@@ -51,7 +51,7 @@ export const jotform = createQadam({
   displayName: 'Jotform',
   description: 'Create online forms and surveys',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/jotform.svg',
   categories: [QadamCategory.FORMS_AND_SURVEYS],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud", "PFernandez98"],

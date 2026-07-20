@@ -85,7 +85,7 @@ export const smtpAuth = QadamAuth.CustomAuth({
 export const smtp = createQadam({
   displayName: 'SMTP',
   description: 'Send emails using Simple Mail Transfer Protocol',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/smtp.svg',
   categories: [QadamCategory.CORE],
   authors: [

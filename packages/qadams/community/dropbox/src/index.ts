@@ -20,7 +20,7 @@ import { dropboxAuth } from './lib/auth';
 import { dropboxNewFolder } from './lib/triggers/new-folder';
 
 export const dropbox = createQadam({
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/dropbox.png',
   actions: [
     dropboxSearch,

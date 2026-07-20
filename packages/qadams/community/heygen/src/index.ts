@@ -20,7 +20,7 @@ export const heygen = createQadam({
   displayName: 'HeyGen',
   description: 'Generate and manage AI avatar videos using HeyGen.',
   auth: heygenAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/heygen.jpg',
   authors: ['krushnarout', 'Angelebeats'],
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],

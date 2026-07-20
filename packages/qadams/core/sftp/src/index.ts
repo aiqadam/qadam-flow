@@ -17,7 +17,7 @@ export { getProtocolBackwardCompatibility, getClient, endClient } from './lib/co
 export const ftpSftp = createQadam({
   displayName: 'FTP/SFTP',
   description: 'Connect to FTP, FTPS or SFTP servers',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/sftp.svg',
   categories: [QadamCategory.CORE, QadamCategory.DEVELOPER_TOOLS],
   authors: [

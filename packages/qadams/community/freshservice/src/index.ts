@@ -71,7 +71,7 @@ For the domain, enter only the subdomain. For example, if your URL is **mycompan
 export const freshservice = createQadam({
   displayName: 'Freshservice',
   description: 'IT service management software for ticketing, asset management, and IT operations.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/freshservice.png',
   categories: [QadamCategory.CUSTOMER_SUPPORT],
   authors: ['AhmadTash'],

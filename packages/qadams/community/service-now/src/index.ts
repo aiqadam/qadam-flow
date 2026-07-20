@@ -27,7 +27,7 @@ export const serviceNow = createQadam({
   description:
     'Enterprise IT service management platform for incident, change, and service request management',
   auth: servicenowAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/service-now.png',
   authors: ['sparkybug'],
   categories: [QadamCategory.PRODUCTIVITY],

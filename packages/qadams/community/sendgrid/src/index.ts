@@ -12,7 +12,7 @@ export const sendgrid = createQadam({
   description:
     'Email delivery service for sending transactional and marketing emails',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/sendgrid.png',
   authors: ['ashrafsamhouri', 'kishanprmr', 'MoShizzle', 'khaledmashaly', 'abuaboud', 'Thijs-Attenza'],
   categories: [QadamCategory.COMMUNICATION, QadamCategory.MARKETING],

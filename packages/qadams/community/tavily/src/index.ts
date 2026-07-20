@@ -8,7 +8,7 @@ import { tavilyAuth } from './lib/auth';
 export const tavily = createQadam({
 	displayName: 'Tavily',
 	description: 'Search engine tailored for AI agents.',
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/tavily.jpg',
 	categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
 	authors: ['OsamaHaikal'],

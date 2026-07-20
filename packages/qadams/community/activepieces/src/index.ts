@@ -19,7 +19,7 @@ export const activepieces = createQadam({
   displayName: 'Qadam Flow Platform',
   description: 'Open source no-code business automation',
   auth: activeQadamAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/activepieces.png',
   authors: ['doskyft', 'abuaboud', 'AdamSelene'],
   actions: [

@@ -15,7 +15,7 @@ import { azureBlobStorageAuth } from './lib/auth';
 export const azureBlobStorage = createQadam({
   displayName: 'Azure Blob Storage',
   auth: azureBlobStorageAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/azure-blob-storage.png',
   authors: ['Daniel-Klippa'],
   actions: [

@@ -15,7 +15,7 @@ export const cloudinary = createQadam({
   auth: cloudinaryAuth,
   description: "Cloudinary is a cloud-based image and video management platform that allows you to upload, store, manage, and deliver your media assets. It provides a range of features for image and video optimization, transformation, and delivery.",
   categories: [QadamCategory.CONTENT_AND_FILES],
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/cloudinary.png",
   authors: ['Sanket6652','onyedikachi-david'],
   actions: [uploadResource, deleteResource, createUsageReport, findResourceByPublicId, transformResource],

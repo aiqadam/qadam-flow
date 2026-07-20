@@ -26,7 +26,7 @@ export const openai = createQadam({
   displayName: 'LocalAI',
   description:
     'The free, Self-hosted, community-driven and local-first. Drop-in replacement for OpenAI running on consumer-grade hardware. No GPU required.',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/localai.jpeg',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   auth: localaiAuth,

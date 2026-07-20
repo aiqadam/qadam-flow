@@ -24,7 +24,7 @@ export const monday = createQadam({
   displayName: 'monday.com',
   description: 'Work operating system for businesses',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/monday.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: [

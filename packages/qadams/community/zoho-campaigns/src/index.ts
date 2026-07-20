@@ -20,7 +20,7 @@ export const zohoCampaigns = createQadam({
   description:
     'Zoho Campaigns is an email marketing platform for managing mailing lists, sending campaigns, tracking engagement, and automating subscriber workflows.',
   auth: zohoCampaignsAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/zoho-campaigns.png',
   authors: ['LuizDMM', 'onyedikachi-david'],
   actions: [

@@ -19,7 +19,7 @@ export const microsoftDynamicsCrm = createQadam({
   auth: dynamicsCRMAuth,
   description:
     'Customer relationship management software package developed by Microsoft.',
-  minimumSupportedRelease: '0.27.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-dynamics-crm.png',
   authors: ['kishanprmr'],
   categories: [QadamCategory.SALES_AND_CRM],

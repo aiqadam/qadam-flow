@@ -9,7 +9,7 @@ export const http = createQadam({
   logoUrl: '/assets/qadams/new-core/http.svg',
   categories: [QadamCategory.CORE],
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.20.3',
+  minimumSupportedRelease: '0.0.0',
   actions: [httpSendRequestAction, parseUrl],
   authors: [
     'bibhuty-did-this',

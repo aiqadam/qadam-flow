@@ -53,7 +53,7 @@ export const couchbasePiece = createQadam({
   displayName: 'Couchbase',
   description: 'NoSQL document database for modern applications',
   auth: couchbaseAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/couchbase.png',
   authors: ['chedim', 'onyedikachi-david'],
   actions,

@@ -43,7 +43,7 @@ export const telegramBotAuth = QadamAuth.SecretText({
 export const telegramBot = createQadam({
   displayName: 'Telegram Bot',
   description: 'Build chatbots for Telegram',
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/telegram_bot.png',
   categories: [QadamCategory.COMMUNICATION],
   auth: telegramBotAuth,

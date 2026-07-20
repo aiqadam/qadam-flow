@@ -33,7 +33,7 @@ export type DocusignAuthType = {
 export const docusign = createQadam({
   displayName: 'Docusign',
   auth: docusignAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/docusign.png',
   authors: ['AdamSelene', 'sanket-a11y'],
   actions: [

@@ -26,7 +26,7 @@ Follow these instructions to get your Clarifai (Personal Access Token) PAT Key:
 export const clarifai = createQadam({
   displayName: 'Clarifai',
   description: 'AI-powered visual recognition',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/clarifai.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["akatechis","zeiler","Salem-Alaa","kishanprmr","MoShizzle","abuaboud"],

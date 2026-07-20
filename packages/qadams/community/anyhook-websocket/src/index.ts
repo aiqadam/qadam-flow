@@ -7,7 +7,7 @@ export const anyHookWebsocket = createQadam({
   description:
     'AnyHook Websocket enables real-time communication through AnyHook proxy server by allowing you to subscribe and listen to websocket events',
   auth: websocketCommon.auth,
-  minimumSupportedRelease: '0.20.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl:
     '/assets/qadams/anyhook-websocket.png',
   authors: ['Swanblocks/Ahmad Shawar'],

@@ -17,7 +17,7 @@ export const microsoftDynamics365BusinessCentral = createQadam({
   auth: businessCentralAuth,
   description: 'All-in-one business management solution by Microsoft.',
   categories: [QadamCategory.SALES_AND_CRM],
-  minimumSupportedRelease: '0.27.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl:
     '/assets/qadams/microsoft-dynamics-365-business-central.png',
   authors: ['kishanprmr'],

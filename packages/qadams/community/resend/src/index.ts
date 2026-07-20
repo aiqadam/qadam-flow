@@ -67,7 +67,7 @@ export const resend = createQadam({
   displayName: 'Resend',
   description: 'The email API for developers',
   auth: resendAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/resend.png',
   categories: [QadamCategory.COMMUNICATION],
   authors: ['Tosh94'],

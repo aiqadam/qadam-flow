@@ -20,7 +20,7 @@ Follow these steps to obtain your Firecrawl API Key:
 export const firecrawl = createQadam({
   displayName: 'Firecrawl',
   description: 'Extract structured data from websites using AI with natural language prompts',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/firecrawl.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["geekyme-fsmk", "geekyme", "arinmakk"],

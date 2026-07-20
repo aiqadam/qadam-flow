@@ -11,7 +11,7 @@ import { getGraphBaseUrl, getMicrosoftCloudFromAuth } from './lib/common/microso
 export const microsoft365Copilot = createQadam({
   displayName: 'Microsoft 365 Copilot',
   auth: microsoft365CopilotAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-copilot.png',
   authors: ['sanket-a11y'],
   actions: [

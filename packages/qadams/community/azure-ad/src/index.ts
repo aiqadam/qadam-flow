@@ -25,7 +25,7 @@ import { newUserTrigger } from './lib/triggers/new-user';
 export const azureAd = createQadam({
     displayName: 'Azure Active Directory',
     description: 'Manage users, groups, and licenses in Microsoft Entra ID (Azure AD) via Microsoft Graph.',
-    minimumSupportedRelease: '0.36.1',
+    minimumSupportedRelease: '0.0.0',
     logoUrl: '/assets/qadams/azure-ad.png',
     categories: [QadamCategory.SALES_AND_CRM],
     authors: ['maurivan', 'sanket-a11y'],

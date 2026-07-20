@@ -18,7 +18,7 @@ export const twenty = createQadam({
   displayName: 'Twenty',
   description: 'Open-source CRM platform.',
   auth: twentyAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/twenty.png',
   categories: [QadamCategory.SALES_AND_CRM],
   authors: ['Akash5908'],

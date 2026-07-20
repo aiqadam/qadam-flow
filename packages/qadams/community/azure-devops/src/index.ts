@@ -13,7 +13,7 @@ import { azureDevOpsAuth, azureDevOpsCommon } from './lib/common';
 export const azureDevOps = createQadam({
   displayName: 'Azure DevOps',
   description: 'Track work, code, and ship software with Azure Boards, Repos, and Pipelines.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/azure-devops.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   auth: azureDevOpsAuth,

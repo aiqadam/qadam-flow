@@ -7,7 +7,7 @@ export const xml = createQadam({
   displayName: 'XML',
   description: 'Extensible Markup Language for storing and transporting data',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/xml.png',
   categories: [QadamCategory.CORE],
   auth: QadamAuth.None(),

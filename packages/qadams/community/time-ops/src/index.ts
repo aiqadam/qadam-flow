@@ -47,7 +47,7 @@ export const timeOps = createQadam({
   displayName: 'TimeOps',
   description: 'Time tracking and project management for teams and freelancers.',
   auth: timeOpsAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/time-ops.png',
   authors: ['onyedikachi-david'],
   categories: [QadamCategory.PRODUCTIVITY],

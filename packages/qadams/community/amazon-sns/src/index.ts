@@ -174,7 +174,7 @@ export const amazonSnsAuth = QadamAuth.CustomAuth({
 export const amazonSns = createQadam({
   displayName: "Amazon SNS",
   auth: amazonSnsAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/amazon-sns.png",
   authors: ["coat"],
   actions: [sendMessageAction],

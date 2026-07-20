@@ -37,7 +37,7 @@ export const matrix = createQadam({
 
   logoUrl: '/assets/qadams/matrix.png',
   categories: [QadamCategory.COMMUNICATION],
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ["MyWay","kishanprmr","MoShizzle","khaledmashaly","abuaboud"],
   auth: matrixAuth,
   actions: [

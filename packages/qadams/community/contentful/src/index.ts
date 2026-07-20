@@ -13,7 +13,7 @@ export const contentful = createQadam({
   description: 'Content infrastructure for digital teams',
 
   auth: ContentfulAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/contentful.png',
   categories: [QadamCategory.MARKETING],
   authors: ["cyrilselasi","kishanprmr","MoShizzle","abuaboud"],

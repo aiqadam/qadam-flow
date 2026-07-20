@@ -15,7 +15,7 @@ const markdown = `
 export const calendly = createQadam({
   displayName: 'Calendly',
   description: 'Simple, modern scheduling',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/calendly.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ["kishanprmr","MoShizzle","AbdulTheActivePiecer","khaledmashaly","abuaboud"],

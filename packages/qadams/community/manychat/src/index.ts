@@ -14,7 +14,7 @@ export const manychat = createQadam({
 	description: 'Automations for Instagram, WhatsApp, TikTok, and Messenger marketing.',
 	categories: [QadamCategory.MARKETING],
 	auth: manychatAuth,
-	minimumSupportedRelease: '0.36.1',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/manychat.png',
 	authors: ['neo773', 'kishanprmr'],
 	actions: [

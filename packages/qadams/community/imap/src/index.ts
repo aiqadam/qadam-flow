@@ -10,7 +10,7 @@ import { moveEmail } from './lib/actions/move-email';
 export const imapPiece = createQadam({
   displayName: 'IMAP',
   description: 'Receive new email trigger',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/imap.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   authors: ['kishanprmr', 'MoShizzle', 'khaledmashaly', 'abuaboud', 'simonc'],

@@ -10,7 +10,7 @@ import { storageRemoveValue } from './lib/actions/store-remove-value';
 export const storage = createQadam({
   displayName: 'Storage',
   description: 'Store or retrieve data from key/value database',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/store.svg',
   categories: [QadamCategory.CORE],
   auth: QadamAuth.None(),

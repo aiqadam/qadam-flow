@@ -14,7 +14,7 @@ export const pinecone = createQadam({
   description: 'Manage vector databases, store embeddings, and perform similarity searches',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   auth: pineconeAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/pinecone.png',
   authors: ['fortunamide', 'onyedikachi-david'],
   actions: [createIndex, upsertVector, updateVector, getVector, deleteVector, searchVector, searchIndex],

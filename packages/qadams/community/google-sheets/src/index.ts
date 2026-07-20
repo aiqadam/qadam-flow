@@ -39,7 +39,7 @@ import { readDataRangeAction } from './lib/actions/read-data-range';
 import { deleteMultipleRowsAction } from './lib/actions/delete-multiple-rows';
 
 export const googleSheets = createQadam({
-	minimumSupportedRelease: '0.71.4',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/google-sheets.png',
 	categories: [QadamCategory.PRODUCTIVITY],
 	authors: [

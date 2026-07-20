@@ -36,7 +36,7 @@ export const mattermost = createQadam({
   description: 'Open-source, self-hosted Slack alternative',
 
   logoUrl: '/assets/qadams/mattermost.png',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.COMMUNICATION],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud"],
   auth: mattermostAuth,

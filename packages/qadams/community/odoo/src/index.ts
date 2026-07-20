@@ -8,7 +8,7 @@ export const odoo = createQadam({
   displayName: 'Odoo',
   description: 'Open source all-in-one management software',
   auth: odooAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/odoo.png',
   authors: ["mariomeyer","kishanprmr","abuaboud"],
   actions,

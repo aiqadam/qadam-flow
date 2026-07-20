@@ -17,7 +17,7 @@ export const jinaAi = createQadam({
   displayName: 'Jina AI',
   description: 'AI-powered web content extraction, search, and classification',
   auth: jinaAiAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/jinaai.jpeg',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ['denieler'],

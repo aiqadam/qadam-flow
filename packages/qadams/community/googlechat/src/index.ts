@@ -13,7 +13,7 @@ import { QadamCategory } from '@aiqadam/shared';
 export const googlechat = createQadam({
   displayName: 'Google Chat',
   auth: googleChatApiAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   description: 'Google Chat is a messaging app that allows you to send and receive messages, create spaces, and more.',
   logoUrl: '/assets/qadams/googlechat.png',
   categories: [QadamCategory.COMMUNICATION],

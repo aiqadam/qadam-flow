@@ -19,7 +19,7 @@ export const addEvent = createQadam({
   description:
     'Create and manage calendars, events, and RSVPs with AddEvent — the add-to-calendar service.',
   auth: addEventAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/add-event.png',
   categories: [QadamCategory.PRODUCTIVITY],
   authors: ['onyedikachi-david'],

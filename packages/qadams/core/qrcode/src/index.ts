@@ -6,7 +6,7 @@
     export const qrcode = createQadam({
       displayName: 'QR Code',
       auth: QadamAuth.None(),
-      minimumSupportedRelease: '0.30.0',
+      minimumSupportedRelease: '0.0.0',
       logoUrl: "/assets/qadams/new-core/qrcode.svg",
       categories: [QadamCategory.CORE],
       authors: ['Meng-Yuan Huang'],

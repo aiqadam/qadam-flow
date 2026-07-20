@@ -14,7 +14,7 @@ export const deepgramPiece = createQadam({
   description:
     'Deepgram is an AI-powered speech recognition platform that provides real-time transcription, text-to-speech, and audio analysis capabilities.',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   authors: ['Ani-4x', 'kishanprmr'],
   auth: deepgramAuth,
   actions: [

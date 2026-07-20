@@ -9,7 +9,7 @@ export const webhook = createQadam({
   description: 'Receive HTTP requests and trigger flows using unique URLs.',
   auth: QadamAuth.None(),
   categories: [QadamCategory.CORE],
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/webhooks.svg',
   authors: ['abuaboud', 'pfernandez98', 'kishanprmr','AbdulTheActivePiecer'],
   actions: [returnResponse,returnResponseAndWaitForNextWebhook],

@@ -52,7 +52,7 @@ export const microsoftExcel = createQadam({
 	description: 'Spreadsheet software by Microsoft',
 
 	auth: excelAuth,
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/microsoft-excel-365.png',
 	categories: [QadamCategory.PRODUCTIVITY],
 	authors: [

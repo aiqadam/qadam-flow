@@ -32,7 +32,7 @@ export const googleBigQuery = createQadam({
   displayName: 'Google BigQuery',
   description:
     'Query, analyze, and stream data into Google BigQuery — the fully managed, serverless data warehouse',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-bigquery.png',
   categories: [QadamCategory.BUSINESS_INTELLIGENCE],
   authors: ['AhmadTash'],

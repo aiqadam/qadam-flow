@@ -31,7 +31,7 @@ export const twilio = createQadam({
   description:
     'Cloud communications platform for building SMS, Voice & Messaging applications',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/twilio.png',
   auth: twilioAuth,
   categories: [QadamCategory.COMMUNICATION],

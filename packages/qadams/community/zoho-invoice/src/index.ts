@@ -52,7 +52,7 @@ export const zohoInvoice = createQadam({
   description: 'Online invoicing software for businesses',
 
   auth: zohoAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/zoho-invoice.png',
   categories: [QadamCategory.ACCOUNTING],
   authors: ["kishanprmr","MoShizzle","abuaboud"],

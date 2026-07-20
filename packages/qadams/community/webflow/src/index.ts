@@ -26,7 +26,7 @@ export const webflowAuth = QadamAuth.OAuth2({
 export const webflow = createQadam({
 	displayName: 'Webflow',
 	description: 'Design, build, and launch responsive websites visually',
-	minimumSupportedRelease: '0.5.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/webflow.png',
 	categories: [QadamCategory.MARKETING],
 	authors: [

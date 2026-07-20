@@ -31,7 +31,7 @@ export const jiraCloud = createQadam({
 	description: 'Issue tracking and project management',
 
 	auth: jiraCloudAuth,
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/jira.png',
 	categories: [QadamCategory.PRODUCTIVITY],
 	authors: ['kishanprmr', 'MoShizzle', 'abuaboud', 'prasanna2000-max', 'sanket-a11y'],

@@ -9,7 +9,7 @@ import { nocodbAuth } from './lib/auth';
 export const nocodb = createQadam({
 	displayName: 'NocoDB',
 	auth: nocodbAuth,
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/nocodb.png',
 	authors: ['kishanprmr'],
 	actions: [

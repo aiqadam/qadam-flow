@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 export const facebookLeads = createQadam({
 	displayName: 'Facebook Leads',
 	description: 'Capture leads from Facebook',
-	minimumSupportedRelease: '0.30.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/facebook.png',
 	authors: ['kishanprmr', 'MoShizzle', 'khaledmashaly', 'abuaboud', 'AbdulTheActivePiecer'],
 	categories: [QadamCategory.MARKETING],

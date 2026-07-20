@@ -46,7 +46,7 @@ export const clicksend = createQadam({
   displayName: 'ClickSend SMS',
   description:
     'Cloud-based messaging platform for sending SMS, MMS, voice, email, and more.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/clicksend.png',
   auth: clicksendAuth,
   categories: [QadamCategory.COMMUNICATION],

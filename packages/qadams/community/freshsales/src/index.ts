@@ -20,7 +20,7 @@ export const freshsales = createQadam({
   displayName: 'Freshsales',
   description: 'Sales CRM software',
 
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/freshsales.png',
   categories: [QadamCategory.SALES_AND_CRM],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud"],

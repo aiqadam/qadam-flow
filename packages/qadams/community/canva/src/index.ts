@@ -74,7 +74,7 @@ export const canva = createQadam({
   displayName: 'Canva',
   description: 'Create stunning designs with Canva\'s powerful design automation tools',
   auth: canvaAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/canva.png',
   categories: [QadamCategory.CONTENT_AND_FILES],
   authors: ['onyedikachi-david'],

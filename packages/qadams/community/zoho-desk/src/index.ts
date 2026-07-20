@@ -16,7 +16,7 @@ export const piecesZohoDesk = createQadam({
 	description: 'Helpdesk management software',
 	auth: zohoDeskAuth,
 	categories: [QadamCategory.CUSTOMER_SUPPORT],
-	minimumSupportedRelease: '0.36.1',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/zoho-desk.png',
 	authors: ['volubile', 'kishanprmr'],
 	actions: [

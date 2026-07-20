@@ -43,7 +43,7 @@ export const supabase = createQadam({
   displayName: 'Supabase',
   description: 'The open-source Firebase alternative',
   auth: supabaseAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/supabase.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: ["kishanprmr","MoShizzle","abuaboud","fortunamide"],

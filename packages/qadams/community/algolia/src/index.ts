@@ -11,7 +11,7 @@ export const algolia = createQadam({
   displayName: 'Algolia',
   description:
     'Manage your Algolia search indices — add, browse, and delete records.',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/algolia.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: ['veri5ied'],

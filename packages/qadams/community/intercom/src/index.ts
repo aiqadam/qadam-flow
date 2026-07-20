@@ -53,7 +53,7 @@ import { assignConversationAction } from './lib/actions/assign-conversation-to-a
 export const intercom = createQadam({
 	displayName: 'Intercom',
 	description: 'Customer messaging platform for sales, marketing, and support',
-	minimumSupportedRelease: '0.79.0',
+	minimumSupportedRelease: '0.0.0',
 	logoUrl: '/assets/qadams/intercom.png',
 	categories: [QadamCategory.CUSTOMER_SUPPORT],
 	auth: intercomAuth,

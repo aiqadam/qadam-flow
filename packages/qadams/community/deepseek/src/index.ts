@@ -9,7 +9,7 @@ import { deepseekAuth } from './lib/auth';
       displayName: "DeepSeek",
       auth: deepseekAuth,
       categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
-      minimumSupportedRelease: '0.36.1',
+      minimumSupportedRelease: '0.0.0',
       logoUrl: "/assets/qadams/deepseek.png",
       authors: ["PFernandez98"],
       actions: [askDeepseek],

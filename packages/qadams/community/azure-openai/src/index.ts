@@ -8,7 +8,7 @@ export const azureOpenai = createQadam({
   displayName: 'Azure OpenAI',
   description: 'Powerful AI tools from Microsoft',
   auth: azureOpenaiAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/azure-openai.png',
   authors: ["MoShizzle","abuaboud"],
   actions: [askGpt],

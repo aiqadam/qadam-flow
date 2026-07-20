@@ -33,7 +33,7 @@ export const biginByZoho = createQadam({
   description:
     'Bigin by Zoho CRM is a lightweight CRM designed for small businesses to manage contacts, companies, deals (pipeline records), tasks, calls, and events.',
   auth: biginAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.SALES_AND_CRM],
   logoUrl: '/assets/qadams/bigin-by-zoho.png',
   authors: ['gs03dev'],

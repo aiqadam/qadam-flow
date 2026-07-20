@@ -16,7 +16,7 @@ import { optimizeFile } from './lib/actions/optimize-file';
 export const cloudconvert = createQadam({
     displayName: 'CloudConvert',
     description: 'File conversion and processing platform supporting 200+ formats',
-    minimumSupportedRelease: '0.36.1',
+    minimumSupportedRelease: '0.0.0',
     logoUrl: '/assets/qadams/cloudconvert.png',
     categories: [QadamCategory.DEVELOPER_TOOLS, QadamCategory.CONTENT_AND_FILES],
     authors: ['owuzo'],

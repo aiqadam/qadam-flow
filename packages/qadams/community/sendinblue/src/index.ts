@@ -13,7 +13,7 @@ export const sendinblue = createQadam({
   displayName: 'Brevo',
   description:
     'Formerly Sendinblue, is a SaaS solution for relationship marketing',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/brevo.png',
   authors: ["kanarelo","BLaidzX","Salem-Alaa","kishanprmr","MoShizzle","khaledmashaly","abuaboud"],
   categories: [QadamCategory.MARKETING],

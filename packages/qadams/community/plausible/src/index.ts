@@ -58,7 +58,7 @@ export const plausible = createQadam({
   displayName: 'Plausible Analytics',
   description: 'Privacy-friendly website analytics',
   auth: plausibleAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/plausible.png',
   categories: [QadamCategory.MARKETING],
   authors: ['Tosh94'],

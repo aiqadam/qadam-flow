@@ -54,7 +54,7 @@ export const zohoBooks = createQadam({
   displayName: "Zoho Books",
   description: 'Comprehensive online accounting software for small businesses.',
   logoUrl: "/assets/qadams/zoho-books.png",
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   categories: [QadamCategory.ACCOUNTING],
   authors: ["ikus060"],
   auth: zohoBooksAuth,

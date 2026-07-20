@@ -24,7 +24,7 @@ import { baseUrl } from './lib/common/common';
 export const openai = createQadam({
   displayName: 'OpenAI',
   description: 'Use the many tools ChatGPT has to offer.',
-  minimumSupportedRelease: '0.63.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/openai.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   auth: openaiAuth,

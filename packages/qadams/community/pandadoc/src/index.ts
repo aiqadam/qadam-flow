@@ -19,7 +19,7 @@ import { QadamCategory } from '@aiqadam/shared';
 export const pandadoc = createQadam({
   displayName: 'PandaDoc',
   auth: pandadocAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/pandadoc.png',
   categories:[QadamCategory.CONTENT_AND_FILES,QadamCategory.PRODUCTIVITY],
   authors: ['onyedikachi-david'],

@@ -81,7 +81,7 @@ export const mailgun = createQadam({
   displayName: 'Mailgun',
   description:
     'Email delivery service for sending, receiving, and tracking emails',
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/mailgun.png',
   categories: [QadamCategory.MARKETING, QadamCategory.COMMUNICATION],
   auth: mailgunAuth,

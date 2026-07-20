@@ -10,7 +10,7 @@ export const chatwoot = createQadam({
   displayName: 'Chatwoot',
   description: 'Receive and reply to customer messages with Chatwoot',
   auth: chatwootAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl:
     '/assets/qadams/chatwoot.png',
   authors: ['AhmadTash'],

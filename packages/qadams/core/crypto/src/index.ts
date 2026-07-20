@@ -12,7 +12,7 @@ export const Crypto = createQadam({
   displayName: 'Crypto',
   description: 'Generate random passwords and hash existing text',
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/crypto.svg',
   categories: [QadamCategory.CORE],
   authors: ['AbdullahBitar', 'kishanprmr', 'abuaboud', 'matthieu-lombard', 'antonyvigouret', 'danielpoonwj', 'prasanna2000-max'],

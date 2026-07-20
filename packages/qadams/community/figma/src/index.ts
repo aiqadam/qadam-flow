@@ -12,7 +12,7 @@ import { figmaAuth } from './lib/auth';
 export const figma = createQadam({
   displayName: 'Figma',
   description: 'Collaborative interface design tool',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/figma.png',
   categories: [],
   authors: ["kishanprmr","MoShizzle","khaledmashaly","abuaboud"],

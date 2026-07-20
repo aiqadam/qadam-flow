@@ -13,7 +13,7 @@ export const googleGemini = createQadam({
   displayName: 'Google Gemini',
   auth: googleGeminiAuth,
   description: 'Use the new Gemini models from Google',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/google-gemini.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["pfernandez98","kishanprmr","MoShizzle","AbdulTheActivePiecer","abuaboud"],

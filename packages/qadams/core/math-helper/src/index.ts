@@ -15,7 +15,7 @@ export const math = createQadam({
   displayName: 'Math Helper',
   description: markdownDescription,
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/new-core/math-helper.svg',
   categories: [QadamCategory.CORE],
   authors: ["kishanprmr","MoShizzle","abuaboud"],

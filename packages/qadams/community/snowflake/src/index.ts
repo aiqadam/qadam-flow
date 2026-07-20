@@ -26,7 +26,7 @@ export const snowflake = createQadam({
   description: 'Data warehouse built for the cloud',
 
   auth: snowflakeAuth,
-  minimumSupportedRelease: '0.27.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/snowflake.png',
   categories: [QadamCategory.DEVELOPER_TOOLS],
   authors: [

@@ -8,7 +8,7 @@ export const soap = createQadam({
     'Simple Object Access Protocol for communication between applications',
 
   auth: soapAuth(),
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/soap.png',
   authors: ["x7airworker","kishanprmr","abuaboud"],
   categories: [],

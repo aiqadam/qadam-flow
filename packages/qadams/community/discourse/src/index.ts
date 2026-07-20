@@ -14,7 +14,7 @@ export const discourse = createQadam({
   displayName: 'Discourse',
   description: 'Modern open source forum software',
   auth: discourseAuth,
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/discourse.png',
   categories: [QadamCategory.COMMUNICATION],
   authors: ["pfernandez98","kishanprmr","MoShizzle","abuaboud"],

@@ -6,7 +6,7 @@ import { stopFlow } from "./lib/actions/stop-flow";
 export const flowHelper = createQadam({
   displayName: "Flow Helper",
   auth: QadamAuth.None(),
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/flow-helper.svg",
   authors: ["AbdulTheActivePiecer","AnkitSharmaOnGithub"],
   actions: [getRunId, failFlow, stopFlow],

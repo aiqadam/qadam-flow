@@ -14,7 +14,7 @@ export const microsoft365People = createQadam({
   displayName: 'Microsoft 365 People',
   description: 'Manage contacts in Microsoft 365 People',
   auth: microsoft365PeopleAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-365-people.png',
   authors: ['LuizDMM'],
   actions: [

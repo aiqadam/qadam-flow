@@ -56,7 +56,7 @@ export { slackAuth, slackOAuth2Auth } from './lib/auth';
 export const slack = createQadam({
   displayName: 'Slack',
   description: 'Channel-based messaging platform',
-  minimumSupportedRelease: '0.82.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/slack.png',
   categories: [QadamCategory.COMMUNICATION],
   auth: slackAuth,

@@ -6,7 +6,7 @@ import { perplexityAiAuth } from './lib/auth';
 export const perplexityAi = createQadam({
   displayName: 'Perplexity AI',
   auth: perplexityAiAuth,
-  minimumSupportedRelease: '0.36.1',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/perplexity-ai.png',
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   description: 'AI powered search engine',

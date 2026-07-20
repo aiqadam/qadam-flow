@@ -7,7 +7,7 @@ export const googleVertexai = createQadam({
   displayName: "Google Vertex AI",
   description: "Generate content and images using Gemini and Imagen models on Google Vertex AI.",
   auth: vertexAiAuth,
-  minimumSupportedRelease: "0.71.4",
+  minimumSupportedRelease: '0.0.0',
   logoUrl: "/assets/qadams/google-vertexai.png",
   categories: [QadamCategory.ARTIFICIAL_INTELLIGENCE],
   authors: ["alinperghel", "onyedikachi-david","bertrandong"],

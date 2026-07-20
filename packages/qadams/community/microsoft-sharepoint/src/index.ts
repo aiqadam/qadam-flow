@@ -36,7 +36,7 @@ import { updatedListItemTrigger } from './lib/triggers/updated-list-item';
 export const microsoftSharePoint = createQadam({
   displayName: 'Microsoft SharePoint',
   auth: microsoftSharePointAuth,
-  minimumSupportedRelease: '0.78.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/microsoft-sharepoint.png',
   categories: [QadamCategory.CONTENT_AND_FILES],
   authors: ['kishanprmr', 'pranith124', 'onyedikachi-david'],

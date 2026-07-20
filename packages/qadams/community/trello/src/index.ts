@@ -75,7 +75,7 @@ export const trelloAuth = QadamAuth.BasicAuth({
 export const trello = createQadam({
   displayName: 'Trello',
   description: 'Project management tool for teams',
-  minimumSupportedRelease: '0.30.0',
+  minimumSupportedRelease: '0.0.0',
   logoUrl: '/assets/qadams/trello.png',
   authors: ["Salem-Alaa", "kishanprmr", "MoShizzle", "khaledmashaly", "abuaboud", "AshotZaqoyan"],
   categories: [QadamCategory.PRODUCTIVITY],
