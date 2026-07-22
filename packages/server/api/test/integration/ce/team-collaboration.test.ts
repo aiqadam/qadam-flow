@@ -587,4 +587,45 @@ describe('Team project collaboration (CE)', () => {
         expect(listRes.statusCode).toBe(StatusCodes.FORBIDDEN)
         expect(listRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
     })
+
+    it('Non-privileged USER cannot create a platform invitation (privilege escalation guard)', async () => {
+        const adminCtx = await createTestContext(app!)
+        const { mockUser: attacker } = await mockBasicUser({
+            user: {
+                platformId: adminCtx.platform.id,
+                platformRole: PlatformRole.MEMBER,
+            },
+        })
+        const attackerToken = await generateMockToken({
+            id: attacker.id,
+            type: PrincipalType.USER,
+            platform: { id: adminCtx.platform.id },
+        })
+
+        const inviteRes = await app!.inject({
+            method: 'POST',
+            url: '/api/v1/user-invitations',
+            headers: { authorization: `Bearer ${attackerToken}` },
+            payload: {
+                email: `escalate-${apId()}@qadam.test`,
+                type: InvitationType.PLATFORM,
+                platformRole: PlatformRole.ADMIN,
+            },
+        })
+
+        expect(inviteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+        expect(inviteRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
+    })
+
+    it('Platform admin can create a platform invitation', async () => {
+        const adminCtx = await createTestContext(app!)
+
+        const inviteRes = await adminCtx.post('/v1/user-invitations', {
+            email: `member-${apId()}@qadam.test`,
+            type: InvitationType.PLATFORM,
+            platformRole: PlatformRole.MEMBER,
+        })
+
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+    })
 })
