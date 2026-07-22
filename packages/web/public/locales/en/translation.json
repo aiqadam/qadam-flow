@@ -473,6 +473,7 @@
   "Go to projects": "Go to projects",
   "Failed to send invitation": "Failed to send invitation",
   "Failed to create invitation": "Failed to create invitation",
+  "invalidEmail": "Invalid email address",
   "Invitation link": "Invitation link",
   "Share this link with the invited user to let them join.": "Share this link with the invited user to let them join.",
   "Remove Member": "Remove Member",

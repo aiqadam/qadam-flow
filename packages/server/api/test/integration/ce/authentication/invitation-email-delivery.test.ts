@@ -151,6 +151,29 @@ describe('Invitation email delivery', () => {
         const body = decodeQuotedPrintable(message.raw)
         expect(body).toContain(invitationToken)
     })
+
+    it('rejects an invitation to a malformed email address', async () => {
+        capturedMessages.length = 0
+        const ctx1 = await createTestContext(app!)
+
+        const createRes = await ctx1.post('/v1/projects', {
+            displayName: faker.animal.bird(),
+            externalId: null,
+            metadata: null,
+            maxConcurrentJobs: null,
+        })
+        const teamProject = createRes.json<ProjectWithLimits>()
+
+        const inviteRes = await ctx1.post('/v1/user-invitations', {
+            email: 'not-an-email',
+            type: InvitationType.PROJECT,
+            projectId: teamProject.id,
+            projectRole: DefaultProjectRole.EDITOR,
+        })
+
+        expect(inviteRes.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        expect(capturedMessages).toHaveLength(0)
+    })
 })
 
 function decodeQuotedPrintable(s: string): string {

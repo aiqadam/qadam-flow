@@ -24,6 +24,8 @@ import { userIdentityService } from '../authentication/user-identity/user-identi
 import { repoFactory } from '../core/db/repo-factory'
 import { ProjectResourceType } from '../core/security/authorization/common'
 import { securityAccess } from '../core/security/authorization/fastify-security'
+import { system } from '../helper/system/system'
+import { AppSystemProp } from '../helper/system/system-props'
 import { ProjectRoleEntity } from '../project/project-role.entity'
 import { projectService } from '../project/project-service'
 import { userService } from '../user/user-service'
@@ -247,6 +249,10 @@ const UpsertUserInvitationRequestParams = {
         security: securityAccess.publicPlatform([PrincipalType.USER, PrincipalType.SERVICE], {
             type: ProjectResourceType.BODY,
         }),
+        rateLimit: {
+            max: Number.parseInt(system.getOrThrow(AppSystemProp.API_RATE_LIMIT_AUTHN_MAX), 10),
+            timeWindow: system.getOrThrow(AppSystemProp.API_RATE_LIMIT_AUTHN_WINDOW),
+        },
     },
     schema: {
         body: SendUserInvitationRequest,
