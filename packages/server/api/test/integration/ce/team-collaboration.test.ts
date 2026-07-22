@@ -617,6 +617,35 @@ describe('Team project collaboration (CE)', () => {
         expect(inviteRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
     })
 
+    it('OPERATOR cannot create a platform invitation (role-minting is ADMIN-only)', async () => {
+        const adminCtx = await createTestContext(app!)
+        const { mockUser: operator } = await mockBasicUser({
+            user: {
+                platformId: adminCtx.platform.id,
+                platformRole: PlatformRole.OPERATOR,
+            },
+        })
+        const operatorToken = await generateMockToken({
+            id: operator.id,
+            type: PrincipalType.USER,
+            platform: { id: adminCtx.platform.id },
+        })
+
+        const inviteRes = await app!.inject({
+            method: 'POST',
+            url: '/api/v1/user-invitations',
+            headers: { authorization: `Bearer ${operatorToken}` },
+            payload: {
+                email: `escalate-${apId()}@qadam.test`,
+                type: InvitationType.PLATFORM,
+                platformRole: PlatformRole.ADMIN,
+            },
+        })
+
+        expect(inviteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+        expect(inviteRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
+    })
+
     it('Platform admin can create a platform invitation', async () => {
         const adminCtx = await createTestContext(app!)
 

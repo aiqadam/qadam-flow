@@ -6,6 +6,7 @@ import {
     isNil,
     ListUserInvitationsRequest,
     Permission,
+    PlatformRole,
     Principal,
     PrincipalType,
     QadamFlowError,
@@ -45,7 +46,7 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
             await assertPrincipalHasPermissionToProject(request, request.principal, request.body.projectId)
         }
         else {
-            await assertPrincipalCanManagePlatformInvitations(request, request.principal)
+            await assertPrincipalIsPlatformAdmin(request, request.principal)
         }
         const platformId = request.principal.platform.id
         const status = await shouldAutoAcceptInvitation(request.principal, request.body, platformId, request.log) ? InvitationStatus.ACCEPTED : InvitationStatus.PENDING
@@ -113,7 +114,7 @@ async function getProjectIdAndAssertPermission<R extends Principal & { platform:
     requestQuery: ListUserInvitationsRequest,
 ): Promise<string | null> {
     if (requestQuery.type === InvitationType.PLATFORM) {
-        await assertPrincipalCanManagePlatformInvitations(request, principal)
+        await assertPrincipalCanListPlatformInvitations(request, principal)
         return null
     }
     if (isNil(requestQuery.projectId)) {
@@ -126,12 +127,28 @@ async function getProjectIdAndAssertPermission<R extends Principal & { platform:
     return requestQuery.projectId
 }
 
-async function assertPrincipalCanManagePlatformInvitations(request: FastifyRequest, principal: Principal): Promise<void> {
+async function assertPrincipalCanListPlatformInvitations(request: FastifyRequest, principal: Principal): Promise<void> {
     if (principal.type !== PrincipalType.USER) {
         return
     }
     const user = await userService(request.log).getOneOrFail({ id: principal.id })
     if (!userService(request.log).isUserPrivileged(user)) {
+        throw new QadamFlowError({
+            code: ErrorCode.PERMISSION_DENIED,
+            params: { userId: user.id, projectId: '', projectRole: null, permission: undefined },
+        })
+    }
+}
+
+// Creating a platform invitation mints a platform role on acceptance, so it is
+// gated to platform ADMIN — matching POST /v1/users/:id (platformAdminOnly),
+// which rejects OPERATOR. SERVICE (API key) is platform-scoped admin.
+async function assertPrincipalIsPlatformAdmin(request: FastifyRequest, principal: Principal): Promise<void> {
+    if (principal.type !== PrincipalType.USER) {
+        return
+    }
+    const user = await userService(request.log).getOneOrFail({ id: principal.id })
+    if (user.platformRole !== PlatformRole.ADMIN) {
         throw new QadamFlowError({
             code: ErrorCode.PERMISSION_DENIED,
             params: { userId: user.id, projectId: '', projectRole: null, permission: undefined },
