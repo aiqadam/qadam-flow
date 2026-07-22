@@ -5,9 +5,12 @@ import { userIdentityService } from '../authentication/user-identity/user-identi
 import { repoFactory } from '../core/db/repo-factory'
 import { domainHelper } from '../helper/domain-helper'
 import { JwtAudience, jwtUtils } from '../helper/jwt-utils'
+import { emailService } from '../helper/mail/email-service'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
+import { platformService } from '../platform/platform.service'
 import { ProjectMemberEntity } from '../project/project-member.entity'
+import { projectService } from '../project/project-service'
 import { userService } from '../user/user-service'
 import { UserInvitationEntity } from './user-invitation.entity'
 
@@ -126,7 +129,9 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
             })
             return userInvitation
         }
-        return enrichWithInvitationLink(userInvitation, invitationExpirySeconds)
+        const enrichedInvitation = await enrichWithInvitationLink(userInvitation, invitationExpirySeconds)
+        await sendInvitationEmail({ userInvitation, invitationLink: enrichedInvitation.link, log })
+        return enrichedInvitation
     },
     async list(params: ListUserParams): Promise<SeekPage<UserInvitation>> {
         const decodedCursor = paginationHelper.decodeCursor(params.cursor ?? null)
@@ -244,6 +249,37 @@ const enrichWithInvitationLink = async (userInvitation: UserInvitation, expireyI
         link: invitationLink,
     }
 }
+
+const sendInvitationEmail = async ({ userInvitation, invitationLink, log }: SendInvitationEmailParams): Promise<void> => {
+    const { error } = await tryCatch(async () => {
+        const projectName = await resolveInvitationEntityName(userInvitation, log)
+        await emailService(log).sendInvitation({
+            email: userInvitation.email,
+            platformId: userInvitation.platformId,
+            projectName,
+            invitationLink,
+        })
+    })
+    if (error) {
+        log.error({ error, email: userInvitation.email, platformId: userInvitation.platformId }, '[userInvitationsService#sendInvitationEmail] failed to send invitation email')
+    }
+}
+
+const resolveInvitationEntityName = async (userInvitation: UserInvitation, log: FastifyBaseLogger): Promise<string> => {
+    if (userInvitation.type === InvitationType.PROJECT) {
+        assertNotNullOrUndefined(userInvitation.projectId, 'projectId')
+        const project = await projectService(log).getOneOrThrow(userInvitation.projectId)
+        return project.displayName
+    }
+    const platform = await platformService(log).getOneOrThrow(userInvitation.platformId)
+    return platform.name
+}
+type SendInvitationEmailParams = {
+    userInvitation: UserInvitation
+    invitationLink: string
+    log: FastifyBaseLogger
+}
+
 type ListUserParams = {
     platformId: string
     type: InvitationType

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { BaseModelSchema, Nullable, NullableEnum } from '../../core/common'
 import { PlatformRole } from '../../core/user/index'
+import { formErrors } from '../../form-errors'
 import { ProjectRole } from '../project-role/project-role'
 
 export enum InvitationType {
@@ -36,13 +37,13 @@ export type UserInvitationWithLink = z.infer<typeof UserInvitationWithLink>
 export const SendUserInvitationRequest = z.union([
     z.object({
         type: z.literal(InvitationType.PROJECT),
-        email: z.string(),
+        email: z.string().email(formErrors.invalidEmail),
         projectId: z.string(),
         projectRole: z.string(),
     }),
     z.object({
         type: z.literal(InvitationType.PLATFORM),
-        email: z.string(),
+        email: z.string().email(formErrors.invalidEmail),
         platformRole: z.nativeEnum(PlatformRole),
     }),
 ])

@@ -8,9 +8,11 @@ import {
 import { zodResolver } from '@hookform/resolvers/zod';
 import { t } from 'i18next';
 import { Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
+import { CopyToClipboardInput } from '@/components/custom/clipboard/copy-to-clipboard';
 import { TextWithTooltip } from '@/components/custom/text-with-tooltip';
 import { Button } from '@/components/ui/button';
 import { Form, FormField, FormItem, FormMessage } from '@/components/ui/form';
@@ -65,6 +67,8 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
   const createMutation = invitationMutations.useCreate();
   const deleteMutation = invitationMutations.useDelete();
 
+  const [invitationLink, setInvitationLink] = useState<string | null>(null);
+
   const form = useForm<InviteFormValues>({
     resolver: zodResolver(InviteSchema),
     defaultValues,
@@ -73,6 +77,7 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
 
   const handleSubmit = (values: InviteFormValues) => {
     form.clearErrors('root.serverError');
+    setInvitationLink(null);
     createMutation.mutate(
       {
         type: InvitationType.PROJECT,
@@ -81,14 +86,15 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
         projectRole: values.projectRole,
       },
       {
-        onSuccess: () => {
+        onSuccess: (invitation) => {
+          setInvitationLink(invitation.link ?? null);
           form.reset(defaultValues);
           refetch();
         },
         onError: () => {
           form.setError('root.serverError', {
             type: 'manual',
-            message: t('Failed to send invitation'),
+            message: t('Failed to create invitation'),
           });
         },
       },
@@ -155,6 +161,16 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
             <FormMessage />
           </form>
         </Form>
+      )}
+
+      {invitationLink && (
+        <div className="flex flex-col gap-2">
+          <Label>{t('Invitation link')}</Label>
+          <p className="text-sm text-muted-foreground">
+            {t('Share this link with the invited user to let them join.')}
+          </p>
+          <CopyToClipboardInput textToCopy={invitationLink} useInput={true} />
+        </div>
       )}
 
       {invitations.length > 0 && (
