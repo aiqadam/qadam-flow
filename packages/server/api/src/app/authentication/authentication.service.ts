@@ -1,11 +1,13 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
-import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, isNil, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
+import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, isNil, OtpType, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flagService } from '../flags/flag.service'
+import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
 import { platformService } from '../platform/platform.service'
 import { userService } from '../user/user-service'
 import { userInvitationsService } from '../user-invitations/user-invitation.service'
 import { authenticationUtils } from './authentication-utils'
+import { otpService } from './otp/otp-service'
 import { userIdentityService } from './user-identity/user-identity-service'
 
 export const authenticationService = (log: FastifyBaseLogger) => ({
@@ -198,7 +200,18 @@ async function getUserForPlatform(identityId: string, platform: PlatformWithoutS
 }
 
 async function sendVerificationOrAutoVerify(userIdentity: UserIdentity, log: FastifyBaseLogger): Promise<void> {
-    await userIdentityService(log).verify(userIdentity.id)
+    if (userIdentity.verified) {
+        return
+    }
+    if (!isSmtpConfigured()) {
+        await userIdentityService(log).verify(userIdentity.id)
+        return
+    }
+    await otpService(log).createAndSend({
+        platformId: null,
+        email: userIdentity.email,
+        type: OtpType.EMAIL_VERIFICATION,
+    })
 }
 
 async function getPreferredPlatformIdForFederatedAuthn(email: string, log: FastifyBaseLogger): Promise<string | null> {

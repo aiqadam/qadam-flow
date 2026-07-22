@@ -24,3 +24,10 @@ export const UserIdentity = z.object({
 })
 
 export type UserIdentity = z.infer<typeof UserIdentity>
+
+export const UserIdentityWithoutSensitiveData = UserIdentity.omit({
+    password: true,
+    tokenVersion: true,
+})
+
+export type UserIdentityWithoutSensitiveData = z.infer<typeof UserIdentityWithoutSensitiveData>

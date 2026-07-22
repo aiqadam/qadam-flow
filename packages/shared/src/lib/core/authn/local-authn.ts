@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { SignUpRequest } from '../authentication/dto/sign-up-request'
+import { PasswordType } from '../user/user'
 
 export const VerifyEmailRequestBody = z.object({
     identityId: z.string(),
@@ -10,7 +11,7 @@ export type VerifyEmailRequestBody = z.infer<typeof VerifyEmailRequestBody>
 export const ResetPasswordRequestBody = z.object({
     identityId: z.string(),
     otp: z.string(),
-    newPassword: z.string(),
+    newPassword: PasswordType,
 })
 export type ResetPasswordRequestBody = z.infer<typeof ResetPasswordRequestBody>
 

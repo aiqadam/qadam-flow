@@ -1,3 +1,4 @@
+import { OtpType, UserIdentity } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { domainHelper } from '../domain-helper'
 import { emailSender } from './email-sender/email-sender'
@@ -37,6 +38,34 @@ export const emailService = (log: FastifyBaseLogger) => ({
             },
         })
     },
+
+    async sendOtp({ platformId, userIdentity, otp, type }: SendOtpArgs): Promise<void> {
+        if (userIdentity.verified && type === OtpType.EMAIL_VERIFICATION) {
+            return
+        }
+
+        log.info({ identityId: userIdentity.id, platformId, type }, '[emailService#sendOtp] sending otp email')
+
+        const frontendPath: Record<OtpType, 'verify-email' | 'reset-password'> = {
+            [OtpType.EMAIL_VERIFICATION]: 'verify-email',
+            [OtpType.PASSWORD_RESET]: 'reset-password',
+        }
+        const templateName = frontendPath[type]
+        const setupLink = await domainHelper.getPublicUrl({
+            path: `${templateName}?otpcode=${otp}&identityId=${userIdentity.id}`,
+        })
+
+        await emailSender(log).send({
+            emails: [userIdentity.email],
+            platformId: platformId ?? undefined,
+            templateData: {
+                name: templateName,
+                vars: {
+                    setupLink,
+                },
+            },
+        })
+    },
 })
 
 type SendInvitationArgs = {
@@ -52,4 +81,11 @@ type SendProjectMemberAddedArgs = {
     projectId: string | undefined
     projectName: string
     role: string
+}
+
+type SendOtpArgs = {
+    type: OtpType
+    platformId: string | null
+    otp: string
+    userIdentity: UserIdentity
 }

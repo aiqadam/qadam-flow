@@ -8,6 +8,7 @@ import { commonProperties } from './database-connection'
 import { Migration } from './migration'
 import { BaselineQadamFlow1750000000000 } from './migration/postgres/1750000000000-BaselineQadamFlow'
 import { AddProjectMemberTable1784284221314 } from './migration/postgres/1784284221314-AddProjectMemberTable'
+import { AddOtpEntity1784713964706 } from './migration/postgres/1784713964706-AddOtpEntity'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -23,6 +24,7 @@ export const getMigrations = (): (new () => Migration)[] => {
     return [
         BaselineQadamFlow1750000000000,
         AddProjectMemberTable1784284221314,
+        AddOtpEntity1784713964706,
     ]
 }
 
