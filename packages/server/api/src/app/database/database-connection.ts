@@ -6,6 +6,7 @@ import {
 import { AIProviderEntity } from '../ai/ai-provider-entity'
 import { PlatformAnalyticsReportEntity } from '../analytics/platform-analytics-report.entity'
 import { AppConnectionEntity } from '../app-connection/app-connection.entity'
+import { OtpEntity } from '../authentication/otp/otp-entity'
 import { UserIdentityEntity } from '../authentication/user-identity/user-identity-entity'
 import { FileEntity } from '../file/file.entity'
 import { FlagEntity } from '../flags/flag.entity'
@@ -65,6 +66,7 @@ function getEntities(): EntitySchema<unknown>[] {
         ProjectMemberEntity,
         StoreEntryEntity,
         UserEntity,
+        OtpEntity,
         AppConnectionEntity,
         VariableEntity,
         FolderEntity,

@@ -14,6 +14,8 @@ import { platformAnalyticsModule } from './analytics/platform-analytics.module'
 import { appConnectionModule } from './app-connection/app-connection.module'
 import { platformAppConnectionModule } from './app-connection/platform-app-connection.module'
 import { authenticationModule } from './authentication/authentication.module'
+import { localAuthnModule } from './authentication/local-authn/local-authn-module'
+import { otpModule } from './authentication/otp/otp-module'
 import { canaryRoutingMiddleware } from './core/canary/canary-routing.middleware'
 import { collaborativeModule } from './core/collaborative/collaborative.module'
 import { rateLimitModule } from './core/security/rate-limit'
@@ -151,6 +153,8 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(openapiModule)
     await app.register(appEventRoutingModule)
     await app.register(authenticationModule)
+    await app.register(otpModule)
+    await app.register(localAuthnModule)
     await app.register(triggerModule)
     await app.register(platformModule)
     await app.register(projectModule)
