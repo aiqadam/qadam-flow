@@ -1,5 +1,6 @@
-import { FlowRun, FlowTriggerType, isFlowRunStateTerminal, isManualQadamTrigger, isNil, RunEnvironment, UpdateRunProgressRequest, WebsocketClientEvent } from '@aiqadam/shared'
+import { FlowRun, FlowTriggerType, isFlowRunStateTerminal, isManualQadamTrigger, isNil, RunEnvironment, tryCatch, UpdateRunProgressRequest, WebsocketClientEvent } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
+import { alertsService } from '../../alerts/alerts-service'
 import { websocketService } from '../../core/websockets.service'
 import { flowVersionService } from '../flow-version/flow-version.service'
 
@@ -10,6 +11,10 @@ export const flowRunHooks = (log: FastifyBaseLogger) => ({
             ignoreInternalError: true,
         })) {
             return
+        }
+        const { error } = await tryCatch(() => alertsService(log).sendAlertOnRunFinish(flowRun))
+        if (error) {
+            log.error({ error, flowRunId: flowRun.id }, '[flowRunHooks#onFinish] failed to send failure alert')
         }
         const flowVersion = await flowVersionService(log).getOne(flowRun.flowVersionId)
         const isPieceTrigger = !isNil(flowVersion) && flowVersion.trigger.type === FlowTriggerType.PIECE && !isNil(flowVersion.trigger.settings.triggerName)
