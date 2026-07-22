@@ -14,7 +14,7 @@ Click the green **Use this template** button at the top of this repo to copy the
 
 ## Development
 
-Install the [Mintlify CLI](https://www.npmjs.com/package/mint) to preview your documentation changes locally. To install, use the following command:
+Install the [Mintlify CLI](http://web.archive.org/web/20250811182646/https://www.npmjs.com/package/mint) to preview your documentation changes locally. To install, use the following command:
 
 ```
 npm i -g mint
