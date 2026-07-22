@@ -138,7 +138,9 @@
     "@types/nodemailer": "6.4.9",
     "@types/qs": "6.9.7",
     "@types/semver": "7.5.6",
+    "@types/smtp-server": "3.5.13",
     "@types/tinycolor2": "1.4.5",
+    "smtp-server": "3.19.2",
     "vitest": "3.0.8",
     "webpack-ignore-dynamic-require": "1.0.0"
   },

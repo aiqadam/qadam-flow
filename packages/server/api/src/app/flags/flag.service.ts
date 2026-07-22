@@ -5,6 +5,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { domainHelper } from '../helper/domain-helper'
+import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { FlagEntity } from './flag.entity'
@@ -271,7 +272,7 @@ export const flagService = (_log: FastifyBaseLogger) => ({
             },
             {
                 id: ApFlagId.SMTP_CONFIGURED,
-                value: false,
+                value: isSmtpConfigured(),
                 created,
                 updated,
             },
