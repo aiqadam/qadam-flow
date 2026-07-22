@@ -39,6 +39,18 @@ export const emailService = (log: FastifyBaseLogger) => ({
         })
     },
 
+    async sendFlowIssueAlert({ emails, platformId, vars }: SendFlowIssueAlertArgs): Promise<void> {
+        log.info({ platformId, flowName: vars.flowName }, '[emailService#sendFlowIssueAlert] sending flow failure alert')
+        await emailSender(log).send({
+            emails,
+            platformId,
+            templateData: {
+                name: 'issue-created',
+                vars,
+            },
+        })
+    },
+
     async sendOtp({ platformId, userIdentity, otp, type }: SendOtpArgs): Promise<void> {
         if (userIdentity.verified && type === OtpType.EMAIL_VERIFICATION) {
             return
@@ -88,4 +100,18 @@ type SendOtpArgs = {
     platformId: string | null
     otp: string
     userIdentity: UserIdentity
+}
+
+type SendFlowIssueAlertArgs = {
+    emails: string[]
+    platformId: string | undefined
+    vars: {
+        runUrl: string
+        projectName: string
+        flowName: string
+        createdAt: string
+        failedStepDisplayName: string
+        failedStepNumber: string
+        failedStepMessage: string
+    }
 }
