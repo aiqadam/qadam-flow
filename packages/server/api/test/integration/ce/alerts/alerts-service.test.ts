@@ -1,11 +1,11 @@
 import { AddressInfo } from 'node:net'
-import { AlertChannel, apId, FlowRunStatus, ProjectType } from '@aiqadam/shared'
+import { AlertChannel, apId, FlowRunStatus, PlatformRole, ProjectType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { SMTPServer } from 'smtp-server'
 import { alertsService } from '../../../../src/app/alerts/alerts-service'
 import { system } from '../../../../src/app/helper/system/system'
 import { db } from '../../../helpers/db'
-import { createMockFlow, createMockFlowRun, createMockFlowVersion, createMockProject, mockAndSaveBasicSetup } from '../../../helpers/mocks'
+import { createMockFlow, createMockFlowRun, createMockFlowVersion, createMockProject, createMockUser, createMockUserIdentity, mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
@@ -71,7 +71,7 @@ const SMTP_ENV = {
     AP_SMTP_SENDER_NAME: 'Qadam Flow',
 }
 
-async function seedTeamProjectWithFlow(): Promise<{ projectId: string, flowVersionId: string, flowId: string }> {
+async function seedTeamProjectWithFlow(): Promise<{ projectId: string, flowVersionId: string, flowId: string, memberEmail: string }> {
     const { mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
     const project = createMockProject({ platformId: mockPlatform.id, ownerId: mockOwner.id, type: ProjectType.TEAM })
     await db.save('project', project)
@@ -79,7 +79,14 @@ async function seedTeamProjectWithFlow(): Promise<{ projectId: string, flowVersi
     await db.save('flow', flow)
     const flowVersion = createMockFlowVersion({ flowId: flow.id, displayName: 'Nightly Sync' })
     await db.save('flow_version', flowVersion)
-    return { projectId: project.id, flowVersionId: flowVersion.id, flowId: flow.id }
+
+    // Alert receivers must be a verified member of the platform.
+    const memberIdentity = createMockUserIdentity({ verified: true })
+    await db.save('user_identity', memberIdentity)
+    const memberUser = createMockUser({ identityId: memberIdentity.id, platformId: mockPlatform.id, platformRole: PlatformRole.MEMBER })
+    await db.save('user', memberUser)
+
+    return { projectId: project.id, flowVersionId: flowVersion.id, flowId: flow.id, memberEmail: memberIdentity.email.toLowerCase() }
 }
 
 beforeAll(async () => {
@@ -125,32 +132,37 @@ beforeEach(() => {
 describe('alertsService', () => {
     describe('add / list', () => {
         it('adds an email alert channel and lists it', async () => {
-            const { projectId } = await seedTeamProjectWithFlow()
-            const receiver = `ops-${apId()}@qadam.test`
+            const { projectId, memberEmail } = await seedTeamProjectWithFlow()
 
-            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver })
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
 
             const page = await alertsService(system.globalLogger()).list({ projectId, cursor: undefined, limit: 10 })
             expect(page.data).toHaveLength(1)
-            expect(page.data[0].receiver).toBe(receiver.toLowerCase())
+            expect(page.data[0].receiver).toBe(memberEmail)
         })
 
         it('rejects a duplicate receiver for the same project', async () => {
-            const { projectId } = await seedTeamProjectWithFlow()
-            const receiver = `dup-${apId()}@qadam.test`
-            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver })
+            const { projectId, memberEmail } = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
 
             await expect(
-                alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver }),
+                alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail }),
             ).rejects.toMatchObject({ error: { code: 'EXISTING_ALERT_CHANNEL' } })
+        })
+
+        it('rejects a receiver that is not a verified platform member', async () => {
+            const { projectId } = await seedTeamProjectWithFlow()
+
+            await expect(
+                alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: `outsider-${apId()}@evil.test` }),
+            ).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
         })
     })
 
     describe('sendAlertOnRunFinish', () => {
         it('emails the alert receiver on a failed run', async () => {
-            const { projectId, flowId, flowVersionId } = await seedTeamProjectWithFlow()
-            const receiver = `alert-${apId()}@qadam.test`
-            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver })
+            const { projectId, flowId, flowVersionId, memberEmail } = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
 
             const flowRun = createMockFlowRun({
                 projectId,
@@ -163,13 +175,13 @@ describe('alertsService', () => {
             await alertsService(system.globalLogger()).sendAlertOnRunFinish(flowRun)
 
             expect(capturedMessages).toHaveLength(1)
-            expect(capturedMessages[0].rcptTo).toContain(receiver.toLowerCase())
+            expect(capturedMessages[0].rcptTo).toContain(memberEmail)
             expect(capturedMessages[0].raw).toContain('Nightly Sync')
         })
 
         it('does not email on a successful run', async () => {
-            const { projectId, flowId, flowVersionId } = await seedTeamProjectWithFlow()
-            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: `ok-${apId()}@qadam.test` })
+            const { projectId, flowId, flowVersionId, memberEmail } = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
 
             const flowRun = createMockFlowRun({
                 projectId,

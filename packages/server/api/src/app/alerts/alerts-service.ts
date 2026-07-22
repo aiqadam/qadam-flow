@@ -1,5 +1,5 @@
 import { apDayjsDuration } from '@aiqadam/server-utils'
-import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun, flowStructureUtil, isFailedState, ListAlertsParams, ProjectType, QadamFlowError, SeekPage } from '@aiqadam/shared'
+import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun, flowStructureUtil, isFailedState, isNil, ListAlertsParams, ProjectType, QadamFlowError, SeekPage } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import timezone from 'dayjs/plugin/timezone'
 import { FastifyBaseLogger } from 'fastify'
@@ -72,6 +72,7 @@ export const alertsService = (log: FastifyBaseLogger) => ({
     async add({ projectId, channel, receiver }: CreateAlertParams): Promise<void> {
         const normalizedReceiver = receiver.toLowerCase()
         const project = await projectService(log).getOneOrThrow(projectId)
+
         if (project.type === ProjectType.PERSONAL) {
             const owner = await userService(log).getOneOrFail({ id: project.ownerId })
             const identity = await userIdentityService(log).getOneOrFail({ id: owner.identityId })
@@ -80,6 +81,20 @@ export const alertsService = (log: FastifyBaseLogger) => ({
                     code: ErrorCode.VALIDATION,
                     params: {
                         message: 'Personal projects only allow the project owner as alert receiver',
+                    },
+                })
+            }
+        }
+        else {
+            const identity = await userIdentityService(log).getIdentityByEmail(normalizedReceiver)
+            const receiverUser = isNil(identity)
+                ? null
+                : await userService(log).getOneByIdentityAndPlatform({ identityId: identity.id, platformId: project.platformId })
+            if (isNil(identity) || !identity.verified || isNil(receiverUser)) {
+                throw new QadamFlowError({
+                    code: ErrorCode.VALIDATION,
+                    params: {
+                        message: 'Alert receiver must be a verified member of the platform',
                     },
                 })
             }
