@@ -12,6 +12,14 @@ import { EmailSender, EmailTemplateData } from './email-sender'
 
 const LIGHT_TINT_PERCENT = 8
 
+const ALLOWED_TEMPLATE_NAMES = new Set<EmailTemplateData['name']>([
+    'invitation-email',
+    'project-member-added',
+    'verify-email',
+    'reset-password',
+    'issue-created',
+])
+
 export const smtpEmailSender = (log: FastifyBaseLogger): SMTPEmailSender => {
     return {
         async validateOrThrow() {
@@ -85,6 +93,12 @@ const getPlatform = async ({ platformId, log }: GetPlatformArgs): Promise<Platfo
 }
 
 const renderEmailBody = async ({ platform, templateData }: RenderEmailBodyArgs): Promise<string> => {
+    if (!ALLOWED_TEMPLATE_NAMES.has(templateData.name)) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: `Unknown email template: ${templateData.name}` },
+        })
+    }
     const templatePath = `packages/server/api/src/assets/emails/${templateData.name}.html`
     const footerPath = 'packages/server/api/src/assets/emails/footer.html'
     const template = await readFile(templatePath, 'utf-8')
@@ -109,10 +123,12 @@ const renderEmailBody = async ({ platform, templateData }: RenderEmailBodyArgs):
 
 const initSmtpClient = (): Transporter => {
     const smtpPort = Number.parseInt(system.getOrThrow(AppSystemProp.SMTP_PORT))
+    const useSSL = system.getBoolean(AppSystemProp.SMTP_USE_SSL) ?? (smtpPort === 465)
     return nodemailer.createTransport({
         host: system.getOrThrow(AppSystemProp.SMTP_HOST),
         port: smtpPort,
-        secure: smtpPort === 465,
+        secure: useSSL,
+        requireTLS: !useSSL,
         auth: {
             user: system.getOrThrow(AppSystemProp.SMTP_USERNAME),
             pass: system.getOrThrow(AppSystemProp.SMTP_PASSWORD),
