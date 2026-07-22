@@ -98,6 +98,16 @@ export const alertsService = (log: FastifyBaseLogger) => ({
             })
         }
 
+        const channelCount = await repo().countBy({ projectId })
+        if (channelCount >= MAX_ALERTS_PER_PROJECT) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: {
+                    message: `A project can have at most ${MAX_ALERTS_PER_PROJECT} alert channels`,
+                },
+            })
+        }
+
         await repo().createQueryBuilder()
             .insert()
             .into(AlertEntity)
@@ -133,3 +143,4 @@ export const alertsService = (log: FastifyBaseLogger) => ({
 })
 
 const MAX_ALERT_RECEIVERS = 50
+const MAX_ALERTS_PER_PROJECT = 20
