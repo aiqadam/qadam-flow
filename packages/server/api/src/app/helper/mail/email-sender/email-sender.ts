@@ -1,14 +1,9 @@
-import { ApEnvironment } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { system } from '../../system/system'
-import { AppSystemProp } from '../../system/system-props'
 import { logEmailSender } from './log-email-sender'
-import { smtpEmailSender } from './smtp-email-sender'
+import { isSmtpConfigured, smtpEmailSender } from './smtp-email-sender'
 
 export const emailSender = (log: FastifyBaseLogger): EmailSender => {
-    const env = system.get(AppSystemProp.ENVIRONMENT)
-
-    if (env === ApEnvironment.PRODUCTION) {
+    if (isSmtpConfigured()) {
         return smtpEmailSender(log)
     }
 

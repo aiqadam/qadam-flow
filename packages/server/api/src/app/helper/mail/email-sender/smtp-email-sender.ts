@@ -3,11 +3,14 @@ import { ApEnvironment, ErrorCode, isNil, PlatformWithoutFederatedAuth, QadamFlo
 import { FastifyBaseLogger } from 'fastify'
 import Mustache from 'mustache'
 import nodemailer, { Transporter } from 'nodemailer'
+import tinycolor from 'tinycolor2'
 import { defaultTheme } from '../../../flags/theme'
 import { platformService } from '../../../platform/platform.service'
 import { system } from '../../system/system'
 import { AppSystemProp } from '../../system/system-props'
 import { EmailSender, EmailTemplateData } from './email-sender'
+
+const LIGHT_TINT_PERCENT = 8
 
 export const smtpEmailSender = (log: FastifyBaseLogger): SMTPEmailSender => {
     return {
@@ -27,7 +30,7 @@ export const smtpEmailSender = (log: FastifyBaseLogger): SMTPEmailSender => {
             }
         },
         async send({ emails, platformId, templateData }) {
-            const emailSubject = getEmailSubject(templateData.name, templateData.vars)
+            const emailSubject = getEmailSubject({ templateName: templateData.name, vars: templateData.vars })
 
             if (!isSmtpConfigured()) {
                 log.error({ emailSubject }, '[smtpEmailSender#send] SMTP is not configured')
@@ -35,7 +38,7 @@ export const smtpEmailSender = (log: FastifyBaseLogger): SMTPEmailSender => {
             }
 
             try {
-                const platform = await getPlatform(platformId, log)
+                const platform = await getPlatform({ platformId, log })
                 const senderName = system.get(AppSystemProp.SMTP_SENDER_NAME)
                 const senderEmail = system.get(AppSystemProp.SMTP_SENDER_EMAIL)
 
@@ -48,7 +51,7 @@ export const smtpEmailSender = (log: FastifyBaseLogger): SMTPEmailSender => {
                 log.info({
                     emails,
                     platformId,
-                    templateData,
+                    template: templateData.name,
                 }, '[smtpEmailSender#send] sending email')
                 await smtpClient.sendMail({
                     from: `${senderName} <${senderEmail}>`,
@@ -77,7 +80,7 @@ export const isSmtpConfigured = (): boolean => {
         .every(prop => !isNil(system.get(prop)))
 }
 
-const getPlatform = async (platformId: string | undefined, log: FastifyBaseLogger): Promise<PlatformWithoutFederatedAuth | null> => {
+const getPlatform = async ({ platformId, log }: GetPlatformArgs): Promise<PlatformWithoutFederatedAuth | null> => {
     return platformId ? platformService(log).getOne(platformId) : null
 }
 
@@ -87,7 +90,7 @@ const renderEmailBody = async ({ platform, templateData }: RenderEmailBodyArgs):
     const template = await readFile(templatePath, 'utf-8')
     const footer = await readFile(footerPath, 'utf-8')
     const primaryColor = platform?.primaryColor ?? defaultTheme.colors.primary.default
-    const primaryColorLight = hexToLightTint({ hex: primaryColor, opacity: 0.08 })
+    const primaryColorLight = hexToLightTint({ hex: primaryColor })
     const fullLogoUrl = platform?.fullLogoUrl ?? defaultTheme.logos.fullLogoUrl
     const platformName = platform?.name ?? defaultTheme.websiteName
 
@@ -117,7 +120,7 @@ const initSmtpClient = (): Transporter => {
     })
 }
 
-const getEmailSubject = (templateName: EmailTemplateData['name'], vars: Record<string, string>): string => {
+const getEmailSubject = ({ templateName, vars }: GetEmailSubjectArgs): string => {
     const templateToSubject: Record<EmailTemplateData['name'], string> = {
         'invitation-email': `You have been invited to "${vars.projectName}" project ✉️`,
         'project-member-added': `Welcome to ${vars.projectName} 🎉`,
@@ -129,18 +132,12 @@ const getEmailSubject = (templateName: EmailTemplateData['name'], vars: Record<s
     return templateToSubject[templateName]
 }
 
-const hexToLightTint = ({ hex, opacity }: { hex: string, opacity: number }): string => {
-    let raw = hex.replace('#', '')
-    if (raw.length === 3) {
-        raw = raw[0] + raw[0] + raw[1] + raw[1] + raw[2] + raw[2]
-    }
-    if (raw.length !== 6) {
+const hexToLightTint = ({ hex }: { hex: string }): string => {
+    const color = tinycolor(hex)
+    if (!color.isValid()) {
         return '#ffffff'
     }
-    const r = Math.round(255 - (255 - parseInt(raw.substring(0, 2), 16)) * opacity)
-    const g = Math.round(255 - (255 - parseInt(raw.substring(2, 4), 16)) * opacity)
-    const b = Math.round(255 - (255 - parseInt(raw.substring(4, 6), 16)) * opacity)
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+    return tinycolor.mix('#ffffff', hex, LIGHT_TINT_PERCENT).toHexString()
 }
 
 export type SMTPEmailSender = EmailSender & {
@@ -151,4 +148,14 @@ export type SMTPEmailSender = EmailSender & {
 type RenderEmailBodyArgs = {
     platform: PlatformWithoutFederatedAuth | null
     templateData: EmailTemplateData
+}
+
+type GetPlatformArgs = {
+    platformId: string | undefined
+    log: FastifyBaseLogger
+}
+
+type GetEmailSubjectArgs = {
+    templateName: EmailTemplateData['name']
+    vars: Record<string, string>
 }

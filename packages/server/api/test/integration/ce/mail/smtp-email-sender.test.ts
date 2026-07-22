@@ -1,7 +1,8 @@
 import { AddressInfo } from 'node:net'
 import { SMTPServer } from 'smtp-server'
-import { system } from '../../../../src/app/helper/system/system'
+import { emailSender } from '../../../../src/app/helper/mail/email-sender/email-sender'
 import { isSmtpConfigured, smtpEmailSender } from '../../../../src/app/helper/mail/email-sender/smtp-email-sender'
+import { system } from '../../../../src/app/helper/system/system'
 
 type CapturedMessage = {
     rcptTo: string[]
@@ -119,6 +120,43 @@ describe('smtpEmailSender', () => {
                     },
                 }),
             ).resolves.toBeUndefined()
+
+            expect(capturedMessages).toHaveLength(0)
+        })
+    })
+
+    describe('emailSender routing', () => {
+        it('delivers over SMTP when SMTP is configured (independent of ENVIRONMENT)', async () => {
+            await emailSender(system.globalLogger()).send({
+                emails: ['routed@qadam.test'],
+                platformId: undefined,
+                templateData: {
+                    name: 'invitation-email',
+                    vars: {
+                        projectName: 'RoutedProject',
+                        setupLink: 'https://flow.test/invitation?token=routedToken',
+                    },
+                },
+            })
+
+            expect(capturedMessages).toHaveLength(1)
+            expect(capturedMessages[0].rcptTo).toContain('routed@qadam.test')
+        })
+
+        it('does not deliver (falls back to log sender) when SMTP is not configured', async () => {
+            delete process.env.AP_SMTP_HOST
+
+            await emailSender(system.globalLogger()).send({
+                emails: ['routed@qadam.test'],
+                platformId: undefined,
+                templateData: {
+                    name: 'invitation-email',
+                    vars: {
+                        projectName: 'RoutedProject',
+                        setupLink: 'https://flow.test/invitation?token=routedToken',
+                    },
+                },
+            })
 
             expect(capturedMessages).toHaveLength(0)
         })
