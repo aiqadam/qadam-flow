@@ -85,6 +85,40 @@ describe('Local Authn / OTP API', () => {
             expect(confirmedOtp?.state).toBe(OtpState.CONFIRMED)
         })
 
+        it('does not leak the password hash or tokenVersion in the response', async () => {
+            const identity = await saveIdentity({ verified: false })
+            const otp = createMockOtp({
+                identityId: identity.id,
+                type: OtpType.EMAIL_VERIFICATION,
+                state: OtpState.PENDING,
+            })
+            await databaseConnection().getRepository('otp').save(otp)
+
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authn/local/verify-email',
+                body: { identityId: identity.id, otp: otp.value },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.password).toBeUndefined()
+            expect(body.tokenVersion).toBeUndefined()
+        })
+
+        it('rejects with INVALID_OTP (not 500) when no OTP exists for the identity', async () => {
+            const identity = await saveIdentity({ verified: false })
+
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authn/local/verify-email',
+                body: { identityId: identity.id, otp: 'any-value' },
+            })
+
+            expect(response?.statusCode).not.toBe(StatusCodes.INTERNAL_SERVER_ERROR)
+            expect(response?.json().code).toBe('INVALID_OTP')
+        })
+
         it('rejects a wrong OTP and leaves the identity unverified', async () => {
             const identity = await saveIdentity({ verified: false })
             const otp = createMockOtp({
@@ -151,6 +185,24 @@ describe('Local Authn / OTP API', () => {
             expect(response?.json().code).toBe('INVALID_OTP')
             const updated = await databaseConnection().getRepository('user_identity').findOneBy({ id: identity.id })
             expect(updated?.password).toBe(originalPassword)
+        })
+
+        it('rejects a password that violates the strength policy', async () => {
+            const identity = await saveIdentity({ verified: true })
+            const otp = createMockOtp({
+                identityId: identity.id,
+                type: OtpType.PASSWORD_RESET,
+                state: OtpState.PENDING,
+            })
+            await databaseConnection().getRepository('otp').save(otp)
+
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authn/local/reset-password',
+                body: { identityId: identity.id, otp: otp.value, newPassword: 'short' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
     })
 })

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import {
     apId,
+    isNil,
     OtpModel,
     OtpState,
     OtpType, PlatformId } from '@aiqadam/shared'
@@ -52,10 +53,13 @@ export const otpService = (log: FastifyBaseLogger) => ({
     },
 
     async confirm({ identityId, type, value }: ConfirmParams): Promise<boolean> {
-        const otp = await repo().findOneByOrFail({
+        const otp = await repo().findOneBy({
             identityId,
             type,
         })
+        if (isNil(otp)) {
+            return false
+        }
         const otpIsPending = otp.state === OtpState.PENDING
         const otpIsNotExpired = dayjs().diff(otp.updated, 'milliseconds') < TEN_MINUTES
         const otpMatches = constantTimeEquals(otp.value, value)

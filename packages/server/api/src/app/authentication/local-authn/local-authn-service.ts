@@ -2,7 +2,7 @@ import {
     ApplicationEventName,
     ErrorCode,
     isNil,
-    OtpType, QadamFlowError, ResetPasswordRequestBody, UserId, UserIdentity, VerifyEmailRequestBody } from '@aiqadam/shared'
+    OtpType, QadamFlowError, ResetPasswordRequestBody, UserId, UserIdentityWithoutSensitiveData, VerifyEmailRequestBody } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { applicationEvents } from '../../helper/application-events'
 import { userService } from '../../user/user-service'
@@ -10,7 +10,7 @@ import { otpService } from '../otp/otp-service'
 import { userIdentityService } from '../user-identity/user-identity-service'
 
 export const localAuthnService = (log: FastifyBaseLogger) => ({
-    async verifyEmail({ identityId, otp }: VerifyEmailRequestBody): Promise<UserIdentity> {
+    async verifyEmail({ identityId, otp }: VerifyEmailRequestBody): Promise<UserIdentityWithoutSensitiveData> {
         const isOtpValid = await otpService(log).confirm({
             identityId,
             type: OtpType.EMAIL_VERIFICATION,
@@ -30,7 +30,8 @@ export const localAuthnService = (log: FastifyBaseLogger) => ({
             log,
         })
 
-        return userIdentityService(log).verify(identityId)
+        const identity = await userIdentityService(log).verify(identityId)
+        return UserIdentityWithoutSensitiveData.parse(identity)
     },
 
     async resetPassword({
