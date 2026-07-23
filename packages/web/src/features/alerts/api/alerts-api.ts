@@ -2,12 +2,6 @@ import { Alert, CreateAlertParams, SeekPage } from '@aiqadam/shared';
 
 import { api } from '@/lib/api';
 
-type ListParams = {
-  projectId: string;
-  cursor?: string;
-  limit?: number;
-};
-
 function list(params: ListParams): Promise<SeekPage<Alert>> {
   return api.get<SeekPage<Alert>>('/v1/alerts', params);
 }
@@ -21,3 +15,9 @@ function del(id: string): Promise<void> {
 }
 
 export const alertsApi = { list, create, del };
+
+type ListParams = {
+  projectId: string;
+  cursor?: string;
+  limit?: number;
+};

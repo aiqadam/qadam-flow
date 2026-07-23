@@ -64,8 +64,11 @@ type ProjectMembersTabProps = {
 export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
   const { checkAccess } = useAuthorization();
   const canInvite = checkAccess(Permission.WRITE_INVITATION);
-  const canReadAlert = checkAccess(Permission.READ_ALERT);
-  const canWriteAlert = checkAccess(Permission.WRITE_ALERT);
+  // Managing alerts needs both: READ to know the current on/off state, WRITE to change it.
+  // Rendering the toggle on WRITE alone (without READ) would show every alert as "off" and
+  // re-create duplicates on enable.
+  const canManageAlerts =
+    checkAccess(Permission.READ_ALERT) && checkAccess(Permission.WRITE_ALERT);
 
   const { data: invitationsPage, refetch } = invitationHooks.useList({
     projectId,
@@ -78,7 +81,7 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
   const { data: members } = projectMemberHooks.useList(projectId);
   const { data: alertsPage } = alertsHooks.useList({
     projectId,
-    enabled: canReadAlert,
+    enabled: canManageAlerts,
   });
   const alerts = alertsPage?.data ?? [];
 
@@ -197,7 +200,7 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
       {members && members.length > 0 && (
         <div className="flex flex-col gap-2">
           <Label>{t('Members')}</Label>
-          {canWriteAlert && !smtpConfigured && (
+          {canManageAlerts && !smtpConfigured && (
             <p className="text-sm text-muted-foreground">
               {t(
                 'Failure alerts require email (SMTP) to be configured for this platform.',
@@ -223,7 +226,7 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
                     {member.email}
                   </p>
                 </div>
-                {canWriteAlert && (
+                {canManageAlerts && (
                   <MemberAlertToggle
                     projectId={projectId}
                     member={member}
@@ -280,7 +283,7 @@ type MemberAlertToggleProps = {
   disabled?: boolean;
 };
 
-export function MemberAlertToggle({
+function MemberAlertToggle({
   projectId,
   member,
   alert,

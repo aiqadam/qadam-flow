@@ -11,7 +11,6 @@ export const projectMemberHooks = {
     return useQuery({
       queryKey: projectMemberQueryKey(projectId),
       queryFn: () => projectMemberApi.list(projectId),
-      meta: { showErrorDialog: true, loadSubsetOptions: {} },
     });
   },
 };
