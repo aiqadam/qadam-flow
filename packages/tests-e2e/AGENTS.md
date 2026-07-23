@@ -48,6 +48,20 @@ AP_FRONTEND_URL=http://localhost:4200 \
 
 For visible debugging: add `--headed` (opens Chromium) or `--trace on` (records DOM snapshots + network per step; view with `npx playwright show-trace --host 127.0.0.1 --port 9323 test-results/**/trace.zip`).
 
+## SMTP-dependent specs
+
+`scenarios/ce/projects/failure-alerts-toggle.spec.ts` (#88) drives the per-member
+failure-alert toggle, which the UI disables unless the backend reports
+`SMTP_CONFIGURED = true` (all of `AP_SMTP_HOST` / `AP_SMTP_PORT` / `AP_SMTP_USERNAME` /
+`AP_SMTP_PASSWORD` set). Toggling only writes an alert row — no mail is sent — so dummy
+values are fine. Boot the dev stack with them set (they reach the dev process because
+`turbo.json` passes `AP_*` through; without that, turbo's strict env-mode filters them):
+
+```bash
+AP_SMTP_HOST=127.0.0.1 AP_SMTP_PORT=2525 AP_SMTP_USERNAME=dev AP_SMTP_PASSWORD=dev \
+AP_SMTP_SENDER_EMAIL=no-reply@qadam.test AP_SMTP_SENDER_NAME='Qadam Flow' npm run dev
+```
+
 ## Environment limitations
 
 - **Single platform on localhost.** `platformUtils.getPlatformIdForRequest` routes anonymous requests to `getOldestPlatform()`, so once dev-seed has created a platform, every anonymous sign-up joins it (invitation-only). Multi-platform tests need SaaS host routing (`legacy_custom_domain`), not present locally. Prefer same-platform isolation scenarios over cross-platform ones — the former exercises `applyProjectsAccessFilters` directly, which is what user-facing isolation actually relies on.
