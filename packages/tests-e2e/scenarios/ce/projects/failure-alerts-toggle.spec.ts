@@ -1,7 +1,7 @@
 import path from 'path';
 
 import { faker } from '@faker-js/faker';
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 import {
   ADMIN_EMAIL,
@@ -21,8 +21,8 @@ const SHOTS = path.resolve(__dirname, '../../../screenshots/failure-alerts');
 
 // #88: a non-platform-admin, as ADMIN of a team project they created, arms per-member
 // flow-failure email alerts from the Team tab — for themselves and for an invited member —
-// entirely through the UI. Requires SMTP configured on the backend (otherwise the toggle is
-// disabled with a hint); this runs against a dev stack booted with AP_SMTP_* set.
+// entirely through the UI, with a screenshot at each step. Requires SMTP configured on the
+// backend (otherwise the toggle is disabled with a hint); runs against a dev stack with AP_SMTP_*.
 test.describe('Per-member failure alerts toggle (#88, UI)', () => {
   test.setTimeout(180_000);
 
@@ -35,24 +35,34 @@ test.describe('Per-member failure alerts toggle (#88, UI)', () => {
     const memberEmail = `member+${suffix}@example.com`;
     const projectName = `E2E ${suffix} ${faker.animal.bird()}`;
 
+    let step = 0;
+    const shot = async (p: Page, name: string) => {
+      step += 1;
+      await p.screenshot({
+        path: `${SHOTS}/${String(step).padStart(2, '0')}-${name}.png`,
+        fullPage: true,
+      });
+    };
+
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
     const ownerInviteLink = await issuePlatformMemberInvite(page, ownerEmail);
 
     const ownerCtx = await browser.newContext();
-    const owner = await acceptInviteAndSignUp(ownerCtx, ownerInviteLink, {
-      firstName: 'Nadia',
-      lastName: 'NonAdmin',
-      password: OWNER_PASSWORD,
-    });
+    const owner = await acceptInviteAndSignUp(
+      ownerCtx,
+      ownerInviteLink,
+      { firstName: 'Nadia', lastName: 'NonAdmin', password: OWNER_PASSWORD },
+      shot,
+    );
 
-    await createTeamProjectViaUI(owner, projectName);
-    await owner.waitForLoadState('networkidle');
+    await createTeamProjectViaUI(owner, projectName, shot);
     let dialog = await openTeamTab(owner);
 
     // SMTP is configured → no hint, toggles enabled.
     await expect(
       dialog.getByText('Failure alerts require email (SMTP) to be configured for this platform.'),
     ).toHaveCount(0);
+    await shot(owner, 'team-tab-toggles-enabled');
 
     // Phase 1: enable failure alerts for owner2 themselves.
     const ownerToggle = memberRow(dialog, ownerEmail).getByRole('switch');
@@ -64,19 +74,20 @@ test.describe('Per-member failure alerts toggle (#88, UI)', () => {
     await ownerToggle.click();
     expect((await ownerAlert).status()).toBeLessThan(300);
     await expect(ownerToggle).toBeChecked();
-    await owner.screenshot({ path: `${SHOTS}/01-owner-alerts-on.png`, fullPage: true });
+    await shot(owner, 'owner-alerts-on');
 
     // Phase 2: invite a member from the Team tab; member accepts + signs up via the invite link.
     const memberInviteLink = await inviteMemberViaTeamTab(owner, dialog, memberEmail);
     await expect(dialog.getByText(memberEmail)).toBeVisible({ timeout: 10_000 });
-    await owner.screenshot({ path: `${SHOTS}/02-member-invited-pending.png`, fullPage: true });
+    await shot(owner, 'member-invited-pending');
 
     const memberCtx = await browser.newContext();
-    await acceptInviteAndSignUp(memberCtx, memberInviteLink, {
-      firstName: 'Marat',
-      lastName: 'Member',
-      password: MEMBER_PASSWORD,
-    });
+    await acceptInviteAndSignUp(
+      memberCtx,
+      memberInviteLink,
+      { firstName: 'Marat', lastName: 'Member', password: MEMBER_PASSWORD },
+      shot,
+    );
     await memberCtx.close();
 
     // Phase 3: owner2 reopens the Team tab and enables the invited member's alerts too.
@@ -93,10 +104,9 @@ test.describe('Per-member failure alerts toggle (#88, UI)', () => {
     await memberToggle.click();
     expect((await memberAlert).status()).toBeLessThan(300);
     await expect(memberToggle).toBeChecked();
-    // Owner's alert persisted across the reload above (its checked state is re-derived from a
-    // fresh alerts fetch), and the member's alert is on — both confirmed purely from the UI.
+    // Owner's alert persisted across the reload (its checked state is re-derived from a fresh fetch).
     await expect(memberRow(dialog, ownerEmail).getByRole('switch')).toBeChecked();
-    await owner.screenshot({ path: `${SHOTS}/03-both-members-alerts-on.png`, fullPage: true });
+    await shot(owner, 'both-members-alerts-on');
 
     await ownerCtx.close();
   });
