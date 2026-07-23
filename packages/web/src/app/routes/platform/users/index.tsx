@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
 import LockedFeatureGuard from '@/app/components/locked-feature-guard';
 import { DataTable } from '@/components/custom/data-table';
+import { InvitePlatformUserDialog } from '@/features/invitations/components/invite-platform-user-dialog';
 import {
   platformUserHooks,
   platformUserMutations,
@@ -70,7 +71,9 @@ export default function UsersPage() {
           description={t(
             'Manage, delete, activate and deactivate users on platform',
           )}
-        />
+        >
+          <InvitePlatformUserDialog />
+        </DashboardPageHeader>
         <DataTable
           emptyStateTextTitle={t('No users found')}
           emptyStateTextDescription={t('No users on this platform yet')}

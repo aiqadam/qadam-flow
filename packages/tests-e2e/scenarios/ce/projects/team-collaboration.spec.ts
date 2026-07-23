@@ -11,7 +11,7 @@ import {
   acceptInviteAndSignUp,
   createTeamProjectViaUI,
   inviteMemberViaTeamTab,
-  issuePlatformMemberInvite,
+  issuePlatformMemberInviteViaUI,
   memberRow,
   openTeamTab,
   signIn,
@@ -47,7 +47,7 @@ test.describe('Non-admin project owner manages team members (UI)', () => {
 
     // Admin mints the non-admin actor (only non-UI step).
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-    const ownerInviteLink = await issuePlatformMemberInvite(page, ownerEmail);
+    const ownerInviteLink = await issuePlatformMemberInviteViaUI(page, ownerEmail, shot);
 
     // owner2 enters like a real user: opens the invite link → accepts → signs up.
     const ownerCtx = await browser.newContext();

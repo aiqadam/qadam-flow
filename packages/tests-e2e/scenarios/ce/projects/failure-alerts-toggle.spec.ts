@@ -11,7 +11,7 @@ import {
   acceptInviteAndSignUp,
   createTeamProjectViaUI,
   inviteMemberViaTeamTab,
-  issuePlatformMemberInvite,
+  issuePlatformMemberInviteViaUI,
   memberRow,
   openTeamTab,
   signIn,
@@ -45,7 +45,7 @@ test.describe('Per-member failure alerts toggle (#88, UI)', () => {
     };
 
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-    const ownerInviteLink = await issuePlatformMemberInvite(page, ownerEmail);
+    const ownerInviteLink = await issuePlatformMemberInviteViaUI(page, ownerEmail, shot);
 
     const ownerCtx = await browser.newContext();
     const owner = await acceptInviteAndSignUp(

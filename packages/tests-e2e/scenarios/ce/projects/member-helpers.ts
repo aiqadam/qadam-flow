@@ -1,12 +1,9 @@
 import {
   expect,
-  request as playwrightRequest,
   type BrowserContext,
   type Locator,
   type Page,
 } from '@playwright/test';
-
-const API = 'http://localhost:3000';
 
 export async function signIn(page: Page, email: string, password: string) {
   await page.goto('/sign-in');
@@ -16,22 +13,26 @@ export async function signIn(page: Page, email: string, password: string) {
   await page.waitForURL((u) => !u.pathname.startsWith('/sign-in'), { timeout: 15_000 });
 }
 
-// The only non-UI step: an admin issues a PLATFORM MEMBER invitation. There is no UI to
-// send platform invitations, so this mints the non-admin test actor over the API (analogous
-// to how global-setup provisions the dev user). Everything the non-admin then does is UI.
-export async function issuePlatformMemberInvite(adminPage: Page, email: string): Promise<string> {
-  const token = await adminPage.evaluate(() => localStorage.getItem('token') ?? '');
-  const api = await playwrightRequest.newContext({
-    baseURL: API,
-    extraHTTPHeaders: { Authorization: `Bearer ${token}` },
-  });
-  const res = await api.post('/api/v1/user-invitations', {
-    data: { email, type: 'PLATFORM', platformRole: 'MEMBER' },
-  });
-  expect(res.status()).toBe(201);
-  const link = (await res.json()).link as string;
-  await api.dispose();
+// An admin invites a MEMBER to the platform from the platform Users page (Invite user →
+// dialog → POST). Returns the invitation link (read from the click's response). This mints
+// the non-admin test actor entirely through the UI.
+export async function issuePlatformMemberInviteViaUI(
+  adminPage: Page,
+  email: string,
+  shot?: Shot,
+): Promise<string> {
+  await adminPage.goto('/platform/users');
+  await adminPage.getByTestId('invite-platform-user-button').click();
+  const dialog = adminPage.getByRole('dialog');
+  await dialog.locator('#platform-invite-email').fill(email);
+  const invitePromise = adminPage.waitForResponse(
+    (r) => r.url().includes('/api/v1/user-invitations') && r.request().method() === 'POST',
+  );
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  const link = (await (await invitePromise).json()).link as string;
   if (!link) throw new Error('platform invitation link missing');
+  await expect(dialog.getByText('Invitation link')).toBeVisible({ timeout: 10_000 });
+  await shot?.(adminPage, 'admin-invites-platform-member');
   return link;
 }
 
