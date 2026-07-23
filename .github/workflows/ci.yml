@@ -48,6 +48,44 @@ jobs:
       - name: Unit tests
         run: npm run test-unit
 
+  dco:
+    name: DCO Sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify every commit is signed off
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          commits=$(git rev-list --no-merges "$BASE_SHA".."$HEAD_SHA")
+          if [ -z "$commits" ]; then
+            echo "No non-merge commits to check."
+            exit 0
+          fi
+          fail=0
+          for sha in $commits; do
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+            signoffs="$(git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")"
+            if ! printf '%s\n' "$signoffs" | grep -qiF "$author"; then
+              echo "::error::Commit ${sha} is missing a 'Signed-off-by' trailer matching its author (${author})."
+              echo "  found sign-off: ${signoffs:-<none>}"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "DCO check failed. Every commit must carry 'Signed-off-by: Name <email>' matching its author (see CONTRIBUTING.md)."
+            echo "Sign new commits with 'git commit -s'; fix existing ones with 'git rebase --signoff ${BASE_SHA}' then force-push."
+            exit 1
+          fi
+          echo "All commits are signed off. ✅"
+
   image:
     name: Docker Image
     needs: verify
