@@ -86,6 +86,7 @@ export const ProjectDashboardPageHeader = ({
         variant="ghost"
         size="icon"
         className="h-8 w-8"
+        data-testid="project-settings-button"
         onClick={() => {
           setSettingsInitialTab(getFirstAvailableTab());
           setSettingsOpen(true);

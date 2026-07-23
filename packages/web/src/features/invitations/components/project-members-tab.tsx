@@ -208,6 +208,7 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
             {members.map((member) => (
               <div
                 key={member.id}
+                data-testid="project-member-row"
                 className="flex flex-row items-center justify-between gap-3 rounded-sm border px-3 py-2 min-w-0"
               >
                 <div className="min-w-0 flex-1">
