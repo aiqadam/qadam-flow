@@ -1,6 +1,6 @@
 import { isNil, Permission, PlatformRole, ProjectType } from '@aiqadam/shared';
 import { t } from 'i18next';
-import { GitBranch, Puzzle, Settings } from 'lucide-react';
+import { GitBranch, Puzzle, Settings, Users } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ProjectMembersTab } from '@/features/invitations/components/project-members-tab';
 import { projectCollectionUtils } from '@/features/projects';
 import { ApProjectDisplay } from '@/features/projects/components/ap-project-display';
 import { useAuthorization } from '@/hooks/authorization-hooks';
@@ -24,7 +25,7 @@ import { GeneralSettings, FormValues } from './general';
 import { McpServerSettings } from './mcp-server';
 import { PiecesSettings } from './qadams';
 
-type TabId = 'general' | 'pieces' | 'environment' | 'mcp';
+type TabId = 'general' | 'team' | 'pieces' | 'environment' | 'mcp';
 
 interface ProjectSettingsDialogProps {
   open: boolean;
@@ -98,6 +99,14 @@ export function ProjectSettingsDialog({
       disabled: !hasGeneralSettings,
     },
     {
+      id: 'team' as TabId,
+      label: t('Team'),
+      icon: <Users className="w-4 h-4" />,
+      disabled:
+        project.type !== ProjectType.TEAM ||
+        !checkAccess(Permission.READ_PROJECT_MEMBER),
+    },
+    {
       id: 'mcp' as TabId,
       label: t('MCP Server'),
       icon: <McpSvg className="w-4 h-4" />,
@@ -121,6 +130,8 @@ export function ProjectSettingsDialog({
     switch (activeTab) {
       case 'general':
         return <GeneralSettings form={form} />;
+      case 'team':
+        return <ProjectMembersTab projectId={project.id} />;
       case 'pieces':
         return <PiecesSettings />;
       case 'environment':
@@ -188,6 +199,7 @@ export function ProjectSettingsDialog({
                 {tabs.map((tab) => (
                   <div
                     key={tab.id}
+                    data-testid={`project-settings-tab-${tab.id}`}
                     className={cn(
                       'flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm font-medium transition-all cursor-pointer hover:bg-sidebar-accent',
                       {

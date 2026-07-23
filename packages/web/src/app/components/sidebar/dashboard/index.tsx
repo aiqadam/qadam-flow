@@ -1,7 +1,6 @@
 import {
   isNil,
   PROJECT_COLOR_PALETTE,
-  PlatformRole,
   ProjectType,
   TeamProjectsLimit,
   TemplateTelemetryEventType,
@@ -77,10 +76,7 @@ export function ProjectDashboardSidebar({
   }, [searchOpen]);
 
   const shouldShowNewProjectButton = useMemo(() => {
-    if (platform.plan.teamProjectsLimit === TeamProjectsLimit.NONE) {
-      return false;
-    }
-    return currentUser?.platformRole === PlatformRole.ADMIN;
+    return platform.plan.teamProjectsLimit !== TeamProjectsLimit.NONE;
   }, [platform.plan.teamProjectsLimit]);
 
   const shouldShowSearchButton = useMemo(() => {
@@ -92,7 +88,6 @@ export function ProjectDashboardSidebar({
 
   const shouldShowInlineAddButton =
     platform.plan.teamProjectsLimit !== TeamProjectsLimit.NONE &&
-    currentUser?.platformRole === PlatformRole.ADMIN &&
     projects.filter((project) => project.type === ProjectType.TEAM).length ===
       0;
 

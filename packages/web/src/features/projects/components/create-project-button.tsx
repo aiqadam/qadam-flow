@@ -112,7 +112,10 @@ function SidebarMenuVariant({
   }
   return (
     <NewProjectDialog onCreate={onCreate}>
-      <SidebarMenuButton className="text-muted-foreground gap-2">
+      <SidebarMenuButton
+        data-testid="create-team-project-button"
+        className="text-muted-foreground gap-2"
+      >
         <Plus className="size-4" />
         <span>{t('Add team project')}</span>
       </SidebarMenuButton>

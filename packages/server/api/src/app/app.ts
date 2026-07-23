@@ -42,6 +42,7 @@ import { knowledgeBaseModule } from './knowledge-base/knowledge-base.module'
 import { mcpServerModule } from './mcp/mcp-module'
 import { mcpOAuthApproveController } from './mcp/oauth/code/mcp-oauth-approve.controller'
 import { platformModule } from './platform/platform.module'
+import { projectMemberModule } from './project/project-member/project-member.module'
 import { projectModule } from './project/project-module'
 import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
@@ -157,6 +158,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(otpModule)
     await app.register(localAuthnModule)
     await app.register(alertsModule)
+    await app.register(projectMemberModule)
     await app.register(triggerModule)
     await app.register(platformModule)
     await app.register(projectModule)
