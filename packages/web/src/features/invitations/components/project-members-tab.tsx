@@ -1,8 +1,12 @@
 import {
+  Alert,
+  AlertChannel,
+  ApFlagId,
   DefaultProjectRole,
   InvitationStatus,
   InvitationType,
   Permission,
+  ProjectMemberWithUser,
   formErrors,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,6 +14,7 @@ import { t } from 'i18next';
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { toast } from 'sonner';
 import { z } from 'zod';
 
 import { CopyToClipboardInput } from '@/components/custom/clipboard/copy-to-clipboard';
@@ -25,12 +30,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { useAuthorization } from '@/hooks/authorization-hooks';
+import { flagsHooks } from '@/hooks/flags-hooks';
 
+import { alertsHooks, alertsMutations } from '../../alerts/hooks/alerts-hooks';
 import {
   invitationHooks,
   invitationMutations,
 } from '../hooks/invitation-hooks';
+import { projectMemberHooks } from '../hooks/project-member-hooks';
 
 const InviteSchema = z.object({
   email: z.string().email(formErrors.required),
@@ -55,6 +64,8 @@ type ProjectMembersTabProps = {
 export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
   const { checkAccess } = useAuthorization();
   const canInvite = checkAccess(Permission.WRITE_INVITATION);
+  const canReadAlert = checkAccess(Permission.READ_ALERT);
+  const canWriteAlert = checkAccess(Permission.WRITE_ALERT);
 
   const { data: invitationsPage, refetch } = invitationHooks.useList({
     projectId,
@@ -63,6 +74,16 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
   });
 
   const invitations = invitationsPage?.data ?? [];
+
+  const { data: members } = projectMemberHooks.useList(projectId);
+  const { data: alertsPage } = alertsHooks.useList({
+    projectId,
+    enabled: canReadAlert,
+  });
+  const alerts = alertsPage?.data ?? [];
+
+  const smtpConfigured =
+    flagsHooks.useFlag<boolean>(ApFlagId.SMTP_CONFIGURED).data ?? false;
 
   const createMutation = invitationMutations.useCreate();
   const deleteMutation = invitationMutations.useDelete();
@@ -173,6 +194,51 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
         </div>
       )}
 
+      {members && members.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <Label>{t('Members')}</Label>
+          {canWriteAlert && !smtpConfigured && (
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'Failure alerts require email (SMTP) to be configured for this platform.',
+              )}
+            </p>
+          )}
+          <div className="flex flex-col gap-2">
+            {members.map((member) => (
+              <div
+                key={member.id}
+                className="flex flex-row items-center justify-between gap-3 rounded-sm border px-3 py-2 min-w-0"
+              >
+                <div className="min-w-0 flex-1">
+                  <TextWithTooltip tooltipMessage={member.email}>
+                    <p className="text-sm truncate">
+                      {[member.firstName, member.lastName]
+                        .filter(Boolean)
+                        .join(' ') || member.email}
+                    </p>
+                  </TextWithTooltip>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {member.email}
+                  </p>
+                </div>
+                {canWriteAlert && (
+                  <MemberAlertToggle
+                    projectId={projectId}
+                    member={member}
+                    alert={alerts.find(
+                      (a) =>
+                        a.receiver.toLowerCase() === member.email.toLowerCase(),
+                    )}
+                    disabled={!smtpConfigured}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {invitations.length > 0 && (
         <div className="flex flex-col gap-2">
           <Label>{t('Pending')}</Label>
@@ -202,6 +268,62 @@ export function ProjectMembersTab({ projectId }: ProjectMembersTabProps) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+type MemberAlertToggleProps = {
+  projectId: string;
+  member: ProjectMemberWithUser;
+  alert?: Alert;
+  disabled?: boolean;
+};
+
+export function MemberAlertToggle({
+  projectId,
+  member,
+  alert,
+  disabled,
+}: MemberAlertToggleProps) {
+  const createMutation = alertsMutations.useCreate(projectId);
+  const deleteMutation = alertsMutations.useDelete(projectId);
+  const isPending = createMutation.isPending || deleteMutation.isPending;
+
+  const handleToggle = (checked: boolean) => {
+    if (checked) {
+      createMutation.mutate(
+        {
+          projectId,
+          channel: AlertChannel.EMAIL,
+          receiver: member.email,
+        },
+        {
+          onError: () => toast.error(t('Failed to enable failure alerts')),
+        },
+      );
+      return;
+    }
+    if (alert) {
+      deleteMutation.mutate(alert.id, {
+        onError: () => toast.error(t('Failed to disable failure alerts')),
+      });
+    }
+  };
+
+  return (
+    <div className="flex flex-row items-center gap-2 shrink-0">
+      <TextWithTooltip
+        tooltipMessage={t('Email this member when a flow run fails')}
+      >
+        <span className="text-xs text-muted-foreground whitespace-nowrap">
+          {t('Failure alerts')}
+        </span>
+      </TextWithTooltip>
+      <Switch
+        checked={!!alert}
+        disabled={disabled || isPending}
+        onCheckedChange={handleToggle}
+      />
     </div>
   );
 }
