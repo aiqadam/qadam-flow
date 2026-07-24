@@ -294,8 +294,24 @@ describe('filter_list', () => {
         const r = result('filter_list({{items}};"name";"Bob")', LIST_DATA) as unknown[]
         expect(r).toHaveLength(2)
     })
+    it('explicit equals operator', () => {
+        const r = result('filter_list({{files}};"ext";"pdf";"equals")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('contains operator', () => {
+        const r = result('filter_list({{files}};"name";"data";"contains")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('starts_with operator', () => {
+        const r = result('filter_list({{files}};"name";"report";"starts_with")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
     it('ends_with operator', () => {
         const r = result('filter_list({{files}};"name";".pdf";"ends_with")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('less_than operator', () => {
+        const r = result('filter_list({{files}};"size";100;"less_than")', FILES_DATA) as unknown[]
         expect(r).toHaveLength(1)
     })
     it('not_equals operator', () => {
@@ -326,8 +342,14 @@ describe('build_object', () => {
         const r = result('build_object("id";{{id}};"name";{{name}})', { id: 42, name: 'Bob' })
         expect(r).toEqual({ id: 42, name: 'Bob' })
     })
-    it('ignores prototype-mutating keys', () => {
-        const r = result('build_object("__proto__";{{bad}};"safe";{{ok}})', { bad: { polluted: 1 }, ok: 'yes' })
+    it('drops a trailing key with no value', () => {
+        expect(result('build_object("a";{{v}};"b")', { v: 1 })).toEqual({ a: 1 })
+    })
+    it('ignores prototype-mutating keys (__proto__, constructor, prototype)', () => {
+        const r = result(
+            'build_object("__proto__";{{bad}};"constructor";{{bad}};"prototype";{{bad}};"safe";{{ok}})',
+            { bad: { polluted: 1 }, ok: 'yes' },
+        )
         expect(r).toEqual({ safe: 'yes' })
         expect(({} as Record<string, unknown>).polluted).toBeUndefined()
     })

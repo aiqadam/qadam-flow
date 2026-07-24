@@ -758,10 +758,10 @@ export const AP_FUNCTIONS: ApFunction[] = [
     {
         name: 'build_object',
         category: 'list',
-        description: 'Builds an object from alternating key and value pairs.',
+        description: 'Builds an object from alternating key and value pairs. Pass values as variables to keep their type; bare literals are treated as text.',
         syntax: 'build_object(key1; value1; key2; value2; ...)',
-        example: 'build_object( name; Bob; age; 30 )',
-        exampleResult: '{ name: Bob, age: 30 }',
+        example: 'build_object( name; Bob; role; admin )',
+        exampleResult: '{ name: Bob, role: admin }',
         minArgs: 2,
         maxArgs: -1,
         argTypes: [['string', 'number', 'boolean', 'list']],
