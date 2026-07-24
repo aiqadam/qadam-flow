@@ -531,7 +531,6 @@
   "Copy this key now. For your security, it will not be shown again.": "Copy this key now. For your security, it will not be shown again.",
   "Create your first API key to get started": "Create your first API key to get started",
   "Manage API keys used to authenticate requests to the API": "Manage API keys used to authenticate requests to the API",
-  "Create API keys to authenticate programmatic access to your platform": "Create API keys to authenticate programmatic access to your platform",
   "This API key will be permanently deleted. Any request using it will stop working.": "This API key will be permanently deleted. Any request using it will stop working.",
   "Secret Managers": "Secret Managers",
   "Observability": "Observability",

@@ -95,6 +95,36 @@ describe('GET /v1/api-keys', () => {
     })
 })
 
+describe('api key privilege', () => {
+  it('does not let a SERVICE principal manage api keys', async () => {
+    const ctx = await createTestContext(app!)
+    const apiKey = await createKey(ctx)
+    const serviceAuth = { authorization: `Bearer ${apiKey.value}` }
+
+    const createRes = await app!.inject({
+      method: 'POST',
+      url: '/api/v1/api-keys',
+      headers: serviceAuth,
+      payload: { displayName: faker.lorem.word() },
+    })
+    expect(createRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+
+    const listRes = await app!.inject({
+      method: 'GET',
+      url: '/api/v1/api-keys',
+      headers: serviceAuth,
+    })
+    expect(listRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+
+    const deleteRes = await app!.inject({
+      method: 'DELETE',
+      url: `/api/v1/api-keys/${apiKey.id}`,
+      headers: serviceAuth,
+    })
+    expect(deleteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+  })
+})
+
 describe('api key authentication', () => {
     it('authenticates a project-scoped request with a valid key', async () => {
         const ctx = await createTestContext(app!)

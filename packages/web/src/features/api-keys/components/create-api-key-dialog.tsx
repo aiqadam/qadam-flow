@@ -1,10 +1,9 @@
-import { CreateApiKeyRequest, formErrors } from '@aiqadam/shared';
+import { CreateApiKeyRequest } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { t } from 'i18next';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 
 import { CopyToClipboardInput } from '@/components/custom/clipboard/copy-to-clipboard';
 import { Button } from '@/components/ui/button';
@@ -21,13 +20,7 @@ import { Label } from '@/components/ui/label';
 
 import { apiKeysMutations } from '../hooks/api-keys-hooks';
 
-const CreateApiKeySchema = z.object({
-  displayName: z.string().min(1, formErrors.required),
-});
-
-type CreateApiKeyValues = z.infer<typeof CreateApiKeySchema>;
-
-const defaultValues: CreateApiKeyValues = {
+const defaultValues: CreateApiKeyRequest = {
   displayName: '',
 };
 
@@ -35,8 +28,8 @@ function CreateApiKeyForm() {
   const [secret, setSecret] = useState<string | null>(null);
   const createMutation = apiKeysMutations.useCreate();
 
-  const form = useForm<CreateApiKeyValues>({
-    resolver: zodResolver(CreateApiKeySchema),
+  const form = useForm<CreateApiKeyRequest>({
+    resolver: zodResolver(CreateApiKeyRequest),
     defaultValues,
     mode: 'onChange',
   });

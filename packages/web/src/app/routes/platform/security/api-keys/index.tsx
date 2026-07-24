@@ -4,7 +4,6 @@ import { t } from 'i18next';
 import { KeyRound, Trash } from 'lucide-react';
 
 import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
-import LockedFeatureGuard from '@/app/components/locked-feature-guard';
 import { DataTable, RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
 import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
@@ -55,52 +54,46 @@ export default function ApiKeysPage() {
   const { mutateAsync: deleteApiKey } = apiKeysMutations.useDelete();
 
   return (
-    <LockedFeatureGuard
-      locked={false}
-      lockTitle={t('API Keys')}
-      lockDescription={t(
-        'Create API keys to authenticate programmatic access to your platform',
-      )}
-    >
-      <div className="flex flex-col w-full">
-        <DashboardPageHeader
-          title={t('API Keys')}
-          description={t(
-            'Manage API keys used to authenticate requests to the API',
-          )}
-        >
-          <CreateApiKeyDialog />
-        </DashboardPageHeader>
-        <DataTable
-          emptyStateTextTitle={t('No API keys found')}
-          emptyStateTextDescription={t('Create your first API key to get started')}
-          emptyStateIcon={<KeyRound className="size-14" />}
-          columns={columns}
-          page={{
-            data: data?.data ?? [],
-            next: data?.next || null,
-            previous: data?.previous || null,
-          }}
-          hidePagination={true}
-          isLoading={isLoading}
-          actions={[
-            (row) => (
-              <ConfirmationDeleteDialog
-                title={t('Delete API key')}
-                message={t(
-                  'This API key will be permanently deleted. Any request using it will stop working.',
-                )}
-                entityName={row.displayName}
-                mutationFn={() => deleteApiKey(row.id)}
-              >
-                <Button variant="ghost" size="icon">
-                  <Trash className="size-4 text-destructive" />
-                </Button>
-              </ConfirmationDeleteDialog>
-            ),
-          ]}
-        />
-      </div>
-    </LockedFeatureGuard>
+    <div className="flex flex-col w-full">
+      <DashboardPageHeader
+        title={t('API Keys')}
+        description={t(
+          'Manage API keys used to authenticate requests to the API',
+        )}
+      >
+        <CreateApiKeyDialog />
+      </DashboardPageHeader>
+      <DataTable
+        emptyStateTextTitle={t('No API keys found')}
+        emptyStateTextDescription={t(
+          'Create your first API key to get started',
+        )}
+        emptyStateIcon={<KeyRound className="size-14" />}
+        columns={columns}
+        page={{
+          data: data?.data ?? [],
+          next: data?.next || null,
+          previous: data?.previous || null,
+        }}
+        hidePagination={true}
+        isLoading={isLoading}
+        actions={[
+          (row) => (
+            <ConfirmationDeleteDialog
+              title={t('Delete API key')}
+              message={t(
+                'This API key will be permanently deleted. Any request using it will stop working.',
+              )}
+              entityName={row.displayName}
+              mutationFn={() => deleteApiKey(row.id)}
+            >
+              <Button variant="ghost" size="icon">
+                <Trash className="size-4 text-destructive" />
+              </Button>
+            </ConfirmationDeleteDialog>
+          ),
+        ]}
+      />
+    </div>
   );
 }

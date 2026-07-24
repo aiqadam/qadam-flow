@@ -11,7 +11,9 @@ function list(): Promise<SeekPage<ResponseApiKey>> {
   return api.get<SeekPage<ResponseApiKey>>('/v1/api-keys', { limit: 100 });
 }
 
-function create(request: CreateApiKeyRequest): Promise<ApiKeyResponseWithValue> {
+function create(
+  request: CreateApiKeyRequest,
+): Promise<ApiKeyResponseWithValue> {
   return api.post<ApiKeyResponseWithValue>('/v1/api-keys', request);
 }
 
