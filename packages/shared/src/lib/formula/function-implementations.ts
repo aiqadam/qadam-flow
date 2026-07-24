@@ -197,17 +197,12 @@ parser.functions.to_date = (d: unknown) => {
     return parsed.isValid() ? parsed.toISOString() : ''
 }
 
-parser.functions.filter_list = (list: unknown, field: unknown, value: unknown) =>
-    toArray(list).filter(
-        (item) =>
-            typeof item === 'object' &&
-            item !== null &&
-            // Loose equality is intentional: formula args arrive as strings from text
-            // input, while item fields are typed (`{age: 25}`). `===` would silently
-            // return zero matches when filtering numeric fields with string args.
-            // Same rationale applies to is_equal, switch, if_null below.
-            (item as Record<string, unknown>)[String(field)] == value,
-    )
+// Loose equality is intentional throughout: formula args arrive as strings from
+// text input, while item fields are typed (`{age: 25}`). `===` would silently
+// return zero matches when filtering numeric fields with string args. Same
+// rationale applies to is_equal, switch, if_null below.
+parser.functions.filter_list = (list: unknown, field: unknown, value: unknown, operator: unknown = 'equals') =>
+    toArray(list).filter((item) => matchesOperator(readPath(item, String(field)), value, String(operator)))
 parser.functions.sort_list = (list: unknown, field: unknown, order: unknown = 'asc') => {
     const arr = [...toArray(list)]
     const fieldName = String(field)
@@ -223,11 +218,35 @@ parser.functions.sort_list = (list: unknown, field: unknown, order: unknown = 'a
     })
 }
 parser.functions.pluck = (list: unknown, field: unknown) =>
-    toArray(list).map((item) =>
-        typeof item === 'object' && item !== null
-            ? (item as Record<string, unknown>)[String(field)]
-            : undefined,
-    )
+    toArray(list).map((item) => readPath(item, String(field)))
+parser.functions.find_by = (list: unknown, field: unknown, value: unknown) =>
+    // Loose equality mirrors filter_list: formula args arrive as strings from
+    // text input while item fields are typed, so `===` would never match.
+    toArray(list).find((item) => readPath(item, String(field)) == value) ?? null
+parser.functions.keys = (obj: unknown) =>
+    obj != null && typeof obj === 'object' && !Array.isArray(obj) ? Object.keys(obj) : []
+parser.functions.values = (obj: unknown) =>
+    obj != null && typeof obj === 'object' && !Array.isArray(obj) ? Object.values(obj) : []
+parser.functions.to_json = (val: unknown) => (val == null ? '' : JSON.stringify(val))
+parser.functions.from_json = (text: unknown) => {
+    try {
+        return JSON.parse(String(text ?? ''))
+    }
+    catch {
+        return null
+    }
+}
+parser.functions.build_object = (...args: unknown[]) => {
+    const obj: Record<string, unknown> = {}
+    for (let i = 0; i + 1 < args.length; i += 2) {
+        const key = String(args[i])
+        // build_object writes a user-supplied key into a real object (a write sink,
+        // unlike the read-only field helpers), so block prototype-mutating keys.
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+        obj[key] = args[i + 1]
+    }
+    return obj
+}
 parser.functions.join_list = (list: unknown, sep: unknown = ',') =>
     toArray(list).join(String(sep))
 parser.functions.first_item = (list: unknown) => toArray(list)[0]
@@ -338,6 +357,44 @@ function readField(item: unknown, field: string): unknown {
         return (item as Record<string, unknown>)[field]
     }
     return undefined
+}
+
+// Traverse a dot-separated path (e.g. "output.body.s3_key") so pluck/find_by can
+// reach nested step outputs. A path with no dots behaves like a single-level read.
+function readPath(item: unknown, path: string): unknown {
+    // A literal key that itself contains dots (common in webhook/analytics
+    // payloads like {"user.email": ...}) wins over traversal, so adding dot-path
+    // support stays backward compatible with flat single-level reads.
+    if (item != null && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, path)) {
+        return (item as Record<string, unknown>)[path]
+    }
+    let value = item
+    for (const part of path.split('.')) {
+        if (value == null || typeof value !== 'object') return undefined
+        value = (value as Record<string, unknown>)[part]
+    }
+    return value
+}
+
+// `in` accepts either a real list (e.g. from split_text_to_list or pluck) or a
+// comma-separated string, so `.pdf OR .docx` filtering needs no CODE step.
+function toValueList(value: unknown): unknown[] {
+    if (Array.isArray(value)) return value
+    return String(value ?? '').split(',').map((part) => part.trim())
+}
+
+function matchesOperator(fieldValue: unknown, value: unknown, operator: string): boolean {
+    switch (operator) {
+        case 'not_equals': return fieldValue != value
+        case 'contains': return String(fieldValue ?? '').includes(String(value ?? ''))
+        case 'starts_with': return String(fieldValue ?? '').startsWith(String(value ?? ''))
+        case 'ends_with': return String(fieldValue ?? '').endsWith(String(value ?? ''))
+        case 'greater_than': return Number(fieldValue) > Number(value)
+        case 'less_than': return Number(fieldValue) < Number(value)
+        case 'in': return toValueList(value).some((candidate) => candidate == fieldValue)
+        case 'equals':
+        default: return fieldValue == value
+    }
 }
 
 function toNumericFieldValues(list: unknown, field: unknown): number[] {

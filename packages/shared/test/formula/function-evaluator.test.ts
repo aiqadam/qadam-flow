@@ -280,10 +280,78 @@ const LIST_DATA = {
     ],
 }
 
+const FILES_DATA = {
+    files: [
+        { name: 'report.pdf', ext: 'pdf', size: 100 },
+        { name: 'data.xlsx', ext: 'xlsx', size: 50 },
+        { name: 'notes.docx', ext: 'docx', size: 200 },
+    ],
+    exts: ['pdf', 'docx'],
+}
+
 describe('filter_list', () => {
-    it('filters by field value', () => {
+    it('filters by field value (default equals, backward compatible)', () => {
         const r = result('filter_list({{items}};"name";"Bob")', LIST_DATA) as unknown[]
         expect(r).toHaveLength(2)
+    })
+    it('explicit equals operator', () => {
+        const r = result('filter_list({{files}};"ext";"pdf";"equals")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('contains operator', () => {
+        const r = result('filter_list({{files}};"name";"data";"contains")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('starts_with operator', () => {
+        const r = result('filter_list({{files}};"name";"report";"starts_with")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('ends_with operator', () => {
+        const r = result('filter_list({{files}};"name";".pdf";"ends_with")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('less_than operator', () => {
+        const r = result('filter_list({{files}};"size";100;"less_than")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('not_equals operator', () => {
+        const r = result('filter_list({{files}};"ext";"pdf";"not_equals")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('greater_than operator', () => {
+        const r = result('filter_list({{files}};"size";60;"greater_than")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('in operator with a list value', () => {
+        const r = result('filter_list({{files}};"ext";{{exts}};"in")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('in operator with a comma-separated string value', () => {
+        const r = result('filter_list({{files}};"ext";"pdf,docx";"in")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('filters on a nested dot-path field', () => {
+        const data = { rows: [{ meta: { status: 'ok' } }, { meta: { status: 'no' } }] }
+        const r = result('filter_list({{rows}};"meta.status";"ok")', data) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+})
+
+describe('build_object', () => {
+    it('builds an object from key/value pairs', () => {
+        const r = result('build_object("id";{{id}};"name";{{name}})', { id: 42, name: 'Bob' })
+        expect(r).toEqual({ id: 42, name: 'Bob' })
+    })
+    it('drops a trailing key with no value', () => {
+        expect(result('build_object("a";{{v}};"b")', { v: 1 })).toEqual({ a: 1 })
+    })
+    it('ignores prototype-mutating keys (__proto__, constructor, prototype)', () => {
+        const r = result(
+            'build_object("__proto__";{{bad}};"constructor";{{bad}};"prototype";{{bad}};"safe";{{ok}})',
+            { bad: { polluted: 1 }, ok: 'yes' },
+        )
+        expect(r).toEqual({ safe: 'yes' })
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined()
     })
 })
 
@@ -303,6 +371,84 @@ describe('pluck', () => {
         const r = result('pluck({{items}};"name")', LIST_DATA)
         expect(r).toEqual(['Alice', 'Bob', 'Charlie', 'Bob'])
     })
+    it('follows a dotted path into nested fields', () => {
+        const data = {
+            rows: [
+                { output: { body: { id: 1 } } },
+                { output: { body: { id: 2 } } },
+            ],
+        }
+        expect(result('pluck({{rows}};"output.body.id")', data)).toEqual([1, 2])
+    })
+    it('yields undefined for a missing nested path', () => {
+        const data = { rows: [{ output: {} }] }
+        expect(result('pluck({{rows}};"output.body.id")', data)).toEqual([undefined])
+    })
+    it('prefers a literal flat key containing dots over traversal', () => {
+        const data = { rows: [{ 'user.email': 'a@x.com' }, { 'user.email': 'b@x.com' }] }
+        expect(result('pluck({{rows}};"user.email")', data)).toEqual(['a@x.com', 'b@x.com'])
+    })
+    it('lets a top-level literal dotted key win over a same-named nested path', () => {
+        const data = { rows: [{ 'a.b': 'flat', a: { b: 'nested' } }] }
+        expect(result('pluck({{rows}};"a.b")', data)).toEqual(['flat'])
+    })
+    it('does not resolve a nested key that itself contains a dot (documented limit)', () => {
+        const data = { rows: [{ a: { 'b.c': 1 } }] }
+        expect(result('pluck({{rows}};"a.b.c")', data)).toEqual([undefined])
+    })
+})
+
+describe('find_by', () => {
+    it('returns the first matching item', () => {
+        const r = result('find_by({{items}};"name";"Bob")', LIST_DATA) as { score: number }
+        expect(r.score).toBe(70)
+    })
+    it('matches loosely across string and number args', () => {
+        const r = result('find_by({{items}};"score";90)', LIST_DATA) as { name: string }
+        expect(r.name).toBe('Alice')
+    })
+    it('returns null when nothing matches', () => {
+        expect(result('find_by({{items}};"name";"Zed")', LIST_DATA)).toBeNull()
+    })
+    it('matches on a nested dot-path field', () => {
+        const data = { rows: [{ meta: { id: 1 } }, { meta: { id: 2 } }] }
+        const r = result('find_by({{rows}};"meta.id";2)', data) as { meta: { id: number } }
+        expect(r.meta.id).toBe(2)
+    })
+})
+
+describe('keys / values', () => {
+    const OBJ = { obj: { name: 'Bob', age: 30 } }
+    it('keys returns field names', () =>
+        expect(result('keys({{obj}})', OBJ)).toEqual(['name', 'age']))
+    it('values returns field values', () =>
+        expect(result('values({{obj}})', OBJ)).toEqual(['Bob', 30]))
+    it('keys returns empty list for a non-object', () =>
+        expect(result('keys({{x}})', { x: 'plain' })).toEqual([]))
+    it('keys returns empty list for an array', () =>
+        expect(result('keys({{x}})', { x: [1, 2, 3] })).toEqual([]))
+    it('values returns empty list for null', () =>
+        expect(result('values({{x}})', { x: null })).toEqual([]))
+})
+
+describe('to_json / from_json', () => {
+    it('to_json serializes an object', () =>
+        expect(result('to_json({{obj}})', { obj: { id: 42 } })).toBe('{"id":42}'))
+    it('to_json serializes a list', () =>
+        expect(result('to_json({{list}})', { list: [1, 2, 3] })).toBe('[1,2,3]'))
+    it('to_json returns empty text for null', () =>
+        expect(result('to_json({{missing}})', {})).toBe(''))
+    it('from_json parses an object round-trip', () => {
+        const r = result('from_json({{text}})', { text: '{"id":42}' }) as { id: number }
+        expect(r.id).toBe(42)
+    })
+    it('round-trips a nested object through to_json then from_json', () => {
+        const data = { obj: { a: { b: 1 } } }
+        const r = result('from_json(to_json({{obj}}))', data) as { a: { b: number } }
+        expect(r.a.b).toBe(1)
+    })
+    it('from_json returns null on invalid JSON', () =>
+        expect(result('from_json({{text}})', { text: 'not json' })).toBeNull())
 })
 
 describe('join_list', () => {
