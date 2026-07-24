@@ -27,9 +27,10 @@ export const filesService = {
             expiresInSeconds: dayjs.duration(executionRetentionInDays, 'days').asSeconds(),
             audience: JwtAudience.FILE_READ,
         })
-        return domainHelper.getPublicApiUrl({
-            path: `v1/files/${params.fileId}?token=${token}`,
-        })
+        const path = `v1/files/${params.fileId}?token=${token}`
+        return params.internal
+            ? domainHelper.getInternalApiUrl({ path })
+            : domainHelper.getPublicApiUrl({ path })
     },
 }
 
@@ -49,4 +50,5 @@ type ConstructReadUrlParams = {
     fileId: string
     fileType?: FileType
     platformId: string | null | undefined
+    internal?: boolean
 }

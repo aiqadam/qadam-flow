@@ -56,6 +56,46 @@ describe('Files Controller', () => {
             }
         })
 
+        it('returns a worker-reachable readUrl built from AP_INTERNAL_URL, not the public frontend host', async () => {
+            const previousInternalUrl = process.env.AP_INTERNAL_URL
+            process.env.AP_INTERNAL_URL = 'http://qadam-flow-app'
+            try {
+                const { mockProject, mockPlatform } = await mockAndSaveBasicSetup()
+                const engineToken = await generateMockToken({
+                    type: PrincipalType.ENGINE,
+                    id: apId(),
+                    projectId: mockProject.id,
+                    platform: { id: mockPlatform.id },
+                })
+                const fileId = apId()
+
+                const response = await app!.inject({
+                    method: 'PUT',
+                    url: `/api/v1/files/${fileId}`,
+                    query: { token: engineToken },
+                    headers: {
+                        'content-type': 'application/octet-stream',
+                        'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                        'x-ap-file-name': 'hello.txt',
+                    },
+                    payload: Buffer.from('internal host body'),
+                })
+
+                expect(response?.statusCode).toBe(StatusCodes.OK)
+                const readUrl = response!.json().readUrl as string
+                expect(new URL(readUrl).origin).toBe('http://qadam-flow-app')
+                expect(response?.headers['x-ap-file-read-url']).toBe(readUrl)
+            }
+            finally {
+                if (previousInternalUrl === undefined) {
+                    delete process.env.AP_INTERNAL_URL
+                }
+                else {
+                    process.env.AP_INTERNAL_URL = previousInternalUrl
+                }
+            }
+        })
+
         it('rejects a request whose token is not an engine principal', async () => {
             const { mockProject, mockPlatform } = await mockAndSaveBasicSetup()
             const userToken = await generateMockToken({
