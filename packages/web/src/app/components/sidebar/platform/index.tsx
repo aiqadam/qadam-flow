@@ -158,8 +158,6 @@ export function PlatformSidebar() {
           to: '/platform/security/api-keys',
           label: t('API Keys'),
           icon: FileJson2Icon,
-          locked: !platform.plan.apiKeysEnabled,
-          badge: !platform.plan.apiKeysEnabled ? t('Soon') : undefined,
         },
         {
           to: '/platform/security/secret-managers',

@@ -56,7 +56,6 @@ export const PlatformPlan = z.object({
     projectRolesEnabled: z.boolean(),
     globalConnectionsEnabled: z.boolean(),
     customRolesEnabled: z.boolean(),
-    apiKeysEnabled: z.boolean(),
     ssoEnabled: z.boolean(),
     secretManagersEnabled: z.boolean(),
     scimEnabled: z.boolean(),

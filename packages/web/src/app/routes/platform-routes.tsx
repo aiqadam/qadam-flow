@@ -14,6 +14,7 @@ const ProjectsPage = React.lazy(() => import('./platform/projects'));
 const SSOPage = React.lazy(() =>
   import('./platform/security/sso').then((m) => ({ default: m.SSOPage })),
 );
+const ApiKeysPage = React.lazy(() => import('./platform/security/api-keys'));
 const AIProvidersPage = React.lazy(() => import('./platform/setup/ai'));
 const PlatformMcpPage = React.lazy(() => import('./platform/setup/mcp'));
 const BrandingPage = React.lazy(() =>
@@ -191,6 +192,18 @@ export const platformRoutes = [
         <PageTitle title="SSO">
           <SuspenseWrapper>
             <SSOPage />
+          </SuspenseWrapper>
+        </PageTitle>
+      </PlatformLayout>
+    ),
+  },
+  {
+    path: '/platform/security/api-keys',
+    element: (
+      <PlatformLayout>
+        <PageTitle title="API Keys">
+          <SuspenseWrapper>
+            <ApiKeysPage />
           </SuspenseWrapper>
         </PageTitle>
       </PlatformLayout>

@@ -253,7 +253,6 @@ async function getPlan(_log: FastifyBaseLogger, _platform: PlatformWithoutFedera
         customAppearanceEnabled: false,
         teamProjectsLimit: TeamProjectsLimit.UNLIMITED,
         projectRolesEnabled: false,
-        apiKeysEnabled: false,
         ssoEnabled: false,
         secretManagersEnabled: false,
         scimEnabled: false,

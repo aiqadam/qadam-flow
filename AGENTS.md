@@ -123,6 +123,7 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## White-Labeling & Edition Paths
 
 - **All customer-facing UI must be white-labeled.** Sign-in/signup pages, email templates, logos, and any user-visible branding must use the platform's configured appearance (name, colors, logos) — never hardcode "Activepieces" in user-facing surfaces.
+- **Never copy upstream EE source — clean-room reimplement instead.** Upstream `packages/ee/` (and `packages/server/api/src/app/ee`) is under the proprietary Activepieces Enterprise License, not MIT; this repo is MIT-only. When restoring a feature that lived under upstream `ee/` (API keys, SSO, RBAC, audit logs, git sync), NEVER copy the EE source verbatim (no `git show <upstream-sha>:packages/ee/...`, no pasting bodies/structure) — that infringes the Enterprise License. Reimplement from behavior only (HTTP contract, schema-as-idea, auth flow); copyright protects the specific source, not the functionality or API. Code already in the MIT core is safe to reuse. See `.claude/rules/edition-safety.md`.
 
 ## Useful Links
 
