@@ -223,11 +223,24 @@ parser.functions.sort_list = (list: unknown, field: unknown, order: unknown = 'a
     })
 }
 parser.functions.pluck = (list: unknown, field: unknown) =>
-    toArray(list).map((item) =>
-        typeof item === 'object' && item !== null
-            ? (item as Record<string, unknown>)[String(field)]
-            : undefined,
-    )
+    toArray(list).map((item) => readPath(item, String(field)))
+parser.functions.find_by = (list: unknown, field: unknown, value: unknown) =>
+    // Loose equality mirrors filter_list: formula args arrive as strings from
+    // text input while item fields are typed, so `===` would never match.
+    toArray(list).find((item) => readPath(item, String(field)) == value) ?? null
+parser.functions.keys = (obj: unknown) =>
+    obj != null && typeof obj === 'object' && !Array.isArray(obj) ? Object.keys(obj) : []
+parser.functions.values = (obj: unknown) =>
+    obj != null && typeof obj === 'object' && !Array.isArray(obj) ? Object.values(obj) : []
+parser.functions.to_json = (val: unknown) => (val == null ? '' : JSON.stringify(val))
+parser.functions.from_json = (text: unknown) => {
+    try {
+        return JSON.parse(String(text ?? ''))
+    }
+    catch {
+        return null
+    }
+}
 parser.functions.join_list = (list: unknown, sep: unknown = ',') =>
     toArray(list).join(String(sep))
 parser.functions.first_item = (list: unknown) => toArray(list)[0]
@@ -338,6 +351,17 @@ function readField(item: unknown, field: string): unknown {
         return (item as Record<string, unknown>)[field]
     }
     return undefined
+}
+
+// Traverse a dot-separated path (e.g. "output.body.s3_key") so pluck/find_by can
+// reach nested step outputs. A path with no dots behaves like a single-level read.
+function readPath(item: unknown, path: string): unknown {
+    let value = item
+    for (const part of path.split('.')) {
+        if (value == null || typeof value !== 'object') return undefined
+        value = (value as Record<string, unknown>)[part]
+    }
+    return value
 }
 
 function toNumericFieldValues(list: unknown, field: unknown): number[] {

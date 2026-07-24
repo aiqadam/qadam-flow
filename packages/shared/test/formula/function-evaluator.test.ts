@@ -303,6 +303,56 @@ describe('pluck', () => {
         const r = result('pluck({{items}};"name")', LIST_DATA)
         expect(r).toEqual(['Alice', 'Bob', 'Charlie', 'Bob'])
     })
+    it('follows a dotted path into nested fields', () => {
+        const data = {
+            rows: [
+                { output: { body: { id: 1 } } },
+                { output: { body: { id: 2 } } },
+            ],
+        }
+        expect(result('pluck({{rows}};"output.body.id")', data)).toEqual([1, 2])
+    })
+    it('yields undefined for a missing nested path', () => {
+        const data = { rows: [{ output: {} }] }
+        expect(result('pluck({{rows}};"output.body.id")', data)).toEqual([undefined])
+    })
+})
+
+describe('find_by', () => {
+    it('returns the first matching item', () => {
+        const r = result('find_by({{items}};"name";"Bob")', LIST_DATA) as { score: number }
+        expect(r.score).toBe(70)
+    })
+    it('matches loosely across string and number args', () => {
+        const r = result('find_by({{items}};"score";90)', LIST_DATA) as { name: string }
+        expect(r.name).toBe('Alice')
+    })
+    it('returns null when nothing matches', () => {
+        expect(result('find_by({{items}};"name";"Zed")', LIST_DATA)).toBeNull()
+    })
+})
+
+describe('keys / values', () => {
+    const OBJ = { obj: { name: 'Bob', age: 30 } }
+    it('keys returns field names', () =>
+        expect(result('keys({{obj}})', OBJ)).toEqual(['name', 'age']))
+    it('values returns field values', () =>
+        expect(result('values({{obj}})', OBJ)).toEqual(['Bob', 30]))
+    it('keys returns empty list for a non-object', () =>
+        expect(result('keys({{x}})', { x: 'plain' })).toEqual([]))
+})
+
+describe('to_json / from_json', () => {
+    it('to_json serializes an object', () =>
+        expect(result('to_json({{obj}})', { obj: { id: 42 } })).toBe('{"id":42}'))
+    it('to_json returns empty text for null', () =>
+        expect(result('to_json({{missing}})', {})).toBe(''))
+    it('from_json parses an object round-trip', () => {
+        const r = result('from_json({{text}})', { text: '{"id":42}' }) as { id: number }
+        expect(r.id).toBe(42)
+    })
+    it('from_json returns null on invalid JSON', () =>
+        expect(result('from_json({{text}})', { text: 'not json' })).toBeNull())
 })
 
 describe('join_list', () => {
