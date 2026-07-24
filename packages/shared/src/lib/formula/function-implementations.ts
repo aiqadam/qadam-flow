@@ -356,6 +356,12 @@ function readField(item: unknown, field: string): unknown {
 // Traverse a dot-separated path (e.g. "output.body.s3_key") so pluck/find_by can
 // reach nested step outputs. A path with no dots behaves like a single-level read.
 function readPath(item: unknown, path: string): unknown {
+    // A literal key that itself contains dots (common in webhook/analytics
+    // payloads like {"user.email": ...}) wins over traversal, so adding dot-path
+    // support stays backward compatible with flat single-level reads.
+    if (item != null && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, path)) {
+        return (item as Record<string, unknown>)[path]
+    }
     let value = item
     for (const part of path.split('.')) {
         if (value == null || typeof value !== 'object') return undefined

@@ -316,6 +316,10 @@ describe('pluck', () => {
         const data = { rows: [{ output: {} }] }
         expect(result('pluck({{rows}};"output.body.id")', data)).toEqual([undefined])
     })
+    it('prefers a literal flat key containing dots over traversal', () => {
+        const data = { rows: [{ 'user.email': 'a@x.com' }, { 'user.email': 'b@x.com' }] }
+        expect(result('pluck({{rows}};"user.email")', data)).toEqual(['a@x.com', 'b@x.com'])
+    })
 })
 
 describe('find_by', () => {
@@ -330,6 +334,11 @@ describe('find_by', () => {
     it('returns null when nothing matches', () => {
         expect(result('find_by({{items}};"name";"Zed")', LIST_DATA)).toBeNull()
     })
+    it('matches on a nested dot-path field', () => {
+        const data = { rows: [{ meta: { id: 1 } }, { meta: { id: 2 } }] }
+        const r = result('find_by({{rows}};"meta.id";2)', data) as { meta: { id: number } }
+        expect(r.meta.id).toBe(2)
+    })
 })
 
 describe('keys / values', () => {
@@ -340,16 +349,27 @@ describe('keys / values', () => {
         expect(result('values({{obj}})', OBJ)).toEqual(['Bob', 30]))
     it('keys returns empty list for a non-object', () =>
         expect(result('keys({{x}})', { x: 'plain' })).toEqual([]))
+    it('keys returns empty list for an array', () =>
+        expect(result('keys({{x}})', { x: [1, 2, 3] })).toEqual([]))
+    it('values returns empty list for null', () =>
+        expect(result('values({{x}})', { x: null })).toEqual([]))
 })
 
 describe('to_json / from_json', () => {
     it('to_json serializes an object', () =>
         expect(result('to_json({{obj}})', { obj: { id: 42 } })).toBe('{"id":42}'))
+    it('to_json serializes a list', () =>
+        expect(result('to_json({{list}})', { list: [1, 2, 3] })).toBe('[1,2,3]'))
     it('to_json returns empty text for null', () =>
         expect(result('to_json({{missing}})', {})).toBe(''))
     it('from_json parses an object round-trip', () => {
         const r = result('from_json({{text}})', { text: '{"id":42}' }) as { id: number }
         expect(r.id).toBe(42)
+    })
+    it('round-trips a nested object through to_json then from_json', () => {
+        const data = { obj: { a: { b: 1 } } }
+        const r = result('from_json(to_json({{obj}}))', data) as { a: { b: number } }
+        expect(r.a.b).toBe(1)
     })
     it('from_json returns null on invalid JSON', () =>
         expect(result('from_json({{text}})', { text: 'not json' })).toBeNull())
