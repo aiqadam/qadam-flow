@@ -197,17 +197,12 @@ parser.functions.to_date = (d: unknown) => {
     return parsed.isValid() ? parsed.toISOString() : ''
 }
 
-parser.functions.filter_list = (list: unknown, field: unknown, value: unknown) =>
-    toArray(list).filter(
-        (item) =>
-            typeof item === 'object' &&
-            item !== null &&
-            // Loose equality is intentional: formula args arrive as strings from text
-            // input, while item fields are typed (`{age: 25}`). `===` would silently
-            // return zero matches when filtering numeric fields with string args.
-            // Same rationale applies to is_equal, switch, if_null below.
-            (item as Record<string, unknown>)[String(field)] == value,
-    )
+// Loose equality is intentional throughout: formula args arrive as strings from
+// text input, while item fields are typed (`{age: 25}`). `===` would silently
+// return zero matches when filtering numeric fields with string args. Same
+// rationale applies to is_equal, switch, if_null below.
+parser.functions.filter_list = (list: unknown, field: unknown, value: unknown, operator: unknown = 'equals') =>
+    toArray(list).filter((item) => matchesOperator(readPath(item, String(field)), value, String(operator)))
 parser.functions.sort_list = (list: unknown, field: unknown, order: unknown = 'asc') => {
     const arr = [...toArray(list)]
     const fieldName = String(field)
@@ -240,6 +235,17 @@ parser.functions.from_json = (text: unknown) => {
     catch {
         return null
     }
+}
+parser.functions.build_object = (...args: unknown[]) => {
+    const obj: Record<string, unknown> = {}
+    for (let i = 0; i + 1 < args.length; i += 2) {
+        const key = String(args[i])
+        // build_object writes a user-supplied key into a real object (a write sink,
+        // unlike the read-only field helpers), so block prototype-mutating keys.
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+        obj[key] = args[i + 1]
+    }
+    return obj
 }
 parser.functions.join_list = (list: unknown, sep: unknown = ',') =>
     toArray(list).join(String(sep))
@@ -368,6 +374,27 @@ function readPath(item: unknown, path: string): unknown {
         value = (value as Record<string, unknown>)[part]
     }
     return value
+}
+
+// `in` accepts either a real list (e.g. from split_text_to_list or pluck) or a
+// comma-separated string, so `.pdf OR .docx` filtering needs no CODE step.
+function toValueList(value: unknown): unknown[] {
+    if (Array.isArray(value)) return value
+    return String(value ?? '').split(',').map((part) => part.trim())
+}
+
+function matchesOperator(fieldValue: unknown, value: unknown, operator: string): boolean {
+    switch (operator) {
+        case 'not_equals': return fieldValue != value
+        case 'contains': return String(fieldValue ?? '').includes(String(value ?? ''))
+        case 'starts_with': return String(fieldValue ?? '').startsWith(String(value ?? ''))
+        case 'ends_with': return String(fieldValue ?? '').endsWith(String(value ?? ''))
+        case 'greater_than': return Number(fieldValue) > Number(value)
+        case 'less_than': return Number(fieldValue) < Number(value)
+        case 'in': return toValueList(value).some((candidate) => candidate == fieldValue)
+        case 'equals':
+        default: return fieldValue == value
+    }
 }
 
 function toNumericFieldValues(list: unknown, field: unknown): number[] {

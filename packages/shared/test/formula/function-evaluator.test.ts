@@ -280,10 +280,56 @@ const LIST_DATA = {
     ],
 }
 
+const FILES_DATA = {
+    files: [
+        { name: 'report.pdf', ext: 'pdf', size: 100 },
+        { name: 'data.xlsx', ext: 'xlsx', size: 50 },
+        { name: 'notes.docx', ext: 'docx', size: 200 },
+    ],
+    exts: ['pdf', 'docx'],
+}
+
 describe('filter_list', () => {
-    it('filters by field value', () => {
+    it('filters by field value (default equals, backward compatible)', () => {
         const r = result('filter_list({{items}};"name";"Bob")', LIST_DATA) as unknown[]
         expect(r).toHaveLength(2)
+    })
+    it('ends_with operator', () => {
+        const r = result('filter_list({{files}};"name";".pdf";"ends_with")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+    it('not_equals operator', () => {
+        const r = result('filter_list({{files}};"ext";"pdf";"not_equals")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('greater_than operator', () => {
+        const r = result('filter_list({{files}};"size";60;"greater_than")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('in operator with a list value', () => {
+        const r = result('filter_list({{files}};"ext";{{exts}};"in")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('in operator with a comma-separated string value', () => {
+        const r = result('filter_list({{files}};"ext";"pdf,docx";"in")', FILES_DATA) as unknown[]
+        expect(r).toHaveLength(2)
+    })
+    it('filters on a nested dot-path field', () => {
+        const data = { rows: [{ meta: { status: 'ok' } }, { meta: { status: 'no' } }] }
+        const r = result('filter_list({{rows}};"meta.status";"ok")', data) as unknown[]
+        expect(r).toHaveLength(1)
+    })
+})
+
+describe('build_object', () => {
+    it('builds an object from key/value pairs', () => {
+        const r = result('build_object("id";{{id}};"name";{{name}})', { id: 42, name: 'Bob' })
+        expect(r).toEqual({ id: 42, name: 'Bob' })
+    })
+    it('ignores prototype-mutating keys', () => {
+        const r = result('build_object("__proto__";{{bad}};"safe";{{ok}})', { bad: { polluted: 1 }, ok: 'yes' })
+        expect(r).toEqual({ safe: 'yes' })
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined()
     })
 })
 
