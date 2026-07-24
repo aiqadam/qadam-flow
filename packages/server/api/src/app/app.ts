@@ -12,6 +12,7 @@ import { aiProviderService } from './ai/ai-provider-service'
 import { aiProviderModule } from './ai/ai-provider.module'
 import { alertsModule } from './alerts/alerts-module'
 import { platformAnalyticsModule } from './analytics/platform-analytics.module'
+import { apiKeyModule } from './api-keys/api-key.module'
 import { appConnectionModule } from './app-connection/app-connection.module'
 import { platformAppConnectionModule } from './app-connection/platform-app-connection.module'
 import { authenticationModule } from './authentication/authentication.module'
@@ -158,6 +159,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(otpModule)
     await app.register(localAuthnModule)
     await app.register(alertsModule)
+    await app.register(apiKeyModule)
     await app.register(projectMemberModule)
     await app.register(triggerModule)
     await app.register(platformModule)

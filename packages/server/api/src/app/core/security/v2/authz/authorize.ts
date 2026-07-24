@@ -93,6 +93,17 @@ async function assertAccessToProject(principal: Principal, projectSecurity: Proj
         throwNoAccess()
     }
 
+    // SERVICE principals are api-key based and treated as platform-scoped admin.
+    // Their `id` is the api-key id (not a user), so resolve scope via the key's
+    // platform and allow any project within it, bypassing per-project checks.
+    if (principal.type === PrincipalType.SERVICE) {
+        const serviceProject = await projectService(log).getOne(projectSecurity.projectId)
+        if (isNil(serviceProject) || serviceProject.platformId !== principal.platform.id) {
+            throwNoAccess()
+        }
+        return
+    }
+
     const user = await userService(log).getOneOrFail({ id: principal.id })
     if (isNil(user.platformId)) {
         throwNoAccess()
@@ -101,12 +112,6 @@ async function assertAccessToProject(principal: Principal, projectSecurity: Proj
     const project = await projectService(log).getOne(projectSecurity.projectId)
     if (isNil(project) || project.platformId !== user.platformId) {
         throwNoAccess()
-    }
-
-    // SERVICE principals are api-key based and treated as platform-scoped admin.
-    // They bypass per-project membership and permission checks.
-    if (principal.type === PrincipalType.SERVICE) {
-        return
     }
 
     // Platform-privileged users (ADMIN/OPERATOR) bypass per-project checks.
