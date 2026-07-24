@@ -320,6 +320,14 @@ describe('pluck', () => {
         const data = { rows: [{ 'user.email': 'a@x.com' }, { 'user.email': 'b@x.com' }] }
         expect(result('pluck({{rows}};"user.email")', data)).toEqual(['a@x.com', 'b@x.com'])
     })
+    it('lets a top-level literal dotted key win over a same-named nested path', () => {
+        const data = { rows: [{ 'a.b': 'flat', a: { b: 'nested' } }] }
+        expect(result('pluck({{rows}};"a.b")', data)).toEqual(['flat'])
+    })
+    it('does not resolve a nested key that itself contains a dot (documented limit)', () => {
+        const data = { rows: [{ a: { 'b.c': 1 } }] }
+        expect(result('pluck({{rows}};"a.b.c")', data)).toEqual([undefined])
+    })
 })
 
 describe('find_by', () => {
