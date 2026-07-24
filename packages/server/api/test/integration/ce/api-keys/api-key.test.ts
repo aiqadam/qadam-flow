@@ -96,33 +96,33 @@ describe('GET /v1/api-keys', () => {
 })
 
 describe('api key privilege', () => {
-  it('does not let a SERVICE principal manage api keys', async () => {
-    const ctx = await createTestContext(app!)
-    const apiKey = await createKey(ctx)
-    const serviceAuth = { authorization: `Bearer ${apiKey.value}` }
+    it('does not let a SERVICE principal manage api keys', async () => {
+        const ctx = await createTestContext(app!)
+        const apiKey = await createKey(ctx)
+        const serviceAuth = { authorization: `Bearer ${apiKey.value}` }
 
-    const createRes = await app!.inject({
-      method: 'POST',
-      url: '/api/v1/api-keys',
-      headers: serviceAuth,
-      payload: { displayName: faker.lorem.word() },
-    })
-    expect(createRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+        const createRes = await app!.inject({
+            method: 'POST',
+            url: '/api/v1/api-keys',
+            headers: serviceAuth,
+            payload: { displayName: faker.lorem.word() },
+        })
+        expect(createRes.statusCode).toBe(StatusCodes.FORBIDDEN)
 
-    const listRes = await app!.inject({
-      method: 'GET',
-      url: '/api/v1/api-keys',
-      headers: serviceAuth,
-    })
-    expect(listRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+        const listRes = await app!.inject({
+            method: 'GET',
+            url: '/api/v1/api-keys',
+            headers: serviceAuth,
+        })
+        expect(listRes.statusCode).toBe(StatusCodes.FORBIDDEN)
 
-    const deleteRes = await app!.inject({
-      method: 'DELETE',
-      url: `/api/v1/api-keys/${apiKey.id}`,
-      headers: serviceAuth,
+        const deleteRes = await app!.inject({
+            method: 'DELETE',
+            url: `/api/v1/api-keys/${apiKey.id}`,
+            headers: serviceAuth,
+        })
+        expect(deleteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
     })
-    expect(deleteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
-  })
 })
 
 describe('api key authentication', () => {
@@ -163,6 +163,20 @@ describe('api key authentication', () => {
         })
 
         expect(res.statusCode).toBe(StatusCodes.UNAUTHORIZED)
+    })
+
+    it('denies a key access to another platform\'s project', async () => {
+        const ctxA = await createTestContext(app!)
+        const apiKeyA = await createKey(ctxA)
+        const ctxB = await createTestContext(app!)
+
+        const res = await app!.inject({
+            method: 'GET',
+            url: `/api/v1/tables?projectId=${ctxB.project.id}`,
+            headers: { authorization: `Bearer ${apiKeyA.value}` },
+        })
+
+        expect(res.statusCode).toBe(StatusCodes.FORBIDDEN)
     })
 })
 
