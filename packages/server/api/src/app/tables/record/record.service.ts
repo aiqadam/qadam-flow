@@ -540,6 +540,16 @@ function doesCellValueMatchFilters(cell: Cell, filters: Filter[]): boolean {
                 }
                 return false
             }
+            case FilterOperator.IN: {
+                return typeof cell.value === 'string' && filter.value.includes(cell.value)
+            }
+            case FilterOperator.NOT_IN: {
+                // A null/empty cell counts as "not in the list" (included), matching
+                // NEQ. Note the caller's outer guard still excludes records that have
+                // no cell row at all for this field, as it does for every non-NOT_EXISTS
+                // operator.
+                return typeof cell.value !== 'string' || !filter.value.includes(cell.value)
+            }
         }
     })
 
