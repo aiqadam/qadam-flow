@@ -33,6 +33,7 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
                 fileId,
                 fileType,
                 platformId: principal.platform.id,
+                internal: true,
             })
             void reply.header(fileTransportHeaders.READ_URL, readUrl)
 
@@ -88,6 +89,7 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
             fileId,
             fileType,
             platformId: principal.platform.id,
+            internal: true,
         })
         return reply.status(StatusCodes.OK).send({ fileId, readUrl })
     })
