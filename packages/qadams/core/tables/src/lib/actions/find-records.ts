@@ -108,12 +108,13 @@ export const findRecords = createAction({
     const filtersArray: { field: FieldInfo; operator: FilterOperator; value: unknown }[] = filters?.['filters'] ?? [];
 
     for (const filter of filtersArray) {
-      if (
-        filter.operator === FilterOperator.EXISTS ||
-        filter.operator === FilterOperator.NOT_EXISTS ||
-        filter.operator === FilterOperator.IN ||
-        filter.operator === FilterOperator.NOT_IN
-      ) {
+      if (filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS) {
+        continue;
+      }
+      if (filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN) {
+        if (toFilterList(filter.value).length === 0) {
+          throw new Error(`The "${filter.operator}" operator on field "${filter.field.name}" requires at least one value.`);
+        }
         continue;
       }
 

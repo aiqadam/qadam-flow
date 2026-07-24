@@ -21,6 +21,11 @@ const OPERATOR_VALUES = [
 
 const operatorSchema = z.enum(OPERATOR_VALUES)
 
+// in/not_in take a comma-separated value from the agent.
+function splitListValue(value: string): string[] {
+    return value.split(',').map(part => part.trim()).filter(part => part.length > 0)
+}
+
 const findRecordsInput = z.object({
     tableId: z.string().describe('The table ID. Use ap_list_tables to find it.'),
     filters: z.array(z.object({
@@ -51,8 +56,13 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                     fields = resolved.fields
 
                     for (const filter of filters) {
-                        if (filter.operator !== FilterOperator.EXISTS && filter.operator !== FilterOperator.NOT_EXISTS && filter.value === undefined) {
+                        const isListOp = filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN
+                        const isExistenceOp = filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS
+                        if (!isExistenceOp && filter.value === undefined) {
                             resolved.errors.push(`Filter on "${filter.fieldName}" with operator "${filter.operator}" requires a value.`)
+                        }
+                        else if (isListOp && filter.value !== undefined && splitListValue(filter.value).length === 0) {
+                            resolved.errors.push(`Filter on "${filter.fieldName}" with operator "${filter.operator}" requires at least one value.`)
                         }
                     }
 
@@ -66,7 +76,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                             return { fieldId, operator: f.operator }
                         }
                         if (f.operator === FilterOperator.IN || f.operator === FilterOperator.NOT_IN) {
-                            return { fieldId, operator: f.operator, value: f.value!.split(',').map(part => part.trim()).filter(part => part.length > 0) }
+                            return { fieldId, operator: f.operator, value: splitListValue(f.value!) }
                         }
                         return { fieldId, operator: f.operator, value: f.value! }
                     })

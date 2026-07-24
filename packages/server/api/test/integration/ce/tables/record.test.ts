@@ -428,7 +428,7 @@ describe('Record API', () => {
             expect(body.data[0].id).toBe(records[1].id)
         })
 
-        it('IN: single-value list still parses (querystring coercion)', async () => {
+        it('IN: a bare single value (no array index) is coerced to a one-item list', async () => {
             const ctx = await setup()
             const { table, field } = await createTableWithField(ctx)
             const record1 = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
@@ -440,15 +440,50 @@ describe('Record API', () => {
             cell2.value = 'other'
             await db.save('cell', [cell1, cell2])
 
+            // `value: 'only'` (a plain string, not an array) exercises the
+            // coerceToStringArray `[String(v)]` fallback path.
             const response = await ctx.inject({
                 method: 'GET',
-                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.IN, value: ['only'] }] })}`,
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.IN, value: 'only' }] })}`,
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
             const body = response?.json()
             expect(body.data.length).toBe(1)
             expect(body.data[0].id).toBe(record1.id)
+        })
+
+        it('IN: an empty value list is rejected', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.IN, value: [] }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('NOT_IN: excludes a record that has no cell for the field (outer guard)', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const withCell = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            const withoutCell = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', [withCell, withoutCell])
+            const cell = createMockCell({ recordId: withCell.id, fieldId: field.id, projectId: ctx.project.id })
+            cell.value = 'kept'
+            await db.save('cell', cell)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.NOT_IN, value: ['excluded'] }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(withCell.id)
         })
     })
 

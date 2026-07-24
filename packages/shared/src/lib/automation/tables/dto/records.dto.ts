@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { OptionalArrayFromQuery } from '../../../core/common/base-model'
 import { Cursor } from '../../../core/common/seek-page'
+import { formErrors } from '../../../form-errors'
 
 const coerceToString = z.preprocess(
     (v) => (v === null || v === undefined ? v : String(v)),
@@ -47,7 +48,9 @@ const coerceToStringArray = z.preprocess(
     // Query-string arrays arrive as a single string when only one value is
     // present, so normalise both shapes to a string[].
     (v) => (Array.isArray(v) ? v.map(String) : v === null || v === undefined ? [] : [String(v)]),
-    z.array(z.string()),
+    // An empty list would make `in` match nothing and `not_in` match everything —
+    // almost always an unfilled value rather than intent, so reject it.
+    z.array(z.string()).min(1, formErrors.required),
 )
 
 const valueFilter = <T extends FilterOperator>(op: T) => z.object({
