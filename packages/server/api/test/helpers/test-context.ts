@@ -13,7 +13,6 @@ import { FastifyInstance, InjectOptions } from 'fastify'
 import { generateMockToken } from './auth'
 import { db } from './db'
 import {
-    createMockApiKey,
     createMockProjectMember,
     mockAndSaveBasicSetup,
     mockBasicUser,
@@ -77,24 +76,6 @@ export async function createMemberContext(
         platform: parentCtx.platform,
         project: parentCtx.project,
         token,
-    })
-}
-
-export async function createServiceContext(
-    app: FastifyInstance,
-    parentCtx: TestContext,
-): Promise<TestContext> {
-    const mockApiKey = createMockApiKey({
-        platformId: parentCtx.platform.id,
-    })
-    await db.save('api_key', mockApiKey)
-
-    return buildContext(app, {
-        userIdentity: parentCtx.userIdentity,
-        user: parentCtx.user,
-        platform: parentCtx.platform,
-        project: parentCtx.project,
-        token: mockApiKey.value,
     })
 }
 

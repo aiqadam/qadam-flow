@@ -1,11 +1,8 @@
 import { LATEST_CONTEXT_VERSION, QadamMetadata } from '@aiqadam/qadams-framework'
-import { cryptoUtils } from '@aiqadam/server-utils'
 import {
     AIProvider,
     AIProviderName,
     apId,
-    ApiKey,
-    secureApId,
     AppConnection,
     AppConnectionScope,
     AppConnectionStatus,
@@ -286,33 +283,6 @@ kxbNAUSuLQESkfZq1Dw5+tdBDJr29bxjmiSggyittTYn1B3iHACNoe4zj9sMQQIf
 j9mmntXsa/leIwBVspiEOHYZwJOe5+goSd8K1VIQJxC1DVBxB2eHxMvuo3eyJ0HE
 DlebIeZy4zrE1LPgRic1kfdemyxvuN3iwZnPGiY79nL1ZNDM3M4ApSMCAwEAAQ==
 -----END RSA PUBLIC KEY-----`
-
-function generateApiKey() {
-    const secretValue = secureApId(61)
-    const secretKey = `sk-${secretValue}`
-    return {
-        secret: secretKey,
-        secretHashed: cryptoUtils.hashSHA256(secretKey),
-        secretTruncated: secretKey.slice(-4),
-    }
-}
-
-export const createMockApiKey = (
-    apiKey?: Partial<Omit<ApiKey, 'hashedValue' | 'truncatedValue'>>,
-): ApiKey & { value: string } => {
-    const { secretHashed, secretTruncated, secret } = generateApiKey()
-    return {
-        id: apiKey?.id ?? apId(),
-        created: apiKey?.created ?? faker.date.recent().toISOString(),
-        updated: apiKey?.updated ?? faker.date.recent().toISOString(),
-        displayName: apiKey?.displayName ?? faker.lorem.word(),
-        platformId: apiKey?.platformId ?? apId(),
-        hashedValue: secretHashed,
-        value: secret,
-        truncatedValue: secretTruncated,
-    }
-}
-
 
 export const createMockSigningKey = (
     signingKey?: Partial<SigningKey>,
@@ -646,21 +616,6 @@ export const mockAndSaveBasicSetup = async (params?: MockBasicSetupParams): Prom
         mockOwner,
         mockPlatform,
         mockProject,
-    }
-}
-
-type MockBasicSetupWithApiKey = MockBasicSetup & { mockApiKey: ApiKey & { value: string } }
-export const mockAndSaveBasicSetupWithApiKey = async (params?: MockBasicSetupParams): Promise<MockBasicSetupWithApiKey> => {
-    const basicSetup = await mockAndSaveBasicSetup(params)
-
-    const mockApiKey = createMockApiKey({
-        platformId: basicSetup.mockPlatform.id,
-    })
-    await databaseConnection().getRepository('api_key').save(mockApiKey)
-
-    return {
-        ...basicSetup,
-        mockApiKey,
     }
 }
 
