@@ -10,6 +10,17 @@ type FieldInfo = {
   name: string;
 };
 
+// "In" / "Not In" accept either a list variable or a comma-separated string.
+function toFilterList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(String);
+  }
+  return String(value ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
 export const findRecords = createAction({
   name: 'tables-find-records',
   displayName: 'Find Records',
@@ -73,6 +84,8 @@ export const findRecords = createAction({
                     { label: 'Less Than', value: FilterOperator.LT },
                     { label: 'Less Than or Equal', value: FilterOperator.LTE },
                     { label: 'Contains', value: FilterOperator.CO },
+                    { label: 'In', value: FilterOperator.IN },
+                    { label: 'Not In', value: FilterOperator.NOT_IN },
                     { label: 'Exists', value: FilterOperator.EXISTS },
                     { label: 'Does not exist', value: FilterOperator.NOT_EXISTS },
                   ],
@@ -80,6 +93,7 @@ export const findRecords = createAction({
               }),
               value: Property.ShortText({
                 displayName: 'Value',
+                description: 'For "In" / "Not In", pass a comma-separated list or a list variable.',
                 required: false,
               }),
             },
@@ -94,7 +108,12 @@ export const findRecords = createAction({
     const filtersArray: { field: FieldInfo; operator: FilterOperator; value: unknown }[] = filters?.['filters'] ?? [];
 
     for (const filter of filtersArray) {
-      if (filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS) {
+      if (
+        filter.operator === FilterOperator.EXISTS ||
+        filter.operator === FilterOperator.NOT_EXISTS ||
+        filter.operator === FilterOperator.IN ||
+        filter.operator === FilterOperator.NOT_IN
+      ) {
         continue;
       }
 
@@ -138,6 +157,13 @@ export const findRecords = createAction({
         return {
           fieldId,
           operator: filter.operator,
+        };
+      }
+      if (filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN) {
+        return {
+          fieldId,
+          operator: filter.operator,
+          value: toFilterList(filter.value),
         };
       }
       return {

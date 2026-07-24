@@ -37,14 +37,29 @@ export enum FilterOperator {
     LT = 'lt',
     LTE = 'lte',
     CO = 'co',
+    IN = 'in',
+    NOT_IN = 'not_in',
     EXISTS = 'exists',
     NOT_EXISTS = 'not_exists',
 }
+
+const coerceToStringArray = z.preprocess(
+    // Query-string arrays arrive as a single string when only one value is
+    // present, so normalise both shapes to a string[].
+    (v) => (Array.isArray(v) ? v.map(String) : v === null || v === undefined ? [] : [String(v)]),
+    z.array(z.string()),
+)
 
 const valueFilter = <T extends FilterOperator>(op: T) => z.object({
     fieldId: z.string(),
     operator: z.literal(op),
     value: z.string(),
+})
+
+const listFilter = <T extends FilterOperator>(op: T) => z.object({
+    fieldId: z.string(),
+    operator: z.literal(op),
+    value: coerceToStringArray,
 })
 
 const existenceFilter = <T extends FilterOperator>(op: T) => z.object({
@@ -60,6 +75,8 @@ export const Filter = z.discriminatedUnion('operator', [
     valueFilter(FilterOperator.LT),
     valueFilter(FilterOperator.LTE),
     valueFilter(FilterOperator.CO),
+    listFilter(FilterOperator.IN),
+    listFilter(FilterOperator.NOT_IN),
     existenceFilter(FilterOperator.EXISTS),
     existenceFilter(FilterOperator.NOT_EXISTS),
 ])

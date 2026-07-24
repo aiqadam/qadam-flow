@@ -374,6 +374,82 @@ describe('Record API', () => {
             expect(body.data.length).toBe(1)
             expect(body.data[0].id).toBe(record1.id)
         })
+
+        it('IN: should match records whose value is in the list', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const records = [
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+            ]
+            await db.save('record', records)
+            const cells = records.map((record, i) => {
+                const cell = createMockCell({ recordId: record.id, fieldId: field.id, projectId: ctx.project.id })
+                cell.value = ['a', 'b', 'c'][i]
+                return cell
+            })
+            await db.save('cell', cells)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.IN, value: ['a', 'c'] }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.map((r: { id: string }) => r.id).sort()).toEqual([records[0].id, records[2].id].sort())
+        })
+
+        it('NOT_IN: should exclude records whose value is in the list', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const records = [
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+            ]
+            await db.save('record', records)
+            const cells = records.map((record, i) => {
+                const cell = createMockCell({ recordId: record.id, fieldId: field.id, projectId: ctx.project.id })
+                cell.value = ['a', 'b', 'c'][i]
+                return cell
+            })
+            await db.save('cell', cells)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.NOT_IN, value: ['a', 'c'] }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(records[1].id)
+        })
+
+        it('IN: single-value list still parses (querystring coercion)', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const record1 = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            const record2 = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', [record1, record2])
+            const cell1 = createMockCell({ recordId: record1.id, fieldId: field.id, projectId: ctx.project.id })
+            cell1.value = 'only'
+            const cell2 = createMockCell({ recordId: record2.id, fieldId: field.id, projectId: ctx.project.id })
+            cell2.value = 'other'
+            await db.save('cell', [cell1, cell2])
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.IN, value: ['only'] }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(record1.id)
+        })
     })
 
     describeWithAuth('DELETE /v1/records (Delete)', () => app!, (setup) => {

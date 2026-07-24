@@ -540,6 +540,12 @@ function doesCellValueMatchFilters(cell: Cell, filters: Filter[]): boolean {
                 }
                 return false
             }
+            case FilterOperator.IN: {
+                return typeof cell.value === 'string' && filter.value.includes(cell.value)
+            }
+            case FilterOperator.NOT_IN: {
+                return typeof cell.value !== 'string' || !filter.value.includes(cell.value)
+            }
         }
     })
 
