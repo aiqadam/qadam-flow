@@ -56,7 +56,8 @@
         "@aiqadam/qadam-data-mapper#build",
         "@aiqadam/qadam-approval#build",
         "@aiqadam/qadam-webhook#build",
-        "@aiqadam/qadam-delay#build"
+        "@aiqadam/qadam-delay#build",
+        "@aiqadam/qadam-subflows#build"
       ],
       "inputs": ["src/**", "test/**", "tsconfig*.json", "vitest.config.*"],
       "outputs": ["coverage/**"]
@@ -72,7 +73,15 @@
       "outputs": ["coverage/**"]
     },
     "test-ce": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build",
+        "@aiqadam/qadam-http#build",
+        "@aiqadam/qadam-data-mapper#build",
+        "@aiqadam/qadam-approval#build",
+        "@aiqadam/qadam-webhook#build",
+        "@aiqadam/qadam-delay#build",
+        "@aiqadam/qadam-subflows#build"
+      ],
       "cache": false
     },
     "check-migrations": {
