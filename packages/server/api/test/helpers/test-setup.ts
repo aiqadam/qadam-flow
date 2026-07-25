@@ -51,7 +51,7 @@ async function createFreshEnvironment(): Promise<FastifyInstance> {
     return app
 }
 
-async function cleanDatabase(): Promise<void> {
+export async function cleanDatabase(): Promise<void> {
     const ds = databaseConnection()
     const entities = ds.entityMetadatas
     const tableNames = entities.map(e => `"${e.tableName}"`).join(', ')

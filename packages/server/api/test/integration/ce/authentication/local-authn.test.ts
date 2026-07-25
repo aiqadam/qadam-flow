@@ -2,8 +2,8 @@ import { OtpState, OtpType, UserIdentity } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import { createMockOtp, createMockUserIdentity } from '../../../helpers/mocks'
+import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
 
@@ -16,12 +16,7 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-    await databaseConnection().getRepository('otp').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('flag').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('project').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('platform').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('user').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('user_identity').createQueryBuilder().delete().execute()
+    await cleanDatabase()
 })
 
 async function saveIdentity(overrides?: Partial<UserIdentity>): Promise<UserIdentity> {

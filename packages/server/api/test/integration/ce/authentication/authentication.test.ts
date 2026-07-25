@@ -1,4 +1,3 @@
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
@@ -6,6 +5,7 @@ import {
     createMockSignInRequest,
     createMockSignUpRequest,
 } from '../../../helpers/mocks/authn'
+import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
 
@@ -18,11 +18,7 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-    await databaseConnection().getRepository('flag').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('project').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('platform').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('user').createQueryBuilder().delete().execute()
-    await databaseConnection().getRepository('user_identity').createQueryBuilder().delete().execute()
+    await cleanDatabase()
 })
 describe('Authentication API', () => {
     describe('Sign up Endpoint', () => {
