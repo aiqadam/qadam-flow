@@ -1,6 +1,4 @@
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import {
-    DefaultProjectRole,
     PlatformRole,
     PrincipalType,
 } from '@aiqadam/shared'
@@ -9,6 +7,7 @@ import { StatusCodes } from 'http-status-codes'
 import { generateMockToken } from '../../../helpers/auth'
 import { mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
+import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
 
@@ -75,14 +74,14 @@ describe('Tags API', () => {
         })
     })
 
-    describe('POST /v1/tags/pieces (Assign)', () => {
+    describe('POST /v1/tags/qadams (Assign)', () => {
         it('should assign tags to pieces', async () => {
             const ctx = await createTestContext(app!)
 
             const tagResponse = await ctx.post('/v1/tags', { name: 'assign-tag' })
             const tagName = tagResponse?.json().name
 
-            const response = await ctx.post('/v1/tags/pieces', {
+            const response = await ctx.post('/v1/tags/qadams', {
                 qadamsName: ['@aiqadam/qadam-test'],
                 tags: [tagName],
             })
@@ -108,7 +107,7 @@ describe('Tags API', () => {
 
             const response = await app?.inject({
                 method: 'POST',
-                url: '/api/v1/tags/pieces',
+                url: '/api/v1/tags/qadams',
                 headers: { authorization: `Bearer ${memberToken}` },
                 body: {
                     qadamsName: ['@aiqadam/qadam-test'],

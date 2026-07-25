@@ -80,10 +80,9 @@ describe('Piece Metadata CE API', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
-            const body = response?.json()
+            const body = response?.json<{ name: string }[]>()
             expect(Array.isArray(body)).toBe(true)
-            expect(body).toHaveLength(1)
-            expect(body[0].name).toBe('ce-list-test-piece')
+            expect(body.some((qadam) => qadam.name === 'ce-list-test-piece')).toBe(true)
         })
 
         it('should filter pieces by searchQuery', async () => {

@@ -6,6 +6,7 @@ import {
     PrincipalType,
     Project,
     ProjectRole,
+    RoleType,
     User,
     UserIdentity,
 } from '@aiqadam/shared'
@@ -15,6 +16,7 @@ import { db } from './db'
 import {
     createMockApiKey,
     createMockProjectMember,
+    createMockProjectRole,
     mockAndSaveBasicSetup,
     mockBasicUser,
 } from './mocks'
@@ -53,9 +55,18 @@ export async function createMemberContext(
         },
     })
 
-    const projectRole = await db.findOneByOrFail<ProjectRole>('project_role', {
+    let projectRole = await db.findOneBy<ProjectRole>('project_role', {
         name: params.projectRole,
+        platformId: parentCtx.platform.id,
     })
+    if (!projectRole) {
+        projectRole = createMockProjectRole({
+            name: params.projectRole,
+            platformId: parentCtx.platform.id,
+            type: RoleType.DEFAULT,
+        })
+        await db.save('project_role', projectRole)
+    }
 
     const mockProjectMember = createMockProjectMember({
         userId: mockUser.id,
