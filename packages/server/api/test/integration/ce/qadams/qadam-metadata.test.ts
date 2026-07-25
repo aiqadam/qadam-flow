@@ -1,9 +1,8 @@
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import {
     apId,
-    QadamType,
-    PrincipalType,
     PackageType,
+    PrincipalType,
+    QadamType,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -16,6 +15,7 @@ import {
     createMockQadamMetadata,
 } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
+import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
 let mockLog: FastifyBaseLogger
@@ -73,7 +73,7 @@ describe('Piece Metadata CE API', () => {
 
             const response = await app?.inject({
                 method: 'GET',
-                url: '/api/v1/pieces',
+                url: '/api/v1/qadams',
                 headers: {
                     authorization: `Bearer ${testToken}`,
                 },
@@ -109,7 +109,7 @@ describe('Piece Metadata CE API', () => {
 
             const response = await app?.inject({
                 method: 'GET',
-                url: '/api/v1/pieces?searchQuery=Searchable+Unique',
+                url: '/api/v1/qadams?searchQuery=Searchable+Unique',
                 headers: {
                     authorization: `Bearer ${testToken}`,
                 },
@@ -258,7 +258,7 @@ describe('Piece Metadata CE API', () => {
             })
             const response = await app?.inject({
                 method: 'GET',
-                url: '/api/v1/pieces',
+                url: '/api/v1/qadams',
                 headers: { authorization: `Bearer ${testToken}` },
             })
 
