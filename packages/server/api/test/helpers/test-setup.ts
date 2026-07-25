@@ -46,6 +46,7 @@ async function createFreshEnvironment(): Promise<FastifyInstance> {
     }
     resetDatabaseConnection()
     await initializeDatabase({ runMigrations: false })
+    await cleanDatabase()
     const app = await setupServer()
     setGlobalState({ app })
     return app

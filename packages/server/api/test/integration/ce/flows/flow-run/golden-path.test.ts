@@ -17,7 +17,7 @@
  *   - bun must be available for piece installation
  *   - Redis (in-memory via AP_REDIS_TYPE=MEMORY) is started automatically
  */
-import { FlowActionType, FlowOperationType, FlowRunStatus, FlowVersionState, PackageType, PopulatedFlow, QadamType } from '@aiqadam/shared'
+import { FlowActionType, FlowOperationType, FlowRunStatus, FlowTriggerType, FlowVersionState, PackageType, PopulatedFlow, QadamType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { worker } from '../../../../../../worker/src/lib/worker'
@@ -99,10 +99,10 @@ describe('Golden-path API journey', () => {
         const updateTriggerResponse = await ctx.post(`/v1/flows/${flow.id}`, {
             type: FlowOperationType.UPDATE_TRIGGER,
             request: {
-                type: 'PIECE',
+                type: FlowTriggerType.PIECE,
                 settings: {
                     qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.29',
+                    qadamVersion: '0.1.34',
                     input: { authType: 'none' },
                     triggerName: 'catch_webhook',
                     propertySettings: {},
@@ -110,6 +110,7 @@ describe('Golden-path API journey', () => {
                 valid: false,
                 name: 'trigger',
                 displayName: 'Catch Webhook',
+                lastUpdatedDate: new Date().toISOString(),
             },
         })
 
@@ -200,10 +201,10 @@ describe('Golden-path API journey', () => {
         const updateTriggerResponse = await ctx.post(`/v1/flows/${flow.id}`, {
             type: FlowOperationType.UPDATE_TRIGGER,
             request: {
-                type: 'PIECE',
+                type: FlowTriggerType.PIECE,
                 settings: {
                     qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.29',
+                    qadamVersion: '0.1.34',
                     input: { authType: 'none' },
                     triggerName: 'catch_webhook',
                     propertySettings: {},
@@ -211,6 +212,7 @@ describe('Golden-path API journey', () => {
                 valid: false,
                 name: 'trigger',
                 displayName: 'Catch Webhook',
+                lastUpdatedDate: new Date().toISOString(),
             },
         })
 
