@@ -50,7 +50,7 @@ afterAll(async () => {
 async function saveWebhookQadamMetadata(): Promise<void> {
     const webhookPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-webhook',
-        version: '0.1.29',
+        version: '0.1.34',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
@@ -200,7 +200,7 @@ describe('Golden-path API journey', () => {
         // here: fastify's `app.inject` does not populate the webhook route's
         // raw body, so the trigger's `body` output is empty under the harness.)
         expect(result.steps.step_1.output).toEqual(
-            expect.objectContaining({ success: true }),
+            expect.objectContaining({ success: true, message: 'no message' }),
         )
     }, 120_000)
 
@@ -286,7 +286,7 @@ describe('Golden-path API journey', () => {
 
         expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
         expect(result.steps.step_1.output).toEqual(
-            expect.objectContaining({ success: true }),
+            expect.objectContaining({ success: true, message: 'no message' }),
         )
     }, 120_000)
 })
