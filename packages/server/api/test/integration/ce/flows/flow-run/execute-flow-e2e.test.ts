@@ -21,13 +21,15 @@ import {
     FlowVersionState,
     PackageType,
     QadamType,
+    RunEnvironment,
     StepOutputType,
     StreamStepProgress,
-    RunEnvironment,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
+import { worker } from '../../../../../../worker/src/lib/worker'
 import { databaseConnection } from '../../../../../src/app/database/database-connection'
 import { flowRunService } from '../../../../../src/app/flows/flow-run/flow-run-service'
+import { db } from '../../../../helpers/db'
 import { setupE2eEnvironment } from '../../../../helpers/e2e-setup'
 import {
     createMockFlow,
@@ -35,8 +37,6 @@ import {
     createMockQadamMetadata,
     mockAndSaveBasicSetup,
 } from '../../../../helpers/mocks'
-import { db } from '../../../../helpers/db'
-import { worker } from '../../../../../../worker/src/lib/worker'
 
 let app: FastifyInstance
 
@@ -52,7 +52,7 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-    worker.stop()
+    void worker.stop()
     await app.close()
 }, 15_000)
 
@@ -61,14 +61,14 @@ async function setupSubflowFixtures() {
 
     const webhookPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-webhook',
-        version: '0.1.29',
+        version: '0.1.34',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
     })
     const subflowsPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-subflows',
-        version: '0.4.11',
+        version: '0.4.14',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
@@ -83,14 +83,14 @@ async function setupSubflowFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.11',
+            qadamVersion: '0.4.14',
             actionName: 'returnResponse',
             input: {
                 mode: 'simple',
                 response: {
                     response: {
-                        greeting: "{{step_1['output'].greeting}}",
-                        processed: "{{step_1['output'].processed}}",
+                        greeting: '{{step_1[\'output\'].greeting}}',
+                        processed: '{{step_1[\'output\'].processed}}',
                     },
                 },
             },
@@ -115,7 +115,7 @@ async function setupSubflowFixtures() {
                 packageJson: '{}',
             },
             input: {
-                name: "{{trigger['output'].data.name}}",
+                name: '{{trigger[\'output\'].data.name}}',
             },
             errorHandlingOptions: {},
         },
@@ -138,7 +138,7 @@ async function setupSubflowFixtures() {
             lastUpdatedDate: new Date().toISOString(),
             settings: {
                 qadamName: '@aiqadam/qadam-subflows',
-                qadamVersion: '0.4.11',
+                qadamVersion: '0.4.14',
                 triggerName: 'callableFlow',
                 input: {
                     mode: 'simple',
@@ -167,7 +167,7 @@ async function setupSubflowFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.11',
+            qadamVersion: '0.4.14',
             actionName: 'callFlow',
             input: {
                 flow: {
@@ -182,7 +182,7 @@ async function setupSubflowFixtures() {
                 mode: 'simple',
                 flowProps: {
                     payload: {
-                        name: "{{trigger['output'].body.name}}",
+                        name: '{{trigger[\'output\'].body.name}}',
                     },
                 },
                 waitForResponse: true,
@@ -208,7 +208,7 @@ async function setupSubflowFixtures() {
             lastUpdatedDate: new Date().toISOString(),
             settings: {
                 qadamName: '@aiqadam/qadam-webhook',
-                qadamVersion: '0.1.29',
+                qadamVersion: '0.1.34',
                 triggerName: 'catch_webhook',
                 input: { authType: 'none' },
                 propertySettings: {},
@@ -226,14 +226,14 @@ async function setupSubflowWithWebhookResponseFixtures() {
 
     const webhookPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-webhook',
-        version: '0.1.29',
+        version: '0.1.34',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
     })
     const subflowsPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-subflows',
-        version: '0.4.11',
+        version: '0.4.14',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
@@ -248,13 +248,13 @@ async function setupSubflowWithWebhookResponseFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.11',
+            qadamVersion: '0.4.14',
             actionName: 'returnResponse',
             input: {
                 mode: 'simple',
                 response: {
                     response: {
-                        echo: "{{trigger['output'].data.message}}",
+                        echo: '{{trigger[\'output\'].data.message}}',
                     },
                 },
             },
@@ -279,7 +279,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
             valid: true,
             settings: {
                 qadamName: '@aiqadam/qadam-subflows',
-                qadamVersion: '0.4.11',
+                qadamVersion: '0.4.14',
                 triggerName: 'callableFlow',
                 input: {
                     mode: 'simple',
@@ -308,7 +308,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-webhook',
-            qadamVersion: '0.1.29',
+            qadamVersion: '0.1.34',
             actionName: 'return_response',
             input: {
                 responseType: 'json',
@@ -316,7 +316,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
                 fields: {
                     status: 200,
                     headers: {},
-                    body: { echo: "{{step_1['output'].data.echo}}" },
+                    body: { echo: '{{step_1[\'output\'].data.echo}}' },
                 },
             },
             propertySettings: {},
@@ -331,7 +331,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.11',
+            qadamVersion: '0.4.14',
             actionName: 'callFlow',
             input: {
                 flow: {
@@ -345,7 +345,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
                 mode: 'simple',
                 flowProps: {
                     payload: {
-                        message: "{{trigger['output'].body.message}}",
+                        message: '{{trigger[\'output\'].body.message}}',
                     },
                 },
                 waitForResponse: true,
@@ -373,7 +373,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
             lastUpdatedDate: new Date().toISOString(),
             settings: {
                 qadamName: '@aiqadam/qadam-webhook',
-                qadamVersion: '0.1.29',
+                qadamVersion: '0.1.34',
                 triggerName: 'catch_webhook',
                 input: { authType: 'none' },
                 propertySettings: {},
@@ -419,7 +419,7 @@ describe('Execute Flow E2E', () => {
         // Save piece metadata records
         const webhookPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-webhook',
-            version: '0.1.29',
+            version: '0.1.34',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
@@ -451,7 +451,7 @@ describe('Execute Flow E2E', () => {
                     packageJson: '{}',
                 },
                 input: {
-                    data: "{{step_1['output']}}",
+                    data: '{{step_1[\'output\']}}',
                 },
                 errorHandlingOptions: {},
             },
@@ -468,8 +468,8 @@ describe('Execute Flow E2E', () => {
                 actionName: 'advanced_mapping',
                 input: {
                     mapping: {
-                        fullName: "{{trigger['output'].body.name}}",
-                        emailAddress: "{{trigger['output'].body.email}}",
+                        fullName: '{{trigger[\'output\'].body.name}}',
+                        emailAddress: '{{trigger[\'output\'].body.email}}',
                     },
                 },
                 propertySettings: {},
@@ -494,7 +494,7 @@ describe('Execute Flow E2E', () => {
                 lastUpdatedDate: new Date().toISOString(),
                 settings: {
                     qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.29',
+                    qadamVersion: '0.1.34',
                     triggerName: 'catch_webhook',
                     input: { authType: 'none' },
                     propertySettings: {},
@@ -539,7 +539,6 @@ describe('Execute Flow E2E', () => {
                 projectId: mockProject.id,
             })
         }
-        console.log(result)
         // Assertions
         expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
         expect(result.steps.step_1.output).toEqual(
@@ -562,7 +561,7 @@ describe('Execute Flow E2E', () => {
 
         const webhookPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-webhook',
-            version: '0.1.29',
+            version: '0.1.34',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
@@ -602,7 +601,7 @@ describe('Execute Flow E2E', () => {
                 lastUpdatedDate: new Date().toISOString(),
                 settings: {
                     qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.29',
+                    qadamVersion: '0.1.34',
                     triggerName: 'catch_webhook',
                     input: { authType: 'none' },
                     propertySettings: {},
@@ -708,14 +707,14 @@ describe('Execute Flow E2E', () => {
 
         const webhookPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-webhook',
-            version: '0.1.29',
+            version: '0.1.34',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
         })
         const delayPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-delay',
-            version: '0.3.26',
+            version: '0.3.27',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
@@ -746,7 +745,7 @@ describe('Execute Flow E2E', () => {
             valid: true,
             settings: {
                 qadamName: '@aiqadam/qadam-delay',
-                qadamVersion: '0.3.26',
+                qadamVersion: '0.3.27',
                 actionName: 'delayFor',
                 input: {
                     unit: 'seconds',
@@ -774,7 +773,7 @@ describe('Execute Flow E2E', () => {
                 lastUpdatedDate: new Date().toISOString(),
                 settings: {
                     qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.29',
+                    qadamVersion: '0.1.34',
                     triggerName: 'catch_webhook',
                     input: { authType: 'none' },
                     propertySettings: {},
@@ -811,14 +810,14 @@ describe('Execute Flow E2E', () => {
 
         const webhookPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-webhook',
-            version: '0.1.29',
+            version: '0.1.34',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
         })
         const delayPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-delay',
-            version: '0.3.26',
+            version: '0.3.27',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
@@ -852,7 +851,7 @@ describe('Execute Flow E2E', () => {
             valid: true,
             settings: {
                 qadamName: '@aiqadam/qadam-delay',
-                qadamVersion: '0.3.26',
+                qadamVersion: '0.3.27',
                 actionName: 'delayFor',
                 input: {
                     unit: 'seconds',
@@ -871,7 +870,7 @@ describe('Execute Flow E2E', () => {
             valid: true,
             settings: {
                 sourceCode: {
-                    code: `export const code = async () => ({ big: 'x'.repeat(40000) });`,
+                    code: 'export const code = async () => ({ big: \'x\'.repeat(40000) });',
                     packageJson: '{}',
                 },
                 input: {},
@@ -896,7 +895,7 @@ describe('Execute Flow E2E', () => {
                 lastUpdatedDate: new Date().toISOString(),
                 settings: {
                     qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.29',
+                    qadamVersion: '0.1.34',
                     triggerName: 'catch_webhook',
                     input: { authType: 'none' },
                     propertySettings: {},

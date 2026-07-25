@@ -68,7 +68,7 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
     })
 
     if (isNil(qadam)) {
-        return { content: [{ type: 'text', text: `❌ Qadam "${qadamName}" not found. Use ap_research_qadams to find valid qadam names.` }] }
+        return { content: [{ type: 'text', text: `❌ Qadam "${qadamName}" not found. Use ap_research_pieces to find valid qadam names.` }] }
     }
 
     const rawAuth = qadam.auth

@@ -190,7 +190,7 @@ async function lookupQadamComponent({ qadamName, componentName, componentType, p
     }
     const qadam = await qadamMetadataService(log).get({ name: normalized, projectId, platformId: resolvedPlatformId })
     if (isNil(qadam)) {
-        return { error: { content: [{ type: 'text', text: `❌ Qadam "${normalized}" not found. Use ap_research_qadams to get valid qadam names.` }] } }
+        return { error: { content: [{ type: 'text', text: `❌ Qadam "${normalized}" not found. Use ap_research_pieces to get valid qadam names.` }] } }
     }
     const componentMap = componentType === 'action' ? qadam.actions : qadam.triggers
     const label = componentType === 'action' ? 'Action' : 'Trigger'
@@ -342,7 +342,7 @@ async function resolveLatestQadamVersion({ qadamName, projectId, platformId, log
     }
     const qadam = await qadamMetadataService(log).get({ name: normalized, projectId, platformId })
     if (isNil(qadam)) {
-        return { error: { content: [{ type: 'text', text: `❌ Qadam "${normalized}" not found. Use ap_research_qadams to get valid qadam names.` }] } }
+        return { error: { content: [{ type: 'text', text: `❌ Qadam "${normalized}" not found. Use ap_research_pieces to get valid qadam names.` }] } }
     }
     return { qadamVersion: `~${qadam.version}`, normalizedPieceName: normalized }
 }

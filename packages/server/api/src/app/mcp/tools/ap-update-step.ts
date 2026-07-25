@@ -215,7 +215,7 @@ async function diagnoseMissingInputs({ settings, platformId, log }: {
         const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
         const action = qadam.actions[actionName]
         if (isNil(action)) {
-            return `Action "${actionName}" not found in qadam "${qadamName}". Use ap_research_qadams with includeActions=true to get valid action names.`
+            return `Action "${actionName}" not found in qadam "${qadamName}". Use ap_research_pieces with includeActions=true to get valid action names.`
         }
         const input = settings.input ?? {}
         const { parts } = mcpUtils.diagnoseQadamProps({ props: action.props, input, qadamAuth: qadam.auth, requireAuth: action.requireAuth, componentType: 'action' })

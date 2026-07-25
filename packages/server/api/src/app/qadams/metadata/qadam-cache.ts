@@ -75,7 +75,12 @@ function toRegistryEntry(qadam: QadamMetadataSchema): QadamRegistryEntry {
 async function fetchRegistryFromDB(): Promise<QadamRegistryEntry[]> {
     return repo()
         .createQueryBuilder('pm')
-        .select(['pm.name', 'pm.version', 'pm.platformId', 'pm.qadamType', 'pm.minimumSupportedRelease', 'pm.maximumSupportedRelease'])
+        .select('pm.name', 'name')
+        .addSelect('pm.version', 'version')
+        .addSelect('pm.platformId', 'platformId')
+        .addSelect('pm.qadamType', 'qadamType')
+        .addSelect('pm.minimumSupportedRelease', 'minimumSupportedRelease')
+        .addSelect('pm.maximumSupportedRelease', 'maximumSupportedRelease')
         .getRawMany<QadamRegistryEntry>()
 }
 

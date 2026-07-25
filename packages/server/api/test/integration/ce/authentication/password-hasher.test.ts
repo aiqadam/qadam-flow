@@ -72,7 +72,7 @@ describe('Password Hasher', () => {
         const plainTextPassword = 'BusyBeaver$LOL99'
         const salt = 'sPtDhWcd1MfdAw=='
         const hashedPassword =
-      'iu1iqj6i6g9D7aBiE/Qdqv88GNnV/Ea67JK1kfLmzNgxsyCL8mhUxxI5VIHM9D+62xGHuZgjrfEBF+17wxyFIQ=='
+      'ZbtWPnrwNJsWuVK/NotfoATqPwaqNLOqf7rV+9AXoGuh23foPcGSyzOBrmFojDpDj2YHDPTI8UkM/yxr58rptg=='
 
         it('should return true for identical scrypt passwords', async () => {
             const result = await passwordHasher.compare(

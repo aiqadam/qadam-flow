@@ -78,7 +78,7 @@ const GetUserRequest = {
         security: [SERVICE_KEY_SECURITY_OPENAPI],
     },
     config: {
-        security: securityAccess.nonEmbedUsersOnly([PrincipalType.USER, PrincipalType.SERVICE]),
+        security: securityAccess.platformAdminOnly([PrincipalType.USER, PrincipalType.SERVICE]),
     },
 }
 
@@ -96,7 +96,7 @@ const ListUsersRequest = {
         [StatusCodes.OK]: SeekPage(UserWithMetaInformation),
     },
     config: {
-        security: securityAccess.nonEmbedUsersOnly([PrincipalType.USER, PrincipalType.SERVICE]),
+        security: securityAccess.platformAdminOnly([PrincipalType.USER, PrincipalType.SERVICE]),
     },
 }
 

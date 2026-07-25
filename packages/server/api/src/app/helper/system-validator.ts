@@ -220,8 +220,11 @@ const validateSystemPropTypes = () => {
 export const validateEnvPropsOnStartup = async (log: FastifyBaseLogger): Promise<void> => {
 
     const environment = system.get(AppSystemProp.ENVIRONMENT)
+    if (!isNil(environment) && !(Object.values(ApEnvironment) as string[]).includes(environment)) {
+        throw new Error(`Invalid AP_ENVIRONMENT="${environment}". Expected one of: ${Object.values(ApEnvironment).join(', ')}. Note: ApEnvironment.TESTING === 'test' (not 'TESTING', which is RunEnvironment).`)
+    }
     const fileStorageLocation = process.env.AP_FILE_STORAGE_LOCATION
-    
+
     if (environment !== ApEnvironment.TESTING && fileStorageLocation === FileLocation.S3) {
         try {
             await s3Helper(log).validateS3Configuration()
