@@ -392,7 +392,12 @@ async function fetchQadamVersion({ qadamName, version, platformId, log }: FetchQ
 async function fetchLatestCompatiblePiecesFromDB(currentRelease: string): Promise<QadamMetadataSchema[]> {
     const allKeys = await qadamRepos()
         .createQueryBuilder('pm')
-        .select(['pm.id', 'pm.name', 'pm.version', 'pm.platformId', 'pm.minimumSupportedRelease', 'pm.maximumSupportedRelease'])
+        .select('pm.id', 'id')
+        .addSelect('pm.name', 'name')
+        .addSelect('pm.version', 'version')
+        .addSelect('pm.platformId', 'platformId')
+        .addSelect('pm.minimumSupportedRelease', 'minimumSupportedRelease')
+        .addSelect('pm.maximumSupportedRelease', 'maximumSupportedRelease')
         .getRawMany<QadamKey>()
 
     const compatibleKeys = allKeys.filter((qadam) => isSupportedRelease(currentRelease, qadam))
