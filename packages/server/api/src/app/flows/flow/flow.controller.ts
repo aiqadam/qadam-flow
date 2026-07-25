@@ -91,6 +91,10 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
     }, async (request) => {
         const userId = await authenticationUtils(request.log).extractUserIdFromRequest(request)
 
+        const flowBeforeUpdate = await flowService(request.log).getOneOrThrow({
+            id: request.params.id,
+            projectId: request.projectId,
+        })
         const updatedFlow = await flowService(request.log).update({
             id: request.params.id,
             userId: request.principal.type === PrincipalType.SERVICE ? null : userId,
@@ -111,7 +115,7 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
                 flowVersion: updatedFlow.version,
             },
         })
-        for (const action of pickLifecycleActions({ operation: request.body, previousStatus: updatedFlow.status })) {
+        for (const action of pickLifecycleActions({ operation: request.body, previousStatus: flowBeforeUpdate.status })) {
             applicationEvents(request.log).sendUserEvent(request, {
                 action,
                 data: {
