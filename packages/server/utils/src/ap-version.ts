@@ -34,8 +34,12 @@ export const apVersionUtil = {
                     timeout: 5000,
                 },
             )
-            cachedLatestRelease = response.data.version
-            return response.data.version
+            const version = response.data?.version
+            if (typeof version !== 'string') {
+                return '0.0.0'
+            }
+            cachedLatestRelease = version
+            return version
         }
         catch (ex) {
             return '0.0.0'
