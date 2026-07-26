@@ -34,6 +34,8 @@ export const authorizeOrThrow = async (principal: Principal, security: Authoriza
 
 
 async function assertNonEmbedOrAdmin(principal: Principal, log: FastifyBaseLogger): Promise<void> {
+    // SERVICE (api-key) principals are platform-admins by design — see the note
+    // on assertPlatformIsOwnedByCurrentPrincipal. #107 (L1).
     if (principal.type === PrincipalType.SERVICE) {
         return
     }
@@ -61,6 +63,11 @@ async function assertNonEmbedOrAdmin(principal: Principal, log: FastifyBaseLogge
 }
 
 async function assertPlatformIsOwnedByCurrentPrincipal(principal: Principal, log: FastifyBaseLogger): Promise<void> {
+    // A SERVICE principal is an api-key (`sk-`) credential. By design it is an
+    // unscoped platform-admin: it clears every admin/embed gate for its own
+    // platform (cross-tenant isolation still holds — see assertAccessToProject).
+    // There is no per-key project/permission scoping yet, so treat any `sk-` key
+    // as equivalent to a full platform-admin session. See issue #107 (L1).
     if (principal.type === PrincipalType.SERVICE) {
         return
     }

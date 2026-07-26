@@ -1,8 +1,9 @@
-import { ApiKeyResponseWithValue, PlatformRole, PrincipalType, ResponseApiKey, SeekPage } from '@aiqadam/shared'
+import { apId, ApiKeyResponseWithValue, PlatformRole, PrincipalType, ResponseApiKey, SeekPage } from '@aiqadam/shared'
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { generateMockToken } from '../../../helpers/auth'
+import { db } from '../../../helpers/db'
 import { mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
@@ -40,6 +41,26 @@ describe('POST /v1/api-keys', () => {
         const res = await ctx.post('/v1/api-keys', { displayName: '' })
 
         expect(res.statusCode).toBe(StatusCodes.BAD_REQUEST)
+    })
+
+    it('rejects creation once the per-platform cap is reached', async () => {
+        const ctx = await createTestContext(app!)
+
+        const now = new Date().toISOString()
+        const seededKeys = Array.from({ length: 50 }, () => ({
+            id: apId(),
+            created: now,
+            updated: now,
+            displayName: faker.lorem.word(),
+            platformId: ctx.platform.id,
+            hashedValue: apId(),
+            truncatedValue: 'abcd',
+        }))
+        await db.save('api_key', seededKeys)
+
+        const res = await ctx.post('/v1/api-keys', { displayName: faker.lorem.word() })
+
+        expect(res.statusCode).toBe(StatusCodes.CONFLICT)
     })
 
     it('forbids non-admin platform members', async () => {
