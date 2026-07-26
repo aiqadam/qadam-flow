@@ -588,7 +588,7 @@ describe('Team project collaboration (CE)', () => {
         expect(listRes.json<{ code: string }>().code).toBe('AUTHORIZATION')
     })
 
-    it('Privileged USER can list platform-scope invitations (GET /v1/user-invitations?type=PLATFORM)', async () => {
+    it('Privileged USER can still list platform-scope invitations (positive-path regression guard, not error-code coverage)', async () => {
         const adminCtx = await createTestContext(app!)
 
         const listRes = await adminCtx.get('/v1/user-invitations', { type: InvitationType.PLATFORM })
