@@ -79,6 +79,7 @@ API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`,
 
 - **`AP_ENVIRONMENT` valid values are `prod` / `dev` / `test`** (the `ApEnvironment` enum). The test env is `test`, NOT `TESTING`. Beware the footgun: `ApEnvironment.TESTING === 'test'` but the unrelated `RunEnvironment.TESTING === 'TESTING'` — using `TESTING` for `AP_ENVIRONMENT` silently disables every `environment === ApEnvironment.TESTING` branch. Startup now throws on an invalid value. See `.claude/rules/environment.md`.
 - CE integration tests share one Postgres DB, so they must run serially — `test-ce-command` passes `--no-file-parallelism`. Don't re-enable file parallelism for `test/integration`.
+- **Test files are linted too.** The `api` package's `lint` script covers `test/**/*.ts` as well as `src/`, and the `CE Integration Tests` / `Lint + Unit Tests` CI jobs enforce it — so `test/` code must satisfy the same ESLint rules as `src/` (import order, single quotes, no unused vars, no floating promises, …). Two rules are relaxed for `test/**/*.ts` only, via an override in `packages/server/api/.eslintrc.json`: `no-explicit-any` and `no-dynamic-delete` (tests legitimately poke internals and build negative fixtures). Run `npm run lint-dev` before finishing — it auto-fixes most test-lint issues.
 
 ## Commands
 

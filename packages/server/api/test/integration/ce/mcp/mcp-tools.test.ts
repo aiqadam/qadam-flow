@@ -1,5 +1,3 @@
-import { beforeAll, afterAll, describe, it, expect } from 'vitest'
-import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import {
     apId,
     FlowActionType,
@@ -7,41 +5,43 @@ import {
     FlowRunStatus,
     McpServerType,
     PackageType,
-    QadamType,
     ProjectScopedMcpServer,
+    QadamType,
     RunEnvironment,
     StepLocationRelativeToParent,
 } from '@aiqadam/shared'
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
-import { createTestContext } from '../../../helpers/test-context'
-import { db } from '../../../helpers/db'
-import { createMockQadamMetadata } from '../../../helpers/mocks'
+import { FastifyBaseLogger, FastifyInstance } from 'fastify'
+import { StatusCodes } from 'http-status-codes'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { flowService } from '../../../../src/app/flows/flow/flow.service'
 import { system } from '../../../../src/app/helper/system/system'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
-import { apListFlowsTool } from '../../../../src/app/mcp/tools/ap-list-flows'
+import { apAddBranchTool } from '../../../../src/app/mcp/tools/ap-add-branch'
+import { apAddStepTool } from '../../../../src/app/mcp/tools/ap-add-step'
 import { apBuildFlowTool } from '../../../../src/app/mcp/tools/ap-build-flow'
 import { apCreateFlowTool } from '../../../../src/app/mcp/tools/ap-create-flow'
-import { apFlowStructureTool } from '../../../../src/app/mcp/tools/ap-flow-structure'
-import { apResearchPiecesTool } from '../../../../src/app/mcp/tools/ap-research-qadams'
-import { apAddStepTool } from '../../../../src/app/mcp/tools/ap-add-step'
-import { apUpdateStepTool } from '../../../../src/app/mcp/tools/ap-update-step'
-import { apRenameFlowTool } from '../../../../src/app/mcp/tools/ap-rename-flow'
-import { apDeleteStepTool } from '../../../../src/app/mcp/tools/ap-delete-step'
-import { apLockAndPublishTool } from '../../../../src/app/mcp/tools/ap-lock-and-publish'
-import { apAddBranchTool } from '../../../../src/app/mcp/tools/ap-add-branch'
 import { apDeleteBranchTool } from '../../../../src/app/mcp/tools/ap-delete-branch'
-import { apGetPiecePropsTool } from '../../../../src/app/mcp/tools/ap-get-qadam-props'
-import { apValidateStepConfigTool } from '../../../../src/app/mcp/tools/ap-validate-step-config'
-import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
-import { apUpdateTriggerTool } from '../../../../src/app/mcp/tools/ap-update-trigger'
+import { apDeleteStepTool } from '../../../../src/app/mcp/tools/ap-delete-step'
 import { apDuplicateFlowTool } from '../../../../src/app/mcp/tools/ap-duplicate-flow'
-import { apUpdateBranchTool } from '../../../../src/app/mcp/tools/ap-update-branch'
-import { apListRunsTool } from '../../../../src/app/mcp/tools/ap-list-runs'
+import { apFlowStructureTool } from '../../../../src/app/mcp/tools/ap-flow-structure'
+import { apGetPiecePropsTool } from '../../../../src/app/mcp/tools/ap-get-qadam-props'
 import { apGetRunTool } from '../../../../src/app/mcp/tools/ap-get-run'
+import { apListFlowsTool } from '../../../../src/app/mcp/tools/ap-list-flows'
+import { apListRunsTool } from '../../../../src/app/mcp/tools/ap-list-runs'
+import { apLockAndPublishTool } from '../../../../src/app/mcp/tools/ap-lock-and-publish'
+import { apRenameFlowTool } from '../../../../src/app/mcp/tools/ap-rename-flow'
+import { apResearchPiecesTool } from '../../../../src/app/mcp/tools/ap-research-qadams'
 import { apRunActionTool } from '../../../../src/app/mcp/tools/ap-run-action'
+import { apUpdateBranchTool } from '../../../../src/app/mcp/tools/ap-update-branch'
+import { apUpdateStepTool } from '../../../../src/app/mcp/tools/ap-update-step'
+import { apUpdateTriggerTool } from '../../../../src/app/mcp/tools/ap-update-trigger'
+import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
+import { apValidateStepConfigTool } from '../../../../src/app/mcp/tools/ap-validate-step-config'
 import { mcpUtils } from '../../../../src/app/mcp/tools/mcp-utils'
-import { flowService } from '../../../../src/app/flows/flow/flow.service'
-import { StatusCodes } from 'http-status-codes'
+import { db } from '../../../helpers/db'
+import { createMockQadamMetadata } from '../../../helpers/mocks'
+import { createTestContext } from '../../../helpers/test-context'
+import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance
 let mockLog: FastifyBaseLogger
@@ -143,6 +143,33 @@ beforeAll(async () => {
         triggers: {},
     })
     await db.save('qadam_metadata', dynamicPiece)
+
+    // Auth-bearing piece for ap_run_action validation tests. `auth` must be set
+    // (not just the action's requireAuth) so diagnoseQadamProps flags a missing
+    // connection before any engine execution — this suite runs no worker.
+    const authPiece = createMockQadamMetadata({
+        name: '@aiqadam/qadam-test-auth',
+        displayName: 'Test Auth',
+        version: '0.1.0',
+        qadamType: QadamType.OFFICIAL,
+        packageType: PackageType.REGISTRY,
+        platformId: undefined,
+        auth: { type: 'SECRET_TEXT', displayName: 'API Key', required: true },
+        actions: {
+            send_email: {
+                name: 'send_email',
+                displayName: 'Send Email',
+                description: 'Send an email',
+                requireAuth: true,
+                props: {
+                    to: { type: 'SHORT_TEXT', displayName: 'To', required: true },
+                    subject: { type: 'SHORT_TEXT', displayName: 'Subject', required: true },
+                },
+            },
+        },
+        triggers: {},
+    })
+    await db.save('qadam_metadata', authPiece)
 })
 
 afterAll(async () => {
@@ -1315,7 +1342,7 @@ describe('MCP Tools integration', () => {
         expect(output).toContain('sourceCode:')
         expect(output).toContain('inputs.name')
         expect(output).toContain('input:')
-        expect(output).toContain("{{trigger['output'].from}}")
+        expect(output).toContain('{{trigger[\'output\'].from}}')
     })
 
     it('51. ap_flow_structure — shows LOOP step loopItems expression', async () => {
@@ -1346,7 +1373,7 @@ describe('MCP Tools integration', () => {
         const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         const output = text(result)
 
-        expect(output).toContain("loopItems: {{trigger['output'].items}}")
+        expect(output).toContain('loopItems: {{trigger[\'output\'].items}}')
     })
 
     it('52. ap_flow_structure — shows router branch conditions', async () => {
@@ -1384,7 +1411,7 @@ describe('MCP Tools integration', () => {
 
         expect(output).toContain('VIP')
         expect(output).toContain('conditions:')
-        expect(output).toContain("{{trigger['output'].type}}")
+        expect(output).toContain('{{trigger[\'output\'].type}}')
         expect(output).toContain('TEXT_EXACTLY_MATCHES')
         expect(output).toContain('vip')
     })
@@ -1566,7 +1593,7 @@ describe('MCP Tools integration', () => {
         const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         const output = text(structure)
         expect(output).toContain('VIP Branch')
-        expect(output).toContain("{{trigger['output'].type}}")
+        expect(output).toContain('{{trigger[\'output\'].type}}')
         expect(output).toContain('TEXT_EXACTLY_MATCHES')
     })
 
@@ -1808,7 +1835,7 @@ describe('MCP Tools integration', () => {
         expect(output).toContain('Inner Code')
         expect(output).toContain('step_2')
         expect(output).toContain('branch 0')
-        expect(output).toContain("{{trigger['output'].status}}")
+        expect(output).toContain('{{trigger[\'output\'].status}}')
     })
 
     it('66. ap_update_branch — handles complex multi-group conditions', async () => {
@@ -1995,9 +2022,6 @@ describe('MCP Tools integration', () => {
     // ── Error sanitization ───────────────────────────────────────────
 
     it('73. mcpToolError — sanitizes internal paths from error messages', async () => {
-        const ctx = await createTestContext(app)
-        const mcp = makeMcp(ctx.project.id)
-
         // Simulate what mcpUtils.mcpToolError does with internal paths
         const fakeError = new Error('Cannot find module at /root/codes/abc123/step_1/index.js and /root/common/node_modules/.bun/@activepieces+piece-slack@0.16.2/lib.js')
         const result = mcpUtils.mcpToolError('Test', fakeError)
@@ -2332,12 +2356,12 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('items')
     })
 
-    it.skip('87. ap_run_action — returns error when auth-required action has no connection', async () => {
+    it('87. ap_run_action — returns error when auth-required action has no connection', async () => {
         const ctx = await createTestContext(app)
         const mcp = makeMcp(ctx.project.id)
 
         const result = await apRunActionTool(mcp, mockLog).execute({
-            qadamName: '@aiqadam/qadam-test-email',
+            qadamName: '@aiqadam/qadam-test-auth',
             actionName: 'send_email',
             input: { to: 'x@y.z', subject: 'hi' },
         })
@@ -2347,7 +2371,7 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('ap_list_connections')
     })
 
-    it.skip('88. ap_run_action — rejects connectionExternalId containing special characters', async () => {
+    it('88. ap_run_action — rejects connectionExternalId containing special characters', async () => {
         const ctx = await createTestContext(app)
         const mcp = makeMcp(ctx.project.id)
 
@@ -2355,25 +2379,31 @@ describe('MCP Tools integration', () => {
             qadamName: '@aiqadam/qadam-test-email',
             actionName: 'send_email',
             input: { to: 'x@y.z', subject: 'hi' },
-            connectionExternalId: "bad'; evil",
+            connectionExternalId: 'bad\'; evil',
         })
 
         expect(text(result)).toContain('❌')
         expect(text(result)).toContain('special characters')
     })
 
-    it.skip('89. ap_run_action — accepts a plain connectionExternalId without validation error', async () => {
+    it('89. ap_run_action — accepts a plain connectionExternalId without validation error', async () => {
         const ctx = await createTestContext(app)
         const mcp = makeMcp(ctx.project.id)
 
+        // A valid externalId must clear validateAuth. `subject` is omitted so the
+        // call stops at the missing-input diagnosis instead of dispatching to the
+        // engine (this suite runs no worker) — proving the id was accepted, not
+        // rejected for special characters.
         const result = await apRunActionTool(mcp, mockLog).execute({
-            qadamName: '@aiqadam/qadam-test-email',
+            qadamName: '@aiqadam/qadam-test-auth',
             actionName: 'send_email',
-            input: { to: 'x@y.z', subject: 'hi' },
+            input: { to: 'x@y.z' },
             connectionExternalId: 'valid_external_id_123',
         })
 
         expect(text(result)).not.toContain('special characters')
+        expect(text(result)).toContain('Missing required inputs')
+        expect(text(result)).toContain('subject')
     })
 
     // ── Private (CUSTOM) pieces visibility ───────────────────────────

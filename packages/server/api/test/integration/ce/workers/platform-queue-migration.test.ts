@@ -1,9 +1,9 @@
 import { apId, FlowTriggerType, LATEST_JOB_DATA_SCHEMA_VERSION, WorkerJobType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import { getWorkerGroupQueueName } from '../../../../src/app/workers/job'
 import { jobQueue } from '../../../../src/app/workers/job-queue/job-queue'
 import { platformQueueMigrationService } from '../../../../src/app/workers/platform-queue-migration.service'
+import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance
 
