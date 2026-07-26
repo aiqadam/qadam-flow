@@ -23,6 +23,7 @@ is covered by `run.sh` plus plain `docker compose` commands.
 | `.agents/features/*.md` | ~60 lines each | When Claude explores the feature | Entity schemas, services, data flows |
 | `.claude/rules/` | 3-5 lines each | Every session | Critical safety checks (entity registration, data isolation, edition safety) |
 | `.agents/skills/` | 30-65 lines each | When invoked | Step-by-step workflows (`/add-feature`, `/add-entity`, `/add-endpoint`, `/qadam-builder`) |
+| `.claude/agents/` | 40-70 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |
 - **Exported types and constants must be placed at the end of the file**, after all logic (functions, hooks, components, classes, etc.). This keeps the logic front and centre when reading a file, and groups the public contract at a predictable location.
 
   ```ts
@@ -123,6 +124,25 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Verification
 
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
+
+## Review Agents
+
+Two read-only reviewer subagents live in `.claude/agents/`. Their charters are the source of truth —
+read the file, don't paraphrase it from here.
+
+| Agent | Use it for |
+| --- | --- |
+| `code-quality` | Correctness, project-convention violations, dead code left by a removal, missing test coverage, and PR-body claims the diff does not support |
+| `app-sec` | Tenant isolation, authz, SSRF, injection, secret handling, migration hazards on existing deployments, edition/licensing safety |
+
+- **Review before merging anything that touches server code, auth, migrations, or outbound HTTP** —
+  run both, and treat a `DO NOT MERGE` verdict as blocking.
+- **Use a different agent than the one that wrote the code.** An author reviewing its own work
+  reproduces its own blind spots; the point of the second pass is an independent reading.
+- Both are read-only by charter. A reviewer that edits code stops being a reviewer.
+- Reviewers must verify claims against the code, not against the PR description. The failure mode
+  worth guarding against is a confident assertion resting on the wrong file or a same-named-but-
+  different symbol — that is how wrong work gets approved.
 
 ## White-Labeling & Edition Paths
 
