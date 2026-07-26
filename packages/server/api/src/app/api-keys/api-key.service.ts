@@ -10,6 +10,16 @@ const repo = repoFactory(ApiKeyEntity)
 
 export const apiKeyService = {
     async create({ platformId, request }: { platformId: ApId, request: CreateApiKeyRequest }): Promise<ApiKeyResponseWithValue> {
+        const keyCount = await repo().countBy({ platformId })
+        if (keyCount >= MAX_API_KEYS_PER_PLATFORM) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: {
+                    message: `A platform can have at most ${MAX_API_KEYS_PER_PLATFORM} API keys`,
+                },
+            })
+        }
+
         const value = generateSecret()
         const apiKey: ApiKey = {
             id: apId(),
@@ -62,3 +72,5 @@ export const apiKeyService = {
 function generateSecret(): string {
     return `${API_KEY_PREFIX}${secureApId(API_KEY_SECRET_LENGTH)}`
 }
+
+export const MAX_API_KEYS_PER_PLATFORM = 50

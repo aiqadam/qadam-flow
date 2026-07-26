@@ -5,6 +5,7 @@ import {
     TriggerHookType,
     WorkerJobType,
 } from '@aiqadam/shared'
+import { Queue } from 'bullmq'
 import { FastifyInstance } from 'fastify'
 import { redisConnections } from '../../../../src/app/database/redis-connections'
 import { QueueName } from '../../../../src/app/workers/job'
@@ -23,6 +24,17 @@ beforeAll(async () => {
 afterAll(async () => {
     await jobBroker(app.log).close()
     await teardownTestEnvironment()
+})
+
+beforeEach(async () => {
+    // The CE suite shares one Redis; other files (flow-run e2e, …) leak jobs into
+    // WORKER_JOBS that never get consumed. These tests assert on the specific job
+    // they enqueue, and poll() pops the queue head — so drain waiting/delayed jobs
+    // first to guarantee poll() returns this test's job, not a leaked one. drain()
+    // (not obliterate) leaves active jobs and the running worker untouched.
+    const queue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+    await queue.drain(true)
+    await queue.close()
 })
 
 const jobKey = (jobId: string): string => `bull:${QueueName.WORKER_JOBS}:${jobId}`

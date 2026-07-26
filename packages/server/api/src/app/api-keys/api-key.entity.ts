@@ -43,7 +43,6 @@ export const ApiKeyEntity = new EntitySchema<ApiKeySchema>({
         platform: {
             type: 'many-to-one',
             target: 'platform',
-            cascade: true,
             onDelete: 'CASCADE',
             joinColumn: {
                 name: 'platformId',
