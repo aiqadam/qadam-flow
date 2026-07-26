@@ -67,18 +67,29 @@ jobs:
 
           # --no-renames expands a rename into delete+add so BOTH the old and the
           # new path get classified; a code -> docs rename must not read as docs.
-          if ! diff_out="$(git diff -z --name-only --no-renames "$merge_base" "$HEAD_SHA" 2>/dev/null)"; then
+          # Written to a file, not a variable: bash strips NUL bytes out of
+          # command substitutions, so `-z` output collapses into one unterminated
+          # record and a NUL-delimited read loop silently classifies nothing.
+          changed="${RUNNER_TEMP}/changed-paths.txt"
+          if ! git diff --name-only --no-renames "$merge_base" "$HEAD_SHA" > "$changed" 2>/dev/null; then
             echo "::warning::git diff failed; running the full pipeline."
             emit false
           fi
 
-          if [ -z "$diff_out" ]; then
+          expected="$(grep -c '' "$changed")"
+          if [ "${expected:-0}" -eq 0 ]; then
             echo "::warning::Empty diff against merge-base; running the full pipeline."
             emit false
           fi
 
           docs_only=true
-          while IFS= read -r -d '' file; do
+          classified=0
+          while IFS= read -r file; do
+            if [ -z "$file" ]; then
+              echo "::warning::Empty path in diff; running the full pipeline."
+              emit false
+            fi
+            classified=$((classified + 1))
             case "$file" in
               # ---- Denylist. Evaluated first, so it always wins over the
               # ---- allowlist below (e.g. packages/server/CLAUDE.md, a symlink
@@ -104,8 +115,16 @@ jobs:
             if [ "$verdict" != docs ]; then
               docs_only=false
             fi
-          done < <(printf '%s' "$diff_out")
+          done < "$changed"
 
+          # Belt and braces: if the loop did not see every path git reported, we
+          # do not actually know what changed.
+          if [ "$classified" -ne "$expected" ]; then
+            echo "::warning::Classified ${classified} of ${expected} changed paths; running the full pipeline."
+            emit false
+          fi
+
+          echo "Classified ${classified}/${expected} paths."
           emit "$docs_only"
 
   verify:
