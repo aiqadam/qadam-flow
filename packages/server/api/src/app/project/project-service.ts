@@ -7,6 +7,7 @@ import {
     ErrorCode,
     isNil,
     Metadata,
+    PlatformUsageMetric,
     Project,
     ProjectIcon,
     ProjectId,
@@ -16,11 +17,14 @@ import {
     rolePermissions,
     RoleType,
     spreadIfDefined,
+    TeamProjectsLimit,
     UserId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
+import { distributedLock } from '../database/redis-connections'
+import { platformService } from '../platform/platform.service'
 import { userService } from '../user/user-service'
 import { projectHooks, ProjectPostCreateContext } from './project-hooks'
 import { ProjectMemberEntity } from './project-member.entity'
@@ -42,18 +46,9 @@ export const projectService = (log: FastifyBaseLogger) => ({
             icon,
             releasesEnabled: false,
         }
-        if (params.type === ProjectType.TEAM) {
-            await ensureDefaultProjectRoles(params.platformId, entityManager)
-        }
-        const savedProject = await projectRepo(entityManager).save(newProject)
-        if (params.type === ProjectType.TEAM) {
-            await addCreatorAsProjectAdmin({
-                projectId: savedProject.id,
-                userId: params.ownerId,
-                platformId: params.platformId,
-                entityManager,
-            })
-        }
+        const savedProject = params.type === ProjectType.TEAM
+            ? await createTeamProject({ platformId: params.platformId, ownerId: params.ownerId, newProject, entityManager, log })
+            : await projectRepo(entityManager).save(newProject)
         if (callPostCreateHooks) {
             await this.callProjectPostCreateHooks(savedProject, postCreateContext)
         }
@@ -321,6 +316,47 @@ async function callerCanAdministerProject(params: CallerCanAdministerProjectPara
     return !isNil(adminMembership)
 }
 
+async function createTeamProject(params: CreateTeamProjectParams): Promise<Project> {
+    const { platformId, ownerId, newProject, entityManager, log } = params
+    return distributedLock(log).runExclusive({
+        key: `team-project-limit:${platformId}`,
+        timeoutInSeconds: 10,
+        fn: async () => {
+            await assertTeamProjectsLimitNotExceeded({ platformId, entityManager, log })
+            await ensureDefaultProjectRoles(platformId, entityManager)
+            const savedProject = await projectRepo(entityManager).save(newProject)
+            await addCreatorAsProjectAdmin({
+                projectId: savedProject.id,
+                userId: ownerId,
+                platformId,
+                entityManager,
+            })
+            return savedProject
+        },
+    })
+}
+
+async function assertTeamProjectsLimitNotExceeded(params: AssertTeamProjectsLimitNotExceededParams): Promise<void> {
+    const { platformId, entityManager, log } = params
+    const { teamProjectsLimit } = await platformService(log).getPlanOrThrow(platformId)
+    if (teamProjectsLimit === TeamProjectsLimit.UNLIMITED) {
+        return
+    }
+    const maxTeamProjects = teamProjectsLimit === TeamProjectsLimit.ONE ? 1 : 0
+    const currentTeamProjects = await projectRepo(entityManager).countBy({
+        platformId,
+        type: ProjectType.TEAM,
+    })
+    if (currentTeamProjects >= maxTeamProjects) {
+        throw new QadamFlowError({
+            code: ErrorCode.QUOTA_EXCEEDED,
+            params: {
+                metric: PlatformUsageMetric.TEAM_PROJECTS,
+            },
+        })
+    }
+}
+
 async function addCreatorAsProjectAdmin(params: AddCreatorAsProjectAdminParams): Promise<void> {
     const { projectId, userId, platformId, entityManager } = params
     const adminRole = await projectRoleRepo(entityManager).findOneByOrFail({
@@ -480,4 +516,18 @@ type AddCreatorAsProjectAdminParams = {
     userId: string
     platformId: string
     entityManager?: EntityManager
+}
+
+type CreateTeamProjectParams = {
+    platformId: string
+    ownerId: string
+    newProject: NewProject
+    entityManager?: EntityManager
+    log: FastifyBaseLogger
+}
+
+type AssertTeamProjectsLimitNotExceededParams = {
+    platformId: string
+    entityManager?: EntityManager
+    log: FastifyBaseLogger
 }

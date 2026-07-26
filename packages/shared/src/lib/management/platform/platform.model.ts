@@ -13,6 +13,7 @@ export enum FilteredQadamBehavior {
 
 export enum PlatformUsageMetric {
     ACTIVE_FLOWS = 'active-flows',
+    TEAM_PROJECTS = 'team-projects',
 }
 
 export const PlatformUsage = z.object({

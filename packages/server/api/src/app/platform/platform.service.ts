@@ -166,6 +166,10 @@ export const platformService = (log: FastifyBaseLogger) => ({
     async getOneOrThrow(id: PlatformId): Promise<PlatformWithoutFederatedAuth> {
         return platformRepo().findOneByOrFail({ id })
     },
+    async getPlanOrThrow(id: PlatformId): Promise<PlatformPlanLimits> {
+        const platform = await this.getOneOrThrow(id)
+        return getPlan(log, platform)
+    },
     async getOne(id: PlatformId): Promise<PlatformWithoutFederatedAuth | null> {
         return platformRepo().findOneBy({ id })
     },
