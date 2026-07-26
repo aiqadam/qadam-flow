@@ -1,11 +1,13 @@
 # Chat Engineering Gaps — Priority Order
 
-## ~~Priority 1: Batch Execution for One-Time Tasks~~
-**Status:** Done
-**Impact:** Critical — blocks 8 of 10 use cases (any multi-item task)
+## Priority 1: Batch Execution for One-Time Tasks
+**Status:** Partially landed — UI only
+**Impact:** Critical for any multi-item task
 **Effort:** Medium
 
-**Implemented:** Extended `ap_execute_action` with `items[]` array (max 100) + `description` for progress label. Worker-side batch loop calls `executeAdhocAction` per item via RPC, pushes `data-batch-progress` stream events for a live-updating `BatchProgressCard` in the chat UI. Continue-on-error. Timeout scales with item count. Single-item path unchanged.
+**Landed:** the chat UI can render batch progress — `BatchProgressData` (`packages/shared/src/lib/automation/chat/index.ts`) plus `BatchProgressCard` / `chatPartUtils.extractBatchProgressFromOutput` in `packages/web/src/app/routes/chat-with-ai/`.
+
+**Still missing:** there is no batch-capable tool on the server. The ad-hoc execution tool is `ap_run_action` (`packages/server/api/src/app/mcp/tools/ap-run-action.ts`) and it runs exactly one action — no `items[]` input, no per-item cap, no worker-side batch loop, and nothing emits `batchProgress`.
 
 ---
 

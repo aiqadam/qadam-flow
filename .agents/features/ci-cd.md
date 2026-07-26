@@ -79,12 +79,12 @@ and lets the changelog skill stay simple.
 
 ## What This Replaces
 
-Forked from upstream Activepieces, which had **28 workflow files** designed for their own
-infra: GHCR org (`ghcr.io/activepieces/*`), BetterStack, Checkly, Crowdin, Depot,
+Forked from upstream Activepieces, which carried a large set of workflow files designed for
+their own infra: GHCR org (`ghcr.io/activepieces/*`), BetterStack, Checkly, Crowdin, Depot,
 EE license server, separate npm publishes per qadam, staging/canary/prod deploy targets.
 
-All 28 files were dropped. The replacement is 4 files focused only on what this fork needs:
-build → test → publish a single image.
+All of them were dropped. The replacement is the 4 files in `.github/workflows/` above,
+focused only on what this fork needs: build → test → publish a single image.
 
 ## What Is NOT Yet Covered (Backlog)
 
@@ -95,7 +95,8 @@ build → test → publish a single image.
 - **Multi-arch builds** (`linux/arm64`) — see Decision 6.
 - **Image security scanning** (Trivy/Grype) — separate scheduled workflow, post-MVP.
 - **Auto-deploy** — no staging target exists yet for this fork.
-- **Dependabot security fixes** — 184 alerts (21 critical) on the repo. Separate cleanup task.
+- **Dependabot security fixes** — check the repo's Dependabot alerts for the current count
+  (`gh api /repos/aiqadam/qadam-flow/dependabot/alerts`). Separate cleanup task.
 
 ## Cost Profile (Public Repo)
 
