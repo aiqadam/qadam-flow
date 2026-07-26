@@ -12,7 +12,7 @@ Manages user identity, platform membership, roles, session security, and a gamif
 - `packages/server/api/src/app/user/badges/checks/active-flows-badges.ts` — FLOW_UPDATED badge checks
 - `packages/server/api/src/app/user/badges/checks/flow-runs-badges.ts` — FLOW_RUN_FINISHED badge checks
 - `packages/server/api/src/app/user/badges/checks/flow-content.ts` — flow content badge checks
-- `packages/server/api/src/app/user/platform/platform-user-controller.ts` — platform admin user management endpoints (EE)
+- `packages/server/api/src/app/user/platform/platform-user-controller.ts` — platform admin user management endpoints (GET `/:id`, GET `/`, POST `/:id`, DELETE `/:id`); registered unconditionally via `platformUserModule` in `app.ts`
 - `packages/server/api/src/app/user/platform/platform-user-module.ts` — platform user module
 - `packages/shared/src/lib/core/user/user.ts` — User, UserWithMetaInformation, UserWithBadges schemas; PlatformRole and UserStatus enums
 - `packages/shared/src/lib/core/user/badges/index.ts` — UserBadge schema
@@ -27,11 +27,6 @@ Manages user identity, platform membership, roles, session security, and a gamif
 - `packages/web/src/features/authentication/components/sign-up-form.tsx` — sign-up form
 - `packages/web/src/features/authentication/components/change-password.tsx` — password change form
 - `packages/web/src/features/authentication/hooks/auth-hooks.ts` — auth React Query hooks
-
-## Edition Availability
-- Community (CE): User, UserIdentity, badges, session management, `GET /v1/users/me`, `POST /v1/users/me`
-- Enterprise (EE): Platform admin user CRUD via `platform-user-controller.ts` (list, update role, deactivate, delete)
-- Cloud: same as EE for multi-tenant platform management
 
 ## Domain Terms
 - **User** — a platform-scoped membership record; one identity can have many users across platforms
@@ -88,4 +83,4 @@ Manages user identity, platform membership, roles, session security, and a gamif
 
 - `GET /v1/users/me` — get current user with identity info
 - `POST /v1/users/me` — update profile (firstName, lastName, profilePicture)
-- User CRUD managed via platform admin endpoints (EE): list users, update role/status, delete user
+- User CRUD managed via the platform admin endpoints in `platform-user-controller.ts`: list users, update role/status, delete user

@@ -68,18 +68,22 @@ One-paragraph description of what this feature does and why it exists.
 - `packages/server/api/src/app/<path>` — backend service/controller
 - `packages/shared/src/lib/<path>` — shared types
 
-## Edition Availability
-Which editions support this feature (Community, Enterprise, Cloud).
-
 ## Domain Terms
 Key terms used by this feature (link to glossary definitions if they exist).
 ```
+
+**Never add an "Edition Availability" section.** This repo ships a single edition — see
+`.claude/rules/edition-safety.md`. There is no `ApEdition` enum, no plan tier, and
+`platformService.getPlan()` (`packages/server/api/src/app/platform/platform.service.ts`) returns a
+fixed object, so any per-edition statement is untrue by construction. If a feature really is gated,
+document the gate itself: name the `PlatformPlan` flag, the file that reads it, and the value
+`getPlan()` hardcodes — that is checkable and stays true.
 
 #### 2b. When modifying an existing feature
 
 After making changes to a feature, update its `.agents/features/<feature-name>.md` to reflect:
 - New or removed key files
-- Changed edition availability
+- Any `PlatformPlan` flag the change starts or stops reading
 - New domain terms introduced
 - Any scope changes to the feature's summary
 

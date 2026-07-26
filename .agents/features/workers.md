@@ -12,9 +12,6 @@ Workers are separate Node processes that poll the app for jobs and execute flows
 - `packages/server/utils/src/ap-version.ts` — `apVersionUtil.getCurrentRelease()`; both sides read the deploy-root `package.json` version
 - `packages/shared/src/lib/automation/workers/index.ts` — `WorkerProps`, `MachineInformation`, `WorkerSettingsResponse`, `WorkerToApiContract` contracts
 
-## Edition Availability
-- Community / Enterprise / Cloud: all editions run workers; topology differs (embedded `WORKER_AND_APP` for self-host single-container vs dedicated worker fleets on Cloud).
-
 ## Domain Terms
 - **`WorkerProps`** — typed worker identity sent in every heartbeat (`EXECUTION_MODE`, `WORKER_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `REUSE_SANDBOX`, `version`). Previously a free-form `Record<string,string>`.
 - **`WorkerSettingsResponse`** — runtime config the app hands a worker on connect; now includes `APP_VERSION` (the app's release).

@@ -33,10 +33,6 @@ Flows are the core automation primitive in Activepieces. Each flow is a versione
 - `packages/web/src/app/builder/test-step/test-sample-data-viewer.tsx` and `packages/web/src/app/builder/run-details/flow-step-input-output.tsx` — both wrap `SmartOutputViewer` for test-output and run-output panes, passing the resolved `pieceSchema` for the current step
 - `packages/web/src/app/routes/automations/index.tsx` — flows list page
 
-## Edition Availability
-- **Community (CE)**: Full flow authoring, publishing, folders, sample data, human-input forms.
-- **Enterprise (EE) / Cloud**: Same core. Some operational features (owner transfer, piece filtering, template sharing) integrate with EE plan flags. Active-flow quota enforcement on publish/enable.
-
 ## Domain Terms
 - **Flow**: The persistent automation record — holds status, folder, published version pointer, and metadata.
 - **FlowVersion**: An immutable (once locked) snapshot of the trigger + action graph. DRAFT state is editable; LOCKED state is the published baseline.

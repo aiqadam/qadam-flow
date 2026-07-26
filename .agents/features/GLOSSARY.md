@@ -1,6 +1,6 @@
 # Domain Glossary — Activepieces
 
-> Last updated: 2026-04-16
+> Last updated: 2026-07-26
 
 ## Automation Core
 
@@ -54,8 +54,7 @@
 |---|---|---|---|
 | API Key | A platform-scoped authentication token (hashed, `sk-` prefixed) for programmatic API access. | service key, token | Platform |
 | Custom Domain | A white-label domain mapped to a platform, verified via DNS (CNAME/TXT) with PENDING/ACTIVE lifecycle. | — | Platform, Appearance |
-| Edition | The product variant: Community (CE, open-source), Enterprise (EE, self-hosted licensed), or Cloud (hosted SaaS). | plan type, tier | Platform, PlatformPlan |
-| License Key | An activation key for self-hosted Enterprise that maps features to PlatformPlan flags with expiration tracking. | — | PlatformPlan, Edition |
+| License Key | Upstream activation-key concept — inert here: `VerifyLicenseKeyRequestBody` / `LicenseKeyEntity` are unused Zod schemas in `shared/src/lib/core/license-keys`, no verification or activation code exists, and `platform.controller.ts` returns `licenseKey: null`. | — | PlatformPlan |
 | Platform | The top-level tenant entity that owns projects, users, billing, branding, and feature configuration. | tenant, organization, workspace | Project, PlatformPlan, User |
 | PlatformPlan | A shared Zod schema of platform feature flags and limits — **not** a TypeORM entity and not a database table; `getPlan()` returns a fixed all-CE object, and the Stripe/licence fields on the schema are inert leftovers (no billing code exists in this repo). | plan, subscription | Platform |
 | PlatformRole | A user's role within a platform: ADMIN (full control), MEMBER (own projects), or OPERATOR (all projects except others' personal). | — | User, Platform |
@@ -68,9 +67,9 @@
 
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| Audit Event | A persisted record of a security-relevant action (22 event types) for compliance and forensic review. | audit log entry | ApplicationEventName |
+| Audit Event | Another name for Application Event; nothing is persisted — there is no `audit_event` entity or table and no `/v1/audit-events` route on the server, though `web/.../audit-events-api.ts` still calls one. | audit log entry | Application Event |
 | Federated Auth | Authentication via external identity providers (Google, GitHub) using OAuth2 code exchange. | social login, SSO | SAML, Platform |
-| Managed Auth | JWT-based authentication for embedded Activepieces — exchanges an external token for an AP session with auto-provisioned user/project. | embedded auth, external token | Signing Key, Platform |
+| Managed Auth | Upstream embedded-auth concept (external token exchanged for a session) — not implemented here: no `managed-authn` route is registered on the server, and the only trace is the `/v1/managed-authn/external-token` string in `web/src/lib/api.ts`. | embedded auth, external token | Signing Key, Platform |
 | OTP | A one-time password (10-min expiry) used for email verification and password reset flows. | verification code | UserIdentity |
 | RBAC | Role-Based Access Control — enforcement of permissions based on a user's ProjectRole within a project. | authorization, ACL | ProjectRole, Permission |
 | SAML | Enterprise SSO via SAML 2.0 protocol — login request, IdP redirect, ACS callback, assertion parsing. | — | Federated Auth, SSO |
@@ -91,8 +90,7 @@
 
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| Application Event | A domain event emitted on the internal event bus (22 types) for audit logging, badges, and event destinations. | domain event, system event | Audit Event, Event Destination |
-| Event Destination | A webhook endpoint that receives real-time platform or project events, delivered via BullMQ job queue. | webhook destination, event stream | Application Event |
+| Application Event | One of the 22 `ApplicationEventName` domain events dispatched in-process by `helper/application-events.ts` to listeners registered at runtime — there is no event bus, no persistence, and `badge-service.ts` is the only registered listener. | domain event, system event | Audit Event, Badge |
 | Handshake | A verification protocol where external services confirm webhook ownership before sending events. | webhook verification | Webhook |
 | Webhook | An HTTP endpoint that ingests external payloads to trigger flow execution, supporting sync and async modes. | callback, hook | Flow, Trigger, Handshake |
 

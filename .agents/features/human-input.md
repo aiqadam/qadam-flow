@@ -16,11 +16,6 @@ The Human Input feature exposes public-facing endpoints that allow external user
 - `packages/web/src/app/routes/forms/` — public-facing form page (`index.tsx`)
 - `packages/web/src/app/routes/chat/` — public-facing chat page (`index.tsx`), the reusable chat shell (`flow-chat.tsx`), and the in-builder Drawer wrapper used for testing `chat_submission`-trigger flows from the builder (`chat-drawer.tsx`, paired with `builder/state/chat-state.ts`)
 
-## Edition Availability
-- **Community (CE)**: Fully available — no plan flag required.
-- **Enterprise (EE)**: Fully available.
-- **Cloud**: Fully available.
-
 ## Domain Terms
 - **Forms piece** (`@aiqadam/qadam-forms`): The Activepieces piece that provides three triggers: `form_submission`, `file_submission`, and `chat_submission`.
 - **form_submission trigger**: Accepts structured text/toggle/textarea fields defined by the flow author. `waitForResponse` controls whether the flow pauses to return a value to the form submitter.

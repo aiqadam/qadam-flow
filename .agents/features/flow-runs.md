@@ -1,7 +1,7 @@
 # Flow Runs Module
 
 ## Summary
-Flow Runs records every execution of a flow, tracking its full lifecycle from queuing through completion or failure. It stores compressed execution logs for step-by-step inspection, supports pause-and-resume for delay and webhook-based waits, provides retry strategies for recovering from failures, and emits WebSocket events and application events to notify the frontend and downstream systems in real time.
+Flow Runs records every execution of a flow, tracking its full lifecycle from queuing through completion or failure. It stores compressed execution logs for step-by-step inspection, supports pause-and-resume for delay and webhook-based waits, provides retry strategies for recovering from failures, and emits WebSocket events to the frontend plus in-process application events (consumed only by the badge service).
 
 ## Key Files
 - `packages/server/api/src/app/flows/flow-run/` — controller, service, entity
@@ -15,16 +15,12 @@ Flow Runs records every execution of a flow, tracking its full lifecycle from qu
 - `packages/web/src/app/builder/flow-canvas/widgets/run-info-widget.tsx` — builder widget that jumps to the failed step on the canvas
 - `packages/web/src/app/builder/state/run-state.ts` — tracks the focused/failed step for the builder
 - `packages/web/src/app/builder/state/canvas-state.ts` — tracks `userManuallySelectedStepDuringRun` and exposes the `resumeLiveFollow` action for live-follow control
-- `packages/server/api/src/app/ee/alerts/alerts-service.ts` — sends the failure email via the EE Alerts feature (see `.agents/features/alerts.md`)
+- `packages/server/api/src/app/alerts/alerts-service.ts` — `sendAlertOnRunFinish`, called from `flows/flow-run/flow-run-hooks.ts`; sends the failure email when the run is in a failed state and SMTP is configured
 - `packages/web/src/features/flow-runs/components/step-status-icon.tsx` — per-step status badge
 - `packages/web/src/app/routes/runs/index.tsx` — runs list page
 - `packages/web/src/app/routes/runs/id/index.tsx` — individual run detail page
 - `packages/web/src/app/builder/run-details/` — step input/output inspector inside the builder
 - `packages/web/src/app/builder/run-list/` — recent runs sidebar in the builder
-
-## Edition Availability
-- **Community (CE)**: Full run tracking and inspection. No retention limits beyond the server-configured `EXECUTION_DATA_RETENTION_DAYS`.
-- **Enterprise (EE) / Cloud**: Same core feature. Cloud plans may enforce retention windows. Bulk retry admin endpoint (`POST /v1/admin/platforms/runs/retry`) is Cloud-only.
 
 ## Domain Terms
 - **FlowRun**: A single execution instance of a specific flow version, from trigger to terminal state.

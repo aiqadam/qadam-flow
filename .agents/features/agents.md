@@ -24,9 +24,7 @@ Agents is a flow step type (backed by `@aiqadam/qadam-agent`) that executes an L
 - `packages/web/src/features/agents/structured-output/` — `AgentStructuredOutput` component for defining output field schema
 - `packages/web/src/app/builder/step-settings/agent-settings/index.tsx` — builder panel for configuring an agent step
 - `packages/web/src/app/builder/test-step/agent-test-step/index.tsx` — test panel for running a single agent step and viewing results
-
-## Edition Availability
-Gated by `platform.plan.agentsEnabled`. When disabled, the agent step type is hidden from the piece selector. All editions can run agents if the flag is enabled; by default it is off on Community, on on Cloud plans that include it.
+- `packages/web/src/app/builder/qadams-selector/index.tsx` — the only gate on the agent step: line 147 hides it unless `platform.plan.agentsEnabled`. `platformService.getPlan()` hardcodes `agentsEnabled: true`, so in practice the step is always offered.
 
 ## Domain Terms
 - **AgentTool** — a discriminated union of the four tool types a user can attach to an agent step
