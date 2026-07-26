@@ -1,0 +1,56 @@
+name: 🐞 Bug report
+description: Report a defect in Qadam Flow
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. A maintainer will triage it and set the priority (`P0`–`P3`) and `track/*` labels — you don't need to.
+        See the [label conventions](https://github.com/aiqadam/qadam-flow/blob/main/CONTRIBUTING.md#issue--pr-labels) for how issues are organised.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Qadam Flow version / image tag / commit
+      placeholder: "e.g. ghcr.io/aiqadam/qadam-flow:latest, or a commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker (run.sh / docker compose)
+        - Local dev (npm run dev)
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Paste any server/worker logs. This is automatically formatted as code.
+      render: shell
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
