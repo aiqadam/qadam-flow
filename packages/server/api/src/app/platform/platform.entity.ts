@@ -55,6 +55,7 @@ export const PlatformEntity = new EntitySchema<PlatformSchema>({
         allowedAuthDomains: {
             type: String,
             array: true,
+            nullable: true,
         },
         allowedEmbedOrigins: {
             type: String,
@@ -81,6 +82,7 @@ export const PlatformEntity = new EntitySchema<PlatformSchema>({
         federatedAuthProviders: {
             type: 'jsonb',
             select: false,
+            nullable: true,
         },
         pinnedQadams: {
             type: String,

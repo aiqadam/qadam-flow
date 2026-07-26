@@ -36,7 +36,6 @@ export const flagService = (_log: FastifyBaseLogger) => ({
                 ApFlagId.PUBLIC_URL,
                 ApFlagId.LATEST_VERSION,
                 ApFlagId.PRIVACY_POLICY_URL,
-                ApFlagId.QADAMS_SYNC_MODE,
                 ApFlagId.PRIVATE_PIECES_ENABLED,
                 ApFlagId.FLOW_RUN_TIME_SECONDS,
                 ApFlagId.SHOW_COMMUNITY,
@@ -97,12 +96,6 @@ export const flagService = (_log: FastifyBaseLogger) => ({
             {
                 id: ApFlagId.SHOW_POWERED_BY_IN_FORM,
                 value: true,
-                created,
-                updated,
-            },
-            {
-                id: ApFlagId.QADAMS_SYNC_MODE,
-                value: system.get(AppSystemProp.QADAMS_SYNC_MODE),
                 created,
                 updated,
             },

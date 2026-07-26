@@ -64,6 +64,7 @@ export const UserEntity = new EntitySchema<UserSchema>({
             joinColumn: {
                 name: 'identityId',
                 referencedColumnName: 'id',
+                foreignKeyConstraintName: 'fk_user_identity_id',
             },
         },
         badges: {

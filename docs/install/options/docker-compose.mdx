@@ -1,122 +1,173 @@
 ---
 title: "Docker Compose"
-description: ""
-icon: "book"
+description: "Run Qadam Flow with PostgreSQL and Redis using the repo's docker-compose.yml"
+icon: "layer-group"
 ---
 
-To get up and running quickly with Qadam Flow, we will use the Qadam Flow Docker image. Follow these steps:
+The Docker Compose stack is the recommended way to run Qadam Flow: separate app and worker containers backed by PostgreSQL and Redis.
 
-## Prerequisites
+## Quick install (recommended)
 
-You need to have [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) and [Docker](https://docs.docker.com/get-docker/) installed on your machine in order to set up Qadam Flow via Docker Compose.
-
-## Installing
-
-**1. Clone Qadam Flow repository.**
-
-Use the command line to clone Qadam Flow repository:
+The one-line installer sets this stack up for you — it downloads `docker-compose.yml`, generates a `.env` with random secrets, pulls `ghcr.io/aiqadam/qadam-flow:latest`, and brings everything up:
 
 ```bash
-git clone https://github.com/activepieces/activepieces.git
+curl -fsSL https://flow.aiqadam.org/run.sh | sh
 ```
 
-**2. Go to the repository folder.**
+Then open [http://localhost:8080/sign-up](http://localhost:8080/sign-up). The first account to sign up owns the platform.
 
-```bash
-cd Qadam Flow
-```
+See [Docker](./docker) for the full breakdown of what the installer does and the variables it accepts (`QADAM_FLOW_DIR`, `QADAM_FLOW_IMAGE`, `QADAM_FLOW_REF`, `QADAM_FLOW_PORT`).
 
-**3.Generate Environment variable**
+## Manual setup
 
-Run the following command from the command prompt / terminal
+Use this if you want the stack under version control, or you intend to modify `docker-compose.yml`.
 
-```bash
-sh tools/deploy.sh
-```
+### Prerequisites
 
-<Tip>
-If none of the above methods work, you can rename the .env.example file in the root directory to .env and fill in the necessary information within the file.
-</Tip>
-
-**4. Run Qadam Flow.**
+- [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
+- [Docker](https://docs.docker.com/get-docker/) with Compose v2
 
 <Warning>
-Please note that "docker-compose" (with a dash) is an outdated version of Docker Compose and it will not work properly. We strongly recommend downloading and installing version 2 from the [here](https://docs.docker.com/compose/install/) to use Docker Compose.
+`docker-compose` (with a hyphen) is Compose v1 and will not work. Install [Compose v2](https://docs.docker.com/compose/install/) and use `docker compose` (with a space).
+</Warning>
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/aiqadam/qadam-flow.git
+    cd qadam-flow
+    ```
+
+    If you only want to run the stack and not build from source, download just the compose file instead:
+
+    ```bash
+    mkdir qadam-flow && cd qadam-flow
+    curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml
+    ```
+  </Step>
+  <Step title="Create a .env file">
+    `docker-compose.yml` reads every service's configuration from `.env` in the same directory, so this file is required. Generate the secrets first:
+
+    ```bash
+    openssl rand -hex 16   # AP_ENCRYPTION_KEY  (must be 32 hex characters)
+    openssl rand -hex 32   # AP_JWT_SECRET
+    openssl rand -hex 12   # AP_POSTGRES_PASSWORD
+    ```
+
+    Then write `.env`:
+
+    ```dotenv
+    QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:latest
+
+    AP_ENVIRONMENT=prod
+    AP_FRONTEND_URL=http://localhost:8080
+
+    # Database
+    AP_DB_TYPE=POSTGRES
+    AP_POSTGRES_HOST=postgres
+    AP_POSTGRES_PORT=5432
+    AP_POSTGRES_DATABASE=qadam_flow
+    AP_POSTGRES_USERNAME=postgres
+    AP_POSTGRES_PASSWORD=replace-with-openssl-rand-hex-12
+    AP_POSTGRES_USE_SSL=false
+
+    # Queue
+    AP_REDIS_TYPE=STANDALONE
+    AP_REDIS_HOST=redis
+    AP_REDIS_PORT=6379
+
+    # Secrets
+    AP_ENCRYPTION_KEY=replace-with-openssl-rand-hex-16
+    AP_JWT_SECRET=replace-with-openssl-rand-hex-32
+
+    # Optional
+    AP_TELEMETRY_ENABLED=false
+    AP_EXECUTION_MODE=UNSANDBOXED
+    AP_WEBHOOK_TIMEOUT_SECONDS=30
+    AP_TRIGGER_DEFAULT_POLL_INTERVAL=5
+    ```
+
+    <Note>
+    `AP_ENVIRONMENT` is lowercase: `prod`, `dev`, or `test`. Any other value makes the server throw on startup.
+    </Note>
+
+    The full list of settings lives in [Environment Variables](../configuration/environment-variables).
+  </Step>
+  <Step title="Start the stack">
+    ```bash
+    docker compose pull
+    docker compose up -d
+    ```
+
+    Compose starts four services: `app` (published on `8080:80`), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.0-pg14`), and `redis` (`redis:7.0.7`). PostgreSQL and Redis data live in the named volumes `postgres_data` and `redis_data`.
+  </Step>
+  <Step title="Sign up">
+    Open [http://localhost:8080/sign-up](http://localhost:8080/sign-up) — the first account owns the platform.
+
+    Watch the logs while it boots:
+
+    ```bash
+    docker compose logs -f app worker
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Before exposing this to the internet, change the PostgreSQL credentials from any example values, put a reverse proxy with TLS in front of it (see [Setup SSL](../guides/setup-ssl)), and re-read the [configuration guide](../configuration/environment-variables).
+</Warning>
+
+## Configure the webhook URL
+
+`AP_FRONTEND_URL` is used to build webhook and redirect URLs, so it has to be reachable from the internet for app triggers to fire. For local testing, expose port `8080` with [ngrok](https://ngrok.com/) and set `AP_FRONTEND_URL` to the HTTPS URL it prints, then run `docker compose up -d`. Full walkthrough on the [Docker](./docker#configure-the-webhook-url) page.
+
+## Upgrade
+
+<Warning>
+Review the [breaking changes](../configuration/breaking-changes) for your target version first.
+</Warning>
+
+<Steps>
+  <Step title="Refresh the compose file">
+    If you cloned the repository:
+
+    ```bash
+    git pull
+    ```
+
+    If you only downloaded `docker-compose.yml`, download it again:
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml
+    ```
+  </Step>
+  <Step title="Pull the new image">
+    ```bash
+    docker compose pull
+    ```
+  </Step>
+  <Step title="Restart">
+    ```bash
+    docker compose up -d --remove-orphans
+    ```
+
+    Migrations run automatically on boot. Your `.env` and volumes are untouched.
+  </Step>
+</Steps>
+
+To pin a specific version instead of tracking `latest`, set `QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:<version>` in `.env`. See [Rollback](../guides/rollback) for going back to an earlier version.
+
+## Stop and delete
+
+Stop the stack but keep all data:
+
+```bash
+docker compose down
+```
+
+<Warning>
+The next command removes the containers **and** the `postgres_data` and `redis_data` volumes. Every flow, run, and connection is deleted permanently.
 </Warning>
 
 ```bash
-docker compose -p Qadam Flow up
+docker compose down -v
 ```
-
-## 4. Configure Webhook URL (Important for Triggers, Optional If you have public IP)
-
-**Note:** By default, Qadam Flow will try to use your public IP for webhooks. If you are self-hosting on a personal machine, you must configure the frontend URL so that the webhook is accessible from the internet.
-
-**Optional:** The easiest way to expose your webhook URL on localhost is by using a service like ngrok. However, it is not suitable for production use.
-
-1. Install ngrok
-2. Run the following command:
-```bash
-ngrok http 8080
-```
-3. Replace `AP_FRONTEND_URL` environment variable in `.env` with the ngrok url.
-
-![Ngrok](../../resources/screenshots/docker-ngrok.png)
-
-<Warning>
-When deploying for production, ensure that you update the database credentials and properly set the environment variables.
-
-Review the [configurations guide](/install/configuration/environment-variables) to make any necessary adjustments.
-</Warning>
-
-## Upgrading
-
-To upgrade to new versions, which are installed using docker compose, perform the following steps. First, open a terminal in the Qadam Flow repository directory and run the following commands.
-
-### Automatic Pull
-
-**1. Run the update script**
-
-```bash
-sh tools/update.sh
-```
-
-### Manually Pull
-
-**1. Pull the new docker compose file**
-```bash
-git pull
-```
-
-**2. Pull the new images**
-```bash
-docker compose pull
-```
-
-**3. Review changelog for breaking changes**
-
-<Warning>
-Please review breaking changes in the [changelog](../configuration/breaking-changes).
-</Warning>
-
-**4. Run the updated docker images**
-```
-docker compose up -d --remove-orphans
-```
-
-Congratulations! You have now successfully updated the version.
-
-## Deleting
-
-The following command is capable of deleting all Docker containers and associated data, and therefore should be used with caution:
-
-```
-sh tools/reset.sh
-```
-
-<Warning>
-Executing this command will result in the removal of all Docker containers and the data stored within them. It is important to be aware of the potentially hazardous nature of this command before proceeding.
-</Warning>
-
-
-

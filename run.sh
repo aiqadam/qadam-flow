@@ -170,7 +170,6 @@ AP_JWT_SECRET=${jwt_secret}
 
 # Telemetry + community
 AP_TELEMETRY_ENABLED=false
-AP_QADAMS_SYNC_MODE=NONE
 AP_TEMPLATES_SOURCE_URL=
 
 # Engine
