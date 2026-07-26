@@ -14,10 +14,12 @@ permissions:
 
 jobs:
   # Deny-by-default path classifier. Emits docs_only=true ONLY when every path in
-  # the PR diff is provably prose; anything unrecognised, unreadable, or outside a
-  # pull_request event falls through to docs_only=false, i.e. the full pipeline.
-  # A wrong answer here must never be "skip the tests", so every failure mode
-  # below deliberately reports false.
+  # the PR diff is provably prose or a prose asset; anything unrecognised,
+  # unreadable, or outside a pull_request event falls through to docs_only=false,
+  # i.e. the full pipeline. A wrong answer here must never be "skip the tests",
+  # so every failure mode below deliberately reports false.
+  # The classification rules are in tools/ci/classify-path.sh; see the comments
+  # there before widening anything.
   changes:
     name: Classify changed paths
     runs-on: ubuntu-latest
@@ -76,56 +78,19 @@ jobs:
             emit false
           fi
 
-          expected="$(grep -c '' "$changed")"
-          if [ "${expected:-0}" -eq 0 ]; then
-            echo "::warning::Empty diff against merge-base; running the full pipeline."
-            emit false
-          fi
+          # The allowlist/denylist and the fail-closed guards live in
+          # tools/ci/, not inline here, so they can be unit-tested. The test
+          # runs in the unconditional `verify` job below.
+          verdict="$(tools/ci/classify-changed-paths.sh "$changed")"
 
-          docs_only=true
-          classified=0
-          while IFS= read -r file; do
-            if [ -z "$file" ]; then
-              echo "::warning::Empty path in diff; running the full pipeline."
+          case "$verdict" in
+            docs_only=true) emit true ;;
+            docs_only=false) emit false ;;
+            *)
+              echo "::warning::Unexpected classifier output '${verdict}'; running the full pipeline."
               emit false
-            fi
-            classified=$((classified + 1))
-            case "$file" in
-              # ---- Denylist. Evaluated first, so it always wins over the
-              # ---- allowlist below (e.g. packages/server/CLAUDE.md, a symlink
-              # ---- that *.md would otherwise wave through).
-              .github|.github/*) verdict=code ;;
-              packages|packages/*) verdict=code ;;
-              run.sh|*/run.sh) verdict=code ;;
-              *docker-compose*|*Dockerfile*|*docker-entrypoint.sh) verdict=code ;;
-              package.json|*/package.json) verdict=code ;;
-              *.lock|*lock.json) verdict=code ;;
-              turbo.json|*/turbo.json) verdict=code ;;
-              tsconfig*|*/tsconfig*) verdict=code ;;
-              .env*|*/.env*) verdict=code ;;
-              # ---- Allowlist: prose only.
-              docs/*) verdict=docs ;;
-              .agents/*) verdict=docs ;;
-              *.md|*.mdx) verdict=docs ;;
-              LICENSE|*/LICENSE) verdict=docs ;;
-              # ---- Everything else is code by definition.
-              *) verdict=code ;;
-            esac
-            echo "  ${verdict}: ${file}"
-            if [ "$verdict" != docs ]; then
-              docs_only=false
-            fi
-          done < "$changed"
-
-          # Belt and braces: if the loop did not see every path git reported, we
-          # do not actually know what changed.
-          if [ "$classified" -ne "$expected" ]; then
-            echo "::warning::Classified ${classified} of ${expected} changed paths; running the full pipeline."
-            emit false
-          fi
-
-          echo "Classified ${classified}/${expected} paths."
-          emit "$docs_only"
+              ;;
+          esac
 
   verify:
     name: Lint + Unit Tests
@@ -133,6 +98,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+
+      # Deliberately in this job and not in `integration-run`: `verify` is
+      # unconditional, so the test covering the docs-only filter can never be
+      # skipped by the filter it tests. Pure bash, so it runs before any install
+      # and still reports if the install step later flakes.
+      - name: Test the CI path classifier
+        run: tools/ci/classify-path.test.sh
 
       - uses: actions/setup-node@v6
         with:
@@ -223,7 +195,7 @@ jobs:
       # Runs the CE suite (test-ce) only, not the full `test-api` — the bundled
       # `check-migrations` step still reports baseline schema drift (#59). Fold it
       # back in (or switch to `npm run test-api`) once #59 is resolved.
-      - name: CE integration suite
+      - name: Run CE integration tests
         run: npx turbo run test-ce --filter=api
 
   # Required status check. Runs unconditionally so it always reports a conclusion
