@@ -8,7 +8,7 @@ Prefer webhooks when the API supports them -- they are instant and use fewer res
 
 ## Polling Trigger
 
-Use when the API does NOT support webhooks. Activepieces polls every ~5 minutes.
+Use when the API does NOT support webhooks. Qadam Flow polls every ~5 minutes.
 
 Two deduplication strategies:
 - **TIMEBASED** -- Each item has a timestamp; only items newer than last poll are returned
@@ -156,7 +156,7 @@ export const newRecordWebhookTrigger = createTrigger({
         token: context.auth.secret_text,
       },
       body: {
-        url: context.webhookUrl,         // Activepieces provides this
+        url: context.webhookUrl,         // Qadam Flow provides this
         events: ['record.created'],
       },
     });
