@@ -1,5 +1,5 @@
 import { apDayjsDuration } from '@aiqadam/server-utils'
-import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun, flowStructureUtil, isFailedState, isNil, ListAlertsParams, Project, ProjectId, ProjectType, QadamFlowError, SeekPage, UserId } from '@aiqadam/shared'
+import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun, flowStructureUtil, isFailedState, isNil, ListAlertsParams, ProjectId, ProjectType, QadamFlowError, SeekPage } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import timezone from 'dayjs/plugin/timezone'
 import { FastifyBaseLogger } from 'fastify'
@@ -70,7 +70,9 @@ export const alertsService = (log: FastifyBaseLogger) => ({
     },
 
     async add({ projectId, channel, receiver }: CreateAlertParams): Promise<void> {
-        const normalizedReceiver = receiver.toLowerCase()
+        // Trimmed as well as lowercased, so the stored value matches what
+        // getIdentityByEmail authorized — it trims before looking the identity up.
+        const normalizedReceiver = receiver.toLowerCase().trim()
         const project = await projectService(log).getOneOrThrow(projectId)
 
         if (project.type === ProjectType.PERSONAL) {
@@ -100,7 +102,14 @@ export const alertsService = (log: FastifyBaseLogger) => ({
             }
             // Platform membership alone would let a project admin arm alerts at any
             // platform user's inbox, leaking project and flow names via the failure mail.
-            if (!(await receiverIsProjectMember({ project, receiverUserId: receiverUser.id, log }))) {
+            // Membership is proven the same way authorize.ts gates TEAM project access:
+            // a project_member row, with no exemption for the owner.
+            const receiverProjectRole = await projectService(log).getProjectRoleForUser({
+                userId: receiverUser.id,
+                projectId,
+                platformId: project.platformId,
+            })
+            if (isNil(receiverProjectRole)) {
                 throw new QadamFlowError({
                     code: ErrorCode.VALIDATION,
                     params: {
@@ -171,23 +180,5 @@ export const alertsService = (log: FastifyBaseLogger) => ({
     },
 })
 
-async function receiverIsProjectMember({ project, receiverUserId, log }: ReceiverIsProjectMemberParams): Promise<boolean> {
-    if (project.ownerId === receiverUserId) {
-        return true
-    }
-    const projectRole = await projectService(log).getProjectRoleForUser({
-        userId: receiverUserId,
-        projectId: project.id,
-        platformId: project.platformId,
-    })
-    return !isNil(projectRole)
-}
-
 const MAX_ALERT_RECEIVERS = 50
 const MAX_ALERTS_PER_PROJECT = 20
-
-type ReceiverIsProjectMemberParams = {
-    project: Project
-    receiverUserId: UserId
-    log: FastifyBaseLogger
-}
