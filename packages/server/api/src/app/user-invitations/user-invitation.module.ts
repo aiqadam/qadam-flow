@@ -134,8 +134,8 @@ async function assertPrincipalCanListPlatformInvitations(request: FastifyRequest
     const user = await userService(request.log).getOneOrFail({ id: principal.id })
     if (!userService(request.log).isUserPrivileged(user)) {
         throw new QadamFlowError({
-            code: ErrorCode.PERMISSION_DENIED,
-            params: { userId: user.id, projectId: '', projectRole: null, permission: undefined },
+            code: ErrorCode.AUTHORIZATION,
+            params: { message: 'user is not authorized to list platform-scope invitations' },
         })
     }
 }
@@ -150,8 +150,8 @@ async function assertPrincipalIsPlatformAdmin(request: FastifyRequest, principal
     const user = await userService(request.log).getOneOrFail({ id: principal.id })
     if (user.platformRole !== PlatformRole.ADMIN) {
         throw new QadamFlowError({
-            code: ErrorCode.PERMISSION_DENIED,
-            params: { userId: user.id, projectId: '', projectRole: null, permission: undefined },
+            code: ErrorCode.AUTHORIZATION,
+            params: { message: 'user is not authorized to create a platform-scope invitation' },
         })
     }
 }
