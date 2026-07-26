@@ -57,18 +57,18 @@
 | Edition | The product variant: Community (CE, open-source), Enterprise (EE, self-hosted licensed), or Cloud (hosted SaaS). | plan type, tier | Platform, PlatformPlan |
 | License Key | An activation key for self-hosted Enterprise that maps features to PlatformPlan flags with expiration tracking. | — | PlatformPlan, Edition |
 | Platform | The top-level tenant entity that owns projects, users, billing, branding, and feature configuration. | tenant, organization, workspace | Project, PlatformPlan, User |
-| PlatformPlan | The 40+ column entity controlling feature flags, quotas, billing state, and AI credit configuration per platform. | plan, subscription | Platform, License Key |
+| PlatformPlan | A shared Zod schema of platform feature flags and limits — **not** a TypeORM entity and not a database table; `getPlan()` returns a fixed all-CE object, and the Stripe/licence fields on the schema are inert leftovers (no billing code exists in this repo). | plan, subscription | Platform |
 | PlatformRole | A user's role within a platform: ADMIN (full control), MEMBER (own projects), or OPERATOR (all projects except others' personal). | — | User, Platform |
 | Project | A workspace within a platform that contains flows, tables, connections, and members. | workspace, environment | Platform, Flow, Table, ProjectMember |
 | ProjectMember | An association between a user and a project with an assigned role for RBAC enforcement. | team member, collaborator | Project, ProjectRole |
-| ProjectRole | A set of permissions (26 total) assigned to project members — 3 defaults (ADMIN/EDITOR/VIEWER) plus custom roles. | — | ProjectMember, Permission, RBAC |
-| Signing Key | An RSA-4096 key pair used to sign/verify JWTs for the embedded authentication (Managed Auth) flow. | — | Managed Auth, Platform |
+| ProjectRole | A set of permissions (27 total) assigned to project members — 3 defaults (ADMIN/EDITOR/VIEWER) plus custom roles. | — | ProjectMember, Permission, RBAC |
+| Signing Key | A key pair used to sign/verify JWTs for the embedded authentication (Managed Auth) flow — upstream concept only; no signing-key code exists in this repo. | — | Managed Auth, Platform |
 
 ## Authentication & Security
 
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| Audit Event | A persisted record of a security-relevant action (19 event types) for compliance and forensic review. | audit log entry | ApplicationEventName |
+| Audit Event | A persisted record of a security-relevant action (22 event types) for compliance and forensic review. | audit log entry | ApplicationEventName |
 | Federated Auth | Authentication via external identity providers (Google, GitHub) using OAuth2 code exchange. | social login, SSO | SAML, Platform |
 | Managed Auth | JWT-based authentication for embedded Activepieces — exchanges an external token for an AP session with auto-provisioned user/project. | embedded auth, external token | Signing Key, Platform |
 | OTP | A one-time password (10-min expiry) used for email verification and password reset flows. | verification code | UserIdentity |
@@ -83,15 +83,15 @@
 
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| AI Credits | A metered currency (1000 credits = $1 USD) for AI usage, backed by OpenRouter API key limits. | tokens, AI quota | PlatformPlan, OpenRouter |
-| AI Provider | A configured LLM backend (OpenAI, Anthropic, Google, Azure, OpenRouter, Cloudflare, Custom, Activepieces) with encrypted credentials. | model provider, LLM config | AI Credits, Agent |
+| AI Credits | An upstream metered-usage currency for AI calls — **not implemented in this repo** (no credit metering, no billing code); operators supply their own provider keys. | tokens, AI quota | AI Provider |
+| AI Provider | A configured LLM backend (OpenAI, Anthropic, Google, Azure, OpenRouter, Cloudflare Gateway, Bedrock, Mistral, or a custom OpenAI-compatible endpoint) with encrypted credentials. | model provider, LLM config | Agent |
 | Platform Copilot | A RAG-powered assistant that helps build flows by searching indexed code chunks and streaming AI responses. | AI assistant, flow builder AI | AI Provider |
 
 ## Eventing & Webhooks
 
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| Application Event | A domain event emitted on the internal event bus (19 types) for audit logging, badges, and event destinations. | domain event, system event | Audit Event, Event Destination |
+| Application Event | A domain event emitted on the internal event bus (22 types) for audit logging, badges, and event destinations. | domain event, system event | Audit Event, Event Destination |
 | Event Destination | A webhook endpoint that receives real-time platform or project events, delivered via BullMQ job queue. | webhook destination, event stream | Application Event |
 | Handshake | A verification protocol where external services confirm webhook ownership before sending events. | webhook verification | Webhook |
 | Webhook | An HTTP endpoint that ingests external payloads to trigger flow execution, supporting sync and async modes. | callback, hook | Flow, Trigger, Handshake |

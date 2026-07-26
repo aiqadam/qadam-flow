@@ -5,7 +5,7 @@ description: Design system for Activepieces (open-source AI automation platform,
 
 # Activepieces Design System
 
-You are designing for **Activepieces** — an open-source AI automation platform where users assemble triggers + actions from 280+ "pieces" into automated flows. Every piece doubles as an MCP server.
+You are designing for **Activepieces** — an open-source AI automation platform where users assemble triggers + actions from 238 "pieces" (qadams) into automated flows. Every piece doubles as an MCP server.
 
 Read `README.md` in this folder **first** — it is the canonical reference. This file is a fast-loading summary for agent use.
 
