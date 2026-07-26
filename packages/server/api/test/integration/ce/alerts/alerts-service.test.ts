@@ -3,9 +3,13 @@ import { AlertChannel, apId, FlowRunStatus, PlatformRole, ProjectType, RoleType 
 import { SMTPServer } from 'smtp-server'
 import { alertsService } from '../../../../src/app/alerts/alerts-service'
 import { system } from '../../../../src/app/helper/system/system'
+import * as projectServiceModule from '../../../../src/app/project/project-service'
+import { userService } from '../../../../src/app/user/user-service'
 import { db } from '../../../helpers/db'
 import { createMockFlow, createMockFlowRun, createMockFlowVersion, createMockProject, createMockProjectMember, createMockProjectRole, createMockUser, createMockUserIdentity, mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
+
+const originalProjectService = projectServiceModule.projectService
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
 
@@ -83,6 +87,7 @@ async function seedTeamProjectWithFlow(): Promise<SeededTeamProject> {
 
     // Alert receivers must be a verified platform user who is also a member of the project.
     const memberEmails: string[] = []
+    const memberUserIds: string[] = []
     for (const _ of [0, 1]) {
         const memberIdentity = createMockUserIdentity({ verified: true })
         await db.save('user_identity', memberIdentity)
@@ -95,6 +100,7 @@ async function seedTeamProjectWithFlow(): Promise<SeededTeamProject> {
             projectRoleId: projectRole.id,
         }))
         memberEmails.push(memberIdentity.email.toLowerCase())
+        memberUserIds.push(memberUser.id)
     }
 
     // Verified platform user deliberately left out of the project, to assert the
@@ -106,10 +112,13 @@ async function seedTeamProjectWithFlow(): Promise<SeededTeamProject> {
 
     return {
         projectId: project.id,
+        platformId: mockPlatform.id,
         flowVersionId: flowVersion.id,
         flowId: flow.id,
         memberEmail: memberEmails[0],
+        memberUserId: memberUserIds[0],
         secondMemberEmail: memberEmails[1],
+        secondMemberUserId: memberUserIds[1],
         ownerEmail: mockUserIdentity.email.toLowerCase(),
         nonProjectMemberEmail: outsiderIdentity.email.toLowerCase(),
     }
@@ -266,15 +275,89 @@ describe('alertsService', () => {
 
             expect(capturedMessages).toHaveLength(0)
         })
+
+        // userService#removeFromPlatform detaches the user (platformId -> null) without deleting
+        // the user row, the project_member row, or the alert row (no FK between any of them), so
+        // the grant would otherwise survive offboarding indefinitely. This is the bug in #119.
+        it('does not email a receiver who was offboarded from the platform after the alert was armed', async () => {
+            const { projectId, platformId, flowId, flowVersionId, memberEmail, memberUserId } = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
+
+            await userService(system.globalLogger()).removeFromPlatform({ id: memberUserId, platformId })
+
+            const flowRun = createMockFlowRun({
+                projectId,
+                flowId,
+                flowVersionId,
+                status: FlowRunStatus.FAILED,
+                failedStep: { name: 'step_1', displayName: 'HTTP Request', message: 'boom' },
+            })
+
+            await alertsService(system.globalLogger()).sendAlertOnRunFinish(flowRun)
+
+            expect(capturedMessages).toHaveLength(0)
+        })
+
+        it('still emails a current member even when a co-receiver was offboarded', async () => {
+            const { projectId, platformId, flowId, flowVersionId, memberEmail, memberUserId, secondMemberEmail } = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: secondMemberEmail })
+
+            await userService(system.globalLogger()).removeFromPlatform({ id: memberUserId, platformId })
+
+            const flowRun = createMockFlowRun({
+                projectId,
+                flowId,
+                flowVersionId,
+                status: FlowRunStatus.FAILED,
+                failedStep: { name: 'step_1', displayName: 'HTTP Request', message: 'boom' },
+            })
+
+            await alertsService(system.globalLogger()).sendAlertOnRunFinish(flowRun)
+
+            expect(capturedMessages).toHaveLength(1)
+            expect(capturedMessages[0].rcptTo).toEqual([secondMemberEmail])
+        })
+
+        // Decision: fail closed. Membership revalidation runs on every alert send, so a transient
+        // failure there must not fall back to mailing the unfiltered receiver list — that would
+        // reopen exactly the disclosure this fix closes. flowRunHooks#onFinish already wraps
+        // sendAlertOnRunFinish in tryCatch and only logs, so propagating the error here means the
+        // one missed alert is logged rather than silently masked.
+        it('propagates the error and sends nothing when membership revalidation fails', async () => {
+            const { projectId, flowId, flowVersionId, memberEmail } = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: memberEmail })
+
+            vi.spyOn(projectServiceModule, 'projectService').mockImplementation((log) => ({
+                ...originalProjectService(log),
+                filterActiveMemberEmails: vi.fn().mockRejectedValueOnce(new Error('simulated membership lookup failure')),
+            }))
+
+            const flowRun = createMockFlowRun({
+                projectId,
+                flowId,
+                flowVersionId,
+                status: FlowRunStatus.FAILED,
+                failedStep: { name: 'step_1', displayName: 'HTTP Request', message: 'boom' },
+            })
+
+            await expect(alertsService(system.globalLogger()).sendAlertOnRunFinish(flowRun)).rejects.toThrow('simulated membership lookup failure')
+            expect(capturedMessages).toHaveLength(0)
+
+            vi.restoreAllMocks()
+        })
     })
 })
 
 type SeededTeamProject = {
     projectId: string
+    platformId: string
     flowVersionId: string
     flowId: string
     memberEmail: string
+    memberUserId: string
     secondMemberEmail: string
+    secondMemberUserId: string
     ownerEmail: string
     nonProjectMemberEmail: string
 }
