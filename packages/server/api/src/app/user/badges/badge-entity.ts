@@ -38,6 +38,7 @@ export const UserBadgeEntity = new EntitySchema<UserBadgeSchema>({
             joinColumn: {
                 name: 'userId',
                 referencedColumnName: 'id',
+                foreignKeyConstraintName: 'fk_user_badge_user_id',
             },
             onDelete: 'CASCADE',
         },

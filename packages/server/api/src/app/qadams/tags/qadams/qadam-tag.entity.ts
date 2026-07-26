@@ -22,6 +22,7 @@ export const QadamTagEntity = new EntitySchema<QadamTagSchema>({
     },
     uniques: [
         {
+            name: 'uq_qadam_tag_tag_id_qadam_name',
             columns: ['tagId', 'qadamName'],
         },
     ],
@@ -38,6 +39,7 @@ export const QadamTagEntity = new EntitySchema<QadamTagSchema>({
             cascade: true,
             joinColumn: {
                 name: 'tagId',
+                foreignKeyConstraintName: 'fk_qadam_tag_tag_id',
             },
         },
         platform: {
@@ -46,6 +48,7 @@ export const QadamTagEntity = new EntitySchema<QadamTagSchema>({
             cascade: true,
             joinColumn: {
                 name: 'platformId',
+                foreignKeyConstraintName: 'fk_qadam_tag_platform_id',
             },
         },
     },
