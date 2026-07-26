@@ -2,6 +2,7 @@ import { apId, ApiKeyResponseWithValue, PlatformRole, PrincipalType, ResponseApi
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { MAX_API_KEYS_PER_PLATFORM } from '../../../../src/app/api-keys/api-key.service'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import { mockBasicUser } from '../../../helpers/mocks'
@@ -47,7 +48,7 @@ describe('POST /v1/api-keys', () => {
         const ctx = await createTestContext(app!)
 
         const now = new Date().toISOString()
-        const seededKeys = Array.from({ length: 50 }, () => ({
+        const seededKeys = Array.from({ length: MAX_API_KEYS_PER_PLATFORM }, () => ({
             id: apId(),
             created: now,
             updated: now,

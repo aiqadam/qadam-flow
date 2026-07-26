@@ -73,4 +73,4 @@ function generateSecret(): string {
     return `${API_KEY_PREFIX}${secureApId(API_KEY_SECRET_LENGTH)}`
 }
 
-const MAX_API_KEYS_PER_PLATFORM = 50
+export const MAX_API_KEYS_PER_PLATFORM = 50
