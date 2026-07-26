@@ -11,11 +11,11 @@ icon: "hammer"
 #### Environment variables are migrating from `AP_` to `QF_`
 This is the start of a multi-release migration — **no action is required**, every `AP_*` variable keeps working exactly as before.
 
-- Every environment variable that was previously read as `AP_<NAME>` (e.g. `AP_JWT_SECRET`, `AP_POSTGRES_DATABASE`, `AP_CONTAINER_TYPE`) can now also be set as `QF_<NAME>` (e.g. `QF_JWT_SECRET`).
-- If both `QF_<NAME>` and `AP_<NAME>` are set, `QF_<NAME>` wins.
+- Every environment variable that was previously read as `AP_<NAME>` (e.g. `AP_JWT_SECRET`, `AP_POSTGRES_DATABASE`, `AP_CONTAINER_TYPE`) can now also be set as `QF_<NAME>` (e.g. `QF_JWT_SECRET`) **when it reaches the Node server or worker process** — directly, via `.env`, or via `docker run -e`.
+- If both `QF_<NAME>` and `AP_<NAME>` are set, `QF_<NAME>` wins. An empty `QF_<NAME>` (e.g. `""`) is treated as unset and does not override a valid `AP_<NAME>`.
 - Setting only the old `AP_<NAME>` still works and behaves identically, but logs a one-time startup warning telling you to rename it to `QF_<NAME>`.
 - `AP_ENVIRONMENT` (and its `QF_ENVIRONMENT` alias) still only accepts `prod` / `dev` / `test` — only the variable name is changing, not its accepted values.
-- The Docker Compose file and `run.sh` install script still ship with `AP_*` names for now; that migration is tracked separately so operators aren't asked to change working `.env` files before the alias layer has a release behind it.
+- **The bundled `docker-compose.yml`, `docker-entrypoint.sh`, and the `run.sh` install script still require the `AP_*` names and are not part of this alias.** Those scripts read the variables in the shell — before Node (and this alias layer) ever starts — to do things like interpolate `${AP_POSTGRES_PASSWORD}` into Postgres's own config and decide which process (`APP`/`WORKER`) to launch via `AP_CONTAINER_TYPE`. Setting only `QF_POSTGRES_PASSWORD` or `QF_CONTAINER_TYPE` today does **not** reach those scripts and can leave Postgres with an empty password or start the wrong container topology. Keep using `AP_*` for anything consumed by `docker-compose.yml` / `docker-entrypoint.sh` / `run.sh` until a follow-up migrates those in lockstep.
 
 ### Do you need to take action?
 - No. Existing `.env` files with `AP_*` names keep working. Renaming to `QF_*` is optional during this deprecation window; `AP_*` support will be removed in a future release, announced here with advance notice.

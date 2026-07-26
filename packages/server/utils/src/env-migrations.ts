@@ -30,7 +30,10 @@ for (const [newName, oldName] of Object.entries(LEGACY_QADAM_ALIASES)) {
 // over the `AP_<NAME>` keys this same loop just wrote.
 const qfEnvSnapshot = { ...process.env }
 for (const [name, value] of Object.entries(qfEnvSnapshot)) {
-    if (!name.startsWith('QF_') || value === undefined) {
+    // An empty string is "unset" for our purposes: treating QF_X='' as a real value would let a
+    // blank QF_ var (e.g. from `- QF_X=${QF_X}` compose interpolation with nothing exported) silently
+    // clobber a valid AP_X, so it must not win precedence over an already-configured legacy value.
+    if (!name.startsWith('QF_') || value === undefined || value === '') {
         continue
     }
     process.env['AP_' + name.slice('QF_'.length)] = value
@@ -41,7 +44,8 @@ for (const [name, value] of Object.entries(qfEnvSnapshot)) {
         continue
     }
     const qfName = 'QF_' + name.slice('AP_'.length)
-    if (qfEnvSnapshot[qfName] !== undefined) {
+    const qfValue = qfEnvSnapshot[qfName]
+    if (qfValue !== undefined && qfValue !== '') {
         continue
     }
     console.warn(`[env-migrations] ${name} is deprecated; please rename to ${qfName}`)
