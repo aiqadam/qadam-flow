@@ -1,10 +1,10 @@
 import { AddressInfo } from 'node:net'
-import { AlertChannel, apId, FlowRunStatus, PlatformRole, ProjectType } from '@aiqadam/shared'
+import { AlertChannel, apId, FlowRunStatus, PlatformRole, ProjectType, RoleType } from '@aiqadam/shared'
 import { SMTPServer } from 'smtp-server'
 import { alertsService } from '../../../../src/app/alerts/alerts-service'
 import { system } from '../../../../src/app/helper/system/system'
 import { db } from '../../../helpers/db'
-import { createMockFlow, createMockFlowRun, createMockFlowVersion, createMockProject, createMockUser, createMockUserIdentity, mockAndSaveBasicSetup } from '../../../helpers/mocks'
+import { createMockFlow, createMockFlowRun, createMockFlowVersion, createMockProject, createMockProjectMember, createMockProjectRole, createMockUser, createMockUserIdentity, mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
@@ -69,8 +69,8 @@ const SMTP_ENV = {
     AP_SMTP_SENDER_NAME: 'Qadam Flow',
 }
 
-async function seedTeamProjectWithFlow(): Promise<{ projectId: string, flowVersionId: string, flowId: string, memberEmail: string }> {
-    const { mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+async function seedTeamProjectWithFlow(): Promise<SeededTeamProject> {
+    const { mockPlatform, mockOwner, mockUserIdentity } = await mockAndSaveBasicSetup()
     const project = createMockProject({ platformId: mockPlatform.id, ownerId: mockOwner.id, type: ProjectType.TEAM })
     await db.save('project', project)
     const flow = createMockFlow({ projectId: project.id })
@@ -78,13 +78,41 @@ async function seedTeamProjectWithFlow(): Promise<{ projectId: string, flowVersi
     const flowVersion = createMockFlowVersion({ flowId: flow.id, displayName: 'Nightly Sync' })
     await db.save('flow_version', flowVersion)
 
-    // Alert receivers must be a verified member of the platform.
-    const memberIdentity = createMockUserIdentity({ verified: true })
-    await db.save('user_identity', memberIdentity)
-    const memberUser = createMockUser({ identityId: memberIdentity.id, platformId: mockPlatform.id, platformRole: PlatformRole.MEMBER })
-    await db.save('user', memberUser)
+    const projectRole = createMockProjectRole({ platformId: mockPlatform.id, type: RoleType.DEFAULT })
+    await db.save('project_role', projectRole)
 
-    return { projectId: project.id, flowVersionId: flowVersion.id, flowId: flow.id, memberEmail: memberIdentity.email.toLowerCase() }
+    // Alert receivers must be a verified platform user who is also a member of the project.
+    const memberEmails: string[] = []
+    for (const _ of [0, 1]) {
+        const memberIdentity = createMockUserIdentity({ verified: true })
+        await db.save('user_identity', memberIdentity)
+        const memberUser = createMockUser({ identityId: memberIdentity.id, platformId: mockPlatform.id, platformRole: PlatformRole.MEMBER })
+        await db.save('user', memberUser)
+        await db.save('project_member', createMockProjectMember({
+            userId: memberUser.id,
+            projectId: project.id,
+            platformId: mockPlatform.id,
+            projectRoleId: projectRole.id,
+        }))
+        memberEmails.push(memberIdentity.email.toLowerCase())
+    }
+
+    // Verified platform user deliberately left out of the project, to assert the
+    // project-membership rule on top of the platform-membership one.
+    const outsiderIdentity = createMockUserIdentity({ verified: true })
+    await db.save('user_identity', outsiderIdentity)
+    const outsiderUser = createMockUser({ identityId: outsiderIdentity.id, platformId: mockPlatform.id, platformRole: PlatformRole.MEMBER })
+    await db.save('user', outsiderUser)
+
+    return {
+        projectId: project.id,
+        flowVersionId: flowVersion.id,
+        flowId: flow.id,
+        memberEmail: memberEmails[0],
+        secondMemberEmail: memberEmails[1],
+        ownerEmail: mockUserIdentity.email.toLowerCase(),
+        nonProjectMemberEmail: outsiderIdentity.email.toLowerCase(),
+    }
 }
 
 beforeAll(async () => {
@@ -155,6 +183,52 @@ describe('alertsService', () => {
                 alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: `outsider-${apId()}@evil.test` }),
             ).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
         })
+
+        it('rejects a verified platform member who is not a member of the project', async () => {
+            const { projectId, nonProjectMemberEmail } = await seedTeamProjectWithFlow()
+
+            await expect(
+                alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: nonProjectMemberEmail }),
+            ).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
+
+            const page = await alertsService(system.globalLogger()).list({ projectId, cursor: undefined, limit: 10 })
+            expect(page.data).toHaveLength(0)
+        })
+
+        // authorize.ts gates TEAM project access on a project_member row without exempting
+        // the owner, so an owner who has no such row must not be armed as a receiver either.
+        it('rejects the project owner when no project_member row grants them the project', async () => {
+            const { projectId, ownerEmail } = await seedTeamProjectWithFlow()
+
+            await expect(
+                alertsService(system.globalLogger()).add({ projectId, channel: AlertChannel.EMAIL, receiver: ownerEmail }),
+            ).rejects.toMatchObject({ error: { code: 'VALIDATION' } })
+        })
+    })
+
+    describe('deleteAllForProject', () => {
+        it('removes every alert row of the project and leaves other projects untouched', async () => {
+            const first = await seedTeamProjectWithFlow()
+            const second = await seedTeamProjectWithFlow()
+            await alertsService(system.globalLogger()).add({ projectId: first.projectId, channel: AlertChannel.EMAIL, receiver: first.memberEmail })
+            await alertsService(system.globalLogger()).add({ projectId: first.projectId, channel: AlertChannel.EMAIL, receiver: first.secondMemberEmail })
+            await alertsService(system.globalLogger()).add({ projectId: second.projectId, channel: AlertChannel.EMAIL, receiver: second.memberEmail })
+
+            await alertsService(system.globalLogger()).deleteAllForProject({ projectId: first.projectId })
+
+            const firstPage = await alertsService(system.globalLogger()).list({ projectId: first.projectId, cursor: undefined, limit: 10 })
+            expect(firstPage.data).toHaveLength(0)
+            const secondPage = await alertsService(system.globalLogger()).list({ projectId: second.projectId, cursor: undefined, limit: 10 })
+            expect(secondPage.data).toHaveLength(1)
+        })
+
+        it('is a no-op for a project with no alert rows', async () => {
+            const { projectId } = await seedTeamProjectWithFlow()
+
+            await expect(
+                alertsService(system.globalLogger()).deleteAllForProject({ projectId }),
+            ).resolves.toBeUndefined()
+        })
     })
 
     describe('sendAlertOnRunFinish', () => {
@@ -194,3 +268,13 @@ describe('alertsService', () => {
         })
     })
 })
+
+type SeededTeamProject = {
+    projectId: string
+    flowVersionId: string
+    flowId: string
+    memberEmail: string
+    secondMemberEmail: string
+    ownerEmail: string
+    nonProjectMemberEmail: string
+}

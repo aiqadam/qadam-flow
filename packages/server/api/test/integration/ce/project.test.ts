@@ -1,7 +1,9 @@
-import { PlatformRole, PrincipalType, ProjectType, ProjectWithLimits, SeekPage } from '@aiqadam/shared'
+import { AlertChannel, PlatformRole, PrincipalType, ProjectType, ProjectWithLimits, SeekPage } from '@aiqadam/shared'
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { alertsService } from '../../../src/app/alerts/alerts-service'
+import { system } from '../../../src/app/helper/system/system'
 import { generateMockToken } from '../../helpers/auth'
 import { mockBasicUser } from '../../helpers/mocks'
 import { createTestContext } from '../../helpers/test-context'
@@ -118,6 +120,28 @@ describe('Project endpoints (CE)', () => {
             const body = listResponse.json<SeekPage<ProjectWithLimits>>()
             const found = body.data.find((p) => p.id === created.id)
             expect(found).toBeUndefined()
+        })
+
+        it('deletes the alert rows of the project it soft-deletes', async () => {
+            const ctx = await createTestContext(app!)
+            const createResponse = await ctx.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: null,
+            })
+            const created = createResponse.json<ProjectWithLimits>()
+            await alertsService(system.globalLogger()).add({
+                projectId: created.id,
+                channel: AlertChannel.EMAIL,
+                receiver: ctx.userIdentity.email,
+            })
+
+            const deleteResponse = await ctx.delete(`/v1/projects/${created.id}`)
+            expect(deleteResponse.statusCode).toBe(StatusCodes.NO_CONTENT)
+
+            const alerts = await alertsService(system.globalLogger()).list({ projectId: created.id, cursor: undefined, limit: 10 })
+            expect(alerts.data).toHaveLength(0)
         })
 
         it('returns 404 when project does not exist', async () => {
