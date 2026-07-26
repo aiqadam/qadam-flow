@@ -1,5 +1,5 @@
 import { apDayjsDuration } from '@aiqadam/server-utils'
-import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun, flowStructureUtil, isFailedState, isNil, ListAlertsParams, ProjectType, QadamFlowError, SeekPage } from '@aiqadam/shared'
+import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun, flowStructureUtil, isFailedState, isNil, ListAlertsParams, Project, ProjectId, ProjectType, QadamFlowError, SeekPage, UserId } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import timezone from 'dayjs/plugin/timezone'
 import { FastifyBaseLogger } from 'fastify'
@@ -98,6 +98,16 @@ export const alertsService = (log: FastifyBaseLogger) => ({
                     },
                 })
             }
+            // Platform membership alone would let a project admin arm alerts at any
+            // platform user's inbox, leaking project and flow names via the failure mail.
+            if (!(await receiverIsProjectMember({ project, receiverUserId: receiverUser.id, log }))) {
+                throw new QadamFlowError({
+                    code: ErrorCode.VALIDATION,
+                    params: {
+                        message: 'Alert receiver must be a member of the project',
+                    },
+                })
+            }
         }
         const existingAlert = await repo()
             .createQueryBuilder('alert')
@@ -155,7 +165,29 @@ export const alertsService = (log: FastifyBaseLogger) => ({
     async delete({ alertId }: { alertId: ApId }): Promise<void> {
         await repo().delete({ id: alertId })
     },
+
+    async deleteAllForProject({ projectId }: { projectId: ProjectId }): Promise<void> {
+        await repo().delete({ projectId })
+    },
 })
+
+async function receiverIsProjectMember({ project, receiverUserId, log }: ReceiverIsProjectMemberParams): Promise<boolean> {
+    if (project.ownerId === receiverUserId) {
+        return true
+    }
+    const projectRole = await projectService(log).getProjectRoleForUser({
+        userId: receiverUserId,
+        projectId: project.id,
+        platformId: project.platformId,
+    })
+    return !isNil(projectRole)
+}
 
 const MAX_ALERT_RECEIVERS = 50
 const MAX_ALERTS_PER_PROJECT = 20
+
+type ReceiverIsProjectMemberParams = {
+    project: Project
+    receiverUserId: UserId
+    log: FastifyBaseLogger
+}

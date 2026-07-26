@@ -70,3 +70,4 @@ Relations (one-to-many): `flows`, `files`, `folders`, `events`, `appConnections`
 ## Side Effects
 - Creating a project calls `projectHooks.postCreate(project, context?)`, which in EE creates an associated `ProjectPlan`, sets piece filters, and (per [alerts.md](./alerts.md)) auto-subscribes an alert receiver: the owner's email for personal projects, or `context.alertReceiverEmail` for team projects.
 - Soft-deleted projects remain in DB and can be hard-deleted by a background job
+- Deleting a project calls `projectSideEffects.postSoftDelete({ projectId })` (`project/project-side-effects.ts`) from the DELETE route, which drops the project's `alert` rows. The `alert` table has no FK to `project`, and soft-delete would not fire a cascade anyway, so the rows need an explicit sweep.
