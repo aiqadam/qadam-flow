@@ -34,6 +34,15 @@ const SHELL_LAYER_ONLY_NAMES = new Set([
     'WORKER_API_URL',
 ])
 
+// A QF_ name derived from one of LEGACY_QADAM_ALIASES's *old* piece names (e.g. QF_DEV_PIECES) must
+// land directly on the *new* piece name (AP_DEV_QADAMS) - the one actually read downstream - rather
+// than on the old AP_ name. Writing it to the old name would both miss the downstream reader and trip
+// the legacy loop's own "AP_DEV_PIECES is deprecated" warning for an operator who never set an AP_
+// variable at all.
+const oldPieceNameToNewPieceName: Record<string, string> = Object.fromEntries(
+    Object.entries(LEGACY_QADAM_ALIASES).map(([newName, oldName]) => [oldName, newName]),
+)
+
 // Every configurable prop in this codebase is read as `AP_<NAME>` (see AppSystemProp.getEnvironment
 // and WorkerSystemProp), so the AP_ -> QF_ rename is a generic prefix swap rather than a per-name
 // list: any `QF_<NAME>` the operator sets is mirrored onto `AP_<NAME>` (QF_ wins on conflict), which
@@ -50,7 +59,8 @@ for (const [name, value] of Object.entries(qfEnvSnapshot)) {
     if (!name.startsWith('QF_') || value === undefined || value === '') {
         continue
     }
-    process.env['AP_' + name.slice('QF_'.length)] = value
+    const apName = 'AP_' + name.slice('QF_'.length)
+    process.env[oldPieceNameToNewPieceName[apName] ?? apName] = value
 }
 for (const [name, value] of Object.entries(qfEnvSnapshot)) {
     const isDeprecatedApName = name.startsWith('AP_') && value !== undefined

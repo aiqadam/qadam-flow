@@ -131,8 +131,8 @@ describe('environmentMigrations QF_/AP_ prefix aliasing', () => {
         expect(environmentMigrations.migrate()['AP_SOME_UNKNOWN_PROP']).toBe('value')
     })
 
-    it('lets QF_ override a value already produced by the legacy piece-name alias', async () => {
-        process.env['AP_DEV_PIECES'] = 'from-legacy-piece-alias'
+    it('prefers a QF_ alias of the new piece name over a real AP_ value of the old (legacy) piece name', async () => {
+        process.env['AP_DEV_PIECES'] = 'from-real-legacy-env-var'
         process.env['QF_DEV_QADAMS'] = 'from-qf-alias'
 
         const { environmentMigrations } = await import('../src/env-migrations')
@@ -146,6 +146,18 @@ describe('environmentMigrations QF_/AP_ prefix aliasing', () => {
         const { environmentMigrations } = await import('../src/env-migrations')
 
         expect(environmentMigrations.migrate()['AP_DEV_QADAMS']).toBe('xyz')
+    })
+
+    it('does not warn at all for a QF_-only alias of a legacy old piece name', async () => {
+        process.env['QF_DEV_PIECES'] = 'xyz'
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+        await import('../src/env-migrations')
+
+        const deprecationWarnings = warnSpy.mock.calls.filter(([message]) =>
+            typeof message === 'string' && (message.includes('AP_DEV_PIECES') || message.includes('AP_DEV_QADAMS')),
+        )
+        expect(deprecationWarnings).toHaveLength(0)
     })
 
     it('does not warn about shell-layer-only names that docker-entrypoint.sh/docker-compose.yml already set', async () => {
