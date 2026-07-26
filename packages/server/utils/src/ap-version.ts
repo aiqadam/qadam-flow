@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { safeHttp } from './safe-http'
 
 let cachedCurrentRelease: string | undefined
 let cachedLatestRelease: string | undefined
@@ -27,15 +28,14 @@ export const apVersionUtil = {
             if (cachedLatestRelease) {
                 return cachedLatestRelease
             }
-            const response = await fetch(
+            const response = await safeHttp.axios.get<PackageJson>(
                 'https://raw.githubusercontent.com/activepieces/activepieces/main/package.json',
                 {
-                    signal: AbortSignal.timeout(5000),
+                    timeout: 5000,
                 },
             )
-            const data = await response.json() as PackageJson
-            cachedLatestRelease = data.version
-            return data.version
+            cachedLatestRelease = response.data.version
+            return response.data.version
         }
         catch (ex) {
             return '0.0.0'
