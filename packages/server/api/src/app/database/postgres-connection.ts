@@ -11,6 +11,7 @@ import { AddProjectMemberTable1784284221314 } from './migration/postgres/1784284
 import { AddOtpEntity1784713964706 } from './migration/postgres/1784713964706-AddOtpEntity'
 import { AddAlertEntity1784724891352 } from './migration/postgres/1784724891352-AddAlertEntity'
 import { AddApiKey1784922234136 } from './migration/postgres/1784922234136-AddApiKey'
+import { FixEntityMetadataDrift1785100000000 } from './migration/postgres/1785100000000-FixEntityMetadataDrift'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -29,6 +30,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddOtpEntity1784713964706,
         AddAlertEntity1784724891352,
         AddApiKey1784922234136,
+        FixEntityMetadataDrift1785100000000,
     ]
 }
 

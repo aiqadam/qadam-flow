@@ -34,9 +34,3 @@ When a project hits its concurrency limit:
 3. Once an active run finishes and a slot opens, the next queued run starts.
 
 This means flows will always eventually execute, but they may experience delays when the project is at capacity.
-
-## Programmatic Management via Embedding
-
-If you are embedding Qadam Flow, you can manage concurrency limits programmatically through the JWT token used to provision users. This allows you to group multiple projects into a shared **concurrency pool** so they share the same limit.
-
-See [Provision Users](/embedding/provision-users) for the `concurrencyPoolKey` and `concurrencyPoolLimit` JWT claims.

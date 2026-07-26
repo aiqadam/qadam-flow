@@ -41,7 +41,7 @@ Password: `12345678`
 
 ## Qadams Development
 
-When [`AP_QADAMS_SYNC_MODE`](https://github.com/activepieces/activepieces/blob/main/.env.dev#L14) is set to `OFFICIAL_AUTO`, all qadams are automatically loaded from the cloud API and synced to the database on first launch. This process may take a few seconds to several minutes depending on your internet connection.
+By default, official qadams are bundled with the server and loaded from disk on first launch — there is no cloud sync step.
 
 For local development, qadams are loaded from your local `dist` folder instead of the database. To enable this, set the [`AP_DEV_QADAMS`](https://github.com/activepieces/activepieces/blob/main/.env.dev#L5) environment variable with a comma-separated list of qadams. For example, to develop with `google-sheets` and `cal-com`:
 

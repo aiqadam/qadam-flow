@@ -11,7 +11,6 @@ services:
     env_file: .env
     environment:
       - AP_CONTAINER_TYPE=APP
-      - AP_QADAMS_SYNC_MODE=NONE
     volumes:
       - ./cache:/usr/src/app/cache
     networks:
