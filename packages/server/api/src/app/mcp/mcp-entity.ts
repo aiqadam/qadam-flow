@@ -68,6 +68,7 @@ export const McpServerEntity = new EntitySchema<McpServerWithSchema>({
             joinColumn: {
                 name: 'projectId',
                 referencedColumnName: 'id',
+                foreignKeyConstraintName: 'fk_mcp_server_project_id',
             },
         },
     },

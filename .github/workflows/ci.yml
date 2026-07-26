@@ -192,11 +192,22 @@ jobs:
       - name: Build engine (e2e prerequisite)
         run: npx turbo run build --filter=@aiqadam/engine
 
-      # Runs the CE suite (test-ce) only, not the full `test-api` — the bundled
-      # `check-migrations` step still reports baseline schema drift (#59). Fold it
-      # back in (or switch to `npm run test-api`) once #59 is resolved.
+      # #59 is resolved — check-migrations no longer false-positives on a clean
+      # baseline, so run the full test-api gate (check-migrations + test-ce),
+      # matching the root `test-api` script.
+      #
+      # Note this step is CONDITIONAL: it lives in `integration-run`, which the
+      # `changes` job skips on a provably docs-only diff, so docs-only PRs run
+      # neither test-ce nor the migration-drift check. That is safe because
+      # entities and migrations all live under `packages/`, which the classifier's
+      # blanket `packages|packages/*` arm always calls code — so a diff capable of
+      # introducing drift can never be classified docs-only. Do not "fix" this by
+      # moving check-migrations into `verify`: it runs migrations against a live
+      # database and turbo gives it `dependsOn: ["build"]`, so making it
+      # unconditional means putting a postgres service and a 1-2 min DB spin-up
+      # back onto every docs PR.
       - name: Run CE integration tests
-        run: npx turbo run test-ce --filter=api
+        run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
 
   # Required status check. Runs unconditionally so it always reports a conclusion
   # — a *skipped* required check never reports one under GitHub rulesets, which

@@ -12,6 +12,6 @@ export const ProjectMemberEntity = new EntitySchema<ProjectMember>({
         platformId: { type: String, nullable: false },
     },
     indices: [
-        { columns: ['userId', 'projectId'], unique: true },
+        { name: 'idx_project_member_user_project', columns: ['userId', 'projectId'], unique: true },
     ],
 })

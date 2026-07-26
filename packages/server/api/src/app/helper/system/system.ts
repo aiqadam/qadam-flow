@@ -8,7 +8,6 @@ import {
     isNil,
     NetworkMode,
     QadamFlowError,
-    QadamSyncMode,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { DatabaseType } from '../../database/database-type'
@@ -32,7 +31,6 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.PORT]: '3000',
     [AppSystemProp.EXECUTION_DATA_RETENTION_DAYS]: '30',
     [AppSystemProp.PAUSED_FLOW_TIMEOUT_DAYS]: '30',
-    [AppSystemProp.QADAMS_SYNC_MODE]: QadamSyncMode.OFFICIAL_AUTO,
     [AppSystemProp.ENVIRONMENT]: 'prod',
     [AppSystemProp.EXECUTION_MODE]: ExecutionMode.UNSANDBOXED,
     [AppSystemProp.WEBHOOK_TIMEOUT_SECONDS]: '30',

@@ -1,86 +1,186 @@
 ---
 title: "Docker"
-description: "Single docker image deployment with PGLite and Memory Queue"
+description: "Install Qadam Flow with the one-line installer, or run it as a single Docker container"
 icon: "docker"
 ---
 
+There are two ways to get Qadam Flow running with Docker:
+
+1. **The one-line installer (recommended).** It sets up the full stack — app, workers, PostgreSQL and Redis — with generated secrets.
+2. **A single container.** Good for a quick look or a throwaway test, backed by an embedded database and an in-memory queue.
+
+## Quick install (recommended)
+
+Paste this into any macOS, Linux, or WSL2 shell:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | sh
+```
+
+When it finishes, open [http://localhost:8080/sign-up](http://localhost:8080/sign-up). The first account to sign up owns the platform.
+
+### What the installer does
+
+<Steps>
+  <Step title="Checks your machine">
+    Requires `curl`, `openssl`, `docker`, and Docker Compose v2 (`docker compose`), and verifies the Docker daemon is reachable. Native Windows shells are refused — run it from WSL2.
+  </Step>
+  <Step title="Creates an install directory">
+    Everything lands in `./qadam-flow` in your current directory. Re-running the installer in the same place refreshes the compose file and keeps your existing `.env`.
+  </Step>
+  <Step title="Downloads docker-compose.yml">
+    Fetched from `https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml`. No git clone and no source build.
+  </Step>
+  <Step title="Generates a .env with fresh secrets">
+    `AP_ENCRYPTION_KEY`, `AP_JWT_SECRET` and the PostgreSQL password are generated with `openssl rand`. Delete `.env` and re-run to rotate them.
+  </Step>
+  <Step title="Pulls the image and starts the stack">
+    Runs `docker compose pull` followed by `docker compose up -d`, using `ghcr.io/aiqadam/qadam-flow:latest` (roughly 400 MB on first pull).
+  </Step>
+  <Step title="Waits for the API">
+    Polls `http://localhost:8080/api/v1/flags` for up to 3 minutes, then prints the URL.
+  </Step>
+</Steps>
+
+### Installer options
+
+Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
+
+| Variable           | Default                             | Effect                                                             |
+| ------------------ | ----------------------------------- | ------------------------------------------------------------------ |
+| `QADAM_FLOW_DIR`   | `qadam-flow`                        | Install directory the compose file and `.env` are written to.       |
+| `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:latest` | Image used by the app and worker services.                         |
+| `QADAM_FLOW_REF`   | `main`                              | Git ref the `docker-compose.yml` is downloaded from.                |
+| `QADAM_FLOW_PORT`  | `8080`                              | Port written into `AP_FRONTEND_URL` and used for the health check.  |
+
+<Note>
+`QADAM_FLOW_PORT` does **not** change the published port. `docker-compose.yml` maps `8080:80`, so to serve the app on a different host port you also have to edit that mapping in `qadam-flow/docker-compose.yml`.
+</Note>
+
+### Day-two commands
+
+Run these from your install directory (`qadam-flow` by default):
+
+```bash
+docker compose logs -f app worker             # follow logs
+docker compose down                           # stop, keep data
+docker compose pull && docker compose up -d   # upgrade to the latest image
+docker compose down -v                        # stop AND delete all data
+```
+
+For the details of the compose stack and every value in `.env`, see [Docker Compose](./docker-compose).
+
+## Single container
+
 <Warning>
-This setup is only meant for personal use or testing. It runs on [PGLite](https://pglite.dev/) (embedded PostgreSQL) and an in-memory Redis queue, which supports only a single instance on a single machine. For production or multi-instance setups, you must use Docker Compose with PostgreSQL and Redis. You will not be able to upgrade from Community Edition to Enterprise out of the box, as Enterprise does not support PGLite.
+This setup is meant for personal use and testing only. It runs on [PGLite](https://pglite.dev/) (embedded PostgreSQL) and an in-memory queue, which supports exactly one instance on one machine. For anything shared or long-lived, use [Docker Compose](./docker-compose) with PostgreSQL and Redis.
 </Warning>
 
-To get up and running quickly with Qadam Flow, we will use the Qadam Flow Docker image. Follow these steps:
-
-## Prerequisites
-
-You need to have [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) and [Docker](https://docs.docker.com/get-docker/) installed on your machine in order to set up Qadam Flow via Docker Compose.
-
-## Install
-
-### Pull Image and Run Docker image 
-
-Pull the Qadam Flow Docker image and run the container with the following command:
-
 ```bash
-docker run -d -p 8080:80 -v ~/.activepieces:/root/.activepieces -e AP_REDIS_TYPE=MEMORY -e AP_DB_TYPE=PGLITE -e AP_FRONTEND_URL="http://localhost:8080" activepieces/activepieces:latest
+docker run -d --name qadam-flow \
+  -p 8080:80 \
+  -v ~/.qadam-flow:/root/.qadam-flow \
+  -e AP_CONFIG_PATH=/root/.qadam-flow \
+  -e AP_DB_TYPE=PGLITE \
+  -e AP_REDIS_TYPE=MEMORY \
+  -e AP_FRONTEND_URL=http://localhost:8080 \
+  ghcr.io/aiqadam/qadam-flow:latest
 ```
 
-### Configure Webhook URL (Important for Triggers, Optional If you have public IP)
+What each flag is for:
 
-**Note:** By default, Qadam Flow will try to use your public IP for webhooks. If you are self-hosting on a personal machine, you must configure the frontend URL so that the webhook is accessible from the internet.
+| Setting                              | Why                                                                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-p 8080:80`                         | The container listens on port `80`.                                                                                                                          |
+| `-v ~/.qadam-flow:/root/.qadam-flow` | Persists the PGLite database and `settings.json`. Delete this directory and you lose everything, including the auto-generated secrets.                        |
+| `AP_CONFIG_PATH`                     | Where the PGLite database and local settings are stored inside the container.                                                                                 |
+| `AP_DB_TYPE=PGLITE`                  | Use the embedded database instead of an external PostgreSQL server.                                                                                           |
+| `AP_REDIS_TYPE=MEMORY`               | Use the in-memory queue instead of Redis. In this mode `AP_ENCRYPTION_KEY` and `AP_JWT_SECRET` are generated on first boot and stored under `AP_CONFIG_PATH`.  |
+| `AP_FRONTEND_URL`                    | The base URL used for webhook and redirect URLs. Must be a valid URL.                                                                                        |
 
-**Optional:** The easiest way to expose your webhook URL on localhost is by using a service like ngrok. However, it is not suitable for production use.
+Then open [http://localhost:8080/sign-up](http://localhost:8080/sign-up).
 
-1. Install ngrok
-2. Run the following command:
-```bash
-ngrok http 8080
-```
-3. Replace `AP_FRONTEND_URL` environment variable in the command line above.
+Every other setting is optional — see [Environment Variables](../configuration/environment-variables).
+
+## Configure the webhook URL
+
+By default Qadam Flow uses `AP_FRONTEND_URL` to build webhook URLs. If you are self-hosting on a personal machine, that URL has to be reachable from the internet for app triggers to work.
+
+The quickest way to expose a local port is [ngrok](https://ngrok.com/). It is not suitable for production.
+
+<Steps>
+  <Step title="Install ngrok">
+    Follow the [ngrok getting started guide](https://ngrok.com/docs/getting-started/).
+  </Step>
+  <Step title="Expose port 8080">
+    ```bash
+    ngrok http 8080
+    ```
+  </Step>
+  <Step title="Point Qadam Flow at the tunnel">
+    Set `AP_FRONTEND_URL` to the HTTPS URL ngrok prints, then restart the container — or, for the compose stack, update `.env` and run `docker compose up -d`.
+  </Step>
+</Steps>
 
 ![Ngrok](../../resources/screenshots/docker-ngrok.png)
 
+## Upgrade
 
+<Info>
+Review the [breaking changes](../configuration/breaking-changes) before upgrading, and back up your data first.
+</Info>
 
-## Upgrade 
+### One-line installer
 
-Please follow the steps below:
-
-### Step 1: Back Up Your Data (Recommended)
-
-Before proceeding with the upgrade, it is always a good practice to back up your Qadam Flow data to avoid any potential data loss during the update process.
-
-1. **Stop the Current Qadam Flow Container:** If your Qadam Flow container is running, stop it using the following command:
-   ```bash
-   docker stop activepieces_container_name
-   ```
-
-2. **Backup Qadam Flow Data Directory:** By default, Qadam Flow data is stored in the `~/.activepieces` directory on your host machine. Create a backup of this directory to a safe location using the following command:
-   ```bash
-   cp -r ~/.activepieces ~/.activepieces_backup
-   ```
-
-### Step 2: Update the Docker Image
-
-1. **Pull the Latest Qadam Flow Docker Image:** Run the following command to pull the latest Qadam Flow Docker image from Docker Hub:
-   ```bash
-   docker pull activepieces/activepieces:latest
-   ```
-
-### Step 3: Remove the Existing Qadam Flow Container
-
-1. **Stop and Remove the Current Qadam Flow Container:** If your Qadam Flow container is running, stop and remove it using the following commands:
-   ```bash
-   docker stop activepieces_container_name
-   docker rm activepieces_container_name
-   ```
-
-### Step 4: Run the Updated Qadam Flow Container
-
-Now, run the updated Qadam Flow container with the latest image using the same command you used during the initial setup. Be sure to replace `activepieces_container_name` with the desired name for your new container.
+From your install directory:
 
 ```bash
-docker run -d -p 8080:80 -v ~/.activepieces:/root/.activepieces -e AP_REDIS_TYPE=MEMORY -e AP_DB_TYPE=PGLITE -e AP_FRONTEND_URL="http://localhost:8080" --name activepieces_container_name activepieces/activepieces:latest
+cd qadam-flow
+docker compose pull
+docker compose up -d --remove-orphans
 ```
 
+Your `.env` and the PostgreSQL and Redis volumes are untouched.
 
-Congratulations! You have successfully upgraded your Qadam Flow Docker deployment
+### Single container
+
+<Steps>
+  <Step title="Back up the data directory">
+    ```bash
+    docker stop qadam-flow
+    cp -r ~/.qadam-flow ~/.qadam-flow-backup
+    ```
+  </Step>
+  <Step title="Pull the new image">
+    ```bash
+    docker pull ghcr.io/aiqadam/qadam-flow:latest
+    ```
+  </Step>
+  <Step title="Replace the container">
+    ```bash
+    docker rm qadam-flow
+    ```
+
+    Then run the same `docker run` command as above. Because the data lives in `~/.qadam-flow`, your flows and connections survive.
+  </Step>
+</Steps>
+
+## Uninstall
+
+<Warning>
+Both commands below delete your flows, runs, and connections. There is no undo.
+</Warning>
+
+For the compose stack:
+
+```bash
+cd qadam-flow
+docker compose down -v
+```
+
+For the single container:
+
+```bash
+docker rm -f qadam-flow
+rm -rf ~/.qadam-flow
+```
