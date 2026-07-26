@@ -1,10 +1,19 @@
 <div align="center">
 
-# Qadam Flow
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/qadam-flow-banner-dark.svg">
+  <img alt="Qadam Flow — workflow automation, built by the region, for the region" src=".github/assets/qadam-flow-banner-light.svg" width="100%">
+</picture>
 
-**Workflow automation, built by the region, for the region.**
+<br />
+<br />
 
-Localized · Self-hosted · No paid tiers · No enterprise gates · No vendor lock-in
+[![Website](https://img.shields.io/badge/flow.aiqadam.org-3CA29E?style=flat-square&logo=firefox&logoColor=white)](https://flow.aiqadam.org)
+[![Image](https://img.shields.io/badge/ghcr.io-aiqadam%2Fqadam--flow-1A1D1F?style=flat-square&logo=docker&logoColor=white)](https://github.com/aiqadam/qadam-flow/pkgs/container/qadam-flow)
+[![License: MIT](https://img.shields.io/badge/license-MIT-3CA29E?style=flat-square)](./LICENSE)
+[![Build](https://img.shields.io/badge/build.aiqadam.org-1A1D1F?style=flat-square)](https://build.aiqadam.org)
+
+**Localized · Self-hosted · No paid tiers · No enterprise gates · No vendor lock-in**
 
 [Roadmap](./ROADMAP.md) · [Governance](./GOVERNANCE.md) · [Contributing](./CONTRIBUTING.md) · [Code of Conduct](./CODE_OF_CONDUCT.md)
 
@@ -101,5 +110,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full dev setup, and [CLAUDE.md]
 <div align="center">
 
 *An AI Qadam Build project · #AIQadam*
+
+<sub>The **AI Qadam** name and footprint mark are trademarks of the AI Qadam Community, used by this official project under the [brand-use policy](https://brand.aiqadam.org/brand-use.html). Code is [MIT](./LICENSE).</sub>
 
 </div>
