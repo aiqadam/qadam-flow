@@ -57,7 +57,7 @@ Relations (one-to-many): `flows`, `files`, `folders`, `events`, `appConnections`
 ## Service Methods
 
 ### `projectService`
-- `create({ displayName, ownerId, platformId, type, callPostCreateHooks?, postCreateContext?, entityManager? })` — creates project record with random icon color, calls `projectHooks.postCreate(savedProject, postCreateContext)`. `ProjectPostCreateContext` declares `alertReceiverEmail?: string | null`, but the default hook body returns immediately and no implementation is registered, so nothing is auto-subscribed.
+- `create({ displayName, ownerId, platformId, type, callPostCreateHooks?, postCreateContext?, entityManager? })` — creates project record with random icon color, then calls `projectHooks.postCreate(savedProject, postCreateContext)` when `callPostCreateHooks` is set (defaults to true). `ProjectPostCreateContext` declares `alertReceiverEmail?: string | null`, but the default hook body returns immediately and no implementation is registered, so nothing is auto-subscribed.
 - `update(projectId, request, entityManager?)` — updates allowed fields; TEAM projects allow `displayName` and `icon` update; PERSONAL projects do not
 - `getOne(projectId)` / `getOneOrThrow(projectId)` — single project fetch
 - `getAllForUser({ platformId, userId, isPrivileged })` — returns all projects visible to a user (admins see all platform projects, members see their assigned projects)

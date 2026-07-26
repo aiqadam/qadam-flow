@@ -6,7 +6,7 @@ The authentication feature handles user identity creation, sign-in, and JWT sess
 ## Key Files
 - `packages/server/api/src/app/authentication/authentication.controller.ts` — Fastify routes: POST /sign-up, POST /sign-in, POST /switch-platform
 - `packages/server/api/src/app/authentication/authentication.service.ts` — core service: `signUp`, `signInWithPassword`, `federatedAuthn`, `switchPlatform`
-- `packages/server/api/src/app/authentication/authentication-utils.ts` — shared guards (domain check, email auth check, invitation check) and `getProjectAndToken` helper. `assertDomainIsAllowed` returns immediately unless `platform.plan.ssoEnabled`, which `getPlan()` hardcodes to `false`, so allowed-auth-domain enforcement is currently inert; `assertEmailMatchesSsoDomain` is an empty stub.
+- `packages/server/api/src/app/authentication/authentication-utils.ts` — shared guards (domain check, email auth check, invitation check) and `getProjectAndToken` helper. `assertDomainIsAllowed` returns immediately unless `platform.plan.ssoEnabled`, which `getPlan()` in `platform.service.ts` hardcodes to `false`, so allowed-auth-domain enforcement is currently inert; `assertEmailMatchesSsoDomain` is an empty stub.
 - `packages/server/api/src/app/authentication/lib/access-token-manager.ts` — JWT generation (`generateToken`, `generateEngineToken`, `generateWorkerToken`) and `verifyPrincipal`
 - `packages/server/api/src/app/authentication/lib/password-hasher.ts` — bcrypt helpers
 - `packages/server/api/src/app/authentication/user-identity/user-identity-entity.ts` — `user_identity` table entity

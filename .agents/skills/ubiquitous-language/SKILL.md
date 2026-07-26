@@ -73,11 +73,13 @@ Key terms used by this feature (link to glossary definitions if they exist).
 ```
 
 **Never add an "Edition Availability" section.** This repo ships a single edition — see
-`.claude/rules/edition-safety.md`. There is no `ApEdition` enum, no plan tier, and
-`platformService.getPlan()` (`packages/server/api/src/app/platform/platform.service.ts`) returns a
-fixed object, so any per-edition statement is untrue by construction. If a feature really is gated,
-document the gate itself: name the `PlatformPlan` flag, the file that reads it, and the value
-`getPlan()` hardcodes — that is checkable and stays true.
+`.claude/rules/edition-safety.md`. There is no `ApEdition` enum, no plan tier, and the
+module-local `getPlan()` in `packages/server/api/src/app/platform/platform.service.ts` returns a
+fixed object, so any per-edition statement is untrue by construction. (`getPlan` is not a member of
+`platformService` — the public surface is `getOneWithPlan` / `getOneWithPlanOrThrow` /
+`getOneWithPlanAndUsageOrThrow`, which attach its result.) If a feature really is gated, document the
+gate itself: name the `PlatformPlan` flag, the file that reads it, and the value `getPlan()`
+hardcodes — that is checkable and stays true.
 
 #### 2b. When modifying an existing feature
 

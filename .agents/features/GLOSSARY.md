@@ -91,6 +91,7 @@
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
 | Application Event | One of the 22 `ApplicationEventName` domain events dispatched in-process by `helper/application-events.ts` to listeners registered at runtime — there is no event bus, no persistence, and `badge-service.ts` is the only registered listener. | domain event, system event | Audit Event, Badge |
+| Event Destination | Upstream webhook-fanout concept — dead here: no entity, service, route or queue. The only traces are the unresolved `EventDestinationScope` import plus `createMockEventDestination` in `server/api/test/helpers/mocks/index.ts` (nothing in `packages/shared/src` defines that enum) and two dead `/platform/infrastructure/event-destinations` links in the web sidebar. | webhook destination, event stream | Application Event |
 | Handshake | A verification protocol where external services confirm webhook ownership before sending events. | webhook verification | Webhook |
 | Webhook | An HTTP endpoint that ingests external payloads to trigger flow execution, supporting sync and async modes. | callback, hook | Flow, Trigger, Handshake |
 

@@ -16,7 +16,7 @@ A Platform is the top-level tenant namespace in Activepieces. Every installation
 
 ## Domain Terms
 - **Platform** — tenant root; owns branding, auth config, piece filters
-- **PlatformPlan** — a Zod schema of feature flags and limits in `packages/shared`, **not** a TypeORM entity and not a table; `platformService.getPlan()` returns a fixed object (most flags hardcoded `false`, `tablesEnabled`/`agentsEnabled`/`aiProvidersEnabled`/`analyticsEnabled` `true`), and the Stripe/licence fields on the schema are inert — no billing code exists in this repo
+- **PlatformPlan** — a Zod schema of feature flags and limits in `packages/shared`, **not** a TypeORM entity and not a table; the module-local `getPlan()` in `platform.service.ts` (attached by `getOneWithPlan*`) returns a fixed object (most flags hardcoded `false`, `tablesEnabled`/`agentsEnabled`/`aiProvidersEnabled`/`analyticsEnabled` `true`), and the Stripe/licence fields on the schema are inert — no billing code exists in this repo
 - **FilteredPieceBehavior** — `ALLOWED` (allowlist) or `BLOCKED` (blocklist) applied to `filteredPieceNames`
 - **federatedAuthProviders** — JSONB column storing OAuth2 / SAML config; sensitive fields (secrets, certs) are stripped before returning `PlatformWithoutSensitiveData`
 - **pinnedPieces** — ordered list of piece names shown at the top of the piece selector
@@ -47,7 +47,7 @@ A Platform is the top-level tenant namespace in Activepieces. Every installation
 
 | Method | Path | Security | Description |
 |---|---|---|---|
-| POST | `/v1/platforms` | platformAdminOnly (USER) | Create a platform |
+| POST | `/v1/platforms` | unscoped (ONBOARDING, USER) | Create a platform — `securityAccess.unscoped([PrincipalType.ONBOARDING, PrincipalType.USER])` (`platform.controller.ts:129`), so a post-signup onboarding token can reach it |
 | GET | `/v1/platforms/:id` | publicPlatform (USER, SERVICE) | Get platform with the fixed plan flags attached; `usage` is always undefined and sensitive SSO data is stripped |
 | POST | `/v1/platforms/:id` | platformAdminOnly (USER) | Update branding, auth settings, piece filters |
 | GET | `/v1/platforms/assets/:id` | public | Download a platform asset (logo/favicon) by file ID |

@@ -69,9 +69,9 @@ All routes are prefixed `/v1/user-invitations`.
 
 - Creating a PROJECT invitation goes through `assertPrincipalHasPermissionToProject` (`user-invitation.module.ts`): the project must belong to the principal's platform, SERVICE principals pass as platform admins, and a USER must be privileged, be the project owner, or hold `Permission.WRITE_INVITATION` in its project role. No plan flag is consulted — there is no `projectMustBeTeamType` or `platformMustHaveFeatureEnabled` guard in this repo, and `projectRolesEnabled` is read only by the web sidebar.
 - Creating a PLATFORM invitation requires `assertPrincipalIsPlatformAdmin` — a USER principal must have `PlatformRole.ADMIN`; SERVICE principals pass.
-- Deleting a PROJECT invitation requires `WRITE_INVITATION` permission on that project.
-- Deleting a PLATFORM invitation requires platform ownership.
-- Listing without a `projectId` requires a privileged user (`assertPrincipalCanListPlatformInvitations`); listing with one runs the same project-permission check as create.
+- Deleting a PROJECT invitation runs the same `assertPrincipalHasPermissionToProject` check as create, so privileged users and the project owner pass without `WRITE_INVITATION`.
+- Deleting a PLATFORM invitation is **not checked at all**: `DeleteInvitationRequestParams` is `securityAccess.unscoped([USER, SERVICE])` and the handler only asserts when `invitation.type === InvitationType.PROJECT`. Any authenticated platform user can revoke a platform invitation — tracked as a security gap in #150, not a doc error.
+- Listing branches on the `type` query param (`getProjectIdAndAssertPermission`): `type === InvitationType.PLATFORM` requires a privileged user via `assertPrincipalCanListPlatformInvitations`; for any other `type`, `projectId` is mandatory — its absence throws `AUTHORIZATION` — and the project-permission check runs. There is no privileged fallback for a projectId-less project listing.
 - The `/accept` endpoint is fully public (no auth required) — security is provided by the JWT token.
 
 ## Email Behavior
