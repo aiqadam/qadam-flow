@@ -8,7 +8,7 @@ To configure Qadam Flow, you will need to set some environment variables. There 
 
 <Tip> When you execute the [`tools/deploy.sh`](https://github.com/aiqadam/qadam-flow/blob/main/tools/deploy.sh) script in the Docker installation tutorial, it will produce these values. </Tip>
 
-<Info> Every `AP_*` variable below can also be set as `QF_*` (e.g. `AP_JWT_SECRET` / `QF_JWT_SECRET`) **once it reaches the Node server/worker process** — `AP_*` keeps working during the deprecation window. The bundled `docker-compose.yml` and `run.sh` still require the `AP_*` names for now (they're read in the shell before Node starts). See [Breaking Changes](/install/configuration/breaking-changes#unreleased) for full details and precedence. </Info>
+<Info> Every `AP_*` variable below can also be set as `QF_*` (e.g. `AP_TELEMETRY_ENABLED` / `QF_TELEMETRY_ENABLED`) **once it reaches the Node server/worker process** — `AP_*` keeps working during the deprecation window. The bundled `docker-compose.yml`, `docker-entrypoint.sh`, and `run.sh` still require the `AP_*` names for now (they're read in the shell before Node starts). See [Breaking Changes](/install/configuration/breaking-changes#unreleased) for full details and precedence. </Info>
 
 ## Environment Variables
 
