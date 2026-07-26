@@ -67,10 +67,10 @@ Multiple categories allowed: `categories: [QadamCategory.COMMERCE, QadamCategory
 | `csv` | CSV parsing/generation |
 | `pdf` | PDF generation |
 | `qrcode` | QR code generation |
-| `tables` | Activepieces Tables integration |
+| `tables` | Qadam Flow Tables integration |
 | `subflows` | Call other flows |
 | `connections` | Manage connections |
-| `forms` | Activepieces Forms |
+| `forms` | Qadam Flow Forms |
 | `graphql` | Generic GraphQL requests |
 | `crypto` | Cryptography utilities |
 | `xml` | XML parsing |

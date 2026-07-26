@@ -1,11 +1,45 @@
 # Chat Engineering Gaps — Priority Order
 
-## ~~Priority 1: Batch Execution for One-Time Tasks~~
-**Status:** Done
-**Impact:** Critical — blocks 8 of 10 use cases (any multi-item task)
+## Priority 1: Batch Execution for One-Time Tasks
+**Status:** Specified and plumbed in this repo; the `ap_execute_action` tool implementation is not in this repo (see below)
+**Impact:** Critical for any multi-item task
 **Effort:** Medium
 
-**Implemented:** Extended `ap_execute_action` with `items[]` array (max 100) + `description` for progress label. Worker-side batch loop calls `executeAdhocAction` per item via RPC, pushes `data-batch-progress` stream events for a live-updating `BatchProgressCard` in the chat UI. Continue-on-error. Timeout scales with item count. Single-item path unchanged.
+Batch execution belongs to the **chat** tool `ap_execute_action`, which is a different tool from the
+MCP tool `ap_run_action` (`packages/server/api/src/app/mcp/tools/ap-run-action.ts`). The chat system
+prompt tells the model to never mix them up: "use `ap_discover_action_auth` to check auth, then
+`ap_execute_action` to execute. Never use `ap_run_action`"
+(`packages/server/api/src/assets/prompts/chat-system-prompt.md:105`). Do not cite `ap-run-action.ts`
+as evidence about batching — it is unrelated to this feature.
+
+**What is present in this repo:**
+- **Behaviour spec** — the system prompt documents the batch contract: an `items` array of complete
+  input objects ("max 100"), a `description` label for the progress card, one shared
+  `pieceName`/`actionName`, and a live progress card
+  (`packages/server/api/src/assets/prompts/chat-system-prompt.md:208-213`). The cap is an
+  instruction to the model; no code in this repo enforces it.
+- **Progress passthrough** — `buildStepParts` emits a `BATCH_PROGRESS` part whenever an
+  `ap_execute_action` result carries a `batchProgress` key
+  (`packages/server/utils/src/chat-ai-utils.ts:198-203`).
+- **Shared types** — `BatchProgressData` / `BatchItemResult`
+  (`packages/shared/src/lib/automation/chat/index.ts:219-234`).
+- **UI** — `BatchProgressCard` plus `chatPartUtils.extractBatchProgressFromOutput`
+  (`packages/web/src/app/routes/chat-with-ai/components/batch-progress-card.tsx`,
+  `packages/web/src/features/chat/lib/chat-types.ts:167-175`).
+
+**What could not be located in this repo — do not assume either way:**
+- No tool registration or handler for `ap_execute_action`. `chatAiUtils`
+  (`packages/server/utils/src/chat-ai-utils.ts:237-243`) only builds the model, reshapes history,
+  and transforms output parts; it registers no tools, has no caller inside `packages/`, and
+  `streamText` appears in `packages/server` only inside a comment. There is no `chat` module under
+  `packages/server/api/src/app`.
+- Consequently the actual `items[]` handling, per-item loop, and cap enforcement are **not visible
+  here**. Where that loop runs (another repo, a deploy-time host, or not yet wired) was not
+  determined — do not record it as absent, broken, or externally hosted without new evidence.
+- The declared contract `ChatToolOutputs['ap_execute_action']`
+  (`packages/shared/src/lib/automation/chat/index.ts:182-186`) has no `batchProgress` member and no
+  `items` input, yet `chat-ai-utils.ts:198` forwards `batchProgress` via an `in` check — the
+  passthrough carries a field the type contract does not declare. Worth reconciling.
 
 ---
 
