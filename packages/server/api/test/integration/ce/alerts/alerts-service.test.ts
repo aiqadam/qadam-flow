@@ -1,6 +1,5 @@
 import { AddressInfo } from 'node:net'
 import { AlertChannel, apId, FlowRunStatus, PlatformRole, ProjectType } from '@aiqadam/shared'
-import { FastifyInstance } from 'fastify'
 import { SMTPServer } from 'smtp-server'
 import { alertsService } from '../../../../src/app/alerts/alerts-service'
 import { system } from '../../../../src/app/helper/system/system'
@@ -59,7 +58,6 @@ eU2e7mYNZBuXIzFAw2OLKbDNtrbwKPCB9o+PEQlwENaKli/tDMAEjqcy0WiqD5Jy
 GLYoG8MqluRU5xJe4yE70A==
 -----END PRIVATE KEY-----`
 
-let app: FastifyInstance | null = null
 let smtpServer: SMTPServer
 const capturedMessages: Array<{ rcptTo: string[], raw: string }> = []
 
@@ -90,7 +88,7 @@ async function seedTeamProjectWithFlow(): Promise<{ projectId: string, flowVersi
 }
 
 beforeAll(async () => {
-    app = await setupTestEnvironment()
+    await setupTestEnvironment()
     smtpServer = new SMTPServer({
         authOptional: true,
         secure: false,

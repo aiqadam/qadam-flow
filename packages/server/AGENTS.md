@@ -55,6 +55,8 @@ Stop deps when done: `docker compose -f docker-compose.dev.yml down` (or `... do
 - **Integration** (`packages/server/api/test/integration/{ce,ee}/`) — HTTP handlers + real Postgres + real Redis via `setupTestEnvironment()` + `createTestContext(app)`. Fast (~seconds). This is where invitation flows, permission checks, list filters, and other backend contract tests live.
 - **E2E** (`packages/tests-e2e/`) — Playwright driving the real browser. **Only** put a test here if it calls DOM-mutating `page.*` methods (click, fill, select, etc.). See `packages/tests-e2e/AGENTS.md` for the anti-pattern (API-only tests in Playwright) and the environment quirks (single-platform localhost, ungenerated `project_role`).
 
+**Lint applies to tests.** The `api` `lint` script covers `test/**/*.ts`, so test code must pass the same ESLint rules as `src/` (import order, single quotes, no unused vars, no floating promises). Only `no-explicit-any` and `no-dynamic-delete` are relaxed for `test/**/*.ts` (see the override in `packages/server/api/.eslintrc.json`). Run `npm run lint-dev` before finishing.
+
 ## Email Templates
 
 Email templates live in `src/assets/emails/`. When creating or modifying email templates, follow these rules:

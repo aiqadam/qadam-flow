@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
     FlowActionType,
     FlowOperationType,
@@ -8,6 +7,8 @@ import {
     SampleDataSettings,
 } from '@aiqadam/shared'
 import type { FlowVersion } from '@aiqadam/shared'
+import type { FastifyBaseLogger } from 'fastify'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetPiece = vi.fn()
 const mockGetPlatformId = vi.fn().mockResolvedValue('platform-1')
@@ -66,7 +67,6 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version-validator-util',
 }))
 
 import { flowVersionService } from '../../../../../src/app/flows/flow-version/flow-version.service'
-import type { FastifyBaseLogger } from 'fastify'
 
 const mockLog = {
     info: vi.fn(),

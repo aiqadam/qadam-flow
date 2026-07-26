@@ -163,7 +163,7 @@ describe('AI Providers API', () => {
                     apiKeyHeader: 'Authorization',
                     models: [],
                     defaultHeaders: { 'X-Test': 'test' },
-                }
+                },
             })
 
             const response = await ctx.get('/v1/ai-providers')

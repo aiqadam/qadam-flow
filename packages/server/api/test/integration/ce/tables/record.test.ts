@@ -1,17 +1,17 @@
-import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import { apId, FieldType, FilterOperator } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import qs from 'qs'
 import { db } from '../../../helpers/db'
+import { describeWithAuth } from '../../../helpers/describe-with-auth'
 import {
+    createMockCell,
     createMockField,
     createMockRecord,
-    createMockCell,
     createMockTable,
 } from '../../../helpers/mocks'
-import { createTestContext, TestContext } from '../../../helpers/test-context'
-import { describeWithAuth } from '../../../helpers/describe-with-auth'
-import qs from 'qs'
+import { TestContext } from '../../../helpers/test-context'
+import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
 
@@ -219,7 +219,7 @@ describe('Record API', () => {
 
         it('should add new cell to existing record (upsert)', async () => {
             const ctx = await setup()
-            const { table, field } = await createTableWithField(ctx)
+            const { table } = await createTableWithField(ctx)
             const field2 = createMockField({ tableId: table.id, projectId: ctx.project.id })
             field2.type = FieldType.TEXT
             await db.save('field', field2)

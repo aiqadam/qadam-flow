@@ -1,6 +1,6 @@
+import { EventEmitter } from 'node:events'
 import { PrincipalType } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyReply, FastifyRequest } from 'fastify'
-import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // --- mocks (must be before the import under test) ---
@@ -82,15 +82,15 @@ function makeReply(opts: { sent?: boolean, proxyError?: Error } = {}): FastifyRe
     }
 
     reply.from = vi.fn().mockImplementation(
-        (_url: string, fromOpts: { onError?: Function }) => {
+        (_url: string, fromOpts: { onError?: (...args: unknown[]) => void }) => {
             if (proxyError) {
-                Promise.resolve().then(() => {
+                void Promise.resolve().then(() => {
                     fromOpts?.onError?.(reply, { error: proxyError })
                     rawEmitter.emit('finish')
                 })
             }
             else {
-                Promise.resolve().then(() => rawEmitter.emit('finish'))
+                void Promise.resolve().then(() => rawEmitter.emit('finish'))
             }
             return reply
         },

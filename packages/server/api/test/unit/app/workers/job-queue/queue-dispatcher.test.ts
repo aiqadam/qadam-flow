@@ -96,9 +96,9 @@ describe('QueueDispatcher', () => {
     })
 
     it('should only have one active getNextJob call at a time', async () => {
-        dispatcher.poll()
-        dispatcher.poll()
-        dispatcher.poll()
+        void dispatcher.poll()
+        void dispatcher.poll()
+        void dispatcher.poll()
 
         await vi.advanceTimersByTimeAsync(0)
 
@@ -227,8 +227,8 @@ describe('QueueDispatcher', () => {
     it('should report waiter count', async () => {
         expect(dispatcher.waiterCount()).toBe(0)
 
-        dispatcher.poll()
-        dispatcher.poll()
+        void dispatcher.poll()
+        void dispatcher.poll()
 
         expect(dispatcher.waiterCount()).toBe(2)
     })

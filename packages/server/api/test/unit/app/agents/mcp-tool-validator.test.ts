@@ -1,12 +1,11 @@
+import { safeHttp } from '@aiqadam/server-utils'
 import { AgentToolType, McpAuthType, McpProtocol } from '@aiqadam/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mcpToolValidator } from '../../../../src/app/agents/mcp-tool-validator'
 
 vi.mock('@aiqadam/server-utils', () => ({
     safeHttp: { retryingAxios: { post: vi.fn() } },
 }))
-
-import { mcpToolValidator } from '../../../../src/app/agents/mcp-tool-validator'
-import { safeHttp } from '@aiqadam/server-utils'
 
 type AxiosCall = { url: string, body: string, config: AxiosConfigLike }
 type AxiosConfigLike = { headers?: Record<string, string>, maxRedirects?: number, timeout?: number }
