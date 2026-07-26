@@ -6,24 +6,24 @@ icon: "puzzle-qadam"
 
 Qadams are standard [npm packages](https://www.npmjs.com/search?q=%40activepieces%2Fpiece-). Two facts follow from that:
 
-- **No server upgrade is needed for new qadams** — a sync job pulls fresh versions on its own.
+- **Official qadams ship bundled with the server** — each release bundles a fixed set of official qadams (`loadBundledQadams`); there is no cloud registry to sync from, so picking up new official qadams means upgrading the server.
 - **Each step is pinned to an exact version** — flows never auto-upgrade. Bumps are explicit, through the builder.
 
 ```mermaid
 flowchart LR
-    REG["npm registry<br/>(@aiqadam/qadam-*)"]
+    BUNDLE["Bundled qadams<br/>(shipped with release)"]
     CAT["Local qadam catalog"]
     STEP["Flow step<br/>pieceVersion: 0.5.3"]
     UI["Builder version dialog"]
 
-    REG -- "hourly sync<br/>(OFFICIAL_AUTO)" --> CAT
+    BUNDLE -- "loaded on startup" --> CAT
     CAT -- "exact version on add" --> STEP
     UI -- "explicit upgrade" --> STEP
 
     classDef src fill:#eef,stroke:#88a
     classDef catalog fill:#efe,stroke:#7a7
     classDef flow fill:#fee,stroke:#a77
-    class REG src
+    class BUNDLE src
     class CAT catalog
     class STEP,UI flow
 ```
@@ -32,19 +32,11 @@ flowchart LR
 
 | Type | Source | Installed by |
 |---|---|---|
-| Official | Qadam Flow cloud registry | Auto-sync |
+| Official | Bundled with the Qadam Flow release | Loaded automatically on startup |
 | Custom (npm) | npm registry, scoped to one platform | Platform admin |
 | Private (archive) | `.tgz` upload | Platform admin |
 
 Custom and private qadams are managed manually — see [Manage qadams](/admin-guide/guides/manage-qadams).
-
-## Auto-sync
-
-| `AP_QADAMS_SYNC_MODE` | Behavior |
-|---|---|
-| `OFFICIAL_AUTO` | Hourly reconcile against the cloud registry. Default for all deployments. |
-
-Custom and private qadams are never touched by the sync job.
 
 ## Server compatibility
 

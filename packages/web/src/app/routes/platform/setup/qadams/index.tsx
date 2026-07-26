@@ -10,7 +10,6 @@ import { DashboardPageHeader } from '@/app/components/dashboard-page-header';
 import { ComingSoonBadge } from '@/app/components/request-trial';
 import { ApplyTags } from '@/app/routes/platform/setup/qadams/apply-tags';
 import { PieceActions } from '@/app/routes/platform/setup/qadams/qadam-actions';
-import { SyncPiecesButton } from '@/app/routes/platform/setup/qadams/sync-qadams';
 import { DataTable, RowDataWithActions } from '@/components/custom/data-table';
 import { DataTableColumnHeader } from '@/components/custom/data-table/data-table-column-header';
 import { LockedAlert } from '@/components/custom/locked-alert';
@@ -171,7 +170,6 @@ const PlatformPiecesPage = () => {
             },
           ]}
           toolbarButtons={[
-            <SyncPiecesButton key="sync" />,
             <InstallQadamDialog
               key="install"
               onInstallPiece={() => refetchQadams()}
