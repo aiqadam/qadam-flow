@@ -1,0 +1,51 @@
+name: 🧩 Qadam (integration) request
+description: Request a new integration (qadam) for a third-party service
+labels: ["enhancement", "area/third-party-qadams", "track/product-qadams"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A **qadam** is an integration (piece) with a third-party service. Qadams are modular — one ships without touching the core, which makes this a high-leverage, newcomer-friendly contribution. A maintainer will set the priority.
+  - type: textarea
+    id: overview
+    attributes:
+      label: Product overview
+      description: What does the service do, and who uses it? Include the region if it's a local service.
+    validations:
+      required: true
+  - type: textarea
+    id: actions
+    attributes:
+      label: Actions
+      description: Things an automation should be able to *do* with the service.
+      value: |
+        - e.g. Create contact
+        - e.g. Send message
+    validations:
+      required: true
+  - type: textarea
+    id: triggers
+    attributes:
+      label: Triggers
+      description: Events in the service that should *start* a flow.
+      value: |
+        - e.g. New order created
+  - type: input
+    id: api-docs
+    attributes:
+      label: API reference
+      description: Link to the public API docs / developer portal.
+    validations:
+      required: true
+  - type: textarea
+    id: test-access
+    attributes:
+      label: Test account access
+      description: How can a contributor test the API? (Free tier, sandbox, etc.)
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing qadam requests and this isn't a duplicate.
+          required: true

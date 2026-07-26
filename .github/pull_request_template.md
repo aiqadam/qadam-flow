@@ -1,17 +1,22 @@
-## What does this PR do?
+<!--
+  Thanks for contributing to Qadam Flow!
+  Keep PRs small and focused — one logical change per PR.
+-->
 
-<!-- We need a clear description of what the PR does, as this will be used for the marketing team to generate the release notes. -->
+## What & why
 
+<!-- What does this PR change, and why? Link the issue it addresses. -->
 
-### Explain How the Feature Works
-<!-- Adding a video demonstration is optional but encourged! It helps reviewers / marketing team understand your implementation better. -->
-<!-- [Insert the video link here] -->
+Closes #
 
-### Relevant User Scenarios
+## How it works
 
-<!-- List specific use cases where this feature would be valuable. -->
-<!-- [Insert Pylon tickets or community posts here if possible] -->
+<!-- Brief notes for reviewers: approach, trade-offs, anything non-obvious. A screenshot or short clip helps for UI changes. -->
 
+## Checklist
 
-
-Fixes # (issue)
+- [ ] **Signed off every commit** with `git commit -s` (DCO — required, see [CONTRIBUTING](../CONTRIBUTING.md#commits-and-the-dco)).
+- [ ] Applied **exactly one** primary label: `feature`, `bug`, or `skip-changelog` (and `area/core-qadams` / `area/third-party-qadams` if this touches `packages/qadams`).
+- [ ] PR title follows Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, …).
+- [ ] Tests added/updated where it makes sense; lint and build pass locally.
+- [ ] Docs / translations updated if behaviour changed.

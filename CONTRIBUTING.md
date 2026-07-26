@@ -48,6 +48,24 @@ This adds a `Signed-off-by: Your Name <email>` line. PRs with unsigned commits c
 - [ ] Lint and build pass locally
 - [ ] Docs / translations updated if behavior changed
 
+## Issue & PR labels
+
+We keep a small, consistent label taxonomy so the backlog stays readable. When you open an issue through a template, the **type** label is applied automatically; a maintainer sets the priority and track during triage — you don't have to.
+
+Every issue carries:
+
+- **One type** — `bug`, `enhancement`, `documentation`, `chore`, or `tech-debt`.
+- **One priority** — `P0` (blocker: outage / data loss / exploited security), `P1` (high: near-term bug, security fix, or release blocker), `P2` (medium: should do, not urgent), `P3` (low: nice to have).
+- **One `track/*`** — the roadmap lane it belongs to: `track/product-core`, `track/product-qadams`, `track/product-formulas`, `track/dev-infra`, `track/security`, `track/i18n-brand`, `track/docs-site`, `track/rebrand-cleanup`, `track/enterprise`.
+
+Cross-cutting labels are added on top as needed:
+
+- **`security`** — anything security-relevant (usually paired with `track/security`).
+- **`area/core-qadams` / `area/third-party-qadams`** — for issues/PRs touching `packages/qadams`.
+- **`help wanted`**, **`good first issue`** — to invite contributors.
+
+**Pull requests** take exactly one primary label — `feature`, `bug`, or `skip-changelog` (docs, CI, internal refactors) — plus an `area/*-qadams` label when they touch `packages/qadams`.
+
 ## How contribution turns into standing
 AI Qadam runs on a reputation graph, not on titles. Your merged contributions, reviews, and maintainership are recorded as verified reputation — earned by activity, never self-claimed. Sustained, quality contribution is how a contributor becomes a **committer**, and then a **maintainer**. See [Governance §7–8](./GOVERNANCE.md).
 

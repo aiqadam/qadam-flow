@@ -1,0 +1,51 @@
+name: ✨ Feature request
+description: Suggest a feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Requesting a new **integration / connector**? Use the *Qadam (integration) request* template instead.
+        A maintainer will set the priority (`P0`–`P3`) and `track/*` labels during triage.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and what's getting in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: track
+    attributes:
+      label: Area (your best guess — maintainers confirm)
+      description: Which part of the project does this touch? Optional.
+      options:
+        - "Not sure"
+        - "product-core (engine & platform)"
+        - "product-qadams (connectors / integrations)"
+        - "product-formulas (expression language)"
+        - "i18n-brand (localization & branding)"
+        - "docs-site (docs & onboarding)"
+        - "dev-infra (repo, CI, build & test)"
+        - "security"
+        - "enterprise (SSO / RBAC / audit / SIEM)"
+    validations:
+      required: false
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
