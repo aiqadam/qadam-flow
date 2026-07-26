@@ -143,6 +143,33 @@ beforeAll(async () => {
         triggers: {},
     })
     await db.save('qadam_metadata', dynamicPiece)
+
+    // Auth-bearing piece for ap_run_action validation tests. `auth` must be set
+    // (not just the action's requireAuth) so diagnoseQadamProps flags a missing
+    // connection before any engine execution — this suite runs no worker.
+    const authPiece = createMockQadamMetadata({
+        name: '@aiqadam/qadam-test-auth',
+        displayName: 'Test Auth',
+        version: '0.1.0',
+        qadamType: QadamType.OFFICIAL,
+        packageType: PackageType.REGISTRY,
+        platformId: undefined,
+        auth: { type: 'SECRET_TEXT', displayName: 'API Key', required: true },
+        actions: {
+            send_email: {
+                name: 'send_email',
+                displayName: 'Send Email',
+                description: 'Send an email',
+                requireAuth: true,
+                props: {
+                    to: { type: 'SHORT_TEXT', displayName: 'To', required: true },
+                    subject: { type: 'SHORT_TEXT', displayName: 'Subject', required: true },
+                },
+            },
+        },
+        triggers: {},
+    })
+    await db.save('qadam_metadata', authPiece)
 })
 
 afterAll(async () => {
@@ -2332,12 +2359,12 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('items')
     })
 
-    it.skip('87. ap_run_action — returns error when auth-required action has no connection', async () => {
+    it('87. ap_run_action — returns error when auth-required action has no connection', async () => {
         const ctx = await createTestContext(app)
         const mcp = makeMcp(ctx.project.id)
 
         const result = await apRunActionTool(mcp, mockLog).execute({
-            qadamName: '@aiqadam/qadam-test-email',
+            qadamName: '@aiqadam/qadam-test-auth',
             actionName: 'send_email',
             input: { to: 'x@y.z', subject: 'hi' },
         })
@@ -2347,7 +2374,7 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('ap_list_connections')
     })
 
-    it.skip('88. ap_run_action — rejects connectionExternalId containing special characters', async () => {
+    it('88. ap_run_action — rejects connectionExternalId containing special characters', async () => {
         const ctx = await createTestContext(app)
         const mcp = makeMcp(ctx.project.id)
 
@@ -2362,18 +2389,24 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('special characters')
     })
 
-    it.skip('89. ap_run_action — accepts a plain connectionExternalId without validation error', async () => {
+    it('89. ap_run_action — accepts a plain connectionExternalId without validation error', async () => {
         const ctx = await createTestContext(app)
         const mcp = makeMcp(ctx.project.id)
 
+        // A valid externalId must clear validateAuth. `subject` is omitted so the
+        // call stops at the missing-input diagnosis instead of dispatching to the
+        // engine (this suite runs no worker) — proving the id was accepted, not
+        // rejected for special characters.
         const result = await apRunActionTool(mcp, mockLog).execute({
-            qadamName: '@aiqadam/qadam-test-email',
+            qadamName: '@aiqadam/qadam-test-auth',
             actionName: 'send_email',
-            input: { to: 'x@y.z', subject: 'hi' },
+            input: { to: 'x@y.z' },
             connectionExternalId: 'valid_external_id_123',
         })
 
         expect(text(result)).not.toContain('special characters')
+        expect(text(result)).toContain('Missing required inputs')
+        expect(text(result)).toContain('subject')
     })
 
     // ── Private (CUSTOM) pieces visibility ───────────────────────────
