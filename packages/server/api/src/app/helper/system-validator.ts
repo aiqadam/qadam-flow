@@ -1,5 +1,5 @@
 import { inspect } from 'util'
-import { ApEnvironment, DefaultProjectRole, ExecutionMode, FileLocation, isNil, NetworkMode, QadamSyncMode } from '@aiqadam/shared'
+import { ApEnvironment, DefaultProjectRole, ExecutionMode, FileLocation, isNil, NetworkMode } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { DatabaseType } from '../database/database-type'
 import { RedisType } from '../database/redis/types'
@@ -90,7 +90,6 @@ const systemPropValidators: {
     [AppSystemProp.EXECUTION_DATA_RETENTION_DAYS]: numberValidator,
     [AppSystemProp.JWT_SECRET]: stringValidator,
     [AppSystemProp.DEFAULT_CONCURRENT_JOBS_LIMIT]: numberValidator,
-    [AppSystemProp.QADAMS_SYNC_MODE]: enumValidator(Object.values(QadamSyncMode)),
     [AppSystemProp.POSTGRES_DATABASE]: stringValidator,
     [AppSystemProp.POSTGRES_HOST]: stringValidator,
     [AppSystemProp.POSTGRES_PASSWORD]: stringValidator,

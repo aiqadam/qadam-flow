@@ -20,6 +20,7 @@ export const TagEntity = new EntitySchema<TagEntitySchema>({
     },    
     uniques: [
         {
+            name: 'uq_tag_platform_id_name',
             columns: ['platformId', 'name'],
         },
     ],
@@ -30,6 +31,7 @@ export const TagEntity = new EntitySchema<TagEntitySchema>({
             cascade: true,
             joinColumn: {
                 name: 'platformId',
+                foreignKeyConstraintName: 'fk_tag_platform_id',
             },
         },
     },

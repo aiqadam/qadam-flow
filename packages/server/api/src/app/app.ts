@@ -49,7 +49,6 @@ import { communityQadamsModule } from './qadams/community-qadam-module'
 import { startDevQadamWatcher } from './qadams/dev-qadam-watcher'
 import { qadamModule } from './qadams/metadata/qadam-metadata-controller'
 import { qadamMetadataService } from './qadams/metadata/qadam-metadata-service'
-import { qadamSyncService } from './qadams/qadam-sync-service'
 import { tagsModule } from './qadams/tags/tags-module'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
@@ -143,7 +142,6 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(flagModule)
     await app.register(storeEntryModule)
     await app.register(folderModule)
-    await qadamSyncService(app.log).setup()
     await qadamMetadataService(app.log).setup()
     await app.register(qadamModule)
     await app.register(collaborativeModule)

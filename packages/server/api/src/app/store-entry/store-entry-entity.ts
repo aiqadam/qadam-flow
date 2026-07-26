@@ -23,6 +23,7 @@ export const StoreEntryEntity = new EntitySchema<StoreEntrySchema>({
     },    
     uniques: [
         {
+            name: 'uq_store_entry_project_id_key',
             columns: ['projectId', 'key'],
         },
     ],
