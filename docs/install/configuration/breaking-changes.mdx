@@ -4,6 +4,23 @@ description: "This list shows all versions that include breaking changes and how
 icon: "hammer"
 ---
 
+## Unreleased
+
+### What has changed?
+
+#### Environment variables are migrating from `AP_` to `QF_`
+This is the start of a multi-release migration — **no action is required**, every `AP_*` variable keeps working exactly as before.
+
+- Every environment variable that was previously read as `AP_<NAME>` (e.g. `AP_JWT_SECRET`, `AP_POSTGRES_DATABASE`, `AP_CONTAINER_TYPE`) can now also be set as `QF_<NAME>` (e.g. `QF_JWT_SECRET`).
+- If both `QF_<NAME>` and `AP_<NAME>` are set, `QF_<NAME>` wins.
+- Setting only the old `AP_<NAME>` still works and behaves identically, but logs a one-time startup warning telling you to rename it to `QF_<NAME>`.
+- `AP_ENVIRONMENT` (and its `QF_ENVIRONMENT` alias) still only accepts `prod` / `dev` / `test` — only the variable name is changing, not its accepted values.
+- The Docker Compose file and `run.sh` install script still ship with `AP_*` names for now; that migration is tracked separately so operators aren't asked to change working `.env` files before the alias layer has a release behind it.
+
+### Do you need to take action?
+- No. Existing `.env` files with `AP_*` names keep working. Renaming to `QF_*` is optional during this deprecation window; `AP_*` support will be removed in a future release, announced here with advance notice.
+
+
 ## 0.84.0
 
 ### What has changed?

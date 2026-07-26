@@ -22,6 +22,31 @@ for (const [newName, oldName] of Object.entries(LEGACY_QADAM_ALIASES)) {
     }
 }
 
+// Every configurable prop in this codebase is read as `AP_<NAME>` (see AppSystemProp.getEnvironment
+// and WorkerSystemProp), so the AP_ -> QF_ rename is a generic prefix swap rather than a per-name
+// list: any `QF_<NAME>` the operator sets is mirrored onto `AP_<NAME>` (QF_ wins on conflict), which
+// is the single value every downstream reader (system-props.ts, worker configs.ts, and any direct
+// `process.env.AP_*` access) already looks at. Snapshotting process.env up front avoids iterating
+// over the `AP_<NAME>` keys this same loop just wrote.
+const qfEnvSnapshot = { ...process.env }
+for (const [name, value] of Object.entries(qfEnvSnapshot)) {
+    if (!name.startsWith('QF_') || value === undefined) {
+        continue
+    }
+    process.env['AP_' + name.slice('QF_'.length)] = value
+}
+for (const [name, value] of Object.entries(qfEnvSnapshot)) {
+    const isDeprecatedApName = name.startsWith('AP_') && value !== undefined
+    if (!isDeprecatedApName) {
+        continue
+    }
+    const qfName = 'QF_' + name.slice('AP_'.length)
+    if (qfEnvSnapshot[qfName] !== undefined) {
+        continue
+    }
+    console.warn(`[env-migrations] ${name} is deprecated; please rename to ${qfName}`)
+}
+
 export const environmentMigrations = {
     migrate(): Record<string, string | undefined> {
         return {
