@@ -6,7 +6,6 @@ import { securityAccess } from '../core/security/authorization/fastify-security'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
 import { userService } from '../user/user-service'
 import { projectService } from './project-service'
-import { projectSideEffects } from './project-side-effects'
 
 export const projectController: FastifyPluginAsyncZod = async (fastify) => {
     fastify.post('/', CreateProjectRequest, async (request, reply) => {
@@ -59,7 +58,6 @@ export const projectController: FastifyPluginAsyncZod = async (fastify) => {
             userId: user.id,
             isPrivileged: userService(request.log).isUserPrivileged(user),
         })
-        await projectSideEffects(request.log).postSoftDelete({ projectId: request.params.id })
         return reply.status(StatusCodes.NO_CONTENT).send()
     })
 }

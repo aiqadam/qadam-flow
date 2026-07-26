@@ -3,6 +3,7 @@ import { Alert, AlertChannel, ApId, apId, CreateAlertParams, ErrorCode, FlowRun,
 import dayjs from 'dayjs'
 import timezone from 'dayjs/plugin/timezone'
 import { FastifyBaseLogger } from 'fastify'
+import { EntityManager } from 'typeorm'
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { redisConnections } from '../database/redis-connections'
@@ -175,10 +176,15 @@ export const alertsService = (log: FastifyBaseLogger) => ({
         await repo().delete({ id: alertId })
     },
 
-    async deleteAllForProject({ projectId }: { projectId: ProjectId }): Promise<void> {
-        await repo().delete({ projectId })
+    async deleteAllForProject({ projectId, entityManager }: DeleteAllForProjectParams): Promise<void> {
+        await repo(entityManager).delete({ projectId })
     },
 })
+
+type DeleteAllForProjectParams = {
+    projectId: ProjectId
+    entityManager?: EntityManager
+}
 
 const MAX_ALERT_RECEIVERS = 50
 const MAX_ALERTS_PER_PROJECT = 20

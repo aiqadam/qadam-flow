@@ -21,6 +21,7 @@ import {
 import { FastifyBaseLogger } from 'fastify'
 import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
+import { transaction } from '../core/db/transaction'
 import { userService } from '../user/user-service'
 import { projectHooks, ProjectPostCreateContext } from './project-hooks'
 import { ProjectMemberEntity } from './project-member.entity'
@@ -234,7 +235,13 @@ export const projectService = (log: FastifyBaseLogger) => ({
                 },
             })
         }
-        await projectRepo().update({ id: projectId, platformId }, { deleted: new Date().toISOString() })
+        // The mark-deleted write and the postSoftDelete sweep (e.g. alert-row cleanup) must
+        // land together: softDelete uses deleted-IS-NULL semantics for its own lookup, so a
+        // partial failure would make the project unreachable to any retry that re-runs the sweep.
+        await transaction(async (entityManager) => {
+            await projectRepo(entityManager).update({ id: projectId, platformId }, { deleted: new Date().toISOString() })
+            await projectHooks.get(log).postSoftDelete(entityManager, { projectId })
+        })
     },
 
     async getByPlatformIdAndExternalId({
