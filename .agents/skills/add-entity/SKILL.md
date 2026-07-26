@@ -22,7 +22,7 @@ Create entity for $ARGUMENTS.
 3. **Register entity**: Import and add to `getEntities()` array in `packages/server/api/src/app/database/database-connection.ts`. This is REQUIRED — TypeORM does NOT auto-discover.
 
 4. **Create migration**:
-   - Read [playbook](https://www.activepieces.com/docs/handbook/engineering/playbooks/database-migration)
+   - Read the migration playbook first: `.agents/skills/db-migration/SKILL.md` (skill `/db-migration`)
    - Name: `{Timestamp}{PascalCaseDescription}` (e.g., `AddMyFeature1774500000000`)
    - Import in `packages/server/api/src/app/database/postgres-connection.ts`
    - Add to `getMigrations()` array (chronological order)
