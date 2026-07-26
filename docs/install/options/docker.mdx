@@ -42,10 +42,6 @@ When it finishes, open [http://localhost:8080/sign-up](http://localhost:8080/sig
   </Step>
 </Steps>
 
-<Warning>
-The generated `.env` currently contains `AP_ENVIRONMENT=PRODUCTION`, which is not a valid value — the server accepts only `prod`, `dev`, or `test` and refuses to start otherwise. If the app never becomes healthy, edit `qadam-flow/.env`, set `AP_ENVIRONMENT=prod`, and run `docker compose up -d` again.
-</Warning>
-
 ### Installer options
 
 Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
