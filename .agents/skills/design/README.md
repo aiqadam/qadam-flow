@@ -1,6 +1,6 @@
 # Activepieces Design System
 
-A design system for **Activepieces** — an open-source AI automation platform ("an open source replacement for Zapier"). The product lets both technical and non-technical users build automated workflows with 280+ integrations ("pieces") and exposes every piece as an MCP server for use with Claude, Cursor, Windsurf, etc.
+A design system for **Activepieces** — an open-source AI automation platform ("an open source replacement for Zapier"). The product lets both technical and non-technical users build automated workflows with 238 integrations ("pieces", called *qadams* in this repo: 27 core + 211 community) and exposes every piece as an MCP server for use with Claude, Cursor, Windsurf, etc.
 
 This folder contains the brand/visual foundations, CSS tokens, fonts, icon conventions, HTML preview cards for the Design System tab, and a UI kit that recreates core Activepieces product surfaces.
 
@@ -75,7 +75,7 @@ The kit is plain React via Babel standalone — no build step. Single `app.css` 
 
 ## Brand & product context
 
-**Product**: Activepieces is an all-in-one AI automation platform. The core surface is a visual **flow builder** (React + XYFlow) where users assemble triggers + actions from 280+ open-source **pieces** into runnable flows. Every piece doubles as an MCP server, so LLM agents can call them directly.
+**Product**: Activepieces is an all-in-one AI automation platform. The core surface is a visual **flow builder** (React + XYFlow) where users assemble triggers + actions from the 238 open-source **pieces**/qadams into runnable flows. Every piece doubles as an MCP server, so LLM agents can call them directly.
 
 **Audience**: mixed — "developers set up the tools, and anyone in the organization can use the no-code builder" (from README). Non-technical users live in the builder; developers contribute new pieces as typed npm packages.
 
