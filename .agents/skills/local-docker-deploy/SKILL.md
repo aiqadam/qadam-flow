@@ -34,7 +34,7 @@ that name (or override the env var) so the registry pull is skipped.
 
 ## Key ENV vars
 - `AP_QADAMS_SYNC_MODE=NONE` — disable cloud piece sync (no registry available)
-- `AP_ENVIRONMENT=PRODUCTION` (use `DEVELOPMENT` only to opt into dev seeds)
+- `AP_ENVIRONMENT=prod` (use `dev` only to opt into dev seeds)
 - `SKIP_SSL_VERIFY=true` build arg — for VPN/proxy environments with SSL interception
 - `QADAM_FLOW_IMAGE` — override the image tag picked up by `docker-compose.yml`
 
