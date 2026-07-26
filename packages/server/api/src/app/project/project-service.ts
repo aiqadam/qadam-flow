@@ -291,12 +291,12 @@ export const projectService = (log: FastifyBaseLogger) => ({
     // For PERSONAL projects there is no project_member row for the owner (see
     // applyProjectsAccessFilters above), so membership instead means "still the project owner and
     // still attached to this platform."
-    async filterActiveMemberEmails({ projectId, platformId, emails }: FilterActiveMemberEmailsParams): Promise<string[]> {
+    async filterActiveMemberEmails({ project, emails }: FilterActiveMemberEmailsParams): Promise<string[]> {
         if (emails.length === 0) {
             return []
         }
-        const normalizedEmails = emails.map((email) => email.toLowerCase())
-        const project = await this.getOneOrThrow(projectId)
+        const normalizedEmails = emails.map((email) => email.toLowerCase().trim())
+        const { id: projectId, platformId } = project
 
         if (project.type === ProjectType.PERSONAL) {
             const owner = await userService(log).get({ id: project.ownerId })
@@ -304,7 +304,7 @@ export const projectService = (log: FastifyBaseLogger) => ({
                 return []
             }
             const identity = await userIdentityService(log).getOneOrFail({ id: owner.identityId })
-            const ownerEmail = identity.email.toLowerCase()
+            const ownerEmail = identity.email.toLowerCase().trim()
             return normalizedEmails.filter((email) => email === ownerEmail)
         }
 
@@ -313,6 +313,7 @@ export const projectService = (log: FastifyBaseLogger) => ({
             .innerJoin('user', 'usr', 'usr.id = pm."userId" AND usr."platformId" = :platformId', { platformId })
             .innerJoin('user_identity', 'ui', 'ui.id = usr."identityId"')
             .where('pm."projectId" = :projectId', { projectId })
+            .andWhere('pm."platformId" = :platformId', { platformId })
             .andWhere('LOWER(ui.email) IN (:...emails)', { emails: normalizedEmails })
             .select('LOWER(ui.email)', 'email')
             .getRawMany<{ email: string }>()
@@ -501,8 +502,7 @@ type GetProjectRoleForUserParams = {
 }
 
 type FilterActiveMemberEmailsParams = {
-    projectId: ProjectId
-    platformId: string
+    project: Project
     emails: string[]
 }
 

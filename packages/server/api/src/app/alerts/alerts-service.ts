@@ -55,10 +55,18 @@ export const alertsService = (log: FastifyBaseLogger) => ({
         // so failing closed here means a transient DB error costs one missed alert rather than
         // risking mail to an ex-member.
         const emails = await projectService(log).filterActiveMemberEmails({
-            projectId: flowRun.projectId,
-            platformId: project.platformId,
+            project,
             emails: candidateEmails,
         })
+        const droppedCount = candidateEmails.length - emails.length
+        if (droppedCount > 0) {
+            // Rows armed before the add()-time membership check existed can name someone with
+            // real project access but no project_member row (e.g. a platform ADMIN/OPERATOR,
+            // who bypasses applyProjectsAccessFilters entirely and so never needed one). Those
+            // receivers now stop getting failure mail permanently with no other signal — log the
+            // count (never the addresses) so a drop is at least visible to re-arm from.
+            log.info({ projectId: flowRun.projectId, droppedCount }, '[alertsService#sendAlertOnRunFinish] dropped alert receivers that are no longer active project members')
+        }
         if (emails.length === 0) {
             return
         }

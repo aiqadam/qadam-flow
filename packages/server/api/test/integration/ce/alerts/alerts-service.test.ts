@@ -164,6 +164,10 @@ beforeEach(() => {
     capturedMessages.length = 0
 })
 
+afterEach(() => {
+    vi.restoreAllMocks()
+})
+
 describe('alertsService', () => {
     describe('add / list', () => {
         it('adds an email alert channel and lists it', async () => {
@@ -330,7 +334,7 @@ describe('alertsService', () => {
 
             vi.spyOn(projectServiceModule, 'projectService').mockImplementation((log) => ({
                 ...originalProjectService(log),
-                filterActiveMemberEmails: vi.fn().mockRejectedValueOnce(new Error('simulated membership lookup failure')),
+                filterActiveMemberEmails: vi.fn().mockRejectedValue(new Error('simulated membership lookup failure')),
             }))
 
             const flowRun = createMockFlowRun({
@@ -343,8 +347,59 @@ describe('alertsService', () => {
 
             await expect(alertsService(system.globalLogger()).sendAlertOnRunFinish(flowRun)).rejects.toThrow('simulated membership lookup failure')
             expect(capturedMessages).toHaveLength(0)
+        })
 
-            vi.restoreAllMocks()
+        // project-service#filterActiveMemberEmails' PERSONAL branch has no project_member row to
+        // join against — it resolves membership to "still the project owner and still attached to
+        // this platform." This is the default single-user install shape (userService#getOrCreateWithProject
+        // creates a PERSONAL project), so it is exercised here rather than left to the TEAM-only
+        // coverage the rest of this file has.
+        it('emails a personal-project owner, then stops once the owner is offboarded', async () => {
+            const { mockPlatform } = await mockAndSaveBasicSetup()
+
+            const ownerIdentity = createMockUserIdentity({ verified: true })
+            await db.save('user_identity', ownerIdentity)
+            const ownerUser = createMockUser({ identityId: ownerIdentity.id, platformId: mockPlatform.id, platformRole: PlatformRole.MEMBER })
+            await db.save('user', ownerUser)
+
+            const project = createMockProject({ platformId: mockPlatform.id, ownerId: ownerUser.id, type: ProjectType.PERSONAL })
+            await db.save('project', project)
+            const flow = createMockFlow({ projectId: project.id })
+            await db.save('flow', flow)
+
+            await alertsService(system.globalLogger()).add({ projectId: project.id, channel: AlertChannel.EMAIL, receiver: ownerIdentity.email })
+
+            const firstFlowVersion = createMockFlowVersion({ flowId: flow.id, displayName: 'Personal Sync' })
+            await db.save('flow_version', firstFlowVersion)
+            const firstFlowRun = createMockFlowRun({
+                projectId: project.id,
+                flowId: flow.id,
+                flowVersionId: firstFlowVersion.id,
+                status: FlowRunStatus.FAILED,
+                failedStep: { name: 'step_1', displayName: 'HTTP Request', message: 'boom' },
+            })
+            await alertsService(system.globalLogger()).sendAlertOnRunFinish(firstFlowRun)
+
+            expect(capturedMessages).toHaveLength(1)
+            expect(capturedMessages[0].rcptTo).toContain(ownerIdentity.email)
+
+            await userService(system.globalLogger()).removeFromPlatform({ id: ownerUser.id, platformId: mockPlatform.id })
+
+            // A distinct flow version is required: the Redis dedup counter in sendAlertOnRunFinish
+            // is keyed by flowVersionId, so re-using the first one would short-circuit on the
+            // per-version failure count rather than exercising the membership check again.
+            const secondFlowVersion = createMockFlowVersion({ flowId: flow.id, displayName: 'Personal Sync 2' })
+            await db.save('flow_version', secondFlowVersion)
+            const secondFlowRun = createMockFlowRun({
+                projectId: project.id,
+                flowId: flow.id,
+                flowVersionId: secondFlowVersion.id,
+                status: FlowRunStatus.FAILED,
+                failedStep: { name: 'step_1', displayName: 'HTTP Request', message: 'boom' },
+            })
+            await alertsService(system.globalLogger()).sendAlertOnRunFinish(secondFlowRun)
+
+            expect(capturedMessages).toHaveLength(1)
         })
     })
 })
