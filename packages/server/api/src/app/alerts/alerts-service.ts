@@ -181,10 +181,10 @@ export const alertsService = (log: FastifyBaseLogger) => ({
     },
 })
 
+const MAX_ALERT_RECEIVERS = 50
+const MAX_ALERTS_PER_PROJECT = 20
+
 type DeleteAllForProjectParams = {
     projectId: ProjectId
     entityManager?: EntityManager
 }
-
-const MAX_ALERT_RECEIVERS = 50
-const MAX_ALERTS_PER_PROJECT = 20

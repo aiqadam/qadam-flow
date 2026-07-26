@@ -9,7 +9,7 @@ export const projectHooks = hooksFactory.create<ProjectHooks>(_log => ({
     // Runs inside the same transaction as the soft-delete (see project-service#softDelete),
     // so a caller-registered implementation must only touch the DB via the given entityManager
     // — no queue enqueues, outbound calls, or cache invalidations here.
-    postSoftDelete: async (_entityManager: EntityManager, _params: ProjectPostSoftDeleteParams) => {
+    postSoftDelete: async (_params: ProjectPostSoftDeleteParams) => {
         return
     },
 }))
@@ -19,10 +19,11 @@ export type ProjectPostCreateContext = {
 }
 
 export type ProjectPostSoftDeleteParams = {
+    entityManager: EntityManager
     projectId: ProjectId
 }
 
 export type ProjectHooks = {
     postCreate(project: Project, context?: ProjectPostCreateContext): Promise<void>
-    postSoftDelete(entityManager: EntityManager, params: ProjectPostSoftDeleteParams): Promise<void>
+    postSoftDelete(params: ProjectPostSoftDeleteParams): Promise<void>
 }

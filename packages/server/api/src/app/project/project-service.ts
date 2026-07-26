@@ -240,7 +240,7 @@ export const projectService = (log: FastifyBaseLogger) => ({
         // partial failure would make the project unreachable to any retry that re-runs the sweep.
         await transaction(async (entityManager) => {
             await projectRepo(entityManager).update({ id: projectId, platformId }, { deleted: new Date().toISOString() })
-            await projectHooks.get(log).postSoftDelete(entityManager, { projectId })
+            await projectHooks.get(log).postSoftDelete({ entityManager, projectId })
         })
     },
 

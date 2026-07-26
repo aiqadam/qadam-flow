@@ -15,7 +15,10 @@ const originalAlertsService = alertsServiceModule.alertsService
 let app: FastifyInstance | null = null
 
 beforeAll(async () => {
-    app = await setupTestEnvironment()
+    // fresh: true — this file spies on the alerts-service module (see the atomicity test
+    // below); the shared server would resolve a different module instance than the one
+    // vi.spyOn patches, so the spy would be a silent no-op against a reused server.
+    app = await setupTestEnvironment({ fresh: true })
 })
 
 afterAll(async () => {
@@ -104,6 +107,10 @@ describe('Project endpoints (CE)', () => {
     })
 
     describe('DELETE /v1/projects/:id', () => {
+        afterEach(() => {
+            vi.restoreAllMocks()
+        })
+
         it('soft-deletes a team project and removes it from list', async () => {
             const ctx = await createTestContext(app!)
 
@@ -178,6 +185,8 @@ describe('Project endpoints (CE)', () => {
             const alertsAfterFailure = await alertsService(system.globalLogger()).list({ projectId: created.id, cursor: undefined, limit: 10 })
             expect(alertsAfterFailure.data).toHaveLength(1)
 
+            // Restore before the retry (not just in afterEach) — the retry is still part of
+            // this test's assertions, and it must exercise the real deleteAllForProject.
             vi.restoreAllMocks()
 
             const retryDeleteResponse = await ctx.delete(`/v1/projects/${created.id}`)

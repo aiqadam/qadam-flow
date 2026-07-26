@@ -13,7 +13,7 @@ export const alertsModule: FastifyPluginAsyncZod = async (app) => {
         postCreate: async () => {
             return
         },
-        postSoftDelete: async (entityManager, { projectId }) => {
+        postSoftDelete: async ({ entityManager, projectId }) => {
             await alertsService(log).deleteAllForProject({ projectId, entityManager })
         },
     }))
