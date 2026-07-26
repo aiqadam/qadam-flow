@@ -5,8 +5,11 @@ import {
     TriggerHookType,
     WorkerJobType,
 } from '@aiqadam/shared'
+import { Queue } from 'bullmq'
 import { FastifyInstance } from 'fastify'
+import { redisConnections } from '../../../../src/app/database/redis-connections'
 import { engineResponseWatcher } from '../../../../src/app/workers/engine-response-watcher'
+import { QueueName } from '../../../../src/app/workers/job'
 import { jobBroker } from '../../../../src/app/workers/job-queue/job-broker'
 import { jobQueue, JobType } from '../../../../src/app/workers/job-queue/job-queue'
 import { mockAndSaveBasicSetup } from '../../../helpers/mocks'
@@ -22,6 +25,17 @@ beforeAll(async () => {
 afterAll(async () => {
     await jobBroker(app.log).close()
     await teardownTestEnvironment()
+})
+
+beforeEach(async () => {
+    // The CE suite shares one Redis; other files leak jobs into WORKER_JOBS that
+    // never get consumed. poll() pops the queue head, so a leaked job would hand
+    // this test the wrong token and its listener would time out. Drain waiting/
+    // delayed jobs first; drain() (not obliterate) leaves active jobs and the
+    // running worker untouched.
+    const queue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+    await queue.drain(true)
+    await queue.close()
 })
 
 describe('Job broker error propagation', () => {
