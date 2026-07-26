@@ -205,31 +205,6 @@
             ]
          },
          {
-            "tab": "Embedding",
-            "groups": [
-               {
-                  "group": "Essentials",
-                  "pages": [
-                     "embedding/overview",
-                     "embedding/configure-embedding",
-                     "embedding/provision-users",
-                     "embedding/embed-builder"
-                  ]
-               },
-               {
-                  "group": "Misc",
-                  "pages": [
-                     "embedding/customize-qadams",
-                     "embedding/embed-connections",
-                     "embedding/navigation",
-                     "embedding/predefined-connection",
-                     "embedding/sdk-changelog",
-                     "embedding/sdk-server-requests"
-                  ]
-               }
-            ]
-         },
-         {
             "tab": "Build Pieces",
             "description": "Learn how to build, test, and publish your own custom pieces in Activepieces.",
             "groups": [

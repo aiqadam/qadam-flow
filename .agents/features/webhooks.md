@@ -78,7 +78,7 @@ External services verify webhook ownership before sending events:
 
 ## Payload Size Limit
 
-`AP_MAX_WEBHOOK_PAYLOAD_SIZE_MB` (default 5MB). Returns 413 if exceeded.
+`AP_MAX_WEBHOOK_PAYLOAD_SIZE_MB` (default 25MB). Returns 413 if exceeded.
 
 ## Flow Resolution
 

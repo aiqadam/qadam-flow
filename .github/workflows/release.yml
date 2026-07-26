@@ -58,11 +58,11 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-            cacheScope: monolith-amd64
+            cacheScope: monolith-linux-amd64
             artifactSuffix: linux-amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
-            cacheScope: monolith-arm64
+            cacheScope: monolith-linux-arm64
             artifactSuffix: linux-arm64
     steps:
       - uses: actions/checkout@v5

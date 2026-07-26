@@ -197,8 +197,10 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=monolith
-          cache-to: type=gha,mode=max,scope=monolith
+          # Scope must stay in sync with release.yml's matrix.cacheScope so a
+          # tag build reuses the layers main just produced for the same arch.
+          cache-from: type=gha,scope=monolith-linux-amd64
+          cache-to: type=gha,mode=max,scope=monolith-linux-amd64
           allow: |
             network.host
           build-args: |
