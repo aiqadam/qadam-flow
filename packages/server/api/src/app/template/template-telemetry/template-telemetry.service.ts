@@ -1,3 +1,4 @@
+import { safeHttp } from '@aiqadam/server-utils'
 import { isNil, TemplateTelemetryEvent, TemplateTelemetryEventType, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { rejectedPromiseHandler } from '../../helper/promise-handler'
@@ -29,13 +30,11 @@ async function sendToExternal(event: TemplateTelemetryEvent, log: FastifyBaseLog
     const { url, body } = getEventConfig(event)
 
     await tryCatch(async () => {
-        const response = await fetch(url, {
-            method: 'POST',
+        const response = await safeHttp.axios.post(url, body, {
             headers: {
-                'Content-Type': 'application/json',
                 [TEMPLATE_TELEMETRY_API_KEY_HEADER]: TEMPLATE_TELEMETRY_API_KEY,
             },
-            ...(body ? { body: JSON.stringify(body) } : {}),
+            validateStatus: () => true,
         })
         log.info({ eventType: event.eventType, response: response.status }, 'Template telemetry event sent')
     })
