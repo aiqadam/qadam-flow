@@ -22,7 +22,7 @@
     "typecheck": "turbo run typecheck",
     "lint-affected": "turbo run lint --affected",
     "lint-dev": "turbo run lint --filter='!@aiqadam/qadam-*' --force -- --fix",
-    "test-unit": "turbo run test --filter=@aiqadam/engine --filter=@aiqadam/shared --filter=web --filter=@aiqadam/server-utils",
+    "test-unit": "turbo run test --filter=@aiqadam/engine --filter=@aiqadam/shared --filter=web --filter=@aiqadam/server-utils && turbo run test-unit --filter=api",
     "test-api": "turbo run check-migrations test-ce --filter=api --concurrency=1",
     "cli": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json  packages/cli/src/index.ts",
     "create-qadam": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json  packages/cli/src/index.ts qadams create",

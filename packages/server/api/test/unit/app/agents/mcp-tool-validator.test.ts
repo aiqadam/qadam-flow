@@ -15,6 +15,7 @@ type AxiosRequestConfigLike = {
     maxContentLength?: number
     maxBodyLength?: number
     timeout?: number
+    beforeRedirect?: (options: { hostname: string, protocol: string }) => void
 }
 type AxiosCall = { url: string, body: Record<string, unknown>, config: AxiosRequestConfigLike }
 
@@ -55,6 +56,13 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
+        // Four requests, not three: the SDK opens an SSE GET after
+        // `notifications/initialized` and before `tools/list`, and that one
+        // carries no JSON-RPC body. Asserted explicitly because the filter
+        // below drops body-less entries, which would otherwise let a spurious
+        // extra request slip past `toEqual` unnoticed.
+        expect(capturedCalls()).toHaveLength(4)
+        expect(capturedCalls().filter((c) => c.body.method === undefined)).toHaveLength(1)
         const methods = capturedCalls()
             .map((c) => c.body.method)
             .filter((method): method is string => typeof method === 'string')
@@ -65,16 +73,38 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         ])
     })
 
-    it('disables redirects and sets a 64KB response cap', async () => {
+    it('caps redirects and sets a 64KB response cap', async () => {
         mockJsonRpcServer({ tools: [] })
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
         const call = capturedCalls()[0]
-        expect(call.config.maxRedirects).toBe(0)
+        expect(call.config.maxRedirects).toBe(2)
         expect(call.config.maxContentLength).toBe(64 * 1024)
         expect(call.config.maxBodyLength).toBe(64 * 1024)
         expect(call.config.timeout).toBe(15_000)
+    })
+
+    it.each([
+        ['a different host', { hostname: 'attacker.example', protocol: 'https:' }],
+        ['an https-to-http downgrade', { hostname: 'mcp.example.com', protocol: 'http:' }],
+    ])('refuses a redirect to %s', async (_label, target) => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(buildTool())
+
+        const beforeRedirect = capturedCalls()[0].config.beforeRedirect
+        expect(beforeRedirect).toBeDefined()
+        expect(() => beforeRedirect?.(target)).toThrow()
+    })
+
+    it('allows a same-host redirect, which is how a trailing-slash mount answers', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(buildTool())
+
+        const beforeRedirect = capturedCalls()[0].config.beforeRedirect
+        expect(() => beforeRedirect?.({ hostname: 'mcp.example.com', protocol: 'https:' })).not.toThrow()
     })
 
     it('collapses any downstream failure to a single generic error', async () => {

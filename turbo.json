@@ -102,6 +102,21 @@
       "inputs": ["src/**", "test/**", "tsconfig*.json", "vitest.config.*"],
       "outputs": ["coverage/**"]
     },
+    "test-unit": {
+      // Only `api` declares a `test-unit` script (`vitest run test/unit`). It is a
+      // separate task from `test` because that package's `test` script is
+      // `test-ce` — the integration suite — so `turbo run test --filter=api`
+      // would run Postgres/Redis tests, not these.
+      //
+      // `dependsOn: ["^build"]` is load-bearing: the vitest config aliases
+      // @aiqadam/shared, @aiqadam/qadams-framework, @aiqadam/qadams-common and
+      // @aiqadam/server-utils to *source*, which this task's own `inputs` cannot
+      // see, so without it a change in one of those packages would not move the
+      // hash and a stale pass would be served from cache.
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "test/**", "tsconfig*.json", "vitest.config.*"],
+      "outputs": ["coverage/**"]
+    },
     "test-ce": {
       "dependsOn": [
         "build",
