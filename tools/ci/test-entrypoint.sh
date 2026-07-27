@@ -8,6 +8,12 @@ set -uo pipefail
 ENTRYPOINT="${1:-$(cd "$(dirname "$0")/../.." && pwd)/docker-entrypoint.sh}"
 [ -x "$ENTRYPOINT" ] || { echo "FAIL: $ENTRYPOINT is not executable"; exit 1; }
 
+# Captured before the stub shadows `node`, so the stub can still syntax-check
+# the payload it is handed with the real interpreter.
+REAL_NODE="$(command -v node)"
+export REAL_NODE
+[ -x "$REAL_NODE" ] || { echo 'FAIL: node not found'; exit 1; }
+
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "$STUB_DIR"' EXIT
 mkdir -p "$STUB_DIR/bin"
@@ -18,7 +24,42 @@ cat > "$STUB_DIR/bin/node" <<'STUB'
 #!/usr/bin/env bash
 if [ "$1" = '-e' ]; then
     case "$2" in
-        *jwt.sign*) printf 'stub-worker-token'; exit 0 ;;
+        *jwt.sign*)
+            if [ -n "${FAKE_MINT_FAILS:-}" ]; then
+                echo 'stub-node: mint failed' >&2
+                exit 1
+            fi
+            # Record what the real node would have been able to see. The secret
+            # must arrive through the environment, never on the command line,
+            # where anything in the container could read it out of /proc.
+            if [ -n "${AP_JWT_SECRET:-}" ] && grep -qa -- "$AP_JWT_SECRET" "/proc/$$/cmdline"; then
+                echo 'stub-node: SECRET-ON-ARGV' >&2
+            else
+                echo 'stub-node: secret-not-on-argv' >&2
+            fi
+            case "$2" in
+                *"algorithm: 'HS256'"*) : ;;
+                *) echo 'stub-node: mint payload lost its algorithm' >&2 ;;
+            esac
+            case "$2" in
+                *"type: 'WORKER'"*) : ;;
+                *) echo 'stub-node: mint payload lost its principal type' >&2 ;;
+            esac
+            # A payload the real node could not run must not read as a mint.
+            # It goes through a real .js file: `node --check` reopens the path it
+            # is given (so a process substitution's pipe fails) and refuses a
+            # file whose extension it does not recognise.
+            payload_file="$(mktemp --suffix=.js)"
+            printf '%s' "$2" > "$payload_file"
+            if ! "$REAL_NODE" --check "$payload_file" 2>/dev/null; then
+                rm -f "$payload_file"
+                echo 'stub-node: mint payload is not valid JavaScript' >&2
+                exit 97
+            fi
+            rm -f "$payload_file"
+            printf 'stub-worker-token'
+            exit 0
+            ;;
         *) echo "stub-node: unexpected -e payload" >&2; exit 98 ;;
     esac
 fi
@@ -123,6 +164,18 @@ assert "the worker received a minted token" \
     "$(grep -q 'worker started .*token=minted' <<<"$out" && echo true || echo false)"
 assert "the secret never reaches the log" \
     "$(grep -q 'shhh' <<<"$out" && echo false || echo true)"
+assert "the secret never reaches the mint process's argv" \
+    "$(grep -q 'SECRET-ON-ARGV' <<<"$out" && echo false || echo true)"
+assert "the mint still signs an HS256 WORKER token" \
+    "$(grep -qE 'mint payload lost its' <<<"$out" && echo false || echo true)"
+assert "the mint payload is valid JavaScript" \
+    "$(grep -q 'not valid JavaScript' <<<"$out" && echo false || echo true)"
+
+echo "--- a mint that produces nothing must not start a tokenless worker ---"
+out=$(AP_CONTAINER_TYPE=WORKER AP_JWT_SECRET=shhh FAKE_MINT_FAILS=1 FAKE_WORKER='sleep' timeout 20 "$ENTRYPOINT" 2>&1)
+check "a failed mint exits 1" 1 $?
+assert "no worker was started without a token" \
+    "$(grep -q 'worker started' <<<"$out" && echo false || echo true)"
 
 echo "--- a preset AP_WORKER_TOKEN is not overwritten ---"
 out=$(AP_CONTAINER_TYPE=WORKER AP_WORKER_TOKEN=preset AP_JWT_SECRET=shhh FAKE_WORKER='exit:0:0.2' timeout 20 "$ENTRYPOINT" 2>&1)

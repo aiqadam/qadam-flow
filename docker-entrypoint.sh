@@ -46,6 +46,12 @@ if [ -z "${AP_WORKER_TOKEN:-}" ] && [ -n "${AP_JWT_SECRET:-}" ]; then
         );
         process.stdout.write(token);
     ")
+    # `set -e` is deliberately off here, so a failed mint would otherwise export
+    # an empty token and hand the worker a variable that only looks present.
+    if [ -z "$AP_WORKER_TOKEN" ]; then
+        echo 'FATAL: failed to mint AP_WORKER_TOKEN from AP_JWT_SECRET.' >&2
+        exit 1
+    fi
     export AP_WORKER_TOKEN
 fi
 
