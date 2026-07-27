@@ -88,6 +88,25 @@ export const machineService = (log: FastifyBaseLogger) => {
             }, existingWorker)
             return buildSettingsResponse(log)
         },
+        // `_platformId` is accepted to match both callers' contracts — machine-controller's
+        // `GET /v1/worker-machines` and health.service's `GET /v1/health/system`, each
+        // platformAdminOnly — but it cannot scope anything yet. WorkerMachine has no platformId
+        // field, and no *stored* mapping from a worker group to a platform exists: the model has
+        // the idea (`PlatformPlan.workerGroupId`, and `getWorkerGroupQueueName` names queues
+        // `platform-<workerGroupId>-jobs`), but there is no platform_plan entity here and
+        // `getPlan()` returns a hardcoded object that never sets it (#195, closed not-planned).
+        //
+        // Whoever implements real dedicated/worker-group listing must, in the same change:
+        //   1. make group -> platform a SERVER-side record. `workerGroupId` currently arrives
+        //      from the worker's own socket handshake over the single install-wide
+        //      AP_WORKER_TOKEN, so filtering on it would be isolation enforced by an untrusted
+        //      claim — worse than today's over-filter, because it would read as done (#207).
+        //   2. scope the other two surfaces too, not just the filter below: the offline-prune
+        //      `delete` a few lines down runs install-wide on behalf of whichever platform
+        //      called, and `GET /v1/worker-machines/queue-metrics` returns every queue name —
+        //      which embeds the group id — to any platform admin.
+        // The isolation test in machine-list-filter.test.ts fails the moment a DEDICATED worker
+        // is returned to anyone, so it guards step 2's filter but not the other two surfaces.
         async list(_platformId: string): Promise<WorkerMachineWithStatus[]> {
             const allWorkers = await workerMachineCache().find()
 
@@ -97,6 +116,10 @@ export const machineService = (log: FastifyBaseLogger) => {
 
             await workerMachineCache().delete(offLineWorkers.map(worker => worker.id))
 
+            // SHARED workers are cluster-wide by definition, so every platform admin sees them.
+            // DEDICATED workers carry a workerGroupId but nothing in this repo maps a worker
+            // group to a platformId (#195, closed not-planned) — there is no data to scope them
+            // by platform, so they are dropped for every caller rather than served unscoped.
             return onlineWorkers
                 .filter(worker => worker.type !== WorkerMachineType.DEDICATED)
                 .map(worker => ({
