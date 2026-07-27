@@ -35,7 +35,7 @@ function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
         const response = await safeHttp.axios.request<ArrayBuffer>({
             method: init?.method ?? 'GET',
             url,
-            headers: { ...extraHeaders, ...(init?.headers as Record<string, string> | undefined) },
+            headers: { ...extraHeaders, ...Object.fromEntries(new Headers(init?.headers)) },
             data: init?.body,
             responseType: 'arraybuffer',
             validateStatus: () => true,

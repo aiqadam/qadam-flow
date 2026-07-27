@@ -85,6 +85,28 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         expect(call.config.timeout).toBe(15_000)
     })
 
+    // The MCP SDK passes `init.headers` to fetch as a `Headers` instance
+    // (`_commonHeaders()` in the SDK's streamableHttp transport), and spreading
+    // a `Headers` instance yields `{}` — its state lives in internal slots, not
+    // own enumerable properties. This regression test forwards a real `Headers`
+    // instance end-to-end through `createSafeFetch`, the same shape the SDK
+    // actually sends, rather than a plain object a naive fix could still pass.
+    it('forwards the SDK-supplied content-type and accept headers, not just extra auth headers', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(
+            buildTool({
+                auth: { type: McpAuthType.ACCESS_TOKEN, accessToken: 'tok-abc' },
+            }),
+        )
+
+        const call = capturedCalls()[0]
+        expect(call.config.headers?.['content-type']).toBe('application/json')
+        expect(call.config.headers?.['accept']).toContain('application/json')
+        expect(call.config.headers?.['accept']).toContain('text/event-stream')
+        expect(call.config.headers?.['Authorization']).toBe('Bearer tok-abc')
+    })
+
     // `hostname`/`protocol` are deliberately set to a proxy's here, not the
     // target's: axios's own proxy `beforeRedirect` runs before this one and
     // overwrites them, so a check reading those fields would refuse every
