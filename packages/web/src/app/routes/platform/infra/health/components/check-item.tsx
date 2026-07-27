@@ -1,5 +1,5 @@
 import { t } from 'i18next';
-import { CheckCircle, ExternalLink, XCircle } from 'lucide-react';
+import { CheckCircle, CircleHelp, ExternalLink, XCircle } from 'lucide-react';
 
 import {
   Item,
@@ -16,6 +16,7 @@ type CheckItemProps = {
   title: string;
   icon: React.ReactNode;
   isChecked: boolean;
+  isUnknown?: boolean;
   message: string | React.ReactNode;
   loading: boolean;
   link?: string;
@@ -26,6 +27,7 @@ const CheckItem = ({
   title,
   icon,
   isChecked,
+  isUnknown,
   message,
   loading,
   link,
@@ -50,7 +52,12 @@ const CheckItem = ({
       </ItemContent>
       {!loading && (
         <ItemActions>
-          {isChecked ? (
+          {isUnknown ? (
+            <div className="text-muted-foreground flex items-center gap-2">
+              <CircleHelp size={18} />
+              {t('Unknown')}
+            </div>
+          ) : isChecked ? (
             <div className="text-success-700 flex items-center gap-2">
               <CheckCircle size={18} />
               {t('Passed')}
