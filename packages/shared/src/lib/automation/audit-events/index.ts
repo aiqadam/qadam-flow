@@ -3,20 +3,8 @@ import { Flow } from '../../automation/flows/flow'
 import { FlowVersion } from '../../automation/flows/flow-version'
 import { Folder } from '../../automation/flows/folders/folder'
 import { FlowOperationRequest, FlowOperationType } from '../../automation/flows/operations'
-import { BaseModelSchema, DateOrString, Nullable, OptionalArrayFromQuery } from '../../core/common/base-model'
+import { BaseModelSchema, DateOrString, Nullable } from '../../core/common/base-model'
 import { UserWithMetaInformation } from '../../core/user/user'
-export const ListAuditEventsRequest = z.object({
-    limit: z.coerce.number().optional(),
-    cursor: z.string().optional(),
-    action: OptionalArrayFromQuery(z.string()),
-    projectId: OptionalArrayFromQuery(z.string()),
-    userId: z.string().optional(),
-    createdBefore: z.string().optional(),
-    createdAfter: z.string().optional(),
-})
-
-export type ListAuditEventsRequest = z.infer<typeof ListAuditEventsRequest>
-
 const UserMeta = UserWithMetaInformation.pick({ email: true, id: true, firstName: true, lastName: true })
 
 export enum ApplicationEventName {
