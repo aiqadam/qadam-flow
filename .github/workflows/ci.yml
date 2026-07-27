@@ -79,8 +79,9 @@ jobs:
           fi
 
           # The allowlist/denylist and the fail-closed guards live in
-          # tools/ci/, not inline here, so they can be unit-tested. The test
-          # runs in the unconditional `verify` job below.
+          # tools/ci/, not inline here, so they can be unit-tested. The test runs
+          # in the reusable `_verify.yml` workflow, which the unconditional
+          # `verify-run` job below calls.
           verdict="$(tools/ci/classify-changed-paths.sh "$changed")"
 
           case "$verdict" in
@@ -92,67 +93,38 @@ jobs:
               ;;
           esac
 
+  # Calls the reusable workflow instead of inlining the steps, so ci.yml and
+  # release.yml cannot drift (#64). This job is NOT the required status check:
+  # a called workflow reports its check as "<caller job> / <inner job>", i.e.
+  # "verify-run / Lint + unit test suite", while the ruleset requires the bare
+  # context "Lint + Unit Tests". The gate job below carries that name.
+  verify-run:
+    uses: ./.github/workflows/_verify.yml
+
+  # Required status check. Exists purely to keep the required context name stable
+  # across the extraction above — same pattern, and the same reason, as the
+  # `integration` gate further down. Unconditional so it always reports a
+  # conclusion: a skipped required check reports none at all under this repo's
+  # ruleset (strict_required_status_checks_policy), which would leave every PR
+  # permanently unmergeable.
   verify:
     name: Lint + Unit Tests
+    needs: verify-run
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-
-      # Deliberately in this job and not in `integration-run`: `verify` is
-      # unconditional, so the test covering the docs-only filter can never be
-      # skipped by the filter it tests. Pure bash, so it runs before any install
-      # and still reports if the install step later flakes.
-      - name: Test the CI path classifier
-        run: tools/ci/classify-path.test.sh
-
-      # Same reasoning, and the same job for the same reason: run.sh is the
-      # `curl … | sh` install path with no other automated coverage, so its test
-      # must sit in an unconditional job. Pure shell, no install needed.
-      - name: Test run.sh env reconciliation
-        run: tools/ci/test-run-sh.sh
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.3
-
-      - name: Install dependencies
+      - name: Resolve verify status
+        env:
+          RUN_RESULT: ${{ needs.verify-run.result }}
         run: |
-          bun install --frozen-lockfile || {
-            echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
-            rm -rf ~/.bun/install/cache
-            bun install --frozen-lockfile
-          }
-
-      - name: Set up turbo remote cache (GHA-backed)
-        uses: rharkor/caching-for-turbo@v2.3.12
-
-      # `turbo run lint` with no filter, deliberately. The previous two steps
-      # enumerated packages (`lint-core` named six, `lint-qadams` globbed
-      # `@aiqadam/qadam-*`) and that enumeration silently missed every package it
-      # did not name: `@aiqadam/cli`, `tests-e2e`, and — because the glob is
-      # `qadam-*` and they are `qadam` + `s` — `@aiqadam/qadams-framework` and
-      # `@aiqadam/qadams-common`, which look covered and were not (#184, same
-      # family as #148 and #164). An unfiltered run cannot miss a package, so a
-      # new one is linted the day it declares the script.
-      - name: Lint all packages
-        run: npm run lint-all
-
-      # Only `packages/web` declares a `typecheck` script today — hence the step
-      # name — and no job ran it, so its 849 source files were type-checked
-      # nowhere (vite builds without type-checking). Server packages are still
-      # type-checked only through their `build`. Unfiltered for the same reason
-      # as lint above: the day another package declares the script, it is
-      # covered without editing this file.
-      - name: Typecheck (only web declares one today)
-        run: npm run typecheck
-
-      - name: Unit tests
-        run: npm run test-unit
+          set -uo pipefail
+          echo "verify-run=${RUN_RESULT}"
+          if [ "$RUN_RESULT" != success ]; then
+            echo "::error::Lint + unit tests did not succeed (${RUN_RESULT})."
+            exit 1
+          fi
+          echo "Lint + unit tests passed. ✅"
 
   # The heavy suite. NOT a required status check — the `integration` gate job
   # below carries the required "CE Integration Tests" context and always reports.
