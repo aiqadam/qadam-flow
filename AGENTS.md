@@ -205,6 +205,13 @@ before trusting its silence — an empty output is not the same as a passing che
   exit code are not evidence. Relatedly, when a pipeline is `generate → consume`, confirm the
   generate step ran: a missing `python3` failed one step while the next happily consumed the stale
   input from the previous run.
+- **Pushing to the branch of an already-merged PR exits 0 and changes nothing.** The ref updates, the
+  push reports success, and no warning appears anywhere — but the PR is closed, so the commit never
+  reaches `main`. A review finding on #168 was fixed this way three minutes after that PR merged, and
+  then reported in its own comment thread as landed; `main` never received it. Before pushing a review
+  fixup, check `gh pr view <n> --json state`, and afterwards confirm the commit is reachable from
+  `main` with `git branch -r --contains <sha>` rather than concluding from a successful push. "The
+  command reported success" is not "the outcome happened" — which is the whole subject of this list.
 
 ## Review Agents
 
