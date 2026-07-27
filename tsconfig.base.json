@@ -476,9 +476,6 @@
       "@aiqadam/qadam-rabbitmq": [
         "packages/qadams/community/rabbitmq/src/index.ts"
       ],
-      "@aiqadam/qadam-read-file": [
-        "packages/qadams/read-file/src/index.ts"
-      ],
       "@aiqadam/qadam-reddit": [
         "packages/qadams/community/reddit/src/index.ts"
       ],
@@ -670,9 +667,6 @@
       ],
       "activepieces/piece-snowflake": [
         "packages/qadams/community/snowflake/src/index.ts"
-      ],
-      "ui-feature-forms": [
-        "packages/ui/features-forms/src/index.ts"
       ],
       "@aiqadam/qadam-webex": [
         "packages/qadams/community/webex/src/index.ts"

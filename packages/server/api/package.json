@@ -151,7 +151,7 @@
     "test": "npm run test-ce",
     "test-unit": "vitest run test/unit --bail 1 --passWithNoTests=false",
     "test-ce-command": "vitest run test/integration/ce --no-file-parallelism --bail 1 --passWithNoTests=false",
-    "test-ce": "export $(cat .env.tests | xargs) && AP_EDITION=ce npm run test-ce-command",
+    "test-ce": "export $(cat .env.tests | xargs) && npm run test-ce-command",
     "check-migrations": "echo '🔍 Checking for schema changes...' && export $(cat .env.tests | xargs) && export AP_DEV_QADAMS='' && export AP_ENVIRONMENT=dev && AP_EDITION=ce && ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.app.json node_modules/typeorm/cli.js migration:run -d src/app/database/migration-data-source.ts > /dev/null 2>&1 && echo 'Checking for schema drift...' && ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.app.json node_modules/typeorm/cli.js migration:generate -p -d src/app/database/migration-data-source.ts src/app/database/migration/postgres/check --dryrun --check || (echo '❌ ERROR: Schema changes detected without migration!' && exit 1) && echo '✅ No missing migrations detected'",
     "db": "ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.app.json node_modules/typeorm/cli.js",
     "db-migration": "export $(cat .env.tests | xargs) && export AP_DEV_QADAMS='' && export AP_ENVIRONMENT=dev && export AP_EDITION=ce && ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.app.json node_modules/typeorm/cli.js migration:generate -p -d src/app/database/migration-data-source.ts",

@@ -89,9 +89,3 @@ export const migrateFlowVersionTemplate = async ({ trigger, schemaVersion, notes
     })
 }
 
-export const migrateFlowVersionTemplateList = async (flowVersions: FlowVersionTemplate[]): Promise<FlowVersionTemplate[]> => {
-    return Promise.all(flowVersions.map(async (flowVersion) => {
-        return migrateFlowVersionTemplate(flowVersion)
-    }))
-}
-
