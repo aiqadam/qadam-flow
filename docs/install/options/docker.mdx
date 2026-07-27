@@ -86,6 +86,30 @@ docker compose pull && docker compose up -d   # upgrade to the latest image
 docker compose down -v                        # stop AND delete all data
 ```
 
+### Check the install is working
+
+`docker compose ps` tells you whether the containers are running, which is not
+the same thing as whether Qadam Flow works. An install whose worker process has
+died keeps every container `Up`, keeps a restart count of `0`, and keeps
+answering the health endpoint with a `200` — while no flow ever executes.
+
+Run the doctor from the directory that contains your install (the parent of
+`qadam-flow`):
+
+```bash
+curl -fsSL https://flow.aiqadam.org/doctor.sh | sh
+```
+
+It is read-only and prints one line per check with a `PASS`, `WARN` or `FAIL`
+marker, a next command for every failure, and no secret values — so the output
+is safe to paste into a bug report. It exits `0` when the install is healthy,
+`1` when a check failed and `2` when it could not run at all, so it also works
+as a scheduled health probe.
+
+Set `QADAM_FLOW_DIR` if your install is not in `./qadam-flow`. For what each
+check proves and how to read a failure, see
+[Flows Never Run](../troubleshooting/flows-never-run).
+
 For the details of the compose stack and every value in `.env`, see [Docker Compose](./docker-compose).
 
 ## Configure the webhook URL
