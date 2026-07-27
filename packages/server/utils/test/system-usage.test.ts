@@ -1,7 +1,8 @@
-// The `fs` / `systeminformation` / `check-disk-space` imports deliberately sit below the vi.mock calls
-// that replace them, so the grouping the import-order rule wants would misrepresent the file.
-/* eslint-disable import-x/order */
+import fs from 'fs'
 import os from 'os'
+import checkDiskSpace from 'check-disk-space'
+import si from 'systeminformation'
+import { fileSystemUtils } from '../src/file-system-utils'
 import { systemUsage } from '../src/system-usage'
 
 vi.mock('fs', () => ({
@@ -27,11 +28,6 @@ vi.mock('systeminformation', () => ({
 vi.mock('check-disk-space', () => ({
     default: vi.fn(),
 }))
-
-import fs from 'fs'
-import checkDiskSpace from 'check-disk-space'
-import si from 'systeminformation'
-import { fileSystemUtils } from '../src/file-system-utils'
 
 const mockFileExists = vi.mocked(fileSystemUtils.fileExists)
 const mockReadFile = vi.mocked(fs.promises.readFile)

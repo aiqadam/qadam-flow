@@ -142,6 +142,13 @@ before trusting its silence — an empty output is not the same as a passing che
   --filter=X` on a package with no `lint` script is a no-op that still reports success — this is how
   `packages/server/utils` went unlinted while appearing in `lint-core` (fixed in #148). Before
   trusting a filter, confirm the target package actually declares the script.
+- **Turbo `inputs` narrower than the files the script actually covers makes a check silently
+  cache-skip.** `lint`'s `inputs` listed `src/**` but not `test/**`, while the `api` lint script
+  covers `'src/**/*.ts' 'test/**/*.ts'` — so with remote caching on, a PR touching only
+  `packages/server/api/test/**` got a cache hit and linted nothing, repo-wide (fixed in #148).
+  A green check here means "the inputs turbo hashed did not change", not "the script ran".
+  Audit with `turbo run <task> --filter=<pkg> --dry=json` and compare the resolved input list
+  against the glob the script itself uses.
 - **A skipped required check never reports a conclusion.** Under the repo ruleset
   (`strict_required_status_checks_policy: true`), a required context that is skipped via
   `paths-ignore` or a job-level `if:` leaves the PR permanently unmergeable. A required job must
