@@ -4,18 +4,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mcpToolValidator } from '../../../../src/app/agents/mcp-tool-validator'
 
 vi.mock('@aiqadam/server-utils', () => ({
-    safeHttp: { retryingAxios: { post: vi.fn() } },
+    safeHttp: { axios: { request: vi.fn() } },
 }))
 
-type AxiosCall = { url: string, body: string, config: AxiosConfigLike }
-type AxiosConfigLike = { headers?: Record<string, string>, maxRedirects?: number, timeout?: number }
+type AxiosRequestConfigLike = {
+    url?: string
+    data?: string
+    headers?: Record<string, string>
+    maxRedirects?: number
+    maxContentLength?: number
+    maxBodyLength?: number
+    timeout?: number
+}
+type AxiosCall = { url: string, body: Record<string, unknown>, config: AxiosRequestConfigLike }
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 const SSE_HEADERS = { 'content-type': 'text/event-stream' }
 
 describe('mcpToolValidator.validateAgentMcpTool', () => {
     beforeEach(() => {
-        vi.mocked(safeHttp.retryingAxios.post).mockReset()
+        vi.mocked(safeHttp.axios.request).mockReset()
     })
 
     afterEach(() => {
@@ -47,7 +55,9 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
-        const methods = capturedCalls().map((c) => c.body.method)
+        const methods = capturedCalls()
+            .map((c) => c.body.method)
+            .filter((method): method is string => typeof method === 'string')
         expect(methods).toEqual([
             'initialize',
             'notifications/initialized',
@@ -68,7 +78,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 
     it('collapses any downstream failure to a single generic error', async () => {
-        vi.mocked(safeHttp.retryingAxios.post).mockRejectedValue(
+        vi.mocked(safeHttp.axios.request).mockRejectedValue(
             Object.assign(new Error('ENOTFOUND attacker.example'), { code: 'ENOTFOUND' }),
         )
 
@@ -80,7 +90,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 
     it('rejects malformed URLs without dialing', async () => {
-        const spy = vi.mocked(safeHttp.retryingAxios.post)
+        const spy = vi.mocked(safeHttp.axios.request)
 
         const result = await mcpToolValidator.validateAgentMcpTool(
             buildTool({ serverUrl: 'not a url' }),
@@ -92,7 +102,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 
     it('rejects non-http(s) URLs without dialing', async () => {
-        const spy = vi.mocked(safeHttp.retryingAxios.post)
+        const spy = vi.mocked(safeHttp.axios.request)
 
         const result = await mcpToolValidator.validateAgentMcpTool(
             buildTool({ serverUrl: 'file:///etc/passwd' }),
@@ -161,20 +171,23 @@ function buildTool(overrides: Partial<DefaultTool> = {}): DefaultTool {
 }
 
 function capturedCalls(): AxiosCall[] {
-    return vi.mocked(safeHttp.retryingAxios.post).mock.calls.map(([url, body, config]) => ({
-        url: String(url),
-        body: typeof body === 'string' ? JSON.parse(body) : body,
-        config: (config ?? {}) as AxiosConfigLike & { maxRedirects?: number, maxContentLength?: number, maxBodyLength?: number, timeout?: number },
-    }))
+    return vi.mocked(safeHttp.axios.request).mock.calls.map(([config]) => {
+        const requestConfig = config as AxiosRequestConfigLike
+        return {
+            url: String(requestConfig.url),
+            body: typeof requestConfig.data === 'string' ? JSON.parse(requestConfig.data) : {},
+            config: requestConfig,
+        }
+    })
 }
 
 function mockJsonRpcServer(
     { tools }: { tools: Array<{ name: string }> },
     { forceSse = false }: { forceSse?: boolean } = {},
 ): void {
-    vi.mocked(safeHttp.retryingAxios.post).mockImplementation(async (...args: unknown[]) => {
-        const rawBody = args[1]
-        const body = typeof rawBody === 'string' ? JSON.parse(rawBody) : {}
+    vi.mocked(safeHttp.axios.request).mockImplementation(async (...args: unknown[]) => {
+        const config = args[0] as AxiosRequestConfigLike
+        const body = typeof config.data === 'string' ? JSON.parse(config.data) : {}
         if (body.method === 'initialize') {
             const payload = {
                 jsonrpc: '2.0',
@@ -185,22 +198,30 @@ function mockJsonRpcServer(
                     capabilities: { tools: {} },
                 },
             }
-            return makeResponse(payload, forceSse)
+            return makeAxiosResponse(payload, forceSse)
+        }
+        if (body.method === 'notifications/initialized') {
+            return { status: 202, data: Buffer.alloc(0), headers: {} }
         }
         if (body.method === 'tools/list') {
-            const payload = { jsonrpc: '2.0', id: body.id, result: { tools } }
-            return makeResponse(payload, forceSse)
+            const payload = {
+                jsonrpc: '2.0',
+                id: body.id,
+                result: { tools: tools.map((tool) => ({ ...tool, inputSchema: { type: 'object', properties: {} } })) },
+            }
+            return makeAxiosResponse(payload, forceSse)
         }
-        return makeResponse({}, false)
+        return makeAxiosResponse({}, false)
     })
 }
 
-function makeResponse(payload: unknown, sse: boolean): { data: string, headers: Record<string, string> } {
+function makeAxiosResponse(payload: unknown, sse: boolean): { status: number, data: Buffer, headers: Record<string, string> } {
     if (sse) {
         return {
-            data: `event: message\ndata: ${JSON.stringify(payload)}\n\n`,
+            status: 200,
+            data: Buffer.from(`event: message\ndata: ${JSON.stringify(payload)}\n\n`),
             headers: SSE_HEADERS,
         }
     }
-    return { data: JSON.stringify(payload), headers: JSON_HEADERS }
+    return { status: 200, data: Buffer.from(JSON.stringify(payload)), headers: JSON_HEADERS }
 }

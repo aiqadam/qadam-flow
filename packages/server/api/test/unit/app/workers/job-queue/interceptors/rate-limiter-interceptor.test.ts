@@ -1,7 +1,6 @@
-import { ExecutionType, JOB_PRIORITY, RATE_LIMIT_PRIORITY, RunEnvironment, WorkerJobType } from '@aiqadam/shared'
+import { ExecutionType, JOB_PRIORITY, RATE_LIMIT_PRIORITY, RunEnvironment, StreamStepProgress, WorkerJobType } from '@aiqadam/shared'
 import { Job } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
-import { Redis } from 'ioredis'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getConcurrencyPoolLimitKey, getConcurrencyPoolSetKey, getProjectConcurrencyPoolKey } from '../../../../../../src/app/database/redis/keys'
 import { distributedStore, redisConnections } from '../../../../../../src/app/database/redis-connections'
@@ -9,6 +8,112 @@ import { system } from '../../../../../../src/app/helper/system/system'
 import { AppSystemProp } from '../../../../../../src/app/helper/system/system-props'
 import { rateLimiterInterceptor } from '../../../../../../src/app/workers/job-queue/interceptors/rate-limiter-interceptor'
 import { InterceptorVerdict } from '../../../../../../src/app/workers/job-queue/job-interceptor'
+
+/**
+ * The rate limiter dispatches two hand-written Lua scripts via `redis.eval`
+ * (atomic acquire / release against a ZSET). There is no live Redis in the
+ * `verify` CI job, so this in-memory fake reproduces just the ZSET + string
+ * subset those scripts and `distributedStore` need, and recognises the two
+ * scripts by a distinguishing command they each contain.
+ */
+class FakeRedis {
+    private readonly zsets = new Map<string, Map<string, number>>()
+    private readonly strings = new Map<string, string>()
+
+    private zsetFor(key: string): Map<string, number> {
+        let zset = this.zsets.get(key)
+        if (!zset) {
+            zset = new Map()
+            this.zsets.set(key, zset)
+        }
+        return zset
+    }
+
+    async zrange(key: string, _start: number, _stop: number): Promise<string[]> {
+        return [...this.zsetFor(key).entries()]
+            .sort((a, b) => a[1] - b[1])
+            .map(([member]) => member)
+    }
+
+    async zadd(key: string, score: number, member: string): Promise<number> {
+        this.zsetFor(key).set(member, score)
+        return 1
+    }
+
+    async del(...keys: string[]): Promise<number> {
+        let count = 0
+        for (const key of keys) {
+            if (this.zsets.delete(key)) count += 1
+            if (this.strings.delete(key)) count += 1
+        }
+        return count
+    }
+
+    async set(key: string, value: string): Promise<'OK'> {
+        this.strings.set(key, value)
+        return 'OK'
+    }
+
+    async setex(key: string, _ttlInSeconds: number, value: string): Promise<'OK'> {
+        return this.set(key, value)
+    }
+
+    async get(key: string): Promise<string | null> {
+        return this.strings.get(key) ?? null
+    }
+
+    scanStream({ match }: { match: string, count?: number }): AsyncIterable<string[]> {
+        const pattern = new RegExp(`^${match.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)
+        const matching = [...this.zsets.keys(), ...this.strings.keys()].filter((key) => pattern.test(key))
+        return {
+            [Symbol.asyncIterator]: () => {
+                let yielded = false
+                return {
+                    next: async () => {
+                        if (yielded) return { value: undefined, done: true }
+                        yielded = true
+                        return { value: matching, done: false }
+                    },
+                }
+            },
+        }
+    }
+
+    async eval(script: string, _numKeys: number, ...args: string[]): Promise<number> {
+        const [setKey] = args
+        if (script.includes('ZSCORE')) {
+            const [, currentTimeStr, timeoutMsStr, maxJobsStr, member] = args
+            const currentTime = Number(currentTimeStr)
+            const timeoutMs = Number(timeoutMsStr)
+            const maxJobs = Number(maxJobsStr)
+            const zset = this.zsetFor(setKey)
+            for (const [existingMember, score] of zset) {
+                if (score <= currentTime - timeoutMs) zset.delete(existingMember)
+            }
+            if (zset.has(member)) return 0
+            if (zset.size >= maxJobs) return 1
+            zset.set(member, currentTime)
+            return 0
+        }
+        const [, member] = args
+        this.zsetFor(setKey).delete(member)
+        return 1
+    }
+}
+
+const fakeRedis = new FakeRedis()
+
+vi.mock('../../../../../../src/app/database/redis-connections', () => ({
+    redisConnections: { useExisting: () => Promise.resolve(fakeRedis) },
+    distributedStore: {
+        put: (key: string, value: unknown) => fakeRedis.set(key, JSON.stringify(value)),
+        get: async (key: string) => {
+            const raw = await fakeRedis.get(key)
+            return raw === null ? null : JSON.parse(raw)
+        },
+    },
+}))
+
 
 const mockLog: FastifyBaseLogger = {
     debug: vi.fn(),
@@ -59,7 +164,7 @@ function disableRateLimiter() {
     })
 }
 
-async function deleteKeysByPattern(redis: Redis, pattern: string): Promise<void> {
+async function deleteKeysByPattern(redis: FakeRedis, pattern: string): Promise<void> {
     const stream = redis.scanStream({ match: pattern, count: 100 })
     for await (const keys of stream) {
         if (keys.length > 0) await redis.del(...keys)

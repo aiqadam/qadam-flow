@@ -41,6 +41,12 @@ function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
             timeout: VALIDATE_TIMEOUT_MS,
             maxContentLength: MAX_RESPONSE_BYTES,
             maxBodyLength: MAX_RESPONSE_BYTES,
+            // The URL is user-supplied, so a redirect would move the request to a
+            // host neither the user nor an admin reviewed, and `maxContentLength`
+            // bounds each hop's body rather than the chain. `validateStatus`
+            // accepts everything, so the 3xx surfaces to the MCP client as a
+            // failed validation instead of being followed.
+            maxRedirects: 0,
         })
         return new Response(Buffer.from(response.data), {
             status: response.status,
