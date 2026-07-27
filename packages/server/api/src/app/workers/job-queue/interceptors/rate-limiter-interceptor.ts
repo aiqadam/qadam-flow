@@ -1,13 +1,21 @@
 import { apDayjsDuration } from '@aiqadam/server-utils'
-import { ExecuteFlowJobData, JOB_PRIORITY, JobData, PlatformId, RATE_LIMIT_PRIORITY, RunEnvironment, WorkerJobType } from '@aiqadam/shared'
+import { ExecuteFlowJobData, isNil, JOB_PRIORITY, JobData, PlatformId, ProjectId, RATE_LIMIT_PRIORITY, RunEnvironment, tryCatch, WorkerJobType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { getConcurrencyPoolSetKey } from '../../../database/redis/keys'
-import { redisConnections } from '../../../database/redis-connections'
+import { getConcurrencyPoolSetKey, getProjectMaxConcurrentJobsKey } from '../../../database/redis/keys'
+import { distributedStore, redisConnections } from '../../../database/redis-connections'
 import { system } from '../../../helper/system/system'
 import { AppSystemProp } from '../../../helper/system/system-props'
+import { projectService } from '../../../project/project-service'
 import { InterceptorResult, InterceptorVerdict, JobInterceptor } from '../job-interceptor'
 
 const RATE_LIMIT_WORKER_JOB_TYPES = [WorkerJobType.EXECUTE_FLOW]
+
+// preDispatch runs on every job, so a per-job Postgres read for the project's override is off
+// the table. The value rarely changes, so a short-TTL redis cache (same distributedStore + TTL
+// pattern as flow-execution-cache.ts) bounds staleness to this window as a backstop; the actual
+// invalidation path is project-service.ts's update deleting the cache key on write, so an
+// operator lowering a cap for incident response does not have to wait out the TTL.
+const PROJECT_MAX_CONCURRENT_JOBS_CACHE_TTL_SECONDS = 30
 
 function shouldContinue(jobData: JobData): jobData is ExecuteFlowJobData {
     if (!system.getBoolean(AppSystemProp.PROJECT_RATE_LIMITER_ENABLED)) {
@@ -28,15 +36,59 @@ async function getMaxConcurrentJobsForPlatformPlan(_params: { platformId: Platfo
     return system.getNumberOrThrow(AppSystemProp.DEFAULT_CONCURRENT_JOBS_LIMIT)
 }
 
-async function getMaxConcurrentJobs({ platformId }: { platformId: PlatformId }): Promise<number> {
+// `project.maxConcurrentJobs` is the per-project override a *privileged* caller sets via
+// POST /v1/projects (create) or POST /v1/projects/:id (update) — project-service.ts rejects a
+// non-nil value from anyone else. `null`/`undefined` means "no override" — fall back to the
+// platform-wide default, same as before this project-level cap existed. A non-positive value is
+// also treated as "no override": the create/update schemas already reject it, but the runtime
+// check is kept as a second line of defence (schema and runtime should not both be load-bearing
+// for the same invariant) — a non-positive `maxJobs` makes the Lua's `currentSize >= maxJobs`
+// true unconditionally, permanently blocking every dispatch for that project.
+async function getProjectMaxConcurrentJobsOverride({ projectId, log }: { projectId: ProjectId, log: FastifyBaseLogger }): Promise<number | null> {
+    const { data, error } = await tryCatch(async () => {
+        const cacheKey = getProjectMaxConcurrentJobsKey(projectId)
+        const cached = await distributedStore.get<{ maxConcurrentJobs: number | null }>(cacheKey)
+        if (!isNil(cached)) {
+            return cached.maxConcurrentJobs
+        }
+
+        const project = await projectService(log).getOne(projectId)
+        const maxConcurrentJobs = project?.maxConcurrentJobs ?? null
+        await distributedStore.put(cacheKey, { maxConcurrentJobs }, PROJECT_MAX_CONCURRENT_JOBS_CACHE_TTL_SECONDS)
+        return maxConcurrentJobs
+    })
+
+    if (!isNil(error)) {
+        // This runs inside tryDequeue, after the job has already been moved to `active` — a
+        // throw here would strand it there with no way back to the queue until BullMQ's stalled
+        // scan reclaims it (and a second stall would fail the run outright). Falling back to the
+        // platform default on a Postgres/Redis blip is exactly the pre-#201 behaviour, and briefly
+        // under-enforcing a cap is strictly better than failing someone's run.
+        log.warn({ projectId, err: error }, '[rateLimiterInterceptor] Failed to read project maxConcurrentJobs override, falling back to platform default')
+        return null
+    }
+
+    if (isNil(data) || data <= 0) {
+        return null
+    }
+    return data
+}
+
+async function getMaxConcurrentJobs({ platformId, projectId, log }: { platformId: PlatformId, projectId: ProjectId, log: FastifyBaseLogger }): Promise<number> {
+    const projectOverride = await getProjectMaxConcurrentJobsOverride({ projectId, log })
+    if (!isNil(projectOverride)) {
+        return projectOverride
+    }
     return getMaxConcurrentJobsForPlatformPlan({ platformId })
 }
 
-async function tryAcquireSlot({ jobId, jobData, log: _log }: { jobId: string, jobData: ExecuteFlowJobData, log: FastifyBaseLogger }): Promise<boolean> {
+async function tryAcquireSlot({ jobId, jobData, log }: { jobId: string, jobData: ExecuteFlowJobData, log: FastifyBaseLogger }): Promise<boolean> {
     const flowTimeoutInMilliseconds = apDayjsDuration(system.getNumberOrThrow(AppSystemProp.FLOW_TIMEOUT_SECONDS), 'seconds').add(1, 'minute').asMilliseconds()
     const effectivePoolId = jobData.projectId
     const maxConcurrentJobs = await getMaxConcurrentJobs({
         platformId: jobData.platformId,
+        projectId: jobData.projectId,
+        log,
     })
     const setKey = getConcurrencyPoolSetKey(effectivePoolId)
     const currentTime = Date.now()

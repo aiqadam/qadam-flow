@@ -15,7 +15,10 @@ export const UpdateProjectPlatformRequest = z.object({
         piecesFilterType: z.nativeEnum(QadamsFilterType).optional(),
     }).optional(),
     globalConnectionExternalIds: z.array(z.string()).optional(),
-    maxConcurrentJobs: Nullable(z.number().int().positive()).optional(),
+    // The column is a Postgres `integer` — anything past 2147483647 fails the write with a raw
+    // 22003 (numeric_value_out_of_range), which would otherwise surface as an opaque 500 instead
+    // of a clean 400 at the schema boundary.
+    maxConcurrentJobs: Nullable(z.number().int().positive().max(2147483647)).optional(),
 })
 
 export type UpdateProjectPlatformRequest = z.infer<typeof UpdateProjectPlatformRequest>
@@ -24,7 +27,8 @@ export const CreatePlatformProjectRequest = z.object({
     displayName: z.string().regex(new RegExp(SAFE_STRING_PATTERN)),
     externalId: Nullable(z.string()),
     metadata: Nullable(Metadata),
-    maxConcurrentJobs: Nullable(z.number()),
+    // Kept in sync with UpdateProjectPlatformRequest's bound — see its comment.
+    maxConcurrentJobs: Nullable(z.number().int().positive().max(2147483647)),
     globalConnectionExternalIds: z.array(z.string()).optional(),
     alertReceiverEmail: z.email().nullable().optional(),
 })

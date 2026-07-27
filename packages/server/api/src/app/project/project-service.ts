@@ -16,6 +16,7 @@ import {
     rolePermissions,
     RoleType,
     spreadIfDefined,
+    tryCatch,
     UserId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -23,7 +24,8 @@ import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { transaction } from '../core/db/transaction'
-import { distributedLock } from '../database/redis-connections'
+import { getProjectMaxConcurrentJobsKey } from '../database/redis/keys'
+import { distributedLock, distributedStore } from '../database/redis-connections'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { userService } from '../user/user-service'
@@ -39,7 +41,8 @@ export { projectRepo }
 
 export const projectService = (log: FastifyBaseLogger) => ({
     async create(params: CreateParams): Promise<Project> {
-        const { callPostCreateHooks = true, entityManager, postCreateContext, ...rest } = params
+        const { callPostCreateHooks = true, entityManager, postCreateContext, isPrivileged = false, ...rest } = params
+        assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs: rest.maxConcurrentJobs, currentMaxConcurrentJobs: null, isPrivileged })
         const icon = this.createProjectIcon()
         const newProject: NewProject = {
             id: apId(),
@@ -107,6 +110,8 @@ export const projectService = (log: FastifyBaseLogger) => ({
             })
         }
 
+        assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs: request.maxConcurrentJobs, currentMaxConcurrentJobs: project.maxConcurrentJobs, isPrivileged })
+
         const externalId = request.externalId?.trim() !== '' ? request.externalId : undefined
         await assertExternalIdIsUnique(externalId, projectId)
 
@@ -115,7 +120,13 @@ export const projectService = (log: FastifyBaseLogger) => ({
             ...spreadIfDefined('releasesEnabled', request.releasesEnabled),
             ...spreadIfDefined('metadata', request.metadata),
             ...(request.poolId !== undefined ? { poolId: request.poolId } : {}),
-            ...(request.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: request.maxConcurrentJobs } : {}),
+            // Only a privileged caller ever *writes* this column. A non-privileged caller
+            // reaches here only by echoing the value it read (the gate above rejects anything
+            // else), so writing it would be a no-op — except that the row can change between
+            // the read at the top of this method and this write, in which case the no-op
+            // becomes a revert of an operator's concurrent change. Not writing it closes that
+            // window without changing anything for a legitimate caller.
+            ...(request.maxConcurrentJobs !== undefined && isPrivileged ? { maxConcurrentJobs: request.maxConcurrentJobs } : {}),
         }
 
         const teamUpdate = request.type === ProjectType.TEAM ? {
@@ -124,6 +135,19 @@ export const projectService = (log: FastifyBaseLogger) => ({
         } : {}
 
         await projectRepo(entityManager).update({ id: projectId, platformId }, { ...baseUpdate, ...teamUpdate })
+        // maxConcurrentJobs is read on the rate limiter's hot path through a short-TTL redis
+        // cache (rate-limiter-interceptor.ts), not straight from Postgres — an operator lowering
+        // a cap for incident response should not have to wait out that TTL, so invalidate the
+        // cache entry at the single write site rather than relying on it to expire. This runs
+        // after the row has already committed, so a Redis blip here must not fail the request —
+        // the caller's update landed either way, and the 30s TTL is the backstop that bounds how
+        // stale the rate limiter's view can get if the delete is lost.
+        if (request.maxConcurrentJobs !== undefined && isPrivileged) {
+            const { error } = await tryCatch(() => distributedStore.delete(getProjectMaxConcurrentJobsKey(projectId)))
+            if (!isNil(error)) {
+                log.warn({ projectId, err: error }, '[projectService.update] Failed to invalidate maxConcurrentJobs cache entry')
+            }
+        }
         return this.getOneOrThrow(projectId)
     },
 
@@ -488,6 +512,49 @@ async function ensureDefaultProjectRoles(platformId: string, entityManager?: Ent
     }
 }
 
+// `maxConcurrentJobs` is enforced by the rate limiter (rate-limiter-interceptor.ts, #201) — it is
+// no longer a harmless, dead column. `POST /v1/projects` is open to every authenticated USER
+// (publicPlatform([PrincipalType.USER]), adminOnly: false), and on update the only gate is
+// callerCanAdministerProject, which is true for the project owner or any member with the project
+// ADMIN role — neither is a platform admin/operator. Without this check, any user could set their
+// own project's cap to an arbitrarily high value and starve every other project sharing the same
+// workers, since the pool is the deployment's only per-project fairness guard.
+//
+// The gate has to trigger on a *change*, not on the field merely being present, in both
+// directions:
+// - Gating on "non-nil" alone still let a non-privileged caller null out an operator-set cap
+//   (isNil(null) is true), which is the same escalation the other way — clearing someone else's
+//   throttle.
+// - Gating on presence at all 403s unrelated saves: the web client always sends
+//   `maxConcurrentJobs` on every project update (project-collection.ts), seeded from the current
+//   value by a form whose input only renders for platform admins — so a MEMBER-role project
+//   owner renaming their own project, toggling releases, or saving the pieces filter would get a
+//   403 on any project that already has a cap, entirely unrelated to what they were trying to do.
+// Comparing against the already-loaded row lets an unchanged echo through (fixing the second
+// problem) while still rejecting a non-privileged caller raising *or* clearing the value (fixing
+// the first) — only an actual change requires privilege. On create there is no existing row, so
+// "unset" (`null`) is the only value that doesn't require privilege.
+// `currentMaxConcurrentJobs` is `number | null | undefined` because `Nullable` in
+// `packages/shared` is `.nullable().optional()`, so the Project model's field is optional as
+// well as nullable. The two spellings of "no override" are normalised with `?? null` before the
+// comparison — but only *after* the `undefined` check on the request, where `undefined`
+// means "the field was absent from the body" rather than "no override", and must not compare
+// equal to a stored `null`.
+function assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs, currentMaxConcurrentJobs, isPrivileged }: { requestedMaxConcurrentJobs: number | null | undefined, currentMaxConcurrentJobs: number | null | undefined, isPrivileged: boolean }): void {
+    if (isPrivileged || requestedMaxConcurrentJobs === undefined) {
+        return
+    }
+    if ((requestedMaxConcurrentJobs ?? null) === (currentMaxConcurrentJobs ?? null)) {
+        return
+    }
+    throw new QadamFlowError({
+        code: ErrorCode.AUTHORIZATION,
+        params: {
+            message: 'Only a platform admin or operator can change maxConcurrentJobs',
+        },
+    })
+}
+
 async function assertExternalIdIsUnique(externalId: string | undefined | null, projectId: ProjectId): Promise<void> {
     if (!isNil(externalId)) {
         const externalIdAlreadyExists = await projectRepo().existsBy({
@@ -553,6 +620,7 @@ type CreateParams = {
     externalId?: string
     metadata?: Metadata
     maxConcurrentJobs?: number
+    isPrivileged?: boolean
     callPostCreateHooks?: boolean
     postCreateContext?: ProjectPostCreateContext
     entityManager?: EntityManager

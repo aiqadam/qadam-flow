@@ -18,6 +18,7 @@ export const projectController: FastifyPluginAsyncZod = async (fastify) => {
             externalId: request.body.externalId ?? undefined,
             metadata: request.body.metadata ?? undefined,
             maxConcurrentJobs: request.body.maxConcurrentJobs ?? undefined,
+            isPrivileged: userService(request.log).isUserPrivileged(user),
         })
         return reply.status(StatusCodes.CREATED).send(toProjectWithLimits(project))
     })

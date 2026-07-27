@@ -89,8 +89,56 @@ class FakeRedis {
 
 const fakeRedis = new FakeRedis()
 
+/**
+ * The project-level override lookup (#201) reads through `distributedStore`
+ * (redis-backed cache) and `projectService.getOne` (Postgres) — neither exists
+ * in this unit-test process. This fake store is a plain in-memory map so the
+ * existing "no project override" behaviour keeps working without either
+ * dependency; it is intentionally simpler than `FakeRedis` above because only
+ * `get`/`put` are exercised here. The generic `get<T>` cast mirrors the one
+ * unavoidable cast in the real implementation it stands in for
+ * (`distributed-store-factory.ts`'s `JSON.parse(value) as T`): a generic
+ * store cannot verify the shape of what it hands back at the type level.
+ * Declared inside `vi.hoisted` because `vi.mock` factories are hoisted above
+ * every other top-level statement in the file, so a plain `const` here would
+ * be a `ReferenceError` at mock-evaluation time.
+ */
+const { fakeDistributedStore, resetFakeDistributedStore } = vi.hoisted(() => {
+    class HoistedFakeDistributedStore {
+        private readonly values = new Map<string, unknown>()
+
+        async get<T>(key: string): Promise<T | null> {
+            if (!this.values.has(key)) {
+                return null
+            }
+            return this.values.get(key) as T
+        }
+
+        async put(key: string, value: unknown): Promise<void> {
+            this.values.set(key, value)
+        }
+
+        reset(): void {
+            this.values.clear()
+        }
+    }
+    const store = new HoistedFakeDistributedStore()
+    return { fakeDistributedStore: store, resetFakeDistributedStore: () => store.reset() }
+})
+
+const { getProjectOneMock } = vi.hoisted(() => ({ getProjectOneMock: vi.fn() }))
+
 vi.mock('../../../../../../src/app/database/redis-connections', () => ({
     redisConnections: { useExisting: () => Promise.resolve(fakeRedis) },
+    distributedStore: fakeDistributedStore,
+}))
+
+// projectService is a factory (`projectService(log)`), so the mock has to preserve that shape —
+// only `getOne` is stubbed since it's the only method the interceptor calls.
+vi.mock('../../../../../../src/app/project/project-service', () => ({
+    projectService: () => ({
+        getOne: getProjectOneMock,
+    }),
 }))
 
 
@@ -161,6 +209,11 @@ describe('rateLimiterInterceptor', () => {
         })
         const redis = await redisConnections.useExisting()
         await deleteKeysByPattern(redis, 'active_jobs_set:*')
+        // The fake store's in-memory map otherwise persists across every test in the file —
+        // harmless only while every test resolves the same "no project override" (null) case;
+        // reset it so a future test with an override cannot leak into the next one.
+        resetFakeDistributedStore()
+        getProjectOneMock.mockReset().mockResolvedValue(null)
     })
 
     describe('skip guards', () => {
