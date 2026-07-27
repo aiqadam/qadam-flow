@@ -16,6 +16,7 @@ import {
     rolePermissions,
     RoleType,
     spreadIfDefined,
+    tryCatch,
     UserId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -41,7 +42,7 @@ export { projectRepo }
 export const projectService = (log: FastifyBaseLogger) => ({
     async create(params: CreateParams): Promise<Project> {
         const { callPostCreateHooks = true, entityManager, postCreateContext, isPrivileged = false, ...rest } = params
-        assertCallerMayWriteMaxConcurrentJobs({ maxConcurrentJobs: rest.maxConcurrentJobs, isPrivileged })
+        assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs: rest.maxConcurrentJobs, currentMaxConcurrentJobs: null, isPrivileged })
         const icon = this.createProjectIcon()
         const newProject: NewProject = {
             id: apId(),
@@ -109,7 +110,7 @@ export const projectService = (log: FastifyBaseLogger) => ({
             })
         }
 
-        assertCallerMayWriteMaxConcurrentJobs({ maxConcurrentJobs: request.maxConcurrentJobs, isPrivileged })
+        assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs: request.maxConcurrentJobs, currentMaxConcurrentJobs: project.maxConcurrentJobs, isPrivileged })
 
         const externalId = request.externalId?.trim() !== '' ? request.externalId : undefined
         await assertExternalIdIsUnique(externalId, projectId)
@@ -131,9 +132,15 @@ export const projectService = (log: FastifyBaseLogger) => ({
         // maxConcurrentJobs is read on the rate limiter's hot path through a short-TTL redis
         // cache (rate-limiter-interceptor.ts), not straight from Postgres — an operator lowering
         // a cap for incident response should not have to wait out that TTL, so invalidate the
-        // cache entry at the single write site rather than relying on it to expire.
+        // cache entry at the single write site rather than relying on it to expire. This runs
+        // after the row has already committed, so a Redis blip here must not fail the request —
+        // the caller's update landed either way, and the 30s TTL is the backstop that bounds how
+        // stale the rate limiter's view can get if the delete is lost.
         if (request.maxConcurrentJobs !== undefined) {
-            await distributedStore.delete(getProjectMaxConcurrentJobsKey(projectId))
+            const { error } = await tryCatch(() => distributedStore.delete(getProjectMaxConcurrentJobsKey(projectId)))
+            if (!isNil(error)) {
+                log.warn({ projectId, err: error }, '[projectService.update] Failed to invalidate maxConcurrentJobs cache entry')
+            }
         }
         return this.getOneOrThrow(projectId)
     },
@@ -505,18 +512,30 @@ async function ensureDefaultProjectRoles(platformId: string, entityManager?: Ent
 // callerCanAdministerProject, which is true for the project owner or any member with the project
 // ADMIN role — neither is a platform admin/operator. Without this check, any user could set their
 // own project's cap to an arbitrarily high value and starve every other project sharing the same
-// workers, since the pool is the deployment's only per-project fairness guard. A non-nil value
-// from a non-privileged caller is rejected outright rather than silently dropped: a silent no-op
-// here would look like success to the caller while never taking effect, the exact defect class
-// #201 itself was filed over.
-function assertCallerMayWriteMaxConcurrentJobs({ maxConcurrentJobs, isPrivileged }: { maxConcurrentJobs: number | null | undefined, isPrivileged: boolean }): void {
-    if (isNil(maxConcurrentJobs) || isPrivileged) {
+// workers, since the pool is the deployment's only per-project fairness guard.
+//
+// The gate has to trigger on a *change*, not on the field merely being present, in both
+// directions:
+// - Gating on "non-nil" alone still let a non-privileged caller null out an operator-set cap
+//   (isNil(null) is true), which is the same escalation the other way — clearing someone else's
+//   throttle.
+// - Gating on presence at all 403s unrelated saves: the web client always sends
+//   `maxConcurrentJobs` on every project update (project-collection.ts), seeded from the current
+//   value by a form whose input only renders for platform admins — so a MEMBER-role project
+//   owner renaming their own project, toggling releases, or saving the pieces filter would get a
+//   403 on any project that already has a cap, entirely unrelated to what they were trying to do.
+// Comparing against the already-loaded row lets an unchanged echo through (fixing the second
+// problem) while still rejecting a non-privileged caller raising *or* clearing the value (fixing
+// the first) — only an actual change requires privilege. On create there is no existing row, so
+// "unset" (`null`) is the only value that doesn't require privilege.
+function assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs, currentMaxConcurrentJobs, isPrivileged }: { requestedMaxConcurrentJobs: number | null | undefined, currentMaxConcurrentJobs: number | null, isPrivileged: boolean }): void {
+    if (isPrivileged || requestedMaxConcurrentJobs === undefined || requestedMaxConcurrentJobs === currentMaxConcurrentJobs) {
         return
     }
     throw new QadamFlowError({
         code: ErrorCode.AUTHORIZATION,
         params: {
-            message: 'Only a platform admin or operator can set maxConcurrentJobs',
+            message: 'Only a platform admin or operator can change maxConcurrentJobs',
         },
     })
 }

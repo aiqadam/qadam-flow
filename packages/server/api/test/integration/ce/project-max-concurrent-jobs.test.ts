@@ -1,10 +1,11 @@
-import { PlatformRole, PrincipalType, ProjectWithLimits } from '@aiqadam/shared'
+import { DefaultProjectRole, PlatformRole, PrincipalType, ProjectWithLimits } from '@aiqadam/shared'
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { distributedStore } from '../../../src/app/database/redis-connections'
 import { generateMockToken } from '../../helpers/auth'
 import { mockBasicUser } from '../../helpers/mocks'
-import { createTestContext } from '../../helpers/test-context'
+import { createMemberContext, createTestContext } from '../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
@@ -106,6 +107,19 @@ describe('maxConcurrentJobs authorization and validation (CE)', () => {
             })
             expect(negative.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
+
+        it('rejects a maxConcurrentJobs above the Postgres integer column bound at the schema level', async () => {
+            const ctx = await createTestContext(app!)
+
+            const response = await ctx.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: 2147483648,
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
     })
 
     describe('POST /v1/projects/:id (update)', () => {
@@ -172,6 +186,97 @@ describe('maxConcurrentJobs authorization and validation (CE)', () => {
             const response = await ctx.post(`/v1/projects/${created.id}`, { maxConcurrentJobs: 0 })
 
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('rejects a maxConcurrentJobs above the Postgres integer column bound at the schema level', async () => {
+            const ctx = await createTestContext(app!)
+            const createResponse = await ctx.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: null,
+            })
+            const created = createResponse.json<ProjectWithLimits>()
+
+            const response = await ctx.post(`/v1/projects/${created.id}`, { maxConcurrentJobs: 2147483648 })
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+    })
+
+    // A prior revision gated on "is the field non-nil" rather than "does the value change",
+    // which had two failure modes fixed here: a non-privileged caller could still *clear* an
+    // operator-set cap (isNil(null) is true, same escalation the other way), and — the one that
+    // would have hit real users — the web client always sends `maxConcurrentJobs` on every
+    // project update (project-collection.ts's onUpdate includes it unconditionally, seeded from
+    // the current value by a form whose input only renders for platform admins), so a
+    // MEMBER-role project admin saving an unrelated field (display name, releases toggle, pieces
+    // filter) on a project that already had a cap would get a 403 with no way to save anything.
+    describe('change-based gate (only an actual change to maxConcurrentJobs requires privilege)', () => {
+        it('rejects a non-privileged caller nulling out an operator-set cap', async () => {
+            const ctx = await createTestContext(app!)
+            const setCapResponse = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: 2 })
+            expect(setCapResponse.statusCode).toBe(StatusCodes.OK)
+
+            // Project-ADMIN-role member, not platform-privileged — administers the project
+            // (callerCanAdministerProject) but isPrivileged is still false.
+            const memberCtx = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+
+            const clearResponse = await memberCtx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: null })
+
+            expect(clearResponse.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(clearResponse.json<{ code: string }>().code).toBe('AUTHORIZATION')
+        })
+
+        it('allows a non-privileged caller to echo the current maxConcurrentJobs value while updating an unrelated field', async () => {
+            const ctx = await createTestContext(app!)
+            const setCapResponse = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: 2 })
+            expect(setCapResponse.statusCode).toBe(StatusCodes.OK)
+
+            const memberCtx = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+            const newDisplayName = faker.animal.bird()
+
+            const response = await memberCtx.post(`/v1/projects/${ctx.project.id}`, {
+                displayName: newDisplayName,
+                maxConcurrentJobs: 2,
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            const body = response.json<ProjectWithLimits>()
+            expect(body.displayName).toBe(newDisplayName)
+            expect(body.maxConcurrentJobs).toBe(2)
+        })
+
+        it('allows a privileged caller to clear an existing cap to null', async () => {
+            const ctx = await createTestContext(app!)
+            const setCapResponse = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: 2 })
+            expect(setCapResponse.statusCode).toBe(StatusCodes.OK)
+
+            const clearResponse = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: null })
+
+            expect(clearResponse.statusCode).toBe(StatusCodes.OK)
+            expect(clearResponse.json<ProjectWithLimits>().maxConcurrentJobs).toBeNull()
+        })
+    })
+
+    // The cache-invalidation delete (project-service.ts's update) runs after the row has already
+    // committed in Postgres — a raw ioredis error there must not turn a landed update into a
+    // 500, since a client that then rolls back its optimistic UI to the pre-update value would
+    // be rolling back to a value the server no longer has.
+    describe('cache invalidation resilience', () => {
+        it('does not fail the update when invalidating the maxConcurrentJobs cache entry throws', async () => {
+            const ctx = await createTestContext(app!)
+            const deleteSpy = vi.spyOn(distributedStore, 'delete').mockRejectedValueOnce(new Error('simulated redis blip'))
+
+            try {
+                const response = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: 5 })
+
+                expect(response.statusCode).toBe(StatusCodes.OK)
+                expect(response.json<ProjectWithLimits>().maxConcurrentJobs).toBe(5)
+            }
+            finally {
+                deleteSpy.mockRestore()
+            }
         })
     })
 })
