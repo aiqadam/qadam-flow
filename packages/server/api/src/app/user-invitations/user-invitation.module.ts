@@ -99,6 +99,12 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
             assertNotNullOrUndefined(invitation.projectId, 'projectId')
             await assertPrincipalHasPermissionToProject(request, request.principal, invitation.projectId)
         }
+        else {
+            // Revoking a platform invitation is closer to issuing one than to
+            // reading the list, so it is gated the same way create is: platform
+            // ADMIN only. SERVICE (API key) is platform-scoped admin.
+            await assertPrincipalIsPlatformAdmin(request, request.principal)
+        }
         await userInvitationsService(request.log).delete({
             id: request.params.id,
             platformId: request.principal.platform.id,
@@ -140,9 +146,10 @@ async function assertPrincipalCanListPlatformInvitations(request: FastifyRequest
     }
 }
 
-// Creating a platform invitation mints a platform role on acceptance, so it is
-// gated to platform ADMIN — matching POST /v1/users/:id (platformAdminOnly),
-// which rejects OPERATOR. SERVICE (API key) is platform-scoped admin.
+// Minting a platform invitation (create) or revoking one (delete) both grant
+// or withdraw a platform role, so both are gated to platform ADMIN — matching
+// POST /v1/users/:id (platformAdminOnly), which rejects OPERATOR. SERVICE
+// (API key) is platform-scoped admin.
 async function assertPrincipalIsPlatformAdmin(request: FastifyRequest, principal: Principal): Promise<void> {
     if (principal.type !== PrincipalType.USER) {
         return
@@ -151,7 +158,7 @@ async function assertPrincipalIsPlatformAdmin(request: FastifyRequest, principal
     if (user.platformRole !== PlatformRole.ADMIN) {
         throw new QadamFlowError({
             code: ErrorCode.AUTHORIZATION,
-            params: { userId: user.id, message: 'user is not authorized to create a platform-scope invitation' },
+            params: { userId: user.id, message: 'user is not authorized to manage platform-scope invitations' },
         })
     }
 }
