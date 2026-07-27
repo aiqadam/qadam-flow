@@ -197,8 +197,17 @@ const systemPropValidators: {
 
 
 
-const validateSystemPropTypes = () => {
-    const systemProperties: SystemProp[] = [...Object.values(AppSystemProp), ...Object.values(AppSystemProp)]
+// Worker-only props (e.g. AP_WORKER_TOKEN, AP_WORKER_CONCURRENCY, defined as
+// WorkerSystemProp in packages/server/worker/src/lib/config/configs.ts) are
+// intentionally out of scope here: the worker is a separate deployable with
+// its own `system.get`, its own process, and no dependency on this package.
+// WorkerSystemProp members also hold full `AP_`-prefixed env names (e.g.
+// `AP_WORKER_TOKEN`) whereas AppSystemProp members hold bare names (e.g.
+// `JWT_SECRET`) that this file's `system.get` re-prefixes with `AP_` itself
+// — the two are not interchangeable without a name-normalisation step, and
+// the worker package has no startup validator of its own to receive one.
+export const validateSystemPropTypes = () => {
+    const systemProperties: SystemProp[] = Object.values(AppSystemProp)
     const errors: {
         [key in SystemProp]?: string
     } = {}
