@@ -39,11 +39,6 @@ A built-in relational database feature that lets users store structured data dir
 - `packages/web/src/features/tables/api/fields-api.ts` — field API calls
 - `packages/web/src/features/tables/api/records-api.ts` — record API calls
 
-## Edition Availability
-- Community (CE): available
-- Enterprise (EE): available
-- Cloud: available
-
 ## Domain Terms
 - **Table** — a named collection of typed columns (fields) and rows (records), scoped to a project
 - **Field** — a typed column definition; types: `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN`

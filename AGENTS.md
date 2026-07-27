@@ -16,7 +16,7 @@ is covered by `run.sh` plus plain `docker compose` commands.
 - **Entity registration**: New entities MUST be added to `getEntities()` in `database-connection.ts` — TypeORM does NOT auto-discover.
 - **HTTP**: `POST` for all create/update mutations. `DELETE` for deletes. Never PUT/PATCH. One sanctioned exception: `PUT /v1/files/:fileId` in `packages/server/api/src/app/file/files-controller.ts` — it is the engine's file-upload wire protocol (`packages/server/engine/src/lib/engine-file-api.ts`) and the method the S3 signed-URL redirect it falls through to also requires, so changing it means a lockstep server+engine break for no user-visible gain. Don't add a second exception.
 - **Security**: Every endpoint needs `securityAccess` config.
-- **Side effects**: Separated into `*-side-effects.ts` files, called explicitly after mutations.
+- **Side effects**: Separated into `*-side-effects.ts` files, called explicitly after mutations — except effects that must commit atomically with the mutation: those are registered as hooks (`*-hooks.ts`) and invoked inside the mutation's own transaction, never from a controller.
 - **Multi-server**: Use `distributedLock`, BullMQ deduplication, or `FOR UPDATE SKIP LOCKED` for concurrent operations.
 - **Managed PostgreSQL**: No custom extensions. Use `sanitizeObjectForPostgresql()` for external data.
 - **Before modifying a module**: Read its `.agents/features/<name>.md` file for entities, services, and integration details.
@@ -124,6 +124,31 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Verification
 
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
+
+### Commands that look like verification but verify nothing
+
+These have each produced a confident "verified, clean" claim that was worthless. Check the command
+before trusting its silence — an empty output is not the same as a passing check.
+
+- **`tsc --noEmit -p packages/server/api`** type-checks **zero files**. That `tsconfig.json` has
+  `"files": []`, `"include": []` and only project `references`, and non-build-mode `tsc -p` does not
+  follow references. It exits 0 and prints nothing on any input. Confirm with `--listFiles`.
+  Use `tsc --noEmit -p packages/server/api/tsconfig.app.json` or `tsc -b packages/server/api`.
+- **`tsc` on the api package without built workspace deps** reports ~1600 pre-existing
+  `Cannot find module '@aiqadam/...'` errors. In an environment where `bun install` has not run,
+  local type-checking of that package proves nothing either way; CI is the authoritative signal.
+  Say so rather than substituting a command that returns clean.
+- **`npm run test-unit` does not cover `packages/server/utils`** — it filters to
+  `@aiqadam/engine`, `@aiqadam/shared` and `web`. A test added under `server/utils` runs in no CI
+  job. If you add tests there, wire them into a task that actually runs, or say plainly that they
+  are unenforced.
+- **A skipped required check never reports a conclusion.** Under the repo ruleset
+  (`strict_required_status_checks_policy: true`), a required context that is skipped via
+  `paths-ignore` or a job-level `if:` leaves the PR permanently unmergeable. A required job must
+  always run and always resolve, even when it short-circuits.
+- **Empty check conclusions read as pending, not passing.** `gh pr view --json statusCheckRollup`
+  returns `""` (not `null`) for an in-flight check. Treat any falsy conclusion as pending, or you
+  will read a running pipeline as green.
 
 ## Review Agents
 

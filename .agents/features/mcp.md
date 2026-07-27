@@ -21,11 +21,6 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 - `packages/web/src/features/agents/agent-tools/components/mcp-tool.tsx` — inline display of an MCP tool in agent settings
 - `packages/web/src/app/builder/test-step/custom-test-step/mcp-tool-testing-dialog.tsx` — test an individual MCP tool from the builder
 
-## Edition Availability
-- Community (CE): available
-- Enterprise (EE): available
-- Cloud: available
-
 ## Domain Terms
 - **McpServer** — the per-project MCP server record (token, disabledTools)
 - **Locked tools** — tools that are always active when the MCP server is enabled; cannot be disabled

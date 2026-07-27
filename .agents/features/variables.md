@@ -1,7 +1,7 @@
 # Variables
 
 ## Summary
-Variables are project-scoped, encrypted secret values (API keys, tokens, opaque strings) that users create once and reference inside any flow input via a mention syntax `{{variables['NAME']}}`. They live in a dedicated `variable` table — completely separate from `app_connection` — and resolve at flow execution time through a worker endpoint the engine calls. Values are encrypted at rest with `encryptUtils.encryptObject`; the plaintext is only available to USER principals via the explicit reveal endpoint (audit-logged) or to the engine during a flow run.
+Variables are project-scoped, encrypted secret values (API keys, tokens, opaque strings) that users create once and reference inside any flow input via a mention syntax `{{variables['NAME']}}`. They live in a dedicated `variable` table — completely separate from `app_connection` — and resolve at flow execution time through a worker endpoint the engine calls. Values are encrypted at rest with `encryptUtils.encryptObject`; the plaintext is only available to USER principals via the explicit reveal endpoint (which emits a `VARIABLE_VALUE_REVEALED` application event) or to the engine during a flow run.
 
 ## Key Files
 - `packages/server/api/src/app/variable/variable.entity.ts` — TypeORM entity (`variable` table, unique `(projectId, name)` index, SET NULL FK to user).
@@ -19,17 +19,10 @@ Variables are project-scoped, encrypted secret values (API keys, tokens, opaque 
 - `packages/web/src/app/variables/variable-dialog.tsx` — create / rotate dialog (reused by the page and the data-selector tab).
 - `packages/web/src/app/builder/data-selector/variables-tab.tsx` — builder side panel for inserting `variables['NAME']` mentions.
 
-## Edition Availability
-- Community (CE): available.
-- Enterprise (EE): available.
-- Cloud: available.
-
-No plan flag — the feature ships in every edition.
-
 ## Permissions
 - `READ_VARIABLE` — list page, copy-reference, data-selector tab, mention resolution. Granted to VIEWER, EDITOR, ADMIN.
 - `WRITE_VARIABLE` — create / rotate / delete / reveal value. Granted to EDITOR and ADMIN; VIEWER cannot mutate.
-- The reveal endpoint additionally restricts the principal to `USER` (no SERVICE keys) and emits `VARIABLE_VALUE_REVEALED` on every hit so admins can audit who pulled which secret and when.
+- The reveal endpoint additionally restricts the principal to `USER` (no SERVICE keys) and emits `VARIABLE_VALUE_REVEALED` on every hit (dispatched in-process only — see Audit Events).
 
 ## Domain Terms
 - **Variable**: an encrypted project-scoped secret keyed by a project-unique `name`.
@@ -79,6 +72,8 @@ The `/variables` page mirrors the connections page visually: an info Alert above
 
 ## Audit Events
 
+These are `ApplicationEventName` values passed to `applicationEvents().sendUserEvent`. They are dispatched in-process only — nothing persists them (no `audit_event` table) and `badge-service.ts` is the only registered listener, so they cannot currently be queried after the fact.
+
 - `VARIABLE_UPSERTED` — `variable.upserted`. Fired on create or rotate.
 - `VARIABLE_DELETED` — `variable.deleted`. Fired on hard delete.
-- `VARIABLE_VALUE_REVEALED` — `variable.value.revealed`. Fired on every successful reveal (UI "Copy value" or direct API call). Use this to answer *"who pulled variable X and when"*.
+- `VARIABLE_VALUE_REVEALED` — `variable.value.revealed`. Fired on every successful reveal (UI "Copy value" or direct API call). Intended to answer *"who pulled variable X and when"* — which needs a listener that stores the event; none exists yet.

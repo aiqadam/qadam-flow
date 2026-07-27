@@ -1,25 +1,22 @@
 # CE Project Management
 
 ## Summary
-A Project is the workspace within a platform where flows, connections, tables, and other resources live. Every platform has at least one project. Projects are always scoped to a platform via `platformId`. The Community edition allows a single user to have one personal project; the EE platform-projects module extends this with team projects, per-project limits, and an admin list API. Projects support soft-delete (via `deleted` timestamp), icon customization, concurrency pool assignment, and optional release management.
+A Project is the workspace within a platform where flows, connections, tables, and other resources live. Every platform has at least one project. Projects are always scoped to a platform via `platformId`. A user gets one PERSONAL project on sign-up, and `POST /v1/projects` creates additional TEAM projects. There is no separate platform-projects module in this repo: no `platformProjectService`, no project-limit enforcement (`projectsLimit` is never read, and `countByPlatformIdAndType` has no caller), and no per-project qadam filters. Projects support soft-delete (via `deleted` timestamp), icon customization, concurrency pool assignment, and optional release management.
 
 ## Key Files
-- `packages/server/api/src/app/project/project-controller.ts` — GET `/:id`, GET `/`, POST `/:id` routes (CE level)
+- `packages/server/api/src/app/project/project-controller.ts` — POST `/` (create TEAM project), POST `/:id` (update), GET `/` (list), DELETE `/:id` (soft delete)
 - `packages/server/api/src/app/project/project-service.ts` — core service: `create`, `update`, `getOne`, `getOneOrThrow`, `getAllForUser`, `getUserProjectOrThrow`
 - `packages/server/api/src/app/project/project-entity.ts` — `project` TypeORM entity with all relations
 - `packages/server/api/src/app/project/project-repo.ts` — `repoFactory` wrapper with optional `EntityManager` support
-- `packages/server/api/src/app/project/project-hooks.ts` — `hooksFactory` hook point for EE post-create behavior
+- `packages/server/api/src/app/project/project-hooks.ts` — `hooksFactory` hook point for post-create behaviour; the default `postCreate` is a no-op and nothing overrides it
 - `packages/server/api/src/app/project/project-worker-controller.ts` — internal endpoint used by engine to read project data
 - `packages/shared/src/lib/management/project/project.ts` — `Project`, `ProjectPlan`, `ProjectIcon`, `UpdateProjectRequestInCommunity` schemas
 - `packages/web/src/features/projects/components/projects-selector.tsx` — project-switcher dropdown in the sidebar
 - `packages/web/src/features/projects/components/platform-switcher.tsx` — platform-level switcher component
 - `packages/web/src/features/projects/stores/project-collection.ts` — Zustand store for current project
 
-## Edition Availability
-All editions. The CE controller exposes a minimal set: get, list (returns only the personal project), and update display name/metadata. EE adds `ee-projects` module with `platformProjectService` for full admin CRUD, project limits, and per-project piece filters.
-
 ## Domain Terms
-- **ProjectType** — `PERSONAL` (auto-created on sign-up, one per user per platform) or `TEAM` (EE multi-member workspace)
+- **ProjectType** — `PERSONAL` (auto-created on sign-up, one per user per platform) or `TEAM` (multi-member workspace)
 - **ProjectIcon** — `{ color: ColorName }` stored as JSONB; color chosen from a 12-color palette
 - **externalId** — optional opaque string for embedding integrations to map projects to their own IDs
 - **releasesEnabled** — feature flag per-project for the project-releases module
@@ -52,22 +49,23 @@ Relations (one-to-many): `flows`, `files`, `folders`, `events`, `appConnections`
 
 | Method | Path | Security | Description |
 |---|---|---|---|
-| GET | `/v1/projects` | publicPlatform (USER) | List projects accessible to the current user (CE: returns personal project only) |
-| GET | `/v1/projects/:id` | project scoped (USER, PARAM) | Get a single project by ID |
+| POST | `/v1/projects` | publicPlatform (USER) | Create a TEAM project |
+| GET | `/v1/projects` | publicPlatform (USER) | List projects visible to the current user (`getAllForUser`) |
 | POST | `/v1/projects/:id` | publicPlatform (USER, SERVICE) | Update project display name and metadata |
+| DELETE | `/v1/projects/:id` | publicPlatform (USER) | Soft delete, then `projectSideEffects.postSoftDelete` |
 
 ## Service Methods
 
 ### `projectService`
-- `create({ displayName, ownerId, platformId, type, callPostCreateHooks?, postCreateContext?, entityManager? })` — creates project record with random icon color, calls `projectHooks.postCreate(savedProject, postCreateContext)` if enabled. `postCreateContext: ProjectPostCreateContext` carries side-effect inputs forwarded to the EE hook (currently `alertReceiverEmail?: string | null` for auto-subscribing an alert receiver on team projects).
+- `create({ displayName, ownerId, platformId, type, callPostCreateHooks?, postCreateContext?, entityManager? })` — creates project record with random icon color, then calls `projectHooks.postCreate(savedProject, postCreateContext)` when `callPostCreateHooks` is set (defaults to true). `ProjectPostCreateContext` declares `alertReceiverEmail?: string | null`, but the default hook body returns immediately and no implementation is registered, so nothing is auto-subscribed.
 - `update(projectId, request, entityManager?)` — updates allowed fields; TEAM projects allow `displayName` and `icon` update; PERSONAL projects do not
 - `getOne(projectId)` / `getOneOrThrow(projectId)` — single project fetch
 - `getAllForUser({ platformId, userId, isPrivileged })` — returns all projects visible to a user (admins see all platform projects, members see their assigned projects)
-- `getUserProjectOrThrow(userId)` — returns the personal project owned by the user; used in CE list endpoint
-- `getProjectIdsByPlatform(platformId)` — returns all project IDs for a platform; used during platform deletion
-- `countByPlatformIdAndType(platformId, type)` — used to enforce project limits
+- `getUserProjectOrThrow(userId)` — returns the personal project owned by the user
+- `getProjectIdsByPlatform(platformId)` — returns all project IDs for a platform; used by `health-metrics.service.ts` and `flow.service.ts`
+- `countByPlatformIdAndType(platformId, type)` — counts projects of a type on a platform; currently has no caller
 
 ## Side Effects
-- Creating a project calls `projectHooks.postCreate(project, context?)`, which in EE creates an associated `ProjectPlan`, sets piece filters, and (per [alerts.md](./alerts.md)) auto-subscribes an alert receiver: the owner's email for personal projects, or `context.alertReceiverEmail` for team projects.
+- Creating a project calls `projectHooks.postCreate(project, context?)`. The only registered implementation is the no-op default in `project-hooks.ts` — no `ProjectPlan` row, qadam filter, or alert receiver is created.
 - Soft-deleted projects remain in DB and can be hard-deleted by a background job
-- Deleting a project calls `projectSideEffects.postSoftDelete({ projectId })` (`project/project-side-effects.ts`) from the DELETE route, which drops the project's `alert` rows. The `alert` table has no FK to `project`, and soft-delete would not fire a cascade anyway, so the rows need an explicit sweep.
+- Deleting a project runs the soft-delete and the `alert`-row sweep inside a single transaction in `projectService#softDelete`, via a `projectHooks.postSoftDelete({ entityManager, projectId })` hook registered from `alerts-module.ts` (`project/project-hooks.ts`). The `alert` table has no FK to `project`, and soft-delete would not fire a cascade anyway, so the rows need an explicit, transactional sweep — otherwise a sweep failure would leave the project soft-deleted with its alert rows orphaned and unreachable by any retry.
