@@ -149,6 +149,13 @@ before trusting its silence — an empty output is not the same as a passing che
   A green check here means "the inputs turbo hashed did not change", not "the script ran".
   Audit with `turbo run <task> --filter=<pkg> --dry=json` and compare the resolved input list
   against the glob the script itself uses.
+- **A relative `inputs` path that does not exist is dropped silently, with no warning.** `lint`
+  carried `"../../.eslintrc.json"`, which only reaches the repo root from a depth-2 package; from
+  `packages/server/*` it resolved to the non-existent `packages/.eslintrc.json` and from the qadams
+  to `packages/qadams/.eslintrc.json`, so no shared ESLint config was hashed at all and editing a
+  rule served a cached pass (#164). Address repo-root files with `$TURBO_ROOT$/…`, and confirm the
+  entry actually appears in the `--dry=json` `inputs` map — an entry in `turbo.json` is not
+  evidence that turbo resolved it.
 - **A skipped required check never reports a conclusion.** Under the repo ruleset
   (`strict_required_status_checks_policy: true`), a required context that is skipped via
   `paths-ignore` or a job-level `if:` leaves the PR permanently unmergeable. A required job must
