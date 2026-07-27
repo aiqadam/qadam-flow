@@ -1,3 +1,4 @@
+import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZE } from './formula-bounds'
 import { evaluateRaw } from './function-implementations'
 import { AP_FUNCTIONS } from './function-registry'
 
@@ -68,10 +69,22 @@ function tokenizeFormulaTemplate(template: string): Segment[] {
 function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionParams): EvaluateExpressionResult {
     const trimmed = expression.trim()
     if (!trimmed) return { result: '', error: null }
+    // Checked before any other pass over the string (validateFunctionArgs,
+    // preprocessing) so a pathologically large formula fails fast rather than
+    // paying for a full parse first.
+    if (trimmed.length > FORMULA_MAX_EXPRESSION_LENGTH) {
+        return { result: null, error: 'Formula is too large to evaluate — shorten the expression' }
+    }
     const emptyArgError = validateFunctionArgs(trimmed)
     if (emptyArgError) return { result: null, error: emptyArgError }
 
     const { processed, vars } = preprocessExpression({ expression: trimmed, sampleData })
+    // Bounds the resolved `{{var}}` payload — this is where a huge upstream
+    // step output (not the formula text itself) would otherwise flow in
+    // unchecked, per the issue's "resolved-var payload" hardening ask.
+    if (exceedsSizeBudget({ value: vars, maxSize: FORMULA_MAX_INPUT_SIZE })) {
+        return { result: null, error: 'Formula input data is too large to evaluate' }
+    }
     try {
         return { result: evaluateRaw(processed, vars), error: null }
     }
@@ -317,6 +330,12 @@ function validateFunctionArgs(expr: string): string | null {
 
 function friendlyError(e: unknown): string {
     const msg = String((e as Error).message ?? e)
+    // These are already user-facing sentences thrown by the size guards in
+    // function-implementations.ts — pass them through instead of falling to
+    // the generic fallback below.
+    if (/too large/i.test(msg)) {
+        return msg
+    }
     if (/division by zero/i.test(msg)) {
         return 'Cannot divide by zero'
     }

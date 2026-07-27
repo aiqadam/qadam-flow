@@ -750,3 +750,47 @@ describe('formulaEvaluator wrapper detection', () => {
         expect(formulaEvaluator.containsWrapper(input)).toBe(true)
     })
 })
+
+// ---------------------------------------------------------------------------
+// Size bounds (issue #100: event-loop DoS via unbounded formula input)
+// ---------------------------------------------------------------------------
+
+describe('formula size bounds', () => {
+    it('a normal-sized formula is unaffected', () =>
+        expect(result('uppercase("hello")')).toBe('HELLO'))
+
+    it('an oversized raw expression fails fast with a user-facing error, not a thrown exception', () => {
+        const huge = `uppercase("${'a'.repeat(250_000)}")`
+        const { result: r, error } = ok(huge)
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('an oversized resolved {{var}} payload fails fast with a user-facing error', () => {
+        const huge = { text: 'x'.repeat(1_500_000) }
+        const { result: r, error } = ok('uppercase({{text}})', huge)
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('from_json rejects an oversized JSON string instead of parsing it — below the engine-wide input-size cap, so this exercises from_json\'s own guard', () => {
+        const hugeJson = 'x'.repeat(400_000)
+        expect(hugeJson.length).toBeLessThan(1_000_000) // stays under FORMULA_MAX_INPUT_SIZE
+        const { result: r, error } = ok('from_json({{text}})', { text: hugeJson })
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('to_json rejects an oversized value instead of serializing it — below the engine-wide input-size cap, so this exercises to_json\'s own guard', () => {
+        const hugeList = Array.from({ length: 50_000 }, (_, i) => i) // 50_000 * 8 = 400_000 units
+        const { result: r, error } = ok('to_json({{list}})', { list: hugeList })
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('to_json still works for a normal-sized value', () =>
+        expect(result('to_json({{obj}})', { obj: { a: 1 } })).toBe('{"a":1}'))
+
+    it('from_json still works for a normal-sized value', () =>
+        expect(result('pluck(from_json({{text}});"a")', { text: '[{"a":1},{"a":2}]' })).toEqual([1, 2]))
+})

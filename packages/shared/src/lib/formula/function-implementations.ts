@@ -3,6 +3,7 @@ import relativeTimeDayjs from 'dayjs/plugin/relativeTime'
 import timezoneDayjs from 'dayjs/plugin/timezone'
 import utcDayjs from 'dayjs/plugin/utc'
 import { Parser } from 'expr-eval'
+import { exceedsSizeBudget, FORMULA_MAX_JSON_TEXT_LENGTH } from './formula-bounds'
 import { AP_FUNCTIONS } from './function-registry'
 
 dayjs.extend(relativeTimeDayjs)
@@ -227,10 +228,22 @@ parser.functions.keys = (obj: unknown) =>
     obj != null && typeof obj === 'object' && !Array.isArray(obj) ? Object.keys(obj) : []
 parser.functions.values = (obj: unknown) =>
     obj != null && typeof obj === 'object' && !Array.isArray(obj) ? Object.values(obj) : []
-parser.functions.to_json = (val: unknown) => (val == null ? '' : JSON.stringify(val))
+parser.functions.to_json = (val: unknown) => {
+    if (val == null) return ''
+    // Checked before JSON.stringify rather than after, so a pathologically
+    // large value fails without paying for the full serialization first.
+    if (exceedsSizeBudget({ value: val, maxSize: FORMULA_MAX_JSON_TEXT_LENGTH })) {
+        throw new Error('Value is too large to convert to JSON')
+    }
+    return JSON.stringify(val)
+}
 parser.functions.from_json = (text: unknown) => {
+    const str = String(text ?? '')
+    if (str.length > FORMULA_MAX_JSON_TEXT_LENGTH) {
+        throw new Error('JSON text is too large to parse')
+    }
     try {
-        return JSON.parse(String(text ?? ''))
+        return JSON.parse(str)
     }
     catch {
         return null
