@@ -2,6 +2,7 @@ import {
   BatchProgressData,
   ChatToolName,
   ChatToolOutputs,
+  isBatchProgressData,
   isObject,
   parseToJsonIfPossible,
   PlanStepUpdate,
@@ -169,10 +170,9 @@ function extractBatchProgressFromOutput(
 ): BatchProgressData | null {
   if (part.state !== 'output-available' || !part.output) return null;
   const output = parseToJsonIfPossible(part.output);
-  if (!output || typeof output !== 'object') return null;
-  const record = output as Record<string, unknown>;
-  if (!record['batchProgress']) return null;
-  return record['batchProgress'] as BatchProgressData;
+  if (!isObject(output)) return null;
+  const batchProgress = output.batchProgress;
+  return isBatchProgressData(batchProgress) ? batchProgress : null;
 }
 
 function extractToolTitles(part: AnyToolPart): {
