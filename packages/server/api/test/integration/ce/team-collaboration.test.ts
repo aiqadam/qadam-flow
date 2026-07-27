@@ -585,7 +585,14 @@ describe('Team project collaboration (CE)', () => {
             headers: { authorization: `Bearer ${bystanderToken}` },
         })
         expect(listRes.statusCode).toBe(StatusCodes.FORBIDDEN)
-        expect(listRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
+        expect(listRes.json<{ code: string }>().code).toBe('AUTHORIZATION')
+    })
+
+    it('Privileged USER can still list platform-scope invitations (positive-path regression guard, not error-code coverage)', async () => {
+        const adminCtx = await createTestContext(app!)
+
+        const listRes = await adminCtx.get('/v1/user-invitations', { type: InvitationType.PLATFORM })
+        expect(listRes.statusCode).toBe(StatusCodes.OK)
     })
 
     it('Non-privileged USER cannot create a platform invitation (privilege escalation guard)', async () => {
@@ -614,7 +621,7 @@ describe('Team project collaboration (CE)', () => {
         })
 
         expect(inviteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
-        expect(inviteRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
+        expect(inviteRes.json<{ code: string }>().code).toBe('AUTHORIZATION')
     })
 
     it('OPERATOR cannot create a platform invitation (role-minting is ADMIN-only)', async () => {
@@ -643,7 +650,7 @@ describe('Team project collaboration (CE)', () => {
         })
 
         expect(inviteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
-        expect(inviteRes.json<{ code: string }>().code).toBe('PERMISSION_DENIED')
+        expect(inviteRes.json<{ code: string }>().code).toBe('AUTHORIZATION')
     })
 
     it('Platform admin can create a platform invitation', async () => {

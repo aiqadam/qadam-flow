@@ -1,7 +1,7 @@
 # Trigger Module
 
 ## Summary
-Manages the full lifecycle of flow triggers — registration, event capture, testing, and deduplication. A trigger defines how and when a flow starts: via polling, inbound webhooks, app-native webhooks routed through a shared event bus, or manual invocation. The module tracks each enabled trigger as a `TriggerSource` record, maintains deduplication state in Redis, and drives enable/disable side effects such as BullMQ job scheduling and external webhook registration.
+Manages the full lifecycle of flow triggers — registration, event capture, testing, and deduplication. A trigger defines how and when a flow starts: via polling, inbound webhooks, app-native webhooks routed through the shared `app-event-routing` table (`trigger/app-event-routing/`), or manual invocation. The module tracks each enabled trigger as a `TriggerSource` record, maintains deduplication state in Redis, and drives enable/disable side effects such as BullMQ job scheduling and external webhook registration.
 
 ## Key Files
 - `packages/server/api/src/app/trigger/trigger-source/flow-trigger-side-effect.ts` — enable/disable side effects per strategy
@@ -28,11 +28,6 @@ Manages the full lifecycle of flow triggers — registration, event capture, tes
 - `packages/web/src/app/builder/test-step/custom-test-step/test-webhook-dialog.tsx` — dialog for manually testing webhook triggers
 - `packages/web/src/app/builder/flow-canvas/nodes/step-node/trigger-widget.tsx` — trigger node widget on the flow canvas
 - `packages/web/src/app/builder/flow-canvas/widgets/above-trigger-button.tsx` — "+ Add trigger" button above the trigger node
-
-## Edition Availability
-- Community (CE): all four trigger strategies (POLLING, WEBHOOK, APP_WEBHOOK, MANUAL)
-- Enterprise (EE): same as CE
-- Cloud: same as CE; trigger health stats shown in Platform Admin
 
 ## Domain Terms
 - **TriggerStrategy** — execution model: `POLLING`, `WEBHOOK`, `APP_WEBHOOK`, `MANUAL`

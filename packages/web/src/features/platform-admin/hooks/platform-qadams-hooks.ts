@@ -3,7 +3,6 @@ import { t } from 'i18next';
 import { toast } from 'sonner';
 
 import { platformApi } from '@/api/platforms-api';
-import { qadamsApi } from '@/features/qadams';
 
 export const platformPiecesMutations = {
   useToggleQadamVisibility: ({
@@ -50,18 +49,6 @@ export const platformPiecesMutations = {
       },
       onSuccess: () => {
         toast.success(t('Your changes have been saved.'), { duration: 3000 });
-      },
-    });
-  },
-  useSyncPieces: () => {
-    return useMutation({
-      mutationFn: async () => {
-        await qadamsApi.syncFromCloud();
-      },
-      onSuccess: () => {
-        toast.success(t('Qadams synced'), {
-          description: t('Qadams have been synced from the cloud.'),
-        });
       },
     });
   },

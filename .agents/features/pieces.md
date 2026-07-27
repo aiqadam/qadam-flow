@@ -18,9 +18,6 @@ The qadams feature manages the metadata catalog of automation integrations (call
 - `packages/web/src/features/qadams/components/` — `PieceIcon`, `PieceIconList`, `PieceSelectorSearch`, `InstallPieceDialog`
 - `packages/qadams/framework/src/lib/output-schema.ts` — `OutputSchema` / `OutputSchemaField` / `FieldFormat` plain TypeScript types (embedded into the piece metadata via `z.custom`)
 
-## Edition Availability
-All editions. Piece filtering by allowed/blocked list and EE-specific filtering are gated in `enterpriseFilteringUtils` but the base listing and installation is Community-level.
-
 ## Domain Terms
 - **Qadam** — a named integration (e.g. `@aiqadam/qadam-gmail`) providing actions and triggers
 - **QadamType** — `OFFICIAL` (bundled) or `CUSTOM` (platform-installed)
@@ -75,7 +72,7 @@ Unique index on `(name, version, platformId)`.
 ## Service Methods
 
 ### `pieceMetadataService`
-- `list(params)` — returns filtered + sorted `PieceMetadataModelSummary[]` from cache; applies platform piece filters and EE filtering
+- `list(params)` — returns sorted + searched `PieceMetadataModelSummary[]` from cache. `qadamListUtils.filterPieces` (`qadams/metadata/utils/index.ts`) only sorts and applies the search/category/suggestion filter — the platform's `filteredQadamNames` / `filteredQadamBehavior` columns exist on the entity but nothing reads them when listing.
 - `getOrThrow({ platformId, name, version, locale? })` — returns full `PieceMetadataModel` for exact piece; prefers platform-specific over official; applies i18n translation
 - `listVersions({ name, platformId, projectId })` — returns all available semver versions from registry cache
 - `create({ pieceMetadata, packageType, platformId, pieceType, archiveId? })` — inserts metadata record and invalidates cache

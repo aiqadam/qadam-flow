@@ -4,7 +4,6 @@ import { Dayjs } from 'dayjs'
 
 export enum SystemJobName {
     PIECES_ANALYTICS = 'qadams-analytics',
-    PIECES_SYNC = 'pieces-sync',
     FILE_CLEANUP_TRIGGER = 'file-cleanup-trigger',
     TRIAL_TRACKER = 'trial-tracker',
     RUN_TELEMETRY = 'run-telemetry',
@@ -39,7 +38,6 @@ type ResumeDelayWaitpointSystemJobData = {
 
 type SystemJobDataMap = {
     [SystemJobName.PIECES_ANALYTICS]: Record<string, never>
-    [SystemJobName.PIECES_SYNC]: Record<string, never>
     [SystemJobName.FILE_CLEANUP_TRIGGER]: Record<string, never>
     [SystemJobName.RUN_TELEMETRY]: Record<string, never>
     [SystemJobName.TRIAL_TRACKER]: Record<string, never>
