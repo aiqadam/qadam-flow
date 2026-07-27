@@ -85,7 +85,7 @@ rebrand the product. Verified against the tree:
 | Docs logo + favicon | teal footprint mark | still the purple Activepieces "A" | `docs/resources/logo/light.svg`, `docs/resources/logo/dark.svg`, `docs/favicon.svg`, `docs/favicon.png` |
 | Docs site accent | teal | `#9675FF` | `docs/docs.json:6-8` |
 | Body font | Inter, Latin **and** Cyrillic equally legible | Inter, **Latin subset only** | `packages/web/src/assets/fonts/inter-v20-latin-*` |
-| Display font | Geist | not present; `Sentient-Variable.woff2` is loaded instead | `packages/web/src/styles.css:7-12`, `packages/web/public/fonts/` |
+| Display font | Geist | not present; `Sentient-Variable.woff2` is loaded instead — and it **is in use**, via `font-sentient` on the sign-in/signup headings, platform creation, and the chat empty state | `packages/web/src/styles.css:7-12`; used in `create-platform.tsx`, `chat-with-ai/components/chat-empty-state.tsx`, `authentication/components/auth-form-template.tsx`, `authentication/components/auth-animation.tsx` |
 | Mono font | JetBrains Mono | not loaded | — |
 | Theme default | dark-first (`<html data-theme="dark">`), light a verified peer | light-first: `theme === 'system'` resolves to `'light'` | `packages/web/src/components/providers/theme-provider.tsx:57-61` |
 | Radius default | 8px | `--radius: 0.5rem` = 8px ✅ | `packages/web/src/styles.css:410` |
