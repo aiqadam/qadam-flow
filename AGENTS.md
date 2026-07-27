@@ -9,6 +9,40 @@ generates a fresh `.env`, pulls `ghcr.io/aiqadam/qadam-flow:latest`, and
 brings the stack up on port 8080. Don't reintroduce `start.sh` — its job
 is covered by `run.sh` plus plain `docker compose` commands.
 
+## Read the whole ticket before you write a line — this is not optional
+
+**The issue body is the least reliable part of an issue.** It was written before
+anyone investigated. The comments are where the measurements, the corrections and the
+already-rejected approaches live, and a closed PR is where the reason something was
+*not* done is recorded. Skipping them does not save time; it spends a whole work
+session reproducing an answer the repo already had.
+
+This has happened. #155's body proposed caching `~/.bun/install/cache`. That exact
+change had already been written, measured on real runners and **closed as a net
+regression** in PR #157 — and a local branch `ci/issue-155-cache-bun-deps` was still
+sitting in the repo with the same diff. It was rebuilt from scratch anyway, opened as
+PR #191, and came within one review of merging a step that costs 18 s and saves 7 s.
+Cause: only the issue body was read.
+
+Before touching anything, run all of these and actually read the output:
+
+```bash
+gh issue view <n> --comments                       # the body is the hypothesis; comments are the evidence
+gh pr list --state all --search "<n> in:title,body" # closed PRs say why an approach was rejected
+gh issue list --state all --search "<keyword>"      # a sibling issue may already own this
+git branch -a --list '*<n>*'; git worktree list     # someone may already have a tree for it
+```
+
+Then follow the links. Every issue number, PR number, run URL and commit SHA mentioned
+in the body **or in any comment** is context someone paid for. Open them. A referenced
+CI run has the timings that settle a performance claim; a referenced closed PR has the
+verdict. If a comment contradicts the body, the comment is newer and probably right —
+and say so explicitly in your PR rather than silently following one of them.
+
+If a ticket turns out to rest on a wrong premise, correct the ticket in a comment
+before writing code against it. That is not scope creep; it is the cheapest work in
+the whole session.
+
 ## Architecture (Non-Obvious Rules)
 
 - **Multi-tenant**: Platform → Projects → Users. ALL queries MUST filter by `projectId` or `platformId`.
