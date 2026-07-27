@@ -120,6 +120,31 @@ jobs:
         with:
           bun-version: 1.3.3
 
+      # No dependency cache existed anywhere, so both jobs paid a full download
+      # and extract every run (#155). Keyed on bun.lock plus the OS, the arch and
+      # the bun version pinned above, because none of those is interchangeable
+      # for a resolved dependency tree. `restore-keys` lets a lockfile bump start
+      # from the previous entry instead of nothing.
+      #
+      # Scope, honestly: this covers download and extract. The ~230 s install is
+      # dominated by isolated-vm and sqlite3 compiling from source, and those
+      # artifacts land in node_modules, NOT in ~/.bun/install/cache — so this
+      # step does not remove the compile. Caching node_modules would, but the
+      # tree is 3.2 GB across 249 directories, well past the point where
+      # upload/download beats a rebuild. See the follow-up issue for caching the
+      # two native build outputs specifically.
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ runner.arch }}-bun1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-${{ runner.arch }}-bun1.3.3-
+
+      # The retry deliberately deletes the cache directory before its second
+      # attempt. Now that the directory is restored from a shared cache entry,
+      # that is what keeps a poisoned entry from failing every run until the
+      # lockfile happens to change — do not drop it.
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
@@ -181,6 +206,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.3
+
+      # Deliberately the same key as `verify`: one entry serves both jobs,
+      # whichever wins the save race (the loser logs a harmless "already exists").
+      # See that job's cache step for what this does and does not cover.
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ runner.arch }}-bun1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-cache-${{ runner.os }}-${{ runner.arch }}-bun1.3.3-
 
       - name: Install dependencies
         run: |
