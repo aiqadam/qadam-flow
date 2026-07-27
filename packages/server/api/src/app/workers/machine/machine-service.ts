@@ -88,6 +88,14 @@ export const machineService = (log: FastifyBaseLogger) => {
             }, existingWorker)
             return buildSettingsResponse(log)
         },
+        // `_platformId` is accepted to match the controller's contract (it is the caller's
+        // platform, per securityAccess.platformAdminOnly) but cannot scope anything yet:
+        // WorkerMachine has no platformId field, and nothing in this repo maps a workerGroupId
+        // to a platform (#195, closed not-planned). Implementing real dedicated/worker-group
+        // listing must add that mapping and filter DEDICATED workers by it in the same change —
+        // see the isolation test in machine-list-filter.test.ts, which is written to fail the
+        // moment a DEDICATED worker is returned by anyone, so that change can't slip through
+        // without also updating the filter below.
         async list(_platformId: string): Promise<WorkerMachineWithStatus[]> {
             const allWorkers = await workerMachineCache().find()
 
@@ -97,6 +105,10 @@ export const machineService = (log: FastifyBaseLogger) => {
 
             await workerMachineCache().delete(offLineWorkers.map(worker => worker.id))
 
+            // SHARED workers are cluster-wide by definition, so every platform admin sees them.
+            // DEDICATED workers carry a workerGroupId but nothing in this repo maps a worker
+            // group to a platformId (#195, closed not-planned) — there is no data to scope them
+            // by platform, so they are dropped for every caller rather than served unscoped.
             return onlineWorkers
                 .filter(worker => worker.type !== WorkerMachineType.DEDICATED)
                 .map(worker => ({

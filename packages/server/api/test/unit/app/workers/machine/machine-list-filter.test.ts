@@ -112,4 +112,23 @@ describe('machineService.list — platform filtering', () => {
         expect(result[0].id).toBe('legacy-worker')
         expect(result[0].type).toBe(WorkerMachineType.SHARED)
     })
+
+    it('never returns a DEDICATED worker, to any platform — the tripwire for #202', async () => {
+        await workerMachineCache().upsert({
+            id: 'dedicated-1',
+            information: fakeMachineInfo('dedicated-1'),
+            type: 'DEDICATED',
+            workerGroupId: 'group-1',
+        })
+
+        const resultForPlatformA = await machineService(mockLogger).list('platform-A')
+        const resultForPlatformB = await machineService(mockLogger).list('platform-B')
+
+        // Check by id, not by the returned `type` — `list()` normalises every returned
+        // worker's `type` to SHARED in its own `.map()`, so asserting on that field
+        // would pass even if the DEDICATED worker itself leaked through.
+        for (const result of [resultForPlatformA, resultForPlatformB]) {
+            expect(result.map(worker => worker.id)).not.toContain('dedicated-1')
+        }
+    })
 })
