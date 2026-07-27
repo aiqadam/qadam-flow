@@ -19,7 +19,6 @@ import { SquareDashedBottomCodeIcon } from '@/components/icons/square-dashed-bot
 import { TrophyIcon } from '@/components/icons/trophy';
 import { UnplugIcon } from '@/components/icons/unplug';
 import { UsersIcon } from '@/components/icons/users';
-import { WebhookIcon } from '@/components/icons/webhook';
 import { WorkflowIcon } from '@/components/icons/workflow';
 
 export type StaticPage = {
@@ -166,13 +165,6 @@ export const STATIC_PAGES: StaticPage[] = [
     label: 'Platform Admin — Triggers',
     href: '/platform/infrastructure/triggers',
     icon: MousePointerClickIcon,
-    requiresPlatformAdmin: true,
-  },
-  {
-    id: 'page-platform-event-streaming',
-    label: 'Platform Admin — Event Streaming',
-    href: '/platform/infrastructure/event-destinations',
-    icon: WebhookIcon,
     requiresPlatformAdmin: true,
   },
   {
