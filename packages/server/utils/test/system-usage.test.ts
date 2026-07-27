@@ -1,4 +1,8 @@
+import fs from 'fs'
 import os from 'os'
+import checkDiskSpace from 'check-disk-space'
+import si from 'systeminformation'
+import { fileSystemUtils } from '../src/file-system-utils'
 import { systemUsage } from '../src/system-usage'
 
 vi.mock('fs', () => ({
@@ -24,11 +28,6 @@ vi.mock('systeminformation', () => ({
 vi.mock('check-disk-space', () => ({
     default: vi.fn(),
 }))
-
-import fs from 'fs'
-import checkDiskSpace from 'check-disk-space'
-import si from 'systeminformation'
-import { fileSystemUtils } from '../src/file-system-utils'
 
 const mockFileExists = vi.mocked(fileSystemUtils.fileExists)
 const mockReadFile = vi.mocked(fs.promises.readFile)
@@ -85,7 +84,7 @@ describe('getContainerMemoryUsage', () => {
         expect(result.ramUsage).toBeCloseTo(50)
     })
 
-    it('should skip cgroup v2 when limit is 'max', async () => {
+    it('should skip cgroup v2 when limit is \'max\'', async () => {
         mockCgroupFiles({
             '/sys/fs/cgroup/memory.max': 'max',
             '/sys/fs/cgroup/memory.current': '100000',
@@ -117,7 +116,9 @@ describe('getContainerMemoryUsage', () => {
     it('should skip constrainedMemory when it returns sentinel value', async () => {
         vi.stubGlobal('process', {
             ...process,
-            constrainedMemory: () => 18446744073709551615,
+            // uint64 max is the "unlimited" sentinel Node reports; written as an expression because the
+            // decimal literal 18446744073709551615 cannot be represented exactly by a double.
+            constrainedMemory: () => 2 ** 64 - 1,
             availableMemory: () => 0,
         })
 

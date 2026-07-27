@@ -23,7 +23,6 @@ import { Settings2Icon } from '@/components/icons/settings2';
 import { SquareDashedBottomCodeIcon } from '@/components/icons/square-dashed-bottom-code';
 import { UnplugIcon } from '@/components/icons/unplug';
 import { UsersIcon } from '@/components/icons/users';
-import { WebhookIcon } from '@/components/icons/webhook';
 import { buttonVariants } from '@/components/ui/button';
 import {
   Sidebar,
@@ -177,13 +176,6 @@ export function PlatformSidebar() {
           icon: SquareDashedBottomCodeIcon,
           locked: !platform.plan.auditLogEnabled,
           badge: !platform.plan.auditLogEnabled ? t('Soon') : undefined,
-        },
-        {
-          to: '/platform/infrastructure/event-destinations',
-          label: t('Event Streaming'),
-          icon: WebhookIcon,
-          locked: !platform.plan.eventStreamingEnabled,
-          badge: !platform.plan.eventStreamingEnabled ? t('Soon') : undefined,
         },
       ],
     },

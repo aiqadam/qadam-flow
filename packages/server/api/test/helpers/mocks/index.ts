@@ -14,7 +14,6 @@ import {
     assertNotNullOrUndefined,
     Cell,
     ColorName,
-    EventDestinationScope,
     Field,
     FieldType,
     File,
@@ -752,37 +751,6 @@ export const createMockFolder = (folder?: Partial<Folder>): Folder => {
         projectId: folder?.projectId ?? apId(),
         displayName: folder?.displayName ?? faker.lorem.word(),
         displayOrder: folder?.displayOrder ?? faker.number.int({ min: 0, max: 100 }),
-    }
-}
-
-export const createMockEventDestination = (eventDestination?: Partial<{
-    id: string
-    created: string
-    updated: string
-    platformId: string
-    projectId: string | null
-    events: ApplicationEventName[]
-    url: string
-    scope: EventDestinationScope
-}>): {
-    id: string
-    created: string
-    updated: string
-    platformId: string
-    projectId: string | null
-    events: ApplicationEventName[]
-    url: string
-    scope: EventDestinationScope
-} => {
-    return {
-        id: eventDestination?.id ?? apId(),
-        created: eventDestination?.created ?? faker.date.recent().toISOString(),
-        updated: eventDestination?.updated ?? faker.date.recent().toISOString(),
-        platformId: eventDestination?.platformId ?? apId(),
-        projectId: eventDestination?.projectId ?? null,
-        events: eventDestination?.events ?? [faker.helpers.enumValue(ApplicationEventName)],
-        url: eventDestination?.url ?? faker.internet.url(),
-        scope: eventDestination?.scope ?? EventDestinationScope.PLATFORM,
     }
 }
 

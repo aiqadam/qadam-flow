@@ -1,11 +1,9 @@
 export { aiProviderApi } from './api/ai-provider-api';
 export { analyticsApi } from './api/analytics-api';
-export { auditEventsApi } from './api/audit-events-api';
 export { piecesTagsApi } from './api/qadams-tags';
 export { samlSsoApi } from './api/saml-sso-api';
 export { workersApi } from './api/workers-api';
 export { platformAnalyticsHooks } from './hooks/analytics-hooks';
-export { auditLogQueries, auditLogKeys } from './hooks/audit-log-hooks';
 export { ssoMutations } from './hooks/sso-hooks';
 export {
   aiProviderQueries,
