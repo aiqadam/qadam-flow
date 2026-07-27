@@ -664,4 +664,80 @@ describe('Team project collaboration (CE)', () => {
 
         expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
     })
+
+    it('Non-privileged USER cannot delete a platform-scope invitation (privilege escalation / tampering guard)', async () => {
+        const adminCtx = await createTestContext(app!)
+        const inviteRes = await adminCtx.post('/v1/user-invitations', {
+            email: `revoke-target-${apId()}@qadam.test`,
+            type: InvitationType.PLATFORM,
+            platformRole: PlatformRole.ADMIN,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+
+        const { mockUser: bystander } = await mockBasicUser({
+            user: {
+                platformId: adminCtx.platform.id,
+                platformRole: PlatformRole.MEMBER,
+            },
+        })
+        const bystanderToken = await generateMockToken({
+            id: bystander.id,
+            type: PrincipalType.USER,
+            platform: { id: adminCtx.platform.id },
+        })
+
+        const deleteRes = await app!.inject({
+            method: 'DELETE',
+            url: `/api/v1/user-invitations/${invitation.id}`,
+            headers: { authorization: `Bearer ${bystanderToken}` },
+        })
+        expect(deleteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+        expect(deleteRes.json<{ code: string }>().code).toBe('AUTHORIZATION')
+    })
+
+    it('OPERATOR cannot delete a platform-scope invitation (role-revocation is ADMIN-only, matching create)', async () => {
+        const adminCtx = await createTestContext(app!)
+        const inviteRes = await adminCtx.post('/v1/user-invitations', {
+            email: `revoke-target-${apId()}@qadam.test`,
+            type: InvitationType.PLATFORM,
+            platformRole: PlatformRole.MEMBER,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+
+        const { mockUser: operator } = await mockBasicUser({
+            user: {
+                platformId: adminCtx.platform.id,
+                platformRole: PlatformRole.OPERATOR,
+            },
+        })
+        const operatorToken = await generateMockToken({
+            id: operator.id,
+            type: PrincipalType.USER,
+            platform: { id: adminCtx.platform.id },
+        })
+
+        const deleteRes = await app!.inject({
+            method: 'DELETE',
+            url: `/api/v1/user-invitations/${invitation.id}`,
+            headers: { authorization: `Bearer ${operatorToken}` },
+        })
+        expect(deleteRes.statusCode).toBe(StatusCodes.FORBIDDEN)
+        expect(deleteRes.json<{ code: string }>().code).toBe('AUTHORIZATION')
+    })
+
+    it('Platform admin can delete a platform-scope invitation', async () => {
+        const adminCtx = await createTestContext(app!)
+        const inviteRes = await adminCtx.post('/v1/user-invitations', {
+            email: `revoke-target-${apId()}@qadam.test`,
+            type: InvitationType.PLATFORM,
+            platformRole: PlatformRole.MEMBER,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+
+        const deleteRes = await adminCtx.delete(`/v1/user-invitations/${invitation.id}`)
+        expect(deleteRes.statusCode).toBe(StatusCodes.NO_CONTENT)
+    })
 })

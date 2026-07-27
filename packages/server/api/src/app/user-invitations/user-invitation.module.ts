@@ -99,6 +99,12 @@ const invitationController: FastifyPluginAsyncZod = async (app) => {
             assertNotNullOrUndefined(invitation.projectId, 'projectId')
             await assertPrincipalHasPermissionToProject(request, request.principal, invitation.projectId)
         }
+        else {
+            // Revoking a platform invitation is closer to issuing one than to
+            // reading the list, so it is gated the same way create is: platform
+            // ADMIN only. SERVICE (API key) is platform-scoped admin.
+            await assertPrincipalIsPlatformAdmin(request, request.principal)
+        }
         await userInvitationsService(request.log).delete({
             id: request.params.id,
             platformId: request.principal.platform.id,
