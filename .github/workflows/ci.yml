@@ -156,40 +156,6 @@ jobs:
           echo "bun-reported path: ${bunpath}"
           du -sh "$bunpath" 2>/dev/null || echo "bun-reported path: absent"
 
-      # THROWAWAY BRANCH ONLY. Hypothesis (b): split the install into
-      # link-only vs link+postinstall to see where the ~220 s actually goes.
-      - name: MEASURE - phase split on a warm cache
-        run: |
-          set -uo pipefail
-          echo "::group::pass 1 - bun install --ignore-scripts (link only)"
-          t0=$(date +%s)
-          bun install --frozen-lockfile --ignore-scripts
-          t1=$(date +%s)
-          echo "::endgroup::"
-          echo "T_link_only=$((t1 - t0))s"
-
-          echo "--- sizes AFTER link-only install ---"
-          du -sh ~/.bun/install/cache 2>/dev/null || echo "cache absent"
-
-          echo "::group::wipe every node_modules in the workspace"
-          rm -rf node_modules
-          find packages -maxdepth 4 -name node_modules -type d -prune -exec rm -rf {} + 2>/dev/null || true
-          echo "::endgroup::"
-
-          echo "::group::pass 2 - bun install (link + postinstall scripts)"
-          t2=$(date +%s)
-          bun install --frozen-lockfile
-          t3=$(date +%s)
-          echo "::endgroup::"
-          echo "T_link_plus_scripts=$((t3 - t2))s"
-          echo "T_postinstall_delta=$(( (t3 - t2) - (t1 - t0) ))s"
-
-          echo "--- sizes AFTER full install ---"
-          du -sh ~/.bun/install/cache 2>/dev/null || echo "cache absent"
-          du -sh node_modules 2>/dev/null || true
-          du -sh node_modules/isolated-vm 2>/dev/null || true
-          ls -l node_modules/isolated-vm/out/isolated_vm.node 2>/dev/null || echo "no prebuilt isolated_vm.node at the usual path"
-
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
@@ -292,10 +258,25 @@ jobs:
             echo "::error::No cache directory was restored; there is nothing to poison and this run proves nothing."
             exit 1
           fi
-          find ~/.bun/install/cache -type f -print -quit
-          rm -rf ~/.bun/install/cache
-          printf 'not-a-directory' > ~/.bun/install/cache
-          ls -l ~/.bun/install/cache
+          # Attempt 1 (replacing the whole dir with a file) did NOT break bun:
+          # it installed fine on the first try, so the retry never fired.
+          # Attempt 2 is the realistic mode: leave the cache structurally valid
+          # but corrupt the payload of the native packages whose postinstall is
+          # the thing the retry handler blames.
+          before=$(du -sh ~/.bun/install/cache | cut -f1)
+          n=0
+          for pkg in isolated-vm sqlite3; do
+            while IFS= read -r d; do
+              find "$d" -type f -exec sh -c 'printf CORRUPT-POISON-TEST > "$1"' _ {} +
+              n=$((n + 1))
+              echo "corrupted cache entry: $d"
+            done < <(find ~/.bun/install/cache -maxdepth 1 -type d -name "${pkg}@*")
+          done
+          if [ "$n" -eq 0 ]; then
+            echo "::error::Found no isolated-vm/sqlite3 entries in the restored cache; the poison would be a no-op and this run would prove nothing."
+            exit 1
+          fi
+          echo "Corrupted $n cache entries (cache was $before)."
 
       - name: Install dependencies
         run: |
