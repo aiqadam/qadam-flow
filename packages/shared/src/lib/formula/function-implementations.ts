@@ -3,7 +3,7 @@ import relativeTimeDayjs from 'dayjs/plugin/relativeTime'
 import timezoneDayjs from 'dayjs/plugin/timezone'
 import utcDayjs from 'dayjs/plugin/utc'
 import { Parser } from 'expr-eval'
-import { exceedsSizeBudget, FORMULA_MAX_BUILT_STRING_LENGTH, FORMULA_MAX_JSON_VALUE_BUDGET, FormulaSizeLimitError } from './formula-bounds'
+import { FORMULA_MAX_BUILT_STRING_LENGTH, FORMULA_MAX_JSON_VALUE_BUDGET, FormulaSizeLimitError, measureSize } from './formula-bounds'
 import { AP_FUNCTIONS } from './function-registry'
 
 dayjs.extend(relativeTimeDayjs)
@@ -27,8 +27,49 @@ declare module 'expr-eval' {
 // evaluation process-wide. Use `evaluateRaw` instead.
 const parser = new Parser()
 
+// A per-call cap on each size-generating function (replace/join_list/
+// to_json/from_json) is not enough: every call gets a FRESH allowance, so
+// chaining N individually-capped calls together (e.g. via suffix()/
+// combine(), which are themselves unguarded concatenation) can still produce
+// N times the intended ceiling — the exact defect class rejected in earlier
+// review rounds. These two mutable trackers are shared by every guarded
+// function call within ONE evaluateRaw() invocation, so the SUM of what
+// they've each produced is what's bounded, not each call in isolation.
+//
+// The heavier alternative — constructing a fresh Parser + function registry
+// per evaluation so each guard closes over its own counter — was considered
+// and rejected: `parser.functions` registers ~80 functions today, and
+// re-registering all of them on every single formula evaluation (a hot path
+// during flow execution) would trade a security fix for a real per-run cost.
+// A module-level mutable tracker, reset in a try/finally around the one
+// `parser.evaluate()` call, gets the same "shared budget for this
+// evaluation" property without rebuilding the registry. This relies on
+// `parser.functions.*` only ever running synchronously inside that
+// try-block — true today (expr-eval has no async support) — so there is no
+// concurrent evaluation that could see another call's tracker.
+let currentBuiltStringBudget: { remaining: number } | null = null
+let currentJsonValueBudget: { remaining: number } | null = null
+
 export function evaluateRaw(expression: string, vars: Record<string, unknown>): unknown {
-    return parser.evaluate(expression, vars)
+    currentBuiltStringBudget = { remaining: FORMULA_MAX_BUILT_STRING_LENGTH }
+    currentJsonValueBudget = { remaining: FORMULA_MAX_JSON_VALUE_BUDGET }
+    try {
+        return parser.evaluate(expression, vars)
+    }
+    finally {
+        currentBuiltStringBudget = null
+        currentJsonValueBudget = null
+    }
+}
+
+// Debits `amount` from the shared tracker for the current evaluation and
+// reports whether that tips it over. A `null` tracker means this ran outside
+// evaluateRaw's try-block — should not happen, but treated as "exceeds"
+// rather than silently allowing unbounded output if it ever does.
+function chargeSharedBudget({ tracker, amount }: { tracker: { remaining: number } | null, amount: number }): boolean {
+    if (tracker === null) return true
+    tracker.remaining -= amount
+    return tracker.remaining < 0
 }
 
 parser.functions.combine = (a: unknown, b: unknown, sep: unknown = '') =>
@@ -48,23 +89,25 @@ parser.functions.replace = (s: unknown, from: unknown, to: unknown) => {
     // is multiplicative (`|s| / |from| * |to|`), not additive — a modest `s`
     // and `to` can still build a gigabytes-large result. Project the length
     // from an occurrence count instead of running the real split/join, so a
-    // rejection costs O(|s|) rather than O(the oversized result).
-    if (projectedSplitJoinLength({ source: str, from: fromStr, to: toStr }) > FORMULA_MAX_BUILT_STRING_LENGTH) {
+    // rejection costs O(|s|) rather than O(the oversized result). Charged
+    // against the shared per-evaluation tracker, not a fresh per-call
+    // allowance, so chaining many replace() calls can't each get their own
+    // budget.
+    const projected = projectedSplitJoinLength({ source: str, from: fromStr, to: toStr })
+    if (chargeSharedBudget({ tracker: currentBuiltStringBudget, amount: projected })) {
         throw new FormulaSizeLimitError('Result of replace() is too large to build')
     }
     return str.split(fromStr).join(toStr)
 }
-parser.functions.remove = (s: unknown, sub: unknown) => {
-    const str = String(s ?? '')
-    const subStr = String(sub ?? '')
-    // remove() can only shrink its input (it joins with ''), so it can never
-    // itself amplify — guarded anyway for consistency with replace()/
-    // join_list() and in case a future edit gives it a non-empty `to`.
-    if (projectedSplitJoinLength({ source: str, from: subStr, to: '' }) > FORMULA_MAX_BUILT_STRING_LENGTH) {
-        throw new FormulaSizeLimitError('Result of remove() is too large to build')
-    }
-    return str.split(subStr).join('')
-}
+// remove() joins with '' (`s.split(sub).join('')`), so it can only shrink or
+// preserve its input's length — never amplify. It is deliberately left
+// unguarded: an earlier version guarded it "for consistency", but that guard
+// was reachable (via chained calls feeding it an input that had legitimately
+// grown large elsewhere) and produced a FALSE rejection on a value remove()
+// itself never made larger. A guard that fires without the operation it
+// guards against being possible is a bug, not defense-in-depth.
+parser.functions.remove = (s: unknown, sub: unknown) =>
+    String(s ?? '').split(String(sub ?? '')).join('')
 parser.functions.first_n = (s: unknown, n: unknown) =>
     String(s ?? '').slice(0, Number(n))
 parser.functions.last_n = (s: unknown, n: unknown) => {
@@ -253,14 +296,20 @@ parser.functions.to_json = (val: unknown) => {
     if (val == null) return ''
     // Checked before JSON.stringify rather than after, so a pathologically
     // large value fails without paying for the full serialization first.
-    if (exceedsSizeBudget({ value: val, maxSize: FORMULA_MAX_JSON_VALUE_BUDGET })) {
+    // `measureSize`'s own `cap` is a fixed early-exit hint (bounding the cost
+    // of measuring one absurdly large value); the amount actually charged
+    // against the shared per-evaluation tracker is what determines whether
+    // this call — combined with everything already charged this evaluation
+    // — is accepted.
+    const cost = measureSize({ value: val, cap: FORMULA_MAX_JSON_VALUE_BUDGET })
+    if (chargeSharedBudget({ tracker: currentJsonValueBudget, amount: cost })) {
         throw new FormulaSizeLimitError('Value is too large to convert to JSON')
     }
     return JSON.stringify(val)
 }
 parser.functions.from_json = (text: unknown) => {
     const str = String(text ?? '')
-    if (str.length > FORMULA_MAX_JSON_VALUE_BUDGET) {
+    if (chargeSharedBudget({ tracker: currentJsonValueBudget, amount: str.length })) {
         throw new FormulaSizeLimitError('JSON text is too large to parse')
     }
     try {
@@ -287,11 +336,22 @@ parser.functions.join_list = (list: unknown, sep: unknown = ',') => {
     // Same multiplicative-output risk as replace(): a large array of small
     // elements (e.g. from split_text_to_list(x; "") — one element per
     // character of x) joined with a large separator builds a result far
-    // bigger than either input alone. Projected before the real `.join()`.
-    if (projectedJoinLength({ items: arr, sep: sepStr }) > FORMULA_MAX_BUILT_STRING_LENGTH) {
+    // bigger than either input alone. Projected before the real `.join()`,
+    // and charged against the shared per-evaluation tracker so chaining
+    // many join_list() calls can't each get a fresh allowance.
+    //
+    // Elements are stringified HERE, once, rather than inside the projection
+    // — `.join()` below then runs on an already-all-string array and never
+    // re-stringifies, so a large nested/object element is only ever
+    // converted to a string once, not twice. `item ?? ''` matches
+    // `Array.prototype.join`'s treatment of null/undefined as empty string
+    // (`String(null)` would wrongly produce the literal text "null").
+    const stringified = arr.map((item) => (typeof item === 'string' ? item : String(item ?? '')))
+    const projected = projectedJoinLength({ items: stringified, sep: sepStr })
+    if (chargeSharedBudget({ tracker: currentBuiltStringBudget, amount: projected })) {
         throw new FormulaSizeLimitError('Result of join_list() is too large to build')
     }
-    return arr.join(sepStr)
+    return stringified.join(sepStr)
 }
 parser.functions.first_item = (list: unknown) => toArray(list)[0]
 parser.functions.last_item = (list: unknown) => {
@@ -479,13 +539,14 @@ function projectedSplitJoinLength({ source, from, to }: { source: string, from: 
     return source.length + occurrences * (to.length - from.length)
 }
 
-// Predicts the length `items.join(sep)` would produce. Non-string items are
-// stringified to measure them (same cost `.join()` itself would pay for
-// them), but string items reuse their own `.length` for free.
-function projectedJoinLength({ items, sep }: { items: unknown[], sep: string }): number {
+// Predicts the length `items.join(sep)` would produce. Takes already-
+// stringified items — the caller stringifies once and reuses the result for
+// both this measurement and the real join, rather than this function
+// stringifying its own throwaway copy.
+function projectedJoinLength({ items, sep }: { items: string[], sep: string }): number {
     let total = sep.length * Math.max(0, items.length - 1)
     for (const item of items) {
-        total += typeof item === 'string' ? item.length : String(item ?? '').length
+        total += item.length
     }
     return total
 }

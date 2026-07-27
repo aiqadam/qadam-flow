@@ -44,7 +44,18 @@ function evaluate({ expression, sampleData }: EvaluateExpressionParams): Evaluat
     // reference is counted, not deduplicated by variable identity, because
     // the final result concatenates one copy of the resolved value per
     // occurrence.
-    if (exceedsResolvedVariableBudget({ template: trimmed, sampleData })) {
+    //
+    // Scans `unwrap(trimmed)`, NOT the raw template: the wrapper's opening
+    // marker ends in a single `{` (`ap-formula-v1::{`), so a variable sitting
+    // right at the start of the wrapped expression — `wrap('{{x}}')` becomes
+    // `...v1::{{{x}}}::ap...` — lets VARIABLE_TOKEN_REGEX's leftmost match
+    // consume the wrapper's brace as if it were the token's own opening
+    // brace, capturing `{x` (which resolves to nothing) instead of `x`. That
+    // silently dropped the variable from the budget entirely for any
+    // expression starting with `{`. `unwrap` strips the wrapper markers
+    // first, leaving the inner `{{x}}` tokens with no adjacent wrapper brace
+    // to be confused with.
+    if (exceedsResolvedVariableBudget({ template: unwrap(trimmed), sampleData })) {
         return { result: null, error: 'Formula input data is too large to evaluate' }
     }
 
@@ -85,12 +96,14 @@ function tokenizeFormulaTemplate(template: string): Segment[] {
     return segments.filter((s) => s.value !== '')
 }
 
-// Scans the raw, untokenized template once for every `{{path}}` occurrence —
-// inside a formula wrapper or sitting in plain text, it doesn't matter, since
-// both eventually resolve the same variable into the caller's output. Each
-// occurrence is resolved and pushed into an array (not deduplicated), then
-// checked as one combined payload, so `exceedsSizeBudget`'s per-element
-// accounting sums the actual cost of concatenating every repetition.
+// Scans an already-unwrapped template once for every `{{path}}` occurrence —
+// inside what was a formula wrapper or sitting in plain text, it doesn't
+// matter, since both eventually resolve the same variable into the caller's
+// output. Each occurrence is resolved and pushed into an array (not
+// deduplicated), then checked as one combined payload, so
+// `exceedsSizeBudget`'s per-element accounting sums the actual cost of
+// concatenating every repetition. Callers MUST pass `unwrap(template)`, not
+// the raw wrapped template — see the call site in evaluate() for why.
 function exceedsResolvedVariableBudget({ template, sampleData }: { template: string, sampleData: Record<string, unknown> }): boolean {
     const resolvedValues: unknown[] = []
     for (const match of template.matchAll(VARIABLE_TOKEN_REGEX)) {
