@@ -54,7 +54,7 @@
 |---|---|---|---|
 | API Key | A platform-scoped authentication token (hashed, `sk-` prefixed) for programmatic API access. | service key, token | Platform |
 | Custom Domain | A white-label domain mapped to a platform, verified via DNS (CNAME/TXT) with PENDING/ACTIVE lifecycle. | — | Platform, Appearance |
-| License Key | Upstream activation-key concept — inert here: `VerifyLicenseKeyRequestBody` / `LicenseKeyEntity` are unused Zod schemas in `shared/src/lib/core/license-keys`, no verification or activation code exists, and `platform.controller.ts` returns `licenseKey: null`. | — | PlatformPlan |
+| License Key | Upstream activation-key concept — inert here: no verification or activation code exists. The unused `shared/src/lib/core/license-keys` schemas (`VerifyLicenseKeyRequestBody`, `LicenseKeyEntity`, `CreateTrialLicenseKeyRequestBody`) were removed in #152; the only remaining trace is the `licenseKey: Nullable(z.string())` field on `PlatformPlan` (`shared/src/lib/management/platform/platform.model.ts:62`), which `platform.controller.ts:99` fills with a hardcoded `null` and nothing reads. | — | PlatformPlan |
 | Platform | The top-level tenant entity that owns projects, users, billing, branding, and feature configuration. | tenant, organization, workspace | Project, PlatformPlan, User |
 | PlatformPlan | A shared Zod schema of platform feature flags and limits — **not** a TypeORM entity and not a database table; `getPlan()` returns a fixed all-CE object, and the Stripe/licence fields on the schema are inert leftovers (no billing code exists in this repo). | plan, subscription | Platform |
 | PlatformRole | A user's role within a platform: ADMIN (full control), MEMBER (own projects), or OPERATOR (all projects except others' personal). | — | User, Platform |
@@ -67,7 +67,7 @@
 
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
-| Audit Event | Another name for Application Event; nothing is persisted — there is no `audit_event` entity or table and no `/v1/audit-events` route on the server, though `web/.../audit-events-api.ts` still calls one. | audit log entry | Application Event |
+| Audit Event | Another name for Application Event; nothing is persisted — there is no `audit_event` entity, table, or `/v1/audit-events` route. The web client that called that non-existent route (`audit-events-api.ts`, `audit-log-hooks.ts`) and its `ListAuditEventsRequest` schema were removed in #152; `ApplicationEventName` / `ApplicationEvent` remain because the in-process dispatch in `helper/application-events.ts` uses them. | audit log entry | Application Event |
 | Federated Auth | Authentication via external identity providers (Google, GitHub) using OAuth2 code exchange. | social login, SSO | SAML, Platform |
 | Managed Auth | Upstream embedded-auth concept (external token exchanged for a session) — not implemented here: no `managed-authn` route is registered on the server, and the only trace is the `/v1/managed-authn/external-token` string in `web/src/lib/api.ts`. | embedded auth, external token | Signing Key, Platform |
 | OTP | A one-time password (10-min expiry) used for email verification and password reset flows. | verification code | UserIdentity |
@@ -91,7 +91,7 @@
 | Term | Definition (one sentence) | Aliases to avoid | Related terms |
 |---|---|---|---|
 | Application Event | One of the 22 `ApplicationEventName` domain events dispatched in-process by `helper/application-events.ts` to listeners registered at runtime — there is no event bus, no persistence, and `badge-service.ts` is the only registered listener. | domain event, system event | Audit Event, Badge |
-| Event Destination | Upstream webhook-fanout concept — dead here: no entity, service, route or queue. The only traces are the unresolved `EventDestinationScope` import plus `createMockEventDestination` in `server/api/test/helpers/mocks/index.ts` (nothing in `packages/shared/src` defines that enum) and two dead `/platform/infrastructure/event-destinations` links in the web sidebar. | webhook destination, event stream | Application Event |
+| Event Destination | Upstream webhook-fanout concept — fully dead here: no entity, service, route, queue, or type. The last traces were removed in #152 (the unresolved `EventDestinationScope` import and `createMockEventDestination` in `server/api/test/helpers/mocks/index.ts`, and the `/platform/infrastructure/event-destinations` entries in `web/src/app/components/sidebar/platform/index.tsx` and `web/src/app/components/global-search/static-pages.ts`, both of which pointed at a path absent from `platform-routes.tsx`). Kept as a row so the term is recognised as out-of-scope rather than missing. | webhook destination, event stream | Application Event |
 | Handshake | A verification protocol where external services confirm webhook ownership before sending events. | webhook verification | Webhook |
 | Webhook | An HTTP endpoint that ingests external payloads to trigger flow execution, supporting sync and async modes. | callback, hook | Flow, Trigger, Handshake |
 
