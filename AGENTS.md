@@ -267,6 +267,52 @@ before trusting its silence — an empty output is not the same as a passing che
   fixup, check `gh pr view <n> --json state`, and afterwards confirm the commit is reachable from
   `main` with `git branch -r --contains <sha>` rather than concluding from a successful push. "The
   command reported success" is not "the outcome happened" — which is the whole subject of this list.
+- **A wait loop over the check rollup reports success from an incomplete set.** `gh pr checks <n>
+  --json bucket --jq 'all(.bucket!="pending")'` is vacuously **true** in the first seconds after a
+  push, when only the fast contexts (`PR Title`, `Classify changed paths`) have registered — `all`
+  over a set that does not yet contain the required checks says "everything resolved". A watcher
+  built on it exited immediately and reported a PR green while `Lint + Unit Tests` had not started.
+  Name the required contexts and require each to be present **and** non-pending:
+  `[.[]|select(.name=="Lint + Unit Tests" or …)|select(.bucket!="pending")]|length` against the
+  expected count. Then run the expression once before trusting it and confirm it returns the
+  *not-ready* answer — a gate only ever checked against the state it should accept is not checked.
+- **A loop whose tool is missing hangs silently instead of failing.** The replacement for the above
+  piped into `jq`, which is not installed here (see the table below): every iteration printed
+  `jq: command not found` into a log nobody was reading, the condition never became true, and it ran
+  until killed by hand. `gh` has `--jq` built in and needs no external binary. Same family as the
+  missing `python3` above: run a command once and look at its output before looping on it.
+- **A test that fails after your own edit is not evidence for the first mechanism you think of.**
+  Deleting a `vi.mock` factory left one `mockReset()` reference behind, so four tests failed with
+  `ReferenceError`. That was read as "the mock is load-bearing" and written into a commit message as
+  fact — the mock was inert, because the module under test never imported the path it mocked. Read
+  the actual error before writing the conclusion, and state a mechanism only after confirming it by
+  removing the thing and watching the behaviour change.
+- **"It passes" does not tell you why, and the why decides what the test covers.** A case in
+  `test/unit/app/workers/machine/machine-list-filter.test.ts` was credited as tenant-isolation
+  coverage. It is not: `machineService.list` ignores its `platformId` argument and drops every
+  `DEDICATED` worker, so the test cannot fail if platform scoping regresses — there is none to
+  regress (#202). Before crediting a test with covering something, break that thing on purpose and
+  confirm the test goes red.
+
+### What the sandbox container does not have
+
+Verified with `command -v`, not from memory. Three separate stalls in one session came from assuming
+one of these was present.
+
+| tool | state | consequence |
+| --- | --- | --- |
+| `bun` | **missing** | `turbo` cannot execute any task — `npm run lint-all`, `typecheck`, `test-unit` all die with `Unable to find package manager binary`, because `packageManager` is `bun@1.3.3`. `turbo … --dry=json` still works, so audits are fine and runs are not. |
+| `jq` | **missing** | pipelines into it fail per iteration; use `gh --jq`, which needs no binary. |
+| `python3` / `python` | **missing** | see the `generate → consume` entry above. |
+| `turbo`, `tsc` on PATH | missing | use `npx`. |
+| `psql`, `redis-cli` | missing | integration tests need the docker-compose services, not a bare shell. |
+| `node` | v22 | CI pins **24** (`_verify.yml`); a version-sensitive local result is not authoritative. |
+| git hooks | **not installed** | `core.hooksPath` empty, no `.git/hooks/pre-push`, no `.husky/_`. A successful `CLAUDE_PUSH=yes git push` here is evidence the gate **did not run**. |
+| `docker`, `gh`, `node`, `npx` | present | usable. |
+
+So the authoritative local signals are `npx vitest`, `npx eslint`, `npx tsc` and
+`turbo … --dry=json`; anything routed through `turbo run` or a git hook proves nothing here, and
+saying so is better than substituting a command that returns clean.
 
 ## Review Agents
 
