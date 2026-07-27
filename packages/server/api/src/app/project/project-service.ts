@@ -23,7 +23,8 @@ import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { transaction } from '../core/db/transaction'
-import { distributedLock } from '../database/redis-connections'
+import { getProjectMaxConcurrentJobsKey } from '../database/redis/keys'
+import { distributedLock, distributedStore } from '../database/redis-connections'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { userService } from '../user/user-service'
@@ -39,7 +40,8 @@ export { projectRepo }
 
 export const projectService = (log: FastifyBaseLogger) => ({
     async create(params: CreateParams): Promise<Project> {
-        const { callPostCreateHooks = true, entityManager, postCreateContext, ...rest } = params
+        const { callPostCreateHooks = true, entityManager, postCreateContext, isPrivileged = false, ...rest } = params
+        assertCallerMayWriteMaxConcurrentJobs({ maxConcurrentJobs: rest.maxConcurrentJobs, isPrivileged })
         const icon = this.createProjectIcon()
         const newProject: NewProject = {
             id: apId(),
@@ -107,6 +109,8 @@ export const projectService = (log: FastifyBaseLogger) => ({
             })
         }
 
+        assertCallerMayWriteMaxConcurrentJobs({ maxConcurrentJobs: request.maxConcurrentJobs, isPrivileged })
+
         const externalId = request.externalId?.trim() !== '' ? request.externalId : undefined
         await assertExternalIdIsUnique(externalId, projectId)
 
@@ -124,6 +128,13 @@ export const projectService = (log: FastifyBaseLogger) => ({
         } : {}
 
         await projectRepo(entityManager).update({ id: projectId, platformId }, { ...baseUpdate, ...teamUpdate })
+        // maxConcurrentJobs is read on the rate limiter's hot path through a short-TTL redis
+        // cache (rate-limiter-interceptor.ts), not straight from Postgres — an operator lowering
+        // a cap for incident response should not have to wait out that TTL, so invalidate the
+        // cache entry at the single write site rather than relying on it to expire.
+        if (request.maxConcurrentJobs !== undefined) {
+            await distributedStore.delete(getProjectMaxConcurrentJobsKey(projectId))
+        }
         return this.getOneOrThrow(projectId)
     },
 
@@ -488,6 +499,28 @@ async function ensureDefaultProjectRoles(platformId: string, entityManager?: Ent
     }
 }
 
+// `maxConcurrentJobs` is enforced by the rate limiter (rate-limiter-interceptor.ts, #201) — it is
+// no longer a harmless, dead column. `POST /v1/projects` is open to every authenticated USER
+// (publicPlatform([PrincipalType.USER]), adminOnly: false), and on update the only gate is
+// callerCanAdministerProject, which is true for the project owner or any member with the project
+// ADMIN role — neither is a platform admin/operator. Without this check, any user could set their
+// own project's cap to an arbitrarily high value and starve every other project sharing the same
+// workers, since the pool is the deployment's only per-project fairness guard. A non-nil value
+// from a non-privileged caller is rejected outright rather than silently dropped: a silent no-op
+// here would look like success to the caller while never taking effect, the exact defect class
+// #201 itself was filed over.
+function assertCallerMayWriteMaxConcurrentJobs({ maxConcurrentJobs, isPrivileged }: { maxConcurrentJobs: number | null | undefined, isPrivileged: boolean }): void {
+    if (isNil(maxConcurrentJobs) || isPrivileged) {
+        return
+    }
+    throw new QadamFlowError({
+        code: ErrorCode.AUTHORIZATION,
+        params: {
+            message: 'Only a platform admin or operator can set maxConcurrentJobs',
+        },
+    })
+}
+
 async function assertExternalIdIsUnique(externalId: string | undefined | null, projectId: ProjectId): Promise<void> {
     if (!isNil(externalId)) {
         const externalIdAlreadyExists = await projectRepo().existsBy({
@@ -553,6 +586,7 @@ type CreateParams = {
     externalId?: string
     metadata?: Metadata
     maxConcurrentJobs?: number
+    isPrivileged?: boolean
     callPostCreateHooks?: boolean
     postCreateContext?: ProjectPostCreateContext
     entityManager?: EntityManager
