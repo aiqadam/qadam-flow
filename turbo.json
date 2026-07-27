@@ -99,7 +99,43 @@
     },
     "test": {
       "dependsOn": ["build"],
-      "inputs": ["src/**", "test/**", "tsconfig*.json", "vitest.config.*"],
+      // vitest reads more than src and test: the setup file, the env fixture it
+      // loads and the aliased manual mocks are all inputs to the run. Leaving
+      // them out means editing one of them gets a cache hit and executes nothing
+      // while still reporting success — the #148 / #164 failure mode.
+      "inputs": [
+        "src/**",
+        "test/**",
+        "tsconfig*.json",
+        "vitest.config.*",
+        "vitest.setup.*",
+        ".env.tests",
+        "__mocks__/**"
+      ],
+      "outputs": ["coverage/**"]
+    },
+    "test-unit": {
+      // Only `api` declares a `test-unit` script (`vitest run test/unit`). It is a
+      // separate task from `test` because that package's `test` script is
+      // `test-ce` — the integration suite — so `turbo run test --filter=api`
+      // would run Postgres/Redis tests, not these.
+      //
+      // `dependsOn: ["^build"]` is load-bearing: the vitest config aliases
+      // @aiqadam/shared, @aiqadam/qadams-framework, @aiqadam/qadams-common and
+      // @aiqadam/server-utils to *source*, which this task's own `inputs` cannot
+      // see, so without it a change in one of those packages would not move the
+      // hash and a stale pass would be served from cache.
+      "dependsOn": ["^build"],
+      // Same inputs as `test`, and for the same reason — see the note there.
+      "inputs": [
+        "src/**",
+        "test/**",
+        "tsconfig*.json",
+        "vitest.config.*",
+        "vitest.setup.*",
+        ".env.tests",
+        "__mocks__/**"
+      ],
       "outputs": ["coverage/**"]
     },
     "test-ce": {

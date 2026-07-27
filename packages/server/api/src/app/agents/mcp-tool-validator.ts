@@ -31,6 +31,7 @@ export const mcpToolValidator = {
 function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
     return async (input, init) => {
         const url = input instanceof URL ? input.toString() : (typeof input === 'string' ? input : input.url)
+        const origin = new URL(url)
         const response = await safeHttp.axios.request<ArrayBuffer>({
             method: init?.method ?? 'GET',
             url,
@@ -41,6 +42,35 @@ function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
             timeout: VALIDATE_TIMEOUT_MS,
             maxContentLength: MAX_RESPONSE_BYTES,
             maxBodyLength: MAX_RESPONSE_BYTES,
+            // Bounded, not disabled. The private-network case is already covered:
+            // `follow-redirects` re-applies the filtering agent on every hop, not
+            // only the first. What is left to stop is a redirect off the host the
+            // user configured — it strips just Authorization, Proxy-Authorization
+            // and Cookie, while API_KEY / HEADERS auth sends arbitrary header
+            // names like `X-API-Key` that would travel to the new host verbatim.
+            // Banning redirects outright would break a FastMCP-style mount that
+            // 307s `/mcp` to `/mcp/`, which is the likeliest URL a user types by
+            // hand, so same-host hops stay allowed and the cap stops a chain from
+            // outliving the timeout — which is per-socket inactivity, re-armed on
+            // every hop.
+            maxRedirects: MAX_REDIRECTS,
+            // Read from `href`, not from `hostname`/`protocol`: axios dispatches
+            // its own proxy callback first, and that one overwrites those two
+            // fields with the proxy's, so on any install with HTTP_PROXY set a
+            // hostname comparison refuses every redirect including the same-host
+            // one this exists to allow. `href` is the resolved redirect target and
+            // the proxy rewrite leaves it alone. It also keeps IPv6 literals
+            // comparable — `follow-redirects` strips the brackets off `hostname`
+            // while `new URL()` keeps them.
+            beforeRedirect: (options) => {
+                const target = new URL(options.href)
+                if (target.hostname !== origin.hostname) {
+                    throw new Error('mcp validation refused a cross-host redirect')
+                }
+                if (origin.protocol === 'https:' && target.protocol !== 'https:') {
+                    throw new Error('mcp validation refused an https-to-http redirect')
+                }
+            },
         })
         return new Response(Buffer.from(response.data), {
             status: response.status,
@@ -74,5 +104,9 @@ function isValidUrl(value: string): boolean {
 
 const VALIDATE_TIMEOUT_MS = 15_000
 const MAX_RESPONSE_BYTES = 64 * 1024
+// Two covers the shapes that legitimately occur — a trailing-slash normalisation
+// and an http-to-https upgrade, possibly both — without letting a chain of hops
+// keep re-arming the per-socket inactivity timeout.
+const MAX_REDIRECTS = 2
 const MCP_CLIENT_INFO = { name: 'qadam-flow-validator', version: '1.0.0' }
 const GENERIC_ERROR = 'Could not validate MCP server. Check the URL, authentication, and that the server is reachable.'

@@ -4,18 +4,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mcpToolValidator } from '../../../../src/app/agents/mcp-tool-validator'
 
 vi.mock('@aiqadam/server-utils', () => ({
-    safeHttp: { retryingAxios: { post: vi.fn() } },
+    safeHttp: { axios: { request: vi.fn() } },
 }))
 
-type AxiosCall = { url: string, body: string, config: AxiosConfigLike }
-type AxiosConfigLike = { headers?: Record<string, string>, maxRedirects?: number, timeout?: number }
+type AxiosRequestConfigLike = {
+    url?: string
+    data?: string
+    headers?: Record<string, string>
+    maxRedirects?: number
+    maxContentLength?: number
+    maxBodyLength?: number
+    timeout?: number
+    beforeRedirect?: (options: { href: string, hostname: string, protocol: string }) => void
+}
+type AxiosCall = { url: string, body: Record<string, unknown>, config: AxiosRequestConfigLike }
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 const SSE_HEADERS = { 'content-type': 'text/event-stream' }
 
 describe('mcpToolValidator.validateAgentMcpTool', () => {
     beforeEach(() => {
-        vi.mocked(safeHttp.retryingAxios.post).mockReset()
+        vi.mocked(safeHttp.axios.request).mockReset()
     })
 
     afterEach(() => {
@@ -47,7 +56,16 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
-        const methods = capturedCalls().map((c) => c.body.method)
+        // Four requests, not three: the SDK opens an SSE GET after
+        // `notifications/initialized` and before `tools/list`, and that one
+        // carries no JSON-RPC body. Asserted explicitly because the filter
+        // below drops body-less entries, which would otherwise let a spurious
+        // extra request slip past `toEqual` unnoticed.
+        expect(capturedCalls()).toHaveLength(4)
+        expect(capturedCalls().filter((c) => c.body.method === undefined)).toHaveLength(1)
+        const methods = capturedCalls()
+            .map((c) => c.body.method)
+            .filter((method): method is string => typeof method === 'string')
         expect(methods).toEqual([
             'initialize',
             'notifications/initialized',
@@ -55,20 +73,70 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         ])
     })
 
-    it('disables redirects and sets a 64KB response cap', async () => {
+    it('caps redirects and sets a 64KB response cap', async () => {
         mockJsonRpcServer({ tools: [] })
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
         const call = capturedCalls()[0]
-        expect(call.config.maxRedirects).toBe(0)
+        expect(call.config.maxRedirects).toBe(2)
         expect(call.config.maxContentLength).toBe(64 * 1024)
         expect(call.config.maxBodyLength).toBe(64 * 1024)
         expect(call.config.timeout).toBe(15_000)
     })
 
+    // `hostname`/`protocol` are deliberately set to a proxy's here, not the
+    // target's: axios's own proxy `beforeRedirect` runs before this one and
+    // overwrites them, so a check reading those fields would refuse every
+    // redirect on any install with HTTP_PROXY set. Only `href` survives that
+    // rewrite, so only `href` may be trusted.
+    const AS_SEEN_BEHIND_A_PROXY = { hostname: 'corp-proxy.internal', protocol: 'http:' }
+
+    it.each([
+        ['a different host', 'https://attacker.example/rpc'],
+        ['an https-to-http downgrade', 'http://mcp.example.com/rpc'],
+    ])('refuses a redirect to %s', async (_label, href) => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(buildTool())
+
+        const beforeRedirect = capturedCalls()[0].config.beforeRedirect
+        expect(beforeRedirect).toBeDefined()
+        expect(() => beforeRedirect?.({ href, ...AS_SEEN_BEHIND_A_PROXY })).toThrow()
+    })
+
+    it.each([
+        ['a trailing-slash mount', 'https://mcp.example.com/rpc/'],
+        ['a different port on the same host', 'https://mcp.example.com:8443/rpc'],
+    ])('allows a same-host redirect to %s', async (_label, href) => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(buildTool())
+
+        const beforeRedirect = capturedCalls()[0].config.beforeRedirect
+        expect(() => beforeRedirect?.({ href, ...AS_SEEN_BEHIND_A_PROXY })).not.toThrow()
+    })
+
+    // `follow-redirects` strips the brackets off `options.hostname` for an IPv6
+    // literal while `new URL().hostname` keeps them, so comparing hostnames
+    // across those two sources would never match. Comparing two `new URL()`
+    // results, as the code does, is what makes this pass.
+    it('allows a same-host redirect when the host is an IPv6 literal', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(
+            buildTool({ serverUrl: 'https://[2001:db8::1]/rpc' }),
+        )
+
+        const beforeRedirect = capturedCalls()[0].config.beforeRedirect
+        expect(() => beforeRedirect?.({
+            href: 'https://[2001:db8::1]/rpc/',
+            ...AS_SEEN_BEHIND_A_PROXY,
+        })).not.toThrow()
+    })
+
     it('collapses any downstream failure to a single generic error', async () => {
-        vi.mocked(safeHttp.retryingAxios.post).mockRejectedValue(
+        vi.mocked(safeHttp.axios.request).mockRejectedValue(
             Object.assign(new Error('ENOTFOUND attacker.example'), { code: 'ENOTFOUND' }),
         )
 
@@ -80,7 +148,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 
     it('rejects malformed URLs without dialing', async () => {
-        const spy = vi.mocked(safeHttp.retryingAxios.post)
+        const spy = vi.mocked(safeHttp.axios.request)
 
         const result = await mcpToolValidator.validateAgentMcpTool(
             buildTool({ serverUrl: 'not a url' }),
@@ -92,7 +160,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 
     it('rejects non-http(s) URLs without dialing', async () => {
-        const spy = vi.mocked(safeHttp.retryingAxios.post)
+        const spy = vi.mocked(safeHttp.axios.request)
 
         const result = await mcpToolValidator.validateAgentMcpTool(
             buildTool({ serverUrl: 'file:///etc/passwd' }),
@@ -161,20 +229,23 @@ function buildTool(overrides: Partial<DefaultTool> = {}): DefaultTool {
 }
 
 function capturedCalls(): AxiosCall[] {
-    return vi.mocked(safeHttp.retryingAxios.post).mock.calls.map(([url, body, config]) => ({
-        url: String(url),
-        body: typeof body === 'string' ? JSON.parse(body) : body,
-        config: (config ?? {}) as AxiosConfigLike & { maxRedirects?: number, maxContentLength?: number, maxBodyLength?: number, timeout?: number },
-    }))
+    return vi.mocked(safeHttp.axios.request).mock.calls.map(([config]) => {
+        const requestConfig = config as AxiosRequestConfigLike
+        return {
+            url: String(requestConfig.url),
+            body: typeof requestConfig.data === 'string' ? JSON.parse(requestConfig.data) : {},
+            config: requestConfig,
+        }
+    })
 }
 
 function mockJsonRpcServer(
     { tools }: { tools: Array<{ name: string }> },
     { forceSse = false }: { forceSse?: boolean } = {},
 ): void {
-    vi.mocked(safeHttp.retryingAxios.post).mockImplementation(async (...args: unknown[]) => {
-        const rawBody = args[1]
-        const body = typeof rawBody === 'string' ? JSON.parse(rawBody) : {}
+    vi.mocked(safeHttp.axios.request).mockImplementation(async (...args: unknown[]) => {
+        const config = args[0] as AxiosRequestConfigLike
+        const body = typeof config.data === 'string' ? JSON.parse(config.data) : {}
         if (body.method === 'initialize') {
             const payload = {
                 jsonrpc: '2.0',
@@ -185,22 +256,30 @@ function mockJsonRpcServer(
                     capabilities: { tools: {} },
                 },
             }
-            return makeResponse(payload, forceSse)
+            return makeAxiosResponse(payload, forceSse)
+        }
+        if (body.method === 'notifications/initialized') {
+            return { status: 202, data: Buffer.alloc(0), headers: {} }
         }
         if (body.method === 'tools/list') {
-            const payload = { jsonrpc: '2.0', id: body.id, result: { tools } }
-            return makeResponse(payload, forceSse)
+            const payload = {
+                jsonrpc: '2.0',
+                id: body.id,
+                result: { tools: tools.map((tool) => ({ ...tool, inputSchema: { type: 'object', properties: {} } })) },
+            }
+            return makeAxiosResponse(payload, forceSse)
         }
-        return makeResponse({}, false)
+        return makeAxiosResponse({}, false)
     })
 }
 
-function makeResponse(payload: unknown, sse: boolean): { data: string, headers: Record<string, string> } {
+function makeAxiosResponse(payload: unknown, sse: boolean): { status: number, data: Buffer, headers: Record<string, string> } {
     if (sse) {
         return {
-            data: `event: message\ndata: ${JSON.stringify(payload)}\n\n`,
+            status: 200,
+            data: Buffer.from(`event: message\ndata: ${JSON.stringify(payload)}\n\n`),
             headers: SSE_HEADERS,
         }
     }
-    return { data: JSON.stringify(payload), headers: JSON_HEADERS }
+    return { status: 200, data: Buffer.from(JSON.stringify(payload)), headers: JSON_HEADERS }
 }

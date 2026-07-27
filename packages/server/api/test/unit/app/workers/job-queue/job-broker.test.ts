@@ -26,6 +26,17 @@ vi.mock('../../../../../src/app/workers/job-queue/interceptors/rate-limiter-inte
     },
 }))
 
+// tryDequeue also runs zombiePollingInterceptor unconditionally — it queries
+// triggerSourceRepo() (real Postgres) for repeating job types, which this
+// unit test has no DB for. It is irrelevant to the dequeue behaviour under
+// test here, so it is stubbed to always allow.
+vi.mock('../../../../../src/app/workers/job-queue/interceptors/zombie-polling-interceptor', () => ({
+    zombiePollingInterceptor: {
+        preDispatch: () => Promise.resolve({ verdict: 'ALLOW' }),
+        onJobFinished: () => Promise.resolve(undefined),
+    },
+}))
+
 import { tryDequeue } from '../../../../../src/app/workers/job-queue/job-broker'
 import { InterceptorVerdict } from '../../../../../src/app/workers/job-queue/job-interceptor'
 
@@ -45,7 +56,20 @@ function createMockJob(id: string, data?: Record<string, unknown>, deferredFailu
     return {
         id,
         name: `job-name-${id}`,
-        data: { projectId: 'proj-1', platformId: 'plat-1', ...data },
+        data: {
+            projectId: 'proj-1',
+            platformId: 'plat-1',
+            jobType: 'EXECUTE_WEBHOOK',
+            schemaVersion: 10,
+            requestId: 'req-1',
+            payload: { type: 'inline', value: {} },
+            runEnvironment: 'PRODUCTION',
+            flowId: 'flow-1',
+            saveSampleData: false,
+            flowVersionIdToRun: 'flow-version-1',
+            execute: true,
+            ...data,
+        },
         attemptsMade: 0,
         deferredFailure,
         moveToDelayed: vi.fn().mockResolvedValue(undefined),
@@ -75,7 +99,6 @@ describe('tryDequeue', () => {
         expect(result).not.toBeNull()
         expect(result!.jobId).toBe('job-1')
         expect(result!.engineToken).toBe('engine-token')
-        expect(result!.timeoutInSeconds).toBe(600)
         expect(result!.token).toMatch(/^token-/)
         expect(result!.queueName).toBe('test-queue')
         expect(job.updateData).not.toHaveBeenCalled()

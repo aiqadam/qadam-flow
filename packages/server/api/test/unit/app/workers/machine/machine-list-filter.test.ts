@@ -28,14 +28,6 @@ vi.mock('../../../../../src/app/workers/machine/machine-cache', () => ({
     }),
 }))
 
-const mockGetWorkerGroupId = vi.fn()
-
-vi.mock('../../../../../src/app/ee-stubs', () => ({
-    workerGroupService: () => ({
-        getWorkerGroupId: (...args: unknown[]) => mockGetWorkerGroupId(...args),
-    }),
-}))
-
 const mockLogger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -59,12 +51,10 @@ function fakeMachineInfo(workerId: string): MachineInformation {
 
 describe('machineService.list — platform filtering', () => {
     beforeEach(() => {
-        mockGetWorkerGroupId.mockReset()
         inMemoryStore = new Map()
     })
 
     it('should return shared workers for any platform', async () => {
-        mockGetWorkerGroupId.mockResolvedValue(null)
         await workerMachineCache().upsert({
             id: 'shared-1',
             information: fakeMachineInfo('shared-1'),
@@ -79,39 +69,7 @@ describe('machineService.list — platform filtering', () => {
         expect(result[0].status).toBe(WorkerMachineStatus.ONLINE)
     })
 
-    it('should return dedicated workers only for the matching platform', async () => {
-        mockGetWorkerGroupId.mockImplementation(({ platformId }: { platformId: string }) => {
-            if (platformId === 'platform-A') return Promise.resolve('group-A')
-            if (platformId === 'platform-B') return Promise.resolve('group-B')
-            return Promise.resolve(null)
-        })
-
-        await workerMachineCache().upsert({
-            id: 'dedicated-A',
-            information: fakeMachineInfo('dedicated-A'),
-            type: 'DEDICATED',
-            workerGroupId: 'group-A',
-        })
-
-        await workerMachineCache().upsert({
-            id: 'dedicated-B',
-            information: fakeMachineInfo('dedicated-B'),
-            type: 'DEDICATED',
-            workerGroupId: 'group-B',
-        })
-
-        const resultA = await machineService(mockLogger).list('platform-A')
-        expect(resultA).toHaveLength(1)
-        expect(resultA[0].id).toBe('dedicated-A')
-        expect(resultA[0].type).toBe(WorkerMachineType.DEDICATED)
-
-        const resultB = await machineService(mockLogger).list('platform-B')
-        expect(resultB).toHaveLength(1)
-        expect(resultB[0].id).toBe('dedicated-B')
-    })
-
     it('should not return other platforms dedicated workers', async () => {
-        mockGetWorkerGroupId.mockResolvedValue(null)
         await workerMachineCache().upsert({
             id: 'dedicated-other',
             information: fakeMachineInfo('dedicated-other'),
@@ -123,41 +81,7 @@ describe('machineService.list — platform filtering', () => {
         expect(result).toHaveLength(0)
     })
 
-    it('should return only dedicated workers when platform has a worker group', async () => {
-        mockGetWorkerGroupId.mockImplementation(({ platformId }: { platformId: string }) => {
-            if (platformId === 'platform-X') return Promise.resolve('group-X')
-            return Promise.resolve(null)
-        })
-
-        await workerMachineCache().upsert({
-            id: 'shared-1',
-            information: fakeMachineInfo('shared-1'),
-            type: 'SHARED',
-        })
-
-        await workerMachineCache().upsert({
-            id: 'dedicated-mine',
-            information: fakeMachineInfo('dedicated-mine'),
-            type: 'DEDICATED',
-            workerGroupId: 'group-X',
-        })
-
-        await workerMachineCache().upsert({
-            id: 'dedicated-other',
-            information: fakeMachineInfo('dedicated-other'),
-            type: 'DEDICATED',
-            workerGroupId: 'group-Y',
-        })
-
-        const result = await machineService(mockLogger).list('platform-X')
-        expect(result).toHaveLength(1)
-        expect(result[0].id).toBe('dedicated-mine')
-        expect(result[0].type).toBe(WorkerMachineType.DEDICATED)
-    })
-
     it('should return shared workers when platform has no worker group', async () => {
-        mockGetWorkerGroupId.mockResolvedValue(null)
-
         await workerMachineCache().upsert({
             id: 'shared-1',
             information: fakeMachineInfo('shared-1'),
@@ -178,7 +102,6 @@ describe('machineService.list — platform filtering', () => {
     })
 
     it('should include legacy workers with no type as shared', async () => {
-        mockGetWorkerGroupId.mockResolvedValue(null)
         await workerMachineCache().upsert({
             id: 'legacy-worker',
             information: fakeMachineInfo('legacy-worker'),

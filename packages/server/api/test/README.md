@@ -37,7 +37,6 @@ Integration tests require a running Postgres + Redis (see `.env.tests`).
 
 ## Classification debt
 
-- **`test/unit/app/core/canary/canary-proxy.integration.test.ts`** — already carries an `.integration.` infix but lives under `test/unit/`. Spins up two real Fastify instances listening on real TCP ports and routes requests between them. Target: move to `test/integration/ce/core/canary/` and drop the redundant `.integration.` infix.
 - **`test/integration/ce/authentication/password-hasher.test.ts`** — pure bcrypt + legacy scrypt logic. No `setupTestEnvironment`, no DB, no Fastify app, no `createTestContext`. Target: move to `test/unit/app/authentication/`.
 - **Duplication: `test/integration/ce/flows/flow/flow.test.ts` and `test/integration/cloud/flow/flow.test.ts`** — both exercise identical "Create flow" shapes and assertions; only role-permission checks differ in the cloud copy. Target: extract the shared CRUD assertions into the CE file (the common base) and keep only cloud-specific role permutations under `cloud/`.
 
