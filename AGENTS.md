@@ -183,6 +183,35 @@ before trusting its silence — an empty output is not the same as a passing che
 - **Empty check conclusions read as pending, not passing.** `gh pr view --json statusCheckRollup`
   returns `""` (not `null`) for an in-flight check. Treat any falsy conclusion as pending, or you
   will read a running pipeline as green.
+- **Reading the repo from a working tree that has drifted behind `origin/main` produces confident,
+  wrong measurements with no symptom.** A long session merges PRs while `/workspace` stays on the
+  commit it started at; every `grep`, `cat` and `node -e "require('./package.json')"` then reports
+  the old tree. This is how the root `test-unit` filter list was quoted into an issue after the
+  filter had already been widened. `git fetch && git merge --ff-only origin/main` before measuring
+  anything you intend to publish, or read the file via `git show origin/main:<path>` so the source
+  is unambiguous.
+- **A filename is not a manifest.** `packages/web/src/assets/fonts/inter-v20-latin-500.ttf` and
+  `-600.ttf` are named as Latin subsets and are full 2,849-codepoint `Inter 18pt` builds including
+  Cyrillic and Greek; the `.woff2` files beside them, identically named, really are Latin subsets.
+  An issue was filed asserting "every Inter subset shipped is Latin-only" purely from the names.
+  When a claim is about a file's *contents* — glyph coverage, exported symbols, which routes a
+  bundle registers — open the file. The cheap corroboration here was size: 343 KB versus 24 KB at a
+  comparable weight is not a format difference.
+- **A tool that cannot do its job may still emit a plausible artifact instead of failing.** Rendering
+  the Open Graph card with `@resvg/resvg-js` in this container produced a valid 13 KB PNG containing
+  the logo and **no text at all** — there are no system fonts installed, so every text node was
+  dropped silently. Exit code 0, sane file size, correct dimensions. For anything whose output is
+  visual or binary, inspect the artifact itself (`Read` the image, parse the bytes); a size and an
+  exit code are not evidence. Relatedly, when a pipeline is `generate → consume`, confirm the
+  generate step ran: a missing `python3` failed one step while the next happily consumed the stale
+  input from the previous run.
+- **Pushing to the branch of an already-merged PR exits 0 and changes nothing.** The ref updates, the
+  push reports success, and no warning appears anywhere — but the PR is closed, so the commit never
+  reaches `main`. A review finding on #168 was fixed this way three minutes after that PR merged, and
+  then reported in its own comment thread as landed; `main` never received it. Before pushing a review
+  fixup, check `gh pr view <n> --json state`, and afterwards confirm the commit is reachable from
+  `main` with `git branch -r --contains <sha>` rather than concluding from a successful push. "The
+  command reported success" is not "the outcome happened" — which is the whole subject of this list.
 
 ## Review Agents
 
