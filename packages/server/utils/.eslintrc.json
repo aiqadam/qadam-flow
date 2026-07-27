@@ -16,6 +16,28 @@
     {
       "files": ["*.js", "*.jsx"],
       "rules": {}
+    },
+    {
+      "files": ["src/safe-http.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": ["lodash", "lodash/*"]
+          }
+        ],
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "CallExpression[callee.name='fetch']",
+            "message": "Raw fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+          },
+          {
+            "selector": "CallExpression[callee.object.name='globalThis'][callee.property.name='fetch']",
+            "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+          }
+        ]
+      }
     }
   ]
 }
