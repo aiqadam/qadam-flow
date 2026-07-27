@@ -20,6 +20,7 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder } from 'typeorm'
+import { userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { transaction } from '../core/db/transaction'
 import { userService } from '../user/user-service'
@@ -285,6 +286,48 @@ export const projectService = (log: FastifyBaseLogger) => ({
             .getRawOne<ProjectRole>()
         return row ?? null
     },
+    // Revalidates alert receivers (and anything else keyed by email rather than userId) against
+    // current membership in one round trip. `add()`'s per-receiver getProjectRoleForUser check is
+    // right for a single grant, but MAX_ALERT_RECEIVERS receivers would mean 50 round trips here.
+    //
+    // "Still a member" is deliberately narrower than "a project_member row exists": project_member
+    // has no FK to user (see 1784284221314-AddProjectMemberTable) and userService#removeFromPlatform
+    // detaches a user by nulling user.platformId rather than deleting the user or the membership row.
+    // So a project_member row alone can outlive the offboarding — it has to be joined against a user
+    // row whose platformId still matches this project's platform to prove the grant is still live.
+    // For PERSONAL projects there is no project_member row for the owner (see
+    // applyProjectsAccessFilters above), so membership instead means "still the project owner and
+    // still attached to this platform."
+    async filterActiveMemberEmails({ project, emails }: FilterActiveMemberEmailsParams): Promise<string[]> {
+        if (emails.length === 0) {
+            return []
+        }
+        const normalizedEmails = emails.map((email) => email.toLowerCase().trim())
+        const { id: projectId, platformId } = project
+
+        if (project.type === ProjectType.PERSONAL) {
+            const owner = await userService(log).get({ id: project.ownerId })
+            if (isNil(owner) || owner.platformId !== platformId) {
+                return []
+            }
+            const identity = await userIdentityService(log).getOneOrFail({ id: owner.identityId })
+            const ownerEmail = identity.email.toLowerCase().trim()
+            return normalizedEmails.filter((email) => email === ownerEmail)
+        }
+
+        const rows = await projectMemberRepo()
+            .createQueryBuilder('pm')
+            .innerJoin('user', 'usr', 'usr.id = pm."userId" AND usr."platformId" = :platformId', { platformId })
+            .innerJoin('user_identity', 'ui', 'ui.id = usr."identityId"')
+            .where('pm."projectId" = :projectId', { projectId })
+            .andWhere('pm."platformId" = :platformId', { platformId })
+            .andWhere('LOWER(ui.email) IN (:...emails)', { emails: normalizedEmails })
+            .select('LOWER(ui.email)', 'email')
+            .getRawMany<{ email: string }>()
+        const activeMemberEmails = new Set(rows.map((row) => row.email))
+
+        return normalizedEmails.filter((email) => activeMemberEmails.has(email))
+    },
 })
 
 
@@ -463,6 +506,11 @@ type GetProjectRoleForUserParams = {
     userId: string
     projectId: string
     platformId: string
+}
+
+type FilterActiveMemberEmailsParams = {
+    project: Project
+    emails: string[]
 }
 
 type UpdateProjectParams = {

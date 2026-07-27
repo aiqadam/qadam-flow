@@ -42,12 +42,36 @@ export const alertsService = (log: FastifyBaseLogger) => ({
         }
 
         const alerts = await this.list({ projectId: flowRun.projectId, cursor: undefined, limit: MAX_ALERT_RECEIVERS })
-        const emails = alerts.data.filter((alert) => alert.channel === AlertChannel.EMAIL).map((alert) => alert.receiver)
-        if (emails.length === 0) {
+        const candidateEmails = alerts.data.filter((alert) => alert.channel === AlertChannel.EMAIL).map((alert) => alert.receiver)
+        if (candidateEmails.length === 0) {
             return
         }
 
         const project = await projectService(log).getOneOrThrow(flowRun.projectId)
+        // Revalidated here rather than at add() time only: a grant that was valid when armed
+        // must not survive the receiver being offboarded (userService#removeFromPlatform detaches
+        // the user but leaves the alert row and, for TEAM projects, the project_member row in
+        // place — see filterActiveMemberEmails for why). Any failure in this lookup is left to
+        // propagate: flowRunHooks#onFinish wraps sendAlertOnRunFinish in tryCatch and only logs,
+        // so failing closed here means a transient DB error costs one missed alert rather than
+        // risking mail to an ex-member.
+        const emails = await projectService(log).filterActiveMemberEmails({
+            project,
+            emails: candidateEmails,
+        })
+        const droppedCount = candidateEmails.length - emails.length
+        if (droppedCount > 0) {
+            // Rows armed before the add()-time membership check existed can name someone with
+            // real project access but no project_member row (e.g. a platform ADMIN/OPERATOR,
+            // who bypasses applyProjectsAccessFilters entirely and so never needed one). Those
+            // receivers now stop getting failure mail permanently with no other signal — log the
+            // count (never the addresses) so a drop is at least visible to re-arm from.
+            log.info({ projectId: flowRun.projectId, droppedCount }, '[alertsService#sendAlertOnRunFinish] dropped alert receivers that are no longer active project members')
+        }
+        if (emails.length === 0) {
+            return
+        }
+
         const flowVersion = await flowVersionService(log).getOneOrThrow(flowRun.flowVersionId)
         const failedStep = flowRun.failedStep
         const failedStepNumber = failedStep ? flowStructureUtil.getStepNumber(flowVersion.trigger, failedStep.name) : 0
