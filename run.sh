@@ -13,7 +13,7 @@
 #
 # Environment overrides:
 #   QADAM_FLOW_DIR   — install directory (default: ./qadam-flow)
-#   QADAM_FLOW_PORT  — host port for the app (default: 8080)
+#   QADAM_FLOW_PORT  — host port the app is published on (default: 8080)
 #   QADAM_FLOW_IMAGE — docker image (default: ghcr.io/aiqadam/qadam-flow:latest)
 #   QADAM_FLOW_REF   — git ref for the compose file (default: main)
 #
@@ -43,12 +43,30 @@ die()  { err "$1"; exit 1; }
 # ---------- defaults ---------------------------------------------------------
 
 QADAM_FLOW_DIR=${QADAM_FLOW_DIR:-qadam-flow}
-QADAM_FLOW_PORT=${QADAM_FLOW_PORT:-8080}
 QADAM_FLOW_IMAGE=${QADAM_FLOW_IMAGE:-ghcr.io/aiqadam/qadam-flow:latest}
 QADAM_FLOW_REF=${QADAM_FLOW_REF:-main}
 
+DEFAULT_PORT=8080
+# Whether the operator asked for a specific port matters: an explicit override must be pushed into an
+# existing .env, while no override must adopt whatever port that .env already publishes.
+if [ -n "${QADAM_FLOW_PORT:-}" ]; then
+  PORT_EXPLICIT=yes
+else
+  PORT_EXPLICIT=no
+fi
+QADAM_FLOW_PORT=${QADAM_FLOW_PORT:-$DEFAULT_PORT}
+
 COMPOSE_URL="https://raw.githubusercontent.com/aiqadam/qadam-flow/${QADAM_FLOW_REF}/docker-compose.yml"
-HEALTH_URL="http://localhost:${QADAM_FLOW_PORT}/api/v1/flags"
+
+validate_port() {
+  port_source=${1:-QADAM_FLOW_PORT}
+  case "$QADAM_FLOW_PORT" in
+    ''|*[!0-9]*) die "$port_source must be a number between 1 and 65535 (got '$QADAM_FLOW_PORT')" ;;
+  esac
+  if [ "$QADAM_FLOW_PORT" -lt 1 ] || [ "$QADAM_FLOW_PORT" -gt 65535 ]; then
+    die "$port_source must be a number between 1 and 65535 (got '$QADAM_FLOW_PORT')"
+  fi
+}
 
 # ---------- platform sanity --------------------------------------------------
 
@@ -131,9 +149,93 @@ fetch_compose() {
   mv docker-compose.yml.new docker-compose.yml
 }
 
+# Older compose files hardcode '8080:80'. Publishing a custom port depends on the downloaded file
+# interpolating QADAM_FLOW_PORT, so fail loudly instead of booting a stack on the wrong port.
+check_compose_port() {
+  if [ "$QADAM_FLOW_PORT" = "$DEFAULT_PORT" ]; then
+    return 0
+  fi
+  if ! grep -q 'QADAM_FLOW_PORT' docker-compose.yml; then
+    die "the docker-compose.yml at ref '${QADAM_FLOW_REF}' hardcodes port ${DEFAULT_PORT} and cannot publish ${QADAM_FLOW_PORT} — re-run with QADAM_FLOW_REF=main, or unset QADAM_FLOW_PORT"
+  fi
+}
+
+# A .env written on Windows (Notepad, or a WSL user's editor) is CRLF, and an unstripped \r would end
+# up inside the health-check URL and the compose port mapping.
+env_value() {
+  [ -f .env ] || return 0
+  sed -n "s/^$1=//p" .env | tr -d '\r' | tail -n 1
+}
+
+set_env_value() {
+  if grep -q "^$1=" .env; then
+    # cp -p seeds the temp file with .env's own mode before `>` truncates it, so renaming over a
+    # hand-hardened .env can't widen AP_JWT_SECRET / AP_ENCRYPTION_KEY / the DB password to 0644.
+    cp -p .env .env.tmp && sed "s|^$1=.*|$1=$2|" .env > .env.tmp && mv .env.tmp .env
+  else
+    # Hand-written .env files often lack a trailing newline (VS Code's insertFinalNewline is off by
+    # default); appending blind would glue the assignment onto the last line and destroy both.
+    if [ -s .env ] && [ -n "$(tail -c 1 .env)" ]; then
+      printf '\n' >> .env
+    fi
+    printf '%s=%s\n' "$1" "$2" >> .env
+  fi
+}
+
+# Only the shape run.sh itself generates is safe to rewrite. Anything else — a real hostname, https,
+# an ngrok tunnel, a path — is the operator's own value and must survive a port change untouched.
+is_stock_localhost_url() {
+  case "$1" in
+    http://localhost:*) ;;
+    *) return 1 ;;
+  esac
+  url_port=${1#http://localhost:}
+  case "$url_port" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
+# .env is authoritative for an existing install: compose interpolates QADAM_FLOW_PORT from it, so the
+# health check and the printed URL have to agree with what that file says.
+reconcile_port() {
+  existing_port=$(env_value QADAM_FLOW_PORT)
+  frontend_url=$(env_value AP_FRONTEND_URL)
+  if [ "$PORT_EXPLICIT" = no ]; then
+    if [ -n "$existing_port" ] && [ "$existing_port" != "$QADAM_FLOW_PORT" ]; then
+      log "existing install publishes port ${existing_port} — keeping it (set QADAM_FLOW_PORT to change)"
+      QADAM_FLOW_PORT=$existing_port
+    elif [ -z "$existing_port" ] && is_stock_localhost_url "$frontend_url" \
+      && [ "$frontend_url" != "http://localhost:${QADAM_FLOW_PORT}" ]; then
+      # Installs predating the QADAM_FLOW_PORT line: the app is told one port by AP_FRONTEND_URL while
+      # compose publishes another. Don't move a running stack's port silently — say so instead.
+      warn "AP_FRONTEND_URL says ${frontend_url} but the stack will publish port ${QADAM_FLOW_PORT} — re-run with QADAM_FLOW_PORT=${frontend_url#http://localhost:} to move the published port, or fix AP_FRONTEND_URL in .env"
+    fi
+    return 0
+  fi
+  if [ "$existing_port" != "$QADAM_FLOW_PORT" ]; then
+    log "updating existing .env to publish port ${QADAM_FLOW_PORT}"
+    set_env_value QADAM_FLOW_PORT "$QADAM_FLOW_PORT"
+  fi
+  # Checked even when the port line already matched, so a hand edit that moved only the port — or an
+  # earlier run interrupted between the two writes — is repaired instead of left inconsistent.
+  if [ "$frontend_url" = "http://localhost:${QADAM_FLOW_PORT}" ] || [ -z "$frontend_url" ]; then
+    return 0
+  fi
+  if is_stock_localhost_url "$frontend_url"; then
+    # Announce it: the URL being the stock shape does not prove the operator did not choose it (a local
+    # proxy on http://localhost:3000 is the same shape), so a rewrite of their config must be visible.
+    log "repointing AP_FRONTEND_URL from ${frontend_url} to http://localhost:${QADAM_FLOW_PORT} in .env"
+    set_env_value AP_FRONTEND_URL "http://localhost:${QADAM_FLOW_PORT}"
+  else
+    warn "AP_FRONTEND_URL is customised ($frontend_url) — left as-is; edit .env if it should follow the new port"
+  fi
+}
+
 generate_env() {
   if [ -f .env ]; then
     log "reusing existing .env (delete it to regenerate secrets)"
+    reconcile_port
     return 0
   fi
   log "generating .env with fresh random secrets"
@@ -141,9 +243,16 @@ generate_env() {
   jwt_secret=$(openssl rand -hex 32)
   pg_password=$(openssl rand -hex 12)
 
+  # Tighten the mode on the empty file first: the heredoc below then truncates a file that is already
+  # 0600, so the encryption key, JWT secret and DB password never exist on disk world-readable.
+  : > .env
+  chmod 600 .env
+
   cat > .env <<EOF
-# Qadam Flow — generated by install.sh. Delete this file and re-run to rotate secrets.
+# Qadam Flow — generated by run.sh. Delete this file and re-run to rotate secrets.
+# QADAM_FLOW_* are read by docker-compose.yml itself, not by the app.
 QADAM_FLOW_IMAGE=${QADAM_FLOW_IMAGE}
+QADAM_FLOW_PORT=${QADAM_FLOW_PORT}
 
 AP_ENVIRONMENT=prod
 AP_FRONTEND_URL=http://localhost:${QADAM_FLOW_PORT}
@@ -160,7 +269,7 @@ AP_POSTGRES_PASSWORD=${pg_password}
 AP_POSTGRES_USE_SSL=false
 
 # Queue + cache
-AP_QUEUE_MODE=REDIS
+AP_REDIS_TYPE=STANDALONE
 AP_REDIS_HOST=redis
 AP_REDIS_PORT=6379
 
@@ -168,13 +277,11 @@ AP_REDIS_PORT=6379
 AP_ENCRYPTION_KEY=${enc_key}
 AP_JWT_SECRET=${jwt_secret}
 
-# Telemetry + community
+# Telemetry
 AP_TELEMETRY_ENABLED=false
-AP_TEMPLATES_SOURCE_URL=
 
 # Engine
 AP_EXECUTION_MODE=UNSANDBOXED
-AP_FLOW_WORKER_CONCURRENCY=10
 EOF
 }
 
@@ -188,6 +295,7 @@ pull_and_up() {
 }
 
 wait_for_app() {
+  HEALTH_URL="http://localhost:${QADAM_FLOW_PORT}/api/v1/flags"
   log "waiting for the app at ${HEALTH_URL}"
   deadline=$(( $(date +%s) + 180 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -240,12 +348,22 @@ main() {
   detect_platform
   log "platform: $PLATFORM"
   check_prereqs
+  validate_port
   prepare_dir
   fetch_compose
   generate_env
+  # Both of these run after generate_env because reconcile_port can replace QADAM_FLOW_PORT with a
+  # value adopted from an existing .env — a value no earlier check has seen.
+  validate_port "QADAM_FLOW_PORT in $(pwd)/.env"
+  check_compose_port
   pull_and_up
   wait_for_app
   final_banner
 }
 
-main "$@"
+# Sourcing with QADAM_FLOW_SOURCE_ONLY=1 loads the helpers without installing anything, which is how
+# tools/ci/test-run-sh.sh drives reconcile_port / set_env_value over .env fixtures. `curl | sh` never
+# sets it, so the install path is unchanged.
+if [ "${QADAM_FLOW_SOURCE_ONLY:-}" != 1 ]; then
+  main "$@"
+fi
