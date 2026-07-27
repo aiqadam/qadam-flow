@@ -1,0 +1,80 @@
+name: Verify
+
+# Reusable lint + typecheck + unit-test gate. Called by ci.yml (every PR and push
+# to main) and by release.yml (tag builds), so those two cannot drift apart. They
+# already had: before this extraction both carried a copy of this job and only
+# ci.yml's copy ran the two pure-shell tests below.
+#
+# Callers must wrap this in a gate job — see the comment on `verify` in ci.yml for
+# why. A reusable workflow's check reports as "<caller job> / <inner job>", which
+# is not the required context name.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # Named for the work, not for the required context: the caller's gate job
+  # carries "Lint + Unit Tests". This mirrors the existing
+  # "CE integration suite" (work) / "CE Integration Tests" (required gate)
+  # split in ci.yml, so the two checks on a PR read as suite-and-verdict rather
+  # than as two identically named checks.
+  verify:
+    name: Lint + unit test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # These two run before any install, deliberately: they are pure shell, so
+      # they still report if the install step later flakes. This workflow is only
+      # ever called from an unconditional job, so the test covering the docs-only
+      # path filter can never be skipped by the filter it tests.
+      - name: Test the CI path classifier
+        run: tools/ci/classify-path.test.sh
+
+      # run.sh is the `curl … | sh` install path and has no other automated
+      # coverage. Extracting this job means tag builds now run it too, which they
+      # previously did not.
+      - name: Test run.sh env reconciliation
+        run: tools/ci/test-run-sh.sh
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile || {
+            echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
+            rm -rf ~/.bun/install/cache
+            bun install --frozen-lockfile
+          }
+
+      - name: Set up turbo remote cache (GHA-backed)
+        uses: rharkor/caching-for-turbo@v2.3.12
+
+      # Unfiltered, deliberately. The enumerated `lint-core` / `lint-qadams`
+      # scripts silently missed every package they did not name — `@aiqadam/cli`,
+      # `tests-e2e`, and, because the glob was `qadam-*` while the packages are
+      # `qadams-*`, `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`
+      # (#184, same family as #148 and #164). An unfiltered run cannot miss a
+      # package, so a new one is linted the day it declares the script.
+      - name: Lint all packages
+        run: npm run lint-all
+
+      # Only `packages/web` declares a `typecheck` script today — hence the step
+      # name — and before #184 no job ran it, so its 849 source files were
+      # type-checked nowhere (vite builds without type-checking). Server packages
+      # are still type-checked only through their `build`. Unfiltered for the
+      # same reason as lint above.
+      - name: Typecheck (only web declares one today)
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test-unit
