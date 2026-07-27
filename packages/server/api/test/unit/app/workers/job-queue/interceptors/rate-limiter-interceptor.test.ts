@@ -12,9 +12,10 @@ import { InterceptorVerdict } from '../../../../../../src/app/workers/job-queue/
 /**
  * The rate limiter dispatches two hand-written Lua scripts via `redis.eval`
  * (atomic acquire / release against a ZSET). There is no live Redis in the
- * `verify` CI job, so this in-memory fake reproduces just the ZSET + string
- * subset those scripts and `distributedStore` need, and recognises the two
- * scripts by a distinguishing command they each contain.
+ * `verify` CI job, so this in-memory fake reproduces just the ZSET subset those
+ * scripts need, and recognises the two by a distinguishing command each contains.
+ * It reimplements the Lua rather than executing it, so the scripts' own
+ * Redis-side semantics are covered by nothing — see #199.
  */
 class FakeRedis {
     private readonly zsets = new Map<string, Map<string, number>>()
@@ -47,19 +48,6 @@ class FakeRedis {
             if (this.strings.delete(key)) count += 1
         }
         return count
-    }
-
-    async set(key: string, value: string): Promise<'OK'> {
-        this.strings.set(key, value)
-        return 'OK'
-    }
-
-    async setex(key: string, _ttlInSeconds: number, value: string): Promise<'OK'> {
-        return this.set(key, value)
-    }
-
-    async get(key: string): Promise<string | null> {
-        return this.strings.get(key) ?? null
     }
 
     scanStream({ match }: { match: string, count?: number }): AsyncIterable<string[]> {
@@ -105,13 +93,6 @@ const fakeRedis = new FakeRedis()
 
 vi.mock('../../../../../../src/app/database/redis-connections', () => ({
     redisConnections: { useExisting: () => Promise.resolve(fakeRedis) },
-    distributedStore: {
-        put: (key: string, value: unknown) => fakeRedis.set(key, JSON.stringify(value)),
-        get: async (key: string) => {
-            const raw = await fakeRedis.get(key)
-            return raw === null ? null : JSON.parse(raw)
-        },
-    },
 }))
 
 
@@ -182,10 +163,6 @@ describe('rateLimiterInterceptor', () => {
         })
         const redis = await redisConnections.useExisting()
         await deleteKeysByPattern(redis, 'active_jobs_set:*')
-        await deleteKeysByPattern(redis, 'project:max-concurrent-jobs:*')
-        await deleteKeysByPattern(redis, 'platform_plan:plan:*')
-        await deleteKeysByPattern(redis, 'project:concurrency-pool:*')
-        await deleteKeysByPattern(redis, 'concurrency-pool:limit:*')
     })
 
     describe('skip guards', () => {
