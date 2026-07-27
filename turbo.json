@@ -1,6 +1,11 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalPassThroughEnv": ["NODE_EXTRA_CA_CERTS", "AP_*", "QF_*"],
+  // Every package tsconfig extends the root `tsconfig.base.json`, so a change to
+  // it can change the output of every `build` and of the type-aware ESLint rules.
+  // A per-task `inputs` entry cannot express that without repeating it in each
+  // task, so it belongs to the global hash.
+  "globalDependencies": ["tsconfig.base.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -19,6 +24,10 @@
       "outputs": ["../../dist/packages/web/**"],
       "inputs": [
         "src/**",
+        "index.html",
+        "public/**",
+        "vite-plugins/**",
+        "postcss.config.js",
         "tsconfig*.json",
         "package.json",
         "vite.config.*",
@@ -64,7 +73,28 @@
     },
     "lint": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "test/**", ".eslintrc.json", "../../.eslintrc.json"],
+      // Must cover every file ESLint reads, or a config-only change gets a cache
+      // hit and lints nothing while still reporting success. `../../` is not a
+      // portable way to reach the repo root — it resolves to `packages/` for
+      // `packages/server/*` and to `packages/qadams/` for the qadams — so the
+      // shared configs are addressed with `$TURBO_ROOT$` instead. The two
+      // `packages/server` configs sit in the shared chain of api, worker, engine,
+      // server-utils and shared; listing them here also re-lints the qadams,
+      // which is the cheaper trade against duplicating this list into five
+      // package-scoped overrides that would drift out of sync.
+      "inputs": [
+        "src/**",
+        "test/**",
+        "scenarios/**",
+        ".eslintrc.json",
+        ".prettierignore",
+        "tsconfig*.json",
+        "$TURBO_ROOT$/.eslintrc.json",
+        "$TURBO_ROOT$/.eslintrc.base.json",
+        "$TURBO_ROOT$/.prettierrc",
+        "$TURBO_ROOT$/packages/server/.eslintrc.json",
+        "$TURBO_ROOT$/packages/server/api/.eslintrc.json"
+      ],
       "outputs": []
     },
     "test": {
