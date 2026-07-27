@@ -259,6 +259,56 @@ describe('maxConcurrentJobs authorization and validation (CE)', () => {
         })
     })
 
+    // A non-privileged caller can only ever reach the write by echoing the value it read, so
+    // writing the column for it would be a no-op — except that the row can change between the
+    // read at the top of `update` and the write, turning the no-op into a revert of an
+    // operator's concurrent change. `update` therefore skips the column write, and this
+    // invalidation, unless the caller is privileged.
+    //
+    // Honest limit: this pins the invalidation half, which is deterministically observable. The
+    // write-skip itself would need the read-to-write window forced open from inside the service
+    // to test directly, which there is no hook for — so it rests on the code reading plainly,
+    // not on a test.
+    describe('read-to-write window', () => {
+        it('does not invalidate the cache for a non-privileged echo of the current value', async () => {
+            const ctx = await createTestContext(app!)
+            const setCapResponse = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: 4 })
+            expect(setCapResponse.statusCode).toBe(StatusCodes.OK)
+
+            const memberCtx = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+            const deleteSpy = vi.spyOn(distributedStore, 'delete')
+
+            try {
+                const echoResponse = await memberCtx.post(`/v1/projects/${ctx.project.id}`, {
+                    displayName: 'renamed by a project admin',
+                    maxConcurrentJobs: 4,
+                })
+
+                expect(echoResponse.statusCode).toBe(StatusCodes.OK)
+                expect(echoResponse.json<ProjectWithLimits>().maxConcurrentJobs).toBe(4)
+                expect(deleteSpy).not.toHaveBeenCalled()
+            }
+            finally {
+                deleteSpy.mockRestore()
+            }
+        })
+
+        it('does invalidate the cache when a privileged caller changes the value', async () => {
+            const ctx = await createTestContext(app!)
+            const deleteSpy = vi.spyOn(distributedStore, 'delete')
+
+            try {
+                const response = await ctx.post(`/v1/projects/${ctx.project.id}`, { maxConcurrentJobs: 6 })
+
+                expect(response.statusCode).toBe(StatusCodes.OK)
+                expect(deleteSpy).toHaveBeenCalledWith(expect.stringContaining(ctx.project.id))
+            }
+            finally {
+                deleteSpy.mockRestore()
+            }
+        })
+    })
+
     // The cache-invalidation delete (project-service.ts's update) runs after the row has already
     // committed in Postgres — a raw ioredis error there must not turn a landed update into a
     // 500, since a client that then rolls back its optimistic UI to the pre-update value would

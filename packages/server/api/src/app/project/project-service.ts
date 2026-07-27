@@ -120,7 +120,13 @@ export const projectService = (log: FastifyBaseLogger) => ({
             ...spreadIfDefined('releasesEnabled', request.releasesEnabled),
             ...spreadIfDefined('metadata', request.metadata),
             ...(request.poolId !== undefined ? { poolId: request.poolId } : {}),
-            ...(request.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: request.maxConcurrentJobs } : {}),
+            // Only a privileged caller ever *writes* this column. A non-privileged caller
+            // reaches here only by echoing the value it read (the gate above rejects anything
+            // else), so writing it would be a no-op — except that the row can change between
+            // the read at the top of this method and this write, in which case the no-op
+            // becomes a revert of an operator's concurrent change. Not writing it closes that
+            // window without changing anything for a legitimate caller.
+            ...(request.maxConcurrentJobs !== undefined && isPrivileged ? { maxConcurrentJobs: request.maxConcurrentJobs } : {}),
         }
 
         const teamUpdate = request.type === ProjectType.TEAM ? {
@@ -136,7 +142,7 @@ export const projectService = (log: FastifyBaseLogger) => ({
         // after the row has already committed, so a Redis blip here must not fail the request —
         // the caller's update landed either way, and the 30s TTL is the backstop that bounds how
         // stale the rate limiter's view can get if the delete is lost.
-        if (request.maxConcurrentJobs !== undefined) {
+        if (request.maxConcurrentJobs !== undefined && isPrivileged) {
             const { error } = await tryCatch(() => distributedStore.delete(getProjectMaxConcurrentJobsKey(projectId)))
             if (!isNil(error)) {
                 log.warn({ projectId, err: error }, '[projectService.update] Failed to invalidate maxConcurrentJobs cache entry')
