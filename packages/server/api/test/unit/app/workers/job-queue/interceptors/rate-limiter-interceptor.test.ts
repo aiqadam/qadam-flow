@@ -89,8 +89,40 @@ class FakeRedis {
 
 const fakeRedis = new FakeRedis()
 
+/**
+ * The project-level override lookup (#201) reads through `distributedStore`
+ * (redis-backed cache) and `projectRepo` (Postgres) — neither exists in this
+ * unit-test process. This fake store is a plain in-memory map so the existing
+ * "no project override" behaviour keeps working without either dependency;
+ * it is intentionally simpler than `FakeRedis` above because only `get`/`put`
+ * are exercised here. Declared inside `vi.hoisted` because `vi.mock` factories
+ * are hoisted above every other top-level statement in the file, so a plain
+ * `const` here would be a `ReferenceError` at mock-evaluation time.
+ */
+const { fakeDistributedStore } = vi.hoisted(() => {
+    class HoistedFakeDistributedStore {
+        private readonly values = new Map<string, unknown>()
+
+        async get<T>(key: string): Promise<T | null> {
+            return (this.values.has(key) ? this.values.get(key) : null) as T | null
+        }
+
+        async put(key: string, value: unknown): Promise<void> {
+            this.values.set(key, value)
+        }
+    }
+    return { fakeDistributedStore: new HoistedFakeDistributedStore() }
+})
+
 vi.mock('../../../../../../src/app/database/redis-connections', () => ({
     redisConnections: { useExisting: () => Promise.resolve(fakeRedis) },
+    distributedStore: fakeDistributedStore,
+}))
+
+vi.mock('../../../../../../src/app/project/project-repo', () => ({
+    projectRepo: () => ({
+        findOneBy: vi.fn().mockResolvedValue(null),
+    }),
 }))
 
 

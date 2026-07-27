@@ -1,13 +1,22 @@
 import { apDayjsDuration } from '@aiqadam/server-utils'
-import { ExecuteFlowJobData, JOB_PRIORITY, JobData, PlatformId, RATE_LIMIT_PRIORITY, RunEnvironment, WorkerJobType } from '@aiqadam/shared'
+import { ExecuteFlowJobData, isNil, JOB_PRIORITY, JobData, PlatformId, ProjectId, RATE_LIMIT_PRIORITY, RunEnvironment, WorkerJobType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { getConcurrencyPoolSetKey } from '../../../database/redis/keys'
-import { redisConnections } from '../../../database/redis-connections'
+import { getConcurrencyPoolSetKey, getProjectMaxConcurrentJobsKey } from '../../../database/redis/keys'
+import { distributedStore, redisConnections } from '../../../database/redis-connections'
 import { system } from '../../../helper/system/system'
 import { AppSystemProp } from '../../../helper/system/system-props'
+import { projectRepo } from '../../../project/project-repo'
 import { InterceptorResult, InterceptorVerdict, JobInterceptor } from '../job-interceptor'
 
 const RATE_LIMIT_WORKER_JOB_TYPES = [WorkerJobType.EXECUTE_FLOW]
+
+// preDispatch runs on every job, so a per-job Postgres read for the project's
+// override is off the table. The value rarely changes, so a short-TTL redis
+// cache (same distributedStore + TTL pattern as flow-execution-cache.ts) is
+// enough: a stale read for up to this long is an acceptable trade-off for a
+// concurrency cap, and it bounds how long a just-changed limit takes to apply
+// without needing an explicit invalidation hook on project update.
+const PROJECT_MAX_CONCURRENT_JOBS_CACHE_TTL_SECONDS = 30
 
 function shouldContinue(jobData: JobData): jobData is ExecuteFlowJobData {
     if (!system.getBoolean(AppSystemProp.PROJECT_RATE_LIMITER_ENABLED)) {
@@ -28,7 +37,28 @@ async function getMaxConcurrentJobsForPlatformPlan(_params: { platformId: Platfo
     return system.getNumberOrThrow(AppSystemProp.DEFAULT_CONCURRENT_JOBS_LIMIT)
 }
 
-async function getMaxConcurrentJobs({ platformId }: { platformId: PlatformId }): Promise<number> {
+// `project.maxConcurrentJobs` is the per-project override an admin sets via
+// POST /v1/projects (create) or POST /v1/projects/:id (update). `null`/`undefined`
+// means "no override" — fall back to the platform-wide default, same as before
+// this project-level cap existed.
+async function getProjectMaxConcurrentJobsOverride({ projectId }: { projectId: ProjectId }): Promise<number | null> {
+    const cacheKey = getProjectMaxConcurrentJobsKey(projectId)
+    const cached = await distributedStore.get<{ maxConcurrentJobs: number | null }>(cacheKey)
+    if (!isNil(cached)) {
+        return cached.maxConcurrentJobs
+    }
+
+    const project = await projectRepo().findOneBy({ id: projectId })
+    const maxConcurrentJobs = project?.maxConcurrentJobs ?? null
+    await distributedStore.put(cacheKey, { maxConcurrentJobs }, PROJECT_MAX_CONCURRENT_JOBS_CACHE_TTL_SECONDS)
+    return maxConcurrentJobs
+}
+
+async function getMaxConcurrentJobs({ platformId, projectId }: { platformId: PlatformId, projectId: ProjectId }): Promise<number> {
+    const projectOverride = await getProjectMaxConcurrentJobsOverride({ projectId })
+    if (!isNil(projectOverride)) {
+        return projectOverride
+    }
     return getMaxConcurrentJobsForPlatformPlan({ platformId })
 }
 
@@ -37,6 +67,7 @@ async function tryAcquireSlot({ jobId, jobData, log: _log }: { jobId: string, jo
     const effectivePoolId = jobData.projectId
     const maxConcurrentJobs = await getMaxConcurrentJobs({
         platformId: jobData.platformId,
+        projectId: jobData.projectId,
     })
     const setKey = getConcurrencyPoolSetKey(effectivePoolId)
     const currentTime = Date.now()
