@@ -144,6 +144,8 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Verification
 
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
+- After touching anything under `packages/web`, also run `npm run typecheck` — `vite build` does not
+  type-check, so a type error there surfaces nowhere else until CI.
 
 ### Commands that look like verification but verify nothing
 
@@ -162,6 +164,25 @@ before trusting its silence — an empty output is not the same as a passing che
   --filter=X` on a package with no `lint` script is a no-op that still reports success — this is how
   `packages/server/utils` went unlinted while appearing in `lint-core` (fixed in #148). Before
   trusting a filter, confirm the target package actually declares the script.
+- **An enumerated `--filter` list is itself the defect — it silently omits whatever it does not
+  name.** `lint-core` named six packages and `lint-qadams` globbed `@aiqadam/qadam-*`; between them
+  they missed `@aiqadam/cli`, `tests-e2e`, and — because the glob is `qadam-*` while the packages are
+  `qadam` **s** `-framework` / `-common` — two packages that read as covered and were not (#184).
+  Note the trap in verifying this: `turbo run lint --filter='@aiqadam/qadam-*' --dry=json` *does*
+  list `@aiqadam/qadams-framework` under `.tasks[].package`, because a dependency appears in the
+  graph for its `build` task. Filter on `.task == "lint"` before concluding anything. CI now runs
+  `turbo run lint` and `turbo run typecheck` unfiltered, so coverage cannot drift again; keep it that
+  way rather than reintroducing a package list. Note the residual limit, so nobody over-reads it: a
+  package that never declares the script is still silently uncovered — that is the #148 class, which
+  an unfiltered run does not solve.
+- **Renaming an npm script needs a sweep that is not extension-scoped.** `.husky/pre-push` invokes
+  root scripts and has no file extension, so a `grep --include='*.yml' --include='*.json'
+  --include='*.md' --include='*.sh'` sweep for `lint-core` missed it entirely and the rename would
+  have broken every `CLAUDE_PUSH=yes git push` with a "Lint failed" message that named the wrong
+  cause (caught in review on #184). Grep the whole tree with only `node_modules`/`dist` excluded.
+  Also note the hook is **not installed in the sandbox container** (no `core.hooksPath`, no
+  `.git/hooks/pre-push`), so a successful `CLAUDE_PUSH=yes` push there is not evidence that the
+  gate passes — it is evidence that the gate did not run.
 - **Turbo `inputs` narrower than the files the script actually covers makes a check silently
   cache-skip.** `lint`'s `inputs` listed `src/**` but not `test/**`, while the `api` lint script
   covers `'src/**/*.ts' 'test/**/*.ts'` — so with remote caching on, a PR touching only
