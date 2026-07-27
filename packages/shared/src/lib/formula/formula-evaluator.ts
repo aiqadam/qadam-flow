@@ -1,6 +1,13 @@
-import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZE } from './formula-bounds'
+import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZE, FormulaSizeLimitError } from './formula-bounds'
 import { evaluateRaw } from './function-implementations'
 import { AP_FUNCTIONS } from './function-registry'
+
+// Matches every `{{path}}` occurrence in the RAW template — including the
+// ones sitting inside a formula wrapper, since the wrapper's braces don't
+// interfere with this pattern. Kept identical to the one used inside
+// preprocessExpression/resolveTextVars so this scan and the real resolution
+// agree on what counts as a variable reference.
+const VARIABLE_TOKEN_REGEX = /\{\{([^}]+)\}\}/g
 
 const CURRENT_FORMULA_VERSION = 1
 const FORMULA_PREFIX = `ap-formula-v${CURRENT_FORMULA_VERSION}::{`
@@ -28,6 +35,18 @@ function unwrap(template: string): string {
 function evaluate({ expression, sampleData }: EvaluateExpressionParams): EvaluateExpressionResult {
     const trimmed = expression.trim()
     if (!trimmed) return { result: '', error: null }
+
+    // Runs once, over the WHOLE template, before tokenizing — a per-segment
+    // check would let the same payload dodge the budget by riding in a text
+    // segment (a bare `{{x}}` outside any formula wrapper never reaches
+    // evaluateSingleFormula at all) or by being spread across many segments,
+    // each of which resets the budget for itself. Every occurrence of a
+    // reference is counted, not deduplicated by variable identity, because
+    // the final result concatenates one copy of the resolved value per
+    // occurrence.
+    if (exceedsResolvedVariableBudget({ template: trimmed, sampleData })) {
+        return { result: null, error: 'Formula input data is too large to evaluate' }
+    }
 
     const segments = tokenizeFormulaTemplate(trimmed)
     if (segments.length === 0) return { result: '', error: null }
@@ -66,12 +85,28 @@ function tokenizeFormulaTemplate(template: string): Segment[] {
     return segments.filter((s) => s.value !== '')
 }
 
+// Scans the raw, untokenized template once for every `{{path}}` occurrence —
+// inside a formula wrapper or sitting in plain text, it doesn't matter, since
+// both eventually resolve the same variable into the caller's output. Each
+// occurrence is resolved and pushed into an array (not deduplicated), then
+// checked as one combined payload, so `exceedsSizeBudget`'s per-element
+// accounting sums the actual cost of concatenating every repetition.
+function exceedsResolvedVariableBudget({ template, sampleData }: { template: string, sampleData: Record<string, unknown> }): boolean {
+    const resolvedValues: unknown[] = []
+    for (const match of template.matchAll(VARIABLE_TOKEN_REGEX)) {
+        resolvedValues.push(resolveVariable(match[1].trim(), sampleData) ?? null)
+    }
+    return exceedsSizeBudget({ value: resolvedValues, maxSize: FORMULA_MAX_INPUT_SIZE })
+}
+
 function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionParams): EvaluateExpressionResult {
     const trimmed = expression.trim()
     if (!trimmed) return { result: '', error: null }
     // Checked before any other pass over the string (validateFunctionArgs,
     // preprocessing) so a pathologically large formula fails fast rather than
-    // paying for a full parse first.
+    // paying for a full parse first. The resolved-var payload itself is
+    // already checked once for the whole template by evaluate() before this
+    // runs, so it isn't re-checked per segment here.
     if (trimmed.length > FORMULA_MAX_EXPRESSION_LENGTH) {
         return { result: null, error: 'Formula is too large to evaluate — shorten the expression' }
     }
@@ -79,16 +114,11 @@ function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionPar
     if (emptyArgError) return { result: null, error: emptyArgError }
 
     const { processed, vars } = preprocessExpression({ expression: trimmed, sampleData })
-    // Bounds the resolved `{{var}}` payload — this is where a huge upstream
-    // step output (not the formula text itself) would otherwise flow in
-    // unchecked, per the issue's "resolved-var payload" hardening ask.
-    if (exceedsSizeBudget({ value: vars, maxSize: FORMULA_MAX_INPUT_SIZE })) {
-        return { result: null, error: 'Formula input data is too large to evaluate' }
-    }
     try {
         return { result: evaluateRaw(processed, vars), error: null }
     }
     catch (e) {
+        if (e instanceof FormulaSizeLimitError) return { result: null, error: e.message }
         return { result: null, error: friendlyError(e) }
     }
 }
@@ -330,12 +360,6 @@ function validateFunctionArgs(expr: string): string | null {
 
 function friendlyError(e: unknown): string {
     const msg = String((e as Error).message ?? e)
-    // These are already user-facing sentences thrown by the size guards in
-    // function-implementations.ts — pass them through instead of falling to
-    // the generic fallback below.
-    if (/too large/i.test(msg)) {
-        return msg
-    }
     if (/division by zero/i.test(msg)) {
         return 'Cannot divide by zero'
     }

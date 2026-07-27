@@ -3,7 +3,7 @@ import relativeTimeDayjs from 'dayjs/plugin/relativeTime'
 import timezoneDayjs from 'dayjs/plugin/timezone'
 import utcDayjs from 'dayjs/plugin/utc'
 import { Parser } from 'expr-eval'
-import { exceedsSizeBudget, FORMULA_MAX_JSON_TEXT_LENGTH } from './formula-bounds'
+import { exceedsSizeBudget, FORMULA_MAX_BUILT_STRING_LENGTH, FORMULA_MAX_JSON_VALUE_BUDGET, FormulaSizeLimitError } from './formula-bounds'
 import { AP_FUNCTIONS } from './function-registry'
 
 dayjs.extend(relativeTimeDayjs)
@@ -40,10 +40,31 @@ parser.functions.titlecase = (s: unknown) =>
 parser.functions.trim = (s: unknown) => String(s ?? '').trim()
 parser.functions.prefix = (s: unknown, pfx: unknown) => `${String(pfx ?? '')}${String(s ?? '')}`
 parser.functions.suffix = (s: unknown, sfx: unknown) => `${String(s ?? '')}${String(sfx ?? '')}`
-parser.functions.replace = (s: unknown, from: unknown, to: unknown) =>
-    String(s ?? '').split(String(from ?? '')).join(String(to ?? ''))
-parser.functions.remove = (s: unknown, sub: unknown) =>
-    String(s ?? '').split(String(sub ?? '')).join('')
+parser.functions.replace = (s: unknown, from: unknown, to: unknown) => {
+    const str = String(s ?? '')
+    const fromStr = String(from ?? '')
+    const toStr = String(to ?? '')
+    // replace() is `split(from).join(to)` under the hood, whose result length
+    // is multiplicative (`|s| / |from| * |to|`), not additive — a modest `s`
+    // and `to` can still build a gigabytes-large result. Project the length
+    // from an occurrence count instead of running the real split/join, so a
+    // rejection costs O(|s|) rather than O(the oversized result).
+    if (projectedSplitJoinLength({ source: str, from: fromStr, to: toStr }) > FORMULA_MAX_BUILT_STRING_LENGTH) {
+        throw new FormulaSizeLimitError('Result of replace() is too large to build')
+    }
+    return str.split(fromStr).join(toStr)
+}
+parser.functions.remove = (s: unknown, sub: unknown) => {
+    const str = String(s ?? '')
+    const subStr = String(sub ?? '')
+    // remove() can only shrink its input (it joins with ''), so it can never
+    // itself amplify — guarded anyway for consistency with replace()/
+    // join_list() and in case a future edit gives it a non-empty `to`.
+    if (projectedSplitJoinLength({ source: str, from: subStr, to: '' }) > FORMULA_MAX_BUILT_STRING_LENGTH) {
+        throw new FormulaSizeLimitError('Result of remove() is too large to build')
+    }
+    return str.split(subStr).join('')
+}
 parser.functions.first_n = (s: unknown, n: unknown) =>
     String(s ?? '').slice(0, Number(n))
 parser.functions.last_n = (s: unknown, n: unknown) => {
@@ -232,15 +253,15 @@ parser.functions.to_json = (val: unknown) => {
     if (val == null) return ''
     // Checked before JSON.stringify rather than after, so a pathologically
     // large value fails without paying for the full serialization first.
-    if (exceedsSizeBudget({ value: val, maxSize: FORMULA_MAX_JSON_TEXT_LENGTH })) {
-        throw new Error('Value is too large to convert to JSON')
+    if (exceedsSizeBudget({ value: val, maxSize: FORMULA_MAX_JSON_VALUE_BUDGET })) {
+        throw new FormulaSizeLimitError('Value is too large to convert to JSON')
     }
     return JSON.stringify(val)
 }
 parser.functions.from_json = (text: unknown) => {
     const str = String(text ?? '')
-    if (str.length > FORMULA_MAX_JSON_TEXT_LENGTH) {
-        throw new Error('JSON text is too large to parse')
+    if (str.length > FORMULA_MAX_JSON_VALUE_BUDGET) {
+        throw new FormulaSizeLimitError('JSON text is too large to parse')
     }
     try {
         return JSON.parse(str)
@@ -260,8 +281,18 @@ parser.functions.build_object = (...args: unknown[]) => {
     }
     return obj
 }
-parser.functions.join_list = (list: unknown, sep: unknown = ',') =>
-    toArray(list).join(String(sep))
+parser.functions.join_list = (list: unknown, sep: unknown = ',') => {
+    const arr = toArray(list)
+    const sepStr = String(sep)
+    // Same multiplicative-output risk as replace(): a large array of small
+    // elements (e.g. from split_text_to_list(x; "") — one element per
+    // character of x) joined with a large separator builds a result far
+    // bigger than either input alone. Projected before the real `.join()`.
+    if (projectedJoinLength({ items: arr, sep: sepStr }) > FORMULA_MAX_BUILT_STRING_LENGTH) {
+        throw new FormulaSizeLimitError('Result of join_list() is too large to build')
+    }
+    return arr.join(sepStr)
+}
 parser.functions.first_item = (list: unknown) => toArray(list)[0]
 parser.functions.last_item = (list: unknown) => {
     const arr = toArray(list)
@@ -420,6 +451,43 @@ function toNumericFieldValues(list: unknown, field: unknown): number[] {
         if (Number.isFinite(num)) result.push(num)
     }
     return result
+}
+
+// Counts non-overlapping matches the same way `String.prototype.split` would
+// — via `.indexOf` scanning, not `.split` itself, so counting never
+// materialises the array of parts.
+function countOccurrences({ haystack, needle }: { haystack: string, needle: string }): number {
+    let count = 0
+    let fromIndex = 0
+    while (true) {
+        const idx = haystack.indexOf(needle, fromIndex)
+        if (idx === -1) return count
+        count += 1
+        fromIndex = idx + needle.length
+    }
+}
+
+// Predicts the length `source.split(from).join(to)` would produce, without
+// running it. `split('')` is a special case: it yields one part per
+// character (not `|source| + 1`), so it's handled separately from the
+// general `split(from)` case, which yields `occurrences + 1` parts.
+function projectedSplitJoinLength({ source, from, to }: { source: string, from: string, to: string }): number {
+    if (from === '') {
+        return source.length + Math.max(0, source.length - 1) * to.length
+    }
+    const occurrences = countOccurrences({ haystack: source, needle: from })
+    return source.length + occurrences * (to.length - from.length)
+}
+
+// Predicts the length `items.join(sep)` would produce. Non-string items are
+// stringified to measure them (same cost `.join()` itself would pay for
+// them), but string items reuse their own `.length` for free.
+function projectedJoinLength({ items, sep }: { items: unknown[], sep: string }): number {
+    let total = sep.length * Math.max(0, items.length - 1)
+    for (const item of items) {
+        total += typeof item === 'string' ? item.length : String(item ?? '').length
+    }
+    return total
 }
 
 export const MONTH_NAMES = [

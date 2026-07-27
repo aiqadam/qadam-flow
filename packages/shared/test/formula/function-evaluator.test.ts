@@ -782,11 +782,52 @@ describe('formula size bounds', () => {
     })
 
     it('to_json rejects an oversized value instead of serializing it — below the engine-wide input-size cap, so this exercises to_json\'s own guard', () => {
-        const hugeList = Array.from({ length: 50_000 }, (_, i) => i) // 50_000 * 8 = 400_000 units
+        // exceedsSizeBudget charges 8 units per number PLUS 1 unit for the
+        // array's own `.length` itself: 50_000 * 8 + 50_000 = 450_000 units.
+        const hugeList = Array.from({ length: 50_000 }, (_, i) => i)
         const { result: r, error } = ok('to_json({{list}})', { list: hugeList })
         expect(r).toBeNull()
         expect(error).toMatch(/too large/i)
     })
+
+    it('an oversized {{var}} payload cannot dodge the budget by riding in a plain-text segment outside any formula wrapper', () => {
+        const bigX = 'x'.repeat(100_000)
+        const template = '{{x}}'.repeat(20) // 20 * 100_000 = 2_000_000, over the budget, with no formula wrapper at all
+        const { result: r, error } = okMixed(template, { x: bigX })
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('replace() rejects a projected output that would be gigabytes larger than either input', () => {
+        // |x| + |x| * (|y| - 1) ≈ 4_000_000 chars, while |x| + |y| = 4_000 —
+        // far under the whole-template budget, so only replace()'s own guard
+        // can be responsible for the rejection.
+        const x = 'a'.repeat(2000)
+        const y = 'y'.repeat(2000)
+        const { result: r, error } = ok('replace({{x}};"a";{{y}})', { x, y })
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('replace() still works normally for a reasonable input', () =>
+        expect(result('replace("aabbaa";"a";"x")')).toBe('xxbbxx'))
+
+    it('join_list() rejects a projected output built from many small elements joined by a large separator', () => {
+        // split_text_to_list(x; "") turns x into 2000 single-char elements;
+        // joining them with a 2000-char separator projects to ~4_000_000
+        // chars, while |x| + |y| = 4_000 stays far under the template budget.
+        const x = 'a'.repeat(2000)
+        const y = 'y'.repeat(2000)
+        const { result: r, error } = ok('join_list(split_text_to_list({{x}};"");{{y}})', { x, y })
+        expect(r).toBeNull()
+        expect(error).toMatch(/too large/i)
+    })
+
+    it('join_list() still works normally for a reasonable input', () =>
+        expect(result('join_list(split_text_to_list("a,b,c";",");"-")')).toBe('a-b-c'))
+
+    it('remove() still works normally — it can only shrink its input, so it never trips its own size guard', () =>
+        expect(result('remove("hello world";"l")')).toBe('heo word'))
 
     it('to_json still works for a normal-sized value', () =>
         expect(result('to_json({{obj}})', { obj: { a: 1 } })).toBe('{"a":1}'))
