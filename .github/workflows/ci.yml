@@ -286,6 +286,11 @@ jobs:
             if ! printf '%s\n' "$signoffs" | grep -qiF "$author"; then
               echo "::error::Commit ${sha} is missing a 'Signed-off-by' trailer matching its author (${author})."
               echo "  found sign-off: ${signoffs:-<none>}"
+              if git show -s --format='%B' "$sha" | grep -qi '^Signed-off-by:'; then
+                echo "  note: the message DOES contain a 'Signed-off-by:' line, but git did not parse it as a trailer."
+                echo "        Only the LAST paragraph is the trailer block — remove any blank line between"
+                echo "        'Signed-off-by:' and the trailers after it (e.g. 'Co-Authored-By:')."
+              fi
               fail=1
             fi
           done

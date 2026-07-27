@@ -102,6 +102,21 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Git Commits (DCO)
 
 - **Every commit must be signed off under the Developer Certificate of Origin.** Always commit with `git commit -s` (`--signoff`) so a `Signed-off-by: <name> <email>` trailer (taken from `user.name`/`user.email`) is added. This is required by [GOVERNANCE.md](./GOVERNANCE.md) / [CONTRIBUTING.md](./CONTRIBUTING.md) — PRs with un-signed-off commits can't be merged. Keep the `Co-Authored-By:` trailer as well; both trailers belong at the end of the message.
+- **The trailers must sit in one final block with no blank line between them.** Git treats only the
+  *last paragraph* as the trailer block, and the `DCO Sign-off` job reads sign-offs with
+  `git show -s --format='%(trailers:key=Signed-off-by,valueonly)'` (`.github/workflows/ci.yml`).
+  So a message ending in `Signed-off-by:`, blank line, `Co-Authored-By:` has **no** parsed sign-off
+  and fails the required check, even though the line is plainly visible in `git log`. Correct shape:
+
+  ```
+  Closes #123
+
+  Signed-off-by: Name <email>
+  Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+  ```
+
+  Verify before pushing, don't eyeball the message:
+  `git show -s --format='%(trailers:key=Signed-off-by,valueonly)' HEAD` must print the author.
 
 ## Git Push
 
