@@ -9,10 +9,12 @@ import {
     AIProviderName,
     AzureProviderConfig,
     BaseAIProviderAuthConfig,
+    BatchProgressData,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
     chatPersistenceUtils,
     CloudflareGatewayProviderConfig,
+    isBatchProgressData,
     OpenAICompatibleProviderConfig,
     PersistedChatPart,
     PersistedChatPartType,
@@ -142,6 +144,12 @@ function toRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+function extractBatchProgress(rawOutput: unknown): BatchProgressData | undefined {
+    const outputRecord = toRecord(rawOutput)
+    const { batchProgress } = outputRecord
+    return isBatchProgressData(batchProgress) ? batchProgress : undefined
+}
+
 type ContentPartLike = {
     type: string
     text?: string
@@ -195,10 +203,11 @@ function buildStepParts({ content }: {
                     output: rawOutput,
                     status: result ? PersistedToolCallStatus.COMPLETED : PersistedToolCallStatus.ERROR,
                 })
-                if (toolName === 'ap_execute_action' && typeof rawOutput === 'object' && rawOutput !== null && 'batchProgress' in rawOutput) {
+                const batchProgress = toolName === 'ap_execute_action' ? extractBatchProgress(rawOutput) : undefined
+                if (batchProgress) {
                     parts.push({
                         type: PersistedChatPartType.BATCH_PROGRESS,
-                        data: (rawOutput as Record<string, unknown>)['batchProgress'] as Record<string, unknown>,
+                        data: batchProgress,
                     })
                 }
                 if (toolName === 'ap_execute_action' && result) {

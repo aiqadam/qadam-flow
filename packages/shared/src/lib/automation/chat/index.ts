@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { BaseModelSchema, Nullable } from '../../core/common'
+import { BaseModelSchema, isObject, Nullable } from '../../core/common'
 import { formErrors } from '../../form-errors'
 
 const MAX_FILE_BINARY_SIZE = 10 * 1024 * 1024
@@ -183,7 +183,7 @@ export type ChatToolOutputs = {
     | { noAuthRequired: true, piece: string }
     | { needsConnection: true, piece: string, displayName: string }
     | { pickConnection: true, piece: string, displayName: string, connections: ConnectionOption[] }
-    | { success: boolean, error?: string, output?: unknown }
+    | { success: boolean, error?: string, output?: unknown, batchProgress?: BatchProgressData }
     ap_show_connection_required: { displayed: boolean }
     ap_show_connection_picker: { displayed: boolean }
     ap_show_project_picker: { displayed: boolean }
@@ -216,6 +216,25 @@ export const chatPersistenceUtils = {
     unwrapToolOutput,
 }
 
+function isBatchItemResult(value: unknown): value is BatchItemResult {
+    if (!isObject(value)) return false
+    if (typeof value['index'] !== 'number' || typeof value['success'] !== 'boolean') return false
+    if (value['error'] !== undefined && typeof value['error'] !== 'string') return false
+    return true
+}
+
+function isBatchProgressData(value: unknown): value is BatchProgressData {
+    if (!isObject(value)) return false
+    return typeof value['label'] === 'string'
+        && typeof value['total'] === 'number'
+        && typeof value['completed'] === 'number'
+        && typeof value['succeeded'] === 'number'
+        && typeof value['failed'] === 'number'
+        && typeof value['done'] === 'boolean'
+        && Array.isArray(value['results'])
+        && value['results'].every(isBatchItemResult)
+}
+
 export type BatchItemResult = {
     index: number
     success: boolean
@@ -232,6 +251,8 @@ export type BatchProgressData = {
     done: boolean
     results: BatchItemResult[]
 }
+
+export { isBatchProgressData }
 
 export type ChatAllowedMimeType = typeof CHAT_ALLOWED_MIME_TYPES[number]
 export { CHAT_ALLOWED_MIME_TYPES }
