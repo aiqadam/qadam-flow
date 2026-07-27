@@ -75,12 +75,15 @@ for (const [name, value] of Object.entries(qfEnvSnapshot)) {
     if (qfValue !== undefined && qfValue !== '') {
         continue
     }
+    // This module runs at import time, before any logger exists, so console is the only sink available.
+    // eslint-disable-next-line no-console
     console.warn(`[env-migrations] ${name} is deprecated; please rename to ${qfName}`)
 }
 
 for (const [newName, oldName] of Object.entries(LEGACY_QADAM_ALIASES)) {
     if (process.env[newName] === undefined && process.env[oldName] !== undefined) {
         process.env[newName] = process.env[oldName]
+        // eslint-disable-next-line no-console
         console.warn(`[env-migrations] ${oldName} is deprecated; please rename to ${newName}`)
     }
 }

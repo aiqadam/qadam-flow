@@ -73,7 +73,7 @@ is covered by `run.sh` plus plain `docker compose` commands.
 ## Testing
 
 ```bash
-npm run test-unit     # Vitest: engine + shared
+npm run test-unit     # Vitest: engine + shared + web + server-utils
 npm run test-api      # API integration (CE, EE, Cloud)
 ```
 API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`, `ctx.get()`. DB auto-cleaned between tests.
@@ -102,6 +102,26 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Git Commits (DCO)
 
 - **Every commit must be signed off under the Developer Certificate of Origin.** Always commit with `git commit -s` (`--signoff`) so a `Signed-off-by: <name> <email>` trailer (taken from `user.name`/`user.email`) is added. This is required by [GOVERNANCE.md](./GOVERNANCE.md) / [CONTRIBUTING.md](./CONTRIBUTING.md) — PRs with un-signed-off commits can't be merged. Keep the `Co-Authored-By:` trailer as well; both trailers belong at the end of the message.
+- **The trailers must sit in one final block with no blank line between them.** Git treats only the
+  *last paragraph* as the trailer block, and the `DCO Sign-off` job reads sign-offs with
+  `git show -s --format='%(trailers:key=Signed-off-by,valueonly)'` (`.github/workflows/ci.yml`).
+  So a message ending in `Signed-off-by:`, blank line, `Co-Authored-By:` has **no** parsed sign-off
+  and fails the required check, even though the line is plainly visible in `git log`. Correct shape:
+
+  ```
+  Closes #123
+
+  Signed-off-by: Name <email>
+  Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+  ```
+
+  Verify before pushing, don't eyeball the message — and check the whole branch, not just `HEAD`,
+  because the job checks every non-merge commit in the PR:
+  `git log --no-merges --format='%h %an <%ae> | %(trailers:key=Signed-off-by,valueonly)' origin/main..HEAD`.
+  Keep `--no-merges` — the job passes it too, so an unsigned merge commit from a branch update is
+  not a failure and must not be treated as one.
+  Every line must show the sign-off matching that commit's own author; a blank right-hand side is
+  the failure.
 
 ## Git Push
 
@@ -138,10 +158,17 @@ before trusting its silence — an empty output is not the same as a passing che
   `Cannot find module '@aiqadam/...'` errors. In an environment where `bun install` has not run,
   local type-checking of that package proves nothing either way; CI is the authoritative signal.
   Say so rather than substituting a command that returns clean.
-- **`npm run test-unit` does not cover `packages/server/utils`** — it filters to
-  `@aiqadam/engine`, `@aiqadam/shared` and `web`. A test added under `server/utils` runs in no CI
-  job. If you add tests there, wire them into a task that actually runs, or say plainly that they
-  are unenforced.
+- **A package missing the script turbo is asked to run silently checks nothing.** `turbo run lint
+  --filter=X` on a package with no `lint` script is a no-op that still reports success — this is how
+  `packages/server/utils` went unlinted while appearing in `lint-core` (fixed in #148). Before
+  trusting a filter, confirm the target package actually declares the script.
+- **Turbo `inputs` narrower than the files the script actually covers makes a check silently
+  cache-skip.** `lint`'s `inputs` listed `src/**` but not `test/**`, while the `api` lint script
+  covers `'src/**/*.ts' 'test/**/*.ts'` — so with remote caching on, a PR touching only
+  `packages/server/api/test/**` got a cache hit and linted nothing, repo-wide (fixed in #148).
+  A green check here means "the inputs turbo hashed did not change", not "the script ran".
+  Audit with `turbo run <task> --filter=<pkg> --dry=json` and compare the resolved input list
+  against the glob the script itself uses.
 - **A skipped required check never reports a conclusion.** Under the repo ruleset
   (`strict_required_status_checks_policy: true`), a required context that is skipped via
   `paths-ignore` or a job-level `if:` leaves the PR permanently unmergeable. A required job must

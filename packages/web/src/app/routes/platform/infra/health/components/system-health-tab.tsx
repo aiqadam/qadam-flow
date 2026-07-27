@@ -23,8 +23,28 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
   );
   const { data: systemHealth, isPending } = healthQueries.useSystemHealth();
 
+  // '0.0.0' is the probe's own failure sentinel (see ap-version.ts) — it must never
+  // be read as a real, comparable release, or a stale/unreachable check would render
+  // as a confident green "up to date" even though nothing was actually checked.
+  // semver.valid(...) is defense in depth: the producer already validates the tag
+  // before it reaches this flag, but a single producer bug must not be able to
+  // crash this route's render — there is no error boundary here — so an
+  // unparseable value is treated the same as "unknown" rather than reaching
+  // semver.gte below.
+  const isLatestVersionKnown =
+    !!latestVersion &&
+    latestVersion !== '0.0.0' &&
+    !!semver.valid(latestVersion);
+
   const isVersionUpToDate = React.useMemo(() => {
-    if (!currentVersion || !latestVersion) return false;
+    if (
+      !currentVersion ||
+      !latestVersion ||
+      latestVersion === '0.0.0' ||
+      !semver.valid(latestVersion)
+    ) {
+      return false;
+    }
     return semver.gte(currentVersion, latestVersion);
   }, [currentVersion, latestVersion]);
 
@@ -34,6 +54,7 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
       title: t('Version Check'),
       icon: <Package />,
       isChecked: isVersionUpToDate,
+      isUnknown: !isLatestVersionKnown,
       message: (
         <div>
           <div className="flex flex-row gap-4 items-center">
@@ -41,11 +62,18 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
               <b>{t('Current Version')}</b>: {currentVersion || t('Unknown')}
             </span>
             <span>
-              <b>{t('Latest Version')}</b>: {latestVersion || t('Unknown')}
+              <b>{t('Latest Version')}</b>:{' '}
+              {isLatestVersionKnown ? latestVersion : t('Unknown')}
             </span>
           </div>
           <div className="mt-2 flex flex-col gap-1">
-            {!isVersionUpToDate ? (
+            {!isLatestVersionKnown ? (
+              <span>
+                {t(
+                  'Could not check for the latest release. This does not mean you are up to date.',
+                )}
+              </span>
+            ) : !isVersionUpToDate ? (
               <>
                 <span>
                   {t(
@@ -76,6 +104,7 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
       title: t('Disk Size'),
       icon: <HardDrive />,
       isChecked: systemHealth?.disk,
+      isUnknown: false,
       message: (
         <span>
           {systemHealth?.disk
@@ -95,6 +124,7 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
       title: t('RAM'),
       icon: <MemoryStick />,
       isChecked: systemHealth?.ram,
+      isUnknown: false,
       message: (
         <span>
           {systemHealth?.ram
@@ -114,6 +144,7 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
       title: t('CPU Cores'),
       icon: <Cpu />,
       isChecked: systemHealth?.cpu,
+      isUnknown: false,
       message: (
         <span>
           {systemHealth?.cpu
@@ -138,6 +169,7 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
           id={check.id}
           title={check.title}
           isChecked={check.isChecked ?? false}
+          isUnknown={check.isUnknown}
           message={check.message}
           loading={check.loading ?? false}
           link={check.link}
