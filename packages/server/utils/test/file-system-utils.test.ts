@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileSystemUtils } from '../src/file-system-utils'
@@ -66,7 +66,7 @@ describe('fileSystemUtils', () => {
             await expect(fileSystemUtils.assertPathInside({ baseDir: tempDir, targetPath: target })).resolves.toBeUndefined()
         })
 
-        it('should reject a target that escapes the base via '..', async () => {
+        it('should reject a target that escapes the base via \'..\'', async () => {
             const target = join(tempDir, '..', 'escape.json')
             await expect(fileSystemUtils.assertPathInside({ baseDir: tempDir, targetPath: target })).rejects.toThrow(/path escape detected/)
         })

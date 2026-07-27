@@ -106,6 +106,12 @@ jobs:
       - name: Test the CI path classifier
         run: tools/ci/classify-path.test.sh
 
+      # Same reasoning, and the same job for the same reason: run.sh is the
+      # `curl … | sh` install path with no other automated coverage, so its test
+      # must sit in an unconditional job. Pure shell, no install needed.
+      - name: Test run.sh env reconciliation
+        run: tools/ci/test-run-sh.sh
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
