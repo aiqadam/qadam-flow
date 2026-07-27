@@ -6,6 +6,7 @@
   "typings": "./dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.lib.json",
+    "lint": "eslint 'src/**/*.ts' 'test/**/*.ts'",
     "test": "vitest run"
   },
   "dependencies": {
