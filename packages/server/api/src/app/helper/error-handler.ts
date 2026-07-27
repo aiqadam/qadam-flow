@@ -13,11 +13,12 @@ export const errorHandler = async (
         const statusCodeMap: Partial<Record<ErrorCode, StatusCodes>> = {
             [ErrorCode.INVALID_API_KEY]: StatusCodes.UNAUTHORIZED,
             [ErrorCode.INVALID_BEARER_TOKEN]: StatusCodes.UNAUTHORIZED,
-            // Not PAYMENT_REQUIRED: this repo has no plan/billing concept (edition-safety.md),
-            // and QUOTA_EXCEEDED is unused elsewhere in CE today, so remapping it is safe. A hard
-            // resource cap is a standing authorization boundary, not a transient condition a
-            // client should back off and retry (that's TOO_MANY_REQUESTS/429), so FORBIDDEN fits.
-            [ErrorCode.QUOTA_EXCEEDED]: StatusCodes.FORBIDDEN,
+            [ErrorCode.QUOTA_EXCEEDED]: StatusCodes.PAYMENT_REQUIRED,
+            // A hard operator-configured resource cap (e.g. AP_MAX_TEAM_PROJECTS_PER_PLATFORM) is
+            // a standing authorization boundary, not a transient condition worth a 429 retry hint,
+            // and it is not a plan/billing concept like QUOTA_EXCEEDED/FEATURE_DISABLED above (see
+            // ResourceLimitExceededParams in qadam-flow-error.ts) — hence its own code and FORBIDDEN.
+            [ErrorCode.RESOURCE_LIMIT_EXCEEDED]: StatusCodes.FORBIDDEN,
             [ErrorCode.QADAM_SYNC_NOT_SUPPORTED]: StatusCodes.BAD_REQUEST,
             [ErrorCode.FEATURE_DISABLED]: StatusCodes.PAYMENT_REQUIRED,
             [ErrorCode.PERMISSION_DENIED]: StatusCodes.FORBIDDEN,

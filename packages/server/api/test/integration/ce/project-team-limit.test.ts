@@ -1,4 +1,4 @@
-import { PlatformUsageMetric, ProjectType } from '@aiqadam/shared'
+import { ProjectType } from '@aiqadam/shared'
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -22,7 +22,11 @@ describe('Project team-projects cap (CE, edition-neutral system prop)', () => {
                     return original(prop)
                 }
                 // Mirror system.getNumber's own contract: unparseable input becomes `null`,
-                // not `NaN`, so this test exercises the real "malformed value" code path.
+                // not `NaN`. `system-validator.ts`'s numberValidator entry for this prop only
+                // surfaces a *warning* at startup (validateSystemPropTypes logs, it never
+                // throws — same as every other numberValidator-backed prop, e.g.
+                // MAX_RECORDS_PER_TABLE), so a malformed value can still reach this function at
+                // runtime; it must not be treated any differently than "unset".
                 const parsed = Number.parseInt(maxTeamProjectsOverride, 10)
                 return Number.isNaN(parsed) ? null : parsed
             }
@@ -63,7 +67,7 @@ describe('Project team-projects cap (CE, edition-neutral system prop)', () => {
         expect(third.statusCode).toBe(StatusCodes.CREATED)
     })
 
-    it('rejects the (N+1)th TEAM project once AP_MAX_TEAM_PROJECTS_PER_PLATFORM is reached, with QUOTA_EXCEEDED/403', async () => {
+    it('rejects the (N+1)th TEAM project once AP_MAX_TEAM_PROJECTS_PER_PLATFORM is reached, with RESOURCE_LIMIT_EXCEEDED/403', async () => {
         maxTeamProjectsOverride = '1'
         const ctx = await createContextWithoutSeedTeamProject()
 
@@ -72,12 +76,13 @@ describe('Project team-projects cap (CE, edition-neutral system prop)', () => {
 
         const second = await createTeamProject(ctx)
         expect(second.statusCode).toBe(StatusCodes.FORBIDDEN)
-        const body = second.json<{ code: string, params: { metric: string } }>()
-        expect(body.code).toBe('QUOTA_EXCEEDED')
-        expect(body.params.metric).toBe(PlatformUsageMetric.TEAM_PROJECTS)
+        const body = second.json<{ code: string, params: { resource: string, limit: number } }>()
+        expect(body.code).toBe('RESOURCE_LIMIT_EXCEEDED')
+        expect(body.params.resource).toBe('team_projects')
+        expect(body.params.limit).toBe(1)
     })
 
-    it('does not count a soft-deleted TEAM project toward the cap', async () => {
+    it('does not count a soft-deleted TEAM project toward the cap, and the cap still applies afterwards', async () => {
         maxTeamProjectsOverride = '1'
         const ctx = await createContextWithoutSeedTeamProject()
 
@@ -88,19 +93,32 @@ describe('Project team-projects cap (CE, edition-neutral system prop)', () => {
         const deleteResponse = await ctx.delete(`/v1/projects/${firstProjectId}`)
         expect(deleteResponse.statusCode).toBe(StatusCodes.NO_CONTENT)
 
+        // The soft-deleted project freed a "slot" back up to the cap of 1.
         const second = await createTeamProject(ctx)
         expect(second.statusCode).toBe(StatusCodes.CREATED)
+
+        // But the cap itself is still live — a third TEAM project (the second live one) is
+        // rejected. Without this assertion the test would also pass on `main`, where no cap
+        // exists and every create returns 201 regardless of soft-deletes.
+        const third = await createTeamProject(ctx)
+        expect(third.statusCode).toBe(StatusCodes.FORBIDDEN)
     })
 
     it('does not apply the TEAM-projects cap to PERSONAL project creation', async () => {
         // "0" means "block every TEAM project" (see getMaxTeamProjectsPerPlatform), a much
-        // stricter cap than any test above. Creating a PERSONAL project through the same
-        // projectService.create() codepath must still succeed, proving the cap check only runs
-        // for ProjectType.TEAM and never blocks the onboarding flow that auto-creates a
-        // PERSONAL project per user.
+        // stricter cap than any test above.
         maxTeamProjectsOverride = '0'
         const ctx = await createContextWithoutSeedTeamProject()
 
+        // Prove the cap is actually live under this config: a TEAM project is rejected. Without
+        // this assertion the test would also pass on `main`, where no cap exists and every create
+        // returns 201 regardless of project type.
+        const teamAttempt = await createTeamProject(ctx)
+        expect(teamAttempt.statusCode).toBe(StatusCodes.FORBIDDEN)
+
+        // A PERSONAL project, created through the same projectService.create() codepath, must
+        // still succeed — proving the cap check only runs for ProjectType.TEAM and never blocks
+        // the onboarding flow that auto-creates a PERSONAL project per user.
         const personalProject = await projectService(app.log).create({
             displayName: faker.animal.bird(),
             ownerId: ctx.user.id,

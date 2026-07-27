@@ -7,7 +7,6 @@ import {
     ErrorCode,
     isNil,
     Metadata,
-    PlatformUsageMetric,
     Project,
     ProjectIcon,
     ProjectId,
@@ -92,8 +91,8 @@ export const projectService = (log: FastifyBaseLogger) => ({
         return projects.map((project) => project.id)
     },
 
-    async countByPlatformIdAndType(platformId: string, type: ProjectType): Promise<number> {
-        return projectRepo().countBy({
+    async countByPlatformIdAndType({ platformId, type, entityManager }: CountByPlatformIdAndTypeParams): Promise<number> {
+        return projectRepo(entityManager).countBy({
             platformId,
             type,
         })
@@ -377,6 +376,14 @@ async function callerCanAdministerProject(params: CallerCanAdministerProjectPara
 // actually configured, so the default (unlimited, unconfigured) path never pays a Redis round
 // trip. Count + insert still need the lock together once a cap applies, otherwise two concurrent
 // requests can both read "under the cap" and both insert (CLAUDE.md's concurrency rule).
+//
+// No current caller passes an `entityManager` into project creation for TEAM projects, so
+// `saveTeamProject`'s insert autocommits on its own inside the lock today. If a future caller ever
+// wraps `create()` in an outer `transaction()`, the lock released here would no longer bound the
+// count+insert: the outer transaction could still be uncommitted (and its row invisible to a
+// concurrent count) after this function returns and the lock is released, reopening the exact
+// race the lock exists to close. Any such caller must pass the *same* entityManager through to
+// both the count and the insert, inside a lock that outlives the transaction's commit.
 async function createTeamProject(params: CreateTeamProjectParams): Promise<Project> {
     const { platformId, ownerId, newProject, entityManager, log } = params
     const maxTeamProjects = getMaxTeamProjectsPerPlatform()
@@ -387,7 +394,7 @@ async function createTeamProject(params: CreateTeamProjectParams): Promise<Proje
         key: `team-project-limit:${platformId}`,
         timeoutInSeconds: 10,
         fn: async () => {
-            await assertTeamProjectsLimitNotExceeded({ platformId, maxTeamProjects, entityManager })
+            await assertTeamProjectsLimitNotExceeded({ platformId, maxTeamProjects, entityManager, log })
             return saveTeamProject({ platformId, ownerId, newProject, entityManager })
         },
     })
@@ -406,10 +413,13 @@ async function saveTeamProject(params: SaveTeamProjectParams): Promise<Project> 
     return savedProject
 }
 
-// `system.getNumber()` returns `null` for both "unset" and "unparseable" input. Treating any
-// non-positive result (missing, malformed, zero-or-negative) as "no cap" is deliberate: a bad
-// or missing config value must fail open to the current unlimited behavior, never fail closed
-// to "0 team projects allowed platform-wide" (the non-exhaustive-mapping trap #147 hit).
+// `system.getNumber()` returns `null` for both "unset" and an unparseable value. Startup
+// validation (system-validator.ts's numberValidator entry for this prop) flags a non-numeric
+// AP_MAX_TEAM_PROJECTS_PER_PLATFORM in the `validateEnvPropsOnStartup` warning log — same as every
+// other numberValidator-backed prop (e.g. MAX_RECORDS_PER_TABLE), it only warns, it does not
+// throw and does not stop the process — so a malformed value still reaches this function at
+// runtime. It must fail open to "no cap", never closed to "0 team projects allowed
+// platform-wide" (the non-exhaustive-mapping trap #147 hit).
 function getMaxTeamProjectsPerPlatform(): number | null {
     const configuredValue = system.getNumber(AppSystemProp.MAX_TEAM_PROJECTS_PER_PLATFORM)
     if (isNil(configuredValue) || configuredValue <= 0) {
@@ -419,21 +429,23 @@ function getMaxTeamProjectsPerPlatform(): number | null {
 }
 
 async function assertTeamProjectsLimitNotExceeded(params: AssertTeamProjectsLimitNotExceededParams): Promise<void> {
-    const { platformId, maxTeamProjects, entityManager } = params
+    const { platformId, maxTeamProjects, entityManager, log } = params
     // TEAM-only, not platform-wide: PERSONAL projects are created automatically as a side effect
     // of user onboarding (user-service.ts), outside the caller's control. Counting them toward
     // this cap would risk blocking new-user signup once a platform is at capacity, which is a much
     // worse failure mode than the abuse case (self-service team-project creation) this cap exists
     // to bound.
-    const currentTeamProjects = await projectRepo(entityManager).countBy({
+    const currentTeamProjects = await projectService(log).countByPlatformIdAndType({
         platformId,
         type: ProjectType.TEAM,
+        entityManager,
     })
     if (currentTeamProjects >= maxTeamProjects) {
         throw new QadamFlowError({
-            code: ErrorCode.QUOTA_EXCEEDED,
+            code: ErrorCode.RESOURCE_LIMIT_EXCEEDED,
             params: {
-                metric: PlatformUsageMetric.TEAM_PROJECTS,
+                resource: 'team_projects',
+                limit: maxTeamProjects,
             },
         })
     }
@@ -623,5 +635,12 @@ type SaveTeamProjectParams = {
 type AssertTeamProjectsLimitNotExceededParams = {
     platformId: string
     maxTeamProjects: number
+    entityManager?: EntityManager
+    log: FastifyBaseLogger
+}
+
+type CountByPlatformIdAndTypeParams = {
+    platformId: string
+    type: ProjectType
     entityManager?: EntityManager
 }
