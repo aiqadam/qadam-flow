@@ -48,17 +48,26 @@ function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
             // user configured — it strips just Authorization, Proxy-Authorization
             // and Cookie, while API_KEY / HEADERS auth sends arbitrary header
             // names like `X-API-Key` that would travel to the new host verbatim.
-            // Disabling redirects outright would break the two shapes real servers
-            // answer with (a FastMCP mount 307ing `/mcp` to `/mcp/`, and an http
-            // to https upgrade behind a proxy), so same-host hops stay allowed and
-            // the cap stops a chain from outliving the timeout — which is
-            // per-socket inactivity, re-armed on every hop.
+            // Banning redirects outright would break a FastMCP-style mount that
+            // 307s `/mcp` to `/mcp/`, which is the likeliest URL a user types by
+            // hand, so same-host hops stay allowed and the cap stops a chain from
+            // outliving the timeout — which is per-socket inactivity, re-armed on
+            // every hop.
             maxRedirects: MAX_REDIRECTS,
+            // Read from `href`, not from `hostname`/`protocol`: axios dispatches
+            // its own proxy callback first, and that one overwrites those two
+            // fields with the proxy's, so on any install with HTTP_PROXY set a
+            // hostname comparison refuses every redirect including the same-host
+            // one this exists to allow. `href` is the resolved redirect target and
+            // the proxy rewrite leaves it alone. It also keeps IPv6 literals
+            // comparable — `follow-redirects` strips the brackets off `hostname`
+            // while `new URL()` keeps them.
             beforeRedirect: (options) => {
-                if (options.hostname !== origin.hostname) {
+                const target = new URL(options.href)
+                if (target.hostname !== origin.hostname) {
                     throw new Error('mcp validation refused a cross-host redirect')
                 }
-                if (origin.protocol === 'https:' && options.protocol !== 'https:') {
+                if (origin.protocol === 'https:' && target.protocol !== 'https:') {
                     throw new Error('mcp validation refused an https-to-http redirect')
                 }
             },

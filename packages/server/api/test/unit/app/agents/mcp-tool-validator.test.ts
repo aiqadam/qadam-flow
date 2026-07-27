@@ -15,7 +15,7 @@ type AxiosRequestConfigLike = {
     maxContentLength?: number
     maxBodyLength?: number
     timeout?: number
-    beforeRedirect?: (options: { hostname: string, protocol: string }) => void
+    beforeRedirect?: (options: { href: string, hostname: string, protocol: string }) => void
 }
 type AxiosCall = { url: string, body: Record<string, unknown>, config: AxiosRequestConfigLike }
 
@@ -85,26 +85,54 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         expect(call.config.timeout).toBe(15_000)
     })
 
+    // `hostname`/`protocol` are deliberately set to a proxy's here, not the
+    // target's: axios's own proxy `beforeRedirect` runs before this one and
+    // overwrites them, so a check reading those fields would refuse every
+    // redirect on any install with HTTP_PROXY set. Only `href` survives that
+    // rewrite, so only `href` may be trusted.
+    const AS_SEEN_BEHIND_A_PROXY = { hostname: 'corp-proxy.internal', protocol: 'http:' }
+
     it.each([
-        ['a different host', { hostname: 'attacker.example', protocol: 'https:' }],
-        ['an https-to-http downgrade', { hostname: 'mcp.example.com', protocol: 'http:' }],
-    ])('refuses a redirect to %s', async (_label, target) => {
+        ['a different host', 'https://attacker.example/rpc'],
+        ['an https-to-http downgrade', 'http://mcp.example.com/rpc'],
+    ])('refuses a redirect to %s', async (_label, href) => {
         mockJsonRpcServer({ tools: [] })
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
         const beforeRedirect = capturedCalls()[0].config.beforeRedirect
         expect(beforeRedirect).toBeDefined()
-        expect(() => beforeRedirect?.(target)).toThrow()
+        expect(() => beforeRedirect?.({ href, ...AS_SEEN_BEHIND_A_PROXY })).toThrow()
     })
 
-    it('allows a same-host redirect, which is how a trailing-slash mount answers', async () => {
+    it.each([
+        ['a trailing-slash mount', 'https://mcp.example.com/rpc/'],
+        ['a different port on the same host', 'https://mcp.example.com:8443/rpc'],
+    ])('allows a same-host redirect to %s', async (_label, href) => {
         mockJsonRpcServer({ tools: [] })
 
         await mcpToolValidator.validateAgentMcpTool(buildTool())
 
         const beforeRedirect = capturedCalls()[0].config.beforeRedirect
-        expect(() => beforeRedirect?.({ hostname: 'mcp.example.com', protocol: 'https:' })).not.toThrow()
+        expect(() => beforeRedirect?.({ href, ...AS_SEEN_BEHIND_A_PROXY })).not.toThrow()
+    })
+
+    // `follow-redirects` strips the brackets off `options.hostname` for an IPv6
+    // literal while `new URL().hostname` keeps them, so comparing hostnames
+    // across those two sources would never match. Comparing two `new URL()`
+    // results, as the code does, is what makes this pass.
+    it('allows a same-host redirect when the host is an IPv6 literal', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(
+            buildTool({ serverUrl: 'https://[2001:db8::1]/rpc' }),
+        )
+
+        const beforeRedirect = capturedCalls()[0].config.beforeRedirect
+        expect(() => beforeRedirect?.({
+            href: 'https://[2001:db8::1]/rpc/',
+            ...AS_SEEN_BEHIND_A_PROXY,
+        })).not.toThrow()
     })
 
     it('collapses any downstream failure to a single generic error', async () => {
