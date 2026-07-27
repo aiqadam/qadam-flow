@@ -1,192 +1,327 @@
-# Activepieces Design System
+# Qadam Flow Design System
 
-A design system for **Activepieces** — an open-source AI automation platform ("an open source replacement for Zapier"). The product lets both technical and non-technical users build automated workflows with 238 integrations ("pieces", called *qadams* in this repo: 27 core + 211 community) and exposes every piece as an MCP server for use with Claude, Cursor, Windsurf, etc.
+The design reference for **Qadam Flow** — the AI-first workflow automation platform built by
+**AI Qadam**. Users assemble triggers + actions from 238 *qadams* (27 core + 211 community)
+into automated flows; every qadam doubles as an MCP server for Claude, Cursor, Windsurf, etc.
 
-This folder contains the brand/visual foundations, CSS tokens, fonts, icon conventions, HTML preview cards for the Design System tab, and a UI kit that recreates core Activepieces product surfaces.
+- **AI Qadam** — the organisation (the AI community infrastructure for Central Asia).
+- **Qadam Flow** — this product. Self-hosted by design, MIT, `flow.aiqadam.org`.
 
----
-
-## Source materials
-
-| Source | Location |
-| --- | --- |
-| Shadcn UI Kit for Figma + Pro Blocks (Oct 2025) | mounted `.fig` VFS — browse via `fig_ls /`, screenshot via `fig_screenshot` |
-| Activepieces codebase | `github.com/yazeed-prog/activepieces` (`packages/web` is the React UI) |
-| Canonical brand stylesheet | `packages/web/src/styles.css` (Tailwind v4 + Shadcn "new-york" style) |
-| Brand logo | `packages/web/public/logo.svg` — purple mark `#8142E3` |
-| Brand fonts | Inter (400/500/600/700/800) — provided in `uploads/` and `fonts/` |
-| `Sentient-Variable.woff2` | provided as a display/display-alt exploration font (not used in shipping UI) |
-
-Activepieces uses **Shadcn/Radix UI** primitives on top of Tailwind, with **Lucide** as its icon library (confirmed in `packages/web/components.json` → `"iconLibrary": "lucide"`). Shadcn base color is `"neutral"`.
+Do not call the product Activepieces, and do not describe it as an "open source replacement for
+Zapier". Qadam Flow descends from the MIT core of Activepieces, but upstream's name and
+positioning are not ours.
 
 ---
 
-## Index (what's in this folder)
+## The authority: brand.aiqadam.org
 
-- `README.md` — this file
-- `colors_and_type.css` — CSS variables for colors, fonts, spacing, radii, shadows, type ramp
-- `SKILL.md` — cross-compatible Agent Skill definition for reuse in Claude Code
-- `fonts/` — Inter family (.woff2/.ttf) + Sentient variable
-- `assets/` — `logo.svg` (brand mark), piece-tile SVGs
-- `preview/` — ~700px-wide HTML cards that populate the Design System tab
-- `ui_kits/web/` — UI kit for the Activepieces web app (builder, dashboard, sidebar, forms showcase)
-- `insights/` — Interactive Insights page (`Insights.html`) with reusable chart primitives (`InsightsCharts.jsx`) and page-scoped styles (`insights.css`). Composes the `ui_kits/web/` shell + primitives; adds Sparkline / LineChart / BarChart / Donut / Heatmap. Two layout variations (Classic dashboard + Editorial narrative) switchable via Tweaks. Respects light/dark toggle.
+**Every design question is answered at <https://brand.aiqadam.org>.** It is the canonical brand
+and design reference for the whole AI Qadam umbrella, and it is deliberately not duplicated
+here — this file records only what a Qadam Flow agent needs in order to act, plus the places
+where the shipping product diverges from it.
 
-### `ui_kits/web/` component inventory
+Two pillars, and which one you need:
 
-The kit is plain React via Babel standalone — no build step. Single `app.css` defines the `ap-*` class vocabulary for both light and dark modes.
-
-**Primitives** (`Primitives.jsx`):
-
-| Component | Variants / sizes | Notes |
+| Pillar | Covers | Read it when |
 | --- | --- | --- |
-| `Button` | `default / secondary / outline / ghost / destructive / link` × `xs / sm / default / lg / icon / icon-sm / icon-lg` | Matches Shadcn button API. Supports `loading`, leading/trailing slots. |
-| `Badge` | `default / secondary / outline / destructive / success / warning` | Optional `dot`. |
-| `Input` | default 36px, `thin` 32px | Optional left `icon`. |
-| `Textarea` | auto-grow 1–5 rows | |
-| `Label` | `required` flag adds red asterisk | Paired via `htmlFor`. |
-| `Checkbox` | `checked = true / false / "indeterminate"` | `Minus` glyph on indeterminate. |
-| `Switch` | optional `checkedIcon` + `uncheckedIcon` | Thumb translates 20px. |
-| `RadioGroup` + `RadioGroupItem` | Context-driven selection | |
-| `Slider` | single-thumb, 0..100 | Filled track in primary. |
-| `Progress` | 0..100 | |
-| `Skeleton` | — | Animated-pulse placeholder. |
-| `Avatar` | `size`, `initials`, `src`, `color` | |
-| `Kbd` | — | Inline keyboard-key chip. |
-| `Alert` | `default / primary / warning / destructive / success` | Optional `icon` + `title`. |
-| `Tabs` + `TabsList` + `TabsTrigger` + `TabsContent` | `default / pills / underline` | |
-| `Separator` | `horizontal / vertical` | |
+| [Brand](https://brand.aiqadam.org/brand.html) | identity, logo system, brand colour, colour tokens, type scale, voice & principles, photography, iconography, merch, decks | anything that travels off-screen, plus colour and type (they apply everywhere) |
+| [Design system](https://brand.aiqadam.org/system.html) | spacing, radius, component primitives, domain patterns, mockups, navigation | digital product UI |
 
-**Overlays** (`Overlays.jsx`) — portal-based, all dismiss on Esc + outside click:
+Useful deep links: [`#brand-color`](https://brand.aiqadam.org/brand.html#brand-color) ·
+[`#colors`](https://brand.aiqadam.org/brand.html#colors) ·
+[`#typography`](https://brand.aiqadam.org/brand.html#typography) ·
+[`#logo`](https://brand.aiqadam.org/brand.html#logo) ·
+[`#voice`](https://brand.aiqadam.org/brand.html#voice) ·
+[`#iconography`](https://brand.aiqadam.org/brand.html#iconography) ·
+[`#foundation`](https://brand.aiqadam.org/system.html#foundation) ·
+[`#components`](https://brand.aiqadam.org/system.html#components).
+Agent-oriented index: <https://brand.aiqadam.org/llms.txt>.
 
-| Component | Notes |
-| --- | --- |
-| `Popover` | Anchored to trigger; `placement` + `align` + `offset`; clamps to viewport. |
-| `DropdownMenu` | `items` support `icon`, `shortcut`, `destructive`, `separator`, `disabled`. |
-| `Modal` | Sizes `sm / md / lg`; `title` + `description` + `footer`; `black/50` backdrop, no blur. |
-| `Tooltip` | 400ms show delay, 120ms fade. |
-| `ToastProvider` + `useToast()` + `ToastHost` | Bottom-right stack; `.toast / .success / .error / .warning / .info` helpers; auto-dismiss. |
-
-**Screen views**: `Sidebar.jsx`, `TopBar.jsx`, `FlowsView.jsx`, `BuilderView.jsx`, `RunsView.jsx`, `ConnectionsView.jsx`, `AskAIView.jsx`, `Icons.jsx`.
-
-**Entry points**: `ui_kits/web/index.html` (full app shell) and `ui_kits/web/forms.html` (form-controls showcase).
+**Tokens there are normative.** If this file disagrees with the site, the site wins — go read it
+and fix this file.
 
 ---
 
-## Brand & product context
+## Licensing — what may be reproduced here, and what may not
 
-**Product**: Activepieces is an all-in-one AI automation platform. The core surface is a visual **flow builder** (React + XYFlow) where users assemble triggers + actions from the 238 open-source **pieces**/qadams into runnable flows. Every piece doubles as an MCP server, so LLM agents can call them directly.
+The brand repo carries three separate licenses covering non-overlapping material:
 
-**Audience**: mixed — "developers set up the tools, and anyone in the organization can use the no-code builder" (from README). Non-technical users live in the builder; developers contribute new pieces as typed npm packages.
+| Material | License | Consequence for this MIT repo |
+| --- | --- | --- |
+| Source code — `tokens.css`, `components.css`, HTML markup, scripts | MIT | May be reproduced. This is why the token *values* below are written out. |
+| Brand assets — the name "AI Qadam", the footprint mark, the `AI QADAM` wordmark, the four-dot motif, the brand teal **used as a brand colour or logo background**, `#AIQadam` | © AI Qadam Community, [Brand Usage Policy](https://brand.aiqadam.org/brand-use.html) — **not** open source | Not relicensable. Qadam Flow's use of the mark and the teal rests on the policy's "open-source projects recognised as part of AI Qadam Build" clause (recognition granted by community leads), not on any license grant. Link the assets; don't vendor, redraw, or recolour them. |
+| Editorial prose — guideline copy, examples, manifesto excerpts | CC BY 4.0 | Copyable with attribution, but CC BY prose inside an MIT repo means mixed licensing. So we link it instead. |
 
-**Products / surfaces represented in this design system**:
-1. **Web app** (`packages/web`) — the authenticated product: flow builder, runs, connections, tables, agents, settings. This is the only UI in scope; the marketing site is not in the repo.
+**What this skill therefore does and does not reproduce:**
 
----
-
-## CONTENT FUNDAMENTALS
-
-Activepieces copy is **functional, direct, and product-led**. It talks about workflows, pieces, and runs in concrete terms — no marketing puffery inside the app.
-
-- **Voice**: second-person ("**you** can build", "**your** flows"). Feature names and verbs lead; adjectives are rare.
-- **Casing**: **Sentence case** for every UI string — headings, buttons, menu items, page titles. Proper nouns are the feature itself: "Pieces", "Flows", "Runs", "MCP", "Agents", "Connections".
-- **Tone**: matter-of-fact and a little nerdy. The product README uses emoji headers (🤯 🔥 🧠 🛠️) but the *in-app UI does not* — inside the app, emoji are essentially absent and all iconography is Lucide.
-- **Buttons**: verb-first, terse. "New flow", "Publish", "Connect", "Test step", "Run", "Save". No "Click here", no "Please".
-- **Empty states / errors**: explain the state, then say what the user can do. Example pattern: *"No flows yet. Create your first flow to start automating."*
-- **Microcopy examples (from repo strings & feature names)**: "Create a Piece", "Deploy", "Hot reloading for local piece development", "Chat Interface", "Form Interface", "Ask AI in Code Piece", "Human in the Loop".
-- **Docs / README vibe**: slightly more playful, uses emoji section markers ("💖 Loved by Everyone", "🔒 Secure by Design"), short bullet explainers, bold lead-ins. Good for landing/docs — **not** for in-product UI.
-
-**Do**: "Your flow is live.", "Add a step", "Connect your Google account"
-**Don't**: "Awesome! 🎉 Your flow is now live!", "Click here to add a step", "Please authorize Google"
-
----
-
-## VISUAL FOUNDATIONS
-
-### Palette
-- **Primary — Purple** `hsl(257 74% 57%)` ≈ `#8142E3`. Used for: primary buttons, the logo, active sidebar item, add-step affordance, selection glow in the builder, key links.
-  - `--primary-100` `hsl(257 75% 85%)` for soft backgrounds / selection washes
-  - `--primary-300` `hsl(257 74% 25%)` for deep accents
-- **Neutrals**: Tailwind `neutral` scale (50→950). `950` is near-black (`#0a0a0a`), used for body text and the dark-mode background. The whole app reads as crisp **white + near-black** with purple as the only accent.
-- **Semantics**: Emerald (`success` 160 84% 39%), Rose (`destructive` 350 89% 60%), Amber (`warning` 38 92% 50%). Only the 500 step is used for the solid colour; 50/100 are the soft fill for alerts/toasts; 700 is for high-contrast text on light chips.
-- **Dark mode**: `neutral-950` background, `neutral-800` popovers/secondary, `hsla(0,0%,100%,0.1)` borders. In the shipping app primary *shifts to blue* in dark mode — we keep it purple by default in this design system for brand consistency, but document the blue variant.
-
-### Typography
-- **Inter** across the entire product (400 / 500 / 600 / 700 / 800). `font-feature-settings: 'rlig' 1, 'calt' 1`.
-- **Display**: we also include **Sentient** (uploaded variable font) as an *optional* display/marketing alt. Not used in shipping product UI.
-- **Ramp**: text-xss 10.4 / xs 12 / sm 14 / base 16 / lg 18 / xl 20 / 2xl 24 / **3xl 28** / **4xl 32** (the repo overrides 3xl/4xl to tighter sizes).
-- **Body default is 14px (sm)**, not 16 — this is important. Dense, tool-like feel.
-- **Headings** use `-0.01em` to `-0.02em` letter-spacing.
-
-### Spacing & layout
-- **Base unit 4px**. Gap scale: 4, 8, 12, 16, 24, 32, 48, 64.
-- **Borders are 1px** everywhere, colour `neutral-200` (light) / `white/10` (dark). Never thicker.
-- **Radius**: base `0.625rem` (10px). `lg` = 10, `md` = 8, `sm` = 6, `xs` = 2. Inputs + buttons use `md`; cards and dialogs use `lg`.
-- **No negative margins.** Repo AGENTS.md bans them explicitly — use `gap` or `padding`.
-
-### Surfaces
-- Cards: white fill, 1px `neutral-200` border, `radius-lg`, **no shadow by default**. Shadow only on floating surfaces (popovers, dialogs, dropdowns).
-- **The builder canvas** has a dotted pattern: background `#FBFBFB`, pattern dot `#b2b2b2`. This is a signature look.
-- Shadows are subtle: `0 1px 3px rgba(0,0,0,0.06)` for cards-that-lift, `0 10px 15px -3px rgba(0,0,0,0.08)` for menus. **No coloured shadows** except the add-step button glow (`0 0 0 6px var(--primary-100)`).
-
-### Animation
-- Tailwind `tw-animate-css` is in. Custom easing: `--ease-expand-out: cubic-bezier(0.35, 0, 0.25, 1)`.
-- Durations are short: **200ms default**, 150ms hover. Long-running animations (typing, highlight) are rare and intentional.
-- Common keyframes in the repo: `accordion-down/up`, `fade`, `highlight` (primary-100 → secondary fade), `typing`, `slide-in-from-bottom`, `primary-color-pulse`.
-- **No bounces, no springs**, no "pop" scale easing. Everything glides.
-
-### States
-- **Hover**: primary buttons darken to `/90`; secondary to `/80`; ghost buttons get `bg-gray-300/30`. Links underline. No scale, no elevation change.
-- **Press/active**: same as hover — the product does **not** shrink or translate on press.
-- **Focus-visible**: `3px` ring at `ring-color/50`, with `border-ring` — very visible, accessibility-first.
-- **Disabled**: `opacity: 0.5`, `pointer-events: none`. No greyed-out variant swap.
-- **Aria-invalid**: `border-destructive`, `ring-destructive/20`.
-
-### Imagery & backgrounds
-- **Minimal imagery** inside the product. No hero photos, no illustrations in the main app.
-- **Piece tiles**: small rounded-square icons (48×48) with an 8% tinted background and the piece's own logo. Code piece uses amber `#E5AE43`, etc. Each piece owns its colour.
-- Marketing/docs imagery (not in-app): screenshots of the builder with the dotted canvas, animated GIFs showing flow creation. No abstract gradients, no AI "bluish-purple glow" tropes — just the real UI.
-- **No full-bleed photography** anywhere in the app.
-
-### Transparency & blur
-- Used very sparingly. Sidebar accent fill is `color-mix(in srgb, neutral-200 60%, transparent)` — a tinted translucent wash. Overlays on dialogs use `black/50`. **No backdrop-blur** in the shipping UI.
-
-### Layout rules
-- Fixed left sidebar, fluid content. Top bar only in the builder (it shows flow name + publish/test).
-- Max content width ~1400px; dense tables break out wider.
-- **`cn()` from `@/lib/utils`** is mandatory for className composition (clsx + tailwind-merge).
+- **Reproduced** — the OKLCH/hex token values, font families, radius and spacing scales, and
+  component dimensions. All from MIT-licensed `tokens.css` / `components.css`, and all needed to
+  implement the product. The brand teal's value is stated because it is already the colour of the
+  mark this repo ships (`packages/web/public/logo.svg`) and you cannot build the product without
+  it.
+- **Not reproduced** — the logo SVGs (`logo-mark.svg`, `logo-full.svg`), the merch photography,
+  the seven manifesto principles, and the guideline prose. Those are linked. The seven principles
+  in particular are editorial CC BY content: read them at
+  [`brand.html#voice`](https://brand.aiqadam.org/brand.html#voice), don't paste them here.
+- **Ambiguity resolved toward less copying.** The policy permits brand-asset use by recognised AI
+  Qadam Build projects but doesn't spell out how a recognised project's *own repo* should carry
+  the guidelines. Rather than guess, this folder links. If the tokens should be vendored as a CSS
+  file in `packages/web`, that is an explicit decision for Binali, with license headers sorted
+  first.
 
 ---
 
-## ICONOGRAPHY
+## Brand vs. shipping — the gap, file by file
 
-**Lucide** (https://lucide.dev) is the canonical icon set — confirmed via `components.json` (`"iconLibrary": "lucide"`). Stroke-based, 1.5px strokes, 24×24 viewBox, rounded line caps.
+The brand is teal. Large parts of the product still ship the inherited purple. Both are true at
+once, and an agent that conflates them will either paint a mockup the wrong colour or silently
+rebrand the product. Verified against the tree:
 
-- **In HTML/JSX prototypes in this system, link Lucide from CDN**:
-  ```html
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-  ```
-  Or use inline SVGs from https://lucide.dev. Sizes: default `16` (`size-4`), small `12` (`size-3`), large `20` (`size-5`).
-- **Icon conventions**: icons sit left of text with 8px gap (`gap-2`). Ghost buttons and xs buttons get `size-3` icons, default `size-4`.
-- **Piece icons**: each integration has its own SVG (Google, OpenAI, Slack, …). These live at `packages/web/src/assets/img/piece/` and as npm-published per-piece packages. **Copy the real SVG** — do not redraw.
-- **Custom product glyphs**: a small set of custom SVGs for MCP, Cursor, Claude, Windsurf, auth providers. These live at `packages/web/src/assets/img/custom/`. We copy the MCP and code glyphs into `assets/`.
-- **Emoji**: not used in product UI. Used lightly in the public README (🔥🤯🧠). Do not use in app.
-- **Unicode icon chars** (✓, ×, arrows): not used — always a Lucide `<Check>`, `<X>`, `<ChevronRight>`.
+| Thing | Brand says | Repo ships | Where |
+| --- | --- | --- | --- |
+| Primary colour | teal `#3CA29E` / `oklch(0.58 0.10 192)`; dark `oklch(0.70 0.105 192)` | purple `hsl(257 74% 57%)`; **blue** `hsl(210 90% 50%)` in dark | `packages/web/src/styles.css:414` (light), `:500` (dark) |
+| Platform-branding default | teal | `primaryColor: '#8142E3'` | `packages/server/api/src/app/flags/theme.ts:67` |
+| Product logo | teal footprint mark | **already teal** | `packages/web/public/logo.svg`, `logo-full.svg`, `logo-192.png`, `logo-180.png`, `og-image.svg` |
+| Docs logo + favicon | teal footprint mark | still the purple Activepieces "A" | `docs/resources/logo/light.svg`, `docs/resources/logo/dark.svg`, `docs/favicon.svg`, `docs/favicon.png` |
+| Docs site accent | teal | `#9675FF` | `docs/docs.json:6-8` |
+| Body font | Inter, Latin **and** Cyrillic equally legible | Inter, **Latin subset only** | `packages/web/src/assets/fonts/inter-v20-latin-*` |
+| Display font | Geist | not present; `Sentient-Variable.woff2` is loaded instead | `packages/web/src/styles.css:7-12`, `packages/web/public/fonts/` |
+| Mono font | JetBrains Mono | not loaded | — |
+| Theme default | dark-first (`<html data-theme="dark">`), light a verified peer | light-first: `theme === 'system'` resolves to `'light'` | `packages/web/src/components/providers/theme-provider.tsx:57-61` |
+| Radius default | 8px | `--radius: 0.5rem` = 8px ✅ | `packages/web/src/styles.css:410` |
+| Icons | Lucide | Lucide ✅ | `packages/web/components.json` (`"iconLibrary": "lucide"`) |
+
+At runtime `--primary` is **overwritten by platform branding** in `theme-provider.tsx:64-67` from
+the value the server supplies — so `theme.ts` is as load-bearing as `styles.css`. A recolour that
+touches only the CSS changes nothing for a running install.
+
+**Do not recolour the product as a side effect of any other task.** Enumerated scope for when that
+decision is taken, all line counts verified:
+
+| File | Lines | What changes |
+| --- | --- | --- |
+| `packages/web/src/styles.css` | 891 | `--primary-100` / `--primary` / `--primary-300` light (413-415) + dark (499-501); `--sidebar-primary` (471, 525) |
+| `packages/server/api/src/app/flags/theme.ts` | 72 | default `primaryColor` (67) |
+| `docs/docs.json` | 457 | `colors.primary` / `.light` / `.dark` (6-8) |
+| `docs/favicon.svg` | 3 | purple `#8142E3` mark → teal footprint |
+| `docs/favicon.png` | binary, 2.7 KB | same |
+| `docs/resources/logo/light.svg` | 15 | purple `#8142E3` Activepieces wordmark → AI Qadam lockup |
+| `docs/resources/logo/dark.svg` | 15 | white Activepieces wordmark → AI Qadam lockup |
+| `packages/web/public/chat-suggestions/card-triage-support.svg` | 238 | one `#8142E3` fill |
+
+Verified **not** in scope, contrary to what you might assume:
+
+- **No Tailwind config file exists.** Tailwind v4 is configured in CSS (`@theme` in `styles.css`).
+  There is nothing at `tailwind.config.*` anywhere in the repo.
+- **Email templates carry no brand colour.** `packages/server/api/src/assets/emails/*.html`
+  (8 files) use only `#ffffff`, `#2f2e2e`, `#a3a3a3`, `#0a0a0a`, `#e5e5e5`.
+- **Web logos and app icons are already teal** (`#3CA29E`). `favicon.ico` ships but the app
+  replaces the favicon at runtime from platform branding
+  (`theme-provider.tsx:31-37`), so it follows branding, not the file.
+- A recolour changes **no** `.agents/` or `.claude/` file: after this rewrite they name the brand
+  value and the shipping value separately.
+
+Noted and deliberately untouched: `packages/web/public/og-image.png` is the *brand site's* OG
+image ("AI Qadam Brand Guidelines · brand.aiqadam.org"), not a Qadam Flow card. It is wrong for
+the product's social previews and wants its own fix.
 
 ---
 
-## Tailwind + `cn()` conventions
+## Colour tokens
 
-Activepieces is a Tailwind v4 codebase. When generating production-style code off this system:
-- Always `cn(...classes)` from `@/lib/utils` — never template literals for `className`.
-- Use design-token class names (`bg-primary`, `text-muted-foreground`, `border-border`, `rounded-md`) not raw hex / raw radii.
-- Ban negative margins. Use `gap-*`, `p-*`, `space-*`.
-- Prefer extending existing `/ui` components before creating new ones.
+From the brand's MIT `tokens.css` — Tailwind 4 / shadcn-compatible, OKLCH. **Dark is the brand's
+default surface**; light is a verified peer, not an afterthought.
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| `--background` | `oklch(1 0 0)` | `oklch(0.145 0 0)` |
+| `--foreground` | `oklch(0.145 0 0)` | `oklch(0.985 0 0)` |
+| `--card` | `oklch(0.99 0 0)` | `oklch(0.205 0 0)` |
+| `--popover` | `oklch(1 0 0)` | `oklch(0.205 0 0)` |
+| `--muted` | `oklch(0.97 0 0)` | `oklch(0.269 0 0)` |
+| `--muted-foreground` | `oklch(0.556 0 0)` | `oklch(0.708 0 0)` |
+| `--border` / `--input` | `oklch(0.922 0 0)` | `oklch(0.269 0 0)` |
+| `--primary` | `oklch(0.58 0.10 192)` | `oklch(0.70 0.105 192)` |
+| `--primary-foreground` | `oklch(0.985 0 0)` | `oklch(0.145 0 0)` |
+| `--secondary` / `--accent` | `oklch(0.97 0 0)` | `oklch(0.269 0 0)` |
+| `--success` | `oklch(0.696 0.17 162)` | `oklch(0.765 0.17 162)` |
+| `--warning` | `oklch(0.768 0.188 70)` | `oklch(0.823 0.188 70)` |
+| `--destructive` | `oklch(0.577 0.245 27)` | `oklch(0.704 0.191 22)` |
+| `--ring` | = `--primary` | = `--primary` |
+
+Neutrals are **fully desaturated** (chroma 0) — no cool or warm tint. Brand teal is the only
+colour with brand meaning; everything else is the neutral scale plus four semantic accents.
+**Don't invent new colour tokens.**
+
+Also defined, but specific to AI Qadam community surfaces rather than to Qadam Flow:
+`--live-indicator`, `--badge-bronze` / `-silver` / `-gold` / `-special`, `--streak`. Ignore unless
+you are building those surfaces.
+
+Qadam Flow's own `--primary-100` / `--primary-300` (soft wash, deep accent) have **no brand
+counterpart** — they are a local extension. Treat them as product-local, derive them from
+`--primary`, and don't present them as brand tokens.
 
 ---
 
-## Caveats
+## Typography
 
-- The **Pro-Blocks** Figma pages (Landing, Application, etc.) are Shadcn's stock templates and do NOT reflect the real Activepieces marketing site (which isn't in the repo). We use them as secondary reference for Shadcn patterns only.
-- Figma file says primary purple is `rgb(151,71,255)` (`#9747FF`). The **actual shipping** primary per `styles.css` is `hsl(257 74% 57%)` ≈ `#8142E3` (matches the logo). We use the shipping value — the Figma swatch is a slightly lighter preview variant.
-- **Sentient** (uploaded) is included as a display option but **is not used in shipping Activepieces UI**. Treat as optional branding exploration only.
+Three families, one voice — [`brand.html#typography`](https://brand.aiqadam.org/brand.html#typography):
+
+- `--font-display: "Geist"` — titles, hero, brand.
+- `--font-sans: "Inter"` — body copy.
+- `--font-mono: "JetBrains Mono"` — times, IDs, tags, technical detail.
+
+**Latin and Cyrillic must read equally well.** Central Asia uses both, and the brand's type
+samples are deliberately half Cyrillic. The repo currently loads a Latin-only Inter subset, so
+Cyrillic UI text falls back to a system font. Flag it; don't quietly ship Latin-only copy as if
+it were fine.
+
+Brand type scale: `6xl` 60/64 · `4xl` 36/40 · `3xl` 30/36 · `2xl` 24/32 · `xl` 20/30 · `lg` 18/28
+· `base` 16/24 · `sm` 14/20 · `xs` 12/16. Display sizes carry `-0.01em` to `-0.035em` tracking,
+tightening as size grows.
+
+**Body-size ambiguity, unresolved.** The brand type scale labels `base` (16px) "Body default",
+while the brand's own `tokens.css` sets `body { font-size: 14px }` and its components (buttons,
+inputs, labels) are all built at 13-14px. Qadam Flow ships 14px, which matches the components.
+Keep 14px for dense product UI and 16px for brand/marketing prose; if a screen sits between the
+two, ask — don't treat either number as settled.
+
+---
+
+## Foundation
+
+**Spacing** — base unit 4px. Scale: 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 · 80 · 96. Standard card
+padding 24px. No negative margins (also banned by `packages/web/CLAUDE.md`).
+
+**Radius** — `sm` 6 · **default 8** · `md` 10 · `lg` 12 · `xl` 16 · `full` 9999. Inputs and
+buttons 8, cards 12, modals 16.
+
+**Shadows** — `--shadow-sm` `0 1px 2px rgb(0 0 0 / .05)`, `--shadow` `0 1px 3px rgb(0 0 0 / .1),
+0 1px 2px -1px rgb(0 0 0 / .1)`, plus `--shadow-md` and `--shadow-lg`. Cards get a border, not a
+shadow; shadows belong to floating surfaces (popovers, menus, dialogs). No coloured shadows.
+
+**Motion** — `--ease-out: cubic-bezier(0.4, 0, 0.2, 1)` for interface transitions (150ms on
+components), `--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1)`. The brand defines the spring
+curve but doesn't say where to use it, and its own components use `--ease-out` throughout —
+default to `--ease-out` and treat springs as unspecified.
+
+**Component dimensions** from `components.css`: button heights 32 / 40 / 44 (icon buttons square
+at the same heights); input and textarea 40px tall, textarea min-height 96px; badge and tag 22px
+tall with 12px text; switch 36×20 with a 16px thumb; checkbox and radio 16px; avatars 24 / 32 /
+40 / 56 / 80 / 120.
+
+**Focus** — `outline: 2px solid var(--ring); outline-offset: 2px` on buttons and controls; inputs
+use `border-color: var(--ring)` plus a `0 0 0 2px ring/30%` box-shadow. The repo currently ships a
+3px `ring/50` ring. Divergence, not yet reconciled — match the surrounding code inside the
+product, match the brand on new brand surfaces.
+
+**Disabled** — the brand doesn't specify a disabled treatment. The repo uses
+`opacity: 0.5; pointer-events: none`. Follow the repo, and call it a repo convention.
+
+---
+
+## Iconography
+
+[Lucide](https://lucide.dev) only — line, 2px stroke, 24×24 viewBox, inheriting `currentColor`.
+Confirmed as the repo's icon library in `packages/web/components.json`.
+
+- Never mix icon families (no Heroicons + Phosphor + Lucide on one surface).
+- Never recolour an icon; let it inherit from text.
+- The four-dot motif belongs to the logo alone — never fold it into another icon.
+- Emoji and Unicode glyphs (✓ × ←) are not icons. Use a Lucide component.
+- Qadam icons: copy the real SVG from `packages/web/src/assets/img/piece/`; never redraw a
+  third-party logo.
+
+---
+
+## Logo
+
+Two lockups, one source, both at
+[`brand.html#logo`](https://brand.aiqadam.org/brand.html#logo) — download from there, don't
+recreate:
+
+- **Mark** — the footprint with four dots. Navbars, favicons, app icons, avatars, anywhere small
+  or square. Sizes in use: 20 / 28 / 40 / 64px.
+- **Full lockup** — mark plus the `AI QADAM` wordmark. Splash screens, hero blocks, decks, OG
+  images, print.
+
+The full lockup is **theme-adaptive**: the footprint stays teal while the letters resolve to
+`--foreground` (dark on light, off-white on dark) via `--aiq-logo-dark`. That only works when the
+SVG is **inlined** — an `<img>` gets the baked hex fallback. Inline it on any surface whose theme
+toggles. For print, bake the fill before exporting.
+
+**Never** recolour, redraw, stretch, skew, rotate, add shadows / glows / gradients / outlines,
+crop the four dots, retype the wordmark in a font, or place the mark over busy imagery.
+
+**Writing the name**: `AI Qadam` in prose (title case, two words). `AI QADAM` only inside the
+lockup, never in body copy. `#AIQadam` as the hashtag. The product is `Qadam Flow`. Wrong:
+`AI-Qadam`, `AIQadam`, `ai qadam`, `AI Kadam`, `Qadam AI`.
+
+---
+
+## Voice & copy
+
+Product copy is functional, direct and honest — honesty over hype is an AI Qadam principle, and it
+applies to microcopy as much as to a keynote. Read the seven principles at
+[`brand.html#voice`](https://brand.aiqadam.org/brand.html#voice).
+
+- **Person** — second person: "your flows", "you can build".
+- **Casing** — sentence case for every UI string. Proper nouns are the features themselves:
+  Flows, Runs, Qadams, MCP, Agents, Connections, Tables.
+- **Buttons** — verb-first and terse: "New flow", "Publish", "Connect", "Test step", "Run",
+  "Save".
+- **Empty states / errors** — state the fact, then the action: *"No flows yet. Create your first
+  flow to start automating."*
+- **No** emoji in product UI, no "Click here", no "Please", no exclamation-mark enthusiasm.
+
+**Do**: "Your flow is live." · "Add a step" · "Connect your Google account"
+**Don't**: "Awesome! 🎉 Your flow is now live!" · "Click here to add a step" · "Please authorize
+Google"
+
+---
+
+## Imagery
+
+Documentary, not staged — real rooms, real people, real screens. No AI-generated humans, robots,
+brain graphics or glowing-data backgrounds; no stock handshakes or staged smiles; no heavy filters
+or duotone overlays; no watermarks (credit belongs in the caption). The honesty principle covers
+images too. Inside the product, imagery is minimal by default: no hero photos, no illustrations,
+no abstract gradients — the real UI is the illustration.
+
+---
+
+## Building product UI
+
+Follow `packages/web/CLAUDE.md`; it is authoritative for the frontend. In brief:
+
+- Reuse `packages/web/src/components/ui/` (Shadcn/Radix "new-york" on Tailwind v4, base colour
+  `neutral`) before creating anything; extend an existing component rather than forking it.
+- `cn()` from `@/lib/utils` for every `className` — never template literals.
+- Design-token classes (`bg-primary`, `text-muted-foreground`, `border-border`, `rounded-md`),
+  never raw hex. This is what makes the eventual teal switch a token change instead of a sweep.
+- No negative margins.
+- Layouts follow the F-pattern: left-aligned, not centred.
+
+---
+
+## Not specified by the brand
+
+Say "unspecified" and ask, rather than inventing a value or keeping an inherited one:
+
+- **The flow builder's dotted canvas.** A Qadam Flow product signature, not a brand element. The
+  brand says nothing about it; it survives as a repo convention only.
+- **The floating-content-card shell** (inset sidebar plus bordered content card). Repo layout, not
+  brand.
+- **Dark-mode primary behaviour in the product.** The brand gives one teal per theme. The repo
+  shifts primary to *blue* in dark mode (`styles.css:500`) — inherited, matching neither the brand
+  nor its own light-mode purple, and needing a decision.
+- **Disabled and loading treatments**, **table density**, **z-index layers**, **breakpoints**
+  beyond the brand container's 768 / 1024, and **data-visualisation palettes** — all repo-local or
+  absent. For charts, load the `dataviz` skill and swap in `--primary` plus the neutral scale.
+- **A `--radius-xs`** (the old 2px token) does not exist in the brand scale. Smallest is 6px.
+
+Also gone, and not to be reinstated: this folder previously claimed an inventory of assets —
+`colors_and_type.css`, `fonts/`, `assets/`, `preview/`, `ui_kits/web/`, `insights/` — none of
+which has ever existed in this repo. Only `SKILL.md` and `README.md` are here. Don't cite those
+paths, and don't cite a Figma file: there is no Figma source of truth for this product, only
+`brand.aiqadam.org`.
