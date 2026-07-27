@@ -24,7 +24,7 @@ export const CreatePlatformProjectRequest = z.object({
     displayName: z.string().regex(new RegExp(SAFE_STRING_PATTERN)),
     externalId: Nullable(z.string()),
     metadata: Nullable(Metadata),
-    maxConcurrentJobs: Nullable(z.number()),
+    maxConcurrentJobs: Nullable(z.number().int().positive()),
     globalConnectionExternalIds: z.array(z.string()).optional(),
     alertReceiverEmail: z.email().nullable().optional(),
 })
