@@ -107,8 +107,8 @@ the whole session.
 ## Testing
 
 ```bash
-npm run test-unit     # Vitest: engine + shared + web + server-utils
-npm run test-api      # API integration (CE, EE, Cloud)
+npm run test-unit     # Vitest: engine + shared + web + server-utils, then api's own test-unit
+npm run test-api      # CE API integration + migration check (this repo has no EE or Cloud suite)
 ```
 API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`, `ctx.get()`. DB auto-cleaned between tests.
 
