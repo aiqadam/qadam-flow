@@ -4,6 +4,23 @@ description: "This list shows all versions that include breaking changes and how
 icon: "hammer"
 ---
 
+## Unreleased
+
+### What has changed?
+
+#### Environment variables are migrating from `AP_` to `QF_`
+This is the start of a multi-release migration — **no action is required**, every `AP_*` variable keeps working exactly as before.
+
+- Every environment variable that was previously read as `AP_<NAME>` (e.g. `AP_EXECUTION_DATA_RETENTION_DAYS`, `AP_TELEMETRY_ENABLED`, `AP_WEBHOOK_TIMEOUT_SECONDS`) can now also be set as `QF_<NAME>` (e.g. `QF_TELEMETRY_ENABLED`) **when it reaches the Node server or worker process** — directly, via `.env`, or via `docker run -e`.
+- If both `QF_<NAME>` and `AP_<NAME>` are set, `QF_<NAME>` wins. An empty `QF_<NAME>` (e.g. `""`) is treated as unset and does not override a valid `AP_<NAME>`.
+- Setting only the old `AP_<NAME>` still works and behaves identically, but logs a one-time startup warning telling you to rename it to `QF_<NAME>` — **except for the ~10 names that `docker-entrypoint.sh`/`docker-compose.yml` read in the shell** (`AP_CONTAINER_TYPE`, `AP_PORT`, `AP_PM2_INSTANCES`, `AP_JWT_SECRET`, `AP_WORKER_TOKEN`, `AP_POSTGRES_DATABASE`, `AP_POSTGRES_PASSWORD`, `AP_POSTGRES_USERNAME`, `AP_QADAMS_SYNC_MODE`, `AP_WORKER_API_URL`) plus the already-deprecated `AP_*_PIECES` names. Those are exempt from the warning because renaming them today wouldn't do anything for the shell scripts that read them (see below) — warning about them would just tell every stock Docker install to make a change that breaks it.
+- `AP_ENVIRONMENT` (and its `QF_ENVIRONMENT` alias) still only accepts `prod` / `dev` / `test` — only the variable name is changing, not its accepted values.
+- **The bundled `docker-compose.yml`, `docker-entrypoint.sh`, and the `run.sh` install script still require the `AP_*` names and are not part of this alias.** Those scripts read the variables in the shell — before Node (and this alias layer) ever starts — to do things like interpolate `${AP_POSTGRES_PASSWORD}` into Postgres's own config and decide which process (`APP`/`WORKER`) to launch via `AP_CONTAINER_TYPE`. Setting only `QF_POSTGRES_PASSWORD` or `QF_CONTAINER_TYPE` today does **not** reach those scripts and can leave Postgres with an empty password or start the wrong container topology. Keep using `AP_*` for anything consumed by `docker-compose.yml` / `docker-entrypoint.sh` / `run.sh` until a follow-up migrates those in lockstep.
+
+### Do you need to take action?
+- No. Existing `.env` files with `AP_*` names keep working. Renaming to `QF_*` is optional during this deprecation window; `AP_*` support will be removed in a future release, announced here with advance notice.
+
+
 ## 0.84.0
 
 ### What has changed?
@@ -111,7 +128,7 @@ When creating a project now, the platform owner email doesn't automatically get 
 ### Do you need to take action?
 
 - If you are on the embed plan, update your implementation to redirect users to the `/templates` page.
-- Review the new endpoints documentation: [Templates API Schema](https://www.activepieces.com/docs/endpoints/templates/schema).
+- Review the new endpoints documentation: [Templates API Schema](/endpoints/templates/schema).
 - If you use a custom value for `AP_MAX_FILE_SIZE_MB`, be sure to also set `AP_MAX_FLOW_RUN_LOG_SIZE_MB` accordingly.
 
 ## 0.75.0
@@ -141,11 +158,11 @@ When creating a project now, the platform owner email doesn't automatically get 
 ## 0.73.0
 
 ### What has changed?
-- Major change to MCP: [Read the announcement.](https://community.activepieces.com/t/mcp-update-easier-faster-and-more-secure/11177)
-- If you have SMTP configured in the platform admin, it's no longer supported—you need to use AP_SMTP_ [environment variables.](https://www.activepieces.com/docs/install/configuration/environment-variables#environment-variables)
+- Major change to MCP: MCP servers were reworked to be simpler, faster, and more secure. See [MCP Overview](/mcp/overview).
+- If you have SMTP configured in the platform admin, it's no longer supported—you need to use AP_SMTP_ [environment variables.](/install/configuration/environment-variables#environment-variables)
 
 ### Do you need to take action?
-- If you are currently using MCP, review the linked announcement for important migration details and upgrade guidance.
+- If you are currently using MCP, review the [MCP documentation](/mcp/overview) and reconnect your MCP clients after upgrading.
 
 
 ## 0.71.0
@@ -216,7 +233,7 @@ When creating a project now, the platform owner email doesn't automatically get 
 - No action is required for this change.
 - Your published flows will continue to work without interruption.
 - When editing existing flows that use the "Dynamic Value" toggle on "Array of Properties" inputs (such as the "files" parameter in the "Extract Structured Data" action of the "Utility AI" qadam), the end user will need to remap the values again.
-- For details on the new UI implementation, refer to this [announcement](https://community.activepieces.com/t/inline-items/8964).
+- The new UI renders each array entry as an inline item, with the "Dynamic Value" toggle applying to the whole array rather than to individual entries.
 
 ## 0.38.6
 
@@ -226,7 +243,7 @@ When creating a project now, the platform owner email doesn't automatically get 
 
 ### When is action necessary?
 
-- If `AP_CONTAINER_TYPE` is set to `WORKER` on the worker machine, and `AP_SCHEDULED_WORKER_CONCURRENCY` or `AP_FLOW_WORKER_CONCURRENCY` are set to zero on the app server, workers will stop processing the queues. To fix this, check the [Separate Worker from App](https://www.activepieces.com/docs/install/configuration/separate-workers) documentation and set the `AP_CONTAINER_TYPE` to fetch the necessary values from the app server. If no container type is set on the worker machine, this is not a breaking change.
+- If `AP_CONTAINER_TYPE` is set to `WORKER` on the worker machine, and `AP_SCHEDULED_WORKER_CONCURRENCY` or `AP_FLOW_WORKER_CONCURRENCY` are set to zero on the app server, workers will stop processing the queues. To fix this, check the [Separate Worker from App](/install/guides/separate-workers) documentation and set the `AP_CONTAINER_TYPE` to fetch the necessary values from the app server. If no container type is set on the worker machine, this is not a breaking change.
 
 ## 0.35.1
 

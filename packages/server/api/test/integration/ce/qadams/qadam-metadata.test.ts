@@ -192,17 +192,6 @@ describe('Piece Metadata CE API', () => {
         })
     })
 
-    describe('POST /v1/qadams/sync', () => {
-        it('should sync pieces as platform admin', async () => {
-            const ctx = await createTestContext(app!)
-
-            const response = await ctx.post('/v1/qadams/sync', {})
-
-            // Sync should succeed (200) or be accepted
-            expect([StatusCodes.OK, StatusCodes.NO_CONTENT]).toContain(response?.statusCode)
-        })
-    })
-
     describe('release-compatibility fallback', () => {
         it('GET /v1/qadams/:scope/:name falls back to the newest compatible version when latest requires a newer release', async () => {
             const compatible = createMockQadamMetadata({

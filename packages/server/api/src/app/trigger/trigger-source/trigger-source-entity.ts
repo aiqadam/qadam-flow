@@ -90,6 +90,11 @@ export const TriggerSourceEntity = new EntitySchema<TriggerSourceSchema>({
             inverseSide: 'triggers',
             cascade: true,
             onDelete: 'CASCADE',
+            joinColumn: {
+                name: 'flowId',
+                referencedColumnName: 'id',
+                foreignKeyConstraintName: 'fk_trigger_source_flow_id',
+            },
         },
         project: {
             type: 'many-to-one',
@@ -97,6 +102,11 @@ export const TriggerSourceEntity = new EntitySchema<TriggerSourceSchema>({
             inverseSide: 'triggers',
             cascade: true,
             onDelete: 'CASCADE',
+            joinColumn: {
+                name: 'projectId',
+                referencedColumnName: 'id',
+                foreignKeyConstraintName: 'fk_trigger_source_project_id',
+            },
         },
     },
 })

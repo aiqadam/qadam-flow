@@ -69,9 +69,6 @@ export const qadamsApi = {
         ) as ExecutePropsResult<T>;
       });
   },
-  syncFromCloud() {
-    return api.post<void>(`/v1/qadams/sync`, {});
-  },
   async install(params: AddQadamRequestBody) {
     const formData = new FormData();
     formData.set('packageType', params.packageType);
