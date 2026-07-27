@@ -9,8 +9,6 @@ import {
     AppConnectionScope,
     AppConnectionStatus,
     AppConnectionType,
-    ApplicationEvent,
-    ApplicationEventName,
     assertNotNullOrUndefined,
     Cell,
     ColorName,
@@ -30,11 +28,8 @@ import {
     FlowVersion,
     FlowVersionState,
     Folder,
-    GitBranchType,
-    GitRepo,
     InvitationStatus,
     InvitationType,
-    KeyAlgorithm,
     LATEST_FLOW_SCHEMA_VERSION,
     OtpModel,
     OtpState,
@@ -57,7 +52,6 @@ import {
     RoleType,
     RunEnvironment,
     secureApId,
-    SigningKey,
     Table,
     Template,
     TemplateStatus,
@@ -185,20 +179,6 @@ export const createMockProject = (project?: Partial<Project>): Project => {
     }
 }
 
-export const createMockGitRepo = (gitRepo?: Partial<GitRepo>): GitRepo => {
-    return {
-        id: gitRepo?.id ?? apId(),
-        branchType: faker.helpers.enumValue(GitBranchType),
-        created: gitRepo?.created ?? faker.date.recent().toISOString(),
-        updated: gitRepo?.updated ?? faker.date.recent().toISOString(),
-        projectId: gitRepo?.projectId ?? apId(),
-        remoteUrl: gitRepo?.remoteUrl ?? `git@${faker.internet.url()}`,
-        sshPrivateKey: gitRepo?.sshPrivateKey ?? faker.internet.password(),
-        branch: gitRepo?.branch ?? faker.lorem.word(),
-        slug: gitRepo?.slug ?? faker.lorem.word(),
-    }
-}
-
 export const createMockPlatform = (platform?: Partial<Platform>): Platform => {
     return {
         id: platform?.id ?? apId(),
@@ -272,20 +252,6 @@ export const createMockProjectMember = (
     }
 }
 
-const MOCK_SIGNING_KEY_PUBLIC_KEY = `-----BEGIN RSA PUBLIC KEY-----
-MIICCgKCAgEAlnd5vGP/1bzcndN/yRD+ZTd6tuemxaJd+12bOZ2QCXcTM03AKSp3
-NE5QMyIi13PXMg+z1uPowfivPJ4iVTMaW1U00O7JlUduGR0VrG0BCJlfEf852V71
-TfE+2+EpMme9Yw6Gs/YAuOwgVwu3n/XF0il3FTIm1oY1a/MA79rv0RSscnIgCaYJ
-e86LWm+H6753Si0MIId/ajIfYYIndN6qRIlPsgagdL+kljUSPEiIzmV0POxTltBo
-tXL1t7Mu+meJrY85MXG5W8BS05+q6dJql7Cl0UbPK152ziakB+biMI/4hYlaOIBT
-3KeOcz/Jg7Zv21Y0tbdrZ5osVrrNpFsCV7PGyQIUDVmmnCHrOEBS2XM5zOHzTxMl
-JQh3Db318rB5415zuBTzrO+20++03kH4SwZEEBg1SDAInYwLOWldbTuZuD0Hx7P2
-g4a3OqHHVOcAgtsHgmU7/zCgCIETg4KbRdpSsqOm/YJDWWoLDTwvKnH5QHSBacq1
-kxbNAUSuLQESkfZq1Dw5+tdBDJr29bxjmiSggyittTYn1B3iHACNoe4zj9sMQQIf
-j9mmntXsa/leIwBVspiEOHYZwJOe5+goSd8K1VIQJxC1DVBxB2eHxMvuo3eyJ0HE
-DlebIeZy4zrE1LPgRic1kfdemyxvuN3iwZnPGiY79nL1ZNDM3M4ApSMCAwEAAQ==
------END RSA PUBLIC KEY-----`
-
 function generateApiKey() {
     const secretValue = secureApId(61)
     const secretKey = `sk-${secretValue}`
@@ -309,21 +275,6 @@ export const createMockApiKey = (
         hashedValue: secretHashed,
         value: secret,
         truncatedValue: secretTruncated,
-    }
-}
-
-
-export const createMockSigningKey = (
-    signingKey?: Partial<SigningKey>,
-): SigningKey => {
-    return {
-        id: signingKey?.id ?? apId(),
-        created: signingKey?.created ?? faker.date.recent().toISOString(),
-        updated: signingKey?.updated ?? faker.date.recent().toISOString(),
-        displayName: signingKey?.displayName ?? faker.lorem.word(),
-        platformId: signingKey?.platformId ?? apId(),
-        publicKey: signingKey?.publicKey ?? MOCK_SIGNING_KEY_PUBLIC_KEY,
-        algorithm: signingKey?.algorithm ?? KeyAlgorithm.RSA,
     }
 }
 
@@ -377,20 +328,6 @@ export const createMockQadamMetadata = (
         archiveId: qadamMetadata?.archiveId,
         categories: qadamMetadata?.categories ?? [],
         contextInfo: qadamMetadata?.contextInfo ?? { version: LATEST_CONTEXT_VERSION },
-    }
-}
-
-export const createAuditEvent = (auditEvent: Partial<ApplicationEvent>) => {
-    return {
-        id: auditEvent.id ?? apId(),
-        created: auditEvent.created ?? faker.date.recent().toISOString(),
-        updated: auditEvent.updated ?? faker.date.recent().toISOString(),
-        ip: auditEvent.ip ?? faker.internet.ip(),
-        platformId: auditEvent.platformId,
-        userId: auditEvent.userId,
-        userEmail: auditEvent.userEmail ?? faker.internet.email(),
-        action: auditEvent.action ?? faker.helpers.enumValue(ApplicationEventName),
-        data: auditEvent.data ?? {},
     }
 }
 
