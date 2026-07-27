@@ -85,6 +85,45 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         expect(call.config.timeout).toBe(15_000)
     })
 
+    // The MCP SDK passes `init.headers` to fetch as a `Headers` instance
+    // (`_commonHeaders()` in the SDK's streamableHttp transport), and spreading
+    // a `Headers` instance yields `{}` — its state lives in internal slots, not
+    // own enumerable properties. This regression test forwards a real `Headers`
+    // instance end-to-end through `createSafeFetch`, the same shape the SDK
+    // actually sends, rather than a plain object a naive fix could still pass.
+    it('forwards the SDK-supplied content-type and accept headers, not just extra auth headers', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(
+            buildTool({
+                auth: { type: McpAuthType.ACCESS_TOKEN, accessToken: 'tok-abc' },
+            }),
+        )
+
+        const call = capturedCalls()[0]
+        expect(call.config.headers?.['content-type']).toBe('application/json')
+        expect(call.config.headers?.['accept']).toContain('application/json')
+        expect(call.config.headers?.['accept']).toContain('text/event-stream')
+        expect(call.config.headers?.['Authorization']).toBe('Bearer tok-abc')
+    })
+
+    // Its own test rather than another assertion above: with the fix reverted the
+    // content-type assertion fails first and this one would never be reached, so
+    // it could not be shown to fail on its own — which is the only thing that
+    // makes it worth having.
+    it('forwards mcp-session-id on the requests after the handshake', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(buildTool())
+
+        // The session id is only issued by the initialize response, so it can
+        // appear only on a later request; asserting it on call 0 would pass
+        // whether or not the header is forwarded at all.
+        const afterHandshake = capturedCalls().slice(1)
+        expect(afterHandshake.length).toBeGreaterThan(0)
+        expect(afterHandshake.some((c) => c.config.headers?.['mcp-session-id'] === SESSION_ID)).toBe(true)
+    })
+
     // `hostname`/`protocol` are deliberately set to a proxy's here, not the
     // target's: axios's own proxy `beforeRedirect` runs before this one and
     // overwrites them, so a check reading those fields would refuse every
@@ -204,6 +243,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 })
 
+const SESSION_ID = 'sess-9'
 const GENERIC_ERROR = 'Could not validate MCP server. Check the URL, authentication, and that the server is reachable.'
 
 function defaultTool(): DefaultTool {
@@ -256,7 +296,11 @@ function mockJsonRpcServer(
                     capabilities: { tools: {} },
                 },
             }
-            return makeAxiosResponse(payload, forceSse)
+            // Issue a session id so the requests after the handshake carry
+            // `mcp-session-id`. Without it no session is ever established and
+            // the header this fix restores would go untested.
+            const response = makeAxiosResponse(payload, forceSse)
+            return { ...response, headers: { ...response.headers, 'mcp-session-id': SESSION_ID } }
         }
         if (body.method === 'notifications/initialized') {
             return { status: 202, data: Buffer.alloc(0), headers: {} }
