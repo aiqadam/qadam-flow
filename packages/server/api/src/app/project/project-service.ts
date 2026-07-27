@@ -534,8 +534,17 @@ async function ensureDefaultProjectRoles(platformId: string, entityManager?: Ent
 // problem) while still rejecting a non-privileged caller raising *or* clearing the value (fixing
 // the first) — only an actual change requires privilege. On create there is no existing row, so
 // "unset" (`null`) is the only value that doesn't require privilege.
-function assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs, currentMaxConcurrentJobs, isPrivileged }: { requestedMaxConcurrentJobs: number | null | undefined, currentMaxConcurrentJobs: number | null, isPrivileged: boolean }): void {
-    if (isPrivileged || requestedMaxConcurrentJobs === undefined || requestedMaxConcurrentJobs === currentMaxConcurrentJobs) {
+// `currentMaxConcurrentJobs` is `number | null | undefined` because `Nullable` in
+// `packages/shared` is `.nullable().optional()`, so the Project model's field is optional as
+// well as nullable. The two spellings of "no override" are normalised with `?? null` before the
+// comparison — but only *after* the `undefined` check on the request, where `undefined`
+// means "the field was absent from the body" rather than "no override", and must not compare
+// equal to a stored `null`.
+function assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs, currentMaxConcurrentJobs, isPrivileged }: { requestedMaxConcurrentJobs: number | null | undefined, currentMaxConcurrentJobs: number | null | undefined, isPrivileged: boolean }): void {
+    if (isPrivileged || requestedMaxConcurrentJobs === undefined) {
+        return
+    }
+    if ((requestedMaxConcurrentJobs ?? null) === (currentMaxConcurrentJobs ?? null)) {
         return
     }
     throw new QadamFlowError({
