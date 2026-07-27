@@ -290,10 +290,14 @@ jobs:
           fi
           echo "All commits are signed off. ✅"
 
-  # Kept on PRs: it is the only pre-merge guard against a Dockerfile / build-graph
-  # break, and on `push: main` it publishes ghcr.io/aiqadam/qadam-flow:main — so a
-  # break found after merge is already a broken published image. Gated by the same
-  # deny-by-default classifier: a docs-only diff cannot change the image.
+  # Kept on PRs: it is the only place the Dockerfile path itself is built, including the
+  # vite bundle and the engine's esbuild, which no other job exercises — `verify` type-checks
+  # but does not bundle. Not a required status check, so a PR can be merged while it is still
+  # running; what that costs is a red `main` and no fresh `:main` image, NOT a corrupted
+  # published one — `push:` below is `github.event_name == 'push'`, so a PR build never
+  # publishes and a failed build on main never reaches the push step. (This comment used to
+  # claim the opposite; it was corrected after being cited as a reason to block a merge.)
+  # Gated by the same deny-by-default classifier: a docs-only diff cannot change the image.
   image:
     name: Docker Image
     needs: [changes, verify]
