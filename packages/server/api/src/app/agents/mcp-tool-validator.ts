@@ -35,6 +35,15 @@ function createSafeFetch(extraHeaders: Record<string, string>): typeof fetch {
         const response = await safeHttp.axios.request<ArrayBuffer>({
             method: init?.method ?? 'GET',
             url,
+            // `Object.fromEntries(new Headers(...))`, not a spread: `init.headers` is a
+            // `Headers` instance whose state lives in internal slots, so spreading it
+            // yields `{}` and silently dropped the SDK's mandatory `accept` (#198).
+            // Order matters and is deliberate — axios keeps the LAST value when two
+            // keys differ only in case, and the SDK lowercases whatever it was given.
+            // Today its copy of the auth header is a re-normalisation of the same
+            // secret, so either order sends the same thing; if an `authProvider` is
+            // ever passed to the transport above, the SDK would emit its own
+            // `Authorization` and this order would let it win over the user's.
             headers: { ...extraHeaders, ...Object.fromEntries(new Headers(init?.headers)) },
             data: init?.body,
             responseType: 'arraybuffer',

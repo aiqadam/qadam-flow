@@ -107,6 +107,23 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
         expect(call.config.headers?.['Authorization']).toBe('Bearer tok-abc')
     })
 
+    // Its own test rather than another assertion above: with the fix reverted the
+    // content-type assertion fails first and this one would never be reached, so
+    // it could not be shown to fail on its own — which is the only thing that
+    // makes it worth having.
+    it('forwards mcp-session-id on the requests after the handshake', async () => {
+        mockJsonRpcServer({ tools: [] })
+
+        await mcpToolValidator.validateAgentMcpTool(buildTool())
+
+        // The session id is only issued by the initialize response, so it can
+        // appear only on a later request; asserting it on call 0 would pass
+        // whether or not the header is forwarded at all.
+        const afterHandshake = capturedCalls().slice(1)
+        expect(afterHandshake.length).toBeGreaterThan(0)
+        expect(afterHandshake.some((c) => c.config.headers?.['mcp-session-id'] === SESSION_ID)).toBe(true)
+    })
+
     // `hostname`/`protocol` are deliberately set to a proxy's here, not the
     // target's: axios's own proxy `beforeRedirect` runs before this one and
     // overwrites them, so a check reading those fields would refuse every
@@ -226,6 +243,7 @@ describe('mcpToolValidator.validateAgentMcpTool', () => {
     })
 })
 
+const SESSION_ID = 'sess-9'
 const GENERIC_ERROR = 'Could not validate MCP server. Check the URL, authentication, and that the server is reachable.'
 
 function defaultTool(): DefaultTool {
@@ -278,7 +296,11 @@ function mockJsonRpcServer(
                     capabilities: { tools: {} },
                 },
             }
-            return makeAxiosResponse(payload, forceSse)
+            // Issue a session id so the requests after the handshake carry
+            // `mcp-session-id`. Without it no session is ever established and
+            // the header this fix restores would go untested.
+            const response = makeAxiosResponse(payload, forceSse)
+            return { ...response, headers: { ...response.headers, 'mcp-session-id': SESSION_ID } }
         }
         if (body.method === 'notifications/initialized') {
             return { status: 202, data: Buffer.alloc(0), headers: {} }
