@@ -100,6 +100,14 @@ expect_warn() {
   fi
 }
 
+expect_log() {
+  if grep -qF "$1" "$stdout_log"; then
+    pass=$((pass + 1))
+  else
+    fail_case "$2" "expected a log line containing '$1'" "actual stdout: $(cat "$stdout_log")"
+  fi
+}
+
 expect_no_warn() {
   if [ -s "$stderr_log" ]; then
     fail_case "$1" "expected no warning, got: $(cat "$stderr_log")"
@@ -314,6 +322,66 @@ else
 fi
 expect_no_warn 'noop'
 
+echo "== repointing AP_FRONTEND_URL is announced =="
+
+# The stock shape does not prove the operator did not choose it — http://localhost:3000 is what
+# someone running a local proxy would have. Rewriting it is the accepted cost of shape-based
+# rewritability, but it must not be silent.
+fixture announce <<'ENV'
+QADAM_FLOW_PORT=9000
+AP_FRONTEND_URL=http://localhost:3000
+ENV
+drive announce yes 9000
+expect_env_line 'AP_FRONTEND_URL=http://localhost:9000' 'announce: url repointed'
+expect_log 'repointing AP_FRONTEND_URL from http://localhost:3000' 'announce: the rewrite is logged'
+
+# A no-override run must not reach the rewrite at all, so nothing is logged.
+fixture announce-no-override <<'ENV'
+QADAM_FLOW_PORT=9000
+AP_FRONTEND_URL=http://localhost:3000
+ENV
+no_override_digest="$(digest "$tmp/announce-no-override/.env")"
+drive announce-no-override no 8080
+if [ "$no_override_digest" = "$(digest "$envfile")" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'announce-no-override: a no-override run must not rewrite the url'
+fi
+if grep -q repointing "$stdout_log"; then
+  fail_case 'announce-no-override: nothing to announce' "$(cat "$stdout_log")"
+else
+  pass=$((pass + 1))
+fi
+
+echo "== a freshly generated .env is 0600 whatever the umask =="
+
+# The secrets must never exist on disk world-readable: `: > .env` creates the file
+# empty, chmod tightens it, and the heredoc then truncates that same inode.
+for mask in 022 077 000; do
+  gen_dir="$tmp/genmode-$mask"
+  mkdir -p "$gen_dir"
+  gen_mode="$("$sut" -c '
+    umask "$3"
+    . "$1"
+    cd "$2" || exit 1
+    QADAM_FLOW_PORT=8080
+    QADAM_FLOW_IMAGE=test-image
+    generate_env >/dev/null
+    stat -c "%a" .env
+  ' _ "$runsh" "$gen_dir" "$mask" 2>/dev/null)"
+  if [ "$gen_mode" = 600 ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "generate_env under umask $mask must produce a 0600 .env" "got mode '$gen_mode'"
+  fi
+  # And the secrets really are in there, i.e. the mode is not 600 because the write failed.
+  if grep -q '^AP_JWT_SECRET=[0-9a-f]\{64\}$' "$gen_dir/.env"; then
+    pass=$((pass + 1))
+  else
+    fail_case "generate_env under umask $mask must still write the secrets"
+  fi
+done
+
 echo "== a customised AP_FRONTEND_URL survives a port change =="
 
 for url in https://flow.example.com http://flow.example.com:8080 https://abc.ngrok-free.app http://localhost:8080/base; do
@@ -427,11 +495,17 @@ fi
 # Structural, because the ordering bug lives in main() and main() pulls images.
 # reconcile_port can replace QADAM_FLOW_PORT with a value from .env, so anything
 # that inspects the port has to run after generate_env, not before it.
+#
+# The patterns are anchored at ^ deliberately: an unanchored "  $token" also
+# matches the token inside a comment, so a comment mentioning both names after
+# generate_env was enough to make this check pass on a file with the pre-fix
+# order restored. Being the only shape-only check in this file, it has to be the
+# least maskable one.
 main_body="$(sed -n '/^main() {/,/^}/p' "$runsh")"
-line_of() { printf '%s\n' "$main_body" | grep -n "  $1\b" | head -1 | cut -d: -f1; }
+line_of() { printf '%s\n' "$main_body" | grep -n "^  $1\b" | head -1 | cut -d: -f1; }
 gen_line="$(line_of generate_env)"
 for after in validate_port check_compose_port; do
-  after_line="$(printf '%s\n' "$main_body" | grep -n "  $after\b" | tail -1 | cut -d: -f1)"
+  after_line="$(printf '%s\n' "$main_body" | grep -n "^  $after\b" | tail -1 | cut -d: -f1)"
   if [ -n "$gen_line" ] && [ -n "$after_line" ] && [ "$after_line" -gt "$gen_line" ]; then
     pass=$((pass + 1))
   else

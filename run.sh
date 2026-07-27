@@ -223,6 +223,9 @@ reconcile_port() {
     return 0
   fi
   if is_stock_localhost_url "$frontend_url"; then
+    # Announce it: the URL being the stock shape does not prove the operator did not choose it (a local
+    # proxy on http://localhost:3000 is the same shape), so a rewrite of their config must be visible.
+    log "repointing AP_FRONTEND_URL from ${frontend_url} to http://localhost:${QADAM_FLOW_PORT} in .env"
     set_env_value AP_FRONTEND_URL "http://localhost:${QADAM_FLOW_PORT}"
   else
     warn "AP_FRONTEND_URL is customised ($frontend_url) — left as-is; edit .env if it should follow the new port"
