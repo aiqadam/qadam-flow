@@ -164,15 +164,27 @@ function findLastToolPart({
   return null;
 }
 
+function isBatchProgressData(value: unknown): value is BatchProgressData {
+  if (!isObject(value)) return false;
+  return (
+    typeof value.label === 'string' &&
+    typeof value.total === 'number' &&
+    typeof value.completed === 'number' &&
+    typeof value.succeeded === 'number' &&
+    typeof value.failed === 'number' &&
+    typeof value.done === 'boolean' &&
+    Array.isArray(value.results)
+  );
+}
+
 function extractBatchProgressFromOutput(
   part: AnyToolPart,
 ): BatchProgressData | null {
   if (part.state !== 'output-available' || !part.output) return null;
   const output = parseToJsonIfPossible(part.output);
-  if (!output || typeof output !== 'object') return null;
-  const record = output as Record<string, unknown>;
-  if (!record['batchProgress']) return null;
-  return record['batchProgress'] as BatchProgressData;
+  if (!isObject(output)) return null;
+  const batchProgress = output.batchProgress;
+  return isBatchProgressData(batchProgress) ? batchProgress : null;
 }
 
 function extractToolTitles(part: AnyToolPart): {

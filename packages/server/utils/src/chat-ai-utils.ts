@@ -9,6 +9,8 @@ import {
     AIProviderName,
     AzureProviderConfig,
     BaseAIProviderAuthConfig,
+    BatchItemResult,
+    BatchProgressData,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
     chatPersistenceUtils,
@@ -142,6 +144,23 @@ function toRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+function isBatchItemResult(value: unknown): value is BatchItemResult {
+    const record = toRecord(value)
+    if (typeof record['index'] !== 'number' || typeof record['success'] !== 'boolean') return false
+    if ('error' in record && typeof record['error'] !== 'string') return false
+    return true
+}
+
+function extractBatchProgress(rawOutput: unknown): BatchProgressData | undefined {
+    const outputRecord = toRecord(rawOutput)
+    if (!('batchProgress' in outputRecord)) return undefined
+    const { label, total, completed, succeeded, failed, done, results } = toRecord(outputRecord['batchProgress'])
+    if (typeof label !== 'string' || typeof total !== 'number' || typeof completed !== 'number'
+        || typeof succeeded !== 'number' || typeof failed !== 'number' || typeof done !== 'boolean'
+        || !Array.isArray(results) || !results.every(isBatchItemResult)) return undefined
+    return { label, total, completed, succeeded, failed, done, results }
+}
+
 type ContentPartLike = {
     type: string
     text?: string
@@ -195,10 +214,11 @@ function buildStepParts({ content }: {
                     output: rawOutput,
                     status: result ? PersistedToolCallStatus.COMPLETED : PersistedToolCallStatus.ERROR,
                 })
-                if (toolName === 'ap_execute_action' && typeof rawOutput === 'object' && rawOutput !== null && 'batchProgress' in rawOutput) {
+                const batchProgress = toolName === 'ap_execute_action' ? extractBatchProgress(rawOutput) : undefined
+                if (batchProgress) {
                     parts.push({
                         type: PersistedChatPartType.BATCH_PROGRESS,
-                        data: (rawOutput as Record<string, unknown>)['batchProgress'] as Record<string, unknown>,
+                        data: batchProgress,
                     })
                 }
                 if (toolName === 'ap_execute_action' && result) {
