@@ -26,10 +26,12 @@
     "check-disk-space": "3.4.0",
     "dayjs": "1.11.9",
     "request-filtering-agent": "3.2.0",
+    "semver": "7.6.0",
     "systeminformation": "5.31.6"
   },
   "devDependencies": {
     "@types/node": "24.11.0",
+    "@types/semver": "7.5.6",
     "pino": "10.1.0",
     "vitest": "3.0.8"
   }
