@@ -1,6 +1,6 @@
 import { ConcurrencyPool, Project } from '@aiqadam/shared'
 import { EntitySchema } from 'typeorm'
-import { BaseColumnSchemaPart } from '../database/database-common'
+import { ApIdSchema, BaseColumnSchemaPart } from '../database/database-common'
 
 type ConcurrencyPoolSchema = ConcurrencyPool & {
     projects: Project[]
@@ -11,7 +11,7 @@ export const ConcurrencyPoolEntity = new EntitySchema<ConcurrencyPoolSchema>({
     columns: {
         ...BaseColumnSchemaPart,
         platformId: {
-            type: String,
+            ...ApIdSchema,
             nullable: false,
         },
         key: {
@@ -23,6 +23,13 @@ export const ConcurrencyPoolEntity = new EntitySchema<ConcurrencyPoolSchema>({
             nullable: false,
         },
     },
+    indices: [
+        {
+            name: 'idx_concurrency_pool_platform_key',
+            columns: ['platformId', 'key'],
+            unique: true,
+        },
+    ],
     relations: {
         projects: {
             type: 'one-to-many',

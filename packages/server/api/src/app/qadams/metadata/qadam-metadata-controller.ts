@@ -24,7 +24,6 @@ import { securityAccess } from '../../core/security/authorization/fastify-securi
 import { flowService } from '../../flows/flow/flow.service'
 import { sampleDataService } from '../../flows/step-run/sample-data.service'
 import { userInteractionWatcher } from '../../workers/user-interaction-watcher'
-import { qadamSyncService } from '../qadam-sync-service'
 import { getQadamPackageWithoutArchive, qadamMetadataService } from './qadam-metadata-service'
 
 export const qadamModule: FastifyPluginAsyncZod = async (app) => {
@@ -121,8 +120,6 @@ const baseQadamsController: FastifyPluginAsyncZod = async (app) => {
         return pieces
     })
 
-    app.post('/sync', SyncPiecesRequest, async (req) => qadamSyncService(req.log).sync({ publishCacheRefresh: true }))
-
     app.post(
         '/options',
         OptionsPieceRequest,
@@ -213,11 +210,5 @@ const OptionsPieceRequest = {
         security: securityAccess.project([PrincipalType.USER], undefined, {
             type: ProjectResourceType.BODY,
         }),
-    },
-}
-
-const SyncPiecesRequest = {
-    config: {
-        security: securityAccess.publicPlatform([PrincipalType.USER]),
     },
 }

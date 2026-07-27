@@ -11,11 +11,6 @@ The Store Entry feature provides a persistent key-value store that piece steps c
 - `packages/shared/src/lib/core/store-entry/store-entry.ts` — `StoreEntry` type, `STORE_KEY_MAX_LENGTH`, `STORE_VALUE_MAX_SIZE`
 - `packages/shared/src/lib/core/store-entry/dto/store-entry-request.ts` — `PutStoreEntryRequest`, `GetStoreEntryRequest`, `DeleteStoreEntryRequest`
 
-## Edition Availability
-- **Community (CE)**: Fully available — no plan flag required.
-- **Enterprise (EE)**: Fully available.
-- **Cloud**: Fully available.
-
 ## Domain Terms
 - **StoreEntry**: A project-scoped key-value record. The `value` field is `unknown` (any JSON-serializable value).
 - **STORE_KEY_MAX_LENGTH**: 128 characters — enforced on the `key` column and in the request schema.

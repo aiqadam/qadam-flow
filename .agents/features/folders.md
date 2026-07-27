@@ -13,11 +13,6 @@ Folders provide a lightweight organizational layer for flows within a project. E
 - `packages/web/src/features/folders/api/` — frontend API client
 - `packages/web/src/features/folders/hooks/` — TanStack Query hooks
 
-## Edition Availability
-- **Community (CE)**: Fully available — no plan flag required.
-- **Enterprise (EE)**: Fully available.
-- **Cloud**: Fully available.
-
 ## Domain Terms
 - **Folder**: Named group that flows belong to within a project. Display name is unique per project (case-insensitive).
 - **FolderDto**: Folder plus `numberOfFlows: number` and `numberOfTables: number` computed at query time.
@@ -63,6 +58,8 @@ All routes are prefixed `/v1/folders`. All require `projectId` to be resolvable 
 - `delete({ projectId, folderId })` — hard delete. Flows in the folder become uncategorized (their `folderId` is not nulled automatically — this is a DB-level concern via the flow entity's nullable FK).
 
 ## Audit Events
+
+These are `ApplicationEventName` values passed to `applicationEvents().sendUserEvent`. They are dispatched in-process only — nothing persists them (no `audit_event` table) and `badge-service.ts` is the only registered listener.
 
 - `FOLDER_CREATED` — emitted after successful create
 - `FOLDER_UPDATED` — emitted after successful rename
