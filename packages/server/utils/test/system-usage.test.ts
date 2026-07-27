@@ -1,3 +1,6 @@
+// The `fs` / `systeminformation` / `check-disk-space` imports deliberately sit below the vi.mock calls
+// that replace them, so the grouping the import-order rule wants would misrepresent the file.
+/* eslint-disable import-x/order */
 import os from 'os'
 import { systemUsage } from '../src/system-usage'
 
@@ -85,7 +88,7 @@ describe('getContainerMemoryUsage', () => {
         expect(result.ramUsage).toBeCloseTo(50)
     })
 
-    it('should skip cgroup v2 when limit is 'max', async () => {
+    it('should skip cgroup v2 when limit is \'max\'', async () => {
         mockCgroupFiles({
             '/sys/fs/cgroup/memory.max': 'max',
             '/sys/fs/cgroup/memory.current': '100000',
@@ -117,7 +120,9 @@ describe('getContainerMemoryUsage', () => {
     it('should skip constrainedMemory when it returns sentinel value', async () => {
         vi.stubGlobal('process', {
             ...process,
-            constrainedMemory: () => 18446744073709551615,
+            // uint64 max is the "unlimited" sentinel Node reports; written as an expression because the
+            // decimal literal 18446744073709551615 cannot be represented exactly by a double.
+            constrainedMemory: () => 2 ** 64 - 1,
             availableMemory: () => 0,
         })
 

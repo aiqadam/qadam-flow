@@ -73,7 +73,7 @@ is covered by `run.sh` plus plain `docker compose` commands.
 ## Testing
 
 ```bash
-npm run test-unit     # Vitest: engine + shared
+npm run test-unit     # Vitest: engine + shared + web + server-utils
 npm run test-api      # API integration (CE, EE, Cloud)
 ```
 API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`, `ctx.get()`. DB auto-cleaned between tests.
@@ -138,10 +138,10 @@ before trusting its silence — an empty output is not the same as a passing che
   `Cannot find module '@aiqadam/...'` errors. In an environment where `bun install` has not run,
   local type-checking of that package proves nothing either way; CI is the authoritative signal.
   Say so rather than substituting a command that returns clean.
-- **`npm run test-unit` does not cover `packages/server/utils`** — it filters to
-  `@aiqadam/engine`, `@aiqadam/shared` and `web`. A test added under `server/utils` runs in no CI
-  job. If you add tests there, wire them into a task that actually runs, or say plainly that they
-  are unenforced.
+- **A package missing the script turbo is asked to run silently checks nothing.** `turbo run lint
+  --filter=X` on a package with no `lint` script is a no-op that still reports success — this is how
+  `packages/server/utils` went unlinted while appearing in `lint-core` (fixed in #148). Before
+  trusting a filter, confirm the target package actually declares the script.
 - **A skipped required check never reports a conclusion.** Under the repo ruleset
   (`strict_required_status_checks_policy: true`), a required context that is skipped via
   `paths-ignore` or a job-level `if:` leaves the PR permanently unmergeable. A required job must
