@@ -13,12 +13,98 @@ permissions:
   contents: read
 
 jobs:
+  # Deny-by-default path classifier. Emits docs_only=true ONLY when every path in
+  # the PR diff is provably prose or a prose asset; anything unrecognised,
+  # unreadable, or outside a pull_request event falls through to docs_only=false,
+  # i.e. the full pipeline. A wrong answer here must never be "skip the tests",
+  # so every failure mode below deliberately reports false.
+  # The classification rules are in tools/ci/classify-path.sh; see the comments
+  # there before widening anything.
+  changes:
+    name: Classify changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          emit() {
+            echo "docs_only=$1" >> "$GITHUB_OUTPUT"
+            echo "::notice::docs_only=$1"
+            exit 0
+          }
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Event '$EVENT_NAME' is not a pull_request; running the full pipeline."
+            emit false
+          fi
+
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::warning::Missing base/head SHA; running the full pipeline."
+            emit false
+          fi
+
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null \
+            || ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::base/head commit not present locally; running the full pipeline."
+            emit false
+          fi
+
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::Could not compute merge-base; running the full pipeline."
+            emit false
+          fi
+
+          # --no-renames expands a rename into delete+add so BOTH the old and the
+          # new path get classified; a code -> docs rename must not read as docs.
+          # Written to a file, not a variable: bash strips NUL bytes out of
+          # command substitutions, so `-z` output collapses into one unterminated
+          # record and a NUL-delimited read loop silently classifies nothing.
+          changed="${RUNNER_TEMP}/changed-paths.txt"
+          if ! git diff --name-only --no-renames "$merge_base" "$HEAD_SHA" > "$changed" 2>/dev/null; then
+            echo "::warning::git diff failed; running the full pipeline."
+            emit false
+          fi
+
+          # The allowlist/denylist and the fail-closed guards live in
+          # tools/ci/, not inline here, so they can be unit-tested. The test
+          # runs in the unconditional `verify` job below.
+          verdict="$(tools/ci/classify-changed-paths.sh "$changed")"
+
+          case "$verdict" in
+            docs_only=true) emit true ;;
+            docs_only=false) emit false ;;
+            *)
+              echo "::warning::Unexpected classifier output '${verdict}'; running the full pipeline."
+              emit false
+              ;;
+          esac
+
   verify:
     name: Lint + Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+
+      # Deliberately in this job and not in `integration-run`: `verify` is
+      # unconditional, so the test covering the docs-only filter can never be
+      # skipped by the filter it tests. Pure bash, so it runs before any install
+      # and still reports if the install step later flakes.
+      - name: Test the CI path classifier
+        run: tools/ci/classify-path.test.sh
 
       - uses: actions/setup-node@v6
         with:
@@ -48,8 +134,12 @@ jobs:
       - name: Unit tests
         run: npm run test-unit
 
-  integration:
-    name: CE Integration Tests
+  # The heavy suite. NOT a required status check — the `integration` gate job
+  # below carries the required "CE Integration Tests" context and always reports.
+  integration-run:
+    name: CE integration suite
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -105,8 +195,63 @@ jobs:
       # #59 is resolved — check-migrations no longer false-positives on a clean
       # baseline, so run the full test-api gate (check-migrations + test-ce),
       # matching the root `test-api` script.
-      - name: CE integration suite
+      #
+      # Note this step is CONDITIONAL: it lives in `integration-run`, which the
+      # `changes` job skips on a provably docs-only diff, so docs-only PRs run
+      # neither test-ce nor the migration-drift check. That is safe because
+      # entities and migrations all live under `packages/`, which the classifier's
+      # blanket `packages|packages/*` arm always calls code — so a diff capable of
+      # introducing drift can never be classified docs-only. Do not "fix" this by
+      # moving check-migrations into `verify`: it runs migrations against a live
+      # database and turbo gives it `dependsOn: ["build"]`, so making it
+      # unconditional means putting a postgres service and a 1-2 min DB spin-up
+      # back onto every docs PR.
+      - name: Run CE integration tests
         run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
+
+  # Required status check. Runs unconditionally so it always reports a conclusion
+  # — a *skipped* required check never reports one under GitHub rulesets, which
+  # would leave the PR permanently unmergeable. It passes only if the heavy suite
+  # succeeded, or if it was skipped *and* the classifier proved the diff is
+  # docs-only. Any other combination (classifier failure, suite failure, or a
+  # skip we cannot justify) fails the required context.
+  integration:
+    name: CE Integration Tests
+    needs: [changes, integration-run]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve CE integration status
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          RUN_RESULT: ${{ needs.integration-run.result }}
+        run: |
+          set -uo pipefail
+          echo "classifier=${CHANGES_RESULT} docs_only=${DOCS_ONLY:-<unset>} suite=${RUN_RESULT}"
+
+          if [ "$CHANGES_RESULT" != success ]; then
+            echo "::error::Path classifier did not succeed (${CHANGES_RESULT}); refusing to pass the required check."
+            exit 1
+          fi
+
+          case "$RUN_RESULT" in
+            success)
+              echo "CE integration suite passed. ✅"
+              ;;
+            skipped)
+              if [ "${DOCS_ONLY:-}" != true ]; then
+                echo "::error::CE integration suite was skipped but the diff is not provably docs-only."
+                exit 1
+              fi
+              echo "Diff is provably docs-only; CE integration suite intentionally not run. ✅"
+              ;;
+            *)
+              echo "::error::CE integration suite result: ${RUN_RESULT}."
+              exit 1
+              ;;
+          esac
 
   dco:
     name: DCO Sign-off
@@ -146,9 +291,14 @@ jobs:
           fi
           echo "All commits are signed off. ✅"
 
+  # Kept on PRs: it is the only pre-merge guard against a Dockerfile / build-graph
+  # break, and on `push: main` it publishes ghcr.io/aiqadam/qadam-flow:main — so a
+  # break found after merge is already a broken published image. Gated by the same
+  # deny-by-default classifier: a docs-only diff cannot change the image.
   image:
     name: Docker Image
-    needs: verify
+    needs: [changes, verify]
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
