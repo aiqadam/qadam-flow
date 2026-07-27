@@ -103,8 +103,8 @@ export const twilioNewCall = createTrigger({
       "duration": "4",
       "end_time": "Fri, 18 Oct 2019 17:03:00 +0000",
       "forwarded_from": "calledvia1",
-      "from": "+13051416799",
-      "from_formatted": "(305) 141-6799",
+      "from": "+15551416799",
+      "from_formatted": "(555) 141-6799",
       "group_sid": "GPdeadbeefdeadbeefdeadbeefdeadbeef",
       "parent_call_sid": "CAdeadbeefdeadbeefdeadbeefdeadbeef",
       "phone_number_sid": "PNdeadbeefdeadbeefdeadbeefdeadbeef",
@@ -124,8 +124,8 @@ export const twilioNewCall = createTrigger({
         "user_defined_message_subscriptions": "/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Calls/CAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/UserDefinedMessageSubscriptions.json",
         "user_defined_messages": "/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Calls/CAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/UserDefinedMessages.json"
       },
-      "to": "+13051913581",
-      "to_formatted": "(305) 191-3581",
+      "to": "+15551913581",
+      "to_formatted": "(555) 191-3581",
       "trunk_sid": "TKdeadbeefdeadbeefdeadbeefdeadbeef",
       "uri": "/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Calls/CAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
       "queue_time": "1000"
