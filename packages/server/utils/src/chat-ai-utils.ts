@@ -9,12 +9,12 @@ import {
     AIProviderName,
     AzureProviderConfig,
     BaseAIProviderAuthConfig,
-    BatchItemResult,
     BatchProgressData,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
     chatPersistenceUtils,
     CloudflareGatewayProviderConfig,
+    isBatchProgressData,
     OpenAICompatibleProviderConfig,
     PersistedChatPart,
     PersistedChatPartType,
@@ -144,21 +144,10 @@ function toRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
-function isBatchItemResult(value: unknown): value is BatchItemResult {
-    const record = toRecord(value)
-    if (typeof record['index'] !== 'number' || typeof record['success'] !== 'boolean') return false
-    if ('error' in record && typeof record['error'] !== 'string') return false
-    return true
-}
-
 function extractBatchProgress(rawOutput: unknown): BatchProgressData | undefined {
     const outputRecord = toRecord(rawOutput)
-    if (!('batchProgress' in outputRecord)) return undefined
-    const { label, total, completed, succeeded, failed, done, results } = toRecord(outputRecord['batchProgress'])
-    if (typeof label !== 'string' || typeof total !== 'number' || typeof completed !== 'number'
-        || typeof succeeded !== 'number' || typeof failed !== 'number' || typeof done !== 'boolean'
-        || !Array.isArray(results) || !results.every(isBatchItemResult)) return undefined
-    return { label, total, completed, succeeded, failed, done, results }
+    const { batchProgress } = outputRecord
+    return isBatchProgressData(batchProgress) ? batchProgress : undefined
 }
 
 type ContentPartLike = {

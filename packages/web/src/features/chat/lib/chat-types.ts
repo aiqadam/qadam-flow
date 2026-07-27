@@ -2,6 +2,7 @@ import {
   BatchProgressData,
   ChatToolName,
   ChatToolOutputs,
+  isBatchProgressData,
   isObject,
   parseToJsonIfPossible,
   PlanStepUpdate,
@@ -162,19 +163,6 @@ function findLastToolPart({
     if (predicate(getToolPartName(p), p)) return p;
   }
   return null;
-}
-
-function isBatchProgressData(value: unknown): value is BatchProgressData {
-  if (!isObject(value)) return false;
-  return (
-    typeof value.label === 'string' &&
-    typeof value.total === 'number' &&
-    typeof value.completed === 'number' &&
-    typeof value.succeeded === 'number' &&
-    typeof value.failed === 'number' &&
-    typeof value.done === 'boolean' &&
-    Array.isArray(value.results)
-  );
 }
 
 function extractBatchProgressFromOutput(
