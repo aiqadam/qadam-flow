@@ -18,7 +18,7 @@ import { StatusCodes } from 'http-status-codes'
 import { generateMockToken } from '../../helpers/auth'
 import { db } from '../../helpers/db'
 import { createMockProjectRole, createMockUserIdentity, mockBasicUser } from '../../helpers/mocks'
-import { createTestContext } from '../../helpers/test-context'
+import { createServiceContext, createTestContext } from '../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
@@ -738,6 +738,22 @@ describe('Team project collaboration (CE)', () => {
         const invitation = inviteRes.json<UserInvitationWithLink>()
 
         const deleteRes = await adminCtx.delete(`/v1/user-invitations/${invitation.id}`)
+        expect(deleteRes.statusCode).toBe(StatusCodes.NO_CONTENT)
+    })
+
+    it('SERVICE principal (API key) can delete a platform-scope invitation', async () => {
+        const adminCtx = await createTestContext(app!)
+        const serviceCtx = await createServiceContext(app!, adminCtx)
+
+        const inviteRes = await adminCtx.post('/v1/user-invitations', {
+            email: `revoke-target-${apId()}@qadam.test`,
+            type: InvitationType.PLATFORM,
+            platformRole: PlatformRole.MEMBER,
+        })
+        expect(inviteRes.statusCode).toBe(StatusCodes.CREATED)
+        const invitation = inviteRes.json<UserInvitationWithLink>()
+
+        const deleteRes = await serviceCtx.delete(`/v1/user-invitations/${invitation.id}`)
         expect(deleteRes.statusCode).toBe(StatusCodes.NO_CONTENT)
     })
 })
