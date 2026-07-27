@@ -22,6 +22,7 @@
         "no-restricted-imports": [
           "error",
           {
+            "patterns": ["lodash", "lodash/*"],
             "paths": [
               {
                 "name": "axios",
@@ -42,6 +43,10 @@
             "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
           },
           {
+            "selector": "CallExpression[callee.type='MemberExpression'][callee.object.name!='globalThis'][callee.property.name='fetch']",
+            "message": "Raw <obj>.fetch(...) (e.g. window.fetch) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+          },
+          {
             "selector": "CallExpression[callee.object.name='axios'][callee.property.name='create']",
             "message": "axios.create(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
           },
@@ -50,30 +55,6 @@
             "message": "Calling axios(...) directly bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
           }
         ]
-      }
-    },
-    {
-      "files": ["utils/src/safe-http.ts"],
-      "rules": {
-        "no-restricted-imports": "off",
-        "no-restricted-syntax": [
-          "error",
-          {
-            "selector": "CallExpression[callee.name='fetch']",
-            "message": "Raw fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
-          },
-          {
-            "selector": "CallExpression[callee.object.name='globalThis'][callee.property.name='fetch']",
-            "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
-          }
-        ]
-      }
-    },
-    {
-      "files": ["**/test/**/*.ts", "**/test/**/*.js"],
-      "rules": {
-        "no-restricted-imports": "off",
-        "no-restricted-syntax": "off"
       }
     }
   ]
