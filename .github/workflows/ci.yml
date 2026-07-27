@@ -141,41 +141,28 @@ jobs:
       # THROWAWAY BRANCH ONLY - not for merge. Realistic poison: overwrite every
       # file in the restored cache with garbage, simulating truncated/corrupt
       # cached artifacts arriving pre-warmed from actions/cache.
-      - if: steps.bun-cache.outputs.cache-hit == 'true'
-        name: POISON TEST - corrupt the restored bun cache (content)
-        run: |
-          set -euo pipefail
-          if [ ! -d ~/.bun/install/cache ]; then
-            echo "::error::No cache directory was restored; there is nothing to poison and this run proves nothing."
-            exit 1
-          fi
-          n=$(find ~/.bun/install/cache -type f | wc -l)
-          if [ "$n" -eq 0 ]; then
-            echo "::error::Restored cache is empty; poisoning it would prove nothing."
-            exit 1
-          fi
-          find ~/.bun/install/cache -type f -exec sh -c 'printf CORRUPT-POISON-TEST > "$1"' _ {} \;
-          echo "Corrupted $n cached files."
-
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
             echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
             rm -rf ~/.bun/install/cache
-            touch "${RUNNER_TEMP}/retry-fired"
             bun install --frozen-lockfile
           }
 
-      # THROWAWAY BRANCH ONLY. Fails the job if the poison did NOT break the
-      # first install — otherwise this "test" would pass while proving nothing.
-      - if: steps.bun-cache.outputs.cache-hit == 'true'
-        name: POISON TEST - assert the retry handler actually fired
+      # THROWAWAY BRANCH ONLY. Actually loads the isolated-vm native addon.
+      # The CE suite does NOT prove this: v8-isolate-code-sandbox.ts require()s
+      # isolated-vm lazily and only for the V8 sandbox path.
+      - name: PROBE - isolated-vm native addon loads
         run: |
-          if [ ! -f "${RUNNER_TEMP}/retry-fired" ]; then
-            echo "::error::bun install succeeded on the FIRST attempt: the poison did not break it, so this run proves nothing about recovery."
-            exit 1
-          fi
-          echo "Retry handler fired and the install recovered. ✅"
+          set -euo pipefail
+          node -e "const ivm=require('isolated-vm');
+            const iso=new ivm.Isolate({memoryLimit:32});
+            const ctx=iso.createContextSync();
+            const r=ctx.evalSync('1+1');
+            if (r!==2) { throw new Error('isolated-vm evaluated 1+1 as '+r); }
+            console.log('isolated-vm loaded and evaluated 1+1=2; addon OK');
+            iso.dispose();"
+
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
@@ -269,6 +256,20 @@ jobs:
             touch "${RUNNER_TEMP}/retry-fired"
             bun install --frozen-lockfile
           }
+
+      # THROWAWAY BRANCH ONLY. Actually loads the isolated-vm native addon.
+      # The CE suite does NOT prove this: v8-isolate-code-sandbox.ts require()s
+      # isolated-vm lazily and only for the V8 sandbox path.
+      - name: PROBE - isolated-vm native addon loads
+        run: |
+          set -euo pipefail
+          node -e "const ivm=require('isolated-vm');
+            const iso=new ivm.Isolate({memoryLimit:32});
+            const ctx=iso.createContextSync();
+            const r=ctx.evalSync('1+1');
+            if (r!==2) { throw new Error('isolated-vm evaluated 1+1 as '+r); }
+            console.log('isolated-vm loaded and evaluated 1+1=2; addon OK');
+            iso.dispose();"
 
       # THROWAWAY BRANCH ONLY. Fails the job if the poison did NOT break the
       # first install — otherwise this "test" would pass while proving nothing.
