@@ -7,6 +7,7 @@ import {
     ErrorCode,
     isNil,
     Metadata,
+    PlatformUsageMetric,
     Project,
     ProjectIcon,
     ProjectId,
@@ -23,6 +24,9 @@ import { Brackets, EntityManager, IsNull, Not, ObjectLiteral, SelectQueryBuilder
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { transaction } from '../core/db/transaction'
+import { distributedLock } from '../database/redis-connections'
+import { system } from '../helper/system/system'
+import { AppSystemProp } from '../helper/system/system-props'
 import { userService } from '../user/user-service'
 import { projectHooks, ProjectPostCreateContext } from './project-hooks'
 import { ProjectMemberEntity } from './project-member.entity'
@@ -44,18 +48,15 @@ export const projectService = (log: FastifyBaseLogger) => ({
             icon,
             releasesEnabled: false,
         }
-        if (params.type === ProjectType.TEAM) {
-            await ensureDefaultProjectRoles(params.platformId, entityManager)
-        }
-        const savedProject = await projectRepo(entityManager).save(newProject)
-        if (params.type === ProjectType.TEAM) {
-            await addCreatorAsProjectAdmin({
-                projectId: savedProject.id,
-                userId: params.ownerId,
+        const savedProject = params.type === ProjectType.TEAM
+            ? await createTeamProject({
                 platformId: params.platformId,
+                ownerId: params.ownerId,
+                newProject,
                 entityManager,
+                log,
             })
-        }
+            : await projectRepo(entityManager).save(newProject)
         if (callPostCreateHooks) {
             await this.callProjectPostCreateHooks(savedProject, postCreateContext)
         }
@@ -371,6 +372,73 @@ async function callerCanAdministerProject(params: CallerCanAdministerProjectPara
     return !isNil(adminMembership)
 }
 
+// The cap check reads a system prop, not `platform.plan.*` (edition-safety.md forbids
+// plan/edition-derived gating), and only enters the distributed lock when a finite cap is
+// actually configured, so the default (unlimited, unconfigured) path never pays a Redis round
+// trip. Count + insert still need the lock together once a cap applies, otherwise two concurrent
+// requests can both read "under the cap" and both insert (CLAUDE.md's concurrency rule).
+async function createTeamProject(params: CreateTeamProjectParams): Promise<Project> {
+    const { platformId, ownerId, newProject, entityManager, log } = params
+    const maxTeamProjects = getMaxTeamProjectsPerPlatform()
+    if (isNil(maxTeamProjects)) {
+        return saveTeamProject({ platformId, ownerId, newProject, entityManager })
+    }
+    return distributedLock(log).runExclusive({
+        key: `team-project-limit:${platformId}`,
+        timeoutInSeconds: 10,
+        fn: async () => {
+            await assertTeamProjectsLimitNotExceeded({ platformId, maxTeamProjects, entityManager })
+            return saveTeamProject({ platformId, ownerId, newProject, entityManager })
+        },
+    })
+}
+
+async function saveTeamProject(params: SaveTeamProjectParams): Promise<Project> {
+    const { platformId, ownerId, newProject, entityManager } = params
+    await ensureDefaultProjectRoles(platformId, entityManager)
+    const savedProject = await projectRepo(entityManager).save(newProject)
+    await addCreatorAsProjectAdmin({
+        projectId: savedProject.id,
+        userId: ownerId,
+        platformId,
+        entityManager,
+    })
+    return savedProject
+}
+
+// `system.getNumber()` returns `null` for both "unset" and "unparseable" input. Treating any
+// non-positive result (missing, malformed, zero-or-negative) as "no cap" is deliberate: a bad
+// or missing config value must fail open to the current unlimited behavior, never fail closed
+// to "0 team projects allowed platform-wide" (the non-exhaustive-mapping trap #147 hit).
+function getMaxTeamProjectsPerPlatform(): number | null {
+    const configuredValue = system.getNumber(AppSystemProp.MAX_TEAM_PROJECTS_PER_PLATFORM)
+    if (isNil(configuredValue) || configuredValue <= 0) {
+        return null
+    }
+    return configuredValue
+}
+
+async function assertTeamProjectsLimitNotExceeded(params: AssertTeamProjectsLimitNotExceededParams): Promise<void> {
+    const { platformId, maxTeamProjects, entityManager } = params
+    // TEAM-only, not platform-wide: PERSONAL projects are created automatically as a side effect
+    // of user onboarding (user-service.ts), outside the caller's control. Counting them toward
+    // this cap would risk blocking new-user signup once a platform is at capacity, which is a much
+    // worse failure mode than the abuse case (self-service team-project creation) this cap exists
+    // to bound.
+    const currentTeamProjects = await projectRepo(entityManager).countBy({
+        platformId,
+        type: ProjectType.TEAM,
+    })
+    if (currentTeamProjects >= maxTeamProjects) {
+        throw new QadamFlowError({
+            code: ErrorCode.QUOTA_EXCEEDED,
+            params: {
+                metric: PlatformUsageMetric.TEAM_PROJECTS,
+            },
+        })
+    }
+}
+
 async function addCreatorAsProjectAdmin(params: AddCreatorAsProjectAdminParams): Promise<void> {
     const { projectId, userId, platformId, entityManager } = params
     const adminRole = await projectRoleRepo(entityManager).findOneByOrFail({
@@ -534,5 +602,26 @@ type AddCreatorAsProjectAdminParams = {
     projectId: string
     userId: string
     platformId: string
+    entityManager?: EntityManager
+}
+
+type CreateTeamProjectParams = {
+    platformId: string
+    ownerId: string
+    newProject: NewProject
+    entityManager?: EntityManager
+    log: FastifyBaseLogger
+}
+
+type SaveTeamProjectParams = {
+    platformId: string
+    ownerId: string
+    newProject: NewProject
+    entityManager?: EntityManager
+}
+
+type AssertTeamProjectsLimitNotExceededParams = {
+    platformId: string
+    maxTeamProjects: number
     entityManager?: EntityManager
 }

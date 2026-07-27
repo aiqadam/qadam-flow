@@ -13,7 +13,11 @@ export const errorHandler = async (
         const statusCodeMap: Partial<Record<ErrorCode, StatusCodes>> = {
             [ErrorCode.INVALID_API_KEY]: StatusCodes.UNAUTHORIZED,
             [ErrorCode.INVALID_BEARER_TOKEN]: StatusCodes.UNAUTHORIZED,
-            [ErrorCode.QUOTA_EXCEEDED]: StatusCodes.PAYMENT_REQUIRED,
+            // Not PAYMENT_REQUIRED: this repo has no plan/billing concept (edition-safety.md),
+            // and QUOTA_EXCEEDED is unused elsewhere in CE today, so remapping it is safe. A hard
+            // resource cap is a standing authorization boundary, not a transient condition a
+            // client should back off and retry (that's TOO_MANY_REQUESTS/429), so FORBIDDEN fits.
+            [ErrorCode.QUOTA_EXCEEDED]: StatusCodes.FORBIDDEN,
             [ErrorCode.QADAM_SYNC_NOT_SUPPORTED]: StatusCodes.BAD_REQUEST,
             [ErrorCode.FEATURE_DISABLED]: StatusCodes.PAYMENT_REQUIRED,
             [ErrorCode.PERMISSION_DENIED]: StatusCodes.FORBIDDEN,
