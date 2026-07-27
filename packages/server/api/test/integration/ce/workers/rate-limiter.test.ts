@@ -18,9 +18,13 @@ let flowTimeoutSeconds = 600
 
 /**
  * Runs `rateLimiterInterceptor` against a real Redis (the CE integration DB/Redis, not
- * the in-memory fakes the unit-test file for this interceptor uses). This file starts
- * with #201's project-level `maxConcurrentJobs` override, which needs the live Redis
- * because the override lookup goes through the real `distributedStore` cache.
+ * the in-memory fakes the unit-test file for this interceptor uses). The unit-test file
+ * (test/unit/.../rate-limiter-interceptor.test.ts) mocks `redis.eval` with a fake that
+ * *reimplements* the Lua rather than running it — see the comment on that fake, and #199
+ * — so neither hand-written script (`tryAcquireSlot`, `releaseSlot`) is exercised for
+ * real anywhere else. This file also covers #201's project-level `maxConcurrentJobs`
+ * override, which independently needs the live Redis because the override lookup goes
+ * through the real `distributedStore` cache, not the in-memory fake.
  */
 describe('rateLimiterInterceptor (CE, real Redis)', () => {
     beforeAll(async () => {
@@ -72,6 +76,80 @@ describe('rateLimiterInterceptor (CE, real Redis)', () => {
         await redis.del(getConcurrencyPoolSetKey(projectId))
         await redis.del(getProjectMaxConcurrentJobsKey(projectId))
     }
+
+    describe('#199 — the real Lua scripts (dedup, capacity, eviction)', () => {
+        it('dedups the same jobId — second acquire for an identical jobId does not add a second ZSET member', async () => {
+            defaultConcurrentJobsLimit = 5
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const jobData = createJobData({ projectId: mockProject.id, platformId: mockPlatform.id })
+
+            const r1 = await rateLimiterInterceptor.preDispatch({ jobId: 'dup-job', jobData, job: createMockJob(), log: app.log })
+            const r2 = await rateLimiterInterceptor.preDispatch({ jobId: 'dup-job', jobData, job: createMockJob(), log: app.log })
+            expect(r1.verdict).toBe(InterceptorVerdict.ALLOW)
+            expect(r2.verdict).toBe(InterceptorVerdict.ALLOW)
+
+            const redis = await redisConnections.useExisting()
+            const members = await redis.zrange(getConcurrencyPoolSetKey(mockProject.id), 0, -1)
+            expect(members).toHaveLength(1)
+
+            await cleanupPool(mockProject.id)
+        })
+
+        it('rejects once the real ZCARD check hits the configured limit', async () => {
+            defaultConcurrentJobsLimit = 2
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const jobData = createJobData({ projectId: mockProject.id, platformId: mockPlatform.id })
+
+            const r1 = await rateLimiterInterceptor.preDispatch({ jobId: 'cap-1', jobData, job: createMockJob(), log: app.log })
+            const r2 = await rateLimiterInterceptor.preDispatch({ jobId: 'cap-2', jobData, job: createMockJob(), log: app.log })
+            const r3 = await rateLimiterInterceptor.preDispatch({ jobId: 'cap-3', jobData, job: createMockJob(), log: app.log })
+
+            expect(r1.verdict).toBe(InterceptorVerdict.ALLOW)
+            expect(r2.verdict).toBe(InterceptorVerdict.ALLOW)
+            expect(r3.verdict).toBe(InterceptorVerdict.REJECT)
+
+            await cleanupPool(mockProject.id)
+        })
+
+        it('releaseSlot ZREMs the member, freeing capacity for the next acquire', async () => {
+            defaultConcurrentJobsLimit = 1
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const jobData = createJobData({ projectId: mockProject.id, platformId: mockPlatform.id })
+
+            await rateLimiterInterceptor.preDispatch({ jobId: 'rel-1', jobData, job: createMockJob(), log: app.log })
+            const blocked = await rateLimiterInterceptor.preDispatch({ jobId: 'rel-2', jobData, job: createMockJob(), log: app.log })
+            expect(blocked.verdict).toBe(InterceptorVerdict.REJECT)
+
+            await rateLimiterInterceptor.onJobFinished({ jobId: 'rel-1', jobData, failed: false, log: app.log })
+
+            const afterRelease = await rateLimiterInterceptor.preDispatch({ jobId: 'rel-3', jobData, job: createMockJob(), log: app.log })
+            expect(afterRelease.verdict).toBe(InterceptorVerdict.ALLOW)
+
+            await cleanupPool(mockProject.id)
+        })
+
+        it('the acquire script evicts stale ZSET members older than timeoutMs before checking capacity', async () => {
+            defaultConcurrentJobsLimit = 1
+            flowTimeoutSeconds = 1 // timeoutMs = (1s + 1min), so anything older than ~61s is stale
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const jobData = createJobData({ projectId: mockProject.id, platformId: mockPlatform.id })
+
+            const redis = await redisConnections.useExisting()
+            const setKey = getConcurrencyPoolSetKey(mockProject.id)
+            const staleTimestamp = Date.now() - 120_000
+            await redis.zadd(setKey, staleTimestamp, `${mockProject.id}:stale-job`)
+
+            // Pool reads as "at capacity" (1 stale member, limit 1) unless the real Lua's
+            // ZREMRANGEBYSCORE actually runs against Redis and evicts it first.
+            const result = await rateLimiterInterceptor.preDispatch({ jobId: 'fresh-job', jobData, job: createMockJob(), log: app.log })
+            expect(result.verdict).toBe(InterceptorVerdict.ALLOW)
+
+            const members = await redis.zrange(setKey, 0, -1)
+            expect(members).toEqual([`${mockProject.id}:fresh-job`])
+
+            await cleanupPool(mockProject.id)
+        })
+    })
 
     describe('#201 — project-level maxConcurrentJobs override', () => {
         it('enforces a project cap lower than the platform default', async () => {
