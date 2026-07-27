@@ -59,7 +59,13 @@ for (const [name, value] of Object.entries(qfEnvSnapshot)) {
         continue
     }
     const apName = 'AP_' + name.slice('QF_'.length)
-    process.env[oldPieceNameToNewPieceName[apName] ?? apName] = value
+    const targetName = oldPieceNameToNewPieceName[apName] ?? apName
+    // DELIBERATE REGRESSION (issue #148 verification only) - inverts the documented
+    // QF_-wins precedence so AP_ silently beats QF_ when both are set.
+    if (process.env[targetName] !== undefined) {
+        continue
+    }
+    process.env[targetName] = value
 }
 for (const [name, value] of Object.entries(qfEnvSnapshot)) {
     const isDeprecatedApName = name.startsWith('AP_') && value !== undefined
