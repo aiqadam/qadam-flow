@@ -35,11 +35,11 @@ jobs:
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
 
-      - name: Lint core packages
-        run: npm run lint-core
+      - name: Lint all packages
+        run: npm run lint-all
 
-      - name: Lint qadams
-        run: npm run lint-qadams
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Unit tests
         run: npm run test-unit

@@ -131,11 +131,22 @@ jobs:
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
 
-      - name: Lint core packages
-        run: npm run lint-core
+      # `turbo run lint` with no filter, deliberately. The previous two steps
+      # enumerated packages (`lint-core` named six, `lint-qadams` globbed
+      # `@aiqadam/qadam-*`) and that enumeration silently missed every package it
+      # did not name: `@aiqadam/cli`, `tests-e2e`, and — because the glob is
+      # `qadam-*` and they are `qadam` + `s` — `@aiqadam/qadams-framework` and
+      # `@aiqadam/qadams-common`, which look covered and were not (#184, same
+      # family as #148 and #164). An unfiltered run cannot miss a package, so a
+      # new one is linted the day it declares the script.
+      - name: Lint all packages
+        run: npm run lint-all
 
-      - name: Lint qadams
-        run: npm run lint-qadams
+      # Only `packages/web` declares a `typecheck` script today and no job ran
+      # it, so its ~849 source files were type-checked nowhere (vite builds
+      # without type-checking). Unfiltered for the same reason as lint above.
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Unit tests
         run: npm run test-unit

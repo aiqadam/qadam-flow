@@ -162,6 +162,15 @@ before trusting its silence — an empty output is not the same as a passing che
   --filter=X` on a package with no `lint` script is a no-op that still reports success — this is how
   `packages/server/utils` went unlinted while appearing in `lint-core` (fixed in #148). Before
   trusting a filter, confirm the target package actually declares the script.
+- **An enumerated `--filter` list is itself the defect — it silently omits whatever it does not
+  name.** `lint-core` named six packages and `lint-qadams` globbed `@aiqadam/qadam-*`; between them
+  they missed `@aiqadam/cli`, `tests-e2e`, and — because the glob is `qadam-*` while the packages are
+  `qadam` **s** `-framework` / `-common` — two packages that read as covered and were not (#184).
+  Note the trap in verifying this: `turbo run lint --filter='@aiqadam/qadam-*' --dry=json` *does*
+  list `@aiqadam/qadams-framework` under `.tasks[].package`, because a dependency appears in the
+  graph for its `build` task. Filter on `.task == "lint"` before concluding anything. CI now runs
+  `turbo run lint` and `turbo run typecheck` unfiltered, so coverage cannot drift again; keep it that
+  way rather than reintroducing a package list.
 - **Turbo `inputs` narrower than the files the script actually covers makes a check silently
   cache-skip.** `lint`'s `inputs` listed `src/**` but not `test/**`, while the `api` lint script
   covers `'src/**/*.ts' 'test/**/*.ts'` — so with remote caching on, a PR touching only
