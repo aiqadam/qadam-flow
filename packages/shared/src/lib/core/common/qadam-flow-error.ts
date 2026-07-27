@@ -46,6 +46,7 @@ export type ApErrorParams =
     | PauseMetadataMissingErrorParams
     | PermissionDeniedErrorParams
     | QuotaExceededParams
+    | ResourceLimitExceededParams
     | FeatureDisabledErrorParams
     | SignUpDisabledParams
     | SystemInvalidErrorParams
@@ -341,6 +342,18 @@ ErrorCode.QUOTA_EXCEEDED,
 }
 >
 
+// Deliberately distinct from QuotaExceededParams/QUOTA_EXCEEDED: that code (and its 402 sibling
+// FEATURE_DISABLED) is plan/billing vocabulary reserved for a real plan-persistence feature.
+// Operator-configured hard caps (system props like AP_MAX_TEAM_PROJECTS_PER_PLATFORM) are a
+// different, edition-neutral concept and get their own code so the two are never conflated.
+export type ResourceLimitExceededParams = BaseErrorParams<
+ErrorCode.RESOURCE_LIMIT_EXCEEDED,
+{
+    resource: string
+    limit: number
+}
+>
+
 export type ErrorUpdatingSubscriptionParams = BaseErrorParams<
 ErrorCode.ERROR_UPDATING_SUBSCRIPTION,
 {
@@ -529,6 +542,7 @@ export enum ErrorCode {
     PAUSE_METADATA_MISSING = 'PAUSE_METADATA_MISSING',
     PERMISSION_DENIED = 'PERMISSION_DENIED',
     QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',
+    RESOURCE_LIMIT_EXCEEDED = 'RESOURCE_LIMIT_EXCEEDED',
     FEATURE_DISABLED = 'FEATURE_DISABLED',
     SIGN_UP_DISABLED = 'SIGN_UP_DISABLED',
     SYSTEM_PROP_INVALID = 'SYSTEM_PROP_INVALID',

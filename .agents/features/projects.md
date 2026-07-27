@@ -1,7 +1,7 @@
 # CE Project Management
 
 ## Summary
-A Project is the workspace within a platform where flows, connections, tables, and other resources live. Every platform has at least one project. Projects are always scoped to a platform via `platformId`. A user gets one PERSONAL project on sign-up, and `POST /v1/projects` creates additional TEAM projects. There is no separate platform-projects module in this repo: no `platformProjectService`, no project-limit enforcement (`projectsLimit` is never read, and `countByPlatformIdAndType` has no caller), and no per-project qadam filters. Projects support soft-delete (via `deleted` timestamp), icon customization, concurrency pool assignment, and optional release management.
+A Project is the workspace within a platform where flows, connections, tables, and other resources live. Every platform has at least one project. Projects are always scoped to a platform via `platformId`. A user gets one PERSONAL project on sign-up, and `POST /v1/projects` creates additional TEAM projects. There is no separate platform-projects module in this repo: no `platformProjectService`, no per-plan quota (`platform.plan.*` is never read for this purpose — `platformService.getPlan()` hardcodes `TeamProjectsLimit.UNLIMITED`, per edition-safety.md), and no per-project qadam filters. TEAM project creation is capped by the edition-neutral system prop `AP_MAX_TEAM_PROJECTS_PER_PLATFORM` (unset/non-positive/malformed = unlimited, the default); see "TEAM-projects cap" below. Projects support soft-delete (via `deleted` timestamp), icon customization, concurrency pool assignment, and optional release management.
 
 ## Key Files
 - `packages/server/api/src/app/project/project-controller.ts` — POST `/` (create TEAM project), POST `/:id` (update), GET `/` (list), DELETE `/:id` (soft delete)
@@ -63,7 +63,13 @@ Relations (one-to-many): `flows`, `files`, `folders`, `events`, `appConnections`
 - `getAllForUser({ platformId, userId, isPrivileged })` — returns all projects visible to a user (admins see all platform projects, members see their assigned projects)
 - `getUserProjectOrThrow(userId)` — returns the personal project owned by the user
 - `getProjectIdsByPlatform(platformId)` — returns all project IDs for a platform; used by `health-metrics.service.ts` and `flow.service.ts`
-- `countByPlatformIdAndType(platformId, type)` — counts projects of a type on a platform; currently has no caller
+- `countByPlatformIdAndType({ platformId, type, entityManager? })` — counts projects of a type on a platform (soft-deleted rows excluded automatically, since `ProjectEntity.deleted` is a TypeORM `deleteDate` column); called by the TEAM-projects cap check below
+
+## TEAM-projects cap
+- `AP_MAX_TEAM_PROJECTS_PER_PLATFORM` (system prop, `system-validator.ts` validates it with `numberValidator`) caps how many TEAM projects a platform may have. Unset, non-numeric, or `<= 0` all mean **unlimited** — `getMaxTeamProjectsPerPlatform()` in `project-service.ts` fails open, never closed to zero, so a malformed or missing value cannot lock a platform out of TEAM-project creation. A malformed value only produces a `log.warn` at startup (`validateEnvPropsOnStartup`); it does not throw or block the process.
+- Only `ProjectType.TEAM` counts. PERSONAL projects are created as a side effect of user onboarding (`user-service.ts`) and platform bootstrap (`platform.service.ts`), outside caller control, so they are deliberately excluded from the cap.
+- When a finite cap is configured, `createTeamProject()` wraps the count (`countByPlatformIdAndType`) and the insert in `distributedLock(log).runExclusive({ key: 'team-project-limit:${platformId}', ... })` to close the count-then-insert race between concurrent requests. When no cap is configured (the default), the lock is skipped entirely — no Redis round trip on the common path.
+- Breaching the cap throws `QadamFlowError({ code: ErrorCode.RESOURCE_LIMIT_EXCEEDED, params: { resource: 'team_projects', limit } })`, mapped to HTTP `403` in `error-handler.ts`. This is a dedicated code, deliberately distinct from `ErrorCode.QUOTA_EXCEEDED`/`FEATURE_DISABLED` (plan/billing vocabulary reserved for a real plan-persistence feature that doesn't exist in this repo) and from `PlatformUsageMetric` (plan-usage vocabulary with no `teamProjects` field).
 
 ## Side Effects
 - Creating a project calls `projectHooks.postCreate(project, context?)`. The only registered implementation is the no-op default in `project-hooks.ts` — no `ProjectPlan` row, qadam filter, or alert receiver is created.
