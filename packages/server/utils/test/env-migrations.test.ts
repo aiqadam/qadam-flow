@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// `env-migrations` reads the environment at module load, so every test must re-import it after
+// `vi.resetModules()`. Without this stub each of those re-imports also rebuilds the whole
+// `@aiqadam/shared` barrel — the module needs exactly one enum from it — which made the file cost
+// seconds and vary by ~2.5x run to run, tripping vitest's 5s default and failing unrelated PRs (#183).
+vi.mock('@aiqadam/shared', () => ({
+    ExecutionMode: {
+        SANDBOX_PROCESS: 'SANDBOX_PROCESS',
+        SANDBOX_CODE_ONLY: 'SANDBOX_CODE_ONLY',
+        UNSANDBOXED: 'UNSANDBOXED',
+        SANDBOX_CODE_AND_PROCESS: 'SANDBOX_CODE_AND_PROCESS',
+    },
+}))
+
 const ENV_KEYS_UNDER_TEST = [
     'AP_JWT_SECRET',
     'QF_JWT_SECRET',
