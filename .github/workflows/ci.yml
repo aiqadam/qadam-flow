@@ -114,6 +114,29 @@ jobs:
         with:
           bun-version: 1.3.3
 
+      # Bun's global download/extract cache only. Deliberately NOT node_modules:
+      # this is a workspaces monorepo with per-package dirs, and a stale or
+      # partially-restored node_modules fails in ways that look like source bugs.
+      # Caching only the download cache keeps `bun install --frozen-lockfile` in
+      # the loop as the thing that decides what gets linked, so the tree is always
+      # built from the lockfile — the cache just removes the network fetch.
+      #
+      # `actions/cache` does not re-save on a hit, so a cache entry that keeps
+      # failing keeps being restored until the lockfile changes. Bump the `v1`
+      # in the key to force a cold rebuild without touching the lockfile.
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-v1-${{ runner.os }}-bun1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-cache-v1-${{ runner.os }}-bun1.3.3-
+
+      # The retry is NOT redundant with the cache above — it is what makes a
+      # poisoned cache self-heal. `actions/cache` restores bytes without
+      # validating them, so a truncated tarball or a half-written isolated-vm
+      # build product now arrives pre-warmed; that is exactly the failure this
+      # handler was written for. Keep both.
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
@@ -176,6 +199,19 @@ jobs:
         with:
           bun-version: 1.3.3
 
+      # Same key as `verify`, on purpose: the two jobs install the same lockfile,
+      # so whichever runs first populates the entry and the other gets a hit.
+      # See the rationale comment in `verify` for why node_modules is excluded.
+      - name: Cache bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-v1-${{ runner.os }}-bun1.3.3-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-cache-v1-${{ runner.os }}-bun1.3.3-
+
+      # Retry kept deliberately — see the note in `verify`. A warm cache is the
+      # condition under which a bad cached isolated-vm artifact would surface.
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
