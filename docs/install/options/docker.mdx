@@ -61,6 +61,19 @@ Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
 **Upgrading from an install that changed the port by hand.** Earlier versions ignored `QADAM_FLOW_PORT`, so the only way to move the port was to edit the `8080:80` mapping in `qadam-flow/docker-compose.yml` — and the installer overwrites that file on every run, silently putting you back on 8080. Move the port into `.env` instead: re-run with `QADAM_FLOW_PORT=<your port>`, which records it in `.env` and repoints `AP_FRONTEND_URL`. The installer warns if it spots an `AP_FRONTEND_URL` pointing at a port the stack will not publish.
 </Warning>
 
+### Memory budget
+
+Give the `app` service at least **768 MB**. Node sizes its V8 heap to the memory the
+container is allowed, and at a `mem_limit` around `400m` the very first sign-up can
+exhaust the heap on small hosts (Raspberry Pi, 1–2 GB VPS). If you need to run tighter
+than that, set `NODE_OPTIONS=--max-old-space-size=<MB>` in `.env` to a value comfortably
+below the limit rather than letting V8 auto-tune into it.
+
+A process that runs out of heap now exits the container, so Docker's `restart:` policy
+restarts it and the crash shows up in `docker ps` (a rising restart count) and
+`docker events`. Earlier images supervised Node with PM2 inside the container, which
+restarted the process in place and left the container reporting `Up` while sign-up hung.
+
 ### Day-two commands
 
 Run these from your install directory (`qadam-flow` by default):
