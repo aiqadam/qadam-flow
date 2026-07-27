@@ -899,6 +899,7 @@
   "Unknown": "Unknown",
   "Latest Version": "Latest Version",
   "A new version is available. Upgrade now to enjoy the latest features, improvements, and bug fixes.": "A new version is available. Upgrade now to enjoy the latest features, improvements, and bug fixes.",
+  "Could not check for the latest release. This does not mean you are up to date.": "Could not check for the latest release. This does not mean you are up to date.",
   "See the": "See the",
   "release changelog": "release changelog",
   "Disk Size": "Disk Size",
