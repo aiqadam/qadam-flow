@@ -2,6 +2,7 @@ import { AlertChannel, PlatformRole, PrincipalType, ProjectType, ProjectWithLimi
 import { faker } from '@faker-js/faker'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import * as alertsServiceModule from '../../../src/app/alerts/alerts-service'
 import { alertsService } from '../../../src/app/alerts/alerts-service'
 import { system } from '../../../src/app/helper/system/system'
 import { generateMockToken } from '../../helpers/auth'
@@ -9,10 +10,15 @@ import { mockBasicUser } from '../../helpers/mocks'
 import { createTestContext } from '../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../helpers/test-setup'
 
+const originalAlertsService = alertsServiceModule.alertsService
+
 let app: FastifyInstance | null = null
 
 beforeAll(async () => {
-    app = await setupTestEnvironment()
+    // fresh: true — this file spies on the alerts-service module (see the atomicity test
+    // below); the shared server would resolve a different module instance than the one
+    // vi.spyOn patches, so the spy would be a silent no-op against a reused server.
+    app = await setupTestEnvironment({ fresh: true })
 })
 
 afterAll(async () => {
@@ -101,6 +107,10 @@ describe('Project endpoints (CE)', () => {
     })
 
     describe('DELETE /v1/projects/:id', () => {
+        afterEach(() => {
+            vi.restoreAllMocks()
+        })
+
         it('soft-deletes a team project and removes it from list', async () => {
             const ctx = await createTestContext(app!)
 
@@ -142,6 +152,52 @@ describe('Project endpoints (CE)', () => {
 
             const alerts = await alertsService(system.globalLogger()).list({ projectId: created.id, cursor: undefined, limit: 10 })
             expect(alerts.data).toHaveLength(0)
+        })
+
+        it('rolls back the soft-delete when the alert sweep fails, so a retry can complete both', async () => {
+            const ctx = await createTestContext(app!)
+            const createResponse = await ctx.post('/v1/projects', {
+                displayName: faker.animal.bird(),
+                externalId: null,
+                metadata: null,
+                maxConcurrentJobs: null,
+            })
+            const created = createResponse.json<ProjectWithLimits>()
+            await alertsService(system.globalLogger()).add({
+                projectId: created.id,
+                channel: AlertChannel.EMAIL,
+                receiver: ctx.userIdentity.email,
+            })
+
+            const deleteAllForProjectSpy = vi.fn().mockRejectedValueOnce(new Error('simulated sweep failure'))
+            vi.spyOn(alertsServiceModule, 'alertsService').mockImplementation((log) => ({
+                ...originalAlertsService(log),
+                deleteAllForProject: deleteAllForProjectSpy,
+            }))
+
+            const failedDeleteResponse = await ctx.delete(`/v1/projects/${created.id}`)
+            expect(failedDeleteResponse.statusCode).toBe(StatusCodes.INTERNAL_SERVER_ERROR)
+
+            const listAfterFailureResponse = await ctx.get('/v1/projects')
+            const listAfterFailure = listAfterFailureResponse.json<SeekPage<ProjectWithLimits>>()
+            expect(listAfterFailure.data.find((p) => p.id === created.id)).toBeDefined()
+
+            const alertsAfterFailure = await alertsService(system.globalLogger()).list({ projectId: created.id, cursor: undefined, limit: 10 })
+            expect(alertsAfterFailure.data).toHaveLength(1)
+
+            // Restore before the retry (not just in afterEach) — the retry is still part of
+            // this test's assertions, and it must exercise the real deleteAllForProject.
+            vi.restoreAllMocks()
+
+            const retryDeleteResponse = await ctx.delete(`/v1/projects/${created.id}`)
+            expect(retryDeleteResponse.statusCode).toBe(StatusCodes.NO_CONTENT)
+
+            const listAfterRetryResponse = await ctx.get('/v1/projects')
+            const listAfterRetry = listAfterRetryResponse.json<SeekPage<ProjectWithLimits>>()
+            expect(listAfterRetry.data.find((p) => p.id === created.id)).toBeUndefined()
+
+            const alertsAfterRetry = await alertsService(system.globalLogger()).list({ projectId: created.id, cursor: undefined, limit: 10 })
+            expect(alertsAfterRetry.data).toHaveLength(0)
         })
 
         it('returns 404 when project does not exist', async () => {

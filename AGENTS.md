@@ -16,7 +16,7 @@ is covered by `run.sh` plus plain `docker compose` commands.
 - **Entity registration**: New entities MUST be added to `getEntities()` in `database-connection.ts` — TypeORM does NOT auto-discover.
 - **HTTP**: `POST` for all create/update mutations. `DELETE` for deletes. Never PUT/PATCH. One sanctioned exception: `PUT /v1/files/:fileId` in `packages/server/api/src/app/file/files-controller.ts` — it is the engine's file-upload wire protocol (`packages/server/engine/src/lib/engine-file-api.ts`) and the method the S3 signed-URL redirect it falls through to also requires, so changing it means a lockstep server+engine break for no user-visible gain. Don't add a second exception.
 - **Security**: Every endpoint needs `securityAccess` config.
-- **Side effects**: Separated into `*-side-effects.ts` files, called explicitly after mutations.
+- **Side effects**: Separated into `*-side-effects.ts` files, called explicitly after mutations — except effects that must commit atomically with the mutation: those are registered as hooks (`*-hooks.ts`) and invoked inside the mutation's own transaction, never from a controller.
 - **Multi-server**: Use `distributedLock`, BullMQ deduplication, or `FOR UPDATE SKIP LOCKED` for concurrent operations.
 - **Managed PostgreSQL**: No custom extensions. Use `sanitizeObjectForPostgresql()` for external data.
 - **Before modifying a module**: Read its `.agents/features/<name>.md` file for entities, services, and integration details.
