@@ -105,14 +105,20 @@ describe('Project team-projects cap (CE, edition-neutral system prop)', () => {
     })
 
     it('does not apply the TEAM-projects cap to PERSONAL project creation', async () => {
-        // "0" means "block every TEAM project" (see getMaxTeamProjectsPerPlatform), a much
-        // stricter cap than any test above.
-        maxTeamProjectsOverride = '0'
+        // Cap = 1: consume the one TEAM slot first, so a further TEAM create is provably rejected
+        // under this config. (An earlier draft of this test used "0" here on the mistaken belief
+        // that "0" means "block every TEAM project" — it does not: getMaxTeamProjectsPerPlatform
+        // treats any non-positive value as "no cap" by design, so "0" is unlimited. See the
+        // dedicated "0 configured value" test below for that exact case.)
+        maxTeamProjectsOverride = '1'
         const ctx = await createContextWithoutSeedTeamProject()
 
-        // Prove the cap is actually live under this config: a TEAM project is rejected. Without
-        // this assertion the test would also pass on `main`, where no cap exists and every create
-        // returns 201 regardless of project type.
+        const consumesTheSlot = await createTeamProject(ctx)
+        expect(consumesTheSlot.statusCode).toBe(StatusCodes.CREATED)
+
+        // Prove the cap is actually live under this config: a second TEAM project is rejected.
+        // Without this assertion the test would also pass on `main`, where no cap exists and
+        // every create returns 201 regardless of project type.
         const teamAttempt = await createTeamProject(ctx)
         expect(teamAttempt.statusCode).toBe(StatusCodes.FORBIDDEN)
 
@@ -128,6 +134,21 @@ describe('Project team-projects cap (CE, edition-neutral system prop)', () => {
 
         expect(personalProject.type).toBe(ProjectType.PERSONAL)
         expect(personalProject.platformId).toBe(ctx.platform.id)
+    })
+
+    it('treats a configured value of "0" as unlimited, not as "block every TEAM project"', async () => {
+        // Pins getMaxTeamProjectsPerPlatform's `configuredValue <= 0` branch: an operator who
+        // sets AP_MAX_TEAM_PROJECTS_PER_PLATFORM=0 intending "no team projects at all" instead
+        // gets no cap. This was previously asserted backwards in this file (see the review that
+        // caught it) — this test exists specifically so that regression can't recur silently.
+        maxTeamProjectsOverride = '0'
+        const ctx = await createContextWithoutSeedTeamProject()
+
+        const first = await createTeamProject(ctx)
+        const second = await createTeamProject(ctx)
+
+        expect(first.statusCode).toBe(StatusCodes.CREATED)
+        expect(second.statusCode).toBe(StatusCodes.CREATED)
     })
 
     it('malformed cap config (non-numeric) fails open to unlimited, not to zero', async () => {
