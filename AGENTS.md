@@ -115,8 +115,13 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
   Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   ```
 
-  Verify before pushing, don't eyeball the message:
-  `git show -s --format='%(trailers:key=Signed-off-by,valueonly)' HEAD` must print the author.
+  Verify before pushing, don't eyeball the message — and check the whole branch, not just `HEAD`,
+  because the job checks every non-merge commit in the PR:
+  `git log --no-merges --format='%h %an <%ae> | %(trailers:key=Signed-off-by,valueonly)' origin/main..HEAD`.
+  Keep `--no-merges` — the job passes it too, so an unsigned merge commit from a branch update is
+  not a failure and must not be treated as one.
+  Every line must show the sign-off matching that commit's own author; a blank right-hand side is
+  the failure.
 
 ## Git Push
 
