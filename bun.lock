@@ -352,7 +352,7 @@
       "name": "@aiqadam/cli",
       "version": "1.0.2",
       "bin": {
-        "pieces-cli": "../../dist/cli/src/index.js",
+        "qadam-flow-cli": "../../dist/packages/cli/src/index.js",
       },
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",

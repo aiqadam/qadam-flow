@@ -1,9 +1,12 @@
+#!/bin/sh
+# Resets the VS Code dev container defined in .devcontainer/docker-compose.yml.
+# Container and volume names are left to compose rather than hardcoded, because
+# the project prefix depends on how the dev container was launched.
+set -eu
+
 rm -rf ~/.activepieces
 rm -rf node_modules/
-docker container rm activepieces_devcontainer_db_1 --force
-docker container rm activepieces_devcontainer_redis_1 --force
-docker container rm activepieces_devcontainer_app_1 --force
-docker volume rm activepieces_devcontainer_redis_data
-docker volume rm activepieces_devcontainer_postgres_data
 
-echo "Deleted activepieces dev dockers and volumes."
+docker compose -f .devcontainer/docker-compose.yml down --volumes --remove-orphans
+
+echo "Deleted the Qadam Flow dev container, its volumes, node_modules and ~/.activepieces."

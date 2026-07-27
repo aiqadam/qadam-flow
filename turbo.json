@@ -46,6 +46,20 @@
         "!src/**/*.test.ts"
       ]
     },
+    // `tsconfig.lib.json` sets `outDir` to `../../dist/packages/cli`, which the
+    // generic `build` task's package-relative `dist/**` never matches — so every
+    // run was an uncachable MISS with nothing to save. Same class as #148/#164.
+    "@aiqadam/cli#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["../../dist/packages/cli/**"],
+      "inputs": [
+        "src/**",
+        "tsconfig*.json",
+        "package.json",
+        "!src/**/*.spec.ts",
+        "!src/**/*.test.ts"
+      ]
+    },
     "@aiqadam/engine#build": {
       "dependsOn": [],
       "outputs": ["../../../dist/packages/engine/**"],

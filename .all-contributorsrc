@@ -1,12 +1,12 @@
 {
   "files": [
-    "README.md"
+    "CONTRIBUTORS.md"
   ],
   "imageSize": 100,
   "commit": false,
   "contributorsPerLine": 7,
-  "projectName": "activepieces",
-  "projectOwner": "activepieces",
+  "projectName": "qadam-flow",
+  "projectOwner": "aiqadam",
   "repoType": "github",
   "repoHost": "https://github.com",
   "skipCi": true,
