@@ -125,6 +125,7 @@ jobs:
       # failing keeps being restored until the lockfile changes. Bump the `v1`
       # in the key to force a cold rebuild without touching the lockfile.
       - name: Cache bun install cache
+        id: bun-cache
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -137,13 +138,44 @@ jobs:
       # validating them, so a truncated tarball or a half-written isolated-vm
       # build product now arrives pre-warmed; that is exactly the failure this
       # handler was written for. Keep both.
+      # THROWAWAY BRANCH ONLY - not for merge. Realistic poison: overwrite every
+      # file in the restored cache with garbage, simulating truncated/corrupt
+      # cached artifacts arriving pre-warmed from actions/cache.
+      - if: steps.bun-cache.outputs.cache-hit == 'true'
+        name: POISON TEST - corrupt the restored bun cache (content)
+        run: |
+          set -euo pipefail
+          if [ ! -d ~/.bun/install/cache ]; then
+            echo "::error::No cache directory was restored; there is nothing to poison and this run proves nothing."
+            exit 1
+          fi
+          n=$(find ~/.bun/install/cache -type f | wc -l)
+          if [ "$n" -eq 0 ]; then
+            echo "::error::Restored cache is empty; poisoning it would prove nothing."
+            exit 1
+          fi
+          find ~/.bun/install/cache -type f -exec sh -c 'printf CORRUPT-POISON-TEST > "$1"' _ {} \;
+          echo "Corrupted $n cached files."
+
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
             echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
             rm -rf ~/.bun/install/cache
+            touch "${RUNNER_TEMP}/retry-fired"
             bun install --frozen-lockfile
           }
+
+      # THROWAWAY BRANCH ONLY. Fails the job if the poison did NOT break the
+      # first install — otherwise this "test" would pass while proving nothing.
+      - if: steps.bun-cache.outputs.cache-hit == 'true'
+        name: POISON TEST - assert the retry handler actually fired
+        run: |
+          if [ ! -f "${RUNNER_TEMP}/retry-fired" ]; then
+            echo "::error::bun install succeeded on the FIRST attempt: the poison did not break it, so this run proves nothing about recovery."
+            exit 1
+          fi
+          echo "Retry handler fired and the install recovered. ✅"
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
@@ -203,6 +235,7 @@ jobs:
       # so whichever runs first populates the entry and the other gets a hit.
       # See the rationale comment in `verify` for why node_modules is excluded.
       - name: Cache bun install cache
+        id: bun-cache
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -212,13 +245,41 @@ jobs:
 
       # Retry kept deliberately — see the note in `verify`. A warm cache is the
       # condition under which a bad cached isolated-vm artifact would surface.
+      # THROWAWAY BRANCH ONLY - not for merge. Deterministic poison: replace the
+      # restored cache directory with a regular file so bun cannot use the path
+      # at all. Guarantees the first install fails, exercising the retry.
+      - if: steps.bun-cache.outputs.cache-hit == 'true'
+        name: POISON TEST - replace the restored bun cache with a file (structural)
+        run: |
+          set -euo pipefail
+          if [ ! -d ~/.bun/install/cache ]; then
+            echo "::error::No cache directory was restored; there is nothing to poison and this run proves nothing."
+            exit 1
+          fi
+          find ~/.bun/install/cache -type f | head -1
+          rm -rf ~/.bun/install/cache
+          printf 'not-a-directory' > ~/.bun/install/cache
+          ls -l ~/.bun/install/cache
+
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile || {
             echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
             rm -rf ~/.bun/install/cache
+            touch "${RUNNER_TEMP}/retry-fired"
             bun install --frozen-lockfile
           }
+
+      # THROWAWAY BRANCH ONLY. Fails the job if the poison did NOT break the
+      # first install — otherwise this "test" would pass while proving nothing.
+      - if: steps.bun-cache.outputs.cache-hit == 'true'
+        name: POISON TEST - assert the retry handler actually fired
+        run: |
+          if [ ! -f "${RUNNER_TEMP}/retry-fired" ]; then
+            echo "::error::bun install succeeded on the FIRST attempt: the poison did not break it, so this run proves nothing about recovery."
+            exit 1
+          fi
+          echo "Retry handler fired and the install recovered. ✅"
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
