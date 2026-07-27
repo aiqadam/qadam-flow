@@ -53,16 +53,40 @@ describe('apVersionUtil.getLatestRelease', () => {
         expect(await apVersionUtil.getLatestRelease()).toBe('0.0.0')
     })
 
-    it('falls back to 0.0.0 when the tag is not a parseable version (e.g. a stray "v1.2" release tag)', async () => {
-        getMock.mockResolvedValue({ data: { tag_name: 'v1.2' } })
-        const { apVersionUtil } = await import('../src/ap-version')
-        expect(await apVersionUtil.getLatestRelease()).toBe('0.0.0')
-    })
+    it.each([
+        ['v1.2', 'a stray non-3-segment release tag'],
+        ['nightly', 'a non-numeric ref'],
+        ['01.2.3', 'a leading zero on the major segment'],
+        ['00.0.0', 'a leading zero on every segment'],
+        ['1.02.3', 'a leading zero on the minor segment'],
+        ['1.2.03', 'a leading zero on the patch segment'],
+        ['2026.07.1', 'a CalVer-style date tag'],
+        ['1.2.3-01', 'a leading zero in a numeric prerelease identifier'],
+        ['1.2.3-alpha..1', 'an empty prerelease identifier between dots'],
+        ['1.2.3-alpha.', 'a trailing empty prerelease identifier'],
+        ['1.2.3-.', 'a lone empty prerelease identifier'],
+        ['1.2.3+build..1', 'an empty build-metadata identifier between dots'],
+        ['999999999999999999999.1.1', 'a major segment beyond the safe integer range'],
+    ])(
+        'falls back to 0.0.0 for a tag that is not valid semver: %s (%s) — this would otherwise crash semver.gte in the UI',
+        async (tagName) => {
+            getMock.mockResolvedValue({ data: { tag_name: tagName } })
+            const { apVersionUtil } = await import('../src/ap-version')
+            expect(await apVersionUtil.getLatestRelease()).toBe('0.0.0')
+        },
+    )
 
-    it('falls back to 0.0.0 when the tag is a non-semver ref (e.g. a "nightly" tag), which would otherwise crash semver.gte in the UI', async () => {
-        getMock.mockResolvedValue({ data: { tag_name: 'nightly' } })
+    it.each([
+        ['v1.1.0', '1.1.0'],
+        ['1.2.3-alpha.1', '1.2.3-alpha.1'],
+        ['1.2.3-0.3.7', '1.2.3-0.3.7'],
+        ['1.2.3-beta+exp.sha.5114f85', '1.2.3-beta'],
+        ['1.2.3----', '1.2.3----'],
+        ['1.2.3-0A.is.legal', '1.2.3-0A.is.legal'],
+    ])('accepts a genuinely valid semver tag: %s', async (tagName, expected) => {
+        getMock.mockResolvedValue({ data: { tag_name: tagName } })
         const { apVersionUtil } = await import('../src/ap-version')
-        expect(await apVersionUtil.getLatestRelease()).toBe('0.0.0')
+        expect(await apVersionUtil.getLatestRelease()).toBe(expected)
     })
 
     it('caches a resolved version across calls instead of refetching', async () => {

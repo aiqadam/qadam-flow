@@ -1,8 +1,8 @@
 import fs from 'fs'
 import path from 'path'
+import semver from 'semver'
 import { safeHttp } from './safe-http'
 
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z-.]+)?(\+[0-9A-Za-z-.]+)?$/
 const LATEST_RELEASE_FAILURE_CACHE_TTL_MS = 15 * 60 * 1000
 
 let cachedCurrentRelease: string | undefined
@@ -30,16 +30,21 @@ function isPackageJson(value: unknown): value is PackageJson {
 
 // GitHub tags releases as `v1.2.3`; the `v` isn't needed for the semver.gte
 // comparison downstream (semver tolerates it on either side), only for the
-// unprefixed string operators actually use to `docker pull ...:1.2.3`. A tag
-// can be any ref matching `v*` (release.yml doesn't restrict it to semver), so
-// this also rejects anything that isn't parseable as a version rather than
-// forwarding a string that would later crash `semver.gte` in the UI.
+// unprefixed string operators actually use to `docker pull ...:1.2.3`.
+// `release.yml` triggers on any `v*` ref, not just semver ones, so a hand-typed
+// tag (a leading-zero typo, a CalVer date, ...) must be rejected here rather
+// than forwarded to crash `semver.gte` in the UI. `semver.valid` is the
+// authoritative check (a hand-rolled regex approximation previously let
+// several of these through) and also strips the `v` prefix as part of parsing.
+// Note it also strips build metadata (`1.2.3+build.1` -> `1.2.3`), which is
+// harmless for the gte comparison but means a tag with build metadata would no
+// longer match a `docker pull ...:<version>` tag verbatim — not a concern for
+// this repo's own release process, which doesn't publish build-metadata tags.
 function parseTagName(tagName: unknown): string | undefined {
     if (typeof tagName !== 'string') {
         return undefined
     }
-    const version = tagName.startsWith('v') ? tagName.slice(1) : tagName
-    return SEMVER_PATTERN.test(version) ? version : undefined
+    return semver.valid(tagName) ?? undefined
 }
 
 function cacheLatestReleaseFailure(): void {
@@ -83,6 +88,7 @@ export const apVersionUtil = {
             return version
         }
         catch (ex) {
+            // No logger is threaded through this util; console is the only sink available (see env-migrations.ts).
             // eslint-disable-next-line no-console
             console.warn(`[ap-version] failed to fetch the latest aiqadam/qadam-flow release; treating as unknown for ${LATEST_RELEASE_FAILURE_CACHE_TTL_MS / 60_000} minutes`, ex)
             cacheLatestReleaseFailure()

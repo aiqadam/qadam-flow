@@ -26,11 +26,25 @@ export function SystemHealthTab({ onSeeRuns }: SystemHealthTabProps) {
   // '0.0.0' is the probe's own failure sentinel (see ap-version.ts) — it must never
   // be read as a real, comparable release, or a stale/unreachable check would render
   // as a confident green "up to date" even though nothing was actually checked.
-  const isLatestVersionKnown = !!latestVersion && latestVersion !== '0.0.0';
+  // semver.valid(...) is defense in depth: the producer already validates the tag
+  // before it reaches this flag, but a single producer bug must not be able to
+  // crash this route's render — there is no error boundary here — so an
+  // unparseable value is treated the same as "unknown" rather than reaching
+  // semver.gte below.
+  const isLatestVersionKnown =
+    !!latestVersion &&
+    latestVersion !== '0.0.0' &&
+    !!semver.valid(latestVersion);
 
   const isVersionUpToDate = React.useMemo(() => {
-    if (!currentVersion || !latestVersion || latestVersion === '0.0.0')
+    if (
+      !currentVersion ||
+      !latestVersion ||
+      latestVersion === '0.0.0' ||
+      !semver.valid(latestVersion)
+    ) {
       return false;
+    }
     return semver.gte(currentVersion, latestVersion);
   }, [currentVersion, latestVersion]);
 
