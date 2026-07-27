@@ -51,10 +51,10 @@ Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
 | `QADAM_FLOW_DIR`   | `qadam-flow`                        | Install directory the compose file and `.env` are written to.       |
 | `QADAM_FLOW_IMAGE` | `ghcr.io/aiqadam/qadam-flow:latest` | Image used by the app and worker services.                         |
 | `QADAM_FLOW_REF`   | `main`                              | Git ref the `docker-compose.yml` is downloaded from.                |
-| `QADAM_FLOW_PORT`  | `8080`                              | Port written into `AP_FRONTEND_URL` and used for the health check.  |
+| `QADAM_FLOW_PORT`  | `8080`                              | Host port the app is published on, and the port used for `AP_FRONTEND_URL` and the health check. |
 
 <Note>
-`QADAM_FLOW_PORT` does **not** change the published port. `docker-compose.yml` maps `8080:80`, so to serve the app on a different host port you also have to edit that mapping in `qadam-flow/docker-compose.yml`.
+`QADAM_FLOW_PORT` is written into the generated `.env`, and `docker-compose.yml` interpolates it into the app's port mapping (`${QADAM_FLOW_PORT:-8080}:80`). Re-running the installer against an existing install adopts the port already recorded in that `.env` unless you set `QADAM_FLOW_PORT` again, in which case the `.env` is updated in place.
 </Note>
 
 ### Day-two commands

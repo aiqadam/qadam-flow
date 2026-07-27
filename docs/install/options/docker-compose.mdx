@@ -99,7 +99,7 @@ Use this if you want the stack under version control, or you intend to modify `d
     docker compose up -d
     ```
 
-    Compose starts four services: `app` (published on `8080:80`), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.0-pg14`), and `redis` (`redis:7.0.7`). PostgreSQL and Redis data live in the named volumes `postgres_data` and `redis_data`.
+    Compose starts four services: `app` (published on `${QADAM_FLOW_PORT:-8080}:80` — set `QADAM_FLOW_PORT` in `.env` to use a different host port), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.0-pg14`), and `redis` (`redis:7.0.7`). PostgreSQL and Redis data live in the named volumes `postgres_data` and `redis_data`.
   </Step>
   <Step title="Sign up">
     Open [http://localhost:8080/sign-up](http://localhost:8080/sign-up) — the first account owns the platform.
