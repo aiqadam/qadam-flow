@@ -45,7 +45,7 @@ npm run test-api                                                # check-migratio
 
 `packages/server/api/.env.tests` is the env file the `test-ce` script sources; it points at `127.0.0.1:5432` (postgres) and `127.0.0.1:6379` (redis) with the credentials baked into `docker-compose.dev.yml`. Tests wipe the DB between files (`TRUNCATE ... CASCADE`), so re-runs are safe.
 
-To run a single file: `cd packages/server/api && export $(cat .env.tests | xargs) && AP_EDITION=ce npx vitest run test/integration/ce/<file>.test.ts`.
+To run a single file: `cd packages/server/api && export $(cat .env.tests | xargs) && npx vitest run test/integration/ce/<file>.test.ts`.
 
 Stop deps when done: `docker compose -f docker-compose.dev.yml down` (or `... down -v` to also drop the DB volume).
 
