@@ -16,6 +16,23 @@
       "rules": {
         "no-console": "off"
       }
+    },
+    {
+      "files": [
+        "*.ts",
+        "*.tsx",
+        "*.js",
+        "*.jsx"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": ["lodash", "lodash/*"]
+          }
+        ],
+        "no-restricted-syntax": "off"
+      }
     }
   ]
 }
