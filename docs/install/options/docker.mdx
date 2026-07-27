@@ -57,6 +57,10 @@ Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
 `QADAM_FLOW_PORT` is written into the generated `.env`, and `docker-compose.yml` interpolates it into the app's port mapping (`${QADAM_FLOW_PORT:-8080}:80`). Re-running the installer against an existing install adopts the port already recorded in that `.env` unless you set `QADAM_FLOW_PORT` again, in which case the `.env` is updated in place.
 </Note>
 
+<Warning>
+**Upgrading from an install that changed the port by hand.** Earlier versions ignored `QADAM_FLOW_PORT`, so the only way to move the port was to edit the `8080:80` mapping in `qadam-flow/docker-compose.yml` — and the installer overwrites that file on every run, silently putting you back on 8080. Move the port into `.env` instead: re-run with `QADAM_FLOW_PORT=<your port>`, which records it in `.env` and repoints `AP_FRONTEND_URL`. The installer warns if it spots an `AP_FRONTEND_URL` pointing at a port the stack will not publish.
+</Warning>
+
 ### Day-two commands
 
 Run these from your install directory (`qadam-flow` by default):
