@@ -130,6 +130,17 @@ export const FORMULA_MAX_INPUT_SIZE = 1_000_000
 // unit than the plain walk the engine-wide guard does, and the gap is also
 // what keeps the two guards independently testable rather than the outer one
 // always masking the inner one.
+//
+// Known measurement gap (not an amplification vector — `to_json`'s output is
+// still bounded to roughly a small multiple of what gets charged, unlike the
+// multiplicative risks FORMULA_MAX_BUILT_STRING_LENGTH guards against): an
+// object key costs 1 unit in `measureSize` regardless of the key's own
+// string length. A 200,000-key object with 1,000-character key names charges
+// 200,000 units — under this budget — but serializes to roughly 200 MB,
+// since `JSON.stringify` writes the full key text for every entry. Key names
+// are normally short (a handful of characters), so this is a ~2x
+// under-count in the pathological case, not the multi-order-of-magnitude gap
+// a size guard exists to prevent.
 export const FORMULA_MAX_JSON_VALUE_BUDGET = 300_000
 
 // The STARTING size of a shared per-evaluation budget that replace() and

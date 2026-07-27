@@ -2,9 +2,9 @@ import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZ
 import { evaluateRaw } from './function-implementations'
 import { AP_FUNCTIONS } from './function-registry'
 
-// Matches every `{{path}}` occurrence in the RAW template — including the
-// ones sitting inside a formula wrapper, since the wrapper's braces don't
-// interfere with this pattern. Kept identical to the one used inside
+// Matches every `{{path}}` occurrence WITHIN ONE SEGMENT's text (never
+// across a segment boundary — see exceedsResolvedVariableBudget for why that
+// distinction matters). Kept identical to the one used inside
 // preprocessExpression/resolveTextVars so this scan and the real resolution
 // agree on what counts as a variable reference.
 const VARIABLE_TOKEN_REGEX = /\{\{([^}]+)\}\}/g
@@ -36,31 +36,20 @@ function evaluate({ expression, sampleData }: EvaluateExpressionParams): Evaluat
     const trimmed = expression.trim()
     if (!trimmed) return { result: '', error: null }
 
-    // Runs once, over the WHOLE template, before tokenizing — a per-segment
-    // check would let the same payload dodge the budget by riding in a text
-    // segment (a bare `{{x}}` outside any formula wrapper never reaches
-    // evaluateSingleFormula at all) or by being spread across many segments,
-    // each of which resets the budget for itself. Every occurrence of a
-    // reference is counted, not deduplicated by variable identity, because
-    // the final result concatenates one copy of the resolved value per
-    // occurrence.
-    //
-    // Scans `unwrap(trimmed)`, NOT the raw template: the wrapper's opening
-    // marker ends in a single `{` (`ap-formula-v1::{`), so a variable sitting
-    // right at the start of the wrapped expression — `wrap('{{x}}')` becomes
-    // `...v1::{{{x}}}::ap...` — lets VARIABLE_TOKEN_REGEX's leftmost match
-    // consume the wrapper's brace as if it were the token's own opening
-    // brace, capturing `{x` (which resolves to nothing) instead of `x`. That
-    // silently dropped the variable from the budget entirely for any
-    // expression starting with `{`. `unwrap` strips the wrapper markers
-    // first, leaving the inner `{{x}}` tokens with no adjacent wrapper brace
-    // to be confused with.
-    if (exceedsResolvedVariableBudget({ template: unwrap(trimmed), sampleData })) {
-        return { result: null, error: 'Formula input data is too large to evaluate' }
-    }
-
     const segments = tokenizeFormulaTemplate(trimmed)
     if (segments.length === 0) return { result: '', error: null }
+
+    // Runs once, over every segment the resolver is about to use, before
+    // resolving any of them — checked against the SAME segments (not a
+    // second tokenizer call, and not the raw/unwrapped template) that
+    // resolveTextVars/evaluateSingleFormula below actually read, so this
+    // check and the real resolution can never disagree about where one
+    // variable reference ends and the next begins. See
+    // exceedsResolvedVariableBudget's comment for why scanning the
+    // concatenated template — even after unwrapping it — was still wrong.
+    if (exceedsResolvedVariableBudget({ segments, sampleData })) {
+        return { result: null, error: 'Formula input data is too large to evaluate' }
+    }
 
     if (segments.length === 1 && segments[0].type === 'formula') {
         return evaluateSingleFormula({ expression: segments[0].value, sampleData })
@@ -96,18 +85,41 @@ function tokenizeFormulaTemplate(template: string): Segment[] {
     return segments.filter((s) => s.value !== '')
 }
 
-// Scans an already-unwrapped template once for every `{{path}}` occurrence —
-// inside what was a formula wrapper or sitting in plain text, it doesn't
-// matter, since both eventually resolve the same variable into the caller's
-// output. Each occurrence is resolved and pushed into an array (not
-// deduplicated), then checked as one combined payload, so
-// `exceedsSizeBudget`'s per-element accounting sums the actual cost of
-// concatenating every repetition. Callers MUST pass `unwrap(template)`, not
-// the raw wrapped template — see the call site in evaluate() for why.
-function exceedsResolvedVariableBudget({ template, sampleData }: { template: string, sampleData: Record<string, unknown> }): boolean {
+// Scans every `{{path}}` occurrence PER SEGMENT — inside what was a formula
+// wrapper or sitting in plain text, it doesn't matter, since both eventually
+// resolve the same variable into the caller's output — then accumulates all
+// of them into ONE combined payload, so `exceedsSizeBudget`'s per-element
+// accounting sums the actual cost of concatenating every repetition across
+// the whole template. This is a shared TOTAL, not a shared per-segment
+// allowance: it does not reset between segments, so spreading a payload
+// across many segments still can't dodge it.
+//
+// Scanning per segment (rather than scanning the concatenated/unwrapped
+// template in one regex pass) is not optional. `VARIABLE_TOKEN_REGEX`'s
+// `[^}]+` cannot cross a `}` but CAN cross a `{`, so an unbalanced `{{` left
+// dangling at the very end of one segment merges with the start of the next
+// segment's real `{{token}}` into one bogus capture that resolves to
+// undefined and is charged 0 — while the real resolvers below
+// (resolveTextVars for text segments, preprocessExpression for formula
+// segments) always run their OWN regex pass over one segment's `value` at a
+// time and can never see across that boundary. A single global scan and the
+// segment-scoped real resolution disagreeing about where one token ends and
+// the next begins is exactly how a full-size value hid from the budget:
+//   ap-formula-v1::{"{{"}::ap-formula-v1{{step_1.body}}
+// tokenizes into a formula segment with value `"{{"` and a text segment
+// `{{step_1.body}}`; scanning them SEPARATELY finds no valid token in the
+// first (its dangling `{{` matches nothing without a closing `}}` inside the
+// same segment) and the real `step_1.body` token intact in the second —
+// matching what the real resolvers do. Scanning the concatenation
+// `"{{"{{step_1.body}}` instead let `[^}]+` walk straight through the `"` and
+// the first segment's trailing `{{`, capturing `"{{__ap_pv0` (garbage,
+// charged 0) and eating the real token as part of that one bogus match.
+function exceedsResolvedVariableBudget({ segments, sampleData }: { segments: Segment[], sampleData: Record<string, unknown> }): boolean {
     const resolvedValues: unknown[] = []
-    for (const match of template.matchAll(VARIABLE_TOKEN_REGEX)) {
-        resolvedValues.push(resolveVariable(match[1].trim(), sampleData) ?? null)
+    for (const seg of segments) {
+        for (const match of seg.value.matchAll(VARIABLE_TOKEN_REGEX)) {
+            resolvedValues.push(resolveVariable(match[1].trim(), sampleData) ?? null)
+        }
     }
     return exceedsSizeBudget({ value: resolvedValues, maxSize: FORMULA_MAX_INPUT_SIZE })
 }

@@ -19,6 +19,10 @@ declare module 'expr-eval' {
     // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
     interface Parser {
         evaluate(expression: string, values: Record<string, unknown>): unknown
+        // Not declared in expr-eval's own .d.ts at all (only `functions: any`
+        // is) — added here so overriding `binaryOps['||']` below doesn't need
+        // a cast. Same shape expr-eval registers its built-in operators with.
+        binaryOps: Record<string, (a: unknown, b: unknown) => unknown>
     }
 }
 
@@ -28,13 +32,15 @@ declare module 'expr-eval' {
 const parser = new Parser()
 
 // A per-call cap on each size-generating function (replace/join_list/
-// to_json/from_json) is not enough: every call gets a FRESH allowance, so
-// chaining N individually-capped calls together (e.g. via suffix()/
-// combine(), which are themselves unguarded concatenation) can still produce
-// N times the intended ceiling — the exact defect class rejected in earlier
-// review rounds. These two mutable trackers are shared by every guarded
-// function call within ONE evaluateRaw() invocation, so the SUM of what
-// they've each produced is what's bounded, not each call in isolation.
+// to_json/from_json/split_text_to_list) is not enough: every call gets a
+// FRESH allowance, so chaining N individually-capped calls together (e.g.
+// via suffix()/combine(), which are themselves unguarded concatenation, or
+// by nesting split_text_to_list() inside itself) can still produce N times
+// (or, when nesting doubles per level, exponentially more than) the intended
+// ceiling — the exact defect class rejected in earlier review rounds. These
+// two mutable trackers are shared by every guarded function call within ONE
+// evaluateRaw() invocation, so the SUM of what they've each produced is
+// what's bounded, not each call in isolation.
 //
 // The heavier alternative — constructing a fresh Parser + function registry
 // per evaluation so each guard closes over its own counter — was considered
@@ -47,6 +53,23 @@ const parser = new Parser()
 // `parser.functions.*` only ever running synchronously inside that
 // try-block — true today (expr-eval has no async support) — so there is no
 // concurrent evaluation that could see another call's tracker.
+//
+// INVARIANT the whole design rests on, and the one edit that breaks it:
+// no `await` may EVER appear between the two assignments above and the
+// `finally` block below — not in evaluateRaw, not in anything it calls. This
+// function is synchronous today (`parser.evaluate` is synchronous and none
+// of the guarded functions are async), so nothing yields between "set the
+// tracker" and "clear the tracker". If that ever changed — an `async`
+// evaluateRaw, or `finally` moved, or the reset moved into a `catch` instead
+// of `finally` (which would skip the reset on the success path, not the
+// failure path, and is just as wrong) — a REJECTED evaluation would leave a
+// stale, already-exhausted tracker in place for the next one on this same
+// worker process, silently failing every subsequent formula evaluation with
+// a "too large" error until the process restarts. This is not locally
+// obvious from reading either guarded function in isolation — it only shows
+// up as a worker-wide outage days after the edit that caused it. See the
+// `formula-evaluator budget: a rejected evaluation does not poison the next
+// one` test in the test suite, which asserts exactly this stays true.
 let currentBuiltStringBudget: { remaining: number } | null = null
 let currentJsonValueBudget: { remaining: number } | null = null
 
@@ -70,6 +93,34 @@ function chargeSharedBudget({ tracker, amount }: { tracker: { remaining: number 
     if (tracker === null) return true
     tracker.remaining -= amount
     return tracker.remaining < 0
+}
+
+// Every size guard above lives on `parser.functions.*` — but `||` (string/
+// array concatenation) and `=` (variable assignment) are built-in expr-eval
+// BINARY OPERATORS, evaluated inside expr-eval's own engine and never
+// touching a registered function at all. Combining them —
+// `(a = v||v) || (b = a||a) || (c = b||b) || ...` — assigns each step's
+// DOUBLED value to a short variable name and reuses that name in the next
+// step, so the expression TEXT grows by a small constant per step while the
+// VALUE doubles: verified against the real `expr-eval@2.0.2` dependency, a
+// 1000-char seed run through 3 such steps (an ~40-character expression)
+// produces a 14,000-character result, and by the equivalent of ~20 steps
+// `concat()` itself throws `RangeError: Invalid string length` — completely
+// unguarded, because it never reaches a single one of the functions above.
+// `parser.binaryOps` is a plain object, overridable the same way
+// `parser.functions` is; wrapping `||` specifically closes this, since `+`/
+// `-` are numeric-only in expr-eval (`Number(a) + Number(b)`) and every
+// other binary/ternary operator (`=`, `?:`, `[`) selects or stores a value
+// without concatenating one, so `||` is the only primitive capable of
+// producing a bigger string/array than either of its own operands.
+const builtInConcat = parser.binaryOps['||']
+parser.binaryOps['||'] = (a: unknown, b: unknown) => {
+    const result = builtInConcat(a, b)
+    const amount = typeof result === 'string' || Array.isArray(result) ? result.length : 0
+    if (chargeSharedBudget({ tracker: currentBuiltStringBudget, amount })) {
+        throw new FormulaSizeLimitError('Result of || is too large to build')
+    }
+    return result
 }
 
 parser.functions.combine = (a: unknown, b: unknown, sep: unknown = '') =>
@@ -403,8 +454,24 @@ parser.functions.deduplicate = (list: unknown, field: unknown) => {
     })
 }
 parser.functions.flatten = (list: unknown) => toArray(list).flat()
-parser.functions.split_text_to_list = (s: unknown, sep: unknown = ',') =>
-    String(s ?? '').split(String(sep)).map((x) => x.trim())
+parser.functions.split_text_to_list = (s: unknown, sep: unknown = ',') => {
+    // `String(arr)` joins an array argument with ',' — nesting this call
+    // (feeding one call's array output back in as the next call's `s`)
+    // round-trips array -> comma-joined string -> array-of-chars each level,
+    // roughly DOUBLING length per nesting level (n chars become ~2n-1 once
+    // the join adds n-1 commas, which then themselves become individual
+    // elements on the next split). ~24 characters of expression text per
+    // level reaches multi-gigabyte well inside the 200 KB expression cap,
+    // and nothing charged it before: the built-string budget covered only
+    // replace()/join_list(). Charged here the same way, against the shared
+    // per-evaluation tracker, so nesting can't compound past the shared
+    // budget even though any single level's own array output looks modest.
+    const str = String(s ?? '')
+    if (chargeSharedBudget({ tracker: currentBuiltStringBudget, amount: str.length })) {
+        throw new FormulaSizeLimitError('Result of split_text_to_list() is too large to build')
+    }
+    return str.split(String(sep)).map((x) => x.trim())
+}
 
 // `if` intentionally NOT registered as a JS function. Eager arg evaluation
 // would break short-circuit semantics (e.g. `if(is_empty(x); "safe"; divide(x; 0))`

@@ -761,11 +761,36 @@ const JSON_TEXT_TOO_LARGE = 'JSON text is too large to parse'
 const JSON_VALUE_TOO_LARGE = 'Value is too large to convert to JSON'
 const REPLACE_RESULT_TOO_LARGE = 'Result of replace() is too large to build'
 const JOIN_LIST_RESULT_TOO_LARGE = 'Result of join_list() is too large to build'
+const SPLIT_TEXT_TO_LIST_RESULT_TOO_LARGE = 'Result of split_text_to_list() is too large to build'
+const CONCAT_RESULT_TOO_LARGE = 'Result of || is too large to build'
+
+// Builds `(x0 = v||v) || (x1 = x0||x0) || ... || (x{n-1} = x{n-2}||x{n-2})`:
+// each step assigns the DOUBLED previous value to a short variable name and
+// reuses that name, so the expression text grows by a small constant per
+// step while the runtime value doubles.
+function chainedAssignConcat({ depth, seedVar }: { depth: number, seedVar: string }): string {
+    const statements: string[] = []
+    let prevVar = seedVar
+    for (let i = 0; i < depth; i++) {
+        const varName = `x${i}`
+        statements.push(`(${varName} = ${prevVar}||${prevVar})`)
+        prevVar = varName
+    }
+    return statements.join(' || ')
+}
 
 function chainReplaceCalls(n: number): string {
     let expr = 'replace({{x}};"a";{{y}})'
     for (let i = 1; i < n; i++) {
         expr = `suffix(${expr};replace({{x}};"a";{{y}}))`
+    }
+    return expr
+}
+
+function nestedSplitTextToList(depth: number): string {
+    let expr = '{{x}}'
+    for (let i = 0; i < depth; i++) {
+        expr = `split_text_to_list(${expr};"")`
     }
     return expr
 }
@@ -838,6 +863,34 @@ describe('formula size bounds', () => {
         expect(error).toBe(INPUT_DATA_TOO_LARGE)
     })
 
+    // Regression: exceedsResolvedVariableBudget used to run ONE regex pass
+    // over the concatenation of every segment (even after unwrapping). This
+    // template tokenizes into a formula segment with value `"{{"` (a
+    // dangling, unmatched open-brace pair) followed by a text segment
+    // `{{step_1.body}}`. Scanned TOGETHER, `[^}]+` walks straight through the
+    // quote and the first segment's trailing `{{`, merging it with the real
+    // token into one bogus capture (`"{{__ap_pv0` after preprocessing) that
+    // resolves to undefined and is charged 0 — hiding the real value
+    // entirely. Scanned per segment (what the real resolvers do), the first
+    // segment has no valid token and the second segment's `step_1.body` is
+    // counted normally.
+    it('a dangling "{{" at the end of one segment can no longer merge with the next segment\'s real token and hide it from the budget', () => {
+        const raw = 'ap-formula-v1::{"{{"}::ap-formula-v1{{step_1.body}}'
+        const bigOutput = 'y'.repeat(2_000_000)
+        const { result: r, error } = okMixed(raw, { step_1: { body: bigOutput } })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    it('the same segment-boundary shape repeated 20 times is still caught', () => {
+        const shape = 'ap-formula-v1::{"{{"}::ap-formula-v1{{step_1.body}}'
+        const raw = shape.repeat(20)
+        const bigOutput = 'y'.repeat(100_000) // 20 * 100_000 = 2_000_000, over the budget
+        const { result: r, error } = okMixed(raw, { step_1: { body: bigOutput } })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
     it('replace() rejects a projected output that would be gigabytes larger than either input', () => {
         // |x| + |x| * (|y| - 1) ≈ 4_000_000 chars, while |x| + |y| = 4_000 —
         // far under the whole-template budget, so only replace()'s own guard
@@ -905,5 +958,68 @@ describe('formula size bounds', () => {
         const { result: r, error } = ok(chainReplaceCalls(3), { x: 'a', y: 'b' })
         expect(error).toBeNull()
         expect(typeof r).toBe('string')
+    })
+
+    // Pins the invariant the shared-tracker design rests on: the trackers in
+    // function-implementations.ts are reset in a `finally` around
+    // parser.evaluate(), so a REJECTED evaluation must not leave the next
+    // one on the same worker process with a stale, already-exhausted budget.
+    // A future edit that moves the reset into a `catch` (skips it on
+    // success), above a `return` (skips it on some paths), or introduces an
+    // `await` between the assignment and the `finally` would break this
+    // silently — no error at edit time, just every later evaluation on that
+    // worker throwing "too large" until the process restarts.
+    it('a rejected evaluation does not poison the budget for the next one', () => {
+        const rejected = ok(chainReplaceCalls(150), { x: 'a'.repeat(100), y: 'y'.repeat(100) })
+        expect(rejected.error).toBe(REPLACE_RESULT_TOO_LARGE)
+
+        const next = ok('replace("aabbaa";"a";"x")')
+        expect(next.error).toBeNull()
+        expect(next.result).toBe('xxbbxx')
+    })
+
+    // Regression: split_text_to_list() was completely unguarded. `String(arr)`
+    // joins an array argument with ',', so nesting the call round-trips
+    // array -> comma-joined string -> array-of-chars each level, roughly
+    // doubling length per level. A 1000-char seed nested 12 deep (281 chars
+    // of expression) produced a 2-million-element array with no error before
+    // this fix; nested 14 deep, 8 million elements.
+    it('nesting split_text_to_list() deeply enough to double past the shared budget is rejected', () => {
+        const x = 'a'.repeat(1000)
+        const { result: r, error } = ok(nestedSplitTextToList(12), { x })
+        expect(r).toBeNull()
+        expect(error).toBe(SPLIT_TEXT_TO_LIST_RESULT_TOO_LARGE)
+    })
+
+    it('a shallow nesting of split_text_to_list() still composes normally', () => {
+        const { result: r, error } = ok(nestedSplitTextToList(2), { x: 'a,b,c' })
+        expect(error).toBeNull()
+        expect(Array.isArray(r)).toBe(true)
+    })
+
+    // Regression: `||` (string/array concatenation) and `=` (assignment) are
+    // built-in expr-eval binary OPERATORS, not registered `parser.functions`
+    // — none of the guards above ever saw them. Chaining assignment +
+    // concatenation doubles the runtime value every step while the
+    // expression text grows by only a small constant per step (verified
+    // against the real expr-eval@2.0.2 dependency: a 290-character
+    // expression at depth 16 produced a 131,070,000-character result with no
+    // error before this fix). `parser.binaryOps['||']` is now overridden to
+    // charge the shared per-evaluation tracker the same way replace()/
+    // join_list()/split_text_to_list() do.
+    it('chaining assignment + || concatenation deeply enough to double past the shared budget is rejected', () => {
+        const expr = chainedAssignConcat({ depth: 16, seedVar: '{{v}}' })
+        const { result: r, error } = ok(expr, { v: 'a'.repeat(1000) })
+        expect(r).toBeNull()
+        expect(error).toBe(CONCAT_RESULT_TOO_LARGE)
+    })
+
+    it('a shallow assignment + || concatenation chain still composes normally', () => {
+        const expr = chainedAssignConcat({ depth: 3, seedVar: '{{v}}' })
+        const { result: r, error } = ok(expr, { v: 'a'.repeat(10) })
+        expect(error).toBeNull()
+        // The outer `||`s between statements also concatenate each step's own
+        // result into the final value: x0 (20) + x1 (40) + x2 (80) = 140.
+        expect(r).toBe('a'.repeat(140))
     })
 })
