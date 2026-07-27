@@ -25,19 +25,27 @@ describe('validateSystemPropTypes', () => {
         expect(new Set(seenProps).size).toBe(seenProps.length)
     })
 
-    it('flags a malformed value for a validated prop exactly once', () => {
+    it('flags a malformed value for a validated prop, reading it exactly once', () => {
         const previousLogLevel = process.env.AP_LOG_LEVEL
         process.env.AP_LOG_LEVEL = 'not-a-real-level'
+        const getSpy = vi.spyOn(system, 'get')
 
-        const errors = validateSystemPropTypes()
+        try {
+            const errors = validateSystemPropTypes()
 
-        expect(errors[AppSystemProp.LOG_LEVEL]).toContain('Current value: not-a-real-level')
-
-        if (previousLogLevel === undefined) {
-            delete process.env.AP_LOG_LEVEL
+            expect(errors[AppSystemProp.LOG_LEVEL]).toContain('Current value: not-a-real-level')
+            // The error map is keyed by prop, so a duplicated pass overwrites rather than appends and
+            // the assertion above cannot see it. Count the reads instead.
+            const logLevelReads = getSpy.mock.calls.filter(([prop]) => prop === AppSystemProp.LOG_LEVEL)
+            expect(logLevelReads).toHaveLength(1)
         }
-        else {
-            process.env.AP_LOG_LEVEL = previousLogLevel
+        finally {
+            if (previousLogLevel === undefined) {
+                delete process.env.AP_LOG_LEVEL
+            }
+            else {
+                process.env.AP_LOG_LEVEL = previousLogLevel
+            }
         }
     })
 })
