@@ -19,7 +19,6 @@ import { InterceptorVerdict } from '../../../../../../src/app/workers/job-queue/
  */
 class FakeRedis {
     private readonly zsets = new Map<string, Map<string, number>>()
-    private readonly strings = new Map<string, string>()
 
     private zsetFor(key: string): Map<string, number> {
         let zset = this.zsets.get(key)
@@ -45,14 +44,13 @@ class FakeRedis {
         let count = 0
         for (const key of keys) {
             if (this.zsets.delete(key)) count += 1
-            if (this.strings.delete(key)) count += 1
         }
         return count
     }
 
     scanStream({ match }: { match: string, count?: number }): AsyncIterable<string[]> {
         const pattern = new RegExp(`^${match.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)
-        const matching = [...this.zsets.keys(), ...this.strings.keys()].filter((key) => pattern.test(key))
+        const matching = [...this.zsets.keys()].filter((key) => pattern.test(key))
         return {
             [Symbol.asyncIterator]: () => {
                 let yielded = false
