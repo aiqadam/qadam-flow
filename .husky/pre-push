@@ -45,8 +45,14 @@ case "$RUN_CHECKS" in
     ;;
   *)
     echo "Running lint..."
-    npm run lint-core || { echo ""; echo "Lint failed. To auto-fix issues, run:"; echo "  npm run lint-dev"; echo "Or target a specific package:"; echo "  npx turbo run lint --filter=\"<packageName>\" --force -- --fix"; exit 1; }
+    # The complement of the qadams glob, i.e. the same set `lint-dev` fixes, so
+    # this covers every non-qadam package including the four that the old
+    # `lint-core` list never named. The qadams are covered by `lint-affected`
+    # below; linting all 238 of them on every push is not worth the wall clock.
+    npx turbo run lint --filter='!@aiqadam/qadam-*' || { echo ""; echo "Lint failed. To auto-fix issues, run:"; echo "  npm run lint-dev"; echo "Or target a specific package:"; echo "  npx turbo run lint --filter=\"<packageName>\" --force -- --fix"; exit 1; }
     npm run lint-affected || { echo ""; echo "Lint failed. To auto-fix issues, run:"; echo "  npm run lint-dev"; echo "Or target a specific package:"; echo "  npx turbo run lint --filter=\"<packageName>\" --force -- --fix"; exit 1; }
+    echo "Running typecheck..."
+    npm run typecheck || { echo ""; echo "Typecheck failed. Fix the type errors above and try again."; exit 1; }
     echo "Running tests..."
     npm run test-unit || { echo ""; echo "Unit tests failed. Check the output above for details."; exit 1; }
     npm run test-api || { echo ""; echo "API tests failed. Check the output above for details."; exit 1; }

@@ -38,7 +38,7 @@ jobs:
       - name: Lint all packages
         run: npm run lint-all
 
-      - name: Typecheck
+      - name: Typecheck (only web declares one today)
         run: npm run typecheck
 
       - name: Unit tests
