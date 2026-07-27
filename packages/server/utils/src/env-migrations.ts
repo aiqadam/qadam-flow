@@ -15,7 +15,7 @@ const LEGACY_QADAM_ALIASES: Record<string, string> = {
 }
 
 // docker-entrypoint.sh and docker-compose.yml read these bare names in the shell before Node (and
-// this whole alias layer) exists, to build the pm2 topology, auto-generate AP_WORKER_TOKEN, and
+// this whole alias layer) exists, to select which process to exec, auto-generate AP_WORKER_TOKEN, and
 // interpolate Postgres's own startup config. A QF_ rename can't reach that layer yet (tracked as a
 // follow-up), so warning about the AP_ name here would tell every stock Docker install to make a
 // change that breaks it. Keep this list in sync with docker-entrypoint.sh / docker-compose.yml, and
@@ -23,6 +23,8 @@ const LEGACY_QADAM_ALIASES: Record<string, string> = {
 const SHELL_LAYER_ONLY_NAMES = new Set([
     'CONTAINER_TYPE',
     'PORT',
+    // PM2 is gone from the image; the entrypoint still reads this one to warn that
+    // it is ignored, so a QF_ rename here would still not reach anything.
     'PM2_INSTANCES',
     'JWT_SECRET',
     'WORKER_TOKEN',
