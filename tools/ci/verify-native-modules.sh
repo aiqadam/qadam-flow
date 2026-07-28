@@ -30,7 +30,15 @@
 
 set -euo pipefail
 
-node -e '
+# `--no-node-snapshot` is mandatory, not defensive. isolated-vm's own vendored
+# README states it for Node >= 20 (laverdet/isolated-vm#424), and every other
+# place in this repo that creates an isolate passes it — see the
+# "IMPORTANT DO NOT REMOVE THIS ARGUMENT" comment in
+# packages/server/worker/src/lib/sandbox/fork.ts, which has a test asserting it.
+# A probe that omitted it would be the one isolate site in the tree that
+# disagrees with the rest, so it goes here even though the step was observed
+# passing without it on node v24.18.0.
+node --no-node-snapshot -e '
 const ivm = require("isolated-vm");
 const isolate = new ivm.Isolate({ memoryLimit: 16 });
 try {

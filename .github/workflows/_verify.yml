@@ -55,6 +55,15 @@ jobs:
       - name: Test doctor.sh diagnostics
         run: tools/ci/test-doctor-sh.sh
 
+      # install-deps.sh is a recursive delete that every install in CI runs, and
+      # the only thing keeping it off a tracked git fixture is a depth bound
+      # that has to stay equal to the cache `path:` globs below and in ci.yml.
+      # This suite asserts that agreement, so the drift cannot be silent. Pure
+      # shell, so it belongs up here with the others — before any install.
+      - name: Test the CI dependency-install helper
+        timeout-minutes: 2
+        run: tools/ci/install-deps.test.sh
+
       - uses: actions/setup-node@v6
         id: node
         with:
@@ -115,9 +124,13 @@ jobs:
           #   hashFiles       bun.lock (resolved versions), bunfig.toml (linker
           #                   and minimumReleaseAge), package.json (workspace
           #                   globs and the `rollup -> @rollup/wasm-node`
-          #                   resolution). All three are repo-root files, so
-          #                   the hash cannot accidentally glob into
+          #                   resolution), .npmrc (scoped registry,
+          #                   legacy-peer-deps, save-exact — editing it can
+          #                   change what gets installed without touching any
+          #                   of the other three). All four are repo-root
+          #                   files, so the hash cannot accidentally glob into
           #                   node_modules and differ between restore and save.
+          #                   install-deps.test.sh asserts all four are here.
           #
           # No `restore-keys`: a prefix match is safe for a download cache,
           # where bun re-resolves everything anyway, and unsafe here. A partial
@@ -126,22 +139,31 @@ jobs:
           # installed and skip its build — leaving a binary that fails at
           # `require()` time, not at install time. Exact match only means every
           # ABI-determining input is identical by construction.
-          key: node-modules-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json') }}
+          key: node-modules-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc') }}
 
-      # Runs `bun install --frozen-lockfile` on hit and on miss alike, so the
-      # lockfile stays authoritative over whatever the cache produced.
+      # Runs `bun install --frozen-lockfile` on hit and on miss alike. Note what
+      # that does and does not check: it asserts resolution needs no lockfile
+      # change, NOT that the restored files are intact — bun skips re-extracting
+      # a package it sees present at the right version. The exact-match key and
+      # the addon probe below are what carry that; see the script's header.
       - name: Install dependencies
         run: tools/ci/install-deps.sh
 
       # The restored tree is only worth having if its addons work, and neither
       # suite would notice if they did not — the api vitest config aliases
-      # isolated-vm to a mock. See the script's header.
+      # isolated-vm to a mock. This is also the only step that can catch a
+      # restore that is corrupt at the expected version. See the script's header.
       - name: Verify native addons load
         run: tools/ci/verify-native-modules.sh
 
       # Immediately after a verified install, not at job end: this tree is a
       # pure function of the key, so nothing later in the job can improve it,
       # and a lint failure should not cost the next run its cache.
+      #
+      # The `if:` carries an implicit `success()`, so a failed addon probe also
+      # means nothing is saved. That coupling is the intended order: a cold run
+      # must establish that what it publishes is good, or one bad build gets
+      # served to every later job.
       - name: Save built node_modules
         if: steps.node-modules.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
