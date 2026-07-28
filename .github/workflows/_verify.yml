@@ -64,21 +64,131 @@ jobs:
       - name: Test the release breaking-change gate
         run: tools/ci/test-breaking-change-gate.sh
 
+      # install-deps.sh is a recursive delete that every install in CI runs, and
+      # the only thing keeping it off a tracked git fixture is a depth bound
+      # that has to stay equal to the cache `path:` globs below and in ci.yml.
+      # This suite asserts that agreement, so the drift cannot be silent. Pure
+      # shell, so it belongs up here with the others — before any install.
+      - name: Test the CI dependency-install helper
+        timeout-minutes: 2
+        run: tools/ci/install-deps.test.sh
+
       - uses: actions/setup-node@v6
+        id: node
         with:
           node-version: 24
 
       - uses: oven-sh/setup-bun@v2
+        id: bun
         with:
           bun-version: 1.3.3
 
+      # Restores the BUILT dependency tree — node_modules including every
+      # compiled `.node` addon — not bun's download cache. Caching the download
+      # cache was tried, measured on real runners and closed unmerged (#157,
+      # then again in #191): it hits, and install time does not move, because
+      # what the ~230 s buys is producing node_modules, not fetching tarballs.
+      # #155 has the phase split.
+      #
+      # `restore`/`save` rather than `actions/cache`, for two reasons: the save
+      # below sits immediately after install, so a later lint failure does not
+      # throw away a tree that installed cleanly; and only this job saves — see
+      # the note on the restore step in ci.yml's `integration-run`.
+      #
+      # The path globs stop at three levels under packages/, the deepest
+      # workspace glob in package.json (`packages/qadams/community/*`), and
+      # deliberately do NOT match `**/node_modules`:
+      # packages/server/engine/test/resources/.../hello_world_npm/node_modules
+      # is a *tracked* fixture, and a cache that both captured and restored it
+      # could silently revert an edit to it.
+      #
+      # These globs must agree with `INSTALL_NODE_MODULES_MAXDEPTH` in
+      # tools/ci/install-deps.sh, which deletes the same set on a retry.
+      # tools/ci/install-deps.test.sh asserts that, so editing one side without
+      # the other fails the build rather than quietly widening a recursive rm.
+      - name: Restore built node_modules
+        id: node-modules
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          # Every input that can change the CONTENT of the tree, and no prefix
+          # `restore-keys` fallback. Component by component:
+          #   v1              manual epoch. actions/cache never re-saves on a
+          #                   hit, so a poisoned entry would be served forever;
+          #                   bumping this is the only way to force a cold
+          #                   rebuild without touching the lockfile.
+          #   runner.os/arch  the tree contains native binaries. The shipped
+          #                   files are named per platform and libc
+          #                   (`isolated-vm.abi137.glibc.node`, `...musl.node`).
+          #   node version    the RESOLVED version, not the `24` spec: those
+          #                   same filenames are keyed by Node's ABI, and
+          #                   anything falling back to `node-gyp rebuild`
+          #                   compiles against this Node's headers. Stricter
+          #                   than ABI alone on purpose — the cost of a Node
+          #                   patch bump is one cold run.
+          #   bun version     bun decides the tree's SHAPE. bunfig.toml sets
+          #                   `linker = "isolated"`, so the layout is
+          #                   node_modules/.bun/<pkg>@<ver>/... plus a symlink
+          #                   farm; a bun bump can change that wholesale.
+          #   hashFiles       bun.lock (resolved versions), bunfig.toml (linker
+          #                   and minimumReleaseAge), package.json (workspace
+          #                   globs and the `rollup -> @rollup/wasm-node`
+          #                   resolution), .npmrc (scoped registry,
+          #                   legacy-peer-deps, save-exact — editing it can
+          #                   change what gets installed without touching any
+          #                   of the other three). All four are repo-root
+          #                   files, so the hash cannot accidentally glob into
+          #                   node_modules and differ between restore and save.
+          #                   install-deps.test.sh asserts all four are here.
+          #
+          # No `restore-keys`: a prefix match is safe for a download cache,
+          # where bun re-resolves everything anyway, and unsafe here. A partial
+          # hit would put a `.node` built for a different Node ABI on disk at
+          # the version bun expects, so bun would consider that package
+          # installed and skip its build — leaving a binary that fails at
+          # `require()` time, not at install time. Exact match only means every
+          # ABI-determining input is identical by construction.
+          key: node-modules-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc') }}
+
+      # Runs `bun install --frozen-lockfile` on hit and on miss alike. Note what
+      # that does and does not check: it asserts resolution needs no lockfile
+      # change, NOT that the restored files are intact — bun skips re-extracting
+      # a package it sees present at the right version. The exact-match key and
+      # the addon probe below are what carry that; see the script's header.
       - name: Install dependencies
-        run: |
-          bun install --frozen-lockfile || {
-            echo "::warning::bun install failed (likely isolated-vm postinstall flake); retrying with fresh cache"
-            rm -rf ~/.bun/install/cache
-            bun install --frozen-lockfile
-          }
+        run: tools/ci/install-deps.sh
+
+      # The restored tree is only worth having if its addons work, and neither
+      # suite would notice if they did not — the api vitest config aliases
+      # isolated-vm to a mock. This is also the only step that can catch a
+      # restore that is corrupt at the expected version. See the script's header.
+      - name: Verify native addons load
+        run: tools/ci/verify-native-modules.sh
+
+      # Immediately after a verified install, not at job end: this tree is a
+      # pure function of the key, so nothing later in the job can improve it,
+      # and a lint failure should not cost the next run its cache.
+      #
+      # The `if:` carries an implicit `success()`, so a failed addon probe also
+      # means nothing is saved. That coupling is the intended order: a cold run
+      # must establish that what it publishes is good, or one bad build gets
+      # served to every later job.
+      - name: Save built node_modules
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          # The key restore COMPUTED, not a re-evaluation of the expression.
+          # Re-writing it here would be a second chance to drift.
+          key: ${{ steps.node-modules.outputs.cache-primary-key }}
 
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
