@@ -1059,29 +1059,47 @@ describe('formula size bounds', () => {
         expect(result('round(3.456;1)')).toBe(3.5)
     })
 
-    // Regression: expr-eval resolves names against several internal tables
-    // (`functions`, `unaryOps`, `binaryOps`, `ternaryOps`, `consts`, and the
-    // per-call `vars` scope) using `in` or bracket access, both of which
-    // walk the WHOLE prototype chain — so removing every OWN unwanted key
-    // from `functions` alone still left every `Object.prototype` method
-    // (toString, hasOwnProperty, valueOf, ...) reachable through one of the
-    // other five, undermining the "default-deny" claim. Nulling only
-    // `functions`' prototype was tried and measured insufficient twice more
-    // (see function-implementations.ts, right above the six
-    // `Object.setPrototypeOf` calls, for the exact chain of what was tried
-    // and found still leaking) before landing on all six. `toString` is
-    // chosen here as the representative case; `hasOwnProperty`,
-    // `propertyIsEnumerable`, `isPrototypeOf`, `toLocaleString`, `valueOf`,
-    // and `constructor` were each independently confirmed blocked the same
-    // way during development of this fix.
-    it('Object.prototype methods are no longer reachable as formula functions', () => {
+    // KNOWN OPEN GAP, not closed by this PR: the allowlist sweep only
+    // removes OWN keys from `parser.functions`. `Object.prototype` methods
+    // remain callable as formula "functions" today, because `functions` (and
+    // several other expr-eval internal tables) inherit `Object.prototype`
+    // and expr-eval resolves names against them with `in`/bracket access,
+    // which walks the whole chain. `toString(1)` evaluating to the string
+    // "[object Undefined]" is the CURRENT, ACCEPTED behaviour — pinning it
+    // here (rather than asserting it's blocked, which would be false) is
+    // deliberate: a version of this fix DID null those prototypes, and that
+    // was reverted after it was found to enable remote code execution (see
+    // the two regression tests below, and the long comment in
+    // function-implementations.ts right above where the sweep ends,
+    // explaining exactly why those prototypes must stay untouched until a
+    // real fix — blocking `constructor`/`__proto__`/`prototype` member
+    // access, or disabling expr-eval's `()=` operator — is deliberately
+    // designed, not retried opportunistically).
+    it('Object.prototype methods are callable as formula functions today — a known, accepted gap, not a regression', () => {
         const { result: r, error } = ok('toString(1)')
+        expect(error).toBeNull()
+        expect(r).toBe('[object Undefined]')
+    })
+
+    // Regression (security-critical): confirmed as a working RCE — nulling
+    // unaryOps/binaryOps/ternaryOps removed an ACCIDENTAL barrier. Those
+    // tables inheriting `Object.prototype` means expr-eval's tokenizer finds
+    // `constructor` there and tokenizes `X.constructor` as an operator,
+    // which is a parse error today. If a future change nulls those
+    // prototypes again, `constructor` becomes an ordinary member name,
+    // `IMEMBER` access is not filtered, and this reaches `Function`'s
+    // constructor. Needs no sample data at all.
+    it('member access to constructor.constructor does not evaluate (RCE regression, payload 1)', () => {
+        const { result: r, error } = ok('{{step_1.body}}.constructor.constructor("return 7")()', { step_1: { body: 'x' } })
         expect(r).toBeNull()
         expect(error).not.toBeNull()
     })
 
-    it('a second Object.prototype method (hasOwnProperty) is also unreachable', () => {
-        const { result: r, error } = ok('hasOwnProperty("x")')
+    // Same mechanism as payload 1, via a bare identifier plus expr-eval's
+    // `()=` function-definition operator instead of member access on a
+    // resolved variable.
+    it('a bare constructor.constructor reference inside a function definition does not evaluate (RCE regression, payload 2)', () => {
+        const { result: r, error } = ok('(g(y) = constructor.constructor("return 7")())(1)')
         expect(r).toBeNull()
         expect(error).not.toBeNull()
     })

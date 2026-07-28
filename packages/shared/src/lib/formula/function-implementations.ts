@@ -19,30 +19,19 @@ declare module 'expr-eval' {
     // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
     interface Parser {
         evaluate(expression: string, values: Record<string, unknown>): unknown
-        // `binaryOps` and `ternaryOps` are NOT declared in expr-eval's own
-        // .d.ts at all — added here so overriding `binaryOps['||']` below,
-        // and calling `Object.setPrototypeOf` on `ternaryOps` further down,
-        // don't need a cast. (`unaryOps`/`functions`/`consts` ARE already
-        // declared there, as `any` — TypeScript requires a merged interface
-        // member to have the EXACT SAME type as the original declaration,
-        // so they are deliberately left un-redeclared here rather than
-        // conflicting with that `any`; they're only ever passed whole to
-        // `Object.setPrototypeOf`, which accepts `any` fine.)
-        //
-        // `binaryOps` is deliberately NOT a uniform
-        // `Record<string, (a, b) => unknown>`: expr-eval's binary operators
-        // do not all share one shape (`=` is 3-arg `setVar(name, value,
-        // variables)`, `[` is `arrayIndex(array, index)` — neither is a
-        // 2-arg `(a, b)` function). A uniform 2-arg record would let a
-        // future edit assign a wrong-arity function to `binaryOps['=']` or
-        // `binaryOps['[']` and still type-check, silently breaking
-        // assignment or array-index evaluation. Only `||` — the one key
-        // this module actually reads/writes — gets a real signature; every
-        // other key is `unknown`, forcing a type guard before anyone
-        // touches one. `ternaryOps` gets no per-key signature at all — this
-        // file never touches any of its keys, only its prototype.
+        // Not declared in expr-eval's own .d.ts at all (only `functions: any`
+        // is) — added here so overriding `binaryOps['||']` below doesn't need
+        // a cast. Deliberately NOT a uniform `Record<string, (a, b) => unknown>`:
+        // expr-eval's binary operators do not all share one shape (`=` is
+        // 3-arg `setVar(name, value, variables)`, `[` is `arrayIndex(array,
+        // index)` — neither is a 2-arg `(a, b)` function). A uniform 2-arg
+        // record would let a future edit assign a wrong-arity function to
+        // `binaryOps['=']` or `binaryOps['[']` and still type-check, silently
+        // breaking assignment or array-index evaluation. Only `||` — the one
+        // key this module actually reads/writes — gets a real signature;
+        // every other key is `unknown`, forcing a type guard before anyone
+        // touches one.
         binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
-        ternaryOps: object
     }
 }
 
@@ -148,17 +137,6 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
     }
     currentBuiltStringBudget = { remaining: FORMULA_MAX_BUILT_STRING_LENGTH }
     currentJsonValueBudget = { remaining: FORMULA_MAX_JSON_VALUE_BUDGET }
-    // A SECOND path to the same prototype-chain leak the `parser.functions`
-    // sweep above closes: expr-eval's IVAR resolution falls through to
-    // `values[name]` (`values` being this `vars` object) whenever the name
-    // isn't found in `functions`/`unaryOps` — and a plain `{}` inherits
-    // `Object.prototype`, so `vars['toString']` resolves to the inherited
-    // method even with an empty `vars`. Verified: with only
-    // `parser.functions`'s prototype nulled, `toString(1)` still evaluated
-    // to "[object Undefined]" through THIS path. `vars` is freshly built
-    // per call by preprocessExpression and never read again after this
-    // call, so mutating its prototype here is safe.
-    Object.setPrototypeOf(vars, null)
     try {
         return parser.evaluate(expression, vars)
     }
@@ -688,54 +666,59 @@ for (const key of Object.keys(parser.functions)) {
     }
 }
 
-// The sweep above only removes OWN enumerable keys — but expr-eval resolves
-// names against several internal tables using `in` or plain bracket access,
-// and both walk the WHOLE prototype chain, not just own properties. Every
-// one of these tables is a plain object literal with the default
-// `Object.prototype`, and this was found the hard way, one leak at a time,
-// by instrumenting the real `expr-eval` package locally and re-testing
-// `toString(1)` after each fix — recorded here so the next person does not
-// have to redo that work:
-//   1. Nulling only `functions`' prototype (an earlier version of this fix
-//      did just this) left `toString(1)` still evaluating to
-//      "[object Undefined]". Cause: `TokenStream.isNamedOp` — called at
-//      PARSE time, before `functions` is ever consulted — checks `str in
-//      this.binaryOps || str in this.unaryOps || str in this.ternaryOps` to
-//      decide whether an identifier becomes an operator token at all, and
-//      found "toString" through `unaryOps`' inherited
-//      `Object.prototype.toString`. It got tokenized as a prefix unary
-//      operator (`ParserState.parseFunctionCall`'s `isPrefixOperator`,
-//      `token.value in unaryOps`) and evaluated via `expr.unaryOps['toString']`
-//      — the same inherited method, called with `1` as its only argument
-//      and `this === undefined`, producing that exact string.
-//   2. Nulling `functions`, `unaryOps`, `binaryOps`, and `ternaryOps`
-//      together STILL left `toString(1)` evaluating, this time to an
-//      `INUMBER` token holding the function reference directly. Cause:
-//      `TokenStream.isConst` — checked immediately after `isNamedOp` fails
-//      — does `str in this.consts`, and `consts` (`{E, PI, true, false}`)
-//      was untouched and still had the default prototype, so "toString" was
-//      tokenized as a CONSTANT whose value is the inherited method.
-//   3. `values` (this file's `vars` parameter, also a plain object by
-//      default) is a further, independent path: the main `evaluate()`
-//      loop's IVAR branch falls back to `values[item.value]` after
-//      `functions`/`unaryOps` fail, and inherited methods are reachable
-//      there the same way. See `evaluateRaw`'s own
-//      `Object.setPrototypeOf(vars, null)`.
-// That is six objects total — `functions`, `unaryOps`, `binaryOps`,
-// `ternaryOps`, `consts`, and `vars` — everywhere this package was found to
-// use `in` or bracket access against a name that ultimately comes from
-// user-authored formula text. None of our own registrations depend on
-// inheriting anything from `Object.prototype`: every `parser.functions.X =
-// ...` assignment above is an own property, and this file assigns nothing
-// to `unaryOps`/`binaryOps`/`ternaryOps`/`consts` except the single
-// `binaryOps['||']` override, itself an own property. Verified after all
-// six: `toString(1)` and `hasOwnProperty("x")` both fail to evaluate, and
-// the full existing test suite (every documented function) still passes.
-Object.setPrototypeOf(parser.functions, null)
-Object.setPrototypeOf(parser.unaryOps, null)
-Object.setPrototypeOf(parser.binaryOps, null)
-Object.setPrototypeOf(parser.ternaryOps, null)
-Object.setPrototypeOf(parser.consts, null)
+// KNOWN OPEN GAP, deliberately NOT fixed here — read this before reaching
+// for `Object.setPrototypeOf` on `functions`/`unaryOps`/`binaryOps`/
+// `ternaryOps`/`consts`/`vars`, which looks like the obvious next step and
+// is NOT SAFE to make without a broader, deliberate design change:
+//
+// The sweep above only removes OWN enumerable keys from `parser.functions`.
+// `Object.prototype` methods (`toString`, `hasOwnProperty`, `valueOf`, ...)
+// remain callable as formula "functions" — `toString(1)` evaluates to the
+// string "[object Undefined]" — because several expr-eval internal tables
+// (`functions`, `unaryOps`, `binaryOps`, `ternaryOps`, `consts`, and the
+// per-call `vars` scope) are plain objects that inherit `Object.prototype`,
+// and expr-eval resolves names against them with `in` or bracket access,
+// both of which walk the whole prototype chain. As far as two review passes
+// could determine, this specific gap — a handful of harmless
+// `Object.prototype` methods being callable, each invoked with an
+// `undefined` receiver — is not itself exploitable. It is left open, not
+// closed, and must not be described as closed.
+//
+// A version of this file DID null all six of those prototypes, and that
+// change was reverted after it was found to enable remote code execution,
+// confirmed with a working `child_process.execSync` payload against this
+// evaluator. The mechanism: `unaryOps`/`binaryOps`/`ternaryOps` inheriting
+// `Object.prototype` is not only a leak — it is ALSO an accidental barrier.
+// `TokenStream.isNamedOp` (parse time) tokenizes any identifier found in
+// those three tables as an OPERATOR rather than a plain member name. Because
+// `constructor` is inherited from `Object.prototype` on all three, expr-eval
+// tokenizes `X.constructor` as `X` followed by an operator token and the
+// parse dies — `{{step_1.body}}.constructor` is a parse error today, with
+// the prototypes intact. Null those three prototypes and `constructor`
+// becomes an ORDINARY member name with no special handling, and expr-eval's
+// `IMEMBER` access is not filtered at all: `X.constructor.constructor("...")()`
+// reaches `Function`'s constructor and runs arbitrary JavaScript. Both of
+// these were confirmed to evaluate successfully once the prototypes were
+// nulled (see the regression tests in function-evaluator.test.ts, which
+// assert they do NOT evaluate — keep those passing):
+//   {{step_1.body}}.constructor.constructor("return 7")()
+//   (g(y) = constructor.constructor("return 7")())(1)
+// The first needs no sample data at all. There is also a SEVENTH object,
+// found only after the RCE was already confirmed: `evaluate()`'s IFUNDEF
+// branch (used by the `()=` function-definition operator) builds its
+// callee's scope with `Object.assign({}, values)` — a FRESH object with the
+// default prototype, constructed after `vars` itself would have been
+// nulled, so nulling `vars` does not even fully close that one path.
+//
+// A real fix exists but is a deliberate design decision for this module's
+// owner, not something to retry opportunistically: blocking member access to
+// `constructor`/`__proto__`/`prototype` specifically (in `IMEMBER`
+// resolution), and/or disabling expr-eval's `()=` function-definition
+// operator entirely (removing the ability to define callable closures from
+// formula text at all, which `map`/`fold`/`filter` already needed as
+// prerequisites before they were removed by the sweep above — this class of
+// risk is exactly why those three were removed rather than guarded). Until
+// that design decision is made, the six prototypes above stay untouched.
 
 function toArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value
