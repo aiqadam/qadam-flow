@@ -4,6 +4,38 @@ description: "This list shows all versions that include breaking changes and how
 icon: "hammer"
 ---
 
+## How this page is enforced
+
+<Note>
+This section is for maintainers cutting a release. If you are upgrading an install, skip to the version list below.
+</Note>
+
+This page is not maintained by convention — a CI job refuses to publish a release without it.
+
+**Why.** [PR #210](https://github.com/aiqadam/qadam-flow/pull/210) removed the `WORKER_AND_APP` launch mode and made `AP_CONTAINER_TYPE` required. Any all-in-one container install refuses to start after that ships, and there is no automated migration from the embedded PGLite database to PostgreSQL, so recovery is manual. The change *is* written up below — but only because a person noticed it needed to be. Nothing mechanical would have stopped the release. Since `:latest` is published solely by `release.yml` on a tag push (merges to `main` publish `:main` and `:sha-…` only), the tag is the last moment at which a check can stop an undocumented breaking change from reaching users, so that is where the check lives.
+
+**What it does.** On a `v*` tag push, `tools/ci/check-breaking-change-changelog.sh` walks every commit from the previous non-prerelease tag up to the tag being released. If any of them declares a breaking change — a Conventional Commits `type!:` subject, or a `BREAKING CHANGE:` footer — then this file must have been modified somewhere in that range **and** must contain a non-empty `## <version>` section for the version being released. In practice that means renaming the `## Unreleased` heading below to the version number as part of cutting the release.
+
+**What it cannot catch.** It reads declarations, not behaviour. A breaking change that nobody marked with `!` or a `BREAKING CHANGE:` footer passes it, as does an entry whose content is useless. It raises the floor; it does not replace review.
+
+**When it cannot measure, it fails.** A shallow checkout, a missing tag, an empty commit range or a missing changelog file all exit with `UNKNOWN` and fail the release rather than reporting "no breaking changes found". An empty measurement is never rendered as a pass.
+
+**Overriding it.** If a `!` commit genuinely needs no entry here, the preferred fix is a `Breaking-Change-Exempt: <reason>` trailer on that commit. At release time, when rewriting the commit is no longer an option, re-cut the tag as an *annotated* tag whose message contains:
+
+```
+Release-Gate-Override: <why this release needs no changelog entry>
+```
+
+for example:
+
+```bash
+git tag -d v1.2.0
+git tag -a v1.2.0 -m 'Release-Gate-Override: entry lands in #999, shipping the hotfix first'
+git push -f origin v1.2.0
+```
+
+The gate then passes and prints the tagger's name, email and reason into the job log and the run summary. The reason is stored in the tag object, so `git show v1.2.0` shows it forever. This is deliberately a little more work than writing the changelog entry, and deliberately impossible to do invisibly — a lightweight tag cannot carry an override. Do not delete the check instead; the whole reason it exists is that the previous control was somebody remembering.
+
 ## Unreleased
 
 ### What has changed?
