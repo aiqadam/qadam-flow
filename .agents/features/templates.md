@@ -85,4 +85,4 @@ Query params for list: `type`, `pieces[]`, `tags[]`, `search`, `category`.
 - The list endpoint concatenates `loadOfficialTemplatesOrReturnEmpty` (community proxy) with `loadCustomTemplatesOrReturnEmpty` (local DB filtered by `platformId`), and the latter is always empty — see Summary.
 - No template can be created, updated or deleted via the API — the controller exposes GET routes only.
 - Custom templates listing is skipped silently when `manageTemplatesEnabled` is false — no error is thrown, an empty array is returned (`template.controller.ts`).
-- `migrateFlowVersionTemplateList` (`flows/flow-version/migrations/index.ts`) exists to migrate stored template flows across schema versions, but nothing in the template module calls it — it has no caller in `packages/server/api/src`.
+- `migrateFlowVersionTemplateList` (`flows/flow-version/migrations/index.ts`) had no caller anywhere in the repo and was removed as dead code.

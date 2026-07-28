@@ -30,11 +30,6 @@ export function getEnginePath(): string {
     return path.join(getGlobalCacheCommonPath(), 'main.js')
 }
 
-export enum CacheState {
-    READY = 'READY',
-    PENDING = 'PENDING',
-}
-
 export async function deleteStaleCache(): Promise<void> {
     try {
         const cacheDir = path.resolve(GLOBAL_CACHE_ALL_VERSIONS_PATH)

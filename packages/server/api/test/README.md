@@ -26,11 +26,9 @@ Key helpers live under `test/helpers/`:
 ## Running the tests
 
 ```bash
-npm run test             # runs test-ce && test-ee && test-cloud sequentially
+npm run test             # runs test-ce
 npm run test-unit        # vitest run test/unit --bail 1
-npm run test-ce          # loads .env.tests, AP_EDITION=ce, runs test/integration/ce
-npm run test-ee          # same, AP_EDITION=ee, runs test/integration/ee
-npm run test-cloud       # same, runs test/integration/cloud
+npm run test-ce          # loads .env.tests, runs test/integration/ce
 ```
 
 Integration tests require a running Postgres + Redis (see `.env.tests`).
