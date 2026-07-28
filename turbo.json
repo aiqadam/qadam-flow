@@ -123,7 +123,8 @@
       //    all ~247 packages and then resolves that node's `dependsOn` even for
       //    the ones with no `test` script. With `["build"]` that meant building
       //    the entire monorepo to run 21 test suites (confirmed with
-      //    `--dry=json`: 247 build tasks). With `["^build"]` it is 14.
+      //    `--dry=json`: 247 build tasks). With `["^build"]` it is 15 — the same
+      //    set the two old filtered invocations carried between them.
       //
       // `^build` is still required rather than dropped: the source aliases above
       // are invisible to this task's `inputs`, so without it a change in
@@ -134,6 +135,29 @@
       // loads and the aliased manual mocks are all inputs to the run. Leaving
       // them out means editing one of them gets a cache hit and executes nothing
       // while still reporting success — the #148 / #164 failure mode.
+      "inputs": [
+        "src/**",
+        "test/**",
+        "tsconfig*.json",
+        "vitest.config.*",
+        "vitest.setup.*",
+        ".env.tests",
+        "__mocks__/**"
+      ],
+      "outputs": ["coverage/**"]
+    },
+    // `web#test` keeps the self-`build` the generic `test` task just dropped, and
+    // not because the suite needs it — it runs in a node environment off `src/**`
+    // and reads no bundle. It is the only thing in the required `Lint + Unit Tests`
+    // job that runs `vite build`: `typecheck` type-checks web but does not bundle,
+    // so without this a bundler-level break (a vite plugin, an asset that fails to
+    // resolve — anything `tsc` cannot see) would fail only the `Docker Image` job,
+    // which is not a required status check. Removing it silently narrows CI, which
+    // is the exact defect this file's other comments are about. If the bundle gets
+    // its own step in `_verify.yml`, drop this override then.
+    "web#test": {
+      "dependsOn": ["build"],
+      // Same inputs as `test` — see the note there.
       "inputs": [
         "src/**",
         "test/**",
