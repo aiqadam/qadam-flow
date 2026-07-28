@@ -120,16 +120,32 @@ describe('isolateProcess', () => {
     })
 
     describe('argv', () => {
-        it('emits all static --dir flags in the expected order', async () => {
+        it('emits all static --dir flags, hardened by --no-default-dirs', async () => {
             await callCreate()
 
             const args: string[] = spawnMock.mock.calls[0][1]
-            expect(args.slice(0, 4)).toEqual([
+            const staticDirFlags = [
+                '--dir=/bin/',
+                '--dir=/lib/',
+                '--dir=/lib64/:maybe',
                 '--dir=/usr/bin/',
+                '--dir=/usr/lib/',
                 '--dir=/usr/local/',
                 `--dir=/etc/=${etcDir}`,
                 '--dir=/usr/src/node_modules/',
-            ])
+                '--dir=proc=proc:fs',
+                '--dir=/dev=/dev:dev',
+            ]
+
+            expect(args).toContain('--no-default-dirs')
+            for (const flag of staticDirFlags) {
+                expect(args).toContain(flag)
+            }
+
+            const noDefaultDirsIndex = args.indexOf('--no-default-dirs')
+            for (const flag of staticDirFlags) {
+                expect(args.indexOf(flag)).toBeGreaterThan(noDefaultDirsIndex)
+            }
         })
 
         it('never drops the /etc mount (binds to the bundled etcDir)', async () => {
