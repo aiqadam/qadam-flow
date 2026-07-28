@@ -17,6 +17,15 @@
 # (including to .env). Everything it prints is safe to paste into a GitHub issue
 # — secrets are reported by presence and shape only, never by value.
 #
+# Deliberately absent: any inspection of processes *inside* a container. There is
+# no in-container supervisor to inspect since #210 — docker is the supervisor, one
+# `exec`ed process per container, so a process that dies takes its container with
+# it and surfaces in `restarts` and `containers` below. Whether that is enough, or
+# whether the image needs a HEALTHCHECK and the API a health endpoint, is #223's
+# question; the answer belongs in the image and the compose file, not in a bespoke
+# probe here. Do not re-add one on the first sight of a crash-looping process —
+# take it to #223.
+#
 # Exit codes:
 #   0  everything material passed (warnings do not fail the run)
 #   1  at least one check FAILed — the install is broken
@@ -338,6 +347,12 @@ check_containers() {
 
 # What this catches: a container that docker reports as `Up` because it keeps
 # being restarted. `docker ps` shows the current attempt, not the count.
+#
+# Since #210 this is the supervision signal, not a supplement to one: each
+# container `exec`s a single process as PID 1, so a Node process that dies takes
+# the container with it and the restart policy's count is what a crash loop looks
+# like from outside. It does not cover a process that is alive and wedged — the
+# `workers` check below is what covers that, from the app's own registry.
 check_restarts() {
   restarts_ok=yes
   for svc in $(service_list); do
@@ -356,62 +371,6 @@ check_restarts() {
     done
   done
   [ "$restarts_ok" = yes ] && pass restarts "no container has been restarted by docker"
-  return 0
-}
-
-# What this catches: THE motivating failure. Each Qadam Flow container runs its
-# processes under an in-container supervisor (pm2). When the worker process dies
-# — a bad token, a missing secret — pm2 restarts it, and after enough attempts
-# marks it `errored` and stops trying. The container stays `Up`, docker's
-# RestartCount stays 0, and the API keeps answering 200. Nothing outside the
-# container can see it. This looks inside.
-#
-# The parse runs through node (present in the image by construction — it is a
-# `node:` base) rather than grep, because `pm2 jlist` dumps every process's full
-# environment, AP_JWT_SECRET and the database password included. Only four
-# fields per process ever leave the container.
-check_supervisor() {
-  supervisor_seen=no
-  supervisor_ok=yes
-  for svc in $(service_list); do
-    [ -n "$(running_ids "$svc")" ] || continue
-    svc_pm2=$(dexec "$svc" sh -c 'command -v pm2 >/dev/null 2>&1 || exit 9
-pm2 jlist 2>/dev/null | node -e "
-let s = \"\";
-process.stdin.on(\"data\", (d) => { s += d; });
-process.stdin.on(\"end\", () => {
-  try {
-    const list = JSON.parse(s);
-    for (const p of list) {
-      console.log([p.name, p.pm2_env.status, p.pm2_env.restart_time, p.pm2_env.unstable_restarts].join(\"|\"));
-    }
-  } catch (e) { process.exit(3); }
-});
-"' || true)
-    [ -n "$svc_pm2" ] || continue
-    supervisor_seen=yes
-    printf '%s\n' "$svc_pm2" | tr -d '\r' | sed "/^\$/d; s|^|${svc}\||" > "$TMPDIR_DOCTOR/pm2"
-    while IFS='|' read -r p_svc p_name p_status p_restarts p_unstable; do
-      if [ "$p_status" != online ]; then
-        bad supervisor "${p_name} in service '${p_svc}' is ${p_status} after ${p_restarts} restart(s) — the container is Up but this process is not running" \
-          "docker compose exec ${p_svc} pm2 logs ${p_name} --lines 100 --nostream"
-        supervisor_ok=no
-      elif num_lt 4 "$p_restarts"; then
-        bad supervisor "${p_name} in service '${p_svc}' has been restarted ${p_restarts} times (${p_unstable} unstable) — it is crash-looping" \
-          "docker compose exec ${p_svc} pm2 logs ${p_name} --lines 100 --nostream"
-        supervisor_ok=no
-      elif num_lt 0 "$p_restarts"; then
-        soft supervisor "${p_name} in service '${p_svc}' has been restarted ${p_restarts} time(s)" \
-          "docker compose exec ${p_svc} pm2 logs ${p_name} --lines 100 --nostream"
-        [ "$supervisor_ok" = no ] || supervisor_ok=warned
-      fi
-    done < "$TMPDIR_DOCTOR/pm2"
-  done
-  if [ "$supervisor_seen" = no ]; then
-    skip supervisor "no in-container supervisor found — nothing to inspect inside the containers"
-  elif [ "$supervisor_ok" = yes ]; then
-    pass supervisor "every supervised process is online with no restarts"
-  fi
   return 0
 }
 
@@ -556,9 +515,10 @@ check_workers() {
     return 0
   fi
 
-  # In WORKER_AND_APP topologies there is no `worker` service and the worker runs
-  # inside the app container, so "no worker container" only means something when
-  # the compose file declares one.
+  # "No worker container" only means something when the compose file declares a
+  # worker service. An operator whose workers run elsewhere — a separate host, a
+  # separate compose project — has none here by design, and must not be told the
+  # install is broken for it.
   workers_service=no
   for svc in $(service_list); do
     [ "$svc" = worker ] && workers_service=yes
@@ -910,7 +870,6 @@ main() {
   check_env
   check_containers
   check_restarts
-  check_supervisor
   check_api
   check_postgres
   check_redis

@@ -89,9 +89,10 @@ docker compose down -v                        # stop AND delete all data
 ### Check the install is working
 
 `docker compose ps` tells you whether the containers are running, which is not
-the same thing as whether Qadam Flow works. An install whose worker process has
-died keeps every container `Up`, keeps a restart count of `0`, and keeps
-answering the health endpoint with a `200` — while no flow ever executes.
+the same thing as whether Qadam Flow works. A worker container can be `Up`, never
+have restarted, and still take no job — because it never registered with the app,
+stopped asking for work, or is running a different release than the app. The API
+answers `200` throughout.
 
 Run the doctor from the directory that contains your install (the parent of
 `qadam-flow`):

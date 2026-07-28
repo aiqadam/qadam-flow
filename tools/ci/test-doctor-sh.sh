@@ -15,9 +15,9 @@
 # output at all.
 #
 # The stack-dependent checks (workers, version gate, postgres/redis
-# reachability, the supervisor probe) cannot run here: they need a live compose
-# project. They were validated by hand against a real stack with induced
-# failures — see the PR that introduced this file.
+# reachability) cannot run here: they need a live compose project. They were
+# validated by hand against a real stack with induced failures — see the PR that
+# introduced this file.
 #
 # Run from the `Lint + Unit Tests` job, which is unconditional, so this can
 # never be skipped by the docs-only path filter. Pure shell, no install needed.
@@ -406,6 +406,46 @@ fi
 if printf '%s' "$out" | grep -q 'PASS  env'; then ok; else fail_case 'the non-tty run still has to report' "output: $out"; fi
 
 # ---------------------------------------------------------------------------
+echo "== structural: the roster of checks main() runs =="
+
+# Pins the exact set, in order. Removing `check_supervisor` (the pm2 probe, dropped
+# once #210 made docker the supervisor) changed no assertion in this file, because
+# every check that needs a live stack is unassertable here — a check could be
+# deleted and the suite would stay green. This is the assertion that makes the
+# roster a deliberate decision instead of a silent one; update it on purpose.
+expected_checks='check_env
+check_containers
+check_restarts
+check_api
+check_postgres
+check_redis
+check_workers
+check_version
+check_queue
+check_logs
+check_disk'
+actual_checks="$(sed -n '/^main() {/,/^}/p' "$doctorsh" | sed -n 's/^  \(check_[a-z_]*\)$/\1/p')"
+if [ "$actual_checks" = "$expected_checks" ]; then
+  ok
+else
+  fail_case 'main() runs an unexpected set of checks' \
+    "expected:" "$expected_checks" "actual:" "$actual_checks"
+fi
+
+# Every check main() calls must exist, and every check_* defined must be called —
+# a defined-but-uncalled check is dead code that reads as coverage.
+for name in $actual_checks; do
+  if grep -q "^${name}() {" "$doctorsh"; then ok; else fail_case "main() calls ${name}, which is not defined"; fi
+done
+defined_checks="$(sed -n 's/^\(check_[a-z_]*\)() {$/\1/p' "$doctorsh")"
+for name in $defined_checks; do
+  if printf '%s\n' "$actual_checks" | grep -qx "$name"; then
+    ok
+  else
+    fail_case "${name} is defined but never called from main()"
+  fi
+done
+
 echo "== structural: ordering main() depends on =="
 
 # check_env compares AP_FRONTEND_URL against PUBLISHED_PORT, which only exists

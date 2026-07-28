@@ -5,14 +5,15 @@ icon: "stethoscope"
 ---
 
 The hardest self-hosting failure to find is the one where everything looks fine.
-`docker ps` says `Up`, `docker stats` looks normal, the container has never
-restarted, and `GET /api/v1/flags` returns `200` — while flows sit in the queue
-and never execute.
+`docker ps` says `Up`, `docker stats` looks normal, nothing has restarted, and
+`GET /api/v1/flags` returns `200` — while flows sit in the queue and never
+execute.
 
-That happens because the parts that answer those questions are not the parts
-that run flows. The API can be perfectly healthy while the worker process inside
-its container has died, or is connected to the app but on a different release
-and therefore refused every job.
+That happens because the things answering those questions are not the things
+that run flows. Docker can tell you a worker process is alive. It cannot tell
+you the worker never registered with the app, stopped asking for work, or is
+running a different release than the app — in which case the app withholds every
+job from it and it executes nothing while looking perfectly healthy.
 
 ## Run the doctor
 
@@ -44,8 +45,7 @@ only report "up" would not have caught any of the failures above.
 | --- | --- |
 | `env` | Secrets are present and well-formed, `AP_ENVIRONMENT` is one of the three values the app accepts, and `AP_FRONTEND_URL` matches the port the stack actually publishes. |
 | `containers` | Every service in `docker-compose.yml` has a running container. |
-| `restarts` | No container is being restarted by Docker behind an `Up` status. |
-| `supervisor` | Every process **inside** each container is online. This is the one that catches a dead worker in a container that stays `Up`. |
+| `restarts` | No container is being restarted by Docker behind an `Up` status. Each container runs one process, so a crash loop shows up here as a rising count. |
 | `api` | `/api/v1/flags` returns a real flags payload, not just any `200`. |
 | `postgres` | The database is reachable **from the app container**, accepts the app's credentials, and has a migrated schema. |
 | `redis` | Redis answers `PING` from inside the app container, not just from its own. |
