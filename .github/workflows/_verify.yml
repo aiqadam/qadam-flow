@@ -95,13 +95,17 @@ jobs:
       # throw away a tree that installed cleanly; and only this job saves — see
       # the note on the restore step in ci.yml's `integration-run`.
       #
-      # Keep the path globs in sync with `clean_installed_node_modules` in
-      # tools/ci/install-deps.sh. They stop at three levels under packages/,
-      # which is the deepest workspace glob in package.json
-      # (`packages/qadams/community/*`), and deliberately do NOT match
-      # `**/node_modules`: packages/server/engine/test/resources/.../
-      # hello_world_npm/node_modules is a *tracked* fixture, and a cache that
-      # both captured and restored it could silently revert an edit to it.
+      # The path globs stop at three levels under packages/, the deepest
+      # workspace glob in package.json (`packages/qadams/community/*`), and
+      # deliberately do NOT match `**/node_modules`:
+      # packages/server/engine/test/resources/.../hello_world_npm/node_modules
+      # is a *tracked* fixture, and a cache that both captured and restored it
+      # could silently revert an edit to it.
+      #
+      # These globs must agree with `INSTALL_NODE_MODULES_MAXDEPTH` in
+      # tools/ci/install-deps.sh, which deletes the same set on a retry.
+      # tools/ci/install-deps.test.sh asserts that, so editing one side without
+      # the other fails the build rather than quietly widening a recursive rm.
       - name: Restore built node_modules
         id: node-modules
         uses: actions/cache/restore@v4

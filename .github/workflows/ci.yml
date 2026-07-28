@@ -172,15 +172,16 @@ jobs:
 
       # Restore-only, by design. This job and `verify` install the same tree
       # from the same lockfile, so they compute the same key; letting both save
-      # would mean two concurrent uploads of an identical ~0.7 GB entry, with
-      # the loser discarded as "cache already exists". `verify` is the writer
-      # because it is the job that always runs — this one is skipped on a
-      # docs-only diff.
+      # would mean two concurrent uploads of an identical entry (357 MiB
+      # measured), with the loser discarded as "cache already exists". `verify`
+      # is the writer because it is the job that always runs — this one is
+      # skipped on a docs-only diff.
       #
       # The key and paths MUST match _verify.yml's exactly, or this job reads
-      # nothing while reporting green. See that file for what each component is
-      # for and why there is no `restore-keys` fallback; the reasoning is
-      # deliberately in one place rather than duplicated here.
+      # nothing while reporting green. tools/ci/install-deps.test.sh checks both
+      # files' globs and hashed inputs for exactly that. See _verify.yml for
+      # what each key component is for and why there is no `restore-keys`
+      # fallback; the reasoning lives in one place rather than duplicated here.
       - name: Restore built node_modules
         uses: actions/cache/restore@v4
         with:
