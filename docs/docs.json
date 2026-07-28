@@ -183,6 +183,7 @@
                {
                   "group": "Troubleshooting",
                   "pages": [
+                     "install/troubleshooting/flows-never-run",
                      "install/troubleshooting/bullboard",
                      "install/troubleshooting/reset-password",
                      "install/troubleshooting/truncated-logs",

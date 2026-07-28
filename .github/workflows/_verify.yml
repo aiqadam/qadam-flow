@@ -27,10 +27,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # These two run before any install, deliberately: they are pure shell, so
-      # they still report if the install step later flakes. This workflow is only
-      # ever called from an unconditional job, so the test covering the docs-only
-      # path filter can never be skipped by the filter it tests.
+      # These run before any install, deliberately: they are pure shell, so they
+      # still report if the install step later flakes. This workflow is only ever
+      # called from an unconditional job, so the test covering the docs-only path
+      # filter can never be skipped by the filter it tests.
       - name: Test the CI path classifier
         run: tools/ci/classify-path.test.sh
 
@@ -39,6 +39,21 @@ jobs:
       # previously did not.
       - name: Test run.sh env reconciliation
         run: tools/ci/test-run-sh.sh
+
+      # docker-entrypoint.sh is the other pure-shell entry point with no image
+      # build behind it. #51 was a supervision regression nothing would have
+      # caught; this suite runs against a stub `node` in seconds.
+      - name: Test docker-entrypoint.sh
+        run: tools/ci/test-entrypoint.sh
+
+      # doctor.sh is the `curl … | sh` diagnostic. Its stack-dependent checks
+      # need a live compose project and are validated by hand; what runs here is
+      # everything that decides what a user is told — argument handling, .env
+      # parsing, the pass/warn/fail arithmetic behind the exit code, the
+      # no-colour path, and the assertion that no secret value ever reaches the
+      # output a user pastes into an issue.
+      - name: Test doctor.sh diagnostics
+        run: tools/ci/test-doctor-sh.sh
 
       - uses: actions/setup-node@v6
         with:
