@@ -94,22 +94,15 @@ have restarted, and still take no job — because it never registered with the a
 stopped asking for work, or is running a different release than the app. The API
 answers `200` throughout.
 
-Run the doctor from the directory that contains your install (the parent of
-`qadam-flow`):
+The quickest end-to-end check is to run a flow: sign up, build a two-step flow
+and trigger it. A run that completes proves the whole path — app, queue, worker,
+engine — in a way no container status can.
+
+If it does not, start with the logs from both halves:
 
 ```bash
-curl -fsSL https://flow.aiqadam.org/doctor.sh | sh
+docker compose logs --tail=100 app worker
 ```
-
-It is read-only and prints one line per check with a `PASS`, `WARN` or `FAIL`
-marker, a next command for every failure, and no secret values — so the output
-is safe to paste into a bug report. It exits `0` when the install is healthy,
-`1` when a check failed and `2` when it could not run at all, so it also works
-as a scheduled health probe.
-
-Set `QADAM_FLOW_DIR` if your install is not in `./qadam-flow`. For what each
-check proves and how to read a failure, see
-[Flows Never Run](../troubleshooting/flows-never-run).
 
 For the details of the compose stack and every value in `.env`, see [Docker Compose](./docker-compose).
 
