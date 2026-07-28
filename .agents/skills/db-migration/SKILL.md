@@ -102,18 +102,13 @@ Zero errors required before the task is complete.
 
 ---
 
-## PGlite Compatibility
+## Using `CONCURRENTLY`
 
-PGlite does **not** support `CONCURRENTLY` (it is a single-connection embedded database). When creating or dropping indexes with `CONCURRENTLY`, add a PGlite check:
+Qadam Flow runs against real PostgreSQL only (PGLite support was removed). When creating or dropping indexes with `CONCURRENTLY`, set `transaction = false` on the migration — PostgreSQL requires it, since `CONCURRENTLY` cannot run inside a transaction:
 
 ```ts
 import { QueryRunner } from 'typeorm'
 import { Migration } from '../../migration'
-import { system } from '../../../helper/system/system'
-import { AppSystemProp } from '../../../helper/system/system-props'
-import { DatabaseType } from '../../database-type'
-
-const isPGlite = system.get(AppSystemProp.DB_TYPE) === DatabaseType.PGLITE
 
 export class AddMyIndex1234567890 implements Migration {
     name = 'AddMyIndex1234567890'
@@ -122,24 +117,14 @@ export class AddMyIndex1234567890 implements Migration {
     transaction = false  // Required when using CONCURRENTLY
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        if (isPGlite) {
-            await queryRunner.query(`CREATE INDEX "idx_name" ON "table" ("column")`)
-        } else {
-            await queryRunner.query(`CREATE INDEX CONCURRENTLY "idx_name" ON "table" ("column")`)
-        }
+        await queryRunner.query(`CREATE INDEX CONCURRENTLY "idx_name" ON "table" ("column")`)
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
-        if (isPGlite) {
-            await queryRunner.query(`DROP INDEX "idx_name"`)
-        } else {
-            await queryRunner.query(`DROP INDEX CONCURRENTLY "idx_name"`)
-        }
+        await queryRunner.query(`DROP INDEX CONCURRENTLY "idx_name"`)
     }
 }
 ```
-
-Set `transaction = false` whenever using `CONCURRENTLY` — PostgreSQL requires it.
 
 ---
 
@@ -159,4 +144,4 @@ Set `transaction = false` whenever using `CONCURRENTLY` — PostgreSQL requires 
 2. **Never use `MigrationInterface`** — always patch the generated file to use `Migration` from `../../migration`
 3. **`breaking`, `release`, and `down()` are mandatory** — CI will reject the migration without them
 4. **Register in `postgres-connection.ts`** — migration won't run without this
-5. **PGlite + CONCURRENTLY** — always guard with `isPGlite` and set `transaction = false`
+5. **`CONCURRENTLY`** — always set `transaction = false` when using it

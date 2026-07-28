@@ -234,6 +234,11 @@ export const validateEnvPropsOnStartup = async (log: FastifyBaseLogger): Promise
     if (!isNil(environment) && !(Object.values(ApEnvironment) as string[]).includes(environment)) {
         throw new Error(`Invalid AP_ENVIRONMENT="${environment}". Expected one of: ${Object.values(ApEnvironment).join(', ')}. Note: ApEnvironment.TESTING === 'test' (not 'TESTING', which is RunEnvironment).`)
     }
+
+    const dbType = system.get(AppSystemProp.DB_TYPE)
+    if (!isNil(dbType) && !(Object.values(DatabaseType) as string[]).includes(dbType)) {
+        throw new Error(`Invalid AP_DB_TYPE="${dbType}". Expected one of: ${Object.values(DatabaseType).join(', ')}. PGLite support has been removed — POSTGRES is the only supported database type. There is no automated migration from a PGLite data directory to PostgreSQL; stay on your current image tag, or set AP_DB_TYPE=POSTGRES and rebuild your flows in a fresh install. See https://flow.aiqadam.org/docs/install/configuration/breaking-changes.`)
+    }
     const fileStorageLocation = process.env.AP_FILE_STORAGE_LOCATION
 
     if (environment !== ApEnvironment.TESTING && fileStorageLocation === FileLocation.S3) {

@@ -2,8 +2,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm'
 
 /**
  * SQLite is no longer a supported runtime database type — Qadam Flow uses
- * Postgres (`POSTGRES`) and PGLite (`PGLITE`). This baseline is retained only
- * so that the `migration/sqlite/` directory has a non-empty entry point if any
+ * Postgres (`POSTGRES`) exclusively. This baseline is retained only so that
+ * the `migration/sqlite/` directory has a non-empty entry point if any
  * tooling (e.g. legacy CLIs or test helpers) discovers it.
  *
  * It intentionally creates no schema; runtime systems will never load it.

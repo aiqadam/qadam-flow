@@ -1,11 +1,6 @@
 import { EntitySchemaColumnOptions } from 'typeorm'
-import { system } from '../helper/system/system'
-import { AppSystemProp } from '../helper/system/system-props'
-import { DatabaseType } from './database-type'
 
-const databaseType = system.get(AppSystemProp.DB_TYPE)
-
-export const COLLATION = databaseType === DatabaseType.PGLITE ? undefined : 'en_natural'
+export const COLLATION = 'en_natural'
 
 export const ApIdSchema = {
     type: String,

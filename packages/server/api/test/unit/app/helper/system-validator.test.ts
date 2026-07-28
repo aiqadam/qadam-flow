@@ -1,7 +1,20 @@
+import { FastifyBaseLogger } from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { system } from '../../../../src/app/helper/system/system'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
-import { validateSystemPropTypes } from '../../../../src/app/helper/system-validator'
+import { validateEnvPropsOnStartup, validateSystemPropTypes } from '../../../../src/app/helper/system-validator'
+
+const mockLog: FastifyBaseLogger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    trace: vi.fn(),
+    child: vi.fn(),
+    silent: vi.fn(),
+    level: 'info',
+} as unknown as FastifyBaseLogger
 
 describe('validateSystemPropTypes', () => {
     afterEach(() => {
@@ -47,5 +60,52 @@ describe('validateSystemPropTypes', () => {
                 process.env.AP_LOG_LEVEL = previousLogLevel
             }
         }
+    })
+})
+
+describe('validateEnvPropsOnStartup AP_DB_TYPE', () => {
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    const withDbType = async (value: string | undefined, run: () => Promise<void>): Promise<void> => {
+        const previousDbType = process.env.AP_DB_TYPE
+        if (value === undefined) {
+            delete process.env.AP_DB_TYPE
+        }
+        else {
+            process.env.AP_DB_TYPE = value
+        }
+        try {
+            await run()
+        }
+        finally {
+            if (previousDbType === undefined) {
+                delete process.env.AP_DB_TYPE
+            }
+            else {
+                process.env.AP_DB_TYPE = previousDbType
+            }
+        }
+    }
+
+    it('throws a clear, actionable error for the removed AP_DB_TYPE=PGLITE, not a downstream stack trace', async () => {
+        await withDbType('PGLITE', async () => {
+            await expect(validateEnvPropsOnStartup(mockLog)).rejects.toThrow(/PGLite support has been removed/)
+        })
+    })
+
+    it('throws for the older, already-deprecated AP_DB_TYPE=SQLITE3 rather than silently mapping it', async () => {
+        await withDbType('SQLITE3', async () => {
+            await expect(validateEnvPropsOnStartup(mockLog)).rejects.toThrow(/Invalid AP_DB_TYPE="SQLITE3"/)
+        })
+    })
+
+    it('does not reject on account of AP_DB_TYPE when it is POSTGRES', async () => {
+        await withDbType('POSTGRES', async () => {
+            await validateEnvPropsOnStartup(mockLog).catch((error: unknown) => {
+                expect(String(error)).not.toMatch(/AP_DB_TYPE/)
+            })
+        })
     })
 })

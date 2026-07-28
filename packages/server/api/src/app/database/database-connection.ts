@@ -48,7 +48,6 @@ import { UserEntity } from '../user/user-entity'
 import { UserInvitationEntity } from '../user-invitations/user-invitation.entity'
 import { VariableEntity } from '../variable/variable.entity'
 import { DatabaseType } from './database-type'
-import { createPGliteDataSource } from './pglite-connection'
 import { createPostgresDataSource } from './postgres-connection'
 
 const databaseType = system.get(AppSystemProp.DB_TYPE)
@@ -116,13 +115,10 @@ function setPersistedConnection(ds: DataSource | null): void {
 }
 
 const createDataSource = (): DataSource => {
-    switch (databaseType) {
-        case DatabaseType.PGLITE:
-            return createPGliteDataSource()
-        case DatabaseType.POSTGRES:
-        default:
-            return createPostgresDataSource()
+    if (databaseType !== DatabaseType.POSTGRES) {
+        throw new Error(`Unsupported AP_DB_TYPE "${databaseType}". PGLite support has been removed — POSTGRES is the only supported database type. There is no automated migration from a PGLite data directory to PostgreSQL; see https://flow.aiqadam.org/docs/install/configuration/breaking-changes for details.`)
     }
+    return createPostgresDataSource()
 }
 
 export const databaseConnection = (): DataSource => {
