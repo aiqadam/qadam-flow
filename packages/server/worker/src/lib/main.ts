@@ -1,3 +1,4 @@
+import { deleteStaleCache } from './cache/cache-paths'
 import { getApiUrl, getSocketUrl, system, WorkerSystemProp } from './config/configs'
 import { logger } from './config/logger'
 import { worker } from './worker'
@@ -6,6 +7,11 @@ const workerToken = system.getOrThrow(WorkerSystemProp.WORKER_TOKEN)
 
 async function main(): Promise<void> {
     const containerType = system.get(WorkerSystemProp.CONTAINER_TYPE) ?? 'WORKER_AND_APP'
+
+    // Fire-and-forget: a stale-cache cleanup failure must never block a worker from
+    // starting to accept jobs. Errors are logged inside deleteStaleCache itself.
+    void deleteStaleCache()
+
     await worker.start({ apiUrl: getApiUrl(), socketUrl: getSocketUrl(), workerToken, withHealthServer: containerType === 'WORKER' })
 
     const shutdown = async () => {
