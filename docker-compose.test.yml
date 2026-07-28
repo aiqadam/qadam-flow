@@ -4,7 +4,10 @@ services:
       file: docker-compose.dev.yml
       service: app
     user: "${UID}:${GID}"
-    command: /bin/sh -c "npm_config_cache=/usr/src/app/.npm-cache turbo run test --filter=api"
+    # `test-ce`, not `test`: `api`'s `test` script is its unit suite (which needs
+    # neither Postgres nor Redis, so running it here would prove nothing) — the
+    # integration suite this compose file exists to serve is `test-ce`.
+    command: /bin/sh -c "npm_config_cache=/usr/src/app/.npm-cache turbo run test-ce --filter=api"
 
   postgres:
     extends:

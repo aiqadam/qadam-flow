@@ -107,7 +107,7 @@ the whole session.
 ## Testing
 
 ```bash
-npm run test-unit     # Vitest: engine + shared + web + server-utils, then api's own test-unit
+npm run test-unit     # Vitest, unfiltered: `turbo run test` — every package declaring a `test` script
 npm run test-api      # CE API integration + migration check (this repo has no EE or Cloud suite)
 ```
 API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`, `ctx.get()`. DB auto-cleaned between tests.
@@ -205,10 +205,20 @@ before trusting its silence — an empty output is not the same as a passing che
   Note the trap in verifying this: `turbo run lint --filter='@aiqadam/qadam-*' --dry=json` *does*
   list `@aiqadam/qadams-framework` under `.tasks[].package`, because a dependency appears in the
   graph for its `build` task. Filter on `.task == "lint"` before concluding anything. CI now runs
-  `turbo run lint` and `turbo run typecheck` unfiltered, so coverage cannot drift again; keep it that
-  way rather than reintroducing a package list. Note the residual limit, so nobody over-reads it: a
+  `turbo run lint`, `turbo run typecheck` and `turbo run test` unfiltered, so coverage cannot drift
+  again; keep it that way rather than reintroducing a package list. The `test` one was this same bug
+  a second time: the root `test-unit` script named four packages plus `api`, so
+  `packages/server/worker` (18 files, 215 tests) and all 14 core qadams that declare `test`
+  (40 files, 231 tests) ran in no CI job at all — and the worker suite had been red for months
+  before anyone looked (#215). Note the residual limit, so nobody over-reads it: a
   package that never declares the script is still silently uncovered — that is the #148 class, which
-  an unfiltered run does not solve.
+  an unfiltered run does not solve. Live example, left standing deliberately: `packages/server/worker`
+  declares no `typecheck` script and its `lint` glob covers only `src/**`, so five tests in
+  `test/lib/execute/sandbox-manager.test.ts` call `createSandboxManager(1)` against
+  `createSandboxManager({ boxId, proxyPort })` — they pass, and nothing type-checks them. Measured
+  cost of closing it: ~82 errors across 12 of the 18 non-e2e test files, mostly `TS4111`
+  index-signature noise plus 17 real `TS2345` argument mismatches — its own piece of work, not a
+  line in a CI PR. See the comment thread on #215.
 - **Renaming an npm script needs a sweep that is not extension-scoped.** `.husky/pre-push` invokes
   root scripts and has no file extension, so a `grep --include='*.yml' --include='*.json'
   --include='*.md' --include='*.sh'` sweep for `lint-core` missed it entirely and the rename would
