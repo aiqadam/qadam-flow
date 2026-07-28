@@ -123,7 +123,7 @@
       //    all ~247 packages and then resolves that node's `dependsOn` even for
       //    the ones with no `test` script. With `["build"]` that meant building
       //    the entire monorepo to run 21 test suites (confirmed with
-      //    `--dry=json`: 247 build tasks). With `["^build"]` it is 8.
+      //    `--dry=json`: 247 build tasks). With `["^build"]` it is 14.
       //
       // `^build` is still required rather than dropped: the source aliases above
       // are invisible to this task's `inputs`, so without it a change in
