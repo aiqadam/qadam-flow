@@ -1,7 +1,6 @@
 import { Dirent } from 'fs'
 import { readdir, rm, stat } from 'fs/promises'
 import path from 'path'
-import { isNil } from '@aiqadam/shared'
 import { logger } from '../config/logger'
 
 export const LATEST_CACHE_VERSION = 'v12'
@@ -65,48 +64,106 @@ export async function deleteStaleCache(): Promise<void> {
 // for this long, so that overlap window closes on its own well before eviction
 // runs. Chosen generously (two orders of magnitude above the restart window)
 // specifically because directory mtimes are a coarse, write-only signal (see
-// getIdleTimeMs below) — the margin has to cover for the signal's own blind
+// isEvictable below) — the margin has to cover for the signal's own blind
 // spots, not just the restart itself.
 const STALE_CACHE_MIN_IDLE_MS = 6 * 60 * 60 * 1000
 
+// How many levels below the version root to probe for activity. A qadam
+// install lands at pieces-metadata/<npm-scope>/<qadam>-<version>-<platformId>
+// — two levels down, because the npm-scoped piece name itself contains a "/"
+// — so depth 2 (root, its children, and their children) is what's needed to
+// see that. codes/ and flows/ already advance one level deep (their leaf
+// entries are direct children), so depth 2 covers those too.
+const MTIME_PROBE_DEPTH = 2
+
 async function filterEvictable({ cacheDir, staleEntries }: { cacheDir: string, staleEntries: Dirent[] }): Promise<string[]> {
-    const decisions = await Promise.all(staleEntries.map(async (entry) => {
-        const idleForMs = await getIdleTimeMs(path.join(cacheDir, entry.name))
-        return { name: entry.name, evictable: idleForMs === null || idleForMs >= STALE_CACHE_MIN_IDLE_MS }
-    }))
+    const decisions = await Promise.all(staleEntries.map(async (entry) => ({
+        name: entry.name,
+        evictable: await isEvictable(path.join(cacheDir, entry.name)),
+    })))
     return decisions.filter((decision) => decision.evictable).map((decision) => decision.name)
 }
 
 // A directory's own mtime only advances when an entry is added, removed, or
-// renamed *directly inside it* — never for writes deeper in the tree, and never
-// for reads at any depth (verified empirically: writing a file two levels down
-// left the top-level dir's mtime untouched). Each cached version's top-level
-// directory (cache/<version>/) only ever gets direct children once, when
-// pieces-metadata/common/codes/flows are first created during provisioning —
-// every subsequent qadam install or code/flow cache write lands one level
-// deeper, inside those four directories, not as a new direct child of the
-// version root. So the version directory's own mtime freezes at first-use and
-// checking only that would make every version look idle from the moment it's
-// created, defeating the grace period entirely. Taking the max mtime across
-// the version root *and* its immediate children captures that install-time
-// activity instead. It still can't see pure reads (mtime never reflects
-// those, and this volume can't assume atime is enabled), so it does not fully
-// close a worker that is only ever reading a fully warm cache during the exact
-// restart window — the multi-hour threshold above is what covers that gap in
-// practice, not this function.
-async function getIdleTimeMs(versionDir: string): Promise<number | null> {
-    const rootStat = await stat(versionDir).catch(() => null)
-    if (isNil(rootStat)) {
-        return null
+// renamed *directly inside it* — never for writes deeper in the tree, and
+// never for reads at any depth (verified empirically: writing a file two
+// levels down left the top-level dir's mtime untouched). Probing root +
+// children + grandchildren (MTIME_PROBE_DEPTH) captures real write activity
+// throughout the version, including qadam installs (see above). It still
+// can't see pure reads, and this volume can't assume atime is enabled, so it
+// does not fully close a worker that is only ever reading an already-warm
+// cache during the exact restart window — the multi-hour threshold above is
+// what covers that gap in practice, not this function.
+//
+// Fails closed: a stat/readdir error other than ENOENT (EACCES, EPERM, EIO,
+// ELOOP, ...) means "couldn't determine whether this is safe to delete", and
+// this heuristic's only job is to avoid deleting something in use — so that
+// resolves to "not evictable", logged, rather than silently falling through
+// to "evictable".
+async function isEvictable(versionDir: string): Promise<boolean> {
+    const probes = await collectMtimeProbes(versionDir, MTIME_PROBE_DEPTH)
+
+    const unreadable = probes.find((probe): probe is MtimeProbeUnreadable => probe.kind === 'unreadable')
+    if (unreadable) {
+        logger.warn({ path: unreadable.path, code: unreadable.code }, 'Could not fully read a stale cache version while checking its age; leaving it in place rather than risk deleting something in use')
+        return false
     }
-    const children = await readdir(versionDir, { withFileTypes: true }).catch(() => [])
-    const childStats = await Promise.all(
-        children.filter((child) => child.isDirectory()).map((child) => stat(path.join(versionDir, child.name)).catch(() => null)),
+
+    const mtimesMs = probes
+        .filter((probe): probe is MtimeProbeValue => probe.kind === 'value')
+        .map((probe) => probe.mtimeMs)
+
+    if (mtimesMs.length === 0) {
+        // The version root itself is already gone - a sibling replica won the race.
+        return true
+    }
+
+    return Date.now() - Math.max(...mtimesMs) >= STALE_CACHE_MIN_IDLE_MS
+}
+
+async function collectMtimeProbes(targetPath: string, depthRemaining: number): Promise<MtimeProbe[]> {
+    const rootProbe = await probeMtime(targetPath)
+    if (rootProbe.kind !== 'value' || depthRemaining === 0) {
+        return [rootProbe]
+    }
+
+    let dirEntries: Dirent[]
+    try {
+        dirEntries = await readdir(targetPath, { withFileTypes: true })
+    }
+    catch (error) {
+        if (isErrnoException(error) && error.code === 'ENOENT') {
+            return [rootProbe]
+        }
+        return [rootProbe, { kind: 'unreadable', path: targetPath, code: isErrnoException(error) ? error.code : undefined }]
+    }
+
+    const childProbes = await Promise.all(
+        dirEntries
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => collectMtimeProbes(path.join(targetPath, entry.name), depthRemaining - 1)),
     )
-    const mtimesMs = [rootStat.mtimeMs, ...childStats.filter((childStat) => !isNil(childStat)).map((childStat) => childStat.mtimeMs)]
-    return Date.now() - Math.max(...mtimesMs)
+    return [rootProbe, ...childProbes.flat()]
+}
+
+async function probeMtime(targetPath: string): Promise<MtimeProbe> {
+    try {
+        const targetStat = await stat(targetPath)
+        return { kind: 'value', mtimeMs: targetStat.mtimeMs }
+    }
+    catch (error) {
+        if (isErrnoException(error) && error.code === 'ENOENT') {
+            return { kind: 'gone' }
+        }
+        return { kind: 'unreadable', path: targetPath, code: isErrnoException(error) ? error.code : undefined }
+    }
 }
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
     return error instanceof Error && 'code' in error
 }
+
+type MtimeProbeValue = { kind: 'value', mtimeMs: number }
+type MtimeProbeGone = { kind: 'gone' }
+type MtimeProbeUnreadable = { kind: 'unreadable', path: string, code: string | undefined }
+type MtimeProbe = MtimeProbeValue | MtimeProbeGone | MtimeProbeUnreadable

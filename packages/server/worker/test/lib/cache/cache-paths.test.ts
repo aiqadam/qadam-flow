@@ -13,7 +13,7 @@ async function ageDirectoryAndContents(dir: string, when: Date): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true })
     for (const entry of entries) {
         if (entry.isDirectory()) {
-            await utimes(join(dir, entry.name), when, when)
+            await ageDirectoryAndContents(join(dir, entry.name), when)
         }
     }
 }
@@ -68,17 +68,20 @@ describe('deleteStaleCache', () => {
         expect(remaining.sort()).toEqual(['v11', LATEST_CACHE_VERSION].sort())
     })
 
-    it('treats a version as recently active if any of its immediate subdirectories were touched recently, even though the version root itself was not', async () => {
+    it('treats a version as recently active from a qadam install two levels below the root, even though the root and pieces-metadata itself look idle', async () => {
         const { deleteStaleCache, LATEST_CACHE_VERSION } = await import('../../../src/lib/cache/cache-paths')
 
+        // Mirrors qadamCache.getPiece's real on-disk layout: an install lands at
+        // pieces-metadata/<npm-scope>/<qadam>-<version>-<platformId>, i.e. two
+        // levels below the version root, because the npm-scoped piece name
+        // itself contains a "/". pieces-metadata's own mtime only advances
+        // when @aiqadam is first created, not on every later install into it -
+        // so both the root and pieces-metadata are aged, and only the
+        // @aiqadam directory is left "now".
         const staleDir = join(tempDir, 'cache', 'v11')
-        const piecesDir = join(staleDir, 'pieces-metadata')
-        await mkdir(piecesDir, { recursive: true })
-        // The version root's own mtime only advances when a direct child is
-        // added/removed/renamed - which only happens once, at first
-        // provisioning. Back-date just the root to simulate that: everything
-        // that has happened since (e.g. a new piece installed under
-        // pieces-metadata) shows up one level down, not on the root.
+        const scopeDir = join(staleDir, 'pieces-metadata', '@aiqadam')
+        await mkdir(scopeDir, { recursive: true })
+        await utimes(join(staleDir, 'pieces-metadata'), TEN_DAYS_AGO, TEN_DAYS_AGO)
         await utimes(staleDir, TEN_DAYS_AGO, TEN_DAYS_AGO)
         await mkdir(join(tempDir, 'cache', LATEST_CACHE_VERSION), { recursive: true })
 
@@ -106,14 +109,14 @@ describe('deleteStaleCache', () => {
         await utimes(staleA, TEN_DAYS_AGO, TEN_DAYS_AGO)
         await utimes(staleB, TEN_DAYS_AGO, TEN_DAYS_AGO)
 
-        const rmCalls: unknown[][] = []
+        const rmCalls: Parameters<typeof rm>[] = []
         vi.doMock('fs/promises', async () => {
             const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises')
             return {
                 ...actual,
-                rm: vi.fn(async (...args: unknown[]) => {
+                rm: vi.fn((...args: Parameters<typeof rm>) => {
                     rmCalls.push(args)
-                    return actual.rm(...(args as Parameters<typeof actual.rm>))
+                    return actual.rm(...args)
                 }),
             }
         })
@@ -131,5 +134,39 @@ describe('deleteStaleCache', () => {
         for (const [, opts] of rmCalls) {
             expect(opts).toMatchObject({ recursive: true, force: true })
         }
+    })
+
+    it('leaves an idle-looking stale directory in place, and logs a warning, when checking its age fails for a reason other than it already being gone', async () => {
+        const staleDir = join(tempDir, 'cache', 'v11')
+        await mkdir(staleDir, { recursive: true })
+        await utimes(staleDir, TEN_DAYS_AGO, TEN_DAYS_AGO)
+
+        vi.doMock('fs/promises', async () => {
+            const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises')
+            return {
+                ...actual,
+                stat: vi.fn(async (...args: Parameters<typeof actual.stat>) => {
+                    const [target] = args
+                    if (target === staleDir) {
+                        const eaccesError: NodeJS.ErrnoException = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+                        throw eaccesError
+                    }
+                    return actual.stat(...args)
+                }),
+            }
+        })
+
+        const { deleteStaleCache, LATEST_CACHE_VERSION } = await import('../../../src/lib/cache/cache-paths')
+        const { logger } = await import('../../../src/lib/config/logger')
+        await mkdir(join(tempDir, 'cache', LATEST_CACHE_VERSION), { recursive: true })
+
+        await deleteStaleCache()
+
+        const remaining = await readdir(join(tempDir, 'cache'))
+        expect(remaining.sort()).toEqual(['v11', LATEST_CACHE_VERSION].sort())
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ path: staleDir, code: 'EACCES' }),
+            expect.any(String),
+        )
     })
 })
