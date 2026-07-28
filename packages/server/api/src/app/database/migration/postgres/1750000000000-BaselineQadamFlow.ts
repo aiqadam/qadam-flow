@@ -352,7 +352,7 @@ export class BaselineQadamFlow1750000000000 implements Migration {
         await queryRunner.query('CREATE INDEX IF NOT EXISTS "idx_variable_owner_id" ON "variable" ("ownerId")')
 
         // --- Custom collation for natural version sorting ---
-        // ICU not available on pglite (WASM PG); swallow that too so dev works.
+        // Some managed Postgres builds ship without the ICU provider; swallow that too so those still boot.
         await queryRunner.query(`
             DO $$ BEGIN
                 CREATE COLLATION "en_natural" (LOCALE = 'en-US-u-kn-true', PROVIDER = 'icu');

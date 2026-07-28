@@ -53,4 +53,4 @@ docker compose down -v   # remove volumes (clean DB)
 - Project controller/module deleted during EE cleanup — `GET /v1/projects` returns 404 without it
 - Authorization: `UserPrincipal` JWT has no `projectId` — fixed to check platform membership via DB
 - Baseline migration not idempotent — added `IF NOT EXISTS` and `EXCEPTION WHEN duplicate_object`
-- `en_natural` collation missing — added `CREATE COLLATION` before `qadam_metadata` table; ICU also unsupported on pglite (handled via additional `EXCEPTION WHEN feature_not_supported`)
+- `en_natural` collation missing — added `CREATE COLLATION` before `qadam_metadata` table, guarded with `EXCEPTION WHEN feature_not_supported` for Postgres builds without ICU

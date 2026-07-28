@@ -298,11 +298,12 @@ env_case custom-host 9000
 expect_out 'COUNTS 1 0 0' 'a custom hostname is not compared against the published port'
 expect_out 'custom hostname' 'a custom hostname says why it was not checked'
 
-# PGLITE installs have no postgres password, and demanding one would be a
-# failure the user cannot act on.
-good_env | sed 's/^AP_DB_TYPE=.*/AP_DB_TYPE=PGLITE/; /^AP_POSTGRES_PASSWORD=/d' | mk_env pglite
+# PGLite has been removed; an old .env carrying it must fail with a message
+# that says what to do, not an obscure stack trace from a database connect.
+good_env | sed 's/^AP_DB_TYPE=.*/AP_DB_TYPE=PGLITE/' | mk_env pglite
 env_case pglite 8080
-expect_out 'COUNTS 1 0 0' 'PGLITE without a postgres password is fine'
+expect_out 'FAIL  env' 'AP_DB_TYPE=PGLITE is rejected'
+expect_out 'PGLite support has been removed' 'the failure says what changed and what to do'
 
 good_env | sed '/^AP_POSTGRES_PASSWORD=/d' | mk_env missing-pg-password
 env_case missing-pg-password 8080

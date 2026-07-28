@@ -61,8 +61,20 @@ This is the start of a multi-release migration — **no action is required**, ev
 - `AP_ENVIRONMENT` (and its `QF_ENVIRONMENT` alias) still only accepts `prod` / `dev` / `test` — only the variable name is changing, not its accepted values.
 - **The bundled `docker-compose.yml`, `docker-entrypoint.sh`, and the `run.sh` install script still require the `AP_*` names and are not part of this alias.** Those scripts read the variables in the shell — before Node (and this alias layer) ever starts — to do things like interpolate `${AP_POSTGRES_PASSWORD}` into Postgres's own config and decide which process (`APP`/`WORKER`) to launch via `AP_CONTAINER_TYPE`. Setting only `QF_POSTGRES_PASSWORD` or `QF_CONTAINER_TYPE` today does **not** reach those scripts and can leave Postgres with an empty password or start the wrong container topology. Keep using `AP_*` for anything consumed by `docker-compose.yml` / `docker-entrypoint.sh` / `run.sh` until a follow-up migrates those in lockstep.
 
+#### PGLite has been removed — `AP_DB_TYPE=PGLITE` is no longer accepted
+
+PGLite existed only to support the one-container "quick look" install, and that install mode was already removed above (`WORKER_AND_APP`) — it turned out to be running with no worker at all, so nothing that depended on PGLite was actually executing flows. With that install gone, PGLite has no remaining reason to exist and has been dropped entirely: the dependency, the connection code, and the `PGLITE` value of `AP_DB_TYPE` are all gone from the image.
+
+- **`AP_DB_TYPE` now accepts only `POSTGRES`.** Setting it to `PGLITE` (or the older, already-deprecated `SQLITE3`) fails at startup with an explanatory error instead of falling back to anything.
+- **There is no automated migration from a PGLite data directory to PostgreSQL.** If you have data sitting under `AP_CONFIG_PATH/pglite`, there is no export tool that moves it into a Postgres install.
+
+**If you already run `AP_DB_TYPE=POSTGRES`** (the bundled `docker-compose.yml` and `run.sh` installer both do), no action is required.
+
+**If you still have `AP_DB_TYPE=PGLITE` set anywhere** — including the all-in-one container mode described above — do not pull a newer image. Stay on the image tag you are running now until you have moved your flows to Postgres by hand, or rebuild them in a fresh compose install.
+
 ### Do you need to take action?
-- No. Existing `.env` files with `AP_*` names keep working. Renaming to `QF_*` is optional during this deprecation window; `AP_*` support will be removed in a future release, announced here with advance notice.
+- No, if you already run against PostgreSQL. Renaming `AP_*` to `QF_*` is optional during the deprecation window described above; `AP_*` support will be removed in a future release, announced here with advance notice.
+- Yes, if `AP_DB_TYPE=PGLITE` or `AP_DB_TYPE=SQLITE3` is set anywhere in your configuration: stay on your current image tag, or move to Postgres and rebuild in a fresh install — there is no automated path between the two.
 
 
 ## 0.84.0

@@ -26,7 +26,7 @@ Create entity for $ARGUMENTS.
    - Name: `{Timestamp}{PascalCaseDescription}` (e.g., `AddMyFeature1774500000000`)
    - Import in `packages/server/api/src/app/database/postgres-connection.ts`
    - Add to `getMigrations()` array (chronological order)
-   - PGlite: `CREATE INDEX` (not `CONCURRENTLY`). Set `transaction = false` for `CONCURRENTLY`.
+   - Set `transaction = false` when using `CONCURRENTLY`.
 
 5. **Create repository**: `const myRepo = repoFactory(MyEntity)` — call as `myRepo()` or `myRepo(entityManager)` for transactions.
 
