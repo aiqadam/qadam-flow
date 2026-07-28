@@ -874,6 +874,16 @@ function projectedJoinLength({ items, sep }: { items: string[], sep: string }): 
 
 const FORBIDDEN_MEMBER_NAMES = new Set(['constructor', '__proto__', 'prototype'])
 
+// expr-eval's own internal instruction-type tags — not part of its public
+// API, just string literals its source happens to use today. Named here,
+// once, and reused by both `findForbiddenMemberAccess` below and the
+// module-load self-check further down, so the two can't drift apart from
+// each other even if someone edits one without the other; they can still
+// drift from expr-eval itself, which is exactly what the self-check exists
+// to catch.
+const IMEMBER_INSTRUCTION_TYPE = 'IMEMBER'
+const IEXPR_INSTRUCTION_TYPE = 'IEXPR'
+
 // `.constructor`/`.__proto__`/`.prototype` are the path to `Function`'s
 // constructor and arbitrary code execution once member access reaches a
 // live object (`x.constructor.constructor("return ...")()`). A text-level
@@ -897,18 +907,44 @@ const FORBIDDEN_MEMBER_NAMES = new Set(['constructor', '__proto__', 'prototype']
 function findForbiddenMemberAccess(tokens: ExprEvalInstruction[]): string | null {
     for (const instruction of tokens) {
         if (
-            instruction.type === 'IMEMBER' &&
+            instruction.type === IMEMBER_INSTRUCTION_TYPE &&
             typeof instruction.value === 'string' &&
             FORBIDDEN_MEMBER_NAMES.has(instruction.value)
         ) {
             return instruction.value
         }
-        if (instruction.type === 'IEXPR' && isInstructionArray(instruction.value)) {
+        if (instruction.type === IEXPR_INSTRUCTION_TYPE && isInstructionArray(instruction.value)) {
             const nested = findForbiddenMemberAccess(instruction.value)
             if (nested !== null) return nested
         }
     }
     return null
+}
+
+// Self-check, run once at module load: parses two tiny, known expressions
+// with THIS parser instance and asserts the resulting instruction tree
+// actually contains the tags `findForbiddenMemberAccess` above assumes.
+// `'IMEMBER'`/`'IEXPR'` are expr-eval's own internal instruction-type
+// strings, not part of its published API — if a future expr-eval version
+// renames either one, the filter above would silently stop matching
+// anything and the member-access block would be defeated with zero signal,
+// the same failure shape as the `builtInConcat`/`Reflect.deleteProperty`
+// checks elsewhere in this file. Throwing here instead turns that into a
+// loud failure at startup rather than a silent one at formula-evaluation
+// time.
+{
+    const memberAccessProbe = parser.parse('a.b')
+    if (!memberAccessProbe.tokens.some((token) => token.type === IMEMBER_INSTRUCTION_TYPE)) {
+        throw new Error(
+            `expr-eval no longer tags member access ("a.b") as "${IMEMBER_INSTRUCTION_TYPE}" — the constructor/__proto__/prototype member-access filter is no longer effective`,
+        )
+    }
+    const nestedExprProbe = parser.parse('a ? b.c : d')
+    if (!nestedExprProbe.tokens.some((token) => token.type === IEXPR_INSTRUCTION_TYPE)) {
+        throw new Error(
+            `expr-eval no longer tags ternary/assignment branches ("a ? b.c : d") as "${IEXPR_INSTRUCTION_TYPE}" — the member-access filter's recursion into nested branches is no longer effective`,
+        )
+    }
 }
 
 function isInstructionArray(value: unknown): value is ExprEvalInstruction[] {
