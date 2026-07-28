@@ -29,7 +29,7 @@ Read `.agents/features/<module-name>.md` first (e.g. `.agents/features/tables.md
 
 - **Entity**: Use `EntitySchema` + `BaseColumnSchemaPart` + `ApIdSchema`. See `tables/table/table.entity.ts`.
 - **Register entity**: Add to `getEntities()` in `database-connection.ts` (REQUIRED — TypeORM doesn't auto-discover)
-- **Migration**: Read playbook → create class → import in `postgres-connection.ts` → add to `getMigrations()` → handle PGlite
+- **Migration**: Read playbook → create class → import in `postgres-connection.ts` → add to `getMigrations()`
 - **Service**: Factory `(log: FastifyBaseLogger) => ({...})` if logging needed, plain object otherwise. See `tables/table/table.service.ts`.
 - **Controller**: `FastifyPluginAsyncZod`. Route configs AFTER controller. `securityAccess` required. See `tables/table/table.controller.ts`.
 - **Project ownership**: Add `entitiesMustBeOwnedByCurrentProject` hook if returning project-scoped data

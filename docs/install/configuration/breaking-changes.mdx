@@ -4,6 +4,38 @@ description: "This list shows all versions that include breaking changes and how
 icon: "hammer"
 ---
 
+## How this page is enforced
+
+<Note>
+This section is for maintainers cutting a release. If you are upgrading an install, skip to the version list below.
+</Note>
+
+This page is not maintained by convention — a CI job refuses to publish a release without it.
+
+**Why.** [PR #210](https://github.com/aiqadam/qadam-flow/pull/210) removed the `WORKER_AND_APP` launch mode and made `AP_CONTAINER_TYPE` required. Any all-in-one container install refuses to start after that ships, and there is no automated migration from the embedded PGLite database to PostgreSQL, so recovery is manual. The change *is* written up below — but only because a person noticed it needed to be. Nothing mechanical would have stopped the release. Since `:latest` is published solely by `release.yml` on a tag push (merges to `main` publish `:main` and `:sha-…` only), the tag is the last moment at which a check can stop an undocumented breaking change from reaching users, so that is where the check lives.
+
+**What it does.** On a `v*` tag push, `tools/ci/check-breaking-change-changelog.sh` walks every commit from the previous non-prerelease tag up to the tag being released. If any of them declares a breaking change — a Conventional Commits `type!:` subject, or a `BREAKING CHANGE:` footer — then this file must have been modified somewhere in that range **and** must contain a non-empty `## <version>` section for the version being released. In practice that means renaming the `## Unreleased` heading below to the version number as part of cutting the release.
+
+**What it cannot catch.** It reads declarations, not behaviour. A breaking change that nobody marked with `!` or a `BREAKING CHANGE:` footer passes it, as does an entry whose content is useless. It raises the floor; it does not replace review.
+
+**When it cannot measure, it fails.** A shallow checkout, a missing tag, an empty commit range or a missing changelog file all exit with `UNKNOWN` and fail the release rather than reporting "no breaking changes found". An empty measurement is never rendered as a pass.
+
+**Overriding it.** If a `!` commit genuinely needs no entry here, the preferred fix is a `Breaking-Change-Exempt: <reason>` trailer on that commit. At release time, when rewriting the commit is no longer an option, re-cut the tag as an *annotated* tag whose message contains:
+
+```
+Release-Gate-Override: <why this release needs no changelog entry>
+```
+
+for example:
+
+```bash
+git tag -d v1.2.0
+git tag -a v1.2.0 -m 'Release-Gate-Override: entry lands in #999, shipping the hotfix first'
+git push -f origin v1.2.0
+```
+
+The gate then passes and prints the tagger's name, email and reason into the job log and the run summary. The reason is stored in the tag object, so `git show v1.2.0` shows it forever. This is deliberately a little more work than writing the changelog entry, and deliberately impossible to do invisibly — a lightweight tag cannot carry an override. Do not delete the check instead; the whole reason it exists is that the previous control was somebody remembering.
+
 ## Unreleased
 
 ### What has changed?
@@ -29,8 +61,20 @@ This is the start of a multi-release migration — **no action is required**, ev
 - `AP_ENVIRONMENT` (and its `QF_ENVIRONMENT` alias) still only accepts `prod` / `dev` / `test` — only the variable name is changing, not its accepted values.
 - **The bundled `docker-compose.yml`, `docker-entrypoint.sh`, and the `run.sh` install script still require the `AP_*` names and are not part of this alias.** Those scripts read the variables in the shell — before Node (and this alias layer) ever starts — to do things like interpolate `${AP_POSTGRES_PASSWORD}` into Postgres's own config and decide which process (`APP`/`WORKER`) to launch via `AP_CONTAINER_TYPE`. Setting only `QF_POSTGRES_PASSWORD` or `QF_CONTAINER_TYPE` today does **not** reach those scripts and can leave Postgres with an empty password or start the wrong container topology. Keep using `AP_*` for anything consumed by `docker-compose.yml` / `docker-entrypoint.sh` / `run.sh` until a follow-up migrates those in lockstep.
 
+#### PGLite has been removed — `AP_DB_TYPE=PGLITE` is no longer accepted
+
+PGLite existed only to support the one-container "quick look" install, and that install mode was already removed above (`WORKER_AND_APP`) — it turned out to be running with no worker at all, so nothing that depended on PGLite was actually executing flows. With that install gone, PGLite has no remaining reason to exist and has been dropped entirely: the dependency, the connection code, and the `PGLITE` value of `AP_DB_TYPE` are all gone from the image.
+
+- **`AP_DB_TYPE` now accepts only `POSTGRES`.** Setting it to `PGLITE` (or the older, already-deprecated `SQLITE3`) fails at startup with an explanatory error instead of falling back to anything.
+- **There is no automated migration from a PGLite data directory to PostgreSQL.** If you have data sitting under `AP_CONFIG_PATH/pglite`, there is no export tool that moves it into a Postgres install.
+
+**If you already run `AP_DB_TYPE=POSTGRES`** (the bundled `docker-compose.yml` and `run.sh` installer both do), no action is required.
+
+**If you still have `AP_DB_TYPE=PGLITE` set anywhere** — including the all-in-one container mode described above — do not pull a newer image. Stay on the image tag you are running now until you have moved your flows to Postgres by hand, or rebuild them in a fresh compose install.
+
 ### Do you need to take action?
-- No. Existing `.env` files with `AP_*` names keep working. Renaming to `QF_*` is optional during this deprecation window; `AP_*` support will be removed in a future release, announced here with advance notice.
+- No, if you already run against PostgreSQL. Renaming `AP_*` to `QF_*` is optional during the deprecation window described above; `AP_*` support will be removed in a future release, announced here with advance notice.
+- Yes, if `AP_DB_TYPE=PGLITE` or `AP_DB_TYPE=SQLITE3` is set anywhere in your configuration: stay on your current image tag, or move to Postgres and rebuild in a fresh install — there is no automated path between the two.
 
 
 ## 0.84.0

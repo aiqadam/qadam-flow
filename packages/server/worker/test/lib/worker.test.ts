@@ -18,6 +18,19 @@ import type {
 
 const mockGetHandler = vi.fn()
 
+// worker.ts gates its poll loop on workerSettings.getSettings().APP_VERSION matching
+// apVersionUtil.getCurrentRelease() (read once at import time, from process.cwd()/package.json).
+// Without APP_VERSION here, every poll looks like a version mismatch and the loop sleeps
+// forever instead of polling. Derive the value the same way the code does rather than
+// hardcoding a version string that will rot. `vi.mock` factories are hoisted above every
+// other top-level statement, so this must be computed inside `vi.hoisted` too.
+const { currentAppVersion } = vi.hoisted(() => {
+    const fs: typeof import('node:fs') = require('node:fs')
+    const path: typeof import('node:path') = require('node:path')
+    const packageJson: { version: string } = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf-8'))
+    return { currentAppVersion: packageJson.version }
+})
+
 vi.mock('../../src/lib/execute/job-registry', () => ({
     getHandler: (...args: unknown[]) => mockGetHandler(...args),
 }))
@@ -25,8 +38,8 @@ vi.mock('../../src/lib/execute/job-registry', () => ({
 vi.mock('../../src/lib/config/worker-settings', () => ({
     workerSettings: {
         set: vi.fn(),
-        waitForSettings: vi.fn().mockResolvedValue({ PUBLIC_URL: 'http://localhost:3000' }),
-        getSettings: vi.fn().mockReturnValue({ PUBLIC_URL: 'http://localhost:3000' }),
+        waitForSettings: vi.fn().mockResolvedValue({ PUBLIC_URL: 'http://localhost:3000', APP_VERSION: currentAppVersion }),
+        getSettings: vi.fn().mockReturnValue({ PUBLIC_URL: 'http://localhost:3000', APP_VERSION: currentAppVersion }),
     },
 }))
 
@@ -93,11 +106,18 @@ describe('worker integration', () => {
         })
         process.env.AP_FRONTEND_URL = `http://127.0.0.1:${port}`
         process.env.AP_CONTAINER_TYPE = 'WORKER'
+        // Production defaults AP_WORKER_CONCURRENCY to 5 (see configs.ts). This suite's
+        // mock poll()/completeJob() share a single pollResponses array and a single
+        // completeJobCalls array with no ordering guarantee across concurrent pollers,
+        // but the assertions below assume one job is polled and completed at a time.
+        // Pin concurrency to 1 so the assertions' ordering assumption actually holds.
+        process.env.AP_WORKER_CONCURRENCY = '1'
     })
 
     afterEach(async () => {
         await worker.stop()
         mockGetHandler.mockReset()
+        delete process.env.AP_WORKER_CONCURRENCY
         await new Promise<void>((resolve) => {
             ioServer.close(() => resolve())
         })

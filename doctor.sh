@@ -284,6 +284,14 @@ check_env() {
        env_ok=no ;;
   esac
 
+  env_db_type=$(env_value AP_DB_TYPE)
+  case "$env_db_type" in
+    ''|POSTGRES) ;;
+    *) bad env "AP_DB_TYPE is '${env_db_type}' — PGLite support has been removed; POSTGRES is the only valid value" \
+         "set AP_DB_TYPE=POSTGRES in $(pwd)/.env (or remove the line — POSTGRES is the default), then: docker compose up -d"
+       env_ok=no ;;
+  esac
+
   if [ "$(env_value AP_DB_TYPE)" = POSTGRES ] || [ -z "$(env_value AP_DB_TYPE)" ]; then
     if ! env_present AP_POSTGRES_PASSWORD; then
       bad env "AP_POSTGRES_PASSWORD is missing while AP_DB_TYPE is POSTGRES" \
@@ -411,11 +419,6 @@ check_api() {
 # container, over the compose network, with the app's own credentials, and reads
 # a table only a migrated database has.
 check_postgres() {
-  pg_type=$(env_value AP_DB_TYPE)
-  if [ "$pg_type" = PGLITE ]; then
-    skip postgres "AP_DB_TYPE is PGLITE — the database is embedded in the app container"
-    return 0
-  fi
   if [ -z "$(running_ids app)" ]; then
     skip postgres "the app container is not running, so there is no app network to test from"
     return 0

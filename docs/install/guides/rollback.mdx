@@ -18,14 +18,6 @@ For most upgrades you won't need a backup, but if you want to be extra safe:
 pg_dump -Fc $DATABASE_URL > backup-pre-upgrade.dump
 ```
 
-### PGLite
-
-Copy the `pglite` folder inside your configured `AP_CONFIG_PATH`:
-
-```bash
-cp -r /path/to/config/pglite /path/to/config/pglite-backup
-```
-
 ## Release Notes
 
 Releases that include non-reversible database changes will have a note at the bottom of the release notes mentioning which migrations are affected. If you don't see a note, the release is rollback-safe.

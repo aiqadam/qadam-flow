@@ -55,6 +55,15 @@ jobs:
       - name: Test doctor.sh diagnostics
         run: tools/ci/test-doctor-sh.sh
 
+      # The release gate that refuses to ship an undocumented breaking change
+      # (release.yml's `breaking-change-gate`). It only ever runs for real on a
+      # tag push, which is far too rare a feedback loop to find a regression in,
+      # so its behaviour is pinned here on every PR — against cases it must
+      # REJECT as much as cases it must accept, plus the UNKNOWN cases where it
+      # must fail rather than report an empty range as clean.
+      - name: Test the release breaking-change gate
+        run: tools/ci/test-breaking-change-gate.sh
+
       # install-deps.sh is a recursive delete that every install in CI runs, and
       # the only thing keeping it off a tracked git fixture is a depth bound
       # that has to stay equal to the cache `path:` globs below and in ci.yml.
