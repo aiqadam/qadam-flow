@@ -34,14 +34,24 @@ export async function deleteStaleCache(): Promise<void> {
     try {
         const cacheDir = path.resolve(GLOBAL_CACHE_ALL_VERSIONS_PATH)
         const entries = await readdir(cacheDir, { withFileTypes: true })
+        const staleEntries = entries.filter((entry) => entry.isDirectory() && entry.name !== LATEST_CACHE_VERSION)
 
-        for (const entry of entries) {
-            if (entry.isDirectory() && entry.name !== LATEST_CACHE_VERSION) {
-                await rm(path.join(cacheDir, entry.name), { recursive: true })
-            }
+        if (staleEntries.length === 0) {
+            return
         }
+
+        logger.info({ staleVersions: staleEntries.map((entry) => entry.name) }, 'Deleting stale worker cache versions')
+
+        await Promise.all(staleEntries.map((entry) => rm(path.join(cacheDir, entry.name), { recursive: true, force: true })))
     }
     catch (error) {
-        logger.error({ err: error }, 'Failed to delete stale cache')
+        if (isErrnoException(error) && error.code === 'ENOENT') {
+            return
+        }
+        logger.error({ err: error }, 'Failed to delete stale cache; continuing worker startup')
     }
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+    return error instanceof Error && 'code' in error
 }
