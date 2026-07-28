@@ -93,6 +93,7 @@ export * from './lib/core/authn'
 export * from './lib/management/project/project-requests'
 
 // formula
+export * from './lib/formula/formula-bounds'
 export * from './lib/formula/function-registry'
 export * from './lib/formula/function-implementations'
 export * from './lib/formula/formula-evaluator'

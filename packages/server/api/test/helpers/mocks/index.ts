@@ -686,7 +686,10 @@ export const createMockFolder = (folder?: Partial<Folder>): Folder => {
         created: folder?.created ?? faker.date.recent().toISOString(),
         updated: folder?.updated ?? faker.date.recent().toISOString(),
         projectId: folder?.projectId ?? apId(),
-        displayName: folder?.displayName ?? faker.lorem.word(),
+        // A folder's (projectId, displayName) pair is uniquely indexed, and
+        // faker.lorem.word() draws from a few hundred words — two folders in one
+        // project collide often enough to fail CI at random.
+        displayName: folder?.displayName ?? `${faker.lorem.word()}-${apId()}`,
         displayOrder: folder?.displayOrder ?? faker.number.int({ min: 0, max: 100 }),
     }
 }

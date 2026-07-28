@@ -750,3 +750,448 @@ describe('formulaEvaluator wrapper detection', () => {
         expect(formulaEvaluator.containsWrapper(input)).toBe(true)
     })
 })
+
+// ---------------------------------------------------------------------------
+// Size bounds (issue #100: event-loop DoS via unbounded formula input)
+// ---------------------------------------------------------------------------
+
+const EXPRESSION_TOO_LARGE = 'Formula is too large to evaluate — shorten the expression'
+const INPUT_DATA_TOO_LARGE = 'Formula input data is too large to evaluate'
+const JSON_TEXT_TOO_LARGE = 'JSON text is too large to parse'
+const JSON_VALUE_TOO_LARGE = 'Value is too large to convert to JSON'
+const REPLACE_RESULT_TOO_LARGE = 'Result of replace() is too large to build'
+const JOIN_LIST_RESULT_TOO_LARGE = 'Result of join_list() is too large to build'
+const SPLIT_TEXT_TO_LIST_RESULT_TOO_LARGE = 'Result of split_text_to_list() is too large to build'
+const CONCAT_RESULT_TOO_LARGE = 'Result of || is too large to build'
+
+// Builds `(x0 = v||v) || (x1 = x0||x0) || ... || (x{n-1} = x{n-2}||x{n-2})`:
+// each step assigns the DOUBLED previous value to a short variable name and
+// reuses that name, so the expression text grows by a small constant per
+// step while the runtime value doubles.
+function chainedAssignConcat({ depth, seedVar }: { depth: number, seedVar: string }): string {
+    const statements: string[] = []
+    let prevVar = seedVar
+    for (let i = 0; i < depth; i++) {
+        const varName = `x${i}`
+        statements.push(`(${varName} = ${prevVar}||${prevVar})`)
+        prevVar = varName
+    }
+    return statements.join(' || ')
+}
+
+function chainReplaceCalls(n: number): string {
+    let expr = 'replace({{x}};"a";{{y}})'
+    for (let i = 1; i < n; i++) {
+        expr = `suffix(${expr};replace({{x}};"a";{{y}}))`
+    }
+    return expr
+}
+
+function nestedSplitTextToList(depth: number): string {
+    let expr = '{{x}}'
+    for (let i = 0; i < depth; i++) {
+        expr = `split_text_to_list(${expr};"")`
+    }
+    return expr
+}
+
+describe('formula size bounds', () => {
+    it('a normal-sized formula is unaffected', () =>
+        expect(result('uppercase("hello")')).toBe('HELLO'))
+
+    it('an oversized raw expression fails fast with a user-facing error, not a thrown exception', () => {
+        const huge = `uppercase("${'a'.repeat(250_000)}")`
+        const { result: r, error } = ok(huge)
+        expect(r).toBeNull()
+        expect(error).toBe(EXPRESSION_TOO_LARGE)
+    })
+
+    it('an oversized resolved {{var}} payload fails fast with a user-facing error', () => {
+        const huge = { text: 'x'.repeat(1_500_000) }
+        const { result: r, error } = ok('uppercase({{text}})', huge)
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    // Regression: exceedsResolvedVariableBudget used to scan the WRAPPED
+    // template. The wrapper's opening marker ends in a single `{`
+    // (`ap-formula-v1::{`), so wrap('{{x}}') produced `...v1::{{{x}}}::ap...`,
+    // and the variable-token regex's leftmost match consumed the wrapper's
+    // brace as if it were `{{x}}`'s own, capturing `{x` — which resolves to
+    // undefined and is charged 0. The variable vanished from the budget for
+    // any expression starting with `{`. Fixed by scanning `unwrap(trimmed)`.
+    it('a variable sitting immediately after the wrapper brace is still counted (regression: wrap(\'{{x}}\'))', () => {
+        const bigX = 'x'.repeat(2_000_000)
+        const { result: r, error } = ok('{{x}}', { x: bigX })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    it('a variable sitting immediately after the wrapper brace still resolves correctly for a small payload', () =>
+        expect(result('{{x}}', { x: 'hello' })).toBe('hello'))
+
+    it('two variables adjacent to an operator are still counted (regression: wrap(\'{{a}} + {{b}}\'))', () => {
+        const bigA = 'a'.repeat(600_000)
+        const bigB = 'b'.repeat(600_000)
+        const { result: r, error } = ok('{{a}} + {{b}}', { a: bigA, b: bigB })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    it('from_json rejects an oversized JSON string instead of parsing it — below the engine-wide input-size cap, so this exercises from_json\'s own guard', () => {
+        const hugeJson = 'x'.repeat(400_000)
+        expect(hugeJson.length).toBeLessThan(1_000_000) // stays under FORMULA_MAX_INPUT_SIZE
+        const { result: r, error } = ok('from_json({{text}})', { text: hugeJson })
+        expect(r).toBeNull()
+        expect(error).toBe(JSON_TEXT_TOO_LARGE)
+    })
+
+    it('to_json rejects an oversized value instead of serializing it — below the engine-wide input-size cap, so this exercises to_json\'s own guard', () => {
+        // measureSize charges 8 units per number PLUS 1 unit for the array's
+        // own `.length` itself: 50_000 * 8 + 50_000 = 450_000 units.
+        const hugeList = Array.from({ length: 50_000 }, (_, i) => i)
+        const { result: r, error } = ok('to_json({{list}})', { list: hugeList })
+        expect(r).toBeNull()
+        expect(error).toBe(JSON_VALUE_TOO_LARGE)
+    })
+
+    it('an oversized {{var}} payload cannot dodge the budget by riding in a plain-text segment outside any formula wrapper', () => {
+        const bigX = 'x'.repeat(100_000)
+        const template = '{{x}}'.repeat(20) // 20 * 100_000 = 2_000_000, over the budget, with no formula wrapper at all
+        const { result: r, error } = okMixed(template, { x: bigX })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    // Regression: exceedsResolvedVariableBudget used to run ONE regex pass
+    // over the concatenation of every segment (even after unwrapping). This
+    // template tokenizes into a formula segment with value `"{{"` (a
+    // dangling, unmatched open-brace pair) followed by a text segment
+    // `{{step_1.body}}`. Scanned TOGETHER, `[^}]+` walks straight through the
+    // quote and the first segment's trailing `{{`, merging it with the real
+    // token into one bogus capture (`"{{__ap_pv0` after preprocessing) that
+    // resolves to undefined and is charged 0 — hiding the real value
+    // entirely. Scanned per segment (what the real resolvers do), the first
+    // segment has no valid token and the second segment's `step_1.body` is
+    // counted normally.
+    it('a dangling "{{" at the end of one segment can no longer merge with the next segment\'s real token and hide it from the budget', () => {
+        const raw = 'ap-formula-v1::{"{{"}::ap-formula-v1{{step_1.body}}'
+        const bigOutput = 'y'.repeat(2_000_000)
+        const { result: r, error } = okMixed(raw, { step_1: { body: bigOutput } })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    it('the same segment-boundary shape repeated 20 times is still caught', () => {
+        const shape = 'ap-formula-v1::{"{{"}::ap-formula-v1{{step_1.body}}'
+        const raw = shape.repeat(20)
+        const bigOutput = 'y'.repeat(100_000) // 20 * 100_000 = 2_000_000, over the budget
+        const { result: r, error } = okMixed(raw, { step_1: { body: bigOutput } })
+        expect(r).toBeNull()
+        expect(error).toBe(INPUT_DATA_TOO_LARGE)
+    })
+
+    it('replace() rejects a projected output that would be gigabytes larger than either input', () => {
+        // |x| + |x| * (|y| - 1) ≈ 4_000_000 chars, while |x| + |y| = 4_000 —
+        // far under the whole-template budget, so only replace()'s own guard
+        // can be responsible for the rejection.
+        const x = 'a'.repeat(2000)
+        const y = 'y'.repeat(2000)
+        const { result: r, error } = ok('replace({{x}};"a";{{y}})', { x, y })
+        expect(r).toBeNull()
+        expect(error).toBe(REPLACE_RESULT_TOO_LARGE)
+    })
+
+    it('replace() still works normally for a reasonable input', () =>
+        expect(result('replace("aabbaa";"a";"x")')).toBe('xxbbxx'))
+
+    it('join_list() rejects a projected output built from many small elements joined by a large separator', () => {
+        // split_text_to_list(x; "") turns x into 2000 single-char elements;
+        // joining them with a 2000-char separator projects to ~4_000_000
+        // chars, while |x| + |y| = 4_000 stays far under the template budget.
+        const x = 'a'.repeat(2000)
+        const y = 'y'.repeat(2000)
+        const { result: r, error } = ok('join_list(split_text_to_list({{x}};"");{{y}})', { x, y })
+        expect(r).toBeNull()
+        expect(error).toBe(JOIN_LIST_RESULT_TOO_LARGE)
+    })
+
+    it('join_list() still works normally for a reasonable input', () =>
+        expect(result('join_list(split_text_to_list("a,b,c";",");"-")')).toBe('a-b-c'))
+
+    // remove() is deliberately NOT guarded (see FORMULA_MAX_BUILT_STRING_LENGTH's
+    // doc comment): it can only shrink or preserve its input's length, so a
+    // guard on it can only ever misfire, never prevent a real amplification.
+    it('remove() still works normally, including when fed a large value produced by other guarded calls', () => {
+        const x = 'a'.repeat(1000)
+        const y = 'b'.repeat(1000)
+        // replace()'s own guard passes here (projected length lands exactly
+        // at FORMULA_MAX_BUILT_STRING_LENGTH); remove() must not add a
+        // second, false rejection on top of an already-accepted value.
+        const { result: r, error } = ok('remove(suffix(replace({{x}};"a";{{y}});"z");"q")', { x, y })
+        expect(error).toBeNull()
+        expect(typeof r).toBe('string')
+    })
+
+    it('to_json still works for a normal-sized value', () =>
+        expect(result('to_json({{obj}})', { obj: { a: 1 } })).toBe('{"a":1}'))
+
+    it('from_json still works for a normal-sized value', () =>
+        expect(result('pluck(from_json({{text}});"a")', { text: '[{"a":1},{"a":2}]' })).toEqual([1, 2]))
+
+    // Regression (finding 2): a per-call cap let N chained calls each get a
+    // fresh allowance, so chaining via suffix() (itself an unguarded
+    // concatenation) could multiply the intended ceiling by N. replace() now
+    // debits ONE shared per-evaluation counter, so the chain is rejected once
+    // the SUM of what it has produced — not any single call — passes the cap.
+    it('chaining many replace() calls via suffix() can no longer compose past the shared per-evaluation budget', () => {
+        const x = 'a'.repeat(100)
+        const y = 'y'.repeat(100)
+        // Each call projects to 100 + 100*(100-1) = 10_000 chars; 150 calls
+        // sum to 1_500_000, over the 1_000_000 shared budget.
+        const { result: r, error } = ok(chainReplaceCalls(150), { x, y })
+        expect(r).toBeNull()
+        expect(error).toBe(REPLACE_RESULT_TOO_LARGE)
+    })
+
+    it('a small number of chained replace() calls still composes normally', () => {
+        const { result: r, error } = ok(chainReplaceCalls(3), { x: 'a', y: 'b' })
+        expect(error).toBeNull()
+        expect(typeof r).toBe('string')
+    })
+
+    // Pins the invariant the shared-tracker design rests on: the trackers in
+    // function-implementations.ts are reset in a `finally` around
+    // parser.evaluate(), so a REJECTED evaluation must not leave the next
+    // one on the same worker process with a stale, already-exhausted budget.
+    // A future edit that moves the reset into a `catch` (skips it on
+    // success), above a `return` (skips it on some paths), or introduces an
+    // `await` between the assignment and the `finally` would break this
+    // silently — no error at edit time, just every later evaluation on that
+    // worker throwing "too large" until the process restarts.
+    it('a rejected evaluation does not poison the budget for the next one', () => {
+        const rejected = ok(chainReplaceCalls(150), { x: 'a'.repeat(100), y: 'y'.repeat(100) })
+        expect(rejected.error).toBe(REPLACE_RESULT_TOO_LARGE)
+
+        const next = ok('replace("aabbaa";"a";"x")')
+        expect(next.error).toBeNull()
+        expect(next.result).toBe('xxbbxx')
+    })
+
+    // Regression: split_text_to_list() was completely unguarded. `String(arr)`
+    // joins an array argument with ',', so nesting the call round-trips
+    // array -> comma-joined string -> array-of-chars each level, roughly
+    // doubling length per level. A 1000-char seed nested 12 deep (281 chars
+    // of expression) produced a 2-million-element array with no error before
+    // this fix; nested 14 deep, 8 million elements.
+    it('nesting split_text_to_list() deeply enough to double past the shared budget is rejected', () => {
+        const x = 'a'.repeat(1000)
+        const { result: r, error } = ok(nestedSplitTextToList(12), { x })
+        expect(r).toBeNull()
+        expect(error).toBe(SPLIT_TEXT_TO_LIST_RESULT_TOO_LARGE)
+    })
+
+    it('a shallow nesting of split_text_to_list() still composes normally', () => {
+        const { result: r, error } = ok(nestedSplitTextToList(2), { x: 'a,b,c' })
+        expect(error).toBeNull()
+        expect(Array.isArray(r)).toBe(true)
+    })
+
+    // Regression: `||` (string/array concatenation) and `=` (assignment) are
+    // built-in expr-eval binary OPERATORS, not registered `parser.functions`
+    // — none of the guards above ever saw them. Chaining assignment +
+    // concatenation doubles the runtime value every step while the
+    // expression text grows by only a small constant per step (verified
+    // against the real expr-eval@2.0.2 dependency: a 290-character
+    // expression at depth 16 produced a 131,070,000-character result with no
+    // error before this fix). `parser.binaryOps['||']` is now overridden to
+    // charge the shared per-evaluation tracker the same way replace()/
+    // join_list()/split_text_to_list() do.
+    it('chaining assignment + || concatenation deeply enough to double past the shared budget is rejected', () => {
+        const expr = chainedAssignConcat({ depth: 16, seedVar: '{{v}}' })
+        const { result: r, error } = ok(expr, { v: 'a'.repeat(1000) })
+        expect(r).toBeNull()
+        expect(error).toBe(CONCAT_RESULT_TOO_LARGE)
+    })
+
+    it('a shallow assignment + || concatenation chain still composes normally', () => {
+        const expr = chainedAssignConcat({ depth: 3, seedVar: '{{v}}' })
+        const { result: r, error } = ok(expr, { v: 'a'.repeat(10) })
+        expect(error).toBeNull()
+        // The outer `||`s between statements also concatenate each step's own
+        // result into the final value: x0 (20) + x1 (40) + x2 (80) = 140.
+        expect(r).toBe('a'.repeat(140))
+    })
+
+    // Regression: enumerating one dangerous function at a time (replace,
+    // join_list, from_json, to_json, split_text_to_list, ||) took four
+    // review rounds and still missed expr-eval's OWN built-ins — `join`
+    // alone (distinct from our `join_list`) produced a 335,941,270-character
+    // string from a 994-character expression with NO input data, and
+    // map/fold/filter are compute-bound (a per-element callback), not
+    // allocation-bound, so no size guard could ever have caught them. Fixed
+    // by allowlisting: every `parser.functions` key that still points at its
+    // original expr-eval implementation after our own registrations run is
+    // deleted (see function-implementations.ts, after the argCompatibility
+    // loop).
+    it('expr-eval\'s own unguarded built-ins (join, map) are genuinely removed, not merely unused', () => {
+        // Removing a `parser.functions` key makes expr-eval treat the bare
+        // name as an undefined VARIABLE reference (not a special
+        // "unknown function" error) — the exact wording isn't the point
+        // here, only that the call fails instead of silently allocating.
+        const { result: r, error } = ok('join(",";[1;2;3])')
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    it('a documented function that happens to share a name with a removed built-in area still works (join_list, our own)', () =>
+        expect(result('join_list(split_text_to_list("a,b,c";",");"-")')).toBe('a-b-c'))
+
+    it('a broad sample of our own registered functions all still work after the allowlist sweep', () => {
+        expect(result('uppercase("hi")')).toBe('HI')
+        expect(result('add(1;2)')).toBe(3)
+        expect(result('pluck(from_json({{text}});"a")', { text: '[{"a":1},{"a":2}]' })).toEqual([1, 2])
+        expect(result('keys({{obj}})', { obj: { a: 1, b: 2 } })).toEqual(['a', 'b'])
+        expect(result('min(3;7)')).toBe(3)
+        expect(result('max(3;7)')).toBe(7)
+        expect(result('length("hello")')).toBe(5)
+        expect(result('and(true;false)')).toBe(false)
+        expect(result('round(3.456;1)')).toBe(3.5)
+    })
+
+    // KNOWN OPEN GAP, not closed by this PR: the allowlist sweep only
+    // removes OWN keys from `parser.functions`. `Object.prototype` methods
+    // remain callable as formula "functions" today, because `functions` (and
+    // several other expr-eval internal tables) inherit `Object.prototype`
+    // and expr-eval resolves names against them with `in`/bracket access,
+    // which walks the whole chain. `toString(1)` evaluating to the string
+    // "[object Undefined]" is the CURRENT, ACCEPTED behaviour — pinning it
+    // here (rather than asserting it's blocked, which would be false) is
+    // deliberate: a version of this fix DID null those prototypes, and that
+    // was reverted after it was found to enable remote code execution (see
+    // the two regression tests below, and the long comment in
+    // function-implementations.ts right above where the sweep ends,
+    // explaining exactly why those prototypes must stay untouched until a
+    // real fix — blocking `constructor`/`__proto__`/`prototype` member
+    // access, or disabling expr-eval's `()=` operator — is deliberately
+    // designed, not retried opportunistically).
+    it('Object.prototype methods are callable as formula functions today — a known, accepted gap, not a regression', () => {
+        const { result: r, error } = ok('toString(1)')
+        expect(error).toBeNull()
+        expect(r).toBe('[object Undefined]')
+    })
+
+    // Regression (security-critical): this was a working RCE at one point —
+    // nulling unaryOps/binaryOps/ternaryOps's prototypes (to close the gap
+    // pinned above) removed an ACCIDENTAL parse-time barrier, since those
+    // tables inheriting `Object.prototype` is what made expr-eval's
+    // tokenizer find `constructor` there and reject `X.constructor` as an
+    // unparseable operator sequence. That prototype change was reverted, so
+    // the accidental barrier is back — but this is now ALSO blocked
+    // deliberately: `findForbiddenMemberAccess` in
+    // function-implementations.ts rejects `.constructor`/`.__proto__`/
+    // `.prototype` by walking the parsed instruction tree, and `()=` is
+    // disabled via expr-eval's own `operators.fndef` switch. Needs no
+    // sample data at all.
+    it('member access to constructor.constructor does not evaluate (RCE regression, payload 1)', () => {
+        const { result: r, error } = ok('{{step_1.body}}.constructor.constructor("return 7")()', { step_1: { body: 'x' } })
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    // Same target as payload 1, via a bare identifier plus expr-eval's
+    // `()=` function-definition operator instead of member access on a
+    // resolved variable. Blocked by `operators.fndef: false` before the
+    // member-access filter even gets a chance to run.
+    it('a bare constructor.constructor reference inside a function definition does not evaluate (RCE regression, payload 2)', () => {
+        const { result: r, error } = ok('(g(y) = constructor.constructor("return 7")())(1)')
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    // Direct forms of the three blocked member names. `.__proto__` and
+    // `.prototype` are the important cases here: unlike `.constructor` and
+    // `.toString`, they were found NOT to be caught by the accidental
+    // parse-time barrier even before this fix (verified: `x.__proto__` and
+    // `x.prototype` parsed and evaluated successfully on `main`, since
+    // those two names are not both inherited on every operator table the
+    // way `constructor` is). These three tests are the ones that would fail
+    // if `findForbiddenMemberAccess` were ever removed without something
+    // else replacing it — `.constructor` alone would still happen to be
+    // caught by the accident.
+    // `.constructor` specifically still hits the accidental parse-time
+    // barrier BEFORE reaching the deliberate filter — `constructor` is
+    // inherited on all three operator tables (unlike `__proto__`/
+    // `prototype` below), so expr-eval never successfully parses this into
+    // an IMEMBER instruction for `findForbiddenMemberAccess` to see. Still
+    // rejected, just via the older mechanism — asserted generically rather
+    // than pinning the specific (accidental) message, since that message
+    // is not this fix's to own.
+    it('direct .constructor member access is rejected', () => {
+        const { result: r, error } = ok('{{obj}}.constructor', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    it('direct .__proto__ member access is rejected with a specific error', () => {
+        const { result: r, error } = ok('{{obj}}.__proto__', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+    })
+
+    it('direct .prototype member access is rejected with a specific error', () => {
+        const { result: r, error } = ok('{{obj}}.prototype', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".prototype" — this property name is not allowed')
+    })
+
+    // A forbidden member name hidden inside a ternary branch or an
+    // assignment's right-hand side is stored by expr-eval as a nested IEXPR
+    // sub-array of instructions, not flattened into the top-level token
+    // list — findForbiddenMemberAccess must recurse into those or this
+    // slips through.
+    it('a forbidden member name inside a ternary branch is still rejected', () => {
+        const { result: r, error } = ok('(1 > 0) ? {{obj}}.__proto__ : 2', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+    })
+
+    it('a forbidden member name inside an assignment right-hand side is still rejected', () => {
+        const { result: r, error } = ok('(a = {{obj}}.__proto__) + 1', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+    })
+
+    // A bare, unambiguous attempt to define a function — expr-eval's `()=`
+    // operator, disabled via `operators.fndef: false` — must not parse at
+    // all, independent of anything it might have gone on to do.
+    it('defining a function inside a formula does not parse', () => {
+        const { result: r, error } = ok('(g(y) = y*y)(3)')
+        expect(r).toBeNull()
+        expect(error).toBe('Defining functions inside a formula is not supported')
+    })
+
+    // The live capability this fix must not take away: dot access to a
+    // resolved variable's own field. There is no `get()`/similar helper
+    // that would let a formula author work around member access being
+    // removed entirely, which is why it stays — only the three dangerous
+    // names above are blocked, not `.` itself.
+    it('ordinary member access ({{obj}}.name) still works', () =>
+        expect(result('{{obj}}.name', { obj: { name: 'Bob' } })).toBe('Bob'))
+
+    // "if()" is one of our documented functions (AP_FUNCTIONS: exactly
+    // 3-arg) but is never registered as parser.functions.if — rewriteLazyIf
+    // rewrites a valid 3-arg call into a ternary before evaluation reaches
+    // this file. A wrong arity used to fall through to expr-eval's built-in
+    // 3-arg `if` and silently return a value; that built-in is now removed
+    // by the allowlist sweep, so a 2-arg or 4-arg call is now caught
+    // upfront with a message naming the actual arity problem.
+    it('if() with the wrong number of arguments fails with a message naming the arity, not an incidental "undefined variable"', () => {
+        const { result: r, error } = ok('if(true;"a")')
+        expect(r).toBeNull()
+        expect(error).toBe('if() needs exactly 3 values (condition; true value; false value) — got 2')
+    })
+
+    it('if() with exactly 3 arguments still works', () =>
+        expect(result('if(1500 > 1000;"High";"Standard")')).toBe('High'))
+})
