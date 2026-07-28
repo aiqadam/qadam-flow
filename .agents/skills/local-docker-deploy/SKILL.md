@@ -27,7 +27,7 @@ docker compose up -d
 that name (or override the env var) so the registry pull is skipped.
 
 ## Stack
-- **app** (port 8080:80) — API + frontend via PM2
+- **app** (port 8080:80) — API + frontend, a single Node process under `tini`
 - **worker** ×5 — BullMQ job workers
 - **postgres** — `pgvector/pgvector:0.8.0-pg14`
 - **redis** — `redis:7.0.7`

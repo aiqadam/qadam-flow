@@ -67,6 +67,8 @@ export const defaultTheme = generateTheme({
     primaryColor: '#8142E3',
     websiteName: 'Qadam Flow',
     fullLogoUrl: '/logo.svg',
-    favIconUrl: '',
+    // Matches the AP_FAVICON shipped by packages/web/vite.config.mts so a
+    // fresh, unbranded install still renders an icon instead of an empty href.
+    favIconUrl: '/logo-192.png',
     logoIconUrl: '/logo.svg',
 })

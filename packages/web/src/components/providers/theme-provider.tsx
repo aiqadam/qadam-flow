@@ -1,3 +1,4 @@
+import { isNil } from '@aiqadam/shared';
 import { createContext, useContext, useEffect, useState } from 'react';
 import * as RippleHook from 'use-ripple-hook';
 
@@ -28,8 +29,16 @@ const initialState: ThemeProviderState = {
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
-const setFavicon = (url: string) => {
-  document.querySelectorAll("link[rel*='icon']").forEach((el) => el.remove());
+export const setFavicon = (url: string) => {
+  // An empty/unset URL means the platform hasn't configured a custom favicon —
+  // leave the icons index.html already ships (including apple-touch-icon) alone
+  // instead of replacing them with an empty href.
+  if (isNil(url) || url === '') {
+    return;
+  }
+  // Only rel="icon" links are ours to replace; apple-touch-icon is a distinct
+  // rel used for iOS home-screen icons and must survive this swap.
+  document.querySelectorAll("link[rel='icon']").forEach((el) => el.remove());
   const link = document.createElement('link');
   link.rel = 'icon';
   link.href = url;

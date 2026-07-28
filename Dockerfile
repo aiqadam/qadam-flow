@@ -29,7 +29,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl \
         ca-certificates \
         iptables \
-        libcap-dev && \
+        libcap-dev \
+        tini && \
     yarn config set python /usr/bin/python3 && \
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen en_US.UTF-8
@@ -55,7 +56,6 @@ RUN --mount=type=cache,target=/root/.npm \
     npm install -g --no-fund --no-audit \
     node-gyp \
     npm@11.11.0 \
-    pm2@6.0.10 \
     typescript@4.9.4 \
     esbuild@0.25.0
 
@@ -138,5 +138,10 @@ COPY --from=build /usr/src/app/dist/packages/web ./dist/packages/web/
 
 LABEL service=qadam-flow
 
-ENTRYPOINT ["./docker-entrypoint.sh"]
+# PID 1 has to reap orphans, and Node does not reap processes it did not spawn.
+# Measured in this image: with `exec node` as PID 1 an orphaned child is left as
+# `Z  sh <defunct>` for the life of the container; under tini it is reaped.
+# Signal handling is not the reason — both the API and the worker install their
+# own SIGTERM handlers, and `docker stop` returns immediately either way.
+ENTRYPOINT ["/usr/bin/tini", "--", "./docker-entrypoint.sh"]
 EXPOSE 80

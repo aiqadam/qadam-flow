@@ -1,13 +1,14 @@
 ---
 title: "Docker"
-description: "Install Qadam Flow with the one-line installer, or run it as a single Docker container"
+description: "Install Qadam Flow with the one-line installer"
 icon: "docker"
 ---
 
-There are two ways to get Qadam Flow running with Docker:
+The one-line installer sets up the full stack — app, workers, PostgreSQL and Redis — with generated secrets. It is the supported way to run Qadam Flow with Docker.
 
-1. **The one-line installer (recommended).** It sets up the full stack — app, workers, PostgreSQL and Redis — with generated secrets.
-2. **A single container.** Good for a quick look or a throwaway test, backed by an embedded database and an in-memory queue.
+<Note>
+**The all-in-one container has been removed.** Earlier images accepted `AP_CONTAINER_TYPE=WORKER_AND_APP` (also the default when the variable was unset) and ran the API and a worker side by side in one container, supervised by PM2 inside the image. That supervisor hid crashes from `docker ps`, and the mode shipped without a working worker — so the container answered HTTP while no flow ever executed. The API and the worker now run as separate containers, each supervised by Docker, and the entrypoint refuses to start rather than guess. See [Breaking Changes](../configuration/breaking-changes).
+</Note>
 
 ## Quick install (recommended)
 
@@ -61,6 +62,19 @@ Set these before piping to `sh`, for example `QADAM_FLOW_DIR=/opt/qadam-flow`:
 **Upgrading from an install that changed the port by hand.** Earlier versions ignored `QADAM_FLOW_PORT`, so the only way to move the port was to edit the `8080:80` mapping in `qadam-flow/docker-compose.yml` — and the installer overwrites that file on every run, silently putting you back on 8080. Move the port into `.env` instead: re-run with `QADAM_FLOW_PORT=<your port>`, which records it in `.env` and repoints `AP_FRONTEND_URL`. The installer warns if it spots an `AP_FRONTEND_URL` pointing at a port the stack will not publish.
 </Warning>
 
+### Memory budget
+
+Give the `app` service at least **768 MB**. Node sizes its V8 heap to the memory the
+container is allowed, and at a `mem_limit` around `400m` the very first sign-up can
+exhaust the heap on small hosts (Raspberry Pi, 1–2 GB VPS). If you need to run tighter
+than that, set `NODE_OPTIONS=--max-old-space-size=<MB>` in `.env` to a value comfortably
+below the limit rather than letting V8 auto-tune into it.
+
+A process that runs out of heap now exits the container, so Docker's `restart:` policy
+restarts it and the crash shows up in `docker ps` (a rising restart count) and
+`docker events`. Earlier images supervised Node with PM2 inside the container, which
+restarted the process in place and left the container reporting `Up` while sign-up hung.
+
 ### Day-two commands
 
 Run these from your install directory (`qadam-flow` by default):
@@ -73,38 +87,6 @@ docker compose down -v                        # stop AND delete all data
 ```
 
 For the details of the compose stack and every value in `.env`, see [Docker Compose](./docker-compose).
-
-## Single container
-
-<Warning>
-This setup is meant for personal use and testing only. It runs on [PGLite](https://pglite.dev/) (embedded PostgreSQL) and an in-memory queue, which supports exactly one instance on one machine. For anything shared or long-lived, use [Docker Compose](./docker-compose) with PostgreSQL and Redis.
-</Warning>
-
-```bash
-docker run -d --name qadam-flow \
-  -p 8080:80 \
-  -v ~/.qadam-flow:/root/.qadam-flow \
-  -e AP_CONFIG_PATH=/root/.qadam-flow \
-  -e AP_DB_TYPE=PGLITE \
-  -e AP_REDIS_TYPE=MEMORY \
-  -e AP_FRONTEND_URL=http://localhost:8080 \
-  ghcr.io/aiqadam/qadam-flow:latest
-```
-
-What each flag is for:
-
-| Setting                              | Why                                                                                                                                                          |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `-p 8080:80`                         | The container listens on port `80`.                                                                                                                          |
-| `-v ~/.qadam-flow:/root/.qadam-flow` | Persists the PGLite database and `settings.json`. Delete this directory and you lose everything, including the auto-generated secrets.                        |
-| `AP_CONFIG_PATH`                     | Where the PGLite database and local settings are stored inside the container.                                                                                 |
-| `AP_DB_TYPE=PGLITE`                  | Use the embedded database instead of an external PostgreSQL server.                                                                                           |
-| `AP_REDIS_TYPE=MEMORY`               | Use the in-memory queue instead of Redis. In this mode `AP_ENCRYPTION_KEY` and `AP_JWT_SECRET` are generated on first boot and stored under `AP_CONFIG_PATH`.  |
-| `AP_FRONTEND_URL`                    | The base URL used for webhook and redirect URLs. Must be a valid URL.                                                                                        |
-
-Then open [http://localhost:8080/sign-up](http://localhost:8080/sign-up).
-
-Every other setting is optional — see [Environment Variables](../configuration/environment-variables).
 
 ## Configure the webhook URL
 
@@ -122,7 +104,7 @@ The quickest way to expose a local port is [ngrok](https://ngrok.com/). It is no
     ```
   </Step>
   <Step title="Point Qadam Flow at the tunnel">
-    Set `AP_FRONTEND_URL` to the HTTPS URL ngrok prints, then restart the container — or, for the compose stack, update `.env` and run `docker compose up -d`.
+    Set `AP_FRONTEND_URL` in `.env` and run `docker compose up -d`.
   </Step>
 </Steps>
 
@@ -146,28 +128,20 @@ docker compose up -d --remove-orphans
 
 Your `.env` and the PostgreSQL and Redis volumes are untouched.
 
-### Single container
+### Coming from the all-in-one container
 
-<Steps>
-  <Step title="Back up the data directory">
-    ```bash
-    docker stop qadam-flow
-    cp -r ~/.qadam-flow ~/.qadam-flow-backup
-    ```
-  </Step>
-  <Step title="Pull the new image">
-    ```bash
-    docker pull ghcr.io/aiqadam/qadam-flow:latest
-    ```
-  </Step>
-  <Step title="Replace the container">
-    ```bash
-    docker rm qadam-flow
-    ```
+<Warning>
+**Do not pull a newer image over an all-in-one install.** The current image refuses to start without `AP_CONTAINER_TYPE=APP` or `WORKER`, so the container will exit instead of upgrading in place.
 
-    Then run the same `docker run` command as above. Because the data lives in `~/.qadam-flow`, your flows and connections survive.
-  </Step>
-</Steps>
+There is **no automated migration** from the embedded PGLite database to PostgreSQL. Your flows, connections and runs live in `~/.qadam-flow` and there is no export tool that moves them into a compose install. Until one exists, either stay on the image tag you are running now, or rebuild your flows in a fresh install.
+</Warning>
+
+Back up the directory before doing anything else:
+
+```bash
+docker stop qadam-flow
+cp -r ~/.qadam-flow ~/.qadam-flow-backup
+```
 
 ## Uninstall
 
@@ -182,7 +156,7 @@ cd qadam-flow
 docker compose down -v
 ```
 
-For the single container:
+For an older all-in-one container:
 
 ```bash
 docker rm -f qadam-flow
