@@ -9,6 +9,18 @@ export class FormulaSizeLimitError extends Error {
     }
 }
 
+// Thrown by the member-access filter in function-implementations.ts when a
+// formula tries to read `.constructor`/`.__proto__`/`.prototype`. Same
+// identity-over-message-regex reasoning as FormulaSizeLimitError above —
+// this is a deliberate security rejection, not a generic parse failure, and
+// needs to stay one even if its wording changes later.
+export class FormulaSecurityError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = 'FormulaSecurityError'
+    }
+}
+
 // A PRIOR version of this comment claimed "expr-eval has no loops or
 // recursion driven by data ... a single linear pass over a fixed,
 // already-parsed instruction list" and used that to argue a formula cannot

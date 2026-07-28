@@ -1,4 +1,4 @@
-import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZE, FormulaSizeLimitError } from './formula-bounds'
+import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZE, FormulaSecurityError, FormulaSizeLimitError } from './formula-bounds'
 import { evaluateRaw } from './function-implementations'
 import { AP_FUNCTIONS } from './function-registry'
 
@@ -148,7 +148,7 @@ function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionPar
         return { result: evaluateRaw(processed, vars), error: null }
     }
     catch (e) {
-        if (e instanceof FormulaSizeLimitError) return { result: null, error: e.message }
+        if (e instanceof FormulaSizeLimitError || e instanceof FormulaSecurityError) return { result: null, error: e.message }
         return { result: null, error: friendlyError(e) }
     }
 }
@@ -426,6 +426,14 @@ function friendlyError(e: unknown): string {
     // catch-all below.
     if (/needs exactly 3 values/i.test(msg)) {
         return msg
+    }
+    // expr-eval's own message for calling `(...)=` with the `fndef`
+    // operator disabled (see function-implementations.ts) — a native
+    // third-party error, not one of ours, so this can't be an
+    // `instanceof` check; matched by message the same way the other
+    // native expr-eval errors below are.
+    if (/function definition is not permitted/i.test(msg)) {
+        return 'Defining functions inside a formula is not supported'
     }
     if (/division by zero/i.test(msg)) {
         return 'Cannot divide by zero'

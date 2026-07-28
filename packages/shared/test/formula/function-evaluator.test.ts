@@ -1081,28 +1081,103 @@ describe('formula size bounds', () => {
         expect(r).toBe('[object Undefined]')
     })
 
-    // Regression (security-critical): confirmed as a working RCE — nulling
-    // unaryOps/binaryOps/ternaryOps removed an ACCIDENTAL barrier. Those
-    // tables inheriting `Object.prototype` means expr-eval's tokenizer finds
-    // `constructor` there and tokenizes `X.constructor` as an operator,
-    // which is a parse error today. If a future change nulls those
-    // prototypes again, `constructor` becomes an ordinary member name,
-    // `IMEMBER` access is not filtered, and this reaches `Function`'s
-    // constructor. Needs no sample data at all.
+    // Regression (security-critical): this was a working RCE at one point —
+    // nulling unaryOps/binaryOps/ternaryOps's prototypes (to close the gap
+    // pinned above) removed an ACCIDENTAL parse-time barrier, since those
+    // tables inheriting `Object.prototype` is what made expr-eval's
+    // tokenizer find `constructor` there and reject `X.constructor` as an
+    // unparseable operator sequence. That prototype change was reverted, so
+    // the accidental barrier is back — but this is now ALSO blocked
+    // deliberately: `findForbiddenMemberAccess` in
+    // function-implementations.ts rejects `.constructor`/`.__proto__`/
+    // `.prototype` by walking the parsed instruction tree, and `()=` is
+    // disabled via expr-eval's own `operators.fndef` switch. Needs no
+    // sample data at all.
     it('member access to constructor.constructor does not evaluate (RCE regression, payload 1)', () => {
         const { result: r, error } = ok('{{step_1.body}}.constructor.constructor("return 7")()', { step_1: { body: 'x' } })
         expect(r).toBeNull()
         expect(error).not.toBeNull()
     })
 
-    // Same mechanism as payload 1, via a bare identifier plus expr-eval's
+    // Same target as payload 1, via a bare identifier plus expr-eval's
     // `()=` function-definition operator instead of member access on a
-    // resolved variable.
+    // resolved variable. Blocked by `operators.fndef: false` before the
+    // member-access filter even gets a chance to run.
     it('a bare constructor.constructor reference inside a function definition does not evaluate (RCE regression, payload 2)', () => {
         const { result: r, error } = ok('(g(y) = constructor.constructor("return 7")())(1)')
         expect(r).toBeNull()
         expect(error).not.toBeNull()
     })
+
+    // Direct forms of the three blocked member names. `.__proto__` and
+    // `.prototype` are the important cases here: unlike `.constructor` and
+    // `.toString`, they were found NOT to be caught by the accidental
+    // parse-time barrier even before this fix (verified: `x.__proto__` and
+    // `x.prototype` parsed and evaluated successfully on `main`, since
+    // those two names are not both inherited on every operator table the
+    // way `constructor` is). These three tests are the ones that would fail
+    // if `findForbiddenMemberAccess` were ever removed without something
+    // else replacing it — `.constructor` alone would still happen to be
+    // caught by the accident.
+    // `.constructor` specifically still hits the accidental parse-time
+    // barrier BEFORE reaching the deliberate filter — `constructor` is
+    // inherited on all three operator tables (unlike `__proto__`/
+    // `prototype` below), so expr-eval never successfully parses this into
+    // an IMEMBER instruction for `findForbiddenMemberAccess` to see. Still
+    // rejected, just via the older mechanism — asserted generically rather
+    // than pinning the specific (accidental) message, since that message
+    // is not this fix's to own.
+    it('direct .constructor member access is rejected', () => {
+        const { result: r, error } = ok('{{obj}}.constructor', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    it('direct .__proto__ member access is rejected with a specific error', () => {
+        const { result: r, error } = ok('{{obj}}.__proto__', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+    })
+
+    it('direct .prototype member access is rejected with a specific error', () => {
+        const { result: r, error } = ok('{{obj}}.prototype', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".prototype" — this property name is not allowed')
+    })
+
+    // A forbidden member name hidden inside a ternary branch or an
+    // assignment's right-hand side is stored by expr-eval as a nested IEXPR
+    // sub-array of instructions, not flattened into the top-level token
+    // list — findForbiddenMemberAccess must recurse into those or this
+    // slips through.
+    it('a forbidden member name inside a ternary branch is still rejected', () => {
+        const { result: r, error } = ok('(1 > 0) ? {{obj}}.__proto__ : 2', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+    })
+
+    it('a forbidden member name inside an assignment right-hand side is still rejected', () => {
+        const { result: r, error } = ok('(a = {{obj}}.__proto__) + 1', { obj: { a: 1 } })
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+    })
+
+    // A bare, unambiguous attempt to define a function — expr-eval's `()=`
+    // operator, disabled via `operators.fndef: false` — must not parse at
+    // all, independent of anything it might have gone on to do.
+    it('defining a function inside a formula does not parse', () => {
+        const { result: r, error } = ok('(g(y) = y*y)(3)')
+        expect(r).toBeNull()
+        expect(error).toBe('Defining functions inside a formula is not supported')
+    })
+
+    // The live capability this fix must not take away: dot access to a
+    // resolved variable's own field. There is no `get()`/similar helper
+    // that would let a formula author work around member access being
+    // removed entirely, which is why it stays — only the three dangerous
+    // names above are blocked, not `.` itself.
+    it('ordinary member access ({{obj}}.name) still works', () =>
+        expect(result('{{obj}}.name', { obj: { name: 'Bob' } })).toBe('Bob'))
 
     // "if()" is one of our documented functions (AP_FUNCTIONS: exactly
     // 3-arg) but is never registered as parser.functions.if — rewriteLazyIf

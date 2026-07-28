@@ -3,7 +3,7 @@ import relativeTimeDayjs from 'dayjs/plugin/relativeTime'
 import timezoneDayjs from 'dayjs/plugin/timezone'
 import utcDayjs from 'dayjs/plugin/utc'
 import { Parser } from 'expr-eval'
-import { FORMULA_MAX_BUILT_STRING_LENGTH, FORMULA_MAX_JSON_VALUE_BUDGET, FormulaSizeLimitError, measureSize } from './formula-bounds'
+import { FORMULA_MAX_BUILT_STRING_LENGTH, FORMULA_MAX_JSON_VALUE_BUDGET, FormulaSecurityError, FormulaSizeLimitError, measureSize } from './formula-bounds'
 import { AP_FUNCTIONS } from './function-registry'
 
 dayjs.extend(relativeTimeDayjs)
@@ -33,12 +33,43 @@ declare module 'expr-eval' {
         // touches one.
         binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
     }
+    // `Expression.tokens` (the parsed instruction array) is not part of
+    // expr-eval's published `.d.ts` either — `Expression` there declares
+    // only `simplify`/`evaluate`/`substitute`/`symbols`/`variables`/
+    // `toJSFunction`. Added so `findForbiddenMemberAccess` below can walk
+    // the real parsed structure instead of grepping the source text (see
+    // that function's comment for why a text-level check doesn't work).
+    // `ExprEvalInstruction` (defined at the bottom of this file) is a
+    // minimal, locally-defined shape — expr-eval doesn't export an
+    // `Instruction` type either. `evaluate` here is an ADDITIONAL overload
+    // (methods merge as overloads, unlike the plain-property case above —
+    // this doesn't hit the "must match exactly" restriction), widening the
+    // same way `Parser.evaluate` already does above, since `evaluateRaw`
+    // now calls `parser.parse(expression).evaluate(vars)` directly instead
+    // of the one-shot `parser.evaluate(expression, vars)`.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+    interface Expression {
+        tokens: ExprEvalInstruction[]
+        evaluate(values: Record<string, unknown>): unknown
+    }
 }
 
 // Parser is a module-private singleton — exposing it would let any consumer
 // of @aiqadam/shared mutate `parser.functions.X` and break formula
 // evaluation process-wide. Use `evaluateRaw` instead.
-const parser = new Parser()
+//
+// `operators.fndef` disables expr-eval's `()=` function-definition operator
+// (`f(x) = x*x` / `map(f(x) = x*x, [1,2,3])`) via a switch expr-eval already
+// supports through its own constructor options — no need to delete or wrap
+// anything post-hoc. Zero documented Qadam Flow formula uses it: none of the
+// 87 examples in function-registry.ts, no entry in the web function picker,
+// no mention in the docs. It is a side effect of embedding this library, and
+// it is a second, independent path to `Function`'s constructor — the
+// callee's scope for a defined function is built with `Object.assign({},
+// values)` inside expr-eval's own `IFUNDEF` handling, a fresh object this
+// module never gets a chance to touch. Disabling it here removes that path
+// outright rather than trying to guard what runs inside it.
+const parser = new Parser({ operators: { fndef: false } })
 
 // Snapshot of exactly what expr-eval registers on `parser.functions` before
 // this module touches it — used at the end of this file to sweep away every
@@ -138,7 +169,18 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
     currentBuiltStringBudget = { remaining: FORMULA_MAX_BUILT_STRING_LENGTH }
     currentJsonValueBudget = { remaining: FORMULA_MAX_JSON_VALUE_BUDGET }
     try {
-        return parser.evaluate(expression, vars)
+        // Parsed once, then checked, then evaluated — rather than
+        // `parser.evaluate(expression, vars)` in one call — so
+        // `findForbiddenMemberAccess` can reject a dangerous member name
+        // before a single guarded function, operator, or user callback
+        // runs. See that function's comment for why this walks the parsed
+        // instruction tree instead of the raw text.
+        const parsed = parser.parse(expression)
+        const forbiddenMember = findForbiddenMemberAccess(parsed.tokens)
+        if (forbiddenMember !== null) {
+            throw new FormulaSecurityError(`Formula cannot access ".${forbiddenMember}" — this property name is not allowed`)
+        }
+        return parsed.evaluate(vars)
     }
     finally {
         currentBuiltStringBudget = null
@@ -666,59 +708,68 @@ for (const key of Object.keys(parser.functions)) {
     }
 }
 
-// KNOWN OPEN GAP, deliberately NOT fixed here — read this before reaching
-// for `Object.setPrototypeOf` on `functions`/`unaryOps`/`binaryOps`/
-// `ternaryOps`/`consts`/`vars`, which looks like the obvious next step and
-// is NOT SAFE to make without a broader, deliberate design change:
+// RCE FIX (this section) + KNOWN OPEN GAP (still, deliberately, below) —
+// read this before touching `Object.setPrototypeOf` on
+// `functions`/`unaryOps`/`binaryOps`/`ternaryOps`/`consts`/`vars` again:
 //
-// The sweep above only removes OWN enumerable keys from `parser.functions`.
-// `Object.prototype` methods (`toString`, `hasOwnProperty`, `valueOf`, ...)
-// remain callable as formula "functions" — `toString(1)` evaluates to the
-// string "[object Undefined]" — because several expr-eval internal tables
-// (`functions`, `unaryOps`, `binaryOps`, `ternaryOps`, `consts`, and the
-// per-call `vars` scope) are plain objects that inherit `Object.prototype`,
-// and expr-eval resolves names against them with `in` or bracket access,
-// both of which walk the whole prototype chain. As far as two review passes
-// could determine, this specific gap — a handful of harmless
-// `Object.prototype` methods being callable, each invoked with an
-// `undefined` receiver — is not itself exploitable. It is left open, not
-// closed, and must not be described as closed.
+// A version of this file nulled the prototypes of all six of those, to
+// close the gap described at the end of this comment. That change enabled
+// remote code execution, confirmed with a working `child_process.execSync`
+// payload against this evaluator, and was reverted. The mechanism:
+// `unaryOps`/`binaryOps`/`ternaryOps` inheriting `Object.prototype` is not
+// only a leak — it is ALSO an accidental parse-time barrier.
+// `TokenStream.isNamedOp` tokenizes any identifier found in those three
+// tables as an OPERATOR rather than a plain member name, and because
+// `constructor` is inherited from `Object.prototype` on all three,
+// `X.constructor` tokenizes as `X` followed by an operator and the parse
+// dies. Null those three prototypes and `constructor` becomes an ORDINARY
+// member name with no special handling, and (before the fix below)
+// `IMEMBER` access was not filtered at all.
 //
-// A version of this file DID null all six of those prototypes, and that
-// change was reverted after it was found to enable remote code execution,
-// confirmed with a working `child_process.execSync` payload against this
-// evaluator. The mechanism: `unaryOps`/`binaryOps`/`ternaryOps` inheriting
-// `Object.prototype` is not only a leak — it is ALSO an accidental barrier.
-// `TokenStream.isNamedOp` (parse time) tokenizes any identifier found in
-// those three tables as an OPERATOR rather than a plain member name. Because
-// `constructor` is inherited from `Object.prototype` on all three, expr-eval
-// tokenizes `X.constructor` as `X` followed by an operator token and the
-// parse dies — `{{step_1.body}}.constructor` is a parse error today, with
-// the prototypes intact. Null those three prototypes and `constructor`
-// becomes an ORDINARY member name with no special handling, and expr-eval's
-// `IMEMBER` access is not filtered at all: `X.constructor.constructor("...")()`
-// reaches `Function`'s constructor and runs arbitrary JavaScript. Both of
-// these were confirmed to evaluate successfully once the prototypes were
-// nulled (see the regression tests in function-evaluator.test.ts, which
-// assert they do NOT evaluate — keep those passing):
+// The owner's decision was to close the actual hole with intent rather than
+// rely on that accident: block the three dangerous member names outright
+// (`findForbiddenMemberAccess`, checked in `evaluateRaw` against the parsed
+// instruction tree before evaluation ever runs — see that function's
+// comment for why a text-level check doesn't work), and separately disable
+// expr-eval's `()=` function-definition operator via its own supported
+// `operators.fndef` switch (see the `new Parser(...)` call above) — the
+// second, independent path to `Function`'s constructor, through
+// `evaluate()`'s `IFUNDEF` branch building its callee's scope with
+// `Object.assign({}, values)`, a FRESH object this module never gets a
+// chance to touch regardless of what `vars`'s own prototype is. Both RCE
+// payloads below are pinned as regression tests in
+// function-evaluator.test.ts, confirmed to no longer evaluate:
 //   {{step_1.body}}.constructor.constructor("return 7")()
 //   (g(y) = constructor.constructor("return 7")())(1)
-// The first needs no sample data at all. There is also a SEVENTH object,
-// found only after the RCE was already confirmed: `evaluate()`'s IFUNDEF
-// branch (used by the `()=` function-definition operator) builds its
-// callee's scope with `Object.assign({}, values)` — a FRESH object with the
-// default prototype, constructed after `vars` itself would have been
-// nulled, so nulling `vars` does not even fully close that one path.
+// The accidental parse-time barrier (`isNamedOp` finding `constructor`
+// through the intact prototypes) still exists underneath this — this fix
+// adds a deliberate, intentional layer on top of it, and doesn't remove or
+// depend on the accident continuing to hold.
 //
-// A real fix exists but is a deliberate design decision for this module's
-// owner, not something to retry opportunistically: blocking member access to
-// `constructor`/`__proto__`/`prototype` specifically (in `IMEMBER`
-// resolution), and/or disabling expr-eval's `()=` function-definition
-// operator entirely (removing the ability to define callable closures from
-// formula text at all, which `map`/`fold`/`filter` already needed as
-// prerequisites before they were removed by the sweep above — this class of
-// risk is exactly why those three were removed rather than guarded). Until
-// that design decision is made, the six prototypes above stay untouched.
+// Direct member access to `.__proto__`/`.prototype` (without chaining
+// `.constructor` afterward) was found, during this investigation, to
+// ALREADY bypass the accidental barrier even before this fix —
+// `x.__proto__` and `x.prototype` parsed and evaluated successfully on
+// `main`, because `__proto__`/`prototype` are not both inherited by every
+// one of the three operator tables the same way `constructor` is. Bracket
+// notation (`x["constructor"]`) was checked too and is NOT an alternate
+// property-access path: expr-eval's `[` is `arrayIndex(array, index)`,
+// which coerces its operand to a number (`index | 0`) rather than doing a
+// generic property lookup, so a string like `"constructor"` just becomes
+// index `0`.
+//
+// STILL OPEN, unchanged by the above, and must not be described as closed:
+// `Object.prototype` METHODS (`toString`, `hasOwnProperty`, `valueOf`, ...)
+// remain callable as formula "functions" — `toString(1)` evaluates to the
+// string "[object Undefined]" — because `functions`/`unaryOps`/`binaryOps`/
+// `ternaryOps`/`consts`/`vars` all still inherit `Object.prototype`, and
+// expr-eval resolves names against them with `in` or bracket access, which
+// walks the whole chain. As far as two review passes could determine, this
+// specific gap — a handful of harmless methods callable with an `undefined`
+// receiver — is not itself exploitable, and is NOT closed by the
+// member-name filter above (it filters `.name` access, not bare
+// identifiers resolving to inherited methods). Nulling those six prototypes
+// remains unsafe for the reason explained above; it stays open.
 
 function toArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value
@@ -821,9 +872,65 @@ function projectedJoinLength({ items, sep }: { items: string[], sep: string }): 
     return total
 }
 
+const FORBIDDEN_MEMBER_NAMES = new Set(['constructor', '__proto__', 'prototype'])
+
+// `.constructor`/`.__proto__`/`.prototype` are the path to `Function`'s
+// constructor and arbitrary code execution once member access reaches a
+// live object (`x.constructor.constructor("return ...")()`). A text-level
+// check (regex over the raw formula string) is NOT an option here:
+// `wrapStringArgs`/`normalizeExpression` (formula-evaluator.ts) rewrite the
+// string before it is ever parsed, so a check against the raw text inspects
+// something other than what expr-eval actually runs — the exact class of
+// bug a size-DoS guard in this same file was rejected for, twice, in
+// earlier review rounds. Checked instead against the PARSED instruction
+// tree (`Expression.tokens`, walked below), which is what `.evaluate()`
+// itself runs — there is nothing left to rewrite by the time this runs.
+//
+// `IMEMBER` is expr-eval's instruction type for `.name` access; its
+// `value` is the plain member-name string. `IEXPR` wraps a nested
+// sub-array of instructions — used for ternary (`?:`) branches and (before
+// this PR) function-definition bodies — and must be walked recursively, or
+// `x ? y.constructor : 1` would slip through unchecked. Array-literal
+// elements (`[a, b.constructor]`) do NOT need special handling: expr-eval
+// pushes them flat into the same top-level array this function already
+// scans, not into a nested one.
+function findForbiddenMemberAccess(tokens: ExprEvalInstruction[]): string | null {
+    for (const instruction of tokens) {
+        if (
+            instruction.type === 'IMEMBER' &&
+            typeof instruction.value === 'string' &&
+            FORBIDDEN_MEMBER_NAMES.has(instruction.value)
+        ) {
+            return instruction.value
+        }
+        if (instruction.type === 'IEXPR' && isInstructionArray(instruction.value)) {
+            const nested = findForbiddenMemberAccess(instruction.value)
+            if (nested !== null) return nested
+        }
+    }
+    return null
+}
+
+function isInstructionArray(value: unknown): value is ExprEvalInstruction[] {
+    return Array.isArray(value) && value.every(
+        (item) => item !== null && typeof item === 'object' && 'type' in item && 'value' in item,
+    )
+}
+
 export const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
 export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+// A minimal local shape for expr-eval's parsed `Instruction` — expr-eval
+// doesn't export an `Instruction` type, only the string-tagged shape
+// `{ type, value }` used throughout its own source. `value` is `unknown`
+// because it varies by `type`: a plain string for `IMEMBER`/`IVAR`, a
+// number for `INUMBER`, a nested `ExprEvalInstruction[]` for `IEXPR`, and
+// other shapes for instruction types this file never inspects.
+type ExprEvalInstruction = {
+    type: string
+    value: unknown
+}
