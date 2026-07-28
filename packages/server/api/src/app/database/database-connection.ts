@@ -50,7 +50,7 @@ import { VariableEntity } from '../variable/variable.entity'
 import { DatabaseType } from './database-type'
 import { createPostgresDataSource } from './postgres-connection'
 
-const databaseType = system.get(AppSystemProp.DB_TYPE)
+const databaseType = system.get(AppSystemProp.DB_TYPE)?.trim()
 
 function getEntities(): EntitySchema<unknown>[] {
     return [
@@ -114,9 +114,19 @@ function setPersistedConnection(ds: DataSource | null): void {
     (globalThis as Record<string, unknown>)[DB_GLOBAL_KEY] = ds
 }
 
+// An empty/whitespace-only value (a blank `.env` line, or a compose override like
+// `- AP_DB_TYPE=${AP_DB_TYPE}` with nothing exported) is treated as absent, matching the
+// historical default rather than refusing to start over a value nobody set. Casing is not
+// enforced either — POSTGRES is the only value left, so rejecting "postgres" or "Postgres"
+// would trade a real outage for policing a convention that was never documented anywhere
+// an operator would read it.
+function isSupportedDatabaseType(value: string | undefined): boolean {
+    return isNil(value) || value === '' || value.toUpperCase() === DatabaseType.POSTGRES
+}
+
 const createDataSource = (): DataSource => {
-    if (databaseType !== DatabaseType.POSTGRES) {
-        throw new Error(`Unsupported AP_DB_TYPE "${databaseType}". PGLite support has been removed — POSTGRES is the only supported database type. There is no automated migration from a PGLite data directory to PostgreSQL; see https://flow.aiqadam.org/docs/install/configuration/breaking-changes for details.`)
+    if (!isSupportedDatabaseType(databaseType)) {
+        throw new Error(`Unsupported AP_DB_TYPE "${databaseType}". PGLite support has been removed — POSTGRES is the only supported database type. Set AP_DB_TYPE=POSTGRES, or remove the variable to use the default. There is no automated migration from a PGLite data directory to PostgreSQL; see https://flow.aiqadam.org/docs/install/configuration/breaking-changes for details.`)
     }
     return createPostgresDataSource()
 }
