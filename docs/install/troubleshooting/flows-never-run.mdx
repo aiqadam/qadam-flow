@@ -1,0 +1,98 @@
+---
+title: "Flows Never Run"
+description: "Diagnose an install that looks healthy but executes nothing"
+icon: "stethoscope"
+---
+
+The hardest self-hosting failure to find is the one where everything looks fine.
+`docker ps` says `Up`, `docker stats` looks normal, nothing has restarted, and
+`GET /api/v1/flags` returns `200` — while flows sit in the queue and never
+execute.
+
+That happens because the things answering those questions are not the things
+that run flows. Docker can tell you a worker process is alive. It cannot tell
+you the worker never registered with the app, stopped asking for work, or is
+running a different release than the app — in which case the app withholds every
+job from it and it executes nothing while looking perfectly healthy.
+
+## Run the doctor
+
+```bash
+curl -fsSL https://flow.aiqadam.org/doctor.sh | sh
+```
+
+Or, if you already have the file, from your install directory's parent:
+
+```bash
+sh doctor.sh
+```
+
+It is read-only — it starts nothing, stops nothing, and does not touch your
+`.env`. It exits `0` when everything material passes, `1` when something is
+actually broken, and `2` when it could not run at all (no Docker, no install
+directory).
+
+Every line it prints is safe to paste into a
+[GitHub issue](https://github.com/aiqadam/qadam-flow/issues): secrets are
+reported by presence and shape, never by value.
+
+## What it checks
+
+Each check is written to tell "running" from "doing its job" — a check that can
+only report "up" would not have caught any of the failures above.
+
+| Check | What it proves |
+| --- | --- |
+| `env` | Secrets are present and well-formed, `AP_ENVIRONMENT` is one of the three values the app accepts, and `AP_FRONTEND_URL` matches the port the stack actually publishes. |
+| `containers` | Every service in `docker-compose.yml` has a running container. |
+| `restarts` | No container is being restarted by Docker behind an `Up` status. Each container runs one process, so a crash loop shows up here as a rising count. |
+| `api` | `/api/v1/flags` returns a real flags payload, not just any `200`. |
+| `postgres` | The database is reachable **from the app container**, accepts the app's credentials, and has a migrated schema. |
+| `redis` | Redis answers `PING` from inside the app container, not just from its own. |
+| `workers` | At least one worker is registered with the app **and has asked for work recently**. A worker that is connected and idle fails here. |
+| `version` | The app and every worker are on the same release. A mismatched pair looks healthy and executes nothing (see below). |
+| `queue` | How much work is waiting. Jobs waiting with nothing polling is reported as a failure, not as load. |
+| `logs` | Known-fatal patterns in the last ten minutes of app and worker logs. |
+| `disk` | Free space on the Postgres and Redis volumes, measured from inside the containers that own them. |
+
+## The version gate
+
+Job dispatch is gated on an exact release match. The app withholds every job
+from a worker running a different release, and the worker pauses polling against
+an app running a different release. Both sides keep running and log a line; from
+the outside the install looks perfectly healthy and executes nothing.
+
+This is normal and self-correcting during a rolling upgrade. If it persists,
+both halves are not on the same image:
+
+```bash
+cd qadam-flow
+docker compose pull
+docker compose up -d --remove-orphans
+```
+
+## Reading a failure
+
+Every `FAIL` line is followed by the command that shows why. Start there rather
+than with a general log dump — `docker compose logs` on a busy install buries
+the one line that matters.
+
+If a check reports `SKIP`, the doctor could not get trustworthy evidence for it
+(for example, it will not report on workers while the app is down, because the
+registry would only be describing what was true before the app stopped). A
+`SKIP` is never counted as a pass.
+
+## Options
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `QADAM_FLOW_DIR` | `qadam-flow` | Install directory to inspect. |
+| `QADAM_FLOW_WORKER_STALE_SECONDS` | `120` | How long a worker may go without asking for work before it counts as stalled. |
+| `NO_COLOR` | unset | Disable colour. Output is already plain when it is not a terminal. |
+
+<Note>
+The doctor understands the Docker Compose install. The single-container
+`docker run` setup is not a Compose project, so `docker compose` cannot address
+it — for that one, check the container's own logs with
+`docker logs qadam-flow`.
+</Note>
