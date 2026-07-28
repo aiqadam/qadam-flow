@@ -55,6 +55,15 @@ jobs:
       - name: Test doctor.sh diagnostics
         run: tools/ci/test-doctor-sh.sh
 
+      # The monitor that watches what flow.aiqadam.org serves (site-installer.yml).
+      # It only runs on a schedule, against a third-party host, so a regression in
+      # its own logic could sit unnoticed for a long time and then read as "the
+      # site is fine". Pinned here on every PR, against the states it must REJECT
+      # — a missing file, an HTML error page, a script carrying no loader marker —
+      # served over file:// so this suite needs no network.
+      - name: Test the site installer monitor
+        run: tools/ci/check-site-installer.test.sh
+
       # The release gate that refuses to ship an undocumented breaking change
       # (release.yml's `breaking-change-gate`). It only ever runs for real on a
       # tag push, which is far too rare a feedback loop to find a regression in,

@@ -1,0 +1,39 @@
+name: Site installer
+
+# The install command in README.md and docs/install/options/docker.mdx points at
+# flow.aiqadam.org, which is a different repository. Nothing in this repo can see what that
+# site serves, so a missing or replaced file reaches users with no signal here at all —
+# doctor.sh has returned 404 since #221 merged and nothing reported it.
+#
+# Scheduled rather than required: it depends on a third-party host being reachable, and a
+# network blip must not block unrelated PRs. The logic it runs is covered on every PR by
+# tools/ci/check-site-installer.test.sh, so only the live answer is new here.
+
+on:
+  schedule:
+    # 07:00 UTC, before the working day in Tashkent (UTC+5).
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+  # A change to the checker or to the list below must be able to prove itself against the
+  # real site before it is trusted on a schedule.
+  pull_request:
+    paths:
+      - 'tools/ci/check-site-installer.sh'
+      - '.github/workflows/site-installer.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Entry points are live
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      # Keep this list in step with what the docs actually tell users to run. An entry
+      # point the docs advertise and this list omits is exactly the gap that let the
+      # doctor.sh 404 stand.
+      - name: Check what flow.aiqadam.org serves
+        run: tools/ci/check-site-installer.sh run.sh doctor.sh
