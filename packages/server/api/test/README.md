@@ -26,10 +26,14 @@ Key helpers live under `test/helpers/`:
 ## Running the tests
 
 ```bash
-npm run test             # runs test-ce
-npm run test-unit        # vitest run test/unit --bail 1
+npm run test             # vitest run test/unit --bail 1 — the unit suite, no DB needed
 npm run test-ce          # loads .env.tests, runs test/integration/ce
 ```
+
+`test` is the unit suite deliberately: the repo-wide unit run is a single unfiltered
+`turbo run test` (#215), so every package's `test` script has to mean "the tests that
+need nothing but node". Integration is `test-ce`, run from the root by
+`npm run test-api`.
 
 Integration tests require a running Postgres + Redis (see `.env.tests`).
 

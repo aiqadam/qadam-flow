@@ -112,7 +112,25 @@
       "outputs": []
     },
     "test": {
-      "dependsOn": ["build"],
+      // `^build` (dependencies only), NOT `build`. Two reasons, both load-bearing:
+      //
+      // 1. No suite needs its own package's `dist` — every vitest config here
+      //    either runs straight off `src/**` or aliases its workspace deps to
+      //    *source* (see `packages/server/worker/vitest.config.ts` and any
+      //    `packages/qadams/core/*/vitest.config.ts`). Verified by running each
+      //    suite with no build artifacts present.
+      // 2. `turbo run test` is unfiltered, so turbo schedules a `test` node for
+      //    all ~247 packages and then resolves that node's `dependsOn` even for
+      //    the ones with no `test` script. With `["build"]` that meant building
+      //    the entire monorepo to run 21 test suites (confirmed with
+      //    `--dry=json`: 247 build tasks). With `["^build"]` it is 15 — the same
+      //    set the two old filtered invocations carried between them.
+      //
+      // `^build` is still required rather than dropped: the source aliases above
+      // are invisible to this task's `inputs`, so without it a change in
+      // @aiqadam/shared would not move the hash and a stale pass would be served
+      // from cache.
+      "dependsOn": ["^build"],
       // vitest reads more than src and test: the setup file, the env fixture it
       // loads and the aliased manual mocks are all inputs to the run. Leaving
       // them out means editing one of them gets a cache hit and executes nothing
@@ -128,19 +146,18 @@
       ],
       "outputs": ["coverage/**"]
     },
-    "test-unit": {
-      // Only `api` declares a `test-unit` script (`vitest run test/unit`). It is a
-      // separate task from `test` because that package's `test` script is
-      // `test-ce` — the integration suite — so `turbo run test --filter=api`
-      // would run Postgres/Redis tests, not these.
-      //
-      // `dependsOn: ["^build"]` is load-bearing: the vitest config aliases
-      // @aiqadam/shared, @aiqadam/qadams-framework, @aiqadam/qadams-common and
-      // @aiqadam/server-utils to *source*, which this task's own `inputs` cannot
-      // see, so without it a change in one of those packages would not move the
-      // hash and a stale pass would be served from cache.
-      "dependsOn": ["^build"],
-      // Same inputs as `test`, and for the same reason — see the note there.
+    // `web#test` keeps the self-`build` the generic `test` task just dropped, and
+    // not because the suite needs it — it runs in a node environment off `src/**`
+    // and reads no bundle. It is the only thing in the required `Lint + Unit Tests`
+    // job that runs `vite build`: `typecheck` type-checks web but does not bundle,
+    // so without this a bundler-level break (a vite plugin, an asset that fails to
+    // resolve — anything `tsc` cannot see) would fail only the `Docker Image` job,
+    // which is not a required status check. Removing it silently narrows CI, which
+    // is the exact defect this file's other comments are about. If the bundle gets
+    // its own step in `_verify.yml`, drop this override then.
+    "web#test": {
+      "dependsOn": ["build"],
+      // Same inputs as `test` — see the note there.
       "inputs": [
         "src/**",
         "test/**",
@@ -152,6 +169,14 @@
       ],
       "outputs": ["coverage/**"]
     },
+    // There is deliberately no `test-unit` task any more. `api` used to call its
+    // unit suite `test-unit` and alias `test` to the *integration* suite, which is
+    // why the root `test-unit` script had to be two filtered turbo invocations —
+    // and an enumerated filter list is the defect this repo has already fixed three
+    // times (#148, #164, #184). `api` now declares `test` = unit tests like every
+    // other package, so one unfiltered `turbo run test` covers the repo and cannot
+    // omit a package. The integration suite stays `test-ce`, reached only through
+    // `npm run test-api` and `docker-compose.test.yml`.
     "test-ce": {
       "dependsOn": [
         "build",

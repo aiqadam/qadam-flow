@@ -210,5 +210,12 @@ jobs:
       - name: Typecheck (only web declares one today)
         run: npm run typecheck
 
+      # `npm run test-unit` is one unfiltered `turbo run test`, for the same reason
+      # as lint and typecheck above. It used to be two filtered invocations, and
+      # the filter list omitted `packages/server/worker` (18 files, 215 tests) and
+      # all 14 core qadams that declare a `test` script (40 files, 231 tests) —
+      # #215, the same family as #148 / #164 / #184. Do not reintroduce a filter
+      # list here or in the root script; a package must be covered the day it
+      # declares the script.
       - name: Unit tests
         run: npm run test-unit
