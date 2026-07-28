@@ -9,12 +9,30 @@ export class FormulaSizeLimitError extends Error {
     }
 }
 
-// expr-eval has no loops or recursion driven by data (verified against the
-// `expr-eval` bundle: `evaluate()` is a single linear pass over a fixed,
-// already-parsed instruction list), so a formula cannot blow up purely from
-// its own expression text. The risk is large-DATA allocation: a resolved
-// `{{var}}` payload, or a `from_json`/`to_json` call, that copies or
-// re-serializes an already-huge value. `measureSize` walks a value with an
+// A PRIOR version of this comment claimed "expr-eval has no loops or
+// recursion driven by data ... a single linear pass over a fixed,
+// already-parsed instruction list" and used that to argue a formula cannot
+// blow up purely from its own expression text. That claim is FALSE and was
+// disproven twice: expr-eval's own built-in `parser.functions` includes
+// `map`/`fold`/`filter`, which DO iterate per array element and invoke a
+// user-defined callback (via the `()=` function-definition operator) for
+// each one — genuinely data-driven, recursive-into-the-evaluator iteration,
+// not a fixed instruction pass. Nested, these ran tens of millions of
+// callback invocations from a four-kilobyte expression with zero input
+// data — compute time, not allocation, which nothing measured by
+// `measureSize` below can see coming. Separately, `join` (also a built-in,
+// distinct from our own `join_list`) is a pure allocation multiplier reachable
+// with zero input data too. Both are removed via the allowlist sweep in
+// function-implementations.ts (delete every `parser.functions` key that
+// isn't ours), which is the actual defense against unbounded expression-
+// text-only blowup — not an intrinsic property of expr-eval as a library.
+// What IS still true, and is what `measureSize` below actually defends
+// against: with that sweep in place, the SURVIVING functions are all
+// data-in-proportional-to-data-out (no callback re-invocation, no
+// per-element user code), so the remaining risk is exactly what this file
+// guards — large-DATA allocation: a resolved `{{var}}` payload, or a
+// `from_json`/`to_json` call, that copies or re-serializes an already-huge
+// value. `measureSize` walks a value with an
 // explicit stack, stopping as soon as the running total exceeds `cap` (the
 // exact number returned past that point doesn't matter — callers only need
 // "did it exceed", or "how much to charge a shared budget", neither of which

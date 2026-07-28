@@ -21,8 +21,17 @@ declare module 'expr-eval' {
         evaluate(expression: string, values: Record<string, unknown>): unknown
         // Not declared in expr-eval's own .d.ts at all (only `functions: any`
         // is) — added here so overriding `binaryOps['||']` below doesn't need
-        // a cast. Same shape expr-eval registers its built-in operators with.
-        binaryOps: Record<string, (a: unknown, b: unknown) => unknown>
+        // a cast. Deliberately NOT a uniform `Record<string, (a, b) => unknown>`:
+        // expr-eval's binary operators do not all share one shape (`=` is
+        // 3-arg `setVar(name, value, variables)`, `[` is `arrayIndex(array,
+        // index)` — neither is a 2-arg `(a, b)` function). A uniform 2-arg
+        // record would let a future edit assign a wrong-arity function to
+        // `binaryOps['=']` or `binaryOps['[']` and still type-check, silently
+        // breaking assignment or array-index evaluation. Only `||` — the one
+        // key this module actually reads/writes — gets a real signature;
+        // every other key is `unknown`, forcing a type guard before anyone
+        // touches one.
+        binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
     }
 }
 
@@ -30,6 +39,20 @@ declare module 'expr-eval' {
 // of @aiqadam/shared mutate `parser.functions.X` and break formula
 // evaluation process-wide. Use `evaluateRaw` instead.
 const parser = new Parser()
+
+// Snapshot of exactly what expr-eval registers on `parser.functions` before
+// this module touches it — used at the end of this file to sweep away every
+// built-in we never asked for (see the comment there for why). Captured by
+// reference, not by value: comparing `parser.functions[key] ===
+// builtInFunctionsSnapshot[key]` later tells us whether THIS key still
+// points at the untouched original implementation ("we never wanted this,
+// remove it") or was reassigned to one of ours, including cases where we
+// override a built-in under its OWN name (`min`/`max`/`length` below) —
+// reassignment always produces a new function reference, so identity
+// comparison catches both "brand new key" and "we replaced this one" the
+// same way, with no separate hand-maintained list of our own function names
+// that could drift out of sync with the registrations below.
+const builtInFunctionsSnapshot: Record<string, unknown> = { ...parser.functions }
 
 // A per-call cap on each size-generating function (replace/join_list/
 // to_json/from_json/split_text_to_list) is not enough: every call gets a
@@ -54,26 +77,53 @@ const parser = new Parser()
 // try-block — true today (expr-eval has no async support) — so there is no
 // concurrent evaluation that could see another call's tracker.
 //
-// INVARIANT the whole design rests on, and the one edit that breaks it:
-// no `await` may EVER appear between the two assignments above and the
-// `finally` block below — not in evaluateRaw, not in anything it calls. This
-// function is synchronous today (`parser.evaluate` is synchronous and none
-// of the guarded functions are async), so nothing yields between "set the
-// tracker" and "clear the tracker". If that ever changed — an `async`
-// evaluateRaw, or `finally` moved, or the reset moved into a `catch` instead
-// of `finally` (which would skip the reset on the success path, not the
-// failure path, and is just as wrong) — a REJECTED evaluation would leave a
-// stale, already-exhausted tracker in place for the next one on this same
-// worker process, silently failing every subsequent formula evaluation with
-// a "too large" error until the process restarts. This is not locally
-// obvious from reading either guarded function in isolation — it only shows
-// up as a worker-wide outage days after the edit that caused it. See the
+// INVARIANT the whole design rests on: no `await` may EVER appear between
+// setting these two trackers and the `finally` block below clearing them —
+// not in evaluateRaw, not in anything it calls. This function is synchronous
+// today (`parser.evaluate` is synchronous and none of the guarded functions
+// are async), so nothing yields between "set the tracker" and "clear the
+// tracker".
+//
+// A PRIOR version of this comment claimed a missing `finally` would leave a
+// stale, exhausted tracker in place and "silently fail every later
+// evaluation" — that claim was checked against the code and found false:
+// the two assignments at the top of evaluateRaw ran UNCONDITIONALLY on every
+// call regardless of the previous call's outcome, so a rejected evaluation
+// self-healed the very next time evaluateRaw ran, and a test asserting "the
+// next evaluation still succeeds" passed even with the `finally` deleted
+// entirely. The real (and, before this fix, unobservable) risk was
+// concurrent/re-entrant calls: if evaluateRaw were ever made `async`, a
+// SECOND call starting while a FIRST is still mid-`await` would overwrite
+// both module-level trackers, and when the first call's `finally` (or lack
+// of one) ran, it could null out the SECOND call's still-in-progress
+// tracker — corrupting whichever evaluation is still running, not the next
+// one to start.
+//
+// That risk is now a hard assertion instead of a comment: entry asserts
+// both trackers are `null` (i.e. no other evaluation is in flight) rather
+// than unconditionally overwriting them. This trades away something real —
+// evaluateRaw can no longer be called re-entrantly (e.g. a hypothetical
+// future "evaluate a sub-formula from within a formula function" feature)
+// without first reworking these two nullable slots into a stack. There is
+// no such re-entrant call today, so the assertion costs nothing yet, but it
+// is a real constraint on future design, not a free improvement. In
+// exchange, a missing/misplaced `finally` now fails the very NEXT
+// evaluation, loudly, with a distinct error — see the
 // `formula-evaluator budget: a rejected evaluation does not poison the next
-// one` test in the test suite, which asserts exactly this stays true.
+// one` test, which now genuinely exercises this (confirmed by temporarily
+// removing the `finally` and watching it fail before restoring it).
 let currentBuiltStringBudget: { remaining: number } | null = null
 let currentJsonValueBudget: { remaining: number } | null = null
 
 export function evaluateRaw(expression: string, vars: Record<string, unknown>): unknown {
+    if (currentBuiltStringBudget !== null || currentJsonValueBudget !== null) {
+        // Not a formula error — a bug in evaluateRaw's own bookkeeping (a
+        // missing/misplaced `finally`, or genuine re-entrancy this design
+        // does not support). Thrown here, not swallowed, so it surfaces as
+        // an engine-level failure rather than a confusing "too large" on a
+        // formula that never touched the guarded functions at all.
+        throw new Error('evaluateRaw invoked while a previous evaluation\'s budget tracker was still set')
+    }
     currentBuiltStringBudget = { remaining: FORMULA_MAX_BUILT_STRING_LENGTH }
     currentJsonValueBudget = { remaining: FORMULA_MAX_JSON_VALUE_BUDGET }
     try {
@@ -96,24 +146,41 @@ function chargeSharedBudget({ tracker, amount }: { tracker: { remaining: number 
 }
 
 // Every size guard above lives on `parser.functions.*` — but `||` (string/
-// array concatenation) and `=` (variable assignment) are built-in expr-eval
-// BINARY OPERATORS, evaluated inside expr-eval's own engine and never
-// touching a registered function at all. Combining them —
-// `(a = v||v) || (b = a||a) || (c = b||b) || ...` — assigns each step's
-// DOUBLED value to a short variable name and reuses that name in the next
-// step, so the expression TEXT grows by a small constant per step while the
-// VALUE doubles: verified against the real `expr-eval@2.0.2` dependency, a
-// 1000-char seed run through 3 such steps (an ~40-character expression)
-// produces a 14,000-character result, and by the equivalent of ~20 steps
-// `concat()` itself throws `RangeError: Invalid string length` — completely
-// unguarded, because it never reaches a single one of the functions above.
-// `parser.binaryOps` is a plain object, overridable the same way
-// `parser.functions` is; wrapping `||` specifically closes this, since `+`/
-// `-` are numeric-only in expr-eval (`Number(a) + Number(b)`) and every
-// other binary/ternary operator (`=`, `?:`, `[`) selects or stores a value
-// without concatenating one, so `||` is the only primitive capable of
-// producing a bigger string/array than either of its own operands.
+// array concatenation) is a built-in expr-eval BINARY OPERATOR, evaluated
+// inside expr-eval's own engine and never touching a registered function at
+// all. Combined with `=` (assignment) — `(a = v||v) || (b = a||a) ||
+// (c = b||b) || ...` — each step assigns the DOUBLED value to a short
+// variable name and reuses that name, so the expression TEXT grows by a
+// small constant per step while the VALUE doubles: verified against the real
+// `expr-eval@2.0.2` dependency, a 1000-char seed run through 3 such steps
+// (an ~40-character expression) produces a 14,000-character result, and a
+// 290-character expression at depth 16 produced a 131,070,000-character
+// result with no error.
+//
+// `||` was previously believed to be the ONLY such primitive, reasoning that
+// `+`/`-` are numeric-only and every other operator selects or stores rather
+// than concatenates. That reasoning was correct about the OPERATORS but
+// incomplete: it did not extend to `parser.functions` (expr-eval registers
+// its own built-ins there too — `join`, `map`, `fold`, `filter`, `indexOf`,
+// among others — completely independent of the operator table), one of
+// which (`join`) is strictly worse than `||` (see the allowlist sweep after
+// the registration block below for the measured numbers) and needed a
+// different fix entirely: removal, not a guard, since `map`/`fold`/`filter`
+// are compute-bound (they invoke a callback per element) rather than
+// allocation-bound, and no size budget stops a slow loop. `||` still needs
+// its OWN guard here regardless of the sweep below, because it is a
+// BINARY OPERATOR, not a `parser.functions` entry — the sweep cannot reach
+// it.
 const builtInConcat = parser.binaryOps['||']
+// Fails at MODULE LOAD, not per-formula, if a future expr-eval version
+// renames or drops this operator — the alternative (capturing `undefined`
+// silently) would make every single `||` in every formula throw a bare
+// TypeError from inside `concat()`, surfacing to users as the generic
+// "Could not evaluate this formula" with no hint that the guard itself is
+// broken.
+if (typeof builtInConcat !== 'function') {
+    throw new Error('expr-eval no longer registers a "||" binary operator — the formula concatenation size guard cannot be installed')
+}
 parser.binaryOps['||'] = (a: unknown, b: unknown) => {
     const result = builtInConcat(a, b)
     const amount = typeof result === 'string' || Array.isArray(result) ? result.length : 0
@@ -514,6 +581,39 @@ for (const fn of AP_FUNCTIONS) {
             padded.push(defaults[i - args.length] ?? defaults[defaults.length - 1])
         }
         return impl(...padded)
+    }
+}
+
+// Guarding size-generating `parser.functions` entries one at a time took
+// four review rounds to reach `replace`/`join_list`/`to_json`/`from_json`/
+// `split_text_to_list` and still missed expr-eval's OWN built-ins —
+// `join`, `map`, `fold`, `filter`, `indexOf`, plus several numeric ones
+// (`random`, `fac`, `hypot`, `pyt`, `pow`, `atan2`, `gamma`, `roundTo`) that
+// nothing above ever touches or reviews. Measured directly against the real
+// `expr-eval@2.0.2` dependency: nesting `join(sep, array)` four levels deep
+// over 100-element array literals (`join(join(join(join("aaaaaaaaaa",
+// [0,1,...,99]),[0,1,...,99]),[0,1,...,99]),[0,1,...,29])`) — a 994-character
+// expression, zero input data — built a 335,941,270-character string, +333MB
+// RSS, in 138ms. Worse, and NOT fixable by any size budget: `map`/`fold`/
+// `filter` invoke a callback PER ELEMENT (expr-eval's `()=` function-
+// definition operator makes an inline callback expression), so nested
+// `map`s over a few hundred elements each is tens of millions of callback
+// invocations — that is compute time, not allocation, and a byte-counting
+// guard cannot see it coming.
+//
+// This replaces per-function enumeration with an allowlist: after every
+// intentional registration above, delete every `parser.functions` key that
+// still points at its ORIGINAL expr-eval implementation (see
+// `builtInFunctionsSnapshot` above `const parser = new Parser()`). Anything
+// we registered — new or overriding a built-in under its own name — has a
+// different reference by now and survives. A future expr-eval version
+// adding another built-in is excluded by default instead of silently
+// reopening this exact hole, and removing `map`/`fold`/`filter` this way
+// closes the compute-bound risk completely: there is no callback to invoke
+// if the function does not exist.
+for (const key of Object.keys(parser.functions)) {
+    if (parser.functions[key] === builtInFunctionsSnapshot[key]) {
+        Reflect.deleteProperty(parser.functions, key)
     }
 }
 

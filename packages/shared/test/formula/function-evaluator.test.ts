@@ -1022,4 +1022,40 @@ describe('formula size bounds', () => {
         // result into the final value: x0 (20) + x1 (40) + x2 (80) = 140.
         expect(r).toBe('a'.repeat(140))
     })
+
+    // Regression: enumerating one dangerous function at a time (replace,
+    // join_list, from_json, to_json, split_text_to_list, ||) took four
+    // review rounds and still missed expr-eval's OWN built-ins — `join`
+    // alone (distinct from our `join_list`) produced a 335,941,270-character
+    // string from a 994-character expression with NO input data, and
+    // map/fold/filter are compute-bound (a per-element callback), not
+    // allocation-bound, so no size guard could ever have caught them. Fixed
+    // by allowlisting: every `parser.functions` key that still points at its
+    // original expr-eval implementation after our own registrations run is
+    // deleted (see function-implementations.ts, after the argCompatibility
+    // loop).
+    it('expr-eval\'s own unguarded built-ins (join, map) are genuinely removed, not merely unused', () => {
+        // Removing a `parser.functions` key makes expr-eval treat the bare
+        // name as an undefined VARIABLE reference (not a special
+        // "unknown function" error) — the exact wording isn't the point
+        // here, only that the call fails instead of silently allocating.
+        const { result: r, error } = ok('join(",";[1;2;3])')
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    it('a documented function that happens to share a name with a removed built-in area still works (join_list, our own)', () =>
+        expect(result('join_list(split_text_to_list("a,b,c";",");"-")')).toBe('a-b-c'))
+
+    it('a broad sample of our own registered functions all still work after the allowlist sweep', () => {
+        expect(result('uppercase("hi")')).toBe('HI')
+        expect(result('add(1;2)')).toBe(3)
+        expect(result('pluck(from_json({{text}});"a")', { text: '[{"a":1},{"a":2}]' })).toEqual([1, 2])
+        expect(result('keys({{obj}})', { obj: { a: 1, b: 2 } })).toEqual(['a', 'b'])
+        expect(result('min(3;7)')).toBe(3)
+        expect(result('max(3;7)')).toBe(7)
+        expect(result('length("hello")')).toBe(5)
+        expect(result('and(true;false)')).toBe(false)
+        expect(result('round(3.456;1)')).toBe(3.5)
+    })
 })
