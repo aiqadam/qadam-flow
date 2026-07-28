@@ -1,11 +1,9 @@
 import { ExecutionMode } from '@aiqadam/shared'
-import { DatabaseType } from './database-type'
 import { RedisType } from './redis-type'
 
 const ENV_VAR_NAMES = {
     EXECUTION_MODE: 'AP_EXECUTION_MODE',
     REDIS_TYPE: 'AP_REDIS_TYPE',
-    DB_TYPE: 'AP_DB_TYPE',
     QUEUE_MODE: 'AP_QUEUE_MODE',
 }
 
@@ -96,7 +94,6 @@ export const environmentMigrations = {
             ...process.env,
             [ENV_VAR_NAMES.EXECUTION_MODE]: migrateExecutionMode(process.env[ENV_VAR_NAMES.EXECUTION_MODE]),
             [ENV_VAR_NAMES.REDIS_TYPE]: migrateRedisType(process.env[ENV_VAR_NAMES.REDIS_TYPE]),
-            [ENV_VAR_NAMES.DB_TYPE]: migrateDbType(process.env[ENV_VAR_NAMES.DB_TYPE]),
         }
     },
 }
@@ -114,11 +111,4 @@ function migrateExecutionMode(currentExecutionMode: string | undefined): string 
         return ExecutionMode.SANDBOX_PROCESS
     }
     return currentExecutionMode
-}
-
-function migrateDbType(currentDbType: string | undefined): string | undefined {
-    if (currentDbType === 'SQLITE3') {
-        return DatabaseType.PGLITE
-    }
-    return currentDbType
 }

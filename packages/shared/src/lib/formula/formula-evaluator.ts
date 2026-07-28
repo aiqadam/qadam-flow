@@ -1,5 +1,13 @@
+import { exceedsSizeBudget, FORMULA_MAX_EXPRESSION_LENGTH, FORMULA_MAX_INPUT_SIZE, FormulaSecurityError, FormulaSizeLimitError } from './formula-bounds'
 import { evaluateRaw } from './function-implementations'
 import { AP_FUNCTIONS } from './function-registry'
+
+// Matches every `{{path}}` occurrence WITHIN ONE SEGMENT's text (never
+// across a segment boundary — see exceedsResolvedVariableBudget for why that
+// distinction matters). Kept identical to the one used inside
+// preprocessExpression/resolveTextVars so this scan and the real resolution
+// agree on what counts as a variable reference.
+const VARIABLE_TOKEN_REGEX = /\{\{([^}]+)\}\}/g
 
 const CURRENT_FORMULA_VERSION = 1
 const FORMULA_PREFIX = `ap-formula-v${CURRENT_FORMULA_VERSION}::{`
@@ -30,6 +38,18 @@ function evaluate({ expression, sampleData }: EvaluateExpressionParams): Evaluat
 
     const segments = tokenizeFormulaTemplate(trimmed)
     if (segments.length === 0) return { result: '', error: null }
+
+    // Runs once, over every segment the resolver is about to use, before
+    // resolving any of them — checked against the SAME segments (not a
+    // second tokenizer call, and not the raw/unwrapped template) that
+    // resolveTextVars/evaluateSingleFormula below actually read, so this
+    // check and the real resolution can never disagree about where one
+    // variable reference ends and the next begins. See
+    // exceedsResolvedVariableBudget's comment for why scanning the
+    // concatenated template — even after unwrapping it — was still wrong.
+    if (exceedsResolvedVariableBudget({ segments, sampleData })) {
+        return { result: null, error: 'Formula input data is too large to evaluate' }
+    }
 
     if (segments.length === 1 && segments[0].type === 'formula') {
         return evaluateSingleFormula({ expression: segments[0].value, sampleData })
@@ -65,17 +85,70 @@ function tokenizeFormulaTemplate(template: string): Segment[] {
     return segments.filter((s) => s.value !== '')
 }
 
+// Scans every `{{path}}` occurrence PER SEGMENT — inside what was a formula
+// wrapper or sitting in plain text, it doesn't matter, since both eventually
+// resolve the same variable into the caller's output — then accumulates all
+// of them into ONE combined payload, so `exceedsSizeBudget`'s per-element
+// accounting sums the actual cost of concatenating every repetition across
+// the whole template. This is a shared TOTAL, not a shared per-segment
+// allowance: it does not reset between segments, so spreading a payload
+// across many segments still can't dodge it.
+//
+// Scanning per segment (rather than scanning the concatenated/unwrapped
+// template in one regex pass) is not optional. `VARIABLE_TOKEN_REGEX`'s
+// `[^}]+` cannot cross a `}` but CAN cross a `{`, so an unbalanced `{{` left
+// dangling at the very end of one segment merges with the start of the next
+// segment's real `{{token}}` into one bogus capture that resolves to
+// undefined and is charged 0 — while the real resolvers below
+// (resolveTextVars for text segments, preprocessExpression for formula
+// segments) always run their OWN regex pass over one segment's `value` at a
+// time and can never see across that boundary. A single global scan and the
+// segment-scoped real resolution disagreeing about where one token ends and
+// the next begins is exactly how a full-size value hid from the budget:
+//   ap-formula-v1::{"{{"}::ap-formula-v1{{step_1.body}}
+// tokenizes into a formula segment with value `"{{"` and a text segment
+// `{{step_1.body}}`; scanning them SEPARATELY finds no valid token in the
+// first (its dangling `{{` matches nothing without a closing `}}` inside the
+// same segment) and the real `step_1.body` token intact in the second —
+// matching what the real resolvers do. Scanning the concatenation
+// `"{{"{{step_1.body}}` instead let `[^}]+` walk straight through the `"` and
+// the first segment's trailing `{{`, capturing `"{{__ap_pv0` (garbage,
+// charged 0) and eating the real token as part of that one bogus match.
+function exceedsResolvedVariableBudget({ segments, sampleData }: { segments: Segment[], sampleData: Record<string, unknown> }): boolean {
+    const resolvedValues: unknown[] = []
+    for (const seg of segments) {
+        for (const match of seg.value.matchAll(VARIABLE_TOKEN_REGEX)) {
+            resolvedValues.push(resolveVariable(match[1].trim(), sampleData) ?? null)
+        }
+    }
+    return exceedsSizeBudget({ value: resolvedValues, maxSize: FORMULA_MAX_INPUT_SIZE })
+}
+
 function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionParams): EvaluateExpressionResult {
     const trimmed = expression.trim()
     if (!trimmed) return { result: '', error: null }
+    // Checked before any other pass over the string (validateFunctionArgs,
+    // preprocessing) so a pathologically large formula fails fast rather than
+    // paying for a full parse first. The resolved-var payload itself is
+    // already checked once for the whole template by evaluate() before this
+    // runs, so it isn't re-checked per segment here.
+    if (trimmed.length > FORMULA_MAX_EXPRESSION_LENGTH) {
+        return { result: null, error: 'Formula is too large to evaluate — shorten the expression' }
+    }
     const emptyArgError = validateFunctionArgs(trimmed)
     if (emptyArgError) return { result: null, error: emptyArgError }
 
-    const { processed, vars } = preprocessExpression({ expression: trimmed, sampleData })
+    // preprocessExpression (specifically rewriteLazyIf's defensive fallback
+    // for a non-3-arg `if(...)` that somehow reached it despite
+    // validateFunctionArgs above) can throw. Inside this try, not before
+    // it, so that throw returns the normal {result:null, error} shape
+    // instead of escaping uncaught out of evaluate().
     try {
+        const { processed, vars } = preprocessExpression({ expression: trimmed, sampleData })
         return { result: evaluateRaw(processed, vars), error: null }
     }
     catch (e) {
+        if (e instanceof FormulaSizeLimitError || e instanceof FormulaSecurityError) return { result: null, error: e.message }
         return { result: null, error: friendlyError(e) }
     }
 }
@@ -115,7 +188,20 @@ function rewriteLazyIf(expr: string): string {
             result += `((${args[0]}) ? (${args[1]}) : (${args[2]}))`
         }
         else {
-            result += 'if(' + args.join(';') + ')'
+            // Unreachable for a formula that reached this point:
+            // validateFunctionArgs (called before preprocessExpression, on
+            // the same argument boundaries) already rejects any `if(...)`
+            // that isn't exactly 3-arg, with a message naming the actual
+            // problem. This branch existed only to re-emit `if(...)`
+            // un-rewritten and let it fall through to expr-eval's built-in
+            // `if` — that built-in no longer exists (removed by the
+            // allowlist sweep in function-implementations.ts), so this used
+            // to be dead code that failed by accident with a message
+            // ("undefined variable: if") that named no arity problem.
+            // Kept as an explicit, deliberate failure instead of deleting
+            // the branch outright, in case `rewriteLazyIf` is ever called on
+            // text that bypassed validateFunctionArgs.
+            throw new Error(`if() needs exactly 3 values (condition; true value; false value) — got ${args.length}`)
         }
         pos = closePos + 1
     }
@@ -311,12 +397,44 @@ function validateFunctionArgs(expr: string): string | null {
                 }
             }
         }
+
+        // `if` is documented as exactly 3-arg (AP_FUNCTIONS: `minArgs: 3,
+        // maxArgs: 3`) and rewriteLazyIf below only rewrites the 3-arg form
+        // into a ternary. A wrong arity here used to fall through to
+        // expr-eval's own built-in `if` (a 3-arg eager conditional) and
+        // silently return a value for calls the registry already declares
+        // invalid; that built-in is now removed by the allowlist sweep in
+        // function-implementations.ts, so an un-rewritten `if(...)` would
+        // otherwise fail with an incidental "undefined variable: if" that
+        // names no arity problem at all. Caught here instead, before
+        // rewriteLazyIf ever sees it, with a message that actually says
+        // what's wrong.
+        const ifArgCount = argsContent.trim() === '' ? 0 : argParts.length
+        if (fnName === 'if' && ifArgCount !== 3) {
+            return `if() needs exactly 3 values (condition; true value; false value) — got ${ifArgCount}`
+        }
     }
     return null
 }
 
 function friendlyError(e: unknown): string {
     const msg = String((e as Error).message ?? e)
+    // Already a complete, specific, user-facing sentence — thrown by
+    // rewriteLazyIf's defensive fallback (see there), which should be
+    // unreachable given validateFunctionArgs runs first, but is worded for
+    // a human either way rather than relying on this function's generic
+    // catch-all below.
+    if (/needs exactly 3 values/i.test(msg)) {
+        return msg
+    }
+    // expr-eval's own message for calling `(...)=` with the `fndef`
+    // operator disabled (see function-implementations.ts) — a native
+    // third-party error, not one of ours, so this can't be an
+    // `instanceof` check; matched by message the same way the other
+    // native expr-eval errors below are.
+    if (/function definition is not permitted/i.test(msg)) {
+        return 'Defining functions inside a formula is not supported'
+    }
     if (/division by zero/i.test(msg)) {
         return 'Cannot divide by zero'
     }

@@ -15,9 +15,60 @@ jobs:
   verify:
     uses: ./.github/workflows/_verify.yml
 
+  # A breaking change may not ship undocumented.
+  #
+  # WHY THIS JOB EXISTS. PR #210 removed the `WORKER_AND_APP` launch mode and
+  # made `AP_CONTAINER_TYPE` required, which means every all-in-one
+  # `docker run … qadam-flow:latest` install refuses to start after it ships —
+  # and there is no automated migration from the embedded PGLite database to
+  # PostgreSQL, so recovering is manual. It *was* written up in
+  # docs/install/configuration/breaking-changes.mdx, but only because a person
+  # noticed. Nothing in CI would have stopped the release otherwise.
+  #
+  # WHY HERE AND NOT IN ci.yml. `:latest` — the tag every installer and every
+  # `docker pull` without a version resolves to — is published in exactly one
+  # place: the `publish` job below, on a tag push. ci.yml's `image` job pushes
+  # only `type=ref,event=branch` and `type=sha` (`:main`, `:sha-…`). So a merge
+  # to `main` cannot reach a user, and the tag is the last point where a check
+  # can still stop one from doing so.
+  #
+  # WHY IT IS NOT JUST A REVIEW HABIT. The person cutting a release is often not
+  # the person who wrote the breaking commit, and is reading dozens of commits
+  # at once. "Remember to update breaking-changes.mdx" is not a control.
+  #
+  # WHAT IT DOES NOT CATCH: a breaking change nobody marked as breaking. It
+  # reads `type!:` subjects and `BREAKING CHANGE:` footers — declarations, not
+  # behaviour. It also does not judge whether the changelog entry is any good.
+  #
+  # HOW TO PROCEED IF IT FAILS AND YOU ARE SURE IT IS WRONG: do not delete this
+  # job. Re-cut the tag as an annotated tag whose message contains a
+  # `Release-Gate-Override: <reason>` line. The gate then passes and records the
+  # tagger and the reason in the log, the step summary and the tag object
+  # itself. The full triage guide is in the script's header comment.
+  #
+  # The logic lives in tools/ci/check-breaking-change-changelog.sh so it can be
+  # tested; tools/ci/test-breaking-change-gate.sh exercises it on cases it must
+  # reject as well as cases it must accept, and runs in the `verify` job above.
+  breaking-change-gate:
+    name: Breaking changes are documented
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # fetch-depth: 0 is load-bearing. The default depth-1 checkout gives the
+      # script a truncated range; it detects that and fails UNKNOWN rather than
+      # reporting a clean release, so removing this line breaks the release
+      # loudly instead of silently — which is the intent.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check the released range against the breaking-changes changelog
+        run: tools/ci/check-breaking-change-changelog.sh "${{ github.ref_name }}"
+
   build:
     name: Build ${{ matrix.platform }}
-    needs: verify
+    needs: [verify, breaking-change-gate]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:

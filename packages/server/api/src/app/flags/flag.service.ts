@@ -1,15 +1,17 @@
 import { apVersionUtil } from '@aiqadam/server-utils'
 import { ApFlagId, ExecutionMode, Flag, isNil } from '@aiqadam/shared'
 import dayjs from 'dayjs'
-import { FastifyBaseLogger } from 'fastify'
+import { FastifyBaseLogger, FastifyRequest } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { domainHelper } from '../helper/domain-helper'
 import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
+import { platformService } from '../platform/platform.service'
+import { platformUtils } from '../platform/platform.utils'
 import { FlagEntity } from './flag.entity'
-import { defaultTheme } from './theme'
+import { defaultTheme, generateTheme } from './theme'
 import { webhookSecretsUtils } from './webhook-secrets-util'
 
 const flagRepo = repoFactory(FlagEntity)
@@ -24,7 +26,8 @@ export const flagService = (_log: FastifyBaseLogger) => ({
     async getOne(flagId: ApFlagId): Promise<Flag | null> {
         return flagRepo().findOneBy({ id: flagId })
     },
-    async getAll(): Promise<Flag[]> {
+    async getAll({ request }: { request: FastifyRequest }): Promise<Flag[]> {
+        const theme = await resolvePlatformTheme({ request, log: _log })
         const flags = await flagRepo().findBy({
             id: In([
                 ApFlagId.SHOW_POWERED_BY_IN_FORM,
@@ -137,7 +140,7 @@ export const flagService = (_log: FastifyBaseLogger) => ({
             },
             {
                 id: ApFlagId.THEME,
-                value: defaultTheme,
+                value: theme,
                 created,
                 updated,
             },
@@ -295,6 +298,40 @@ export const flagService = (_log: FastifyBaseLogger) => ({
 })
 
 
+
+/**
+ * GET /v1/flags is called before sign-in, so the request carries no project or
+ * platform context to scope by. Reuse the same fallback the codebase already
+ * applies to that exact problem elsewhere (`platformUtils.getPlatformIdForRequest`,
+ * used by the auth controllers, itself built on `platformService.getOldestPlatform()`
+ * which `embed-security.ts` also falls back to for the same reason): prefer the
+ * caller's own platform if it is authenticated, otherwise fall back to the oldest
+ * platform, which is the correct notion of "the" platform for this
+ * self-hosted-by-design app. This still resolves to a single, specific platformId
+ * before any row is read, so an anonymous caller cannot use this to enumerate
+ * platforms.
+ */
+async function resolvePlatformTheme({ request, log }: { request: FastifyRequest, log: FastifyBaseLogger }): Promise<typeof defaultTheme> {
+    const platformId = await platformUtils.getPlatformIdForRequest(request)
+    if (isNil(platformId)) {
+        return defaultTheme
+    }
+    const platform = await platformService(log).getOne(platformId)
+    if (isNil(platform)) {
+        return defaultTheme
+    }
+    return generateTheme({
+        primaryColor: nonEmpty(platform.primaryColor) ?? defaultTheme.colors.primary.default,
+        websiteName: nonEmpty(platform.name) ?? defaultTheme.websiteName,
+        fullLogoUrl: nonEmpty(platform.fullLogoUrl) ?? defaultTheme.logos.fullLogoUrl,
+        favIconUrl: nonEmpty(platform.favIconUrl) ?? defaultTheme.logos.favIconUrl,
+        logoIconUrl: nonEmpty(platform.logoIconUrl) ?? defaultTheme.logos.logoIconUrl,
+    })
+}
+
+function nonEmpty(value: string | undefined | null): string | undefined {
+    return isNil(value) || value === '' ? undefined : value
+}
 
 function getSupportedAppWebhooks(): string[] {
     const webhookSecrets = system.get(AppSystemProp.APP_WEBHOOK_SECRETS)

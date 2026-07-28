@@ -230,9 +230,27 @@ export const validateSystemPropTypes = () => {
 
 export const validateEnvPropsOnStartup = async (log: FastifyBaseLogger): Promise<void> => {
 
-    const environment = system.get(AppSystemProp.ENVIRONMENT)
-    if (!isNil(environment) && !(Object.values(ApEnvironment) as string[]).includes(environment)) {
-        throw new Error(`Invalid AP_ENVIRONMENT="${environment}". Expected one of: ${Object.values(ApEnvironment).join(', ')}. Note: ApEnvironment.TESTING === 'test' (not 'TESTING', which is RunEnvironment).`)
+    // A blank/whitespace-only value (an empty `.env` line, a compose override like
+    // `- AP_X=${AP_X}` with nothing exported, or a trailing CR from a file edited on
+    // Windows) is treated as absent rather than as an explicit invalid choice for both
+    // checks below — it falls through to each prop's own default instead of refusing to
+    // start over a value nobody deliberately set.
+    const environment = system.get(AppSystemProp.ENVIRONMENT)?.trim()
+    // Case-sensitive on purpose: `prod`/`dev`/`test` are short, already-lowercase, and this
+    // file's own header comment exists to warn about `ApEnvironment.TESTING === 'test'` vs.
+    // the unrelated `RunEnvironment.TESTING === 'TESTING'` — silently upper-casing input
+    // here would paper over exactly the footgun that comment calls out, not fix it.
+    if (!isNil(environment) && environment !== '' && !(Object.values(ApEnvironment) as string[]).includes(environment)) {
+        throw new Error(`Invalid AP_ENVIRONMENT="${environment}". Expected one of: ${Object.values(ApEnvironment).join(', ')} (case-sensitive). Note: ApEnvironment.TESTING === 'test' (not 'TESTING', which is RunEnvironment).`)
+    }
+
+    const dbType = system.get(AppSystemProp.DB_TYPE)?.trim()
+    // Case-insensitive on purpose, unlike AP_ENVIRONMENT above: POSTGRES is now the only
+    // valid value, so there is nothing case ambiguity could be confused with — rejecting
+    // "postgres" or "Postgres" would only trade a real startup outage for enforcing a
+    // casing convention that isn't documented anywhere an operator would read it.
+    if (!isNil(dbType) && dbType !== '' && dbType.toUpperCase() !== DatabaseType.POSTGRES) {
+        throw new Error(`Invalid AP_DB_TYPE="${dbType}". Expected: ${DatabaseType.POSTGRES} (case-insensitive). PGLite support has been removed — POSTGRES is the only supported database type. Set AP_DB_TYPE=POSTGRES, or remove the variable to use the default. There is no automated migration from a PGLite data directory to PostgreSQL; stay on your current image tag, or rebuild your flows in a fresh install. See https://flow.aiqadam.org/docs/install/configuration/breaking-changes.`)
     }
     const fileStorageLocation = process.env.AP_FILE_STORAGE_LOCATION
 
