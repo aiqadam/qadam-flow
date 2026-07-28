@@ -1058,4 +1058,47 @@ describe('formula size bounds', () => {
         expect(result('and(true;false)')).toBe(false)
         expect(result('round(3.456;1)')).toBe(3.5)
     })
+
+    // Regression: expr-eval resolves names against several internal tables
+    // (`functions`, `unaryOps`, `binaryOps`, `ternaryOps`, `consts`, and the
+    // per-call `vars` scope) using `in` or bracket access, both of which
+    // walk the WHOLE prototype chain — so removing every OWN unwanted key
+    // from `functions` alone still left every `Object.prototype` method
+    // (toString, hasOwnProperty, valueOf, ...) reachable through one of the
+    // other five, undermining the "default-deny" claim. Nulling only
+    // `functions`' prototype was tried and measured insufficient twice more
+    // (see function-implementations.ts, right above the six
+    // `Object.setPrototypeOf` calls, for the exact chain of what was tried
+    // and found still leaking) before landing on all six. `toString` is
+    // chosen here as the representative case; `hasOwnProperty`,
+    // `propertyIsEnumerable`, `isPrototypeOf`, `toLocaleString`, `valueOf`,
+    // and `constructor` were each independently confirmed blocked the same
+    // way during development of this fix.
+    it('Object.prototype methods are no longer reachable as formula functions', () => {
+        const { result: r, error } = ok('toString(1)')
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    it('a second Object.prototype method (hasOwnProperty) is also unreachable', () => {
+        const { result: r, error } = ok('hasOwnProperty("x")')
+        expect(r).toBeNull()
+        expect(error).not.toBeNull()
+    })
+
+    // "if()" is one of our documented functions (AP_FUNCTIONS: exactly
+    // 3-arg) but is never registered as parser.functions.if — rewriteLazyIf
+    // rewrites a valid 3-arg call into a ternary before evaluation reaches
+    // this file. A wrong arity used to fall through to expr-eval's built-in
+    // 3-arg `if` and silently return a value; that built-in is now removed
+    // by the allowlist sweep, so a 2-arg or 4-arg call is now caught
+    // upfront with a message naming the actual arity problem.
+    it('if() with the wrong number of arguments fails with a message naming the arity, not an incidental "undefined variable"', () => {
+        const { result: r, error } = ok('if(true;"a")')
+        expect(r).toBeNull()
+        expect(error).toBe('if() needs exactly 3 values (condition; true value; false value) — got 2')
+    })
+
+    it('if() with exactly 3 arguments still works', () =>
+        expect(result('if(1500 > 1000;"High";"Standard")')).toBe('High'))
 })

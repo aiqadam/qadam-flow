@@ -138,8 +138,13 @@ function evaluateSingleFormula({ expression, sampleData }: EvaluateExpressionPar
     const emptyArgError = validateFunctionArgs(trimmed)
     if (emptyArgError) return { result: null, error: emptyArgError }
 
-    const { processed, vars } = preprocessExpression({ expression: trimmed, sampleData })
+    // preprocessExpression (specifically rewriteLazyIf's defensive fallback
+    // for a non-3-arg `if(...)` that somehow reached it despite
+    // validateFunctionArgs above) can throw. Inside this try, not before
+    // it, so that throw returns the normal {result:null, error} shape
+    // instead of escaping uncaught out of evaluate().
     try {
+        const { processed, vars } = preprocessExpression({ expression: trimmed, sampleData })
         return { result: evaluateRaw(processed, vars), error: null }
     }
     catch (e) {
@@ -183,7 +188,20 @@ function rewriteLazyIf(expr: string): string {
             result += `((${args[0]}) ? (${args[1]}) : (${args[2]}))`
         }
         else {
-            result += 'if(' + args.join(';') + ')'
+            // Unreachable for a formula that reached this point:
+            // validateFunctionArgs (called before preprocessExpression, on
+            // the same argument boundaries) already rejects any `if(...)`
+            // that isn't exactly 3-arg, with a message naming the actual
+            // problem. This branch existed only to re-emit `if(...)`
+            // un-rewritten and let it fall through to expr-eval's built-in
+            // `if` — that built-in no longer exists (removed by the
+            // allowlist sweep in function-implementations.ts), so this used
+            // to be dead code that failed by accident with a message
+            // ("undefined variable: if") that named no arity problem.
+            // Kept as an explicit, deliberate failure instead of deleting
+            // the branch outright, in case `rewriteLazyIf` is ever called on
+            // text that bypassed validateFunctionArgs.
+            throw new Error(`if() needs exactly 3 values (condition; true value; false value) — got ${args.length}`)
         }
         pos = closePos + 1
     }
@@ -379,12 +397,36 @@ function validateFunctionArgs(expr: string): string | null {
                 }
             }
         }
+
+        // `if` is documented as exactly 3-arg (AP_FUNCTIONS: `minArgs: 3,
+        // maxArgs: 3`) and rewriteLazyIf below only rewrites the 3-arg form
+        // into a ternary. A wrong arity here used to fall through to
+        // expr-eval's own built-in `if` (a 3-arg eager conditional) and
+        // silently return a value for calls the registry already declares
+        // invalid; that built-in is now removed by the allowlist sweep in
+        // function-implementations.ts, so an un-rewritten `if(...)` would
+        // otherwise fail with an incidental "undefined variable: if" that
+        // names no arity problem at all. Caught here instead, before
+        // rewriteLazyIf ever sees it, with a message that actually says
+        // what's wrong.
+        const ifArgCount = argsContent.trim() === '' ? 0 : argParts.length
+        if (fnName === 'if' && ifArgCount !== 3) {
+            return `if() needs exactly 3 values (condition; true value; false value) — got ${ifArgCount}`
+        }
     }
     return null
 }
 
 function friendlyError(e: unknown): string {
     const msg = String((e as Error).message ?? e)
+    // Already a complete, specific, user-facing sentence — thrown by
+    // rewriteLazyIf's defensive fallback (see there), which should be
+    // unreachable given validateFunctionArgs runs first, but is worded for
+    // a human either way rather than relying on this function's generic
+    // catch-all below.
+    if (/needs exactly 3 values/i.test(msg)) {
+        return msg
+    }
     if (/division by zero/i.test(msg)) {
         return 'Cannot divide by zero'
     }

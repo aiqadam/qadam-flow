@@ -19,19 +19,30 @@ declare module 'expr-eval' {
     // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
     interface Parser {
         evaluate(expression: string, values: Record<string, unknown>): unknown
-        // Not declared in expr-eval's own .d.ts at all (only `functions: any`
-        // is) — added here so overriding `binaryOps['||']` below doesn't need
-        // a cast. Deliberately NOT a uniform `Record<string, (a, b) => unknown>`:
-        // expr-eval's binary operators do not all share one shape (`=` is
-        // 3-arg `setVar(name, value, variables)`, `[` is `arrayIndex(array,
-        // index)` — neither is a 2-arg `(a, b)` function). A uniform 2-arg
-        // record would let a future edit assign a wrong-arity function to
-        // `binaryOps['=']` or `binaryOps['[']` and still type-check, silently
-        // breaking assignment or array-index evaluation. Only `||` — the one
-        // key this module actually reads/writes — gets a real signature;
-        // every other key is `unknown`, forcing a type guard before anyone
-        // touches one.
+        // `binaryOps` and `ternaryOps` are NOT declared in expr-eval's own
+        // .d.ts at all — added here so overriding `binaryOps['||']` below,
+        // and calling `Object.setPrototypeOf` on `ternaryOps` further down,
+        // don't need a cast. (`unaryOps`/`functions`/`consts` ARE already
+        // declared there, as `any` — TypeScript requires a merged interface
+        // member to have the EXACT SAME type as the original declaration,
+        // so they are deliberately left un-redeclared here rather than
+        // conflicting with that `any`; they're only ever passed whole to
+        // `Object.setPrototypeOf`, which accepts `any` fine.)
+        //
+        // `binaryOps` is deliberately NOT a uniform
+        // `Record<string, (a, b) => unknown>`: expr-eval's binary operators
+        // do not all share one shape (`=` is 3-arg `setVar(name, value,
+        // variables)`, `[` is `arrayIndex(array, index)` — neither is a
+        // 2-arg `(a, b)` function). A uniform 2-arg record would let a
+        // future edit assign a wrong-arity function to `binaryOps['=']` or
+        // `binaryOps['[']` and still type-check, silently breaking
+        // assignment or array-index evaluation. Only `||` — the one key
+        // this module actually reads/writes — gets a real signature; every
+        // other key is `unknown`, forcing a type guard before anyone
+        // touches one. `ternaryOps` gets no per-key signature at all — this
+        // file never touches any of its keys, only its prototype.
         binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
+        ternaryOps: object
     }
 }
 
@@ -46,8 +57,11 @@ const parser = new Parser()
 // reference, not by value: comparing `parser.functions[key] ===
 // builtInFunctionsSnapshot[key]` later tells us whether THIS key still
 // points at the untouched original implementation ("we never wanted this,
-// remove it") or was reassigned to one of ours, including cases where we
-// override a built-in under its OWN name (`min`/`max`/`length` below) —
+// remove it") or was reassigned to one of ours, including the two cases
+// where we override a built-in `parser.functions` entry under its OWN name
+// (`min`/`max` below — `length` is NOT one of these: expr-eval's `length`
+// lives in `unaryOps`, a different table this sweep never touches, so
+// `parser.functions.length` below is a brand-new key, not an override) —
 // reassignment always produces a new function reference, so identity
 // comparison catches both "brand new key" and "we replaced this one" the
 // same way, with no separate hand-maintained list of our own function names
@@ -119,13 +133,32 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
     if (currentBuiltStringBudget !== null || currentJsonValueBudget !== null) {
         // Not a formula error — a bug in evaluateRaw's own bookkeeping (a
         // missing/misplaced `finally`, or genuine re-entrancy this design
-        // does not support). Thrown here, not swallowed, so it surfaces as
-        // an engine-level failure rather than a confusing "too large" on a
-        // formula that never touched the guarded functions at all.
+        // does not support). It is still a plain `Error`, not a
+        // `FormulaSizeLimitError`, so evaluateSingleFormula's catch does NOT
+        // treat it specially — it falls through to friendlyError's generic
+        // fallback, and the user sees the same "Could not evaluate this
+        // formula" as any other unhandled error. What throwing here DOES
+        // buy is not surfacing to the USER differently — it's that it fails
+        // on THIS evaluation instead of silently corrupting the tracker for
+        // whichever evaluation runs next, and the thrown message itself
+        // (visible in logs/stack traces) names the actual bug rather than
+        // whatever guarded function happened to run first and hit a
+        // pre-exhausted budget.
         throw new Error('evaluateRaw invoked while a previous evaluation\'s budget tracker was still set')
     }
     currentBuiltStringBudget = { remaining: FORMULA_MAX_BUILT_STRING_LENGTH }
     currentJsonValueBudget = { remaining: FORMULA_MAX_JSON_VALUE_BUDGET }
+    // A SECOND path to the same prototype-chain leak the `parser.functions`
+    // sweep above closes: expr-eval's IVAR resolution falls through to
+    // `values[name]` (`values` being this `vars` object) whenever the name
+    // isn't found in `functions`/`unaryOps` — and a plain `{}` inherits
+    // `Object.prototype`, so `vars['toString']` resolves to the inherited
+    // method even with an empty `vars`. Verified: with only
+    // `parser.functions`'s prototype nulled, `toString(1)` still evaluated
+    // to "[object Undefined]" through THIS path. `vars` is freshly built
+    // per call by preprocessExpression and never read again after this
+    // call, so mutating its prototype here is safe.
+    Object.setPrototypeOf(vars, null)
     try {
         return parser.evaluate(expression, vars)
     }
@@ -586,36 +619,123 @@ for (const fn of AP_FUNCTIONS) {
 
 // Guarding size-generating `parser.functions` entries one at a time took
 // four review rounds to reach `replace`/`join_list`/`to_json`/`from_json`/
-// `split_text_to_list` and still missed expr-eval's OWN built-ins —
-// `join`, `map`, `fold`, `filter`, `indexOf`, plus several numeric ones
-// (`random`, `fac`, `hypot`, `pyt`, `pow`, `atan2`, `gamma`, `roundTo`) that
-// nothing above ever touches or reviews. Measured directly against the real
-// `expr-eval@2.0.2` dependency: nesting `join(sep, array)` four levels deep
-// over 100-element array literals (`join(join(join(join("aaaaaaaaaa",
-// [0,1,...,99]),[0,1,...,99]),[0,1,...,99]),[0,1,...,29])`) — a 994-character
-// expression, zero input data — built a 335,941,270-character string, +333MB
-// RSS, in 138ms. Worse, and NOT fixable by any size budget: `map`/`fold`/
-// `filter` invoke a callback PER ELEMENT (expr-eval's `()=` function-
-// definition operator makes an inline callback expression), so nested
-// `map`s over a few hundred elements each is tens of millions of callback
-// invocations — that is compute time, not allocation, and a byte-counting
-// guard cannot see it coming.
+// `split_text_to_list` and still missed expr-eval's OWN built-ins. A fresh
+// `new Parser().functions` registers exactly 16 keys; this module's
+// registrations above override only 2 of them (`min`, `max`) under their own
+// names, so the sweep below removes the other 14: `random`, `fac`, `hypot`,
+// `pyt`, `pow`, `atan2`, `if`, `gamma`, `roundTo`, `map`, `fold`, `filter`,
+// `indexOf`, `join`. Measured directly against the real `expr-eval@2.0.2`
+// dependency: nesting `join(sep, array)` four levels deep over 100-element
+// array literals (`join(join(join(join("aaaaaaaaaa",[0,1,...,99]),
+// [0,1,...,99]),[0,1,...,99]),[0,1,...,29])`) — a 994-character expression,
+// zero input data — built a 335,941,270-character string, +333MB RSS, in
+// 138ms. Worse, and NOT fixable by any size budget: `map`/`fold`/`filter`
+// invoke a callback PER ELEMENT (expr-eval's `()=` function-definition
+// operator makes an inline callback expression), so nested `map`s over a
+// few hundred elements each is tens of millions of callback invocations —
+// that is compute time, not allocation, and a byte-counting guard cannot
+// see it coming.
+//
+// `if` needs its own note: it IS one of ours — `AP_FUNCTIONS` documents a
+// 3-argument `if(condition; true_value; false_value)` and the web function
+// picker renders it — but it is never registered as `parser.functions.if`.
+// `rewriteLazyIf` (formula-evaluator.ts) rewrites every 3-arg `if(c;a;b)`
+// into a ternary `((c)?(a):(b))` before the expression reaches this file, so
+// the literal name "if" never survives to be looked up here for a VALID
+// call. This sweep removing expr-eval's built-in `if` (a 3-arg eager
+// conditional, distinct from our lazy-ternary rewrite) changes behaviour
+// only for INVALID arities: a 2-arg or 4-arg `if(...)` — already outside
+// `AP_FUNCTIONS`'s declared `minArgs: 3, maxArgs: 3` — previously fell
+// through rewriteLazyIf's `else` branch un-rewritten, reached expr-eval's
+// built-in `if`, and silently returned a value; it now errors instead. That
+// is arguably a correctness fix (an already-invalid call now fails instead
+// of silently doing something), but it is a real, disclosed behaviour
+// change, not a no-op.
 //
 // This replaces per-function enumeration with an allowlist: after every
 // intentional registration above, delete every `parser.functions` key that
 // still points at its ORIGINAL expr-eval implementation (see
-// `builtInFunctionsSnapshot` above `const parser = new Parser()`). Anything
-// we registered — new or overriding a built-in under its own name — has a
-// different reference by now and survives. A future expr-eval version
-// adding another built-in is excluded by default instead of silently
-// reopening this exact hole, and removing `map`/`fold`/`filter` this way
-// closes the compute-bound risk completely: there is no callback to invoke
-// if the function does not exist.
+// `builtInFunctionsSnapshot` below `const parser = new Parser()`, which it
+// must be — it snapshots THIS instance's `.functions` object, so it cannot
+// be captured before the instance exists). Anything we registered — new or
+// overriding a built-in under its own name — has a different reference by
+// now and survives. A future expr-eval version adding another built-in is
+// excluded by default instead of silently reopening this exact hole, and
+// removing `map`/`fold`/`filter` this way closes the compute-bound risk
+// completely: there is no callback to invoke if the function does not exist.
+//
+// Latent footgun, not present today: this relies on every one of OUR
+// registrations producing a NEW function reference. Registering a built-in
+// verbatim under its own name — `parser.functions.min = min` using the
+// SAME imported `min`, rather than a fresh arrow wrapping it — would leave
+// the reference identical to the snapshot and get silently swept away. Both
+// `min` and `max` above are fresh arrows (`(a, b) => Math.min(...)`), not
+// re-exports of anything expr-eval defines, so this does not happen today —
+// but it is a real constraint on how future overrides must be written, not
+// an impossible case.
 for (const key of Object.keys(parser.functions)) {
     if (parser.functions[key] === builtInFunctionsSnapshot[key]) {
-        Reflect.deleteProperty(parser.functions, key)
+        // `Reflect.deleteProperty` returns `false` (no throw) instead of
+        // deleting a non-configurable property. Checked, not discarded: a
+        // future expr-eval version registering its built-ins via
+        // `Object.defineProperty(..., { configurable: false })` or as
+        // accessors would make this silently no-op per key — reopening the
+        // exact hole this sweep exists to close, with zero signal. Same
+        // fail-loud shape as the `builtInConcat` module-load guard above.
+        if (!Reflect.deleteProperty(parser.functions, key)) {
+            throw new Error(`Could not remove the expr-eval built-in "${key}" from parser.functions — it may be non-configurable, which would silently defeat the allowlist sweep`)
+        }
     }
 }
+
+// The sweep above only removes OWN enumerable keys — but expr-eval resolves
+// names against several internal tables using `in` or plain bracket access,
+// and both walk the WHOLE prototype chain, not just own properties. Every
+// one of these tables is a plain object literal with the default
+// `Object.prototype`, and this was found the hard way, one leak at a time,
+// by instrumenting the real `expr-eval` package locally and re-testing
+// `toString(1)` after each fix — recorded here so the next person does not
+// have to redo that work:
+//   1. Nulling only `functions`' prototype (an earlier version of this fix
+//      did just this) left `toString(1)` still evaluating to
+//      "[object Undefined]". Cause: `TokenStream.isNamedOp` — called at
+//      PARSE time, before `functions` is ever consulted — checks `str in
+//      this.binaryOps || str in this.unaryOps || str in this.ternaryOps` to
+//      decide whether an identifier becomes an operator token at all, and
+//      found "toString" through `unaryOps`' inherited
+//      `Object.prototype.toString`. It got tokenized as a prefix unary
+//      operator (`ParserState.parseFunctionCall`'s `isPrefixOperator`,
+//      `token.value in unaryOps`) and evaluated via `expr.unaryOps['toString']`
+//      — the same inherited method, called with `1` as its only argument
+//      and `this === undefined`, producing that exact string.
+//   2. Nulling `functions`, `unaryOps`, `binaryOps`, and `ternaryOps`
+//      together STILL left `toString(1)` evaluating, this time to an
+//      `INUMBER` token holding the function reference directly. Cause:
+//      `TokenStream.isConst` — checked immediately after `isNamedOp` fails
+//      — does `str in this.consts`, and `consts` (`{E, PI, true, false}`)
+//      was untouched and still had the default prototype, so "toString" was
+//      tokenized as a CONSTANT whose value is the inherited method.
+//   3. `values` (this file's `vars` parameter, also a plain object by
+//      default) is a further, independent path: the main `evaluate()`
+//      loop's IVAR branch falls back to `values[item.value]` after
+//      `functions`/`unaryOps` fail, and inherited methods are reachable
+//      there the same way. See `evaluateRaw`'s own
+//      `Object.setPrototypeOf(vars, null)`.
+// That is six objects total — `functions`, `unaryOps`, `binaryOps`,
+// `ternaryOps`, `consts`, and `vars` — everywhere this package was found to
+// use `in` or bracket access against a name that ultimately comes from
+// user-authored formula text. None of our own registrations depend on
+// inheriting anything from `Object.prototype`: every `parser.functions.X =
+// ...` assignment above is an own property, and this file assigns nothing
+// to `unaryOps`/`binaryOps`/`ternaryOps`/`consts` except the single
+// `binaryOps['||']` override, itself an own property. Verified after all
+// six: `toString(1)` and `hasOwnProperty("x")` both fail to evaluate, and
+// the full existing test suite (every documented function) still passes.
+Object.setPrototypeOf(parser.functions, null)
+Object.setPrototypeOf(parser.unaryOps, null)
+Object.setPrototypeOf(parser.binaryOps, null)
+Object.setPrototypeOf(parser.ternaryOps, null)
+Object.setPrototypeOf(parser.consts, null)
 
 function toArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value
