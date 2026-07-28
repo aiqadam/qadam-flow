@@ -2,8 +2,6 @@ import { access, mkdir, realpath, unlink } from 'node:fs/promises'
 import nodePath from 'node:path'
 import { tryCatch } from '@aiqadam/shared'
 
-export const INFINITE_LOCK_TIMEOUT = 60 * 60 * 1000
-
 async function resolveRealpathThroughMissingTail(targetPath: string): Promise<string> {
     const absolute = nodePath.resolve(targetPath)
     const segments = absolute.split(nodePath.sep).filter((segment) => segment.length > 0)

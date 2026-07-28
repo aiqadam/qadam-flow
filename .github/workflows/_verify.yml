@@ -40,6 +40,12 @@ jobs:
       - name: Test run.sh env reconciliation
         run: tools/ci/test-run-sh.sh
 
+      # docker-entrypoint.sh is the other pure-shell entry point with no image
+      # build behind it. #51 was a supervision regression nothing would have
+      # caught; this suite runs against a stub `node` in seconds.
+      - name: Test docker-entrypoint.sh
+        run: tools/ci/test-entrypoint.sh
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
