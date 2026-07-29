@@ -176,7 +176,7 @@
     // times (#148, #164, #184). `api` now declares `test` = unit tests like every
     // other package, so one unfiltered `turbo run test` covers the repo and cannot
     // omit a package. The integration suite stays `test-ce`, reached only through
-    // `npm run test-api` and `docker-compose.test.yml`.
+    // `npm run test-api`.
     "test-ce": {
       "dependsOn": [
         "build",
