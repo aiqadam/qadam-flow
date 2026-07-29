@@ -6,6 +6,18 @@ ARG SKIP_SSL_VERIFY=
 ENV NODE_TLS_REJECT_UNAUTHORIZED=${SKIP_SSL_VERIFY:+0}
 RUN if [ -n "$SKIP_SSL_VERIFY" ]; then npm config set strict-ssl false; fi
 
+# redis-memory-server's postinstall compiles Redis from source, and that compile is broken. Set here
+# in `base` so every `bun install` in this file inherits it — there are three, and covering only one
+# leaves the next uncached build to fail exactly as before.
+#
+# Those binaries existed for AP_REDIS_TYPE=MEMORY, the embedded-Redis mode of the all-in-one
+# container. That container mode was removed in #210 and now refuses to start, and every shipped
+# install path uses a real Redis (run.sh and .env.dev set STANDALONE; docker-compose.yml runs
+# redis:7.0.7). So the mode this compile served is already gone, while the compile still breaks the
+# image build for everyone. If MEMORY is ever restored as a supported mode, this needs revisiting:
+# without the baked binaries it downloads and compiles Redis at container start.
+ENV REDISMS_DISABLE_POSTINSTALL=1
+
 # Set environment variables early for better layer caching
 ENV LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
@@ -72,9 +84,13 @@ WORKDIR /usr/src/app
 COPY .npmrc package.json bun.lock bunfig.toml ./
 COPY packages/ ./packages/
 
-# Install all dependencies
+# Install all dependencies.
+#
+# No `|| true` here, deliberately. It used to swallow install failures, so the build carried on with
+# no node_modules and died 20 lines later at `npx turbo` with exit 127 (command not found) — naming
+# the symptom and discarding the cause. A failed install must fail the build.
 RUN --mount=type=cache,target=/root/.bun/install/cache \
-    bun install || true
+    bun install
 
 # Copy remaining source code (turbo config, etc.)
 COPY . .

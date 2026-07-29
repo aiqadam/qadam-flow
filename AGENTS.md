@@ -262,6 +262,25 @@ before trusting its silence — an empty output is not the same as a passing che
   When a claim is about a file's *contents* — glyph coverage, exported symbols, which routes a
   bundle registers — open the file. The cheap corroboration here was size: 343 KB versus 24 KB at a
   comparable weight is not a format difference.
+- **A swallowed failure is worse than a failing command, and it hides in build files, not just CI.**
+  `Dockerfile` carried `RUN bun install || true` from the fork import. When `redis-memory-server`'s
+  postinstall began failing, the `|| true` discarded it, the build continued with no `node_modules`,
+  and it died twenty lines later at `npx turbo run build` with `exit code: 127`. Every symptom pointed
+  at turbo; the cause was the install. It survived many reviews because this list was read as being
+  about *test and CI* commands. It is not. Grep anything you are about to trust for `|| true`,
+  `|| exit 0`, `set +e`, `continue-on-error`, and `2>/dev/null` on a step whose success the next step
+  depends on — in `Dockerfile`, `docker-entrypoint.sh`, `run.sh` and npm scripts, not only under
+  `.github/`. If a step's failure would change what the next step does, it must not be allowed to pass.
+  Two caveats learned the hard way. **Count the occurrences before claiming a sweep** — this
+  `Dockerfile` has three `bun install` invocations and only one was covered, so the fix was partial
+  while its own commit message implied otherwise. And **`docker-entrypoint.sh` runs `set -uo pipefail`
+  without `-e` on purpose**, with an in-file comment explaining that the `AP_WORKER_TOKEN` mint depends
+  on it; that one is a documented exception, not a bug to "fix".
+- **Establish provenance with `git blame` before attributing a defect to anyone.** The `|| true` above
+  reads exactly like something a coding agent would add to force a green build, and it was assumed to
+  be that. `git blame` puts it in the `Init` fork-import commit — inherited from upstream, not written
+  by any session here. Blaming the wrong author in a commit message, an issue or a report is itself a
+  defect, and it is cheap to avoid.
 - **A tool that cannot do its job may still emit a plausible artifact instead of failing.** Rendering
   the Open Graph card with `@resvg/resvg-js` in this container produced a valid 13 KB PNG containing
   the logo and **no text at all** — there are no system fonts installed, so every text node was
