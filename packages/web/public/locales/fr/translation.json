@@ -462,7 +462,7 @@
   "On": "Activé",
   "Off": "Désactivé",
   "Required by other tools — always enabled": "Requis par d'autres outils — toujours activé",
-  "Select all in {{category}}": "Tout sélectionner dans {{category}}",
+  "Select all in {category}": "Tout sélectionner dans {category}",
   "always enabled": "toujours activé",
   "{firstName} {lastName} role has become {roleName}": "Rôle {firstName} {lastName} est devenu {roleName}",
   "Pending Invitation": "Invitation en attente",
@@ -716,7 +716,7 @@
   "Estimated hours saved through automation in the last 3 months. Each automated task saves valuable employee time that can be redirected to high-impact work.": "Heures estimées économisées grâce à l'automatisation au cours des 3 derniers mois. Chaque tâche automatisée économise un temps précieux d'employé qui peut être redirigé vers un travail à fort impact.",
   "{days} workdays saved": "{days} jours de travail économisés",
   "Total time saved by automation": "Temps total économisé par l'automatisation",
-  "You have {count} {count, plural, one {flow} other {flows}} without time saved per run. Add it to see your complete automation impact!": "Vous avez {count} {count, plural, one {flux} other {flux}} sans temps économisé par exécution. Ajoutez-le pour voir votre impact total d'automatisation\u00a0!",
+  "You have {count} {count, plural, one {flow} other {flows}} without time saved per run. Add it to see your complete automation impact!": "Vous avez {count} {count, plural, one {flux} other {flux}} sans temps économisé par exécution. Ajoutez-le pour voir votre impact total d'automatisation !",
   "Click the": "Cliquez sur le",
   "pencil icon in the table below to set time saved per run": "icone crayon dans le tableau ci-dessous pour définir le temps économisé par exécution",
   "Download as PNG": "Télécharger en PNG",
@@ -1619,7 +1619,7 @@
   "Maximum credits to add per month": "Crédits maximum à ajouter par mois",
   "{maxMonthlyLimit} credits (${usd})": "{maxMonthlyLimit} crédits (${usd})",
   "No limit": "Pas de limite",
-  "2,000,000": "2\u00a0000\u00a0000",
+  "2,000,000": "2 000 000",
   "Payment per top-up": "Paiement par recharge",
   "${totalCost}": "${totalCost}",
   "$1 per 1000 credits": "1 $ par 1000 crédits",
@@ -1961,5 +1961,6 @@
   "1 min ago": "Il y a 1 min",
   "{count} mins ago": "Il y a {count} mins",
   "1 hour ago": "Il y a 1 heure",
-  "{count} hours ago": "Il y a {count} heures"
+  "{count} hours ago": "Il y a {count} heures",
+  "useInsteadPrefix": "Utiliser"
 }

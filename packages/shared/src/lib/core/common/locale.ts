@@ -8,5 +8,8 @@ export enum LocalesEnum {
     CHINESE_SIMPLIFIED = 'zh',
     PORTUGUESE = 'pt',
     ARABIC = 'ar',
+    RUSSIAN = 'ru',
+    UZBEK = 'uz',
+    KAZAKH = 'kk',
     CHINESE_TRADITIONAL = 'zh-TW',
 }

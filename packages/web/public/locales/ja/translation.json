@@ -462,7 +462,7 @@
   "On": "オン",
   "Off": "オフ",
   "Required by other tools — always enabled": "他のツールに必要 - 常に有効",
-  "Select all in {{category}}": "{{category}} ですべて選択",
+  "Select all in {category}": "{category} ですべて選択",
   "always enabled": "常に有効",
   "{firstName} {lastName} role has become {roleName}": "{firstName} {lastName} ロールが {roleName} になりました",
   "Pending Invitation": "保留中の招待",
@@ -1961,5 +1961,6 @@
   "1 min ago": "1分前",
   "{count} mins ago": "{count} 分前",
   "1 hour ago": "1時間前",
-  "{count} hours ago": "{count} 時間前"
+  "{count} hours ago": "{count} 時間前",
+  "useInsteadPrefix": "使用"
 }

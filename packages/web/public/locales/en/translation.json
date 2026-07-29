@@ -462,7 +462,7 @@
   "On": "On",
   "Off": "Off",
   "Required by other tools — always enabled": "Required by other tools — always enabled",
-  "Select all in {{category}}": "Select all in {{category}}",
+  "Select all in {category}": "Select all in {category}",
   "always enabled": "always enabled",
   "{firstName} {lastName} role has become {roleName}": "{firstName} {lastName} role has become {roleName}",
   "Pending Invitation": "Pending Invitation",
@@ -1976,5 +1976,6 @@
   "1 hour ago": "1 hour ago",
   "{count} hours ago": "{count} hours ago",
   "Horizontal layout": "Horizontal layout",
-  "Vertical layout": "Vertical layout"
+  "Vertical layout": "Vertical layout",
+  "useInsteadPrefix": "Use"
 }

@@ -462,7 +462,7 @@
   "On": "Activado",
   "Off": "Desactivado",
   "Required by other tools — always enabled": "Requerido por otras herramientas: siempre habilitado",
-  "Select all in {{category}}": "Seleccionar todo en {{category}}",
+  "Select all in {category}": "Seleccionar todo en {category}",
   "always enabled": "siempre habilitado",
   "{firstName} {lastName} role has become {roleName}": "El rol {firstName} {lastName} se ha convertido en {roleName}",
   "Pending Invitation": "Invitación pendiente",
@@ -1961,5 +1961,6 @@
   "1 min ago": "Hace 1 min",
   "{count} mins ago": "Hace {count} minuto(s)",
   "1 hour ago": "Hace 1 hora",
-  "{count} hours ago": "Hace {count} hora(s)"
+  "{count} hours ago": "Hace {count} hora(s)",
+  "useInsteadPrefix": "Usar"
 }

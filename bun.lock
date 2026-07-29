@@ -3463,10 +3463,12 @@
         "check-disk-space": "3.4.0",
         "dayjs": "1.11.9",
         "request-filtering-agent": "3.2.0",
+        "semver": "7.6.0",
         "systeminformation": "5.31.6",
       },
       "devDependencies": {
         "@types/node": "24.11.0",
+        "@types/semver": "7.5.6",
         "pino": "10.1.0",
         "vitest": "3.0.8",
       },
@@ -3517,7 +3519,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.95.1",
+      "version": "0.106.0",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",

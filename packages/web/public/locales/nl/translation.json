@@ -462,7 +462,7 @@
   "On": "Aan",
   "Off": "Uit",
   "Required by other tools — always enabled": "Vereist door andere tools — altijd ingeschakeld",
-  "Select all in {{category}}": "Selecteer alles in {{category}}",
+  "Select all in {category}": "Selecteer alles in {category}",
   "always enabled": "altijd ingeschakeld",
   "{firstName} {lastName} role has become {roleName}": "{firstName} {lastName} rol is {roleName} geworden",
   "Pending Invitation": "In behandeling zijnde uitnodiging",
@@ -1961,5 +1961,6 @@
   "1 min ago": "1 min geleden",
   "{count} mins ago": "{count} min geleden",
   "1 hour ago": "1 uur geleden",
-  "{count} hours ago": "{count} uur geleden"
+  "{count} hours ago": "{count} uur geleden",
+  "useInsteadPrefix": "Gebruik"
 }
