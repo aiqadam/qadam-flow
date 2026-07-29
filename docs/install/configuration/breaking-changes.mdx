@@ -86,10 +86,24 @@ to start — and every supported install path runs Redis as its own service (`ru
   Note there are **two** ways to be in this mode: `AP_REDIS_TYPE=MEMORY`, and the legacy
   `AP_QUEUE_MODE=MEMORY`, which is still silently mapped onto it — so check both.
 
+#### The language picker now offers only English, Russian, Uzbek and Kazakh
+
+Nine UI locales have been removed: Dutch, German, French, Spanish, Japanese, Portuguese, Arabic, Simplified Chinese and Traditional Chinese. The product's language coverage now follows the Organization of Turkic States, plus Russian as a regional lingua franca and English as the source language.
+
+- **`LocalesEnum` in `@aiqadam/shared` no longer contains those nine members.** Anything importing them fails to compile. This is why the change is marked breaking even though it is user-facing rather than API-facing for most installs.
+- **A user whose interface was one of those languages now sees English.** No data is affected — only the rendered UI text. They can still pick Russian, Uzbek or Kazakh from the language menu.
+- **A browser set to a removed language falls back to English** rather than being offered a partially translated interface.
+- **Qadam translation files are unchanged on disk, but nine of them stop being read.** `packages/qadams/**/src/i18n/*.json` is untouched, however the framework decides which of those files to load by iterating `LocalesEnum`. So the 1,662 files for the removed languages become dead weight, and **`GET /v1/qadams?locale=de` still returns `200` while silently serving English** action and trigger names where it previously served German. The `locale` query parameter is a free-form string, so nothing rejects the request — it just stops translating.
+- **The `ap_research_pieces` MCP tool now rejects a removed locale outright.** Unlike the REST route, that tool validates `locale` against `LocalesEnum`, so an MCP client passing `locale: "de"` gets a schema validation error instead of degrading to English. If you drive this install over MCP with an explicit locale, update those calls.
+
+**If you rely on one of the removed interface languages,** stay on your current image tag, or switch the affected users to English, Russian, Uzbek or Kazakh. If you need one of them restored, open an issue: the translation files remain in git history and can be brought back.
+
 ### Do you need to take action?
 - No, if you already run against PostgreSQL. Renaming `AP_*` to `QF_*` is optional during the deprecation window described above; `AP_*` support will be removed in a future release, announced here with advance notice.
 - Yes, if `AP_DB_TYPE=PGLITE` or `AP_DB_TYPE=SQLITE3` is set anywhere in your configuration: stay on your current image tag, or move to Postgres and rebuild in a fresh install — there is no automated path between the two.
 - Yes, if `AP_REDIS_TYPE=MEMORY` **or** the legacy `AP_QUEUE_MODE=MEMORY` is set: switch to `STANDALONE` and run Redis as its own service. The bundled `docker-compose.yml` and `run.sh` already do this, so a stock install needs nothing.
+
+- Only if your users read the interface in Dutch, German, French, Spanish, Japanese, Portuguese, Arabic or Chinese: those interface languages are gone and those users will see English. Nothing needs migrating; it is a display change.
 
 
 ## 0.84.0
