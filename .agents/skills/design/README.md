@@ -79,8 +79,8 @@ rebrand the product. Verified against the tree:
 
 | Thing | Brand says | Repo ships | Where |
 | --- | --- | --- | --- |
-| Primary colour | teal `#3CA29E` / `oklch(0.58 0.10 192)`; dark `oklch(0.70 0.105 192)` | purple `hsl(257 74% 57%)`; **blue** `hsl(210 90% 50%)` in dark | `packages/web/src/styles.css:414` (light), `:500` (dark) |
-| Platform-branding default | teal | `primaryColor: '#8142E3'` | `packages/server/api/src/app/flags/theme.ts:67` |
+| Primary colour | `oklch(0.58 0.10 192)` ≈ `#008d89` light, `oklch(0.70 0.105 192)` ≈ `#39b3af` dark. The shipped mark is `#3CA29E`, which is neither — it sits between them | **teal `#3CA29E`**, served to both themes. `styles.css` still declares purple, and blue under `.dark`, but the provider overwrites `--primary`/`-100`/`-300` inline at runtime so neither is what a user sees | default in `packages/server/api/src/app/flags/theme.ts:67` |
+| Platform-branding default | teal | `primaryColor: '#3CA29E'` | `packages/server/api/src/app/flags/theme.ts:67` |
 | Product logo | teal footprint mark | **already teal** | `packages/web/public/logo.svg`, `logo-full.svg`, `logo-192.png`, `logo-180.png`, `og-image.svg` |
 | Docs logo + favicon | teal footprint mark | still the purple Activepieces "A" | `docs/resources/logo/light.svg`, `docs/resources/logo/dark.svg`, `docs/favicon.svg`, `docs/favicon.png` |
 | Docs site accent | teal | `#9675FF` | `docs/docs.json:6-8` |
