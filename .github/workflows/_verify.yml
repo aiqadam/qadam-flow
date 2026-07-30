@@ -164,8 +164,9 @@ jobs:
       # broken postinstall stayed invisible until a PR happened to touch bun.lock, and why a green
       # check on a cache hit is not evidence that an install-related change works.
       #
-      # Emitted as a step output and into the run summary so it can be read without downloading and
-      # grepping the log — `gh api .../jobs` exposes step conclusions but not this distinction.
+      # Emitted three ways; see the step body for which of them is actually readable from outside
+      # this job, because they are not equivalent. `gh api .../jobs` exposes step conclusions but
+      # not this distinction, which is the whole reason the step exists.
       - name: Report node_modules cache state
         id: cache-state
         run: |

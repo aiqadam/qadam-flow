@@ -1,12 +1,15 @@
 name: CI
 
 on:
-  # `labeled` is here for the `refresh-cache` label only. Without it the trigger defaults to
-  # opened/synchronize/reopened, applying the label fires no run, and re-running the existing run
-  # replays the original payload in which the label is absent — so the label read as working while
-  # doing nothing. `unlabeled` is deliberately omitted: removing the label needs no run.
+  # Deliberately the default activity types (opened, synchronize, reopened). Adding `labeled` to make
+  # the `refresh-cache` label self-triggering was tried and reverted: it fires a full duplicate
+  # pipeline on EVERY label event, and CONTRIBUTING.md makes one primary label mandatory on every PR,
+  # so it would add ~11 min of serialised CI per PR (see #156) — and because every `pull_request`
+  # event shares the `refs/pull/N/merge` ref, a `labeled` event lands in the same concurrency group
+  # with `cancel-in-progress` true and kills the run already in flight. The label works on the next
+  # `synchronize` instead; AGENTS.md documents pushing an empty commit, which costs one run rather
+  # than one per label.
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
 

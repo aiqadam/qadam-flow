@@ -343,10 +343,23 @@ Four controls, cheapest first:
 - **The `refresh-cache` PR label** — skips cache restore for that PR only, forcing a real install
   without disturbing what other branches are using. Use it when a change alters install *behaviour*
   but no hashed manifest, since that PR would otherwise get a hit and never exercise its own change.
-  Applying the label starts a fresh run by itself: `ci.yml`'s trigger lists `labeled` explicitly for
-  this reason. Do not reach for *Re-run all jobs* instead — a re-run replays the original event
-  payload, in which the label is absent, so it would silently come back a cache hit. (Skipping restore
-  also skips the save, so a labelled run consumes nothing and publishes nothing.)
+  **The label takes effect on the next push, not on being applied** — and this is the part that makes
+  it work or not. `ci.yml` uses the default `pull_request` activity types, so labelling fires no run,
+  and *Re-run all jobs* replays the original event payload in which the label is absent, silently
+  coming back a cache hit. So: apply the label, then push — an empty commit is enough:
+
+  ```bash
+  gh pr edit <n> --add-label refresh-cache
+  git commit --allow-empty -s -m 'chore: force a cold install' && CLAUDE_PUSH=yes git push
+  ```
+
+  Adding `labeled` to the trigger to remove that step was tried and reverted: it fires a full
+  duplicate pipeline on **every** label event, and CONTRIBUTING.md makes one primary label mandatory
+  on every PR — roughly +11 min of serialised CI per PR (see #156). Worse, every `pull_request` event
+  shares the `refs/pull/N/merge` ref, so a `labeled` event lands in the same concurrency group with
+  `cancel-in-progress` true and cancels the run already in flight, flipping required checks to
+  `cancelled`. One deliberate empty commit is cheaper than that on every PR forever.
+  (Skipping restore also skips the save, so a labelled run consumes nothing and publishes nothing.)
 - **`vars.NODE_MODULES_CACHE_EPOCH`** (repository variable, defaults to `v1`) — bumping it invalidates
   every entry with no commit and no PR. Blunt and repo-wide; prefer the label or `gh cache delete`.
 

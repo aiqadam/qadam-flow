@@ -52,6 +52,44 @@ readonly INSTALL_NODE_MODULES_MAXDEPTH=4
 # Takes its root explicitly instead of trusting the caller's cwd: this is a
 # recursive delete, and every other script in tools/ci/ resolves its own paths
 # rather than depending on how it was invoked.
+# Reads tools/ci/install.env and exports its assignments, or fails the build. Parsed rather than
+# sourced: `.` returns the status of the LAST command in the file and a `command not found` mid-file
+# does not abort it, so `KEY=oh no` followed by any further line returns 0 with KEY unset and the
+# install proceeds under an environment that does not match the cache key it gets saved under — the
+# exact hole install.env exists to close. Verified: sourcing `GOOD=1 / BAD=oh no / AFTER=2` exits 0,
+# leaves BAD unset and applies AFTER.
+#
+# Grammar, deliberately narrow so anything ambiguous fails rather than being half-applied: each line
+# is blank, a `#` comment, or a single KEY=VALUE whose value contains no whitespace, quote or
+# backslash. Quotes are rejected rather than stripped because this parser provides no shell quoting
+# semantics, so `K="a b"` could only mean the author expected semantics that are not here — better to
+# fail than to export a literal quote character. These are install flags, so the restriction costs
+# nothing; if a value ever genuinely needs a space, widen this and its tests together.
+# $1 is the file to read, so the tests can point it at a fixture.
+load_install_env() {
+  install_env_file="${1:-tools/ci/install.env}"
+  if [ ! -f "$install_env_file" ]; then
+    echo "::error::${install_env_file} is missing. It carries the install-affecting environment and is part of the cache key; a tree built without it is not the tree the key describes."
+    return 1
+  fi
+  if [ ! -r "$install_env_file" ]; then
+    echo "::error::${install_env_file} is not readable."
+    return 1
+  fi
+  env_lineno=0
+  while IFS= read -r env_line || [ -n "$env_line" ]; do
+    env_lineno=$((env_lineno + 1))
+    case "$env_line" in
+      '' | '#'*) continue ;;
+    esac
+    if ! printf '%s' "$env_line" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]'"'"'"\\]*$'; then
+      echo "::error file=${install_env_file},line=${env_lineno}::Expected a blank line, a # comment, or KEY=VALUE with no whitespace in the value. Refusing to install under a partially-applied environment."
+      return 1
+    fi
+    export "${env_line?}"
+  done < "$install_env_file"
+}
+
 clean_installed_node_modules() {
   local root="$1"
 
@@ -70,24 +108,9 @@ main() {
   # Environment that changes what the install PRODUCES lives in tools/ci/install.env, which the cache
   # key hashes — so changing a value there invalidates the cache, while editing this script's prose
   # does not. Do not move these exports back into this file; that is what made a stale tree
-  # invisible. Sourced with `set -a` so every assignment is exported to both installs below.
-  # Both failure modes must stop the install, not just a missing file: this script runs under
-  # `set -uo pipefail` with no `-e`, so a file that exists but fails to source (bad permissions, an
-  # unquoted value with a space) would partially apply its assignments and fall straight through to
-  # the install — producing a tree that does not match the key it gets saved under, which is the exact
-  # hole this file was added to close.
-  if [ ! -f tools/ci/install.env ]; then
-    echo "::error::tools/ci/install.env is missing. It carries the install-affecting environment and is part of the cache key; a tree built without it is not the tree the key describes."
-    exit 1
-  fi
-  set -a
-  # shellcheck disable=SC1091
-  if ! . tools/ci/install.env; then
-    set +a
-    echo "::error::tools/ci/install.env exists but could not be sourced. Refusing to install under a partially-applied environment."
-    exit 1
-  fi
-  set +a
+  # invisible. Each assignment is exported, so both installs below inherit it.
+  #
+  load_install_env tools/ci/install.env || exit 1
 
   if bun install --frozen-lockfile; then
     exit 0
