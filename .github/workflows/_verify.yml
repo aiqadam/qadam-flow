@@ -64,6 +64,15 @@ jobs:
         timeout-minutes: 2
         run: tools/ci/install-deps.test.sh
 
+      # The readiness gate ci.yml's `e2e` job puts in front of the Playwright
+      # suite. It only ever runs for real inside that job, where a wrong answer
+      # in the passing direction turns "the stack never booted" into eight
+      # spec timeouts read as UI regressions. Pinned here because that is the
+      # failure mode nothing downstream can distinguish.
+      - name: Test the CI readiness gate
+        timeout-minutes: 2
+        run: tools/ci/wait-for-api.test.sh
+
       - uses: actions/setup-node@v6
         id: node
         with:

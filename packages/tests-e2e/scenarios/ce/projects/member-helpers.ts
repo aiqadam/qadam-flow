@@ -5,6 +5,8 @@ import {
   type Page,
 } from '@playwright/test';
 
+import { DEFAULT_EMAIL, DEFAULT_PASSWORD } from '../../../global-setup';
+
 export async function signIn(page: Page, email: string, password: string) {
   await page.goto('/sign-in');
   await page.getByTestId('sign-in-email').fill(email);
@@ -112,7 +114,10 @@ export function memberRow(dialog: Locator, email: string): Locator {
 
 export type Shot = (page: Page, name: string) => Promise<void>;
 
-export const ADMIN_EMAIL = process.env.E2E_EMAIL ?? 'dev@ap.com';
-export const ADMIN_PASSWORD = process.env.E2E_PASSWORD ?? '12345678';
+// Fall back to whoever global-setup itself authenticated as, so a fresh instance with no
+// E2E_* env vars signs in as the user global-setup just signed up rather than a dev-seed
+// user that does not exist there.
+export const ADMIN_EMAIL = process.env.E2E_EMAIL ?? DEFAULT_EMAIL;
+export const ADMIN_PASSWORD = process.env.E2E_PASSWORD ?? DEFAULT_PASSWORD;
 export const OWNER_PASSWORD = 'Owner2Pass!23';
 export const MEMBER_PASSWORD = 'Member12345!';

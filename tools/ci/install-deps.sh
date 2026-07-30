@@ -4,9 +4,9 @@
 #
 #   tools/ci/install-deps.sh
 #
-# Both installing jobs (`_verify.yml`'s `verify` and `ci.yml`'s
-# `integration-run`) call this so the retry semantics cannot drift between
-# them. It runs AFTER `actions/cache/restore`, and it always runs
+# Every installing job (`_verify.yml`'s `verify`, and `ci.yml`'s
+# `integration-run` and `e2e`) calls this so the retry semantics cannot drift
+# between them. It runs AFTER `actions/cache/restore`, and it always runs
 # `bun install --frozen-lockfile` even on a cache hit.
 #
 # Be precise about what that buys, because the boundary matters more than the

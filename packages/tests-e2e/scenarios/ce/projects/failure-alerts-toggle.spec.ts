@@ -23,7 +23,13 @@ const SHOTS = path.resolve(__dirname, '../../../screenshots/failure-alerts');
 // flow-failure email alerts from the Team tab — for themselves and for an invited member —
 // entirely through the UI, with a screenshot at each step. Requires SMTP configured on the
 // backend (otherwise the toggle is disabled with a hint); runs against a dev stack with AP_SMTP_*.
-test.describe('Per-member failure alerts toggle (#88, UI)', () => {
+//
+// Tagged @smtp so CI can select it: configuring SMTP makes the very first sign-up on a fresh
+// instance fail (it then sends a verification OTP instead of auto-verifying, and a dummy SMTP
+// host cannot deliver it), so the e2e job runs everything else first and only then restarts the
+// app with AP_SMTP_* set. Tag any future SMTP-dependent spec the same way rather than adding it
+// to a list in the workflow.
+test.describe('Per-member failure alerts toggle (#88, UI)', { tag: '@smtp' }, () => {
   test.setTimeout(180_000);
 
   test('non-admin owner enables failure alerts for themselves and an invited member — via clicks', async ({

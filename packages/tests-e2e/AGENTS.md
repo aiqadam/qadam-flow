@@ -44,7 +44,19 @@ AP_FRONTEND_URL=http://localhost:4200 \
   npx playwright test scenarios/ce/<spec>.spec.ts --reporter=list
 ```
 
-`E2E_EMAIL` / `E2E_PASSWORD` let `global-setup.ts` sign in as the seeded dev user instead of running its default sign-up — which is blocked by `INVITATION_ONLY_SIGN_UP` once dev-seed has provisioned a platform.
+`E2E_EMAIL` / `E2E_PASSWORD` let `global-setup.ts` sign in as the seeded dev user instead of running its default sign-up — which is blocked by `INVITATION_ONLY_SIGN_UP` once dev-seed has provisioned a platform. When they are unset, the specs fall back to `DEFAULT_EMAIL` / `DEFAULT_PASSWORD` from `global-setup.ts`, i.e. to whoever global-setup itself just signed up — never to a hardcoded pair of its own, which is how a fresh instance used to fail with a `page.waitForURL` timeout that looked like a UI regression.
+
+`AP_API_URL` is the API origin the specs talk to directly (`request.newContext({ baseURL })`), separately from `AP_FRONTEND_URL`. It defaults to `http://localhost:3000`, the dev stack's backend port, so the command above needs no change; set it when the API is not there — `docker-compose.yml` serves the API on the frontend's own origin, so a compose stack wants `AP_API_URL=http://localhost:8080`.
+
+## Running against a deployed instance in CI
+
+The `E2E Suite (docker compose)` job in `.github/workflows/ci.yml` runs this suite on every push to `main`, against the image that push just built, booted with the bundled `docker-compose.yml`. It also runs on a pull request that touches `packages/tests-e2e/**` or `ci.yml` — but on a PR the image is not published, so it tests the last published `:main`: green there means the job works, not that the PR passes e2e. It uploads `screenshots/**` on every run and `test-results/**` on failure. It pins `--workers=1`: eight parallel browsers against one instance made the app stop answering with `ERR_CONNECTION_RESET`, and serially the whole suite is ~2 min.
+
+**SMTP forces it into two phases, and this is the trap to know about.** Setting `AP_SMTP_*` from the start makes the *first* sign-up on a fresh instance fail: `authentication.service.ts` auto-verifies a new identity only when SMTP is **not** configured, and otherwise emails a verification OTP synchronously, so a dummy SMTP host returns `500 ESOCKET connect ECONNREFUSED` and `global-setup.ts` dies before a single test runs. A *reachable* dummy is no better — the identity is then created unverified and never reaches `/automations` (and `initSmtpClient` sets `requireTLS`, so a plain local sink fails the STARTTLS upgrade anyway).
+
+So the job boots with no SMTP, runs everything not tagged `@smtp` (global-setup signs up and creates the platform), then sets `AP_SMTP_*`, recreates `app`, and runs the `@smtp` specs with `E2E_EMAIL` / `E2E_PASSWORD` so global-setup signs in as the user phase 1 created. Everything after that first sign-up is invitation-based, and invited identities are created verified — no OTP — while the invitation email goes through a `tryCatch` that logs and swallows. No mail is ever sent.
+
+Tag any new SMTP-dependent spec `@smtp` (`test.describe('…', { tag: '@smtp' }, …)`) rather than naming files in the workflow. Forgetting the tag puts the spec in phase 1, where the disabled toggle fails it loudly.
 
 For visible debugging: add `--headed` (opens Chromium) or `--trace on` (records DOM snapshots + network per step; view with `npx playwright show-trace --host 127.0.0.1 --port 9323 test-results/**/trace.zip`).
 
