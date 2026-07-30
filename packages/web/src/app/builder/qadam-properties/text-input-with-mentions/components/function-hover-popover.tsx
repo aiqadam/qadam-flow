@@ -274,7 +274,7 @@ export function FunctionTooltipCard({
           </span>
           {fnDef.deprecated.replacement && (
             <span className="text-gray-300">
-              {t('Use')}{' '}
+              {t('useInsteadPrefix')}{' '}
               <code className="font-mono text-amber-300">
                 {fnDef.deprecated.replacement}
               </code>{' '}

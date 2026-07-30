@@ -97,7 +97,7 @@ export function McpTools({
                       toggleCategory(toolNames, v === true)
                     }
                     onClick={(e) => e.stopPropagation()}
-                    aria-label={t('Select all in {{category}}', {
+                    aria-label={t('Select all in {category}', {
                       category: category.label,
                     })}
                   />

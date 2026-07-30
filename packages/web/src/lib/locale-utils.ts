@@ -144,5 +144,8 @@ export const localesMap = {
   [LocalesEnum.JAPANESE]: '日本語',
   [LocalesEnum.DUTCH]: 'Nederlands',
   [LocalesEnum.PORTUGUESE]: 'Português',
+  [LocalesEnum.RUSSIAN]: 'Русский',
+  [LocalesEnum.UZBEK]: "O'zbek",
+  [LocalesEnum.KAZAKH]: 'Қазақша',
   [LocalesEnum.CHINESE_TRADITIONAL]: '繁體中文',
 };

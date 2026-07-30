@@ -462,7 +462,7 @@
   "On": "Ein",
   "Off": "Aus",
   "Required by other tools — always enabled": "Von anderen Werkzeugen benötigt — immer aktiviert",
-  "Select all in {{category}}": "Alle in {{category}} auswählen",
+  "Select all in {category}": "Alle in {category} auswählen",
   "always enabled": "immer aktiviert",
   "{firstName} {lastName} role has become {roleName}": "{firstName} {lastName} Rolle wurde {roleName}",
   "Pending Invitation": "Anstehende Einladung",
@@ -1961,5 +1961,6 @@
   "1 min ago": "Vor 1 Minute",
   "{count} mins ago": "{count} Minuten her",
   "1 hour ago": "Vor 1 Stunde",
-  "{count} hours ago": "{count} Stunden vor"
+  "{count} hours ago": "{count} Stunden vor",
+  "useInsteadPrefix": "Benutzen"
 }

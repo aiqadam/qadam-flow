@@ -462,7 +462,7 @@
   "On": "Ligado",
   "Off": "Desligado",
   "Required by other tools — always enabled": "Necessário por outras ferramentas — sempre habilitado",
-  "Select all in {{category}}": "Selecionar tudo em {{category}}",
+  "Select all in {category}": "Selecionar tudo em {category}",
   "always enabled": "sempre habilitado",
   "{firstName} {lastName} role has become {roleName}": "A função {firstName} {lastName} se tornou {roleName}",
   "Pending Invitation": "Convite Pendente",
@@ -1961,5 +1961,6 @@
   "1 min ago": "1 min atrás",
   "{count} mins ago": "{count} min atrás",
   "1 hour ago": "1 hora atrás",
-  "{count} hours ago": "{count} horas atrás"
+  "{count} hours ago": "{count} horas atrás",
+  "useInsteadPrefix": "Utilizar"
 }

@@ -462,7 +462,7 @@
   "On": "開啟",
   "Off": "關閉",
   "Required by other tools — always enabled": "為其他工具必需 - 始終啟用",
-  "Select all in {{category}}": "選擇{{category}}中的所有項目",
+  "Select all in {category}": "選擇{category}中的所有項目",
   "always enabled": "始終啟用",
   "{firstName} {lastName} role has become {roleName}": "{firstName} {lastName} role has become {roleName}",
   "Pending Invitation": "待定邀請",
@@ -1961,5 +1961,6 @@
   "1 min ago": "1 分鐘前",
   "{count} mins ago": "{count} 分鐘前",
   "1 hour ago": "1 小時前",
-  "{count} hours ago": "{count} 小時前"
+  "{count} hours ago": "{count} 小時前",
+  "useInsteadPrefix": "Use"
 }
