@@ -42,7 +42,7 @@ if [ -z "${AP_WORKER_TOKEN:-}" ] && [ -n "${AP_JWT_SECRET:-}" ]; then
         const token = jwt.sign(
             { id: crypto.randomUUID(), type: 'WORKER' },
             process.env.AP_JWT_SECRET,
-            { expiresIn: '100y', keyid: '1', algorithm: 'HS256', issuer: 'activepieces' }
+            { expiresIn: '100y', keyid: '1', algorithm: 'HS256', issuer: 'qadam-flow' }
         );
         process.stdout.write(token);
     ")

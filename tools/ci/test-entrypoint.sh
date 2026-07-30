@@ -41,6 +41,14 @@ if [ "$1" = '-e' ]; then
                 *"algorithm: 'HS256'"*) : ;;
                 *) echo 'stub-node: mint payload lost its algorithm' >&2 ;;
             esac
+            # The issuer is the one string in the mint payload with no other guard: a typo
+            # is valid JS, syntax-checks clean, and takes every worker offline at runtime
+            # because the server will not recognise the token. Added with #8, which changed
+            # this value — an unguarded rename is exactly how that would ship.
+            case "$2" in
+                *"issuer: 'qadam-flow'"*) : ;;
+                *) echo 'stub-node: mint payload lost its issuer' >&2 ;;
+            esac
             case "$2" in
                 *"type: 'WORKER'"*) : ;;
                 *) echo 'stub-node: mint payload lost its principal type' >&2 ;;

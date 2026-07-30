@@ -84,4 +84,23 @@ describe('verifyPrincipal', () => {
 
         await expect(manager.verifyPrincipal(token)).rejects.toThrow()
     })
+
+    // #8 renamed the minted issuer to 'qadam-flow'. jwt-issuer.test.ts pins that
+    // jwtUtils still accepts the legacy value, but this is the entry point that
+    // decides whether a real worker gets in — and it would stay green there while an
+    // explicit `issuer:` added to this call locked every legacy holder out. Signed
+    // with the library directly, because jwtUtils.sign can no longer produce the old
+    // issuer.
+    it('accepts a WORKER token issued under the legacy activepieces issuer', async () => {
+        const jwtLibrary = await import('jsonwebtoken')
+        const token = jwtLibrary.default.sign(
+            { id: 'worker-legacy', type: PrincipalType.WORKER },
+            SECRET,
+            { algorithm: 'HS256', keyid: '1', expiresIn: 60, issuer: 'activepieces' },
+        )
+
+        const decoded = await manager.verifyPrincipal(token)
+        expect(decoded.id).toBe('worker-legacy')
+        expect(decoded.type).toBe(PrincipalType.WORKER)
+    })
 })
