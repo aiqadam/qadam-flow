@@ -1,7 +1,9 @@
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 dayjs.extend(duration);
-import i18next, { t } from 'i18next';
+import { t } from 'i18next';
+
+import { localeUtils } from '@/lib/locale-utils';
 
 const emailRegex =
   /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
@@ -24,10 +26,10 @@ export const formatUtils = {
     );
   },
   formatNumber(number: number) {
-    return new Intl.NumberFormat(i18next.language).format(number);
+    return new Intl.NumberFormat(localeUtils.getActiveLocale()).format(number);
   },
   formatNumberCompact(number: number) {
-    return new Intl.NumberFormat(i18next.language, {
+    return new Intl.NumberFormat(localeUtils.getActiveLocale(), {
       notation: 'compact',
       maximumFractionDigits: 1,
     }).format(number);
@@ -40,7 +42,7 @@ export const formatUtils = {
     }
   },
   formatDateOnly(date: Date) {
-    return Intl.DateTimeFormat(i18next.language, {
+    return Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
       month: 'numeric',
       day: 'numeric',
       year: 'numeric',
@@ -53,10 +55,9 @@ export const formatUtils = {
     const isYesterday = inputDate.isSame(now.subtract(1, 'day'), 'day');
     const isSameYear = inputDate.isSame(now, 'year');
 
-    const timeFormat = new Intl.DateTimeFormat(i18next.language, {
+    const timeFormat = new Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
       hour: 'numeric',
       minute: 'numeric',
-      hour12: true,
     });
 
     if (isToday) {
@@ -66,22 +67,20 @@ export const formatUtils = {
     }
 
     if (isSameYear && !hideCurrentYear) {
-      return Intl.DateTimeFormat(i18next.language, {
+      return Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
         month: 'short',
         day: 'numeric',
         hour: 'numeric',
         minute: 'numeric',
-        hour12: true,
       }).format(date);
     }
 
-    return Intl.DateTimeFormat(i18next.language, {
+    return Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
       hour: 'numeric',
       minute: 'numeric',
-      hour12: true,
     }).format(date);
   },
   formatDate(date: Date) {
@@ -113,13 +112,13 @@ export const formatUtils = {
     }
 
     if (isSameYear) {
-      return Intl.DateTimeFormat(i18next.language, {
+      return Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
         month: 'short',
         day: 'numeric',
       }).format(date);
     }
 
-    return Intl.DateTimeFormat(i18next.language, {
+    return Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -157,7 +156,12 @@ export const formatUtils = {
     if (diffInDays < 30) {
       return `${diffInDays}d ago`;
     }
-    return inputDate.format('MMM D, YYYY');
+    // dayjs has no locale data loaded here, so its month names are always English. Intl needs none.
+    return Intl.DateTimeFormat(localeUtils.getActiveLocale(), {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(date);
   },
   formatDuration(durationMs: number | undefined, short?: boolean): string {
     if (durationMs === undefined) {
@@ -189,16 +193,22 @@ export const formatUtils = {
     return short ? `${seconds} s` : `${seconds} seconds`;
   },
   formatStorageSize(bytes: number): string {
+    // toFixed always emits a dot; most locales this ships for use a comma as the decimal mark.
+    const oneDecimal = (value: number) =>
+      new Intl.NumberFormat(localeUtils.getActiveLocale(), {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }).format(value);
     if (bytes < 1024) {
       return `${bytes} B`;
     }
     if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${oneDecimal(bytes / 1024)} KB`;
     }
     if (bytes < 1024 * 1024 * 1024) {
-      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+      return `${oneDecimal(bytes / 1024 / 1024)} MB`;
     }
-    return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    return `${oneDecimal(bytes / 1024 / 1024 / 1024)} GB`;
   },
   urlIsNotLocalhostOrIp(url: string): boolean {
     const parsed = new URL(url);
