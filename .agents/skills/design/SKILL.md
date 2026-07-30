@@ -24,8 +24,9 @@ This is the one thing you must not get wrong:
 
 | | Value | Where |
 |---|---|---|
-| **Brand primary** | `#3CA29E` · `oklch(0.58 0.10 192)` light, `oklch(0.70 0.105 192)` dark | brand.aiqadam.org |
-| **Shipping primary** | `hsl(257 74% 57%)` ≈ `#8142E3` (purple) | `packages/web/src/styles.css:414`, default in `packages/server/api/src/app/flags/theme.ts:67` |
+| **Brand primary** | `oklch(0.58 0.10 192)` ≈ `#008d89` light, `oklch(0.70 0.105 192)` ≈ `#39b3af` dark | brand.aiqadam.org |
+| **Shipped mark** | `#3CA29E` ≈ `oklch(0.653 0.093 191.5)` — the logo/banner/badge teal, **between** the two tokens above, not equal to either | `packages/web/public/logo.svg`, `.github/assets/*`, README badges |
+| **Shipping primary** | `#3CA29E`, matching the mark | default in `packages/server/api/src/app/flags/theme.ts:67`; `packages/web/src/styles.css` still declares the old purple for the pre-hydration paint only |
 
 The logo already migrated — `packages/web/public/logo.svg` and `logo-full.svg` are the teal
 footprint mark. The CSS and the platform-branding default did not.
