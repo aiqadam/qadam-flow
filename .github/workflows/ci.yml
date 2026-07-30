@@ -1,6 +1,14 @@
 name: CI
 
 on:
+  # Deliberately the default activity types (opened, synchronize, reopened). Adding `labeled` to make
+  # the `refresh-cache` label self-triggering was tried and reverted: it fires a full duplicate
+  # pipeline on EVERY label event, and CONTRIBUTING.md makes one primary label mandatory on every PR,
+  # so it would add ~11 min of serialised CI per PR (see #156) — and because every `pull_request`
+  # event shares the `refs/pull/N/merge` ref, a `labeled` event lands in the same concurrency group
+  # with `cancel-in-progress` true and kills the run already in flight. The label works on the next
+  # `synchronize` instead; AGENTS.md documents pushing an empty commit, which costs one run rather
+  # than one per label.
   pull_request:
   push:
     branches: [main]
@@ -183,6 +191,9 @@ jobs:
       # what each key component is for and why there is no `restore-keys`
       # fallback; the reasoning lives in one place rather than duplicated here.
       - name: Restore built node_modules
+        # Skipped when a PR carries `refresh-cache`, forcing that one PR through a real install.
+        # This job only restores — it never saves — so skipping it costs time and nothing else.
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -190,7 +201,7 @@ jobs:
             packages/*/node_modules
             packages/*/*/node_modules
             packages/*/*/*/node_modules
-          key: node-modules-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc') }}
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
 
       - name: Install dependencies
         run: tools/ci/install-deps.sh

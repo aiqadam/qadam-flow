@@ -145,8 +145,13 @@ echo "== every tree-content input is in the cache key =="
 # The key claims to cover everything that can change the tree's contents. These
 # are the repo-root files bun reads; .npmrc was missing from the first version
 # of the key even though it sets a scoped registry and legacy-peer-deps.
+# tools/ci/install-deps.sh is here because it sets the environment the install runs
+# under, and while nothing hashed it a tree built under different install behaviour
+# was served from cache with no symptom. Hashing the script means editing its comments
+# costs a needless cold install; that is the accepted price for the key never lagging
+# behind install behaviour.
 for wf in "${repo_root}/.github/workflows/_verify.yml" "${repo_root}/.github/workflows/ci.yml"; do
-  for input in bun.lock bunfig.toml package.json .npmrc; do
+  for input in bun.lock bunfig.toml package.json .npmrc tools/ci/install-deps.sh; do
     if grep -q "hashFiles(.*'${input}'" "$wf"; then
       ok
     else
@@ -154,6 +159,24 @@ for wf in "${repo_root}/.github/workflows/_verify.yml" "${repo_root}/.github/wor
     fi
   done
 done
+
+echo "== the two workflows compute the SAME cache key =="
+
+# Asserting each input appears in both files is not enough: the rest of the key is duplicated prose
+# (epoch expression, os/arch, resolved node and bun versions), and nothing stopped the two from
+# drifting. If they drift, `integration-run` misses every entry `verify` saves and cold-installs
+# forever while reporting green — "the inputs turbo hashed did not change" dressed up as a pass.
+# Compared verbatim rather than per-component, so any future divergence fails here.
+verify_key="$(grep -h "^ *key: node-modules-" "${repo_root}/.github/workflows/_verify.yml" | sed 's/^ *//')"
+ci_key="$(grep -h "^ *key: node-modules-" "${repo_root}/.github/workflows/ci.yml" | sed 's/^ *//')"
+if [ -z "$verify_key" ] || [ -z "$ci_key" ]; then
+  # an empty match is unknown, not a pass
+  bad "could not find a node-modules cache key line in one or both workflows"
+elif [ "$verify_key" = "$ci_key" ]; then
+  ok
+else
+  bad "the cache keys in _verify.yml and ci.yml differ; integration-run will never restore what verify saves"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

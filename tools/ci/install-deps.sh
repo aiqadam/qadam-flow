@@ -67,20 +67,28 @@ main() {
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit 1
   cd "$repo_root" || exit 1
 
-  # redis-memory-server's postinstall downloads a Redis binary and, when the download fails, falls
-  # back to compiling Redis from source. That compile is currently broken, so the postinstall exits 1
-  # and takes the whole install with it. It is not flaky, it is deterministic: the node_modules cache
-  # key hashes bun.lock, so every PR that touches a dependency manifest gets a cold cache, runs a real
-  # install, and dies here — while PRs that do not touch it hit the cache, skip install scripts
-  # entirely, and pass. That is why this looked intermittent.
+  # Environment that changes what the install PRODUCES. The cache key hashes THIS FILE, so a change
+  # here always changes the key — install behaviour and cache identity move together by construction.
   #
-  # Nothing in CI needs those binaries. The tests run against a real Redis service
-  # (packages/server/api/.env.tests sets AP_REDIS_TYPE=STANDALONE against 127.0.0.1:6379) and no test
-  # constructs RedisMemoryServer — grep of every test/ directory returns nothing. So the binary's only
-  # effect in CI is to fail the install.
+  # This was briefly a separate tools/ci/install.env, parsed by hand, so that editing this script's
+  # prose would not cost every branch a cold rebuild. That traded a real 3-minute cost for a
+  # hand-written shell parser, and three review rounds found three fail-open defects in it, each one
+  # able to apply half an environment and return 0 — precisely the failure the separation existed to
+  # prevent. A conservative key is the cheaper trade: an occasional needless cold install, and no
+  # parser to be wrong.
   #
-  # Exported rather than prefixed onto the command so both the first attempt and the retry below
-  # inherit it, which is the same reason both installs live in this one script.
+  # redis-memory-server's postinstall downloads a Redis binary and compiles Redis from source when
+  # that download fails. The compile is broken, so the postinstall exits 1 and takes the whole install
+  # with it (invisible until a PR touched bun.lock, because until then every run restored a cache hit and bun re-ran no install scripts — see the cache-key comment in .github/workflows/_verify.yml). Nothing in
+  # CI uses those binaries: tests run against a real Redis service (packages/server/api/.env.tests sets
+  # AP_REDIS_TYPE=STANDALONE on 127.0.0.1:6379), the integration job starts one, and no test constructs
+  # RedisMemoryServer. Skipping the compile is the fix, not a workaround. The Dockerfile sets the same
+  # variable independently in its `base` stage, since it has three bun install calls and cannot read
+  # this file.
+  # Exported, not prefixed onto the command: the retry below is a second `bun install` in this same
+  # shell, and a prefix would cover only the first attempt. Collapsing this to
+  # `REDISMS_DISABLE_POSTINSTALL=1 bun install …` would leave the retry running the broken postinstall
+  # again — the hardest failure mode to spot, because the first attempt would still pass.
   export REDISMS_DISABLE_POSTINSTALL=1
 
   if bun install --frozen-lockfile; then
