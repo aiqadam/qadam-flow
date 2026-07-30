@@ -45,6 +45,17 @@ export const setFavicon = (url: string) => {
   document.head.appendChild(link);
 };
 
+// `system` is the default and it resolved to `light` unconditionally, so the OS preference was
+// read by nothing — a user whose machine is in dark mode still got a light app and had to pick
+// dark by hand. Honouring the preference is the conventional behaviour and what the setting's own
+// name promises (#178, item 3). This changes only what `system` means; the default is still
+// `system`, so anyone who has explicitly chosen light or dark is unaffected.
+function resolveSystemTheme(): 'dark' | 'light' {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light';
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = 'system',
@@ -66,7 +77,7 @@ export function ThemeProvider({
     const resolvedTheme = forceLightMode
       ? 'light'
       : theme === 'system'
-      ? 'light'
+      ? resolveSystemTheme()
       : theme;
     root.classList.remove('light', 'dark');
     document.title = branding.websiteName;
