@@ -3,8 +3,16 @@ import path from 'path';
 import { faker } from '@faker-js/faker';
 import { test, expect, request as playwrightRequest } from '@playwright/test';
 
-const OWNER_EMAIL = process.env.E2E_EMAIL ?? 'dev@ap.com';
-const OWNER_PASSWORD = process.env.E2E_PASSWORD ?? '12345678';
+import { DEFAULT_EMAIL, DEFAULT_PASSWORD } from '../../../global-setup';
+
+// Fall back to whoever global-setup itself authenticated as. Hardcoding a different pair
+// (the dev-seed user) made these tests sign in as a user that does not exist on a fresh
+// instance, surfacing as a 15 s `waitForURL` timeout that reads like a UI regression.
+const OWNER_EMAIL = process.env.E2E_EMAIL ?? DEFAULT_EMAIL;
+const OWNER_PASSWORD = process.env.E2E_PASSWORD ?? DEFAULT_PASSWORD;
+// The API is not always on the frontend's origin: the dev stack serves it on :3000, while
+// docker-compose.yml serves it on the frontend port and an ephemeral instance differs again.
+const API_BASE_URL = process.env.AP_API_URL ?? 'http://localhost:3000';
 const SHOTS = path.resolve(__dirname, '../../../screenshots/invitation-accept-flow');
 
 test.describe('Invitation accept flow (Option A)', () => {
@@ -25,7 +33,7 @@ test.describe('Invitation accept flow (Option A)', () => {
     expect(authToken).toBeTruthy();
 
     const adminApi = await playwrightRequest.newContext({
-      baseURL: 'http://localhost:3000',
+      baseURL: API_BASE_URL,
       extraHTTPHeaders: { Authorization: `Bearer ${authToken}` },
     });
     const proj = await adminApi.post('/api/v1/projects', {
@@ -82,7 +90,7 @@ test.describe('Invitation accept flow (Option A)', () => {
     // Invited user's own /v1/projects must include the team project with Editor access
     const invitedToken = await invitedPage.evaluate(() => localStorage.getItem('token') ?? '');
     const invitedApi = await playwrightRequest.newContext({
-      baseURL: 'http://localhost:3000',
+      baseURL: API_BASE_URL,
       extraHTTPHeaders: { Authorization: `Bearer ${invitedToken}` },
     });
     const projectsRes = await invitedApi.get('/api/v1/projects');
@@ -105,7 +113,7 @@ test.describe('Invitation accept flow (Option A)', () => {
 
     const authToken = await page.evaluate(() => localStorage.getItem('token') ?? '');
     const adminApi = await playwrightRequest.newContext({
-      baseURL: 'http://localhost:3000',
+      baseURL: API_BASE_URL,
       extraHTTPHeaders: { Authorization: `Bearer ${authToken}` },
     });
     const projectName = `E2E ${Date.now().toString().slice(-6)} logged-in`;

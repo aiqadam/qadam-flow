@@ -13,7 +13,7 @@
 #
 # 2. The only thing standing between (1) and eating that fixture is a depth
 #    bound that has to stay equal to the deepest cache `path:` glob in BOTH
-#    _verify.yml and ci.yml — five places, in three files, previously kept in
+#    _verify.yml and ci.yml — six places, in three files, previously kept in
 #    agreement by nothing but comments asking a human to. Widening a glob to
 #    `packages/*/*/*/*/node_modules` without touching the delete, or vice
 #    versa, is the realistic drift, and case set 2 fails on it.
@@ -167,8 +167,17 @@ echo "== the two workflows compute the SAME cache key =="
 # drifting. If they drift, `integration-run` misses every entry `verify` saves and cold-installs
 # forever while reporting green — "the inputs turbo hashed did not change" dressed up as a pass.
 # Compared verbatim rather than per-component, so any future divergence fails here.
-verify_key="$(grep -h "^ *key: node-modules-" "${repo_root}/.github/workflows/_verify.yml" | sed 's/^ *//')"
-ci_key="$(grep -h "^ *key: node-modules-" "${repo_root}/.github/workflows/ci.yml" | sed 's/^ *//')"
+#
+# `sort -u` because a file may legitimately carry the key more than once — ci.yml has one
+# restore step per installing job (`integration-run`, `e2e`). Collapsing duplicates keeps
+# that from reading as a mismatch, and does NOT weaken the check: two keys that differ
+# survive the dedup as two lines and still fail the comparison below.
+key_lines() {
+  grep -h "^ *key: node-modules-" "$1" | sed 's/^ *//' | sort -u
+}
+
+verify_key="$(key_lines "${repo_root}/.github/workflows/_verify.yml")"
+ci_key="$(key_lines "${repo_root}/.github/workflows/ci.yml")"
 if [ -z "$verify_key" ] || [ -z "$ci_key" ]; then
   # an empty match is unknown, not a pass
   bad "could not find a node-modules cache key line in one or both workflows"
