@@ -160,5 +160,23 @@ for wf in "${repo_root}/.github/workflows/_verify.yml" "${repo_root}/.github/wor
   done
 done
 
+echo "== the two workflows compute the SAME cache key =="
+
+# Asserting each input appears in both files is not enough: the rest of the key is duplicated prose
+# (epoch expression, os/arch, resolved node and bun versions), and nothing stopped the two from
+# drifting. If they drift, `integration-run` misses every entry `verify` saves and cold-installs
+# forever while reporting green — "the inputs turbo hashed did not change" dressed up as a pass.
+# Compared verbatim rather than per-component, so any future divergence fails here.
+verify_key="$(grep -h "^ *key: node-modules-" "${repo_root}/.github/workflows/_verify.yml" | sed 's/^ *//')"
+ci_key="$(grep -h "^ *key: node-modules-" "${repo_root}/.github/workflows/ci.yml" | sed 's/^ *//')"
+if [ -z "$verify_key" ] || [ -z "$ci_key" ]; then
+  # an empty match is unknown, not a pass
+  bad "could not find a node-modules cache key line in one or both workflows"
+elif [ "$verify_key" = "$ci_key" ]; then
+  ok
+else
+  bad "the cache keys in _verify.yml and ci.yml differ; integration-run will never restore what verify saves"
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
