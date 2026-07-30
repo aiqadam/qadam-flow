@@ -22,7 +22,11 @@ function deriveFlowDisplayName(legacyToolName: string): string | undefined {
 type AgentToolInput = {
     type: string
     toolName: string
-    qadamMetadata?: { qadamName: string, qadamVersion: string, actionName: string, [key: string]: unknown }
+    // Named for what the schema actually declares (`AgentQadamTool.pieceMetadata` in
+    // @aiqadam/shared). This local type said `qadamMetadata`, which no producer ever wrote, so the
+    // reads below were always undefined and every PIECE tool fell through unmigrated — silently,
+    // because the wrong name is also what the type promised (#247).
+    pieceMetadata?: { qadamName: string, qadamVersion: string, actionName: string, [key: string]: unknown }
     flowId?: string
     externalFlowId?: string
     flowDisplayName?: string
@@ -40,10 +44,10 @@ export const migrateV16AgentQadamToolNames: Migration = {
             const tools = (step.settings.input?.[AgentQadamProps.AGENT_TOOLS] as AgentToolInput[] | undefined) ?? []
 
             const newTools = tools.map((tool) => {
-                if (tool.type === AgentToolType.PIECE && tool.qadamMetadata?.qadamName != null && tool.qadamMetadata?.actionName != null) {
+                if (tool.type === AgentToolType.PIECE && tool.pieceMetadata?.qadamName != null && tool.pieceMetadata?.actionName != null) {
                     return {
                         ...tool,
-                        toolName: mcpToolNameUtils.createQadamToolName(tool.qadamMetadata.qadamName, tool.qadamMetadata.actionName),
+                        toolName: mcpToolNameUtils.createQadamToolName(tool.pieceMetadata.qadamName, tool.pieceMetadata.actionName),
                     }
                 }
                 if (tool.type === AgentToolType.FLOW && tool.toolName != null) {

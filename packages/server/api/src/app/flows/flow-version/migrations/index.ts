@@ -16,6 +16,7 @@ import { migrateAgentPieceV2 } from './migrate-v2-agent-piece'
 import { migrateV20GoogleModelPrefix } from './migrate-v20-google-model-prefix'
 import { migrateV21StepOutputNesting } from './migrate-v21-step-output-nesting'
 import { migrateV22RenamePieceToQadam } from './migrate-v22-rename-piece-to-qadam'
+import { migrateV23AgentQadamToolNamesRedo } from './migrate-v23-agent-piece-tool-names-redo'
 import { migrateAgentPieceV3 } from './migrate-v3-agent-piece'
 import { migrateAgentPieceV4 } from './migrate-v4-agent-piece'
 import { migrateHttpToWebhookV5 } from './migrate-v5-http-to-webhook'
@@ -58,6 +59,7 @@ const migrations: Migration[] = [
     migrateV20GoogleModelPrefix,
     migrateV21StepOutputNesting,
     migrateV22RenamePieceToQadam,
+    migrateV23AgentQadamToolNamesRedo,
 ] as const
 
 export const flowMigrations = {
