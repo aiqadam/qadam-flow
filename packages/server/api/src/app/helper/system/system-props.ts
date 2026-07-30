@@ -128,14 +128,9 @@ export enum AppSystemProp {
 export enum ContainerType {
     WORKER = 'WORKER',
     APP = 'APP',
-    WORKER_AND_APP = 'WORKER_AND_APP',
 }
 
 export const environmentVariables = {
-    hasAppModules(): boolean {
-        const environment = this.getEnvironment(AppSystemProp.CONTAINER_TYPE) ?? ContainerType.WORKER_AND_APP
-        return [ContainerType.APP, ContainerType.WORKER_AND_APP].includes(environment as ContainerType)
-    },
     getNumberEnvironment: (prop: AppSystemProp): number | undefined => {
         const value = environmentVariables.getEnvironment(prop)
         return value ? parseInt(value) : undefined

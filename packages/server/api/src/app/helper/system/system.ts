@@ -27,7 +27,6 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.CONFIG_PATH]: path.join(os.homedir(), '.activepieces'),
     [AppSystemProp.DB_TYPE]: DatabaseType.POSTGRES,
     [AppSystemProp.APP_WEBHOOK_SECRETS]: '{}',
-    [AppSystemProp.CONTAINER_TYPE]: ContainerType.WORKER_AND_APP,
     [AppSystemProp.PORT]: '3000',
     [AppSystemProp.EXECUTION_DATA_RETENTION_DAYS]: '30',
     [AppSystemProp.PAUSED_FLOW_TIMEOUT_DAYS]: '30',
@@ -159,16 +158,37 @@ export const system = {
 
         return value
     },
+    // The single place AP_CONTAINER_TYPE is turned into a value. It has to be here rather than
+    // in validateEnvPropsOnStartup, because that runs inside setupApp, which server.ts only
+    // reaches behind `if (system.isApp())` — a guard on the very value being validated can
+    // never fire for a blank or unrecognised one. Left there, `AP_CONTAINER_TYPE=app` would
+    // make isApp() and isWorker() both false and the process would bind its port with no
+    // routes, no database and no worker, while /api/v1/health still answered 200 Healthy.
+    // Failing in the accessor makes every consumer fail closed, including the ones that read
+    // it at import time.
+    getContainerType(): ContainerType {
+        const value = getEnvVarOrReturnDefaultValue(AppSystemProp.CONTAINER_TYPE)?.trim()
+        if (isNil(value) || value === '') {
+            throw new Error(`AP_CONTAINER_TYPE is required and has no default. Set it to ${ContainerType.APP} (the API server) or ${ContainerType.WORKER} (a worker); each runs as its own process. See https://flow.aiqadam.org/docs/install/configuration/environment-variables.`)
+        }
+        if (!isContainerType(value)) {
+            const removedHint = value === 'WORKER_AND_APP'
+                ? ' WORKER_AND_APP has been removed — run the API and the worker as separate processes.'
+                : ''
+            throw new Error(`Invalid AP_CONTAINER_TYPE="${value}". Expected one of: ${Object.values(ContainerType).join(', ')} (case-sensitive).${removedHint} See https://flow.aiqadam.org/docs/install/configuration/breaking-changes.`)
+        }
+        return value
+    },
     isWorker(): boolean {
-        return [ContainerType.WORKER, ContainerType.WORKER_AND_APP].includes(
-            this.getOrThrow<ContainerType>(AppSystemProp.CONTAINER_TYPE),
-        )
+        return this.getContainerType() === ContainerType.WORKER
     },
     isApp(): boolean {
-        return [ContainerType.APP, ContainerType.WORKER_AND_APP].includes(
-            this.getOrThrow<ContainerType>(AppSystemProp.CONTAINER_TYPE),
-        )
+        return this.getContainerType() === ContainerType.APP
     },
+}
+
+function isContainerType(value: string): value is ContainerType {
+    return Object.values(ContainerType).some((candidate) => candidate === value)
 }
 
 const getEnvVarOrReturnDefaultValue = (prop: SystemProp): string | undefined => {

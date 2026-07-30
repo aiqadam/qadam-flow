@@ -17,6 +17,13 @@ function enumValidator<T extends string>(enumValues: T[]) {
     }
 }
 
+// Trims before delegating, so this warn-only check agrees with system.getContainerType(),
+// which also trims. Without it `AP_CONTAINER_TYPE=APP\r` — the Windows-edited-env-file case
+// the checks below deliberately tolerate — would boot fine and still be logged as an error.
+function containerTypeValidator(value: string) {
+    return enumValidator(Object.values(ContainerType))(value.trim())
+}
+
 function booleanValidator(value: string | undefined) {
     const isValid = value === 'true' || value === 'false'
     return isValid ? true : 'Value must be either "true" or "false"'
@@ -72,7 +79,7 @@ const systemPropValidators: {
     [AppSystemProp.OTEL_ENABLED]: booleanValidator,
     [AppSystemProp.HYPERDX_TOKEN]: stringValidator,
     [AppSystemProp.FRONTEND_URL]: urlValidator,
-    [AppSystemProp.CONTAINER_TYPE]: enumValidator(Object.values(ContainerType)),
+    [AppSystemProp.CONTAINER_TYPE]: containerTypeValidator,
     [AppSystemProp.PORT]: numberValidator,
     // AppSystemProp
     [AppSystemProp.API_KEY]: stringValidator,
@@ -252,6 +259,13 @@ export const validateEnvPropsOnStartup = async (log: FastifyBaseLogger): Promise
     if (!isNil(dbType) && dbType !== '' && dbType.toUpperCase() !== DatabaseType.POSTGRES) {
         throw new Error(`Invalid AP_DB_TYPE="${dbType}". Expected: ${DatabaseType.POSTGRES} (case-insensitive). PGLite support has been removed — POSTGRES is the only supported database type. Set AP_DB_TYPE=POSTGRES, or remove the variable to use the default. There is no automated migration from a PGLite data directory to PostgreSQL; stay on your current image tag, or rebuild your flows in a fresh install. See https://flow.aiqadam.org/docs/install/configuration/breaking-changes.`)
     }
+    // AP_CONTAINER_TYPE gets no hard check here, unlike the two above. This function runs inside
+    // setupApp, which server.ts only reaches behind `if (system.isApp())`, so a throw here could
+    // never fire for the blank or unrecognised values it would exist to reject — it would only
+    // ever see a value that was already exactly APP. system.getContainerType() enforces it
+    // instead; see the comment there. The warn-only containerTypeValidator above still runs, via
+    // validateSystemPropTypes below.
+
     const fileStorageLocation = process.env.AP_FILE_STORAGE_LOCATION
 
     if (environment !== ApEnvironment.TESTING && fileStorageLocation === FileLocation.S3) {
