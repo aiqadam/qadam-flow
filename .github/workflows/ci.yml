@@ -1,7 +1,12 @@
 name: CI
 
 on:
+  # `labeled` is here for the `refresh-cache` label only. Without it the trigger defaults to
+  # opened/synchronize/reopened, applying the label fires no run, and re-running the existing run
+  # replays the original payload in which the label is absent — so the label read as working while
+  # doing nothing. `unlabeled` is deliberately omitted: removing the label needs no run.
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
 

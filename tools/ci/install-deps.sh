@@ -71,15 +71,23 @@ main() {
   # key hashes — so changing a value there invalidates the cache, while editing this script's prose
   # does not. Do not move these exports back into this file; that is what made a stale tree
   # invisible. Sourced with `set -a` so every assignment is exported to both installs below.
-  if [ -f tools/ci/install.env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . tools/ci/install.env
-    set +a
-  else
+  # Both failure modes must stop the install, not just a missing file: this script runs under
+  # `set -uo pipefail` with no `-e`, so a file that exists but fails to source (bad permissions, an
+  # unquoted value with a space) would partially apply its assignments and fall straight through to
+  # the install — producing a tree that does not match the key it gets saved under, which is the exact
+  # hole this file was added to close.
+  if [ ! -f tools/ci/install.env ]; then
     echo "::error::tools/ci/install.env is missing. It carries the install-affecting environment and is part of the cache key; a tree built without it is not the tree the key describes."
     exit 1
   fi
+  set -a
+  # shellcheck disable=SC1091
+  if ! . tools/ci/install.env; then
+    set +a
+    echo "::error::tools/ci/install.env exists but could not be sourced. Refusing to install under a partially-applied environment."
+    exit 1
+  fi
+  set +a
 
   if bun install --frozen-lockfile; then
     exit 0

@@ -113,10 +113,14 @@ jobs:
             packages/*/*/*/node_modules
           # Every input that can change the CONTENT of the tree, and no prefix
           # `restore-keys` fallback. Component by component:
-          #   v1              manual epoch. actions/cache never re-saves on a
-          #                   hit, so a poisoned entry would be served forever;
-          #                   bumping this is the only way to force a cold
-          #                   rebuild without touching the lockfile.
+          #   epoch           `vars.NODE_MODULES_CACHE_EPOCH`, default `v1`.
+          #                   actions/cache never re-saves on a hit, so a
+          #                   poisoned entry would be served forever. Bumping
+          #                   the repo variable invalidates every entry with no
+          #                   commit; it is the bluntest of the three escapes —
+          #                   see AGENTS.md "Controlling the node_modules cache"
+          #                   for `gh cache delete` and the `refresh-cache`
+          #                   label, which are both narrower.
           #   runner.os/arch  the tree contains native binaries. The shipped
           #                   files are named per platform and libc
           #                   (`isolated-vm.abi137.glibc.node`, `...musl.node`).
@@ -136,10 +140,14 @@ jobs:
           #                   resolution), .npmrc (scoped registry,
           #                   legacy-peer-deps, save-exact — editing it can
           #                   change what gets installed without touching any
-          #                   of the other three). All four are repo-root
-          #                   files, so the hash cannot accidentally glob into
-          #                   node_modules and differ between restore and save.
-          #                   install-deps.test.sh asserts all four are here.
+          #                   of the other three), and tools/ci/install.env
+          #                   (env that changes what the install PRODUCES —
+          #                   there so that changing install behaviour changes
+          #                   the key, while editing the install script's prose
+          #                   does not). All five are tracked files outside
+          #                   node_modules, so the hash cannot accidentally glob
+          #                   into it and differ between restore and save.
+          #                   install-deps.test.sh asserts all five are here.
           #
           # No `restore-keys`: a prefix match is safe for a download cache,
           # where bun re-resolves everything anyway, and unsafe here. A partial
@@ -169,6 +177,11 @@ jobs:
             note="node_modules built by a real install. Install scripts ran, so this run does exercise the install path."
           fi
           echo "state=$state" >> "$GITHUB_OUTPUT"
+          # The step output alone is not readable from outside the job — this workflow is a
+          # `workflow_call` target and declares no `outputs:`, and the Actions API exposes step
+          # conclusions but not step outputs. `::notice::` surfaces via the check-run annotations
+          # endpoint, which is what actually makes the state readable without downloading the log.
+          echo "::notice title=node_modules cache::state=$state"
           echo "node_modules: **$state** — $note" >> "$GITHUB_STEP_SUMMARY"
           echo "node_modules cache state: $state"
 
@@ -196,8 +209,10 @@ jobs:
       # must establish that what it publishes is good, or one bad build gets
       # served to every later job.
       - name: Save built node_modules
-        # The label is repeated here deliberately: with restore skipped, `cache-hit` is empty, so
-        # this step's own condition would pass and try to save a key that already exists.
+        # The label is repeated here deliberately. With restore skipped, `cache-hit` is empty so this
+        # step's own condition passes — but `cache-primary-key` is empty too, so the save would fail
+        # key validation rather than write anything. Skipping it is the correct outcome either way:
+        # a run that deliberately bypassed the cache has not earned the right to publish to it.
         if: ${{ steps.node-modules.outputs.cache-hit != 'true' && !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
         uses: actions/cache/save@v4
         with:

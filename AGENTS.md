@@ -333,14 +333,20 @@ broken postinstall stayed invisible for exactly this reason until a PR happened 
 Four controls, cheapest first:
 
 - **Read the state instead of guessing.** The `Report node_modules cache state` step emits
-  `state=cache-hit|cold` as a step output and writes it to the run summary, so it can be read without
-  downloading and grepping a log. `gh api .../jobs` gives step conclusions but *not* this distinction —
-  that is why the step exists.
+  `state=cache-hit|cold` three ways: the run summary (visible in the UI), a `::notice::` annotation
+  (readable via `gh api repos/:owner/:repo/check-runs/<id>/annotations`), and a step output. Prefer the
+  annotation when scripting — step outputs are **not** exposed by the Actions API, and `_verify.yml`
+  declares no `workflow_call` `outputs:`, so the output is only usable inside that job. `gh api
+  .../jobs` gives step *conclusions* but not this distinction, which is why the step exists at all.
 - **`gh cache list` / `gh cache delete`** — self-service, no code change, effective immediately. The
   right tool for "this one cache entry is wrong, bin it".
 - **The `refresh-cache` PR label** — skips cache restore for that PR only, forcing a real install
   without disturbing what other branches are using. Use it when a change alters install *behaviour*
   but no hashed manifest, since that PR would otherwise get a hit and never exercise its own change.
+  Applying the label starts a fresh run by itself: `ci.yml`'s trigger lists `labeled` explicitly for
+  this reason. Do not reach for *Re-run all jobs* instead — a re-run replays the original event
+  payload, in which the label is absent, so it would silently come back a cache hit. (Skipping restore
+  also skips the save, so a labelled run consumes nothing and publishes nothing.)
 - **`vars.NODE_MODULES_CACHE_EPOCH`** (repository variable, defaults to `v1`) — bumping it invalidates
   every entry with no commit and no PR. Blunt and repo-wide; prefer the label or `gh cache delete`.
 
@@ -351,6 +357,11 @@ script's prose does not. **Put install-affecting env in `install.env`, never as 
 under different install behaviour was served from cache with no symptom.
 `tools/ci/install-deps.test.sh` asserts every one of those inputs is present, so dropping one fails
 the build rather than silently widening what a stale entry can hide.
+
+Scope caveat, so this does not read as more than it is: `install.env` governs **CI's** install only.
+`Dockerfile` sets `REDISMS_DISABLE_POSTINSTALL=1` itself, in the `base` stage, because it has three
+`bun install` invocations and no access to this file. The two are independent and nothing asserts they
+agree — changing a value here means checking the `Dockerfile` by hand.
 
 ### What the sandbox container does not have
 
