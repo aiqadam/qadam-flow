@@ -72,9 +72,24 @@ PGLite existed only to support the one-container "quick look" install, and that 
 
 **If you still have `AP_DB_TYPE=PGLITE` set anywhere** — including the all-in-one container mode described above — do not pull a newer image. Stay on the image tag you are running now until you have moved your flows to Postgres by hand, or rebuild them in a fresh compose install.
 
+#### The image no longer bakes in an embedded Redis (`AP_REDIS_TYPE=MEMORY`)
+
+`redis-memory-server` compiled a Redis binary into the image so the application could run its own
+in-process Redis. That existed for the all-in-one container, which was removed above — it now refuses
+to start — and every supported install path runs Redis as its own service (`run.sh` and the bundled
+`docker-compose.yml` both do).
+
+- **`AP_REDIS_TYPE=STANDALONE` with a real Redis is the supported configuration.** The bundled
+  `docker-compose.yml` and `run.sh` already set it, so **no action is required** for either.
+- **If you are on the embedded Redis**, the container will now download and compile Redis on first
+  start, which needs network access and a build toolchain. Run Redis as its own service instead.
+  Note there are **two** ways to be in this mode: `AP_REDIS_TYPE=MEMORY`, and the legacy
+  `AP_QUEUE_MODE=MEMORY`, which is still silently mapped onto it — so check both.
+
 ### Do you need to take action?
 - No, if you already run against PostgreSQL. Renaming `AP_*` to `QF_*` is optional during the deprecation window described above; `AP_*` support will be removed in a future release, announced here with advance notice.
 - Yes, if `AP_DB_TYPE=PGLITE` or `AP_DB_TYPE=SQLITE3` is set anywhere in your configuration: stay on your current image tag, or move to Postgres and rebuild in a fresh install — there is no automated path between the two.
+- Yes, if `AP_REDIS_TYPE=MEMORY` **or** the legacy `AP_QUEUE_MODE=MEMORY` is set: switch to `STANDALONE` and run Redis as its own service. The bundled `docker-compose.yml` and `run.sh` already do this, so a stock install needs nothing.
 
 
 ## 0.84.0
