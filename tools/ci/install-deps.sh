@@ -67,6 +67,22 @@ main() {
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit 1
   cd "$repo_root" || exit 1
 
+  # redis-memory-server's postinstall downloads a Redis binary and, when the download fails, falls
+  # back to compiling Redis from source. That compile is currently broken, so the postinstall exits 1
+  # and takes the whole install with it. It is not flaky, it is deterministic: the node_modules cache
+  # key hashes bun.lock, so every PR that touches a dependency manifest gets a cold cache, runs a real
+  # install, and dies here — while PRs that do not touch it hit the cache, skip install scripts
+  # entirely, and pass. That is why this looked intermittent.
+  #
+  # Nothing in CI needs those binaries. The tests run against a real Redis service
+  # (packages/server/api/.env.tests sets AP_REDIS_TYPE=STANDALONE against 127.0.0.1:6379) and no test
+  # constructs RedisMemoryServer — grep of every test/ directory returns nothing. So the binary's only
+  # effect in CI is to fail the install.
+  #
+  # Exported rather than prefixed onto the command so both the first attempt and the retry below
+  # inherit it, which is the same reason both installs live in this one script.
+  export REDISMS_DISABLE_POSTINSTALL=1
+
   if bun install --frozen-lockfile; then
     exit 0
   fi
