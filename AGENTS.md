@@ -323,6 +323,35 @@ before trusting its silence — an empty output is not the same as a passing che
   regress (#202). Before crediting a test with covering something, break that thing on purpose and
   confirm the test goes red.
 
+### Controlling the node_modules cache
+
+A cache hit and a cold install are different runs, and conflating them has already cost a session.
+On a hit, bun does **not** re-run install scripts for a package it sees at the right version — so a
+green check on a cache hit is not evidence that anything install-related works. `redis-memory-server`'s
+broken postinstall stayed invisible for exactly this reason until a PR happened to touch `bun.lock`.
+
+Four controls, cheapest first:
+
+- **Read the state instead of guessing.** The `Report node_modules cache state` step emits
+  `state=cache-hit|cold` as a step output and writes it to the run summary, so it can be read without
+  downloading and grepping a log. `gh api .../jobs` gives step conclusions but *not* this distinction —
+  that is why the step exists.
+- **`gh cache list` / `gh cache delete`** — self-service, no code change, effective immediately. The
+  right tool for "this one cache entry is wrong, bin it".
+- **The `refresh-cache` PR label** — skips cache restore for that PR only, forcing a real install
+  without disturbing what other branches are using. Use it when a change alters install *behaviour*
+  but no hashed manifest, since that PR would otherwise get a hit and never exercise its own change.
+- **`vars.NODE_MODULES_CACHE_EPOCH`** (repository variable, defaults to `v1`) — bumping it invalidates
+  every entry with no commit and no PR. Blunt and repo-wide; prefer the label or `gh cache delete`.
+
+What the key covers: `bun.lock`, `bunfig.toml`, `package.json`, `.npmrc` and **`tools/ci/install.env`**.
+That last one exists so install-affecting environment changes the key while editing the install
+script's prose does not. **Put install-affecting env in `install.env`, never as an export in
+`install-deps.sh`** — an export there is invisible to the key, which is precisely how a tree built
+under different install behaviour was served from cache with no symptom.
+`tools/ci/install-deps.test.sh` asserts every one of those inputs is present, so dropping one fails
+the build rather than silently widening what a stale entry can hide.
+
 ### What the sandbox container does not have
 
 Verified with `command -v`, not from memory. Three separate stalls in one session came from assuming

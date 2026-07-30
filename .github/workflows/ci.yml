@@ -183,6 +183,9 @@ jobs:
       # what each key component is for and why there is no `restore-keys`
       # fallback; the reasoning lives in one place rather than duplicated here.
       - name: Restore built node_modules
+        # Skipped when a PR carries `refresh-cache`, forcing that one PR through a real install.
+        # This job only restores — it never saves — so skipping it costs time and nothing else.
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -190,7 +193,7 @@ jobs:
             packages/*/node_modules
             packages/*/*/node_modules
             packages/*/*/*/node_modules
-          key: node-modules-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc') }}
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install.env') }}
 
       - name: Install dependencies
         run: tools/ci/install-deps.sh

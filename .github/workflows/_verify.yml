@@ -99,6 +99,11 @@ jobs:
       # the other fails the build rather than quietly widening a recursive rm.
       - name: Restore built node_modules
         id: node-modules
+        # Skipped when a PR carries `refresh-cache`, forcing that one PR through a real install
+        # without disturbing the cache any other branch uses. Exists because a PR that changes
+        # install behaviour but no hashed manifest gets a cache hit, so its own run cannot
+        # exercise the change it makes — which is how a broken install shipped unnoticed.
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -143,7 +148,29 @@ jobs:
           # installed and skip its build — leaving a binary that fails at
           # `require()` time, not at install time. Exact match only means every
           # ABI-determining input is identical by construction.
-          key: node-modules-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc') }}
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install.env') }}
+
+      # A cache hit and a cold install are not the same run, and until now the difference existed
+      # only as prose in the log. bun does not re-run install scripts for a package it already sees
+      # at the right version, so on a hit the install path is not exercised at all — which is how a
+      # broken postinstall stayed invisible until a PR happened to touch bun.lock, and why a green
+      # check on a cache hit is not evidence that an install-related change works.
+      #
+      # Emitted as a step output and into the run summary so it can be read without downloading and
+      # grepping the log — `gh api .../jobs` exposes step conclusions but not this distinction.
+      - name: Report node_modules cache state
+        id: cache-state
+        run: |
+          if [ "${{ steps.node-modules.outputs.cache-hit }}" = "true" ]; then
+            state="cache-hit"
+            note="node_modules restored from cache. bun skipped install scripts, so this run does NOT exercise the install path."
+          else
+            state="cold"
+            note="node_modules built by a real install. Install scripts ran, so this run does exercise the install path."
+          fi
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "node_modules: **$state** — $note" >> "$GITHUB_STEP_SUMMARY"
+          echo "node_modules cache state: $state"
 
       # Runs `bun install --frozen-lockfile` on hit and on miss alike. Note what
       # that does and does not check: it asserts resolution needs no lockfile
@@ -169,7 +196,9 @@ jobs:
       # must establish that what it publishes is good, or one bad build gets
       # served to every later job.
       - name: Save built node_modules
-        if: steps.node-modules.outputs.cache-hit != 'true'
+        # The label is repeated here deliberately: with restore skipped, `cache-hit` is empty, so
+        # this step's own condition would pass and try to save a key that already exists.
+        if: ${{ steps.node-modules.outputs.cache-hit != 'true' && !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
         uses: actions/cache/save@v4
         with:
           path: |
