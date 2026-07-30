@@ -1,5 +1,5 @@
 import { QadamPropertyMap, StaticPropsValue, TriggerStrategy } from '@aiqadam/qadams-framework'
-import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, FlowTrigger, InvalidCronExpressionError, isNil, PieceTrigger, PropertySettings, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@aiqadam/shared'
+import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, FlowTrigger, InvalidCronExpressionError, isNil, PropertySettings, QadamTrigger, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@aiqadam/shared'
 import { isValidCron } from 'cron-validator'
 import { EngineConstants, ResolvedExecuteTriggerOperation } from '../handler/context/engine-constants'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
@@ -19,7 +19,7 @@ type Listener = {
 
 export const triggerHelper = {
     async executeOnStart(trigger: FlowTrigger, constants: EngineConstants, payload: unknown) {
-        const { qadamName, qadamVersion, triggerName, input, propertySettings } = (trigger as PieceTrigger).settings
+        const { qadamName, qadamVersion, triggerName, input, propertySettings } = (trigger as QadamTrigger).settings
 
         if (isNil(triggerName)) {
             throw new EngineGenericError('TriggerNameNotSetError', 'Trigger name is not set')
@@ -73,7 +73,7 @@ export const triggerHelper = {
     },
 
     async executeTrigger({ params, constants }: ExecuteTriggerParams): Promise<ExecuteTriggerResponse<TriggerHookType>> {
-        const { qadamName, qadamVersion, triggerName, input, propertySettings } = (params.flowVersion.trigger as PieceTrigger).settings
+        const { qadamName, qadamVersion, triggerName, input, propertySettings } = (params.flowVersion.trigger as QadamTrigger).settings
 
         if (isNil(triggerName)) {
             throw new EngineGenericError('TriggerNameNotSetError', 'Trigger name is not set')

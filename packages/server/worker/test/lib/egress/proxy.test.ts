@@ -1,3 +1,4 @@
+import type { LookupAddress, LookupAllOptions } from 'node:dns'
 import dns from 'node:dns/promises'
 import http from 'node:http'
 import { AddressInfo, createServer, Server } from 'node:net'
@@ -6,6 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EgressProxy, startEgressProxy } from '../../../src/lib/egress/proxy'
 
 const log = pino({ level: 'silent' })
+
+// dns.lookup is overloaded; this narrowed view of the same module object pins the
+// { all: true } overload so the spy's resolved value is typed as LookupAddress[].
+const dnsAllLookup: { lookup(hostname: string, options: LookupAllOptions): Promise<LookupAddress[]> } = dns
 
 type AnyServer = http.Server | Server
 
@@ -140,10 +145,10 @@ describe('egress-proxy', () => {
         })
 
         it('rejects hostname when any resolved IP is private (public + private A records)', async () => {
-            vi.spyOn(dns, 'lookup').mockResolvedValue([
+            vi.spyOn(dnsAllLookup, 'lookup').mockResolvedValue([
                 { address: '8.8.8.8', family: 4 },
                 { address: '10.0.0.5', family: 4 },
-            ] as unknown as dns.LookupAddress)
+            ])
             proxy = await startEgressProxy({ log, allowList: [] })
             const res = await fetchThroughProxy({
                 proxyPort: proxy.port,
@@ -155,11 +160,11 @@ describe('egress-proxy', () => {
         })
 
         it('rejects hostname when the ONLY non-first resolved IP is private (proves we check every A record)', async () => {
-            vi.spyOn(dns, 'lookup').mockResolvedValue([
+            vi.spyOn(dnsAllLookup, 'lookup').mockResolvedValue([
                 { address: '8.8.8.8', family: 4 },
                 { address: '8.8.4.4', family: 4 },
                 { address: '192.168.1.1', family: 4 },
-            ] as unknown as dns.LookupAddress)
+            ])
             proxy = await startEgressProxy({ log, allowList: [] })
             const res = await fetchThroughProxy({
                 proxyPort: proxy.port,

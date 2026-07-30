@@ -1,4 +1,4 @@
-import { apId, DefaultProjectRole, Principal, QadamsFilterType, SigningKeyId } from '@aiqadam/shared'
+import { ApId, apId, DefaultProjectRole, Principal, QadamsFilterType } from '@aiqadam/shared'
 import { faker } from '@faker-js/faker'
 import jwt, { Algorithm, JwtPayload, SignOptions } from 'jsonwebtoken'
 
@@ -151,7 +151,7 @@ type GenerateTokenParams = {
 }
 
 type GenerateMockExternalTokenParams = ExternalPrincipal & {
-    signingKeyId?: SigningKeyId
+    signingKeyId?: ApId
     privateKey?: string
 }
 

@@ -81,7 +81,6 @@ function buildConsumeJobRequest(overrides?: Partial<ConsumeJobRequest>): Consume
     return {
         jobId: 'job-1',
         jobData: buildExtractPieceJob(),
-        timeoutInSeconds: 600,
         attempsStarted: 0,
         engineToken: 'tok-1',
         token: 'token-123',
@@ -104,20 +103,20 @@ describe('worker integration', () => {
                 resolve()
             })
         })
-        process.env.AP_FRONTEND_URL = `http://127.0.0.1:${port}`
-        process.env.AP_CONTAINER_TYPE = 'WORKER'
+        process.env['AP_FRONTEND_URL'] = `http://127.0.0.1:${port}`
+        process.env['AP_CONTAINER_TYPE'] = 'WORKER'
         // Production defaults AP_WORKER_CONCURRENCY to 5 (see configs.ts). This suite's
         // mock poll()/completeJob() share a single pollResponses array and a single
         // completeJobCalls array with no ordering guarantee across concurrent pollers,
         // but the assertions below assume one job is polled and completed at a time.
         // Pin concurrency to 1 so the assertions' ordering assumption actually holds.
-        process.env.AP_WORKER_CONCURRENCY = '1'
+        process.env['AP_WORKER_CONCURRENCY'] = '1'
     })
 
     afterEach(async () => {
         await worker.stop()
         mockGetHandler.mockReset()
-        delete process.env.AP_WORKER_CONCURRENCY
+        delete process.env['AP_WORKER_CONCURRENCY']
         await new Promise<void>((resolve) => {
             ioServer.close(() => resolve())
         })
@@ -178,12 +177,18 @@ describe('worker integration', () => {
                     submitPayloads: vi.fn(),
                     savePayloads: vi.fn(),
                     getFlowVersion: vi.fn(),
-                    getPiece: vi.fn(),
-                    getPieceArchive: vi.fn(),
+                    getQadam: vi.fn(),
+                    getQadamArchive: vi.fn(),
                     extendLock: vi.fn(),
-                    getUsedPieces: vi.fn().mockResolvedValue([]),
-                    markPieceAsUsed: vi.fn(),
+                    getUsedQadams: vi.fn().mockResolvedValue([]),
+                    markQadamAsUsed: vi.fn(),
                     disableFlow: vi.fn(),
+                    sendChatEvent: vi.fn(),
+                    getChatConfig: vi.fn(),
+                    saveChatMessages: vi.fn(),
+                    updateChatProgress: vi.fn(),
+                    updateProjectContext: vi.fn(),
+                    executeChatTool: vi.fn(),
                 }
                 createRpcServer<WorkerToApiContract>(serverSocket, handlers)
             })
@@ -494,11 +499,11 @@ describe('worker integration', () => {
 
         beforeEach(async () => {
             healthPort = await getFreePort()
-            process.env.AP_PORT = String(healthPort)
+            process.env['AP_PORT'] = String(healthPort)
         })
 
         afterEach(() => {
-            delete process.env.AP_PORT
+            delete process.env['AP_PORT']
         })
 
         async function startWithHealthServer(): Promise<void> {

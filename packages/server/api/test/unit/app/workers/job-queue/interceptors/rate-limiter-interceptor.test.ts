@@ -1,6 +1,7 @@
-import { ExecutionType, JOB_PRIORITY, RATE_LIMIT_PRIORITY, RunEnvironment, StreamStepProgress, WorkerJobType } from '@aiqadam/shared'
+import { BeginExecuteFlowJobData, ExecutionType, JOB_PRIORITY, RATE_LIMIT_PRIORITY, RunEnvironment, StreamStepProgress, WebhookJobData, WorkerJobType } from '@aiqadam/shared'
 import { Job } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
+import { Redis } from 'ioredis'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getConcurrencyPoolSetKey } from '../../../../../../src/app/database/redis/keys'
 import { redisConnections } from '../../../../../../src/app/database/redis-connections'
@@ -154,7 +155,7 @@ const mockLog: FastifyBaseLogger = {
     level: 'info',
 } as unknown as FastifyBaseLogger
 
-function createFlowJobData(overrides?: Record<string, unknown>) {
+function createFlowJobData(overrides?: Partial<BeginExecuteFlowJobData>): BeginExecuteFlowJobData {
     return {
         jobType: WorkerJobType.EXECUTE_FLOW,
         environment: RunEnvironment.PRODUCTION,
@@ -166,10 +167,25 @@ function createFlowJobData(overrides?: Record<string, unknown>) {
         runId: `run-${crypto.randomUUID()}`,
         executionType: ExecutionType.BEGIN,
         streamStepProgress: StreamStepProgress.NONE,
-        payload: {},
-        logsUploadUrl: 'http://localhost/logs',
+        payload: { type: 'inline', value: {} },
         logsFileId: 'log-file-id',
         ...overrides,
+    }
+}
+
+function createWebhookJobData(): WebhookJobData {
+    return {
+        jobType: WorkerJobType.EXECUTE_WEBHOOK,
+        projectId: `proj-${crypto.randomUUID()}`,
+        platformId: `plat-${crypto.randomUUID()}`,
+        schemaVersion: 4,
+        requestId: `req-${crypto.randomUUID()}`,
+        payload: { type: 'inline', value: {} },
+        runEnvironment: RunEnvironment.PRODUCTION,
+        flowId: `flow-${crypto.randomUUID()}`,
+        saveSampleData: false,
+        flowVersionIdToRun: `fv-${crypto.randomUUID()}`,
+        execute: true,
     }
 }
 
@@ -191,7 +207,7 @@ function disableRateLimiter() {
     })
 }
 
-async function deleteKeysByPattern(redis: FakeRedis, pattern: string): Promise<void> {
+async function deleteKeysByPattern(redis: Redis, pattern: string): Promise<void> {
     const stream = redis.scanStream({ match: pattern, count: 100 })
     for await (const keys of stream) {
         if (keys.length > 0) await redis.del(...keys)
@@ -230,7 +246,7 @@ describe('rateLimiterInterceptor', () => {
         })
 
         it('should ALLOW for non-EXECUTE_FLOW job type', async () => {
-            const jobData = createFlowJobData({ jobType: WorkerJobType.EXECUTE_WEBHOOK })
+            const jobData = createWebhookJobData()
             const result = await rateLimiterInterceptor.preDispatch({
                 jobId: 'job-1',
                 jobData,
@@ -521,7 +537,7 @@ describe('rateLimiterInterceptor', () => {
             let members = await redis.zrange(getConcurrencyPoolSetKey(jobData.projectId), 0, -1)
             expect(members).toHaveLength(1)
 
-            await rateLimiterInterceptor.onJobFinished({ jobId, jobData, log: mockLog })
+            await rateLimiterInterceptor.onJobFinished({ jobId, jobData, failed: false, log: mockLog })
 
             members = await redis.zrange(getConcurrencyPoolSetKey(jobData.projectId), 0, -1)
             expect(members).toHaveLength(0)
@@ -531,7 +547,7 @@ describe('rateLimiterInterceptor', () => {
             disableRateLimiter()
             const jobData = createFlowJobData()
             // Should not throw
-            await rateLimiterInterceptor.onJobFinished({ jobId: 'job-1', jobData, log: mockLog })
+            await rateLimiterInterceptor.onJobFinished({ jobId: 'job-1', jobData, failed: false, log: mockLog })
         })
 
         it('should be idempotent', async () => {
@@ -544,9 +560,9 @@ describe('rateLimiterInterceptor', () => {
             const jobId = 'idempotent_test_1'
 
             await rateLimiterInterceptor.preDispatch({ jobId, jobData, job: createMockJob(), log: mockLog })
-            await rateLimiterInterceptor.onJobFinished({ jobId, jobData, log: mockLog })
+            await rateLimiterInterceptor.onJobFinished({ jobId, jobData, failed: false, log: mockLog })
             // Second release — should not throw
-            await rateLimiterInterceptor.onJobFinished({ jobId, jobData, log: mockLog })
+            await rateLimiterInterceptor.onJobFinished({ jobId, jobData, failed: false, log: mockLog })
 
             const redis = await redisConnections.useExisting()
             const members = await redis.zrange(getConcurrencyPoolSetKey(jobData.projectId), 0, -1)

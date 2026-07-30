@@ -10,7 +10,7 @@ import {
     User,
     UserIdentity,
 } from '@aiqadam/shared'
-import { FastifyInstance, InjectOptions } from 'fastify'
+import { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify'
 import { generateMockToken } from './auth'
 import { db } from './db'
 import {
@@ -184,9 +184,9 @@ export type TestContext = {
     platform: Platform
     project: Project
     token: string
-    get: (url: string, query?: Record<string, unknown>, opts?: RequestOptions) => ReturnType<FastifyInstance['inject']>
-    post: (url: string, body?: Record<string, unknown>, opts?: RequestOptions) => ReturnType<FastifyInstance['inject']>
-    put: (url: string, body?: Record<string, unknown>, opts?: RequestOptions) => ReturnType<FastifyInstance['inject']>
-    delete: (url: string, query?: Record<string, unknown>, opts?: RequestOptions) => ReturnType<FastifyInstance['inject']>
-    inject: (opts: InjectOptions) => ReturnType<FastifyInstance['inject']>
+    get: (url: string, query?: Record<string, unknown>, opts?: RequestOptions) => Promise<LightMyRequestResponse>
+    post: (url: string, body?: Record<string, unknown>, opts?: RequestOptions) => Promise<LightMyRequestResponse>
+    put: (url: string, body?: Record<string, unknown>, opts?: RequestOptions) => Promise<LightMyRequestResponse>
+    delete: (url: string, query?: Record<string, unknown>, opts?: RequestOptions) => Promise<LightMyRequestResponse>
+    inject: (opts: InjectOptions) => Promise<LightMyRequestResponse>
 }

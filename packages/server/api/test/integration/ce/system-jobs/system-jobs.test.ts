@@ -1,10 +1,16 @@
 import { apDayjs } from '@aiqadam/server-utils'
+import { Queue } from 'bullmq'
 import { FastifyInstance } from 'fastify'
-import { SystemJobName } from '../../../../src/app/helper/system-jobs/common'
+import { SystemJobData, SystemJobName } from '../../../../src/app/helper/system-jobs/common'
 import { systemJobsQueue, systemJobsSchedule } from '../../../../src/app/helper/system-jobs/system-job'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 const TEST_PREFIX = 'test-'
+
+// BullMQ types `upsertJobScheduler`'s scheduler id as the queue's job-*name* type, so the
+// strongly-named `systemJobsQueue` cannot express the legacy `<name>::<repeat-key>` ids these
+// tests have to plant. The id is a plain string at runtime; this widened view says so.
+const legacySchedulerQueue = (): Queue<SystemJobData, unknown, string> => systemJobsQueue
 
 let app: FastifyInstance
 let schedule: ReturnType<typeof systemJobsSchedule>
@@ -118,7 +124,7 @@ describe('System Jobs', () => {
         // Simulate a legacy scheduler by creating one with a key containing '::'
         // This mimics what older BullMQ versions produced when no jobId was set.
         const legacyKey = `${SystemJobName.FILE_CLEANUP_TRIGGER}::0:UTC:0 3 * * *`
-        await systemJobsQueue.upsertJobScheduler(legacyKey, {
+        await legacySchedulerQueue().upsertJobScheduler(legacyKey, {
             pattern: '0 3 * * *',
             tz: 'UTC',
         }, {
@@ -145,7 +151,7 @@ describe('System Jobs', () => {
     it('should keep new-format schedulers while removing legacy ones', async () => {
         // Create a legacy scheduler (key contains ::)
         const legacyKey = `${SystemJobName.PIECES_ANALYTICS}::0:UTC:0 12 * * *`
-        await systemJobsQueue.upsertJobScheduler(legacyKey, {
+        await legacySchedulerQueue().upsertJobScheduler(legacyKey, {
             pattern: '0 12 * * *',
             tz: 'UTC',
         }, {

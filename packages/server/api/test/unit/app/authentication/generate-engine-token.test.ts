@@ -2,14 +2,13 @@ import { EnginePrincipal, PrincipalType } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { accessTokenManager } from '../../../../src/app/authentication/lib/access-token-manager'
 import { jwtUtils } from '../../../../src/app/helper/jwt-utils'
 import { system } from '../../../../src/app/helper/system/system'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 
 const SECRET = 'generate-engine-token-test-secret'
 const RETENTION_DAYS = 30
-
-const { accessTokenManager } = await import('../../../../src/app/authentication/lib/access-token-manager')
 
 const mockLog: FastifyBaseLogger = {
     debug: vi.fn(),

@@ -19,12 +19,14 @@ function makeFlowVersion(): FlowVersion {
         trigger: {
             name: 'trigger',
             valid: true,
+            lastUpdatedDate: '2024-01-01T00:00:00.000Z',
             displayName: 'Trigger',
             type: FlowTriggerType.EMPTY,
             settings: {},
             nextAction: {
                 name: 'ask_ai',
                 valid: true,
+                lastUpdatedDate: '2024-01-01T00:00:00.000Z',
                 displayName: 'Ask AI',
                 type: FlowActionType.PIECE,
                 settings: {
@@ -40,6 +42,7 @@ function makeFlowVersion(): FlowVersion {
                 nextAction: {
                     name: 'run_agent',
                     valid: true,
+                    lastUpdatedDate: '2024-01-01T00:00:00.000Z',
                     displayName: 'Run Agent',
                     type: FlowActionType.PIECE,
                     settings: {
@@ -57,6 +60,7 @@ function makeFlowVersion(): FlowVersion {
                     nextAction: {
                         name: 'run_agent_managed',
                         valid: true,
+                        lastUpdatedDate: '2024-01-01T00:00:00.000Z',
                         displayName: 'Run Agent Managed',
                         type: FlowActionType.PIECE,
                         settings: {

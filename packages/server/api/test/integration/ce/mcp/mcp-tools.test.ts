@@ -1,3 +1,4 @@
+import { Property, QadamAuth } from '@aiqadam/qadams-framework'
 import {
     apId,
     FlowActionType,
@@ -9,6 +10,8 @@ import {
     QadamType,
     RunEnvironment,
     StepLocationRelativeToParent,
+    TriggerStrategy,
+    TriggerTestStrategy,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -66,9 +69,9 @@ beforeAll(async () => {
                 description: 'Send an email',
                 requireAuth: true,
                 props: {
-                    to: { type: 'SHORT_TEXT', displayName: 'To', required: true },
-                    subject: { type: 'SHORT_TEXT', displayName: 'Subject', required: true },
-                    folder: { type: 'DROPDOWN', displayName: 'Folder', required: false, refreshers: ['auth'] },
+                    to: Property.ShortText({ displayName: 'To', required: true }),
+                    subject: Property.ShortText({ displayName: 'Subject', required: true }),
+                    folder: Property.Dropdown({ displayName: 'Folder', required: false, refreshers: ['auth'], auth: undefined, options: async () => ({ disabled: false, options: [] }) }),
                 },
             },
         },
@@ -79,6 +82,9 @@ beforeAll(async () => {
                 description: 'Triggers on new email',
                 requireAuth: false,
                 props: {},
+                type: TriggerStrategy.WEBHOOK,
+                testStrategy: TriggerTestStrategy.SIMULATION,
+                sampleData: {},
             },
             new_attachment: {
                 name: 'new_attachment',
@@ -86,6 +92,9 @@ beforeAll(async () => {
                 description: 'Triggers on new attachment',
                 requireAuth: false,
                 props: {},
+                type: TriggerStrategy.WEBHOOK,
+                testStrategy: TriggerTestStrategy.SIMULATION,
+                sampleData: {},
             },
         },
     })
@@ -105,15 +114,14 @@ beforeAll(async () => {
                 description: 'Action with array property',
                 requireAuth: false,
                 props: {
-                    items: {
-                        type: 'ARRAY',
+                    items: Property.Array({
                         displayName: 'Items',
                         required: true,
                         properties: {
-                            name: { type: 'SHORT_TEXT', displayName: 'Name', required: true },
-                            value: { type: 'NUMBER', displayName: 'Value', required: false },
+                            name: Property.ShortText({ displayName: 'Name', required: true }),
+                            value: Property.Number({ displayName: 'Value', required: false }),
                         },
-                    },
+                    }),
                 },
             },
         },
@@ -135,8 +143,8 @@ beforeAll(async () => {
                 description: 'Action with dynamic props',
                 requireAuth: false,
                 props: {
-                    mode: { type: 'STATIC_DROPDOWN', displayName: 'Mode', required: true, options: { options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] } },
-                    dynamicField: { type: 'DYNAMIC', displayName: 'Dynamic Field', required: false, refreshers: ['mode'] },
+                    mode: Property.StaticDropdown({ displayName: 'Mode', required: true, options: { options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] } }),
+                    dynamicField: Property.DynamicProperties({ displayName: 'Dynamic Field', required: false, refreshers: ['mode'], auth: undefined, props: async () => ({}) }),
                 },
             },
         },
@@ -154,7 +162,7 @@ beforeAll(async () => {
         qadamType: QadamType.OFFICIAL,
         packageType: PackageType.REGISTRY,
         platformId: undefined,
-        auth: { type: 'SECRET_TEXT', displayName: 'API Key', required: true },
+        auth: QadamAuth.SecretText({ displayName: 'API Key', required: true }),
         actions: {
             send_email: {
                 name: 'send_email',
@@ -162,8 +170,8 @@ beforeAll(async () => {
                 description: 'Send an email',
                 requireAuth: true,
                 props: {
-                    to: { type: 'SHORT_TEXT', displayName: 'To', required: true },
-                    subject: { type: 'SHORT_TEXT', displayName: 'Subject', required: true },
+                    to: Property.ShortText({ displayName: 'To', required: true }),
+                    subject: Property.ShortText({ displayName: 'Subject', required: true }),
                 },
             },
         },
@@ -2461,7 +2469,7 @@ describe('MCP Tools integration', () => {
                     description: 'Does a thing on the private piece',
                     requireAuth: false,
                     props: {
-                        note: { type: 'SHORT_TEXT', displayName: 'Note', required: false },
+                        note: Property.ShortText({ displayName: 'Note', required: false }),
                     },
                 },
             },

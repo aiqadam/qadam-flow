@@ -1,6 +1,7 @@
 import { PrincipalType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { accessTokenManager } from '../../../../src/app/authentication/lib/access-token-manager'
 import { jwtUtils } from '../../../../src/app/helper/jwt-utils'
 
 const SECRET = 'verify-principal-test-secret'
@@ -24,8 +25,6 @@ vi.mock('../../../../src/app/authentication/user-identity/user-identity-service'
         }),
     }),
 }))
-
-const { accessTokenManager } = await import('../../../../src/app/authentication/lib/access-token-manager')
 
 const mockLog: FastifyBaseLogger = {
     debug: vi.fn(),

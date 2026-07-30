@@ -96,7 +96,7 @@ function okEngineResponse() {
 
 function failedEngineResponse() {
     return {
-        status: EngineResponseStatus.ERROR,
+        status: EngineResponseStatus.INTERNAL_ERROR,
         response: undefined,
         error: 'Engine failed',
     }

@@ -20,7 +20,7 @@ export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVe
             if (!response.ok) {
                 throw new FetchError(url, `status=${response.status}`)
             }
-            return response.json()
+            return response.json() as Promise<SeekPage<PopulatedFlow>>
         },
         current: {
             id: flowId,

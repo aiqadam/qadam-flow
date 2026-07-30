@@ -46,9 +46,7 @@ function createTestProcessMaker() {
             const port = params.env.AP_SANDBOX_WS_PORT
             const token = params.env.AP_SANDBOX_WS_TOKEN ?? null
             child = new EventEmitter() as ChildProcess & EventEmitter
-            ;(child as ChildProcess).pid = 12345
-            ;(child as ChildProcess).exitCode = null
-            ;(child as ChildProcess).kill = vi.fn()
+            Object.assign(child, { pid: 12345, exitCode: null, kill: vi.fn() })
 
             client = ioClient(`http://127.0.0.1:${port}`, {
                 path: '/worker/ws',

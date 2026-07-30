@@ -21,7 +21,7 @@ export const createConnectionResolver = ({ projectId, engineToken, apiUrl, conte
                         httpStatus: response.status,
                     })
                 }
-                const connection: AppConnection = await response.json()
+                const connection = await response.json() as AppConnection
                 if (connection.status === AppConnectionStatus.ERROR) {
                     throw new ConnectionExpiredError(externalId)
                 }

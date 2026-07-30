@@ -54,6 +54,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             expect(result.inserted).toBe(true)
@@ -70,6 +71,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'step_1',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             await waitpointService(app.log).complete({
@@ -84,6 +86,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'step_2',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             expect(step2Pause.inserted).toBe(true)
@@ -100,6 +103,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
             expect(firstPause.inserted).toBe(true)
 
@@ -115,6 +119,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             expect(result.inserted).toBe(false)
@@ -131,6 +136,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
+                version: 'V0',
                 resumeDateTime: resumeAt,
                 workerHandlerId: 'server-1',
                 httpRequestId: 'reply-1',
@@ -151,6 +157,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'webhook_step',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
                 responseToSend: { status: 200, body: 'ok' },
                 workerHandlerId: 'server-2',
             })
@@ -171,6 +178,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             const result = await waitpointService(app.log).complete({
@@ -236,6 +244,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'step_1',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
             expect(step1Pause.inserted).toBe(true)
 
@@ -267,6 +276,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'step_2',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             expect(step2Pause.inserted).toBe(true)
@@ -286,6 +296,7 @@ describe('Waitpoint service', () => {
                     projectId: ctx.project.id,
                     stepName,
                     type: PauseType.WEBHOOK,
+                    version: 'V0',
                 })
                 expect(pause.inserted).toBe(true)
                 expect(pause.waitpoint.stepName).toBe(stepName)
@@ -330,6 +341,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             await waitpointService(app.log).deleteByFlowRunId(flowRun.id)
@@ -342,6 +354,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
+                version: 'V0',
                 resumeDateTime: new Date().toISOString(),
             })
 
@@ -364,6 +377,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             const result = await waitpointService(app.log).getByFlowRunId(flowRun.id)
@@ -381,6 +395,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             const [result1, result2] = await Promise.all([
@@ -441,6 +456,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             let calledWith: { workerHandlerId: string | null } | null = null
@@ -469,6 +485,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             let onReadyCalled = false
@@ -541,6 +558,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             let onReadyCalled = false
@@ -569,6 +587,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
+                version: 'V0',
                 resumeDateTime: new Date(Date.now() + 60000).toISOString(),
             })
             const staleWaitpointId = delayPause.waitpoint.id
@@ -580,6 +599,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval_step',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             // Stale delay job fires with old waitpointId — should NOT resume the approval step
@@ -612,6 +632,7 @@ describe('Waitpoint service', () => {
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
+                version: 'V0',
             })
 
             const completeResult = await waitpointService(app.log).complete({
@@ -622,7 +643,8 @@ describe('Waitpoint service', () => {
             })
 
             expect(completeResult.completedExisting).toBe(true)
-            expect(completeResult.waitpoint.id).toBe(pauseResult.waitpoint.id)
+            expect(completeResult.waitpoint).not.toBeNull()
+            expect(completeResult.waitpoint!.id).toBe(pauseResult.waitpoint.id)
         })
 
     })

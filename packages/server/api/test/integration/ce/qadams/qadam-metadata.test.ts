@@ -80,7 +80,7 @@ describe('Piece Metadata CE API', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
-            const body = response?.json<{ name: string }[]>()
+            const body = response!.json<{ name: string }[]>()
             expect(Array.isArray(body)).toBe(true)
             expect(body.some((qadam) => qadam.name === 'ce-list-test-piece')).toBe(true)
         })

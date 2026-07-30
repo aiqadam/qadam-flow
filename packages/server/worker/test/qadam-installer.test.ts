@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PackageType, QadamType } from '@aiqadam/shared'
 import type { OfficialQadamPackage } from '@aiqadam/shared'
 import type { Logger } from 'pino'
+import { qadamInstaller } from '../src/lib/cache/qadams/qadam-installer'
 
 // Module-level variable updated per test so the vi.mock factory can reference it
 let testWorkspace = ''
@@ -31,9 +32,6 @@ vi.mock('../src/lib/cache/cache-paths', () => ({
     getGlobalCacheCommonPath: () => testWorkspace,
     getGlobalCachePathLatestVersion: () => testWorkspace,
 }))
-
-// Import after mocks are registered
-const { qadamInstaller } = await import('../src/lib/cache/qadams/qadam-installer')
 
 function makeQadam(name: string, version = '1.0.0'): OfficialQadamPackage {
     return {
@@ -103,9 +101,12 @@ describe('qadamInstaller', () => {
             .mockResolvedValueOnce({ output: '' })                           // good individual
             .mockRejectedValueOnce(new Error('workspace:* resolve error'))  // bad individual
 
-        const error = await installer.install({ pieces: [good, bad], includeFilters: false }).catch(e => e as Error)
+        const error = await installer.install({ pieces: [good, bad], includeFilters: false }).catch((e: unknown) => e)
 
         expect(error).toBeInstanceOf(Error)
+        if (!(error instanceof Error)) {
+            throw error
+        }
         expect(error.message).toContain('@aiqadam/qadam-bad@1.0.0')
         expect(error.message).not.toContain('@aiqadam/qadam-good@1.0.0')
         expect(mockInstall).toHaveBeenCalledTimes(3)
@@ -124,9 +125,12 @@ describe('qadamInstaller', () => {
             .mockRejectedValueOnce(new Error('workspace:* resolve error'))  // qadam-x individual
             .mockRejectedValueOnce(new Error('workspace:* resolve error'))  // qadam-y individual
 
-        const error = await installer.install({ pieces: [qadam1, qadam2], includeFilters: false }).catch(e => e as Error)
+        const error = await installer.install({ pieces: [qadam1, qadam2], includeFilters: false }).catch((e: unknown) => e)
 
         expect(error).toBeInstanceOf(Error)
+        if (!(error instanceof Error)) {
+            throw error
+        }
         expect(error.message).toContain('@aiqadam/qadam-x@1.0.0')
         expect(error.message).toContain('@aiqadam/qadam-y@1.0.0')
         expect(mockInstall).toHaveBeenCalledTimes(3)

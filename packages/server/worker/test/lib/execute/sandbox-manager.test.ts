@@ -73,7 +73,7 @@ describe('sandbox-manager canReuseSandbox', () => {
             environment: ApEnvironment.PRODUCTION,
         }))
 
-        const manager = createSandboxManager(1)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
         const mockApiClient = {} as never
         manager.acquire({ log, apiClient: mockApiClient })
         await manager.release(log)
@@ -94,7 +94,7 @@ describe('sandbox-manager canReuseSandbox', () => {
             environment: ApEnvironment.PRODUCTION,
         }))
 
-        const manager = createSandboxManager(1)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
         const mockApiClient = {} as never
         manager.acquire({ log, apiClient: mockApiClient })
         await manager.release(log)
@@ -110,7 +110,7 @@ describe('sandbox-manager canReuseSandbox', () => {
             environment: ApEnvironment.PRODUCTION,
         }))
 
-        const manager = createSandboxManager(1)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
         const mockApiClient = {} as never
         manager.acquire({ log, apiClient: mockApiClient })
         await manager.release(log)
@@ -127,7 +127,7 @@ describe('sandbox-manager canReuseSandbox', () => {
             environment: ApEnvironment.PRODUCTION,
         }))
 
-        const manager = createSandboxManager(1)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
         const mockApiClient = {} as never
         manager.acquire({ log, apiClient: mockApiClient })
         await manager.release(log)
@@ -143,7 +143,7 @@ describe('sandbox-manager canReuseSandbox', () => {
             environment: ApEnvironment.DEVELOPMENT,
         }))
 
-        const manager = createSandboxManager(1)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
         const mockApiClient = {} as never
         manager.acquire({ log, apiClient: mockApiClient })
         await manager.release(log)

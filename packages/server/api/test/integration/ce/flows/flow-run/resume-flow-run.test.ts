@@ -1,4 +1,4 @@
-import { apId, ExecutionType, FlowRunStatus, FlowVersionState, RunEnvironment, StreamStepProgress } from '@aiqadam/shared'
+import { apId, FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { distributedStore } from '../../../../../src/app/database/redis-connections'
 import { batchDeleteByFlowId } from '../../../../../src/app/flows/flow/flow.jobs'
@@ -383,11 +383,7 @@ describe('Resume flow run', () => {
             flowRunId: parentRun.id,
             projectId: ctx.project.id,
             waitpointId: existingWaitpoint!.id,
-            resumePayload: {
-                payload: { body: { status: 'error', data: { message: 'Subflow execution failed' } } },
-                streamStepProgress: StreamStepProgress.WEBSOCKET,
-                executionType: ExecutionType.RESUME,
-            },
+            resumePayload: { body: { status: 'error', data: { message: 'Subflow execution failed' } } },
         })
 
         const waitpoint = await db.findOneBy<{ status: string, resumePayload: unknown }>('waitpoint', { flowRunId: parentRun.id })
@@ -418,11 +414,7 @@ describe('Resume flow run', () => {
             flowRunId: parentRun.id,
             projectId: ctx.project.id,
             waitpointId: apId(),
-            resumePayload: {
-                payload: { body: { status: 'error', data: { message: 'Subflow execution failed' } } },
-                streamStepProgress: StreamStepProgress.WEBSOCKET,
-                executionType: ExecutionType.RESUME,
-            },
+            resumePayload: { body: { status: 'error', data: { message: 'Subflow execution failed' } } },
         })
 
         expect(result.completedExisting).toBe(false)
@@ -455,11 +447,7 @@ describe('Resume flow run', () => {
             flowRunId: parentRun.id,
             projectId: ctx.project.id,
             waitpointId: apId(),
-            resumePayload: {
-                payload: { body: { status: 'error', data: { message: 'Subflow execution failed' } } },
-                streamStepProgress: StreamStepProgress.WEBSOCKET,
-                executionType: ExecutionType.RESUME,
-            },
+            resumePayload: { body: { status: 'error', data: { message: 'Subflow execution failed' } } },
         })
         expect(result.completedExisting).toBe(false)
         expect(result.waitpoint).toBeNull()

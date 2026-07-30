@@ -252,12 +252,16 @@ jobs:
       - name: Lint all packages
         run: npm run lint-all
 
-      # Only `packages/web` declares a `typecheck` script today — hence the step
-      # name — and before #184 no job ran it, so its 849 source files were
-      # type-checked nowhere (vite builds without type-checking). Server packages
-      # are still type-checked only through their `build`. Unfiltered for the
-      # same reason as lint above.
-      - name: Typecheck (only web declares one today)
+      # All eight TypeScript packages declare a `typecheck` script as of #245.
+      # Before that only `packages/web` did, so this step ran unfiltered and still
+      # checked one package of eight — turbo reports success for a package that
+      # does not declare the script (the #148 class), which is what made a green
+      # run here mean so much less than it looked. Unfiltered for the same reason
+      # as lint above: a filter list is the defect, not the fix. The ~230 qadam
+      # packages deliberately declare none — their `build` is `tsc -p
+      # tsconfig.lib.json`, so a compiler already checks their `src` (their tests
+      # are excluded from that tsconfig and remain unchecked).
+      - name: Typecheck
         run: npm run typecheck
 
       # `npm run test-unit` is one unfiltered `turbo run test`, for the same reason

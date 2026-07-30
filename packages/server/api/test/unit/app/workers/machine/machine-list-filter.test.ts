@@ -46,6 +46,7 @@ function fakeMachineInfo(workerId: string): MachineInformation {
         ip: '127.0.0.1',
         diskInfo: { total: 100, free: 50, used: 50, percentage: 50 },
         workerProps: {},
+        sandboxes: [],
     }
 }
 

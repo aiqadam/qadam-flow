@@ -1,6 +1,7 @@
 import {
     apId,
     EngineResponseStatus,
+    ExecuteTriggerHookJobData,
     LATEST_JOB_DATA_SCHEMA_VERSION,
     TriggerHookType,
     WorkerJobType,
@@ -44,7 +45,7 @@ describe('Job broker error propagation', () => {
         const requestId = apId()
         const webserverId = engineResponseWatcher(app.log).getServerId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
@@ -95,7 +96,7 @@ describe('Job broker error propagation', () => {
         const requestId = apId()
         const webserverId = engineResponseWatcher(app.log).getServerId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
@@ -145,7 +146,7 @@ describe('Job broker error propagation', () => {
         const requestId = apId()
         const webserverId = engineResponseWatcher(app.log).getServerId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
@@ -196,7 +197,7 @@ describe('Job broker error propagation', () => {
         const requestId = apId()
         const webserverId = engineResponseWatcher(app.log).getServerId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
@@ -248,7 +249,7 @@ describe('Job broker error propagation', () => {
         const requestId = apId()
         const webserverId = engineResponseWatcher(app.log).getServerId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
