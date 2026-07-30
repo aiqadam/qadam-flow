@@ -79,12 +79,16 @@ main() {
   #
   # redis-memory-server's postinstall downloads a Redis binary and compiles Redis from source when
   # that download fails. The compile is broken, so the postinstall exits 1 and takes the whole install
-  # with it (see this file's header for why that was invisible until a PR touched bun.lock). Nothing in
+  # with it (invisible until a PR touched bun.lock, because until then every run restored a cache hit and bun re-ran no install scripts — see the cache-key comment in .github/workflows/_verify.yml). Nothing in
   # CI uses those binaries: tests run against a real Redis service (packages/server/api/.env.tests sets
   # AP_REDIS_TYPE=STANDALONE on 127.0.0.1:6379), the integration job starts one, and no test constructs
   # RedisMemoryServer. Skipping the compile is the fix, not a workaround. The Dockerfile sets the same
   # variable independently in its `base` stage, since it has three bun install calls and cannot read
   # this file.
+  # Exported, not prefixed onto the command: the retry below is a second `bun install` in this same
+  # shell, and a prefix would cover only the first attempt. Collapsing this to
+  # `REDISMS_DISABLE_POSTINSTALL=1 bun install …` would leave the retry running the broken postinstall
+  # again — the hardest failure mode to spot, because the first attempt would still pass.
   export REDISMS_DISABLE_POSTINSTALL=1
 
   if bun install --frozen-lockfile; then

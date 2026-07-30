@@ -145,10 +145,11 @@ echo "== every tree-content input is in the cache key =="
 # The key claims to cover everything that can change the tree's contents. These
 # are the repo-root files bun reads; .npmrc was missing from the first version
 # of the key even though it sets a scoped registry and legacy-peer-deps.
-# tools/ci/install.env is here for the same reason one step removed: it carries the
-# environment that changes what the install PRODUCES, and while it was an export
-# inside install-deps.sh no key component covered it, so a tree built under
-# different install behaviour was served from cache with no symptom.
+# tools/ci/install-deps.sh is here because it sets the environment the install runs
+# under, and while nothing hashed it a tree built under different install behaviour
+# was served from cache with no symptom. Hashing the script means editing its comments
+# costs a needless cold install; that is the accepted price for the key never lagging
+# behind install behaviour.
 for wf in "${repo_root}/.github/workflows/_verify.yml" "${repo_root}/.github/workflows/ci.yml"; do
   for input in bun.lock bunfig.toml package.json .npmrc tools/ci/install-deps.sh; do
     if grep -q "hashFiles(.*'${input}'" "$wf"; then
