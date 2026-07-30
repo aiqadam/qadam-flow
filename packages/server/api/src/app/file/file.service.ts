@@ -17,7 +17,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { In, LessThanOrEqual } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { exceptionHandler } from '../helper/exception-handler'
-import { jwtUtils } from '../helper/jwt-utils'
+import { JwtAudience, jwtUtils } from '../helper/jwt-utils'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { fileCompressor } from './file-compressor'
@@ -201,6 +201,13 @@ export const fileService = (log: FastifyBaseLogger) => ({
             const decodedToken = await jwtUtils.decodeAndVerify<FileToken>({
                 jwt: token,
                 key: await jwtUtils.getJwtSecret(),
+                // The route this serves is securityAccess.public(), so the JWT is the only thing
+                // between an arbitrary token and a file lookup. Without the audience, any token
+                // signed with AP_JWT_SECRET clears that check and only the payload shape — needing
+                // a `fileId` claim — stops a session or MCP token being replayed here. That is the
+                // field naming doing the audience's job by coincidence. filesService.verifyReadToken
+                // has always pinned it; this is the same class of token (#251).
+                audience: JwtAudience.FILE_READ,
             })
             const fileType = decodedToken.fileType ?? FileType.FLOW_STEP_FILE
             if (!ALLOWED_SIGNED_FILE_TYPES.includes(fileType)) {
