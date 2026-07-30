@@ -1,4 +1,4 @@
-import { ExecutionType, RunEnvironment, StreamStepProgress, WorkerJobType } from '@aiqadam/shared'
+import { BeginExecuteFlowJobData, ExecutionType, RunEnvironment, StreamStepProgress, WorkerJobType } from '@aiqadam/shared'
 import { Job } from 'bullmq'
 import { FastifyInstance } from 'fastify'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -65,7 +65,7 @@ describe('rateLimiterInterceptor (CE, real Redis)', () => {
         await teardownTestEnvironment()
     })
 
-    function createJobData(overrides: { projectId: string, platformId: string }) {
+    function createJobData(overrides: { projectId: string, platformId: string }): BeginExecuteFlowJobData {
         currentProjectId = overrides.projectId
         return {
             jobType: WorkerJobType.EXECUTE_FLOW,
@@ -76,8 +76,7 @@ describe('rateLimiterInterceptor (CE, real Redis)', () => {
             runId: `run-${crypto.randomUUID()}`,
             executionType: ExecutionType.BEGIN,
             streamStepProgress: StreamStepProgress.NONE,
-            payload: {},
-            logsUploadUrl: 'http://localhost/logs',
+            payload: { type: 'inline', value: {} },
             logsFileId: 'log-file-id',
             ...overrides,
         }

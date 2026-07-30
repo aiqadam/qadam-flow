@@ -208,6 +208,45 @@
     },
     "typecheck": {
       "dependsOn": ["^build"],
+      // Same reasoning as `lint` above: inputs narrower than the files tsc actually
+      // reads make a check silently cache-skip. Deliberately NOT an enumerated list
+      // of directories here, unlike `lint` — every package's tsconfig `include` is
+      // different (tests-e2e compiles `**/*.ts` from the package root, web pulls in
+      // `i18next-parser.config.js`, the server packages use `src`/`test`), so any
+      // list would be right for some packages and silently short for others. A
+      // review of the first draft of this task caught exactly that: `pages/**`,
+      // `fixtures/**`, `global-setup.ts` and `checkly.config.ts` were compiled and
+      // unhashed. Matching every compilable file costs a few extra cache misses and
+      // cannot under-hash; that is the correct trade for a correctness gate.
+      // The shared configs sit above the packages, and a relative path cannot reach
+      // them portably from every depth, so they are addressed with `$TURBO_ROOT$`.
+      // `packages/server/tsconfig.server.json` is the `extends` parent of api,
+      // worker and server-utils; engine and shared extend `tsconfig.base.json`
+      // directly. Both are listed, so the chain is covered either way. Confirm any
+      // change here actually resolved by reading the `inputs` map out of
+      // `turbo run typecheck --filter=<pkg> --dry=json`, per package and not just
+      // one of them — an entry in this file is not evidence that turbo resolved it
+      // (#164).
+      // The negations are load-bearing: a `**/*` glob overrides .gitignore, and
+      // without them `dist/**` gets hashed — 862 files for api alone. Since this
+      // task dependsOn `^build` and not its own `build`, `dist/` exists locally and
+      // not on a fresh CI checkout, so the same commit would hash differently in the
+      // two places; `node_modules/.vite/results.json` is rewritten by every vitest
+      // run and churns the key again. Over-invalidation only, never a false pass —
+      // but a cache key that depends on whether you happened to build first is not
+      // a cache key. Caught by review, after the first draft claimed the resolved
+      // map had been read.
+      "inputs": [
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.json",
+        "!dist/**",
+        "!node_modules/**",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/packages/server/tsconfig.server.json"
+      ],
       "outputs": []
     }
   }

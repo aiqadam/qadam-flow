@@ -212,13 +212,18 @@ before trusting its silence — an empty output is not the same as a passing che
   (40 files, 231 tests) ran in no CI job at all — and the worker suite had been red for months
   before anyone looked (#215). Note the residual limit, so nobody over-reads it: a
   package that never declares the script is still silently uncovered — that is the #148 class, which
-  an unfiltered run does not solve. Live example, left standing deliberately: `packages/server/worker`
-  declares no `typecheck` script and its `lint` glob covers only `src/**`, so five tests in
-  `test/lib/execute/sandbox-manager.test.ts` call `createSandboxManager(1)` against
-  `createSandboxManager({ boxId, proxyPort })` — they pass, and nothing type-checks them. Measured
-  cost of closing it: ~82 errors across 12 of the 18 non-e2e test files, mostly `TS4111`
-  index-signature noise plus 17 real `TS2345` argument mismatches — its own piece of work, not a
-  line in a CI PR. See the comment thread on #215.
+  an unfiltered run does not solve. That limit was live for `typecheck` until #245: seven of the eight
+  TypeScript packages declared no such script, so the unfiltered job checked `web` and nothing else,
+  and `packages/server/engine` — whose `build` is esbuild, which strips types without checking them —
+  had never been type-checked at all. Closing it cost 250 errors, two of them live bugs (#246, #248).
+  All eight now declare one; do not remove a `typecheck` script to make a red build green.
+  **The class is not gone, only this instance of it.** Still uncovered today, each for a stated
+  reason: the ~230 qadam packages are checked by their `build` but their tsconfigs exclude `test/**`,
+  so the ~14 core qadams shipping tests have none checked; `shared` and `engine` check `src` only
+  (13 and 21 errors respectively if their spec projects are turned on); and `packages/server/worker`'s
+  `lint` glob is still `src/**`, so its tests are type-checked but not linted (~97 pre-existing
+  findings). Before trusting any `turbo run <task>`, confirm the packages you care about actually
+  declare the script — `--dry=json`, filtered on `.task`, with `<NONEXISTENT>` counted as uncovered.
 - **Renaming an npm script needs a sweep that is not extension-scoped.** `.husky/pre-push` invokes
   root scripts and has no file extension, so a `grep --include='*.yml' --include='*.json'
   --include='*.md' --include='*.sh'` sweep for `lint-core` missed it entirely and the rename would

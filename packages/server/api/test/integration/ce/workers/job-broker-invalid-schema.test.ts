@@ -58,7 +58,6 @@ describe('jobBroker.tryDequeue — invalid-schema poison handling', () => {
                 streamStepProgress: StreamStepProgress.NONE,
                 payload: { type: 'inline', value: null },
                 logsFileId: apId(),
-                logsUploadUrl: 'https://example.invalid/v1/flow-runs/logs?token=x',
             }
 
             const jobId = apId()

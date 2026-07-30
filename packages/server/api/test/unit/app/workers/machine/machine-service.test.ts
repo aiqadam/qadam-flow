@@ -1,4 +1,4 @@
-import { ExecutionMode } from '@aiqadam/shared'
+import { ExecutionMode, MachineInformation } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../../../src/app/workers/machine/machine-cache', () => ({
@@ -36,11 +36,15 @@ const mockLog = {
     level: 'info',
 } as any
 
-const mockHealthcheck = {
+const mockHealthcheck: MachineInformation = {
     workerId: 'test-worker-1',
     cpuUsagePercentage: 10,
     ramUsagePercentage: 20,
     totalAvailableRamInBytes: 1024,
+    totalCpuCores: 1,
+    ip: '127.0.0.1',
+    workerProps: {},
+    sandboxes: [],
     diskInfo: {
         total: 1000,
         free: 500,

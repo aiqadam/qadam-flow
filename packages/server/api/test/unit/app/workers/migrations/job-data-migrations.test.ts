@@ -1,6 +1,7 @@
-import { ExecuteFlowJobData, ExecutionType, FlowTriggerType, PollingJobData, ResumeReason, RunEnvironment, StreamStepProgress, WorkerJobType } from '@aiqadam/shared'
+import { BeginExecuteFlowJobData, ExecuteFlowJobData, ExecutionType, FlowTriggerType, JobData, JobPayload, PollingJobData, ResumeExecuteFlowJobData, ResumeReason, RunEnvironment, StreamStepProgress, WorkerJobType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest'
+import { jobMigrations } from '../../../../../src/app/workers/migrations/job-data-migrations'
 
 vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => ({
     flowVersionService: () => ({
@@ -8,8 +9,6 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => 
     }),
     flowVersionRepo: () => ({}),
 }))
-
-const { jobMigrations } = await import('../../../../../src/app/workers/migrations/job-data-migrations')
 
 const mockLog: FastifyBaseLogger = {
     debug: vi.fn(),
@@ -25,7 +24,7 @@ const mockLog: FastifyBaseLogger = {
 
 const LATEST = 10
 
-function baseFlowJob(overrides: Partial<ExecuteFlowJobData> = {}): ExecuteFlowJobData {
+function baseFlowJob(overrides: Partial<BeginExecuteFlowJobData> = {}): BeginExecuteFlowJobData {
     return {
         jobType: WorkerJobType.EXECUTE_FLOW,
         schemaVersion: 6,
@@ -54,6 +53,21 @@ function basePollingJob(overrides: Partial<PollingJobData> = {}): PollingJobData
         triggerType: FlowTriggerType.PIECE,
         ...overrides,
     }
+}
+
+// A v9 RESUME job predates `resumeReason` — the field the v9 → v10 migration adds — so the
+// legacy record it reads is deliberately not expressible as `ResumeExecuteFlowJobData`.
+function legacyResumeFlowJobAtV9(payload: JobPayload): Record<string, unknown> {
+    return {
+        ...baseFlowJob({ schemaVersion: 9 }),
+        executionType: ExecutionType.RESUME,
+        payload,
+    }
+}
+
+function assertResumeExecuteFlowJob(job: JobData): asserts job is ResumeExecuteFlowJobData {
+    assert(job.jobType === WorkerJobType.EXECUTE_FLOW)
+    assert(job.executionType === ExecutionType.RESUME)
 }
 
 describe('jobMigrations v6 → v7 (dropLogsUploadUrl)', () => {
@@ -92,6 +106,7 @@ describe('jobMigrations v6 → v7 (dropLogsUploadUrl)', () => {
         const migrated = await jobMigrations(mockLog).apply(job)
 
         expect(migrated.schemaVersion).toBe(LATEST)
+        assert(migrated.jobType === WorkerJobType.EXECUTE_FLOW)
         expect(migrated.runId).toBe('run-1')
     })
 })
@@ -179,39 +194,30 @@ describe('jobMigrations v9 → v10 (addResumeReason)', () => {
     })
 
     it('classifies inline-null payload as RETRY (the only legacy producer of that shape)', async () => {
-        const job = baseFlowJob({
-            schemaVersion: 9,
-            executionType: ExecutionType.RESUME,
-            payload: { type: 'inline', value: null },
-        })
+        const job = legacyResumeFlowJobAtV9({ type: 'inline', value: null })
 
-        const migrated = await jobMigrations(mockLog).apply(job) as ExecuteFlowJobData
+        const migrated = await jobMigrations(mockLog).apply(job)
 
         expect(migrated.schemaVersion).toBe(LATEST)
+        assertResumeExecuteFlowJob(migrated)
         expect(migrated.resumeReason).toBe(ResumeReason.RETRY)
     })
 
     it('classifies inline payload with a real body as WAITPOINT', async () => {
-        const job = baseFlowJob({
-            schemaVersion: 9,
-            executionType: ExecutionType.RESUME,
-            payload: { type: 'inline', value: { body: { action: 'approve' }, headers: {}, queryParams: {} } },
-        })
+        const job = legacyResumeFlowJobAtV9({ type: 'inline', value: { body: { action: 'approve' }, headers: {}, queryParams: {} } })
 
-        const migrated = await jobMigrations(mockLog).apply(job) as ExecuteFlowJobData
+        const migrated = await jobMigrations(mockLog).apply(job)
 
+        assertResumeExecuteFlowJob(migrated)
         expect(migrated.resumeReason).toBe(ResumeReason.WAITPOINT)
     })
 
     it('classifies ref payload as WAITPOINT (offloaded payloads were never produced by retry)', async () => {
-        const job = baseFlowJob({
-            schemaVersion: 9,
-            executionType: ExecutionType.RESUME,
-            payload: { type: 'ref', fileId: 'offloaded-payload-1' },
-        })
+        const job = legacyResumeFlowJobAtV9({ type: 'ref', fileId: 'offloaded-payload-1' })
 
-        const migrated = await jobMigrations(mockLog).apply(job) as ExecuteFlowJobData
+        const migrated = await jobMigrations(mockLog).apply(job)
 
+        assertResumeExecuteFlowJob(migrated)
         expect(migrated.resumeReason).toBe(ResumeReason.WAITPOINT)
     })
 
@@ -221,10 +227,10 @@ describe('jobMigrations v9 → v10 (addResumeReason)', () => {
             executionType: ExecutionType.BEGIN,
         })
 
-        const migrated = await jobMigrations(mockLog).apply(job) as ExecuteFlowJobData
+        const migrated = await jobMigrations(mockLog).apply(job)
 
         expect(migrated.schemaVersion).toBe(LATEST)
-        expect(migrated.resumeReason).toBeUndefined()
+        expect('resumeReason' in migrated).toBe(false)
     })
 
     it('only bumps schemaVersion for non-EXECUTE_FLOW jobs at v9', async () => {

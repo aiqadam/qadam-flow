@@ -82,7 +82,7 @@ describe.skipIf(skip)('sandbox egress — full stack (proxy + iptables + isolate
             proxyPort: proxy.port,
         })
         expect(result.results[0]).toMatchObject({ status: 'ERR' })
-        expect(result.results[0].code).toMatch(/EHOSTUNREACH|ENETUNREACH|ECONNREFUSED|EACCES|EPERM/)
+        expect(result.results[0]['code']).toMatch(/EHOSTUNREACH|ENETUNREACH|ECONNREFUSED|EACCES|EPERM/)
     })
 
     it('iptables allows the sandbox to reach the proxy port directly', async () => {

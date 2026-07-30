@@ -203,7 +203,7 @@ describe('Qadam resolution and platform-scoped filtering', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
-            const body: Array<{ qadamType: string, platformId: string | null }> = response?.json()
+            const body: Array<{ qadamType: string, platformId: string | null }> = response!.json()
             // No CUSTOM qadams should appear for an UNKNOWN principal.
             expect(body.every((p) => p.qadamType === QadamType.OFFICIAL)).toBe(true)
         })

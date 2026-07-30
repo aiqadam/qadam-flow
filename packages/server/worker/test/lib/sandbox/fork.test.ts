@@ -40,10 +40,10 @@ describe('simpleProcess', () => {
         expect(msg.execArgv).toContain('--no-node-snapshot')
         expect(msg.execArgv).toContain('--expose-gc')
         expect(msg.execArgv).toContain('--max-old-space-size=512')
-        expect(msg.env.AP_BASE_CODE_DIRECTORY).toBe('/code-dir')
-        expect(msg.env.SANDBOX_ID).toBe('sb-fork-1')
-        expect(msg.env.CUSTOM_VAR).toBe('hello')
-        expect(msg.env.AP_SANDBOX_WS_PORT).toBe('9999')
+        expect(msg.env['AP_BASE_CODE_DIRECTORY']).toBe('/code-dir')
+        expect(msg.env['SANDBOX_ID']).toBe('sb-fork-1')
+        expect(msg.env['CUSTOM_VAR']).toBe('hello')
+        expect(msg.env['AP_SANDBOX_WS_PORT']).toBe('9999')
     }, 15000)
 
     it('passes through integer memoryLimitMb to --max-old-space-size', async () => {

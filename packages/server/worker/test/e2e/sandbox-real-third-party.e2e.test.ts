@@ -218,7 +218,7 @@ async function runProbeInSandbox({ commonDir, plan, proxyPort, omitProxyUrl }: {
         AP_UNDICI_REQUIRE_PATH: '/root/common/undici',
         AP_PROBE_PLAN: JSON.stringify(plan),
     }
-    if (!omitProxyUrl) baseEnv.AP_EGRESS_PROXY_URL = proxyUrl
+    if (!omitProxyUrl) baseEnv['AP_EGRESS_PROXY_URL'] = proxyUrl
     const child = await maker.create({
         sandboxId: 'e2e-real-3p',
         command: [],

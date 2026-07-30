@@ -52,6 +52,7 @@ const qadamTrigger = {
     name: 'trigger_1',
     valid: true,
     displayName: 'Gmail Trigger',
+    lastUpdatedDate: '2024-01-01T00:00:00Z',
     type: FlowTriggerType.PIECE as const,
     settings: {
         qadamName: '@aiqadam/qadam-gmail',
@@ -120,6 +121,7 @@ describe('extractQadamPackages', () => {
             name: 'trigger_1',
             valid: true,
             displayName: 'Empty Trigger',
+            lastUpdatedDate: '2024-01-01T00:00:00Z',
             type: FlowTriggerType.EMPTY,
             settings: {},
             nextAction: { ...codeAction },
@@ -149,6 +151,7 @@ describe('extractCodeArtifacts', () => {
             name: 'trigger_1',
             valid: true,
             displayName: 'Empty Trigger',
+            lastUpdatedDate: '2024-01-01T00:00:00Z',
             type: FlowTriggerType.EMPTY,
             settings: {},
             nextAction: { ...codeAction },

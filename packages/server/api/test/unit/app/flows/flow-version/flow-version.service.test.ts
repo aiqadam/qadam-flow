@@ -3,7 +3,7 @@ import {
     FlowOperationType,
     FlowTriggerType,
     FlowVersionState,
-    PieceTrigger,
+    QadamTrigger,
     SampleDataSettings,
 } from '@aiqadam/shared'
 import type { FlowVersion } from '@aiqadam/shared'
@@ -80,7 +80,7 @@ const mockLog = {
     level: 'info',
 } as unknown as FastifyBaseLogger
 
-function makeQadamTriggerSettings(extras: Partial<PieceTrigger['settings']> = {}): PieceTrigger['settings'] {
+function makeQadamTriggerSettings(extras: Partial<QadamTrigger['settings']> = {}): QadamTrigger['settings'] {
     return {
         qadamName: '@aiqadam/qadam-gmail',
         qadamVersion: '~0.1.0',
@@ -152,7 +152,7 @@ describe('flowVersionService.applyOperation - USE_AS_DRAFT', () => {
             trigger: {
                 ...makeFlowVersion().trigger,
                 settings: makeQadamTriggerSettings({ sampleData }),
-            } as PieceTrigger,
+            } as QadamTrigger,
         })
         mockRepoFindOne.mockResolvedValue(previousVersion)
 
@@ -168,7 +168,7 @@ describe('flowVersionService.applyOperation - USE_AS_DRAFT', () => {
         })
 
         expect(result.trigger.type).toBe(FlowTriggerType.PIECE)
-        const settings = (result.trigger as PieceTrigger).settings
+        const settings = (result.trigger as QadamTrigger).settings
         expect(settings.sampleData?.sampleDataFileId).toBe(sampleData.sampleDataFileId)
         expect(settings.sampleData?.sampleDataInputFileId).toBe(sampleData.sampleDataInputFileId)
     })
@@ -190,7 +190,7 @@ describe('flowVersionService.applyOperation - USE_AS_DRAFT', () => {
         })
 
         expect(result.trigger.type).toBe(FlowTriggerType.PIECE)
-        expect((result.trigger as PieceTrigger).settings.sampleData).toBeUndefined()
+        expect((result.trigger as QadamTrigger).settings.sampleData).toBeUndefined()
     })
 
     it('skips the sample data preservation when previous version has an EMPTY trigger', async () => {

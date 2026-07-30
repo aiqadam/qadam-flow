@@ -78,12 +78,18 @@ function buildMinimalHandlers(): WorkerToApiContract {
         submitPayloads: vi.fn(),
         savePayloads: vi.fn(),
         getFlowVersion: vi.fn(),
-        getPiece: vi.fn(),
-        getPieceArchive: vi.fn(),
+        getQadam: vi.fn(),
+        getQadamArchive: vi.fn(),
         extendLock: vi.fn(),
-        getUsedPieces: vi.fn().mockResolvedValue([]),
-        markPieceAsUsed: vi.fn(),
+        getUsedQadams: vi.fn().mockResolvedValue([]),
+        markQadamAsUsed: vi.fn(),
         disableFlow: vi.fn(),
+        sendChatEvent: vi.fn(),
+        getChatConfig: vi.fn(),
+        saveChatMessages: vi.fn(),
+        updateChatProgress: vi.fn(),
+        updateProjectContext: vi.fn(),
+        executeChatTool: vi.fn(),
     }
 }
 
@@ -101,18 +107,18 @@ describe('worker settings override', () => {
                 resolve()
             })
         })
-        process.env.AP_FRONTEND_URL = `http://127.0.0.1:${port}`
-        process.env.AP_CONTAINER_TYPE = 'WORKER'
-        delete process.env.AP_EXECUTION_MODE
-        delete process.env.AP_WORKER_GROUP_ID
+        process.env['AP_FRONTEND_URL'] = `http://127.0.0.1:${port}`
+        process.env['AP_CONTAINER_TYPE'] = 'WORKER'
+        delete process.env['AP_EXECUTION_MODE']
+        delete process.env['AP_WORKER_GROUP_ID']
         mockWorkerSettingsSet.mockClear()
     })
 
     afterEach(async () => {
         await worker.stop()
-        delete process.env.AP_EXECUTION_MODE
-        delete process.env.AP_WORKER_GROUP_ID
-        delete process.env.AP_REUSE_SANDBOX
+        delete process.env['AP_EXECUTION_MODE']
+        delete process.env['AP_WORKER_GROUP_ID']
+        delete process.env['AP_REUSE_SANDBOX']
         await new Promise<void>((resolve) => {
             ioServer.close(() => resolve())
         })
@@ -178,7 +184,7 @@ describe('worker settings override', () => {
     }, 10_000)
 
     it('local AP_EXECUTION_MODE overrides server-provided mode', async () => {
-        process.env.AP_EXECUTION_MODE = ExecutionMode.SANDBOX_CODE_ONLY
+        process.env['AP_EXECUTION_MODE'] = ExecutionMode.SANDBOX_CODE_ONLY
         const serverSettings = buildWorkerSettingsResponse({ EXECUTION_MODE: ExecutionMode.SANDBOX_CODE_AND_PROCESS })
         await connectAndWaitForSettings(serverSettings)
 
@@ -188,9 +194,9 @@ describe('worker settings override', () => {
     }, 10_000)
 
     it('worker group + SANDBOX_PROCESS passes validation', async () => {
-        process.env.AP_WORKER_GROUP_ID = 'group-1'
-        process.env.AP_EXECUTION_MODE = ExecutionMode.SANDBOX_PROCESS
-        process.env.AP_REUSE_SANDBOX = 'false'
+        process.env['AP_WORKER_GROUP_ID'] = 'group-1'
+        process.env['AP_EXECUTION_MODE'] = ExecutionMode.SANDBOX_PROCESS
+        process.env['AP_REUSE_SANDBOX'] = 'false'
         const serverSettings = buildWorkerSettingsResponse()
         await connectAndWaitForSettings(serverSettings)
 
@@ -200,9 +206,9 @@ describe('worker settings override', () => {
     }, 10_000)
 
     it('worker group + SANDBOX_CODE_AND_PROCESS passes validation', async () => {
-        process.env.AP_WORKER_GROUP_ID = 'group-1'
-        process.env.AP_EXECUTION_MODE = ExecutionMode.SANDBOX_CODE_AND_PROCESS
-        process.env.AP_REUSE_SANDBOX = 'false'
+        process.env['AP_WORKER_GROUP_ID'] = 'group-1'
+        process.env['AP_EXECUTION_MODE'] = ExecutionMode.SANDBOX_CODE_AND_PROCESS
+        process.env['AP_REUSE_SANDBOX'] = 'false'
         const serverSettings = buildWorkerSettingsResponse()
         await connectAndWaitForSettings(serverSettings)
 
@@ -212,8 +218,8 @@ describe('worker settings override', () => {
     }, 10_000)
 
     it('worker group + SANDBOX_CODE_ONLY throws error', async () => {
-        process.env.AP_WORKER_GROUP_ID = 'group-1'
-        process.env.AP_EXECUTION_MODE = ExecutionMode.SANDBOX_CODE_ONLY
+        process.env['AP_WORKER_GROUP_ID'] = 'group-1'
+        process.env['AP_EXECUTION_MODE'] = ExecutionMode.SANDBOX_CODE_ONLY
         const serverSettings = buildWorkerSettingsResponse()
 
         const err = await connectAndExpectCrash(serverSettings)
@@ -221,8 +227,8 @@ describe('worker settings override', () => {
     }, 10_000)
 
     it('worker group + UNSANDBOXED throws error', async () => {
-        process.env.AP_WORKER_GROUP_ID = 'group-1'
-        process.env.AP_EXECUTION_MODE = ExecutionMode.UNSANDBOXED
+        process.env['AP_WORKER_GROUP_ID'] = 'group-1'
+        process.env['AP_EXECUTION_MODE'] = ExecutionMode.UNSANDBOXED
         const serverSettings = buildWorkerSettingsResponse()
 
         const err = await connectAndExpectCrash(serverSettings)
@@ -230,8 +236,8 @@ describe('worker settings override', () => {
     }, 10_000)
 
     it('worker group + no local override, server sends SANDBOX_PROCESS → passes', async () => {
-        process.env.AP_WORKER_GROUP_ID = 'group-1'
-        process.env.AP_REUSE_SANDBOX = 'false'
+        process.env['AP_WORKER_GROUP_ID'] = 'group-1'
+        process.env['AP_REUSE_SANDBOX'] = 'false'
         const serverSettings = buildWorkerSettingsResponse({ EXECUTION_MODE: ExecutionMode.SANDBOX_PROCESS })
         await connectAndWaitForSettings(serverSettings)
 

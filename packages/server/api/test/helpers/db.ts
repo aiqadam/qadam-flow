@@ -1,9 +1,9 @@
 import { databaseConnection } from '../../src/app/database/database-connection'
 
 export const db = {
-    save<T extends Record<string, unknown>>(entity: string, data: T | T[]): Promise<T> {
+    save<T extends Record<string, unknown>>(entity: string, data: T | T[]): Promise<T[]> {
         const items = Array.isArray(data) ? data : [data]
-        return databaseConnection().getRepository(entity).save(items) as Promise<T>
+        return databaseConnection().getRepository<T>(entity).save(items)
     },
 
     update(entity: string, id: string, data: Record<string, unknown>): Promise<unknown> {

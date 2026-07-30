@@ -86,7 +86,7 @@ describe('iptables-lockdown command builder', () => {
 
         it('places DNS rules after loopback ACCEPTs and strictly before the REJECT', () => {
             const cmds = iptablesLockdown.buildApplyCommands({ ...baseParams, nameservers: ['10.0.0.2'] })
-            const lastLoopbackIdx = cmds.findLastIndex((c) => c.includes('-o') && c.includes('lo'))
+            const lastLoopbackIdx = cmds.reduce((last, c, i) => (c.includes('-o') && c.includes('lo') ? i : last), -1)
             const firstDnsIdx = cmds.findIndex((c) => c.includes('--dport') && c[c.indexOf('--dport') + 1] === '53')
             const rejectIdx = cmds.findIndex((c) => c.includes('REJECT'))
             expect(firstDnsIdx).toBeGreaterThan(lastLoopbackIdx)

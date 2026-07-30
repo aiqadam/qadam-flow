@@ -19,6 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.lib.json && cp package.json dist/",
     "lint": "eslint 'src/**/*.ts'",
+    "typecheck": "tsc --noEmit -p tsconfig.lib.json",
     "test": "vitest run"
   },
   "devDependencies": {

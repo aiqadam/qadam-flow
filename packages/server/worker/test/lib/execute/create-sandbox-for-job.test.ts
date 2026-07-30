@@ -127,7 +127,7 @@ describe('createSandboxForJob', () => {
             [ExecutionMode.SANDBOX_CODE_AND_PROCESS, 'isolate'],
         ])('uses isolateProcess for %s', (executionMode) => {
             getSettingsMock.mockReturnValue(buildSettings({ EXECUTION_MODE: executionMode }))
-            createSandboxForJob({ log, apiClient, boxId: 7, reusable: false })
+            createSandboxForJob({ log, apiClient, boxId: 7, reusable: false, proxyPort: null })
 
             expect(isolateProcessMock).toHaveBeenCalledTimes(1)
             expect(simpleProcessMock).not.toHaveBeenCalled()
@@ -139,7 +139,7 @@ describe('createSandboxForJob', () => {
             [ExecutionMode.SANDBOX_CODE_ONLY, 'simple'],
         ])('uses simpleProcess for %s', (executionMode) => {
             getSettingsMock.mockReturnValue(buildSettings({ EXECUTION_MODE: executionMode }))
-            createSandboxForJob({ log, apiClient, boxId: 3, reusable: false })
+            createSandboxForJob({ log, apiClient, boxId: 3, reusable: false, proxyPort: null })
 
             expect(simpleProcessMock).toHaveBeenCalledTimes(1)
             expect(isolateProcessMock).not.toHaveBeenCalled()
@@ -188,8 +188,8 @@ describe('createSandboxForJob', () => {
         it('only propagates env vars that exist in process.env (no undefined leak)', () => {
             const originalProcessEnv = { ...process.env }
             try {
-                process.env.PROPAGATED_YES = 'forwarded'
-                delete process.env.PROPAGATED_NO
+                process.env['PROPAGATED_YES'] = 'forwarded'
+                delete process.env['PROPAGATED_NO']
                 getSettingsMock.mockReturnValue(buildSettings({
                     SANDBOX_PROPAGATED_ENV_VARS: ['PROPAGATED_YES', 'PROPAGATED_NO'],
                 }))
@@ -261,8 +261,8 @@ describe('createSandboxForJob', () => {
         it('blocks HTTP_PROXY-style propagated env vars when STRICT is derived from proxyPort, not settings', () => {
             const originalProcessEnv = { ...process.env }
             try {
-                process.env.HTTP_PROXY = 'http://leak:3128'
-                process.env.HTTPS_PROXY = 'http://leak:3128'
+                process.env['HTTP_PROXY'] = 'http://leak:3128'
+                process.env['HTTPS_PROXY'] = 'http://leak:3128'
                 getSettingsMock.mockReturnValue(buildSettings({
                     NETWORK_MODE: NetworkMode.UNRESTRICTED,
                     SANDBOX_PROPAGATED_ENV_VARS: ['HTTP_PROXY', 'HTTPS_PROXY'],

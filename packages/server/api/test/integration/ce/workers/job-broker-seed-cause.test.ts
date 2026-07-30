@@ -1,6 +1,7 @@
 import {
     apId,
     EngineResponseStatus,
+    ExecuteTriggerHookJobData,
     LATEST_JOB_DATA_SCHEMA_VERSION,
     TriggerHookType,
     WorkerJobType,
@@ -62,7 +63,7 @@ describe('jobBroker.completeJob — seed cause for stuck-active zombies', () => 
         const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
         const requestId = apId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
@@ -126,7 +127,7 @@ describe('jobBroker.completeJob — seed cause for stuck-active zombies', () => 
         const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
         const requestId = apId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,
@@ -178,7 +179,7 @@ describe('jobBroker.completeJob — seed cause for stuck-active zombies', () => 
         const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
         const requestId = apId()
 
-        const jobData = {
+        const jobData: ExecuteTriggerHookJobData = {
             jobType: WorkerJobType.EXECUTE_TRIGGER_HOOK,
             platformId: mockPlatform.id,
             projectId: mockProject.id,

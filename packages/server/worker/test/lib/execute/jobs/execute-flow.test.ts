@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import {
     QadamFlowError,
     ErrorCode,
@@ -8,6 +8,7 @@ import {
     FlowTriggerType,
     FlowVersionState,
     StreamStepProgress,
+    ResumeReason,
     RunEnvironment,
     WorkerJobType,
 } from '@aiqadam/shared'
@@ -92,14 +93,14 @@ function makeResumeJobData(overrides?: Partial<ExecuteFlowJobData>): ExecuteFlow
         runId: 'run-1',
         payload: { type: 'inline', value: {} },
         executionType: ExecutionType.RESUME,
+        resumeReason: ResumeReason.WAITPOINT,
         streamStepProgress: StreamStepProgress.NONE,
-        logsUploadUrl: 'http://example.com/upload',
         logsFileId: 'logs-file-1',
         ...overrides,
     }
 }
 
-function makeMockContext(apiOverrides?: Record<string, vi.Mock>) {
+function makeMockContext(apiOverrides?: Record<string, Mock>) {
     const mockSandbox = {
         start: vi.fn(),
         execute: vi.fn().mockResolvedValue({ status: 'OK' }),
