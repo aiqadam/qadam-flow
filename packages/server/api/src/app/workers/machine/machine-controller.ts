@@ -1,5 +1,6 @@
 import { createRpcServer, PrincipalType, WebsocketServerEvent, WorkerMachineHealthcheckRequest, WorkerToApiContract } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
+import { Socket } from 'socket.io'
 import { z } from 'zod'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
 import { websocketService } from '../../core/websockets.service'
@@ -11,11 +12,21 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
 
     websocketService.addListener(PrincipalType.WORKER, WebsocketServerEvent.FETCH_WORKER_SETTINGS, (socket) => {
         return async (request: WorkerMachineHealthcheckRequest, _principal, _projectId, callback?: (data: unknown) => void) => {
-            const rawWorkerGroupId = socket.handshake.auth?.workerGroupId
-            const workerGroupId = typeof rawWorkerGroupId === 'string' ? rawWorkerGroupId : undefined
+            const workerGroupId = readWorkerGroupId(socket)
             const response = await machineService(app.log).onConnection(request, workerGroupId)
             callback?.(response)
             createRpcServer<WorkerToApiContract>(socket, createHandlers(app.log, workerGroupId))
+        }
+    })
+
+    // A worker whose version does not match the app never completes a `poll`, and `poll` is the
+    // call that would otherwise keep its registry entry alive — so it sends this instead, and
+    // stays reported (with its version) for as long as it is actually connected (#222). It
+    // deliberately does not re-run `createRpcServer`: that would add a second `rpc` listener to
+    // the same socket on every heartbeat, and both copies would answer each request.
+    websocketService.addListener(PrincipalType.WORKER, WebsocketServerEvent.WORKER_HEALTHCHECK, (socket) => {
+        return async (request: WorkerMachineHealthcheckRequest) => {
+            await machineService(app.log).onConnection(request, readWorkerGroupId(socket))
         }
     })
 
@@ -43,6 +54,11 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
     })
 }
 
+
+function readWorkerGroupId(socket: Socket): string | undefined {
+    const rawWorkerGroupId = socket.handshake.auth?.workerGroupId
+    return typeof rawWorkerGroupId === 'string' ? rawWorkerGroupId : undefined
+}
 
 const ListWorkersParams = {
     config: {

@@ -922,6 +922,7 @@
   "Dedicated Workers Active": "Dedicated Workers Active",
   "Your workers run exclusively for your platform. The execution pool stays warm with no sandboxing overhead, so your automations start instantly.": "Your workers run exclusively for your platform. The execution pool stays warm with no sandboxing overhead, so your automations start instantly.",
   "No workers found": "No workers found",
+  "version unknown": "version unknown",
   "You don't have any workers yet. Spin up new workers to execute your automations": "You don't have any workers yet. Spin up new workers to execute your automations",
   "Dedicated": "Dedicated",
   "Shared": "Shared",

@@ -2,6 +2,9 @@ import { ConsumeJobRequest, isNil, tryCatch } from '@aiqadam/shared'
 import { Worker as BullMQWorker } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
 
+// Exported so machine-cache-expiry.test.ts can pin the relationship with
+// WORKER_MACHINE_TTL_SECONDS: an idle worker only re-registers when this long-poll returns, so a
+// TTL shorter than this would expire healthy workers. Nothing tied the two together before (#222).
 const WAITER_TIMEOUT_MS = 50_000
 const ERROR_RETRY_DELAY_MS = 5_000
 

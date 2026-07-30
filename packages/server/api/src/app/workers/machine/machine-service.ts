@@ -3,7 +3,6 @@ import {
     ExecutionMode,
     isNil,
     NetworkMode,
-    partition,
     WorkerMachineHealthcheckRequest,
     WorkerMachineStatus,
     WorkerMachineType,
@@ -11,15 +10,11 @@ import {
     WorkerSettingsResponse,
 } from '@aiqadam/shared'
 
-import dayjs from 'dayjs'
-import utc from 'dayjs/plugin/utc'
 import { FastifyBaseLogger } from 'fastify'
 import { domainHelper } from '../../helper/domain-helper'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { workerMachineCache } from './machine-cache'
-
-dayjs.extend(utc)
 
 const settingsCache = new Map<string, WorkerSettingsResponse>()
 
@@ -77,15 +72,13 @@ export const machineService = (log: FastifyBaseLogger) => {
             await workerMachineCache().delete([request.workerId])
         },
         async onConnection(request: WorkerMachineHealthcheckRequest, workerGroupId?: string | undefined): Promise<WorkerSettingsResponse> {
-            const existingWorker = await workerMachineCache().findOne(request.workerId)
-
             const type = isNil(workerGroupId) ? 'SHARED' : 'DEDICATED'
             await workerMachineCache().upsert({
                 id: request.workerId,
                 information: request,
                 type,
                 workerGroupId,
-            }, existingWorker)
+            })
             return buildSettingsResponse(log)
         },
         // `_platformId` is accepted to match both callers' contracts — machine-controller's
@@ -101,20 +94,17 @@ export const machineService = (log: FastifyBaseLogger) => {
         //      from the worker's own socket handshake over the single install-wide
         //      AP_WORKER_TOKEN, so filtering on it would be isolation enforced by an untrusted
         //      claim — worse than today's over-filter, because it would read as done (#207).
-        //   2. scope the other two surfaces too, not just the filter below: the offline-prune
-        //      `delete` a few lines down runs install-wide on behalf of whichever platform
-        //      called, and `GET /v1/worker-machines/queue-metrics` returns every queue name —
-        //      which embeds the group id — to any platform admin.
+        //   2. scope the other surface too, not just the filter below:
+        //      `GET /v1/worker-machines/queue-metrics` returns every queue name — which embeds
+        //      the group id — to any platform admin.
         // The isolation test in machine-list-filter.test.ts fails the moment a DEDICATED worker
-        // is returned to anyone, so it guards step 2's filter but not the other two surfaces.
+        // is returned to anyone, so it guards step 2's filter but not the other surface.
+        //
+        // Reading is all this does now: entries expire in Redis (WORKER_MACHINE_TTL_SECONDS), so
+        // a worker that stopped checking in is already gone by the time anyone lists — the prune
+        // that used to live here only ran when someone opened the workers page (#222).
         async list(_platformId: string): Promise<WorkerMachineWithStatus[]> {
-            const allWorkers = await workerMachineCache().find()
-
-            const offlineThreshold = dayjs().subtract(60, 'seconds').utc()
-
-            const [onlineWorkers, offLineWorkers] = partition(allWorkers, (worker) => dayjs(worker.updated).isAfter(offlineThreshold))
-
-            await workerMachineCache().delete(offLineWorkers.map(worker => worker.id))
+            const onlineWorkers = await workerMachineCache().find()
 
             // SHARED workers are cluster-wide by definition, so every platform admin sees them.
             // DEDICATED workers carry a workerGroupId but nothing in this repo maps a worker
