@@ -2,7 +2,7 @@ module.exports = {
   // Must match LocalesEnum in @aiqadam/shared. This list is a second source of truth for which
   // locales exist, and nothing asserts the two agree — a locale missing here silently never
   // receives newly extracted keys.
-  locales: ['en', 'fr', 'de', 'nl', 'ja', 'es', 'zh', 'pt', 'zh-TW', 'ru', 'uz', 'kk'],
+  locales: ['en', 'ru', 'uz', 'kk'],
   output: 'packages/web/public/locales/$LOCALE/$NAMESPACE.json', // Where to output the JSON files
   input: ['src/**/*.{js,jsx,ts,tsx}'], // Where to find your React files
   defaultNamespace: 'translation', // Default namespace if not specified
