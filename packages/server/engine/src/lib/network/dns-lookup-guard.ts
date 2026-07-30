@@ -63,14 +63,25 @@ function buildGuardedCallbackLookup({ policy, boundLookup }: BuildCallbackLookup
 }
 
 function buildGuardedPromiseLookup({ policy, boundPromisesLookup }: BuildPromiseLookupParams): GuardedPromiseLookup {
-    return async function promiseLookup(hostname, options) {
-        const allEntries = await boundPromisesLookup(hostname, { ...options, all: true })
+    // Deliberately byte-for-byte the previous runtime behaviour, only expressed in types the
+    // compiler can check. `options` is `number | LookupOptions` per dns.promises.lookup's
+    // overloads; spreading a number yields no own enumerable properties, so the numeric-family
+    // form produced `{ all: true }` before and still does, and `(4)?.all` was undefined so it
+    // still returns a single entry. That the numeric family is thereby ignored is a real defect,
+    // but fixing it changes what a caller connects to — it belongs in its own change, not in a
+    // typing pass over the SSRF guard. The security-relevant part is untouched: every resolved
+    // address is still checked against the block list before any of them is returned.
+    return async function promiseLookup(hostname: string, options?: number | dns.LookupOptions) {
+        const lookupOptions: dns.LookupAllOptions = typeof options === 'number'
+            ? { all: true }
+            : { ...options, all: true }
+        const allEntries = await boundPromisesLookup(hostname, lookupOptions)
         const blocked = findBlockedEntry({ entries: allEntries, allowList: policy.allowList })
         if (blocked) {
             throw buildBlockedError({ host: hostname, ip: blocked.address })
         }
-        return options?.all ? allEntries : allEntries[0]
-    }
+        return typeof options !== 'number' && options?.all ? allEntries : allEntries[0]
+    } as GuardedPromiseLookup
 }
 
 function toAddressList({ address, family }: ToAddressListParams): dns.LookupAddress[] {

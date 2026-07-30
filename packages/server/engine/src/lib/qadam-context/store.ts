@@ -51,7 +51,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                     })
                 }
 
-                return response.json()
+                return response.json() as Promise<StoreEntry | null>
             }))
 
             if (storeEntryError) {
@@ -87,7 +87,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                     })
                 }
 
-                return response.json()
+                return response.json() as Promise<StoreEntry | null>
             }))
 
             if (storeEntryError) {

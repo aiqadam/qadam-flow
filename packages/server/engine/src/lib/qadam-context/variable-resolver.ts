@@ -33,7 +33,7 @@ export const createVariableResolver = ({ projectId: _projectId, engineToken, api
 }
 
 const handleResponseError = ({ name, httpStatus }: { name: string, httpStatus: number }): never => {
-    throw new EngineGenericError(`Variable ${name} could not be resolved (HTTP ${httpStatus})`)
+    throw new EngineGenericError('VariableResolutionError', `Variable ${name} could not be resolved (HTTP ${httpStatus})`)
 }
 
 type VariableResolver = {
