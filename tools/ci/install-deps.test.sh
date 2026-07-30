@@ -150,7 +150,7 @@ echo "== every tree-content input is in the cache key =="
 # inside install-deps.sh no key component covered it, so a tree built under
 # different install behaviour was served from cache with no symptom.
 for wf in "${repo_root}/.github/workflows/_verify.yml" "${repo_root}/.github/workflows/ci.yml"; do
-  for input in bun.lock bunfig.toml package.json .npmrc tools/ci/install.env; do
+  for input in bun.lock bunfig.toml package.json .npmrc tools/ci/install-deps.sh; do
     if grep -q "hashFiles(.*'${input}'" "$wf"; then
       ok
     else
@@ -158,60 +158,6 @@ for wf in "${repo_root}/.github/workflows/_verify.yml" "${repo_root}/.github/wor
     fi
   done
 done
-
-echo "== load_install_env fails closed on anything it cannot fully apply =="
-
-# This guard shipped with no test at all, which is how it went in catching only a MISSING file: a file
-# that existed but could not be fully applied returned 0 and the install proceeded under a
-# partially-applied environment. Every reject case below is one that previously passed.
-env_dir="$(mktemp -d)"
-trap 'rm -rf "$env_dir"' EXIT
-
-printf '# a comment\n\nREDISMS_DISABLE_POSTINSTALL=1\n' > "${env_dir}/good.env"
-if ( load_install_env "${env_dir}/good.env" >/dev/null 2>&1 ); then ok; else bad "load_install_env rejected a valid file"; fi
-
-# returning 0 is not enough — it must actually export
-if [ "$( ( load_install_env "${env_dir}/good.env" >/dev/null 2>&1; echo "$REDISMS_DISABLE_POSTINSTALL" ) )" = "1" ]; then
-  ok
-else
-  bad "load_install_env returned 0 without exporting the assignment"
-fi
-
-# the regression that motivated the parser: `.` returns the LAST command's status, so an unquoted
-# value with a space followed by any further line sourced to 0 with the key silently unset
-printf 'GOOD=1\nBAD=oh no\nAFTER=2\n' > "${env_dir}/space-mid.env"
-if ( load_install_env "${env_dir}/space-mid.env" >/dev/null 2>&1 ); then
-  bad "accepted an unquoted value with a space mid-file (the case sourcing applied silently)"
-else
-  ok
-fi
-
-printf 'BAD=oh no\n' > "${env_dir}/space-last.env"
-if ( load_install_env "${env_dir}/space-last.env" >/dev/null 2>&1 ); then bad "accepted a space in the last line"; else ok; fi
-
-printf 'UNTERMINATED="oh\n' > "${env_dir}/unterminated.env"
-if ( load_install_env "${env_dir}/unterminated.env" >/dev/null 2>&1 ); then bad "accepted an unterminated quote"; else ok; fi
-
-printf 'rm -rf /\n' > "${env_dir}/command.env"
-if ( load_install_env "${env_dir}/command.env" >/dev/null 2>&1 ); then bad "accepted a bare command line"; else ok; fi
-
-printf '1BAD=x\n' > "${env_dir}/badname.env"
-if ( load_install_env "${env_dir}/badname.env" >/dev/null 2>&1 ); then bad "accepted an invalid identifier"; else ok; fi
-
-if ( load_install_env "${env_dir}/does-not-exist.env" >/dev/null 2>&1 ); then bad "accepted a missing file"; else ok; fi
-
-printf 'X=1\n' > "${env_dir}/unreadable.env"; chmod 000 "${env_dir}/unreadable.env"
-if [ "$(id -u)" -eq 0 ]; then
-  # root ignores mode bits, so this case cannot be exercised here. Say so rather than
-  # counting a skip as a pass.
-  echo "  SKIP unreadable-file case (running as root, mode bits do not apply)"
-else
-  if ( load_install_env "${env_dir}/unreadable.env" >/dev/null 2>&1 ); then bad "accepted an unreadable file"; else ok; fi
-fi
-chmod 644 "${env_dir}/unreadable.env"
-
-# the file actually shipped must satisfy the grammar, or CI is broken on main
-if ( load_install_env "${repo_root}/tools/ci/install.env" >/dev/null 2>&1 ); then ok; else bad "the repo's own tools/ci/install.env does not satisfy the grammar"; fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

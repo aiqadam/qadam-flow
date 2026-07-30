@@ -140,14 +140,19 @@ jobs:
           #                   resolution), .npmrc (scoped registry,
           #                   legacy-peer-deps, save-exact — editing it can
           #                   change what gets installed without touching any
-          #                   of the other three), and tools/ci/install.env
-          #                   (env that changes what the install PRODUCES —
-          #                   there so that changing install behaviour changes
-          #                   the key, while editing the install script's prose
-          #                   does not). All five are tracked files outside
-          #                   node_modules, so the hash cannot accidentally glob
-          #                   into it and differ between restore and save.
-          #                   install-deps.test.sh asserts all five are here.
+          #                   of the other three), and tools/ci/install-deps.sh
+          #                   itself, which sets the environment the install runs
+          #                   under. Hashing the script is deliberately
+          #                   conservative: editing its comments costs a needless
+          #                   cold install, and in exchange install behaviour can
+          #                   never change without the key changing. The
+          #                   alternative — a separate env file, parsed by hand so
+          #                   prose edits stayed cheap — was tried and reverted
+          #                   after three fail-open parser defects. All five are
+          #                   tracked files outside node_modules, so the hash
+          #                   cannot accidentally glob into it and differ between
+          #                   restore and save. install-deps.test.sh asserts all
+          #                   five are here.
           #
           # No `restore-keys`: a prefix match is safe for a download cache,
           # where bun re-resolves everything anyway, and unsafe here. A partial
@@ -156,7 +161,7 @@ jobs:
           # installed and skip its build — leaving a binary that fails at
           # `require()` time, not at install time. Exact match only means every
           # ABI-determining input is identical by construction.
-          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install.env') }}
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
 
       # A cache hit and a cold install are not the same run, and until now the difference existed
       # only as prose in the log. bun does not re-run install scripts for a package it already sees

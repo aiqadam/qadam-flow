@@ -363,18 +363,28 @@ Four controls, cheapest first:
 - **`vars.NODE_MODULES_CACHE_EPOCH`** (repository variable, defaults to `v1`) — bumping it invalidates
   every entry with no commit and no PR. Blunt and repo-wide; prefer the label or `gh cache delete`.
 
-What the key covers: `bun.lock`, `bunfig.toml`, `package.json`, `.npmrc` and **`tools/ci/install.env`**.
-That last one exists so install-affecting environment changes the key while editing the install
-script's prose does not. **Put install-affecting env in `install.env`, never as an export in
-`install-deps.sh`** — an export there is invisible to the key, which is precisely how a tree built
-under different install behaviour was served from cache with no symptom.
+What the key covers: `bun.lock`, `bunfig.toml`, `package.json`, `.npmrc` and
+**`tools/ci/install-deps.sh`** itself. That last one is there because the script sets the environment
+the install runs under, and while nothing hashed it, a tree built under different install behaviour was
+served from cache with no symptom. **Put install-affecting env in `install-deps.sh`** — it is hashed, so
+behaviour and cache identity cannot drift apart.
+
+Hashing the script is deliberately conservative: editing its comments costs a needless cold install on
+every branch. That is the accepted price. The alternative was tried and reverted in #242 — a separate
+`tools/ci/install.env`, parsed by hand so prose edits stayed cheap. Three review rounds found three
+fail-open defects in that parser, each able to apply half an environment and return 0, which is exactly
+the failure the separation existed to prevent. Sourcing returns the *last* command's status, so a bad
+line mid-file is silently skipped; hand-parsing has to get `export`'s status, readonly names, quoting
+and the grammar all right. A conservative key needs none of it. If prose edits ever become frequent
+enough to matter, measure the cost before reaching for a parser again.
+
 `tools/ci/install-deps.test.sh` asserts every one of those inputs is present, so dropping one fails
 the build rather than silently widening what a stale entry can hide.
 
-Scope caveat, so this does not read as more than it is: `install.env` governs **CI's** install only.
-`Dockerfile` sets `REDISMS_DISABLE_POSTINSTALL=1` itself, in the `base` stage, because it has three
-`bun install` invocations and no access to this file. The two are independent and nothing asserts they
-agree — changing a value here means checking the `Dockerfile` by hand.
+Scope caveat: `install-deps.sh` governs **CI's** install only. `Dockerfile` sets
+`REDISMS_DISABLE_POSTINSTALL=1` itself, in the `base` stage, because it has three `bun install`
+invocations and cannot read a CI script. The two are independent and nothing asserts they agree —
+changing one means checking the other by hand.
 
 ### What the sandbox container does not have
 

@@ -52,44 +52,6 @@ readonly INSTALL_NODE_MODULES_MAXDEPTH=4
 # Takes its root explicitly instead of trusting the caller's cwd: this is a
 # recursive delete, and every other script in tools/ci/ resolves its own paths
 # rather than depending on how it was invoked.
-# Reads tools/ci/install.env and exports its assignments, or fails the build. Parsed rather than
-# sourced: `.` returns the status of the LAST command in the file and a `command not found` mid-file
-# does not abort it, so `KEY=oh no` followed by any further line returns 0 with KEY unset and the
-# install proceeds under an environment that does not match the cache key it gets saved under — the
-# exact hole install.env exists to close. Verified: sourcing `GOOD=1 / BAD=oh no / AFTER=2` exits 0,
-# leaves BAD unset and applies AFTER.
-#
-# Grammar, deliberately narrow so anything ambiguous fails rather than being half-applied: each line
-# is blank, a `#` comment, or a single KEY=VALUE whose value contains no whitespace, quote or
-# backslash. Quotes are rejected rather than stripped because this parser provides no shell quoting
-# semantics, so `K="a b"` could only mean the author expected semantics that are not here — better to
-# fail than to export a literal quote character. These are install flags, so the restriction costs
-# nothing; if a value ever genuinely needs a space, widen this and its tests together.
-# $1 is the file to read, so the tests can point it at a fixture.
-load_install_env() {
-  install_env_file="${1:-tools/ci/install.env}"
-  if [ ! -f "$install_env_file" ]; then
-    echo "::error::${install_env_file} is missing. It carries the install-affecting environment and is part of the cache key; a tree built without it is not the tree the key describes."
-    return 1
-  fi
-  if [ ! -r "$install_env_file" ]; then
-    echo "::error::${install_env_file} is not readable."
-    return 1
-  fi
-  env_lineno=0
-  while IFS= read -r env_line || [ -n "$env_line" ]; do
-    env_lineno=$((env_lineno + 1))
-    case "$env_line" in
-      '' | '#'*) continue ;;
-    esac
-    if ! printf '%s' "$env_line" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]'"'"'"\\]*$'; then
-      echo "::error file=${install_env_file},line=${env_lineno}::Expected a blank line, a # comment, or KEY=VALUE with no whitespace in the value. Refusing to install under a partially-applied environment."
-      return 1
-    fi
-    export "${env_line?}"
-  done < "$install_env_file"
-}
-
 clean_installed_node_modules() {
   local root="$1"
 
@@ -105,12 +67,25 @@ main() {
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit 1
   cd "$repo_root" || exit 1
 
-  # Environment that changes what the install PRODUCES lives in tools/ci/install.env, which the cache
-  # key hashes — so changing a value there invalidates the cache, while editing this script's prose
-  # does not. Do not move these exports back into this file; that is what made a stale tree
-  # invisible. Each assignment is exported, so both installs below inherit it.
+  # Environment that changes what the install PRODUCES. The cache key hashes THIS FILE, so a change
+  # here always changes the key — install behaviour and cache identity move together by construction.
   #
-  load_install_env tools/ci/install.env || exit 1
+  # This was briefly a separate tools/ci/install.env, parsed by hand, so that editing this script's
+  # prose would not cost every branch a cold rebuild. That traded a real 3-minute cost for a
+  # hand-written shell parser, and three review rounds found three fail-open defects in it, each one
+  # able to apply half an environment and return 0 — precisely the failure the separation existed to
+  # prevent. A conservative key is the cheaper trade: an occasional needless cold install, and no
+  # parser to be wrong.
+  #
+  # redis-memory-server's postinstall downloads a Redis binary and compiles Redis from source when
+  # that download fails. The compile is broken, so the postinstall exits 1 and takes the whole install
+  # with it (see this file's header for why that was invisible until a PR touched bun.lock). Nothing in
+  # CI uses those binaries: tests run against a real Redis service (packages/server/api/.env.tests sets
+  # AP_REDIS_TYPE=STANDALONE on 127.0.0.1:6379), the integration job starts one, and no test constructs
+  # RedisMemoryServer. Skipping the compile is the fix, not a workaround. The Dockerfile sets the same
+  # variable independently in its `base` stage, since it has three bun install calls and cannot read
+  # this file.
+  export REDISMS_DISABLE_POSTINSTALL=1
 
   if bun install --frozen-lockfile; then
     exit 0
