@@ -40,6 +40,17 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### JWTs are now issued as `qadam-flow` — and no action is required
+
+The `iss` claim on every token the platform mints changes from the inherited `activepieces` to `qadam-flow`. This includes the long-lived `AP_WORKER_TOKEN` that `docker-entrypoint.sh` and `qadam-flow token` generate.
+
+- **No action is required, and nothing needs regenerating.** The verifier accepts both issuers. On the bundled compose install `AP_WORKER_TOKEN` is minted by the entrypoint at container start and never written to disk, so workers re-mint under the new issuer on their own the first time they restart.
+- **A hand-set `AP_WORKER_TOKEN` keeps working indefinitely.** `qadam-flow token` mints with a 100-year expiry, so if you set the variable yourself there is nothing to do — the legacy issuer stays accepted.
+- **Existing user sessions keep working** (7-day expiry), as do engine tokens already embedded in queued jobs (`AP_EXECUTION_DATA_RETENTION_DAYS`, default 30 days). Nobody is signed out and no queued run fails authentication.
+- **Upgrade the `APP` container before the workers.** A new-image worker mints `qadam-flow`, which an APP container still on the old image will not accept. `docker compose up -d` recreates both together so the window is momentary, but on a multi-server or staged rollout do the API first.
+- **Rolling back is not free.** Any session or queued engine token minted while the new version was running carries `iss: qadam-flow`, which the old verifier rejects: users are signed out and in-flight runs fail authentication until those tokens age out. Workers self-heal on restart.
+- Newly minted tokens carry `iss: qadam-flow`. If you have external tooling that inspects the claim — a log pipeline, an API gateway, a monitoring rule — it must accept both.
+
 #### `AP_CONTAINER_TYPE` is now required, and `WORKER_AND_APP` has been removed
 
 The image no longer runs a process supervisor (PM2) of its own. Docker supervises one Node process per container, so a crash exits the container and shows up in `docker ps` and `docker events` instead of being restarted in place behind an `Up` status.

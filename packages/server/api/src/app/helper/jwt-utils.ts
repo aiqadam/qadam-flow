@@ -33,7 +33,19 @@ export enum JwtAudience {
 
 const ONE_WEEK = 7 * 24 * 3600
 const KEY_ID = '1'
-const ISSUER = 'activepieces'
+// Minting moved to the Qadam Flow name in #8. LEGACY_ISSUER stays accepted because
+// legacy-issued tokens outlive the upgrade, from three sources with different lifetimes:
+// user sessions (ONE_WEEK below), engine tokens already embedded in queued jobs
+// (AP_EXECUTION_DATA_RETENTION_DAYS, default 30), and hand-set AP_WORKER_TOKEN values —
+// `qadam-flow token` and the committed .env.dev one are minted with `expiresIn: '100y'`,
+// so those do not age out at all. Dropping this before they are gone locks the holders
+// out, and for the worker case the symptom names nothing: workers simply will not
+// connect. Safe to retire once the compose path has cycled (docker-entrypoint.sh re-mints
+// per container start, so that one self-heals) AND there is a documented way to rotate a
+// hand-set token.
+const ISSUER = 'qadam-flow'
+const LEGACY_ISSUER = 'activepieces'
+const ACCEPTED_ISSUERS = [ISSUER, LEGACY_ISSUER]
 const ALGORITHM = JwtSignAlgorithm.HS256
 
 const redisType = redisConnections.getRedisType()
@@ -91,7 +103,7 @@ export const jwtUtils = {
             `System property AP_${AppSystemProp.JWT_SECRET} must be defined`,
         )
     },
-    async decodeAndVerify<T>({ jwt, key, algorithm = ALGORITHM, issuer = ISSUER, audience }: VerifyParams): Promise<T> {
+    async decodeAndVerify<T>({ jwt, key, algorithm = ALGORITHM, issuer = ACCEPTED_ISSUERS, audience }: VerifyParams): Promise<T> {
         const verifyOptions: VerifyOptions = {
             algorithms: [algorithm],
             ...spreadIfDefined('issuer', issuer),
