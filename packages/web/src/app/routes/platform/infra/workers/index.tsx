@@ -1,4 +1,8 @@
-import { WorkerMachineStatus, WorkerMachineWithStatus } from '@aiqadam/shared';
+import {
+  isNil,
+  WorkerMachineStatus,
+  WorkerMachineWithStatus,
+} from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Server, Clock, Cpu, MemoryStick, HardDrive } from 'lucide-react';
 import prettyBytes from 'pretty-bytes';
@@ -125,7 +129,13 @@ function WorkerCard({ worker, index }: WorkerCardProps) {
 
   const sandboxes = worker.information.sandboxes ?? [];
 
-  const version = workerProps.version ?? 'v0.39.4';
+  // A worker that never reported a version used to be rendered as a hardcoded literal, which is
+  // a confident wrong answer to the exact question a version-skewed fleet raises (#222).
+  const reportedVersion = workerProps.version?.trim();
+  const version =
+    isNil(reportedVersion) || reportedVersion.length === 0
+      ? t('version unknown')
+      : reportedVersion;
 
   return (
     <Card>

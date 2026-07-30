@@ -4,7 +4,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { redisHelper } from '../../database/redis'
 import { redisConnections } from '../../database/redis-connections'
 
-const DELETE_LEGACY_REDIS_KEYS_KEY = 'delete_legacy_redis_keys_v2'
+const DELETE_LEGACY_REDIS_KEYS_KEY = 'delete_legacy_redis_keys_v3'
 
 const LEGACY_PATTERNS = [
     'tasks:project:*',
@@ -12,6 +12,9 @@ const LEGACY_PATTERNS = [
     'project-usage:*',
     'project-*-usage-tasks:*',
     'platform:*:worker_group_id',
+    // The worker registry moved from one hash to a key per worker so Redis can expire entries
+    // (#222). Nothing reads the hash any more, so its surviving fields would sit there forever.
+    'workerMachines',
 ]
 
 export const deleteLegacyRedisKeys = (log: FastifyBaseLogger) => ({

@@ -11,6 +11,7 @@ import {
     QadamFlowError,
     SandboxInformation,
     tryCatch,
+    tryCatchSync,
     WebsocketServerEvent,
     WorkerMachineHealthcheckRequest,
     WorkerProps,
@@ -34,7 +35,9 @@ const tracer = trace.getTracer('worker')
 
 const AP_VERSION = apVersionUtil.getCurrentRelease()
 
-const VERSION_MISMATCH_POLL_PAUSE_MS = 10_000
+// Exported so the skew test can assert this stays well under the registry TTL — a version-skewed
+// worker is kept in the registry only by the heartbeat on this interval (#222).
+export const VERSION_MISMATCH_POLL_PAUSE_MS = 10_000
 
 let socket: Socket | null = null
 let polling = false
@@ -147,17 +150,21 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
     workerLog.info('Polling worker started')
 
     while (polling && connectionGeneration === generation) {
-        const appVersion = workerSettings.getSettings().APP_VERSION
-        if (appVersion !== AP_VERSION) {
-            workerLog.warn({ appVersion, workerVersion: AP_VERSION }, 'Connected app version mismatch — pausing polling until reconnect to a compatible app')
-            await sleep(VERSION_MISMATCH_POLL_PAUSE_MS)
-            continue
-        }
-
         const { data: machineInfo, error: machineError } = await tryCatch(buildMachineInfo)
         if (machineError) {
             workerLog.error({ error: machineError }, 'Failed to build machine info')
             await sleep(20000)
+            continue
+        }
+
+        const appVersion = workerSettings.getSettings().APP_VERSION
+        if (appVersion !== AP_VERSION) {
+            workerLog.warn({ appVersion, workerVersion: AP_VERSION }, 'Connected app version mismatch — pausing polling until reconnect to a compatible app')
+            // `poll` is what refreshes this worker's registry entry, and the gate we are in means
+            // it is never called — so without a heartbeat the API expires the entry of a worker
+            // that is still connected, and loses its version with it (#222).
+            socket?.emit(WebsocketServerEvent.WORKER_HEALTHCHECK, machineInfo)
+            await sleep(VERSION_MISMATCH_POLL_PAUSE_MS)
             continue
         }
 
@@ -288,18 +295,20 @@ async function fetchAndStoreSettings(sock: Socket): Promise<void> {
 }
 
 function getWorkerProps(): WorkerProps {
-    try {
-        const settings = workerSettings.getSettings()
-        return {
-            EXECUTION_MODE: settings.EXECUTION_MODE,
-            WORKER_CONCURRENCY: system.get(WorkerSystemProp.WORKER_CONCURRENCY)!,
-            SANDBOX_MEMORY_LIMIT: settings.SANDBOX_MEMORY_LIMIT,
-            REUSE_SANDBOX: system.get(WorkerSystemProp.REUSE_SANDBOX) ?? 'false',
-            version: AP_VERSION,
-        }
+    // The version comes from this process's own package, not from the settings the API sends,
+    // so it is knowable before the first settings fetch resolves — and it must be reported then,
+    // because a version-skewed worker never completes a poll and its registration would
+    // otherwise carry no version at all, which is the one field that case is about (#222).
+    const { data: settings } = tryCatchSync(() => workerSettings.getSettings())
+    if (isNil(settings)) {
+        return { version: AP_VERSION }
     }
-    catch {
-        return {}
+    return {
+        EXECUTION_MODE: settings.EXECUTION_MODE,
+        WORKER_CONCURRENCY: system.get(WorkerSystemProp.WORKER_CONCURRENCY)!,
+        SANDBOX_MEMORY_LIMIT: settings.SANDBOX_MEMORY_LIMIT,
+        REUSE_SANDBOX: system.get(WorkerSystemProp.REUSE_SANDBOX) ?? 'false',
+        version: AP_VERSION,
     }
 }
 
