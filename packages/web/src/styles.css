@@ -512,9 +512,15 @@
     --ring: theme('colors.neutral.400');
     --radius: 0.5rem;
 
-    --primary-100: 257 75% 85%;
-    --primary: 257 74% 57%;
-    --primary-300: 257 74% 25%;
+    /* The pre-hydration paint only. theme-provider.tsx overwrites --primary, --primary-100 and
+       --primary-300 inline from the API's branding as soon as it has it, so these are what a user
+       sees for the first frame and whenever branding fails to load. They were the inherited
+       Activepieces purple while the server served the brand teal (#3CA29E, see
+       server/api/src/app/flags/theme.ts) — a visible flash of the wrong brand. Derived from the
+       same colour the server generates. */
+    --primary-100: 175.0 35.3% 93.3%;
+    --primary: 177.6 45.9% 43.5%;
+    --primary-300: 177.6 46.2% 41.6%;
     --primary-foreground: 210 20% 98%;
 
     /* Success — Emerald */
@@ -570,7 +576,7 @@
 
     --sidebar-background: theme('colors.neutral.50');
     --sidebar-foreground: theme('colors.neutral.950');
-    --sidebar-primary: 257 74% 57%;
+    --sidebar-primary: 177.6 45.9% 43.5%;
     --sidebar-primary-foreground: theme('colors.neutral.50');
     --sidebar-accent: color-mix(
       in srgb,
@@ -598,9 +604,12 @@
     --accent: theme('colors.neutral.700');
     --accent-foreground: theme('colors.neutral.50');
 
-    --primary-100: 210 80% 40%;
-    --primary: 210 90% 50%;
-    --primary-300: 210 100% 85%;
+    /* Deliberately no --primary / --primary-100 / --primary-300 here. They were a blue that
+       matched neither the light theme's accent nor the brand, and the provider overwrites all
+       three in both themes anyway — so the only thing the override ever produced was a
+       first-frame flash in a third colour. :root's values now apply to both themes, which is
+       what "the accent does not change hue between themes" means at the stylesheet level (#178).
+       --primary-foreground stays: it is a near-white the provider does not set. */
     --primary-foreground: 210 90% 98%;
 
     --success: var(--success-400);
@@ -624,7 +633,10 @@
 
     --sidebar-background: theme('colors.neutral.800');
     --sidebar-foreground: theme('colors.neutral.50');
-    --sidebar-primary: 210 85% 65%;
+    /* No component reads --sidebar-primary (grep across packages/web/src returns none). Kept
+       in step with the accent rather than left blue, so nobody reads a third brand colour out of
+       this file. */
+    --sidebar-primary: 177.6 45.9% 43.5%;
     --sidebar-primary-foreground: 210 90% 98%;
     --sidebar-accent: theme('colors.neutral.700');
     --sidebar-accent-foreground: theme('colors.neutral.50');
