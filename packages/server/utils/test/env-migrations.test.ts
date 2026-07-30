@@ -174,7 +174,7 @@ describe('environmentMigrations QF_/AP_ prefix aliasing', () => {
     })
 
     it('does not warn about shell-layer-only names that docker-entrypoint.sh/docker-compose.yml already set', async () => {
-        process.env['AP_CONTAINER_TYPE'] = 'WORKER_AND_APP'
+        process.env['AP_CONTAINER_TYPE'] = 'APP'
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
         await import('../src/env-migrations')

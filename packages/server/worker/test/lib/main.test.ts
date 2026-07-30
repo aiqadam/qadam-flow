@@ -14,6 +14,9 @@ vi.mock('../../src/lib/config/configs', () => ({
     system: {
         get: vi.fn().mockReturnValue(undefined),
         getOrThrow: vi.fn().mockReturnValue('worker-token'),
+        // main() now resolves the container type through this rather than defaulting, so the mock
+        // has to supply it — an unset value is a startup failure, not "both", since #211.
+        getContainerType: vi.fn().mockReturnValue('WORKER'),
     },
     WorkerSystemProp: {
         CONTAINER_TYPE: 'AP_CONTAINER_TYPE',
@@ -54,5 +57,17 @@ describe('worker main', () => {
             expect(mockDeleteStaleCache).toHaveBeenCalledTimes(1)
         })
         expect(mockWorkerStart).toHaveBeenCalledTimes(1)
+    })
+
+    // The mock above returns WORKER, which is the only value that switches the health server on.
+    // Asserting the argument is what makes that meaningful: without it, inverting the
+    // `containerType === 'WORKER'` test in main.ts turns nothing red.
+    it('starts the health server for a WORKER container', async () => {
+        await import('../../src/lib/main')
+
+        await vi.waitFor(() => {
+            expect(mockWorkerStart).toHaveBeenCalledTimes(1)
+        })
+        expect(mockWorkerStart).toHaveBeenCalledWith(expect.objectContaining({ withHealthServer: true }))
     })
 })

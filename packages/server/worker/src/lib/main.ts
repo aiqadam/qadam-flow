@@ -6,7 +6,7 @@ import { worker } from './worker'
 const workerToken = system.getOrThrow(WorkerSystemProp.WORKER_TOKEN)
 
 async function main(): Promise<void> {
-    const containerType = system.get(WorkerSystemProp.CONTAINER_TYPE) ?? 'WORKER_AND_APP'
+    const containerType = system.getContainerType()
 
     // Fire-and-forget: a stale-cache cleanup failure must never block a worker from
     // starting to accept jobs. Errors are logged inside deleteStaleCache itself.
