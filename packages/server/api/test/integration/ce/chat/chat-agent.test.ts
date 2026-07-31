@@ -11,6 +11,7 @@ import {
     isNil,
     PersistedChatPartType,
     PersistedChatRole,
+    PersistedToolCallStatus,
     Project,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
@@ -336,6 +337,84 @@ describe('Chat agent API', () => {
             const replayedToolResult = replayed.find((message: any) => message.role === 'tool')
             expect(replayedToolResult).toBeDefined()
             expect(replayed.filter((message: any) => message.role === 'user')).toHaveLength(2)
+        })
+
+        // #267. `llama3.1:8b` sends every argument as a string, so a strict `z.object(shape)` on
+        // the MCP shape rejected `{"limit":"1"}` and the model answered the user with a false
+        // failure plus a leaked raw tool call. Driven through the fixture provider because the
+        // coercion has to survive the whole adapter — schema wrapping, `parseToolCall`, and the
+        // handler — not just a unit call to `validate`.
+        it('runs a tool whose numeric argument the model sent as a string', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                toolCallStream({ toolName: 'ap_list_flows', callId: 'call_1', args: '{"limit":"1"}' }),
+                completionStream('You have no flows yet.'),
+            ]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list one flow', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            // The tool ran: `ap_list_flows` only ever answers with this on a successful listing.
+            const toolMessage = (providerBodies[1].messages as any[]).find((message: any) => message.role === 'tool')
+            expect(JSON.stringify(toolMessage)).toContain('Listed 0 flow(s)')
+            expect(JSON.stringify(toolMessage)).not.toContain('Invalid input')
+            // And it ran with a number, not the string: the transcript the model is shown next
+            // carries the coerced argument, so it is not being taught that strings are accepted.
+            const assistantCall = (providerBodies[1].messages as any[])
+                .find((message: any) => message.role === 'assistant' && !isNil(message.tool_calls))
+            expect(assistantCall.tool_calls[0].function.arguments).toBe('{"limit":1}')
+        })
+
+        // The other half of the same class of failure, and the one `z.coerce.boolean()` gets
+        // wrong: `Boolean('false')` is `true`, so a coercion built on it would invert the model.
+        it('runs a tool whose boolean argument the model sent as the string "false"', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                toolCallStream({
+                    toolName: 'ap_research_pieces',
+                    callId: 'call_1',
+                    args: '{"searchQuery":"email","includeActions":"false"}',
+                }),
+                completionStream('Here is what I found.'),
+            ]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'find an email piece', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const toolMessage = (providerBodies[1].messages as any[]).find((message: any) => message.role === 'tool')
+            // Positive first: `ap_research_pieces` only emits this on a successful search, so a
+            // failure for any unrelated reason cannot leave the `not.toContain` below vacuous.
+            expect(JSON.stringify(toolMessage)).toContain('Found pieces')
+            expect(JSON.stringify(toolMessage)).not.toContain('Invalid input')
+            const assistantCall = (providerBodies[1].messages as any[])
+                .find((message: any) => message.role === 'assistant' && !isNil(message.tool_calls))
+            expect(JSON.parse(assistantCall.tool_calls[0].function.arguments).includeActions).toBe(false)
+        })
+
+        // Leniency that swallowed nonsense would be worse than the bug: the model would be told
+        // the call succeeded and would report a result it never got. `"abc"` is left exactly as it
+        // arrived, Zod rejects it, and the rejection reaches the model as a tool error — the #263
+        // behaviour, which is what lets it correct itself instead of inventing an answer.
+        it('still rejects an argument that is not a number at all, and tells the model so', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                toolCallStream({ toolName: 'ap_list_flows', callId: 'call_1', args: '{"limit":"abc"}' }),
+                completionStream('I could not read that limit.'),
+            ]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list abc flows', runId: apId() })
+            const finished = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const toolMessage = (providerBodies[1].messages as any[]).find((message: any) => message.role === 'tool')
+            expect(JSON.stringify(toolMessage)).toContain('Invalid input for tool ap_list_flows')
+            // Not an empty success: the tool never ran, so nothing may claim it listed anything.
+            expect(JSON.stringify(toolMessage)).not.toContain('Listed')
+            const persistedParts = (finished.uiMessages as any[])[1].parts
+            const toolPart = persistedParts.find((part: any) => part.type === PersistedChatPartType.TOOL_CALL)
+            expect(toolPart.status).toBe(PersistedToolCallStatus.ERROR)
         })
 
         // Chat drives the same tools the REST API guards with `Permission.*`. Until this landed,

@@ -4,6 +4,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { PermissionChecker, resolvePermissionChecker } from '../mcp/mcp-permissions'
 import { LOCKED_TOOL_NAMES, qadamFlowTools } from '../mcp/tools'
+import { chatToolInput } from './chat-tool-input'
 
 export const chatTools = {
     async build({ mcp, userId, log }: BuildParams): Promise<ToolSet> {
@@ -49,8 +50,10 @@ function toAiSdkTool({ tool, permissionChecker }: { tool: McpToolDefinition, per
         title: tool.title,
         description: tool.description,
         // `inputSchema` on an McpToolDefinition is a raw Zod shape, which is what the MCP SDK
-        // takes; the AI SDK wants a schema, so it is wrapped rather than redeclared.
-        inputSchema: z.object(tool.inputSchema),
+        // takes; the AI SDK wants a schema, so it is wrapped rather than redeclared. The wrapping
+        // advertises that shape unchanged and only relaxes how the model's reply is read — see
+        // `chat-tool-input.ts`. The MCP contract for every other caller is untouched.
+        inputSchema: chatToolInput.lenient(tool.inputSchema),
         execute: async (input) => execute(toRecord(input)),
     })
 }
