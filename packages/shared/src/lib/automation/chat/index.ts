@@ -281,5 +281,3 @@ export { isBatchProgressData }
 
 export type ChatAllowedMimeType = typeof CHAT_ALLOWED_MIME_TYPES[number]
 export { CHAT_ALLOWED_MIME_TYPES }
-
-export { chatToolClassification } from './tool-classification'
