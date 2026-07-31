@@ -10,14 +10,17 @@ import { userService } from '../user/user-service'
 // their `permission` all along; nothing ever read it.
 export async function resolvePermissionChecker({ userId, projectId, log }: ResolveParams): Promise<PermissionChecker> {
     const user = await userService(log).getOneOrFail({ id: userId })
-    // Platform ADMIN/OPERATOR bypass per-project checks, exactly as they do on the REST path.
-    if (userService(log).isUserPrivileged(user)) {
-        return ALLOW_ALL
-    }
 
+    // Platform match is checked BEFORE the privileged bypass, in that order, because
+    // `authorize.ts:119-127` does the same and because getting it backwards fails open: a platform
+    // admin handed a project id from another platform would be waved through. No caller passes an
+    // unvalidated id today, but this function is exported and the next one might.
     const project = await projectService(log).getOne(projectId)
     if (isNil(project) || project.platformId !== user.platformId) {
         return DENY_ALL
+    }
+    if (userService(log).isUserPrivileged(user)) {
+        return ALLOW_ALL
     }
     if (project.type === ProjectType.PERSONAL) {
         return project.ownerId === user.id ? ALLOW_ALL : DENY_ALL
@@ -39,11 +42,14 @@ export async function resolvePermissionChecker({ userId, projectId, log }: Resol
 function checkerForPermissions(granted: string[]): PermissionChecker {
     const check = (permission: Permission | undefined, toolTitle: string): McpToolErrorResult | null => {
         // A tool that declares no permission is allowed to anyone who already has access to the
-        // project. All eight are metadata and discovery only — piece properties, piece research,
-        // the AI model list, property options and chains, step-config validation, the setup guide,
-        // project context — and none reads or writes project data. Everything that touches project
-        // data declares a permission, and a unit test asserts that stays true so a new tool cannot
-        // arrive unclassified and be allowed by default.
+        // project. That is deliberate rather than an oversight, but not for the reason it looks
+        // like: `ap_resolve_property_options`, `ap_resolve_property_chain` and `ap_get_piece_props`
+        // do reach real data — they run EXECUTE_PROPERTY against the project's stored connections
+        // and return what the third-party account holds. They are allowed because the REST route
+        // that does the same thing, `POST /v1/qadams/options`, is `securityAccess.project` with no
+        // permission either, so "any member of the project" is exactly the access this mirrors.
+        // The other four are metadata only. `mcp-tool-permissions.test.ts` pins the whole set, so a
+        // new tool cannot arrive unclassified and inherit this by default.
         if (isNil(permission) || granted.includes(permission)) {
             return null
         }

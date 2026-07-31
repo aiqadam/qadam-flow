@@ -111,6 +111,12 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             tools,
             stopWhen: stepCountIs(MAX_AGENT_STEPS),
             abortSignal: abortController.signal,
+            // Proof of life for `isAbandoned`. Without it a long run looks identical to one whose
+            // process died, and the staleness window would have to be longer than the longest
+            // possible run to be safe — which would make it useless.
+            onStepFinish: () => {
+                rejectedPromiseHandler(chatConversationService.touchRun({ id, platformId, userId }), log)
+            },
         })
 
         for await (const chunk of result.toUIMessageStream()) {

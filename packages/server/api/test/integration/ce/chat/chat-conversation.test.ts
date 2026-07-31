@@ -69,6 +69,25 @@ describe('Chat conversations API', () => {
             expect(ids).not.toContain(theirs['id'])
         })
 
+        // A conversation row can hold tens of megabytes — a message may carry ten 10 MB
+        // attachments, base64-encoded. Serialising those for a page of 100 would let any
+        // authenticated user pull gigabytes through the event loop in one request and stall the
+        // instance for every tenant. The client reads transcripts per conversation instead.
+        it('does not return the transcript blobs, only what a list row needs', async () => {
+            const conversation = await createConversation(ctx, { title: 'has a transcript' })
+            await db.update('chat_conversation', conversation['id'], {
+                uiMessages: [{ role: 'user', parts: [{ type: 'text', text: 'a very large transcript' }] }],
+                messages: [{ role: 'user', content: 'a very large transcript' }],
+            })
+
+            const response = await ctx.get('/v1/chat/conversations')
+
+            const row = response!.json().data.find((candidate: Record<string, unknown>) => candidate.id === conversation['id'])
+            expect(row.title).toBe('has a transcript')
+            expect(row.messages).toBeUndefined()
+            expect(row.uiMessages).toBeUndefined()
+        })
+
         it('honours the page limit', async () => {
             await createConversation(ctx)
             await createConversation(ctx)

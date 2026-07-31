@@ -48,7 +48,17 @@ export const chatConversationService = {
         })
         // Scoped by userId as well as platformId: a conversation is private to the person who
         // opened it, and it carries their prompts and the outputs of tools run as them.
-        const query = repo().createQueryBuilder(ChatConversationEntity.options.name).where({ platformId, userId })
+        //
+        // The transcript columns are deliberately excluded. A single row can hold tens of
+        // megabytes — a message may carry ten 10 MB attachments, base64-encoded into `messages` —
+        // so serialising 100 of them would let any authenticated user pull gigabytes through the
+        // event loop in one request and stall the process for every tenant on the instance. The
+        // client never reads them from here anyway; it fetches them per conversation from
+        // `GET /conversations/:id/messages`.
+        const query = repo()
+            .createQueryBuilder(ChatConversationEntity.options.name)
+            .select(LIST_COLUMNS.map((column) => `${ChatConversationEntity.options.name}.${column}`))
+            .where({ platformId, userId })
         const { data, cursor: newCursor } = await paginator.paginate(query)
         return paginationHelper.createPage<ChatConversation>(data, newCursor)
     },
@@ -105,7 +115,7 @@ export const chatConversationService = {
                     params: { entityId: id, entityType: 'ChatConversation' },
                 })
             }
-            if (conversation.status === ChatConversationStatus.STREAMING) {
+            if (conversation.status === ChatConversationStatus.STREAMING && !isAbandoned(conversation)) {
                 // Refusing the second is better than corrupting the history; the client already
                 // disables sending while a run is in flight, so this catches a second tab or a
                 // retry rather than normal use.
@@ -144,7 +154,37 @@ export const chatConversationService = {
         const conversation = await this.getOneOrThrow({ id, platformId, userId })
         await repo().save({ ...conversation, status: ChatConversationStatus.ERROR })
     },
+
+    // Called on every step boundary so `updated` keeps moving while a run is genuinely alive. That
+    // is what lets `isAbandoned` tell "still working" from "the process that owned this died", and
+    // it is why the staleness window can be short enough to be useful.
+    async touchRun({ id, platformId, userId }: GetParams): Promise<void> {
+        await repo().update({ id, platformId, userId, status: ChatConversationStatus.STREAMING }, { updated: new Date().toISOString() })
+    },
+
+    // Settling the row is the caller's job as well as the loop's. A cancel that reaches an API
+    // instance which is not the one running the loop — or a conversation whose owning process is
+    // simply gone — must still leave STREAMING, or the client polls forever and every later
+    // message 409s with nothing the user can do about it.
+    async cancelRun({ id, platformId, userId }: GetParams): Promise<void> {
+        await repo().update({ id, platformId, userId, status: ChatConversationStatus.STREAMING }, { status: ChatConversationStatus.IDLE })
+    },
 }
+
+// A live run touches the row at every step, and the transport gives up on a silent provider after
+// 120s, so a STREAMING row untouched for this long belongs to a process that is no longer running
+// — an API restart mid-run, which is routine on a self-hosted upgrade. Without this the
+// conversation is wedged permanently: nothing settles the row, every message 409s, and the client
+// spins on a status that will never change.
+const ABANDONED_RUN_AFTER_MS = 5 * 60 * 1000
+
+function isAbandoned(conversation: ChatConversation): boolean {
+    return Date.now() - new Date(conversation.updated).getTime() > ABANDONED_RUN_AFTER_MS
+}
+
+// Everything the conversation list needs to render a row, and nothing that grows with the
+// conversation. `paginationHelper` needs `created`/`id` for its cursor.
+const LIST_COLUMNS = ['id', 'created', 'updated', 'platformId', 'projectId', 'userId', 'title', 'modelName', 'status', 'summary', 'summarizedUpToIndex']
 
 type CreateParams = {
     platformId: string

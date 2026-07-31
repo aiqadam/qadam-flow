@@ -192,6 +192,17 @@ function toolCallStream({ toolName, callId, args }: { toolName: string, callId: 
     ].join('')
 }
 
+async function waitForCondition(read: () => Promise<Record<string, unknown> | null>): Promise<Record<string, unknown>> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const row = await read()
+        if (row !== null) {
+            return row
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error('Condition never became true')
+}
+
 async function waitForStatus(conversationId: string, status: ChatConversationStatus): Promise<Record<string, unknown>> {
     for (let attempt = 0; attempt < 100; attempt++) {
         const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
@@ -393,6 +404,24 @@ describe('Chat agent API', () => {
             expect(providerCalls).toEqual([])
         })
 
+        // An API restart mid-run is routine on a self-hosted upgrade, and it leaves a STREAMING row
+        // with no process behind it. Without a way out the conversation is dead: every later
+        // message 409s and the client polls a status that will never change.
+        it('takes over a run abandoned by a restarted process instead of wedging the conversation', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+            await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.STREAMING, updated: longAgo })
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, {
+                content: 'are you still there',
+                runId: apId(),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+        })
+
         it('refuses a platform sibling attempt to post into someone else conversation', async () => {
             await enableChatProvider(ctx.platform.id)
             // Same platform on purpose — two createTestContext calls would give two different
@@ -537,10 +566,29 @@ describe('Chat agent API', () => {
             expect(cancelled?.statusCode).toBe(StatusCodes.NO_CONTENT)
             releaseRest()
 
-            const settled = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
-            expect(settled.status).not.toBe(ChatConversationStatus.ERROR)
-            const parts = (settled.uiMessages as any[])[1]?.parts
-            expect(parts?.[0]?.text).toContain('Partial answer so far')
+            // Waiting on the assistant turn, not on IDLE: the cancel endpoint settles the status
+            // itself so that a run owned by another process still unsticks, which means IDLE can
+            // land before the loop has written what it managed to stream.
+            const settled = await waitForCondition(async () => {
+                const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return (row?.uiMessages as any[])?.length === 2 ? row : null
+            })
+            expect(settled.status).toBe(ChatConversationStatus.IDLE)
+            expect((settled.uiMessages as any[])[1].parts[0].text).toContain('Partial answer so far')
+        })
+
+        // The abort controller lives in the process that started the run. A cancel arriving at any
+        // other instance — or after that instance restarted — must still settle the row, or the
+        // user is left with a stop button that answers 204 and changes nothing.
+        it('settles a conversation left streaming by another process', async () => {
+            const conversationId = await createConversation(ctx)
+            await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.STREAMING })
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
+
+            expect(response?.statusCode).toBe(StatusCodes.NO_CONTENT)
+            const settled = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+            expect(settled?.status).toBe(ChatConversationStatus.IDLE)
         })
 
         it('refuses to cancel a platform sibling run', async () => {
