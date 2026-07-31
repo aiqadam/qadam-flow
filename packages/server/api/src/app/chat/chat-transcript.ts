@@ -37,8 +37,12 @@ export const chatTranscript = {
             : toAssistantModelMessages({
                 parts: message.parts,
                 knownApprovalIds: requestedApprovalIds,
-                // Both conditions, and both matter: the run must actually be resuming a gate, AND
-                // this must be the turn that carries it. See `toAssistantModelMessages`.
+                // `resumingGate` is the condition that decides this; the index check is
+                // belt-and-braces. `chatApprovals.assertAnswerable` refuses to answer a gate whose
+                // message is not the newest, and `recentTurns` only ever drops *leading* messages,
+                // so on the approve path the resumed gate is already guaranteed to be last. Kept
+                // because this is a general helper and a future caller could pass a different array
+                // — but do not read it as load-bearing, or as a second guard on the same risk.
                 isResumedGateTurn: resumingGate && index === window.length - 1,
             }))
     },

@@ -5,6 +5,8 @@ import {
   isObject,
   omit,
 } from '@aiqadam/shared';
+import { t } from 'i18next';
+import { toast } from 'sonner';
 import { StoreApi, create } from 'zustand';
 
 import { chatApi } from './chat-api';
@@ -12,8 +14,12 @@ import { MultiQuestion } from './chat-store-types';
 import { AnyToolPart, ChatUIMessage, chatPartUtils } from './chat-types';
 import { chatUtils } from './chat-utils';
 
-// Fire-and-forget by design: the answer starts a run, and the run reaches the UI over the socket
-// like any other. `onResumed` is how the chat hook learns the run id it should start rendering.
+// The answer starts a run, and the run reaches the UI over the socket like any other, so the happy
+// path is fire-and-forget. The failure path is not: the card is dismissed optimistically, and the
+// server can legitimately refuse — a gate already answered, or one the conversation has moved past
+// and which therefore cannot resume. Swallowing that left the user looking at a dismissed card for
+// a destructive action that never happened, which is the same silent success the server was fixed
+// to stop producing. So a refusal restores the card and says why.
 function sendApprovalDecision({
   conversationId,
   gateId,
@@ -21,6 +27,7 @@ function sendApprovalDecision({
   reason,
   toolCallId,
   onRunResumed,
+  onRefused,
 }: {
   conversationId: string | null;
   gateId: string;
@@ -28,12 +35,39 @@ function sendApprovalDecision({
   reason?: string;
   toolCallId?: string;
   onRunResumed: ((runId: string) => void) | null;
+  onRefused: () => void;
 }): void {
   if (!conversationId) return;
   void chatApi
     .approveToolCall({ conversationId, gateId, approved, reason, toolCallId })
     .then((started) => onRunResumed?.(started.runId))
-    .catch(() => undefined);
+    .catch((error: unknown) => {
+      onRefused();
+      toast.error(refusalMessage(error));
+    });
+}
+
+// The server's own wording where it has one — it is written for the user ("This action can no longer
+// be answered because the conversation has moved on."). Anything else is a transport failure, and
+// saying so is more honest than inventing a reason.
+function refusalMessage(error: unknown): string {
+  const params =
+    isObject(error) && isObject(error.response) && isObject(error.response.data)
+      ? error.response.data.params
+      : undefined;
+  const message = isObject(params) ? params.message : undefined;
+  return typeof message === 'string' && message.length > 0
+    ? message
+    : t('The action could not be answered. Please try again.');
+}
+
+// Undoes the optimistic dismissal so the card comes back and the user can see the action is still
+// unanswered.
+function restoreGate(
+  prev: ChatStoreState,
+  gateId: string,
+): Partial<ChatStoreState> {
+  return { dismissedGateIds: omit(prev.dismissedGateIds, [gateId]) };
 }
 
 function extractQuestionsFromInput(part: AnyToolPart | null): MultiQuestion[] {
@@ -115,6 +149,7 @@ export const createChatStore = () =>
         gateId,
         approved: true,
         onRunResumed,
+        onRefused: () => set((prev) => restoreGate(prev, gateId)),
       });
     },
     rejectGate: (gateId: string, reason?: string) => {
@@ -123,6 +158,7 @@ export const createChatStore = () =>
       sendApprovalDecision({
         conversationId,
         gateId,
+        onRefused: () => set((prev) => restoreGate(prev, gateId)),
         approved: false,
         reason,
         onRunResumed,
