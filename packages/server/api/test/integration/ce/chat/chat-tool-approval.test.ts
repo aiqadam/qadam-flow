@@ -110,13 +110,16 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-    await teardownTestEnvironment(app)
-    await new Promise<void>((resolve) => providerServer.close(() => resolve()))
+    await teardownTestEnvironment()
+    await new Promise<void>((resolve, reject) => providerServer.close((err) => err ? reject(err) : resolve()))
 })
 
 beforeEach(async () => {
     providerBodies = []
     scriptedResponses = []
+    if (isNil(app)) {
+        throw new Error('test environment was not set up')
+    }
     ctx = await createTestContext(app)
 })
 
@@ -145,9 +148,9 @@ async function createConversation(context: TestContext): Promise<string> {
 
 async function waitForStatus(conversationId: string, status: ChatConversationStatus): Promise<Record<string, unknown>> {
     for (let attempt = 0; attempt < 200; attempt++) {
-        const row = await db.findOneBy('chat_conversation', { id: conversationId })
+        const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
         if (!isNil(row) && row['status'] === status) {
-            return row as Record<string, unknown>
+            return row
         }
         await new Promise((resolve) => setTimeout(resolve, 50))
     }

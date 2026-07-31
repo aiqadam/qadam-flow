@@ -4,6 +4,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { PermissionChecker, resolvePermissionChecker } from '../mcp/mcp-permissions'
 import { LOCKED_TOOL_NAMES, qadamFlowTools } from '../mcp/tools'
+import { chatToolGating } from './chat-tool-gating'
 import { chatToolInput } from './chat-tool-input'
 
 export const chatTools = {
@@ -54,6 +55,13 @@ function toAiSdkTool({ tool, permissionChecker }: { tool: McpToolDefinition, per
         // advertises that shape unchanged and only relaxes how the model's reply is read — see
         // `chat-tool-input.ts`. The MCP contract for every other caller is untouched.
         inputSchema: chatToolInput.lenient(tool.inputSchema),
+        // #264. Deliberately keyed on an explicit list rather than on `tool.annotations`, which are
+        // not forwarded here at all: `destructiveHint` is `false` on tools that publish or enable a
+        // flow, so a gate derived from it would fail open. See `chat-tool-gating.ts` for the audit.
+        // Read synchronously — the SDK awaits this inside the transform that pumps provider chunks
+        // (`ai/dist/index.mjs:6263`), so any I/O here stalls the stream and eats into the
+        // first-token timeout tuned in #266.
+        needsApproval: chatToolGating.requiresApproval(tool.title),
         execute: async (input) => execute(toRecord(input)),
     })
 }
