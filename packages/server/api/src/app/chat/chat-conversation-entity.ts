@@ -38,10 +38,14 @@ export const ChatConversationEntity = new EntitySchema<ChatConversationSchema>({
             type: String,
             nullable: false,
         },
-        // Two histories, not one, because they serve different readers: `messages` is the provider
-        // transcript replayed back to the model, `uiMessages` is the rendered part list the web
-        // client draws. Deriving either from the other loses information the other side needs —
-        // reasoning signatures on one side, thinking-status parts on the other.
+        // Two histories, because the shared `ChatConversation` contract declares both and the web
+        // client reads `uiMessages`. `uiMessages` is the live one: it is schema-validated, it is
+        // what the client renders, and it is what the next turn's transcript is rebuilt from.
+        // `messages` is a write-only record of what was last sent to the provider — the AI SDK
+        // exports no runtime schema for `ModelMessage`, so reading it back would need a cast this
+        // repo does not allow. Nothing is lost by replaying from `uiMessages`: cross-turn
+        // reasoning is stripped for every provider anyway (`chatAiUtils.stripThinkingBlocks`),
+        // and the tool-call/result pairs survive.
         messages: {
             type: 'json',
             nullable: false,

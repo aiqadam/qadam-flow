@@ -15,3 +15,14 @@ Dockerfile
 dist
 docs
 **/node_modules
+
+# The chat system prompt is a runtime asset, not documentation: the API reads it off disk on every
+# chat run (packages/server/api/src/app/chat/chat-agent.service.ts), so if it is excluded here the
+# chat breaks in the built image only — never in dev, never in CI.
+#
+# It is not excluded today: `*.md` above has no `/`, and Docker matches it against the whole
+# relative path, so it catches top-level docs and nothing nested. Verified by building a synthetic
+# context with this same file — the nested prompt was copied, README.md was not. This line is kept
+# anyway because the last matching rule wins: it means widening `*.md` to `**/*.md` later cannot
+# silently take the prompt with it.
+!packages/server/api/src/assets/prompts/*.md

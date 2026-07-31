@@ -84,6 +84,46 @@ export const chatConversationService = {
         await this.getOneOrThrow({ id, platformId, userId })
         await repo().delete({ id, platformId, userId })
     },
+
+    // `save` rather than `update` throughout the run lifecycle: TypeORM's
+    // `QueryDeepPartialEntity` cannot express a json column holding a discriminated union, so an
+    // `update` of `messages`/`uiMessages` does not type-check at all.
+    async startRun({ id, platformId, userId, projectId, userMessage }: StartRunParams): Promise<void> {
+        const conversation = await this.getOneOrThrow({ id, platformId, userId })
+        if (conversation.status === ChatConversationStatus.STREAMING) {
+            // Both `startRun` and `finishRun` read `uiMessages`, append, and write the whole array
+            // back, so two overlapping runs on one conversation silently lose one side's turn.
+            // Refusing the second is better than corrupting the history; the client already
+            // disables sending while a run is in flight, so this catches a second tab or a retry.
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'This conversation is already generating a reply. Wait for it to finish or cancel it first.' },
+            })
+        }
+        await repo().save({
+            ...conversation,
+            // Pinned on the first run so every later turn — and the connection picker — resolves
+            // the same project, instead of drifting when the user's project list changes.
+            projectId,
+            status: ChatConversationStatus.STREAMING,
+            uiMessages: [...(conversation.uiMessages ?? []), userMessage],
+        })
+    },
+
+    async finishRun({ id, platformId, userId, messages, assistantMessage }: FinishRunParams): Promise<void> {
+        const conversation = await this.getOneOrThrow({ id, platformId, userId })
+        await repo().save({
+            ...conversation,
+            status: ChatConversationStatus.IDLE,
+            messages,
+            uiMessages: [...(conversation.uiMessages ?? []), assistantMessage],
+        })
+    },
+
+    async failRun({ id, platformId, userId }: GetParams): Promise<void> {
+        const conversation = await this.getOneOrThrow({ id, platformId, userId })
+        await repo().save({ ...conversation, status: ChatConversationStatus.ERROR })
+    },
 }
 
 type CreateParams = {
@@ -107,4 +147,14 @@ type GetParams = {
 
 type UpdateParams = GetParams & {
     request: UpdateChatConversationRequest
+}
+
+type StartRunParams = GetParams & {
+    projectId: string
+    userMessage: PersistedChatMessage
+}
+
+type FinishRunParams = GetParams & {
+    messages: ChatConversation['messages']
+    assistantMessage: PersistedChatMessage
 }
