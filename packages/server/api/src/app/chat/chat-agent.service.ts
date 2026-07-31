@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { chatAiUtils, ContentPartLike } from '@aiqadam/server-utils'
 import {
+    AnswerChatToolApprovalRequest,
     apId,
     ChatAgentEvent,
     ChatAgentEventType,
@@ -14,6 +15,7 @@ import {
     QadamFlowError,
     SendChatMessageRequest,
     spreadIfDefined,
+    ToolApprovalRequestEvent,
     tryCatch,
     WebsocketClientEvent,
 } from '@aiqadam/shared'
@@ -24,6 +26,7 @@ import { rejectedPromiseHandler } from '../helper/promise-handler'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { mcpServerService } from '../mcp/mcp-service'
+import { chatApprovals } from './chat-approvals'
 import { chatConversationService } from './chat-conversation.service'
 import { chatModel, ResolvedChatModel } from './chat-model'
 import { chatProjects } from './chat-projects'
@@ -46,12 +49,8 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
         const systemPrompt = await buildSystemPrompt({ projectId, platformId, userId, log })
 
         const runId = request.runId ?? apId()
-        const messages = [
-            ...chatTranscript.toModelMessages(conversation.uiMessages ?? []),
-            buildUserMessage(request),
-        ]
 
-        const { displacedRunId } = await chatConversationService.startRun({
+        const { displacedRunId, uiMessages } = await chatConversationService.startRun({
             id,
             platformId,
             userId,
@@ -60,6 +59,15 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             log,
             userMessage: { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: request.content }] },
         })
+
+        // Composed from what admission actually wrote rather than from the row read above, because
+        // admitting a message auto-denies any gate still waiting and that denial lands on an older
+        // message. The just-appended user turn is dropped and rebuilt by `buildUserMessage`, which
+        // is the only path that can carry attachments — the persisted turn is text alone.
+        const messages = [
+            ...chatTranscript.toModelMessages(uiMessages.slice(0, -1)),
+            buildUserMessage(request),
+        ]
 
         // A takeover only rewrites the row. If the run it displaced is still looping in this
         // process, it has to be stopped too, or two loops stream the same conversation.
@@ -73,6 +81,79 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             resolvedModel,
             systemPrompt,
             messages,
+            tools,
+            log,
+        }), log)
+
+        return { conversationId: id, runId }
+    },
+
+    /**
+     * Answers one gate and resumes the run it stopped.
+     *
+     * Ownership is proven by `getOneOrThrow` — `{ id, platformId, userId }` — *before* anything looks
+     * for the approval, and the approval is then looked for inside that row alone. The inverse shape,
+     * "find the conversation holding approval X", would authorise on knowledge of an id that appears
+     * in a socket payload and a card, which is not a secret. Route order matters for the same reason:
+     * the gate id is a path segment *under* the conversation, so there is no way to reach this
+     * without naming a conversation the caller can already open.
+     *
+     * The tool is not executed here. `collectToolApprovals` executes it inside the resumed
+     * `streamText` call (`ai/dist/index.mjs:7013`); doing it here as well would run it twice.
+     */
+    async approve({ id, platformId, userId, approvalId, request }: ApproveParams): Promise<StartChatRunResponse> {
+        const conversation = await chatConversationService.getOneOrThrow({ id, platformId, userId })
+        // Before any of the resolution below, so a gate that cannot be answered is reported as
+        // itself. It is re-checked under the row lock inside `startRun`, which is the check that
+        // counts; this one only picks the right error to answer with.
+        chatApprovals.assertAnswerable({
+            uiMessages: conversation.uiMessages,
+            approvalId,
+            expectedToolCallId: request.toolCallId,
+        })
+        const projectId = await resolveProjectId({ conversation, log })
+        const resolvedModel = await chatModel.resolve({ platformId, modelName: conversation.modelName, log })
+
+        const mcp = await mcpServerService(log).getByProjectId(projectId)
+        const projectScopedMcp: ProjectScopedMcpServer = { ...mcp, projectId }
+        const tools = await chatTools.build({ mcp: projectScopedMcp, userId, log })
+        const systemPrompt = await buildSystemPrompt({ projectId, platformId, userId, log })
+
+        const runId = apId()
+        const { displacedRunId, uiMessages } = await chatConversationService.startRun({
+            id,
+            platformId,
+            userId,
+            projectId,
+            runId,
+            log,
+            userMessage: null,
+            approval: {
+                approvalId,
+                approved: request.approved,
+                reason: request.reason,
+                expectedToolCallId: request.toolCallId,
+            },
+        })
+
+        abortRun(displacedRunId)
+
+        rejectedPromiseHandler(runAgentLoop({
+            id,
+            platformId,
+            userId,
+            runId,
+            resolvedModel,
+            systemPrompt,
+            // No user turn is appended, so the transcript ends on the tool message carrying the
+            // response — the only arrangement in which `collectToolApprovals` reads it at all
+            // (`ai/dist/index.mjs:2690`: it returns empty unless the last message is a tool message).
+            // `resumingGate` is set ONLY here: this is the one run that must leave the settled gate
+            // without a tool result, because a result would make `collectToolApprovals` skip the
+            // call (`:2737`) and the approved tool would silently never execute. Every other run —
+            // `start` included, which is where an auto-denied gate is replayed — must answer it, or
+            // the provider rejects an assistant `tool-call` that nothing responds to.
+            messages: chatTranscript.toModelMessages(uiMessages, { resumingGate: true }),
             tools,
             log,
         }), log)
@@ -119,6 +200,13 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
     const abortController = new AbortController()
     activeRuns.set(runId, abortController)
     const streamedText: string[] = []
+    // The SDK's `tool-approval-request` UI chunk carries `{ type, approvalId, toolCallId }` and
+    // nothing else (`ai/dist/index.mjs:5136-5140`), but the card is useless without the tool and its
+    // arguments. The gated call's `tool-input-available` chunk is enqueued *before* the approval
+    // check (`:6226` then `:6264`), so by the time the request arrives its input has already gone
+    // past — correlated by `toolCallId` here rather than re-read from the database, which the row
+    // does not yet contain.
+    const gatedCallInputs = new Map<string, { toolName: string, input: Record<string, unknown> }>()
 
     const { error } = await tryCatch(async () => {
         const result = streamText({
@@ -142,6 +230,10 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             // reply that survives a cancel.
             collectStreamedText({ chunk, into: streamedText })
             emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.CHUNK, data: chunk } })
+            const approvalEvent = trackToolApproval({ chunk, gatedCallInputs })
+            if (!isNil(approvalEvent)) {
+                emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.TOOL_APPROVAL_REQUEST, data: approvalEvent } })
+            }
         }
 
         const steps = await result.steps
@@ -190,6 +282,43 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         runId,
         event: { type: ChatAgentEventType.ERROR, data: { message: 'The assistant could not finish this message. Please try again.' } },
     })
+}
+
+// Narrowed off `unknown` for the same reason `collectStreamedText` is: the stream's element type is
+// generic over the UI message shape, and reading fields off it directly needs a cast this repo
+// forbids. Returns the event to emit rather than emitting, so the caller keeps the one socket path.
+function trackToolApproval({ chunk, gatedCallInputs }: TrackApprovalParams): ToolApprovalRequestEvent | null {
+    if (typeof chunk !== 'object' || isNil(chunk) || !('type' in chunk)) {
+        return null
+    }
+    if (chunk.type === 'tool-input-available' && 'toolCallId' in chunk && typeof chunk.toolCallId === 'string' && 'toolName' in chunk && typeof chunk.toolName === 'string') {
+        gatedCallInputs.set(chunk.toolCallId, {
+            toolName: chunk.toolName,
+            input: 'input' in chunk ? toInputRecord(chunk.input) : {},
+        })
+        return null
+    }
+    if (chunk.type !== 'tool-approval-request' || !('approvalId' in chunk) || typeof chunk.approvalId !== 'string' || !('toolCallId' in chunk) || typeof chunk.toolCallId !== 'string') {
+        return null
+    }
+    const gatedCall = gatedCallInputs.get(chunk.toolCallId)
+    if (isNil(gatedCall)) {
+        return null
+    }
+    return {
+        approvalId: chunk.approvalId,
+        toolCallId: chunk.toolCallId,
+        toolName: gatedCall.toolName,
+        displayName: chatApprovals.toDisplayName(gatedCall.toolName),
+        toolInput: gatedCall.input,
+    }
+}
+
+function toInputRecord(value: unknown): Record<string, unknown> {
+    if (typeof value !== 'object' || isNil(value) || Array.isArray(value)) {
+        return {}
+    }
+    return { ...value }
 }
 
 function collectStreamedText({ chunk, into }: { chunk: unknown, into: string[] }): void {
@@ -319,6 +448,11 @@ function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {
         // A failed tool call carries its detail on `error`; `buildStepParts` reads it from
         // `output`, so it is folded in here rather than special-cased there.
         ...spreadIfDefined('output', 'error' in part ? part.error : undefined),
+        // A tool approval request carries no flat `toolCallId`/`toolName`/`input` at all — the
+        // gated call is nested under `toolCall` — so without these two the part arrives at
+        // `buildStepParts` as a bare type with nothing to persist.
+        ...spreadIfDefined('approvalId', 'approvalId' in part ? part.approvalId : undefined),
+        ...spreadIfDefined('toolCall', 'toolCall' in part ? part.toolCall : undefined),
     })))
 }
 
@@ -333,6 +467,19 @@ type StartParams = {
     platformId: string
     userId: string
     request: SendChatMessageRequest
+}
+
+type ApproveParams = {
+    id: string
+    platformId: string
+    userId: string
+    approvalId: string
+    request: AnswerChatToolApprovalRequest
+}
+
+type TrackApprovalParams = {
+    chunk: unknown
+    gatedCallInputs: Map<string, { toolName: string, input: Record<string, unknown> }>
 }
 
 type RunLoopParams = {

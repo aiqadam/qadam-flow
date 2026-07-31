@@ -69,6 +69,7 @@ export function ChatBottomBar({
 
   const approveGate = useChatStoreContext((s) => s.approveGate);
   const rejectGate = useChatStoreContext((s) => s.rejectGate);
+  const answerApprovalGate = useChatStoreContext((s) => s.answerApprovalGate);
   const dismissGate = useChatStoreContext((s) => s.dismissGate);
   const dismissForm = useChatStoreContext((s) => s.dismissForm);
 
@@ -90,15 +91,26 @@ export function ChatBottomBar({
     );
   }
 
-  // MCP tool approval from toolCallMeta
+  // The tool-approval gate. Addressed by `approvalId`, never by `toolCallId`: the server compares the
+  // two and refuses a mismatch, because a stale card naming another call would otherwise spend the
+  // wrong gate.
   if (pendingMcpApproval) {
     return (
       <ToolApprovalForm
-        key={pendingMcpApproval.toolCallId}
+        key={pendingMcpApproval.approvalId}
         displayName={pendingMcpApproval.displayName}
-        onApprove={() => approveGate(pendingMcpApproval.toolCallId)}
-        onReject={() => rejectGate(pendingMcpApproval.toolCallId)}
-        onDismiss={() => dismissGate(pendingMcpApproval.toolCallId)}
+        toolName={pendingMcpApproval.toolName}
+        toolInput={pendingMcpApproval.toolInput}
+        onApprove={() =>
+          answerApprovalGate(pendingMcpApproval.approvalId, { approved: true })
+        }
+        onReject={(reason) =>
+          answerApprovalGate(pendingMcpApproval.approvalId, {
+            approved: false,
+            reason,
+          })
+        }
+        onDismiss={() => dismissGate(pendingMcpApproval.approvalId)}
       />
     );
   }

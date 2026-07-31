@@ -7,6 +7,7 @@ import {
   ChatHistoryMessage,
   CHAT_ALLOWED_MIME_TYPES,
   isNil,
+  PendingChatToolApproval,
   PersistedChatMessage,
   ToolApprovalRequestEvent,
   ToolProgressEvent,
@@ -43,21 +44,18 @@ function restoreReceiptsIntoStore({
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const AGENT_POLL_INTERVAL_MS = 5_000;
 
-function buildToolCallMetaFromGate(gate: {
-  gateId: string;
-  toolName: string;
-  displayName: string;
-  toolInput: Record<string, unknown>;
-}): Record<string, ToolCallMeta> {
+function buildToolCallMetaFromGate(
+  gate: PendingChatToolApproval,
+): Record<string, ToolCallMeta> {
   if (chatPartUtils.isDisplayTool(gate.toolName)) {
     return {};
   }
   const gateInput = gate.toolInput ?? {};
   if (gate.toolName === 'ap_execute_action') {
     return {
-      [gate.gateId]: {
+      [gate.toolCallId]: {
         actionPreview: {
-          toolCallId: gate.gateId,
+          toolCallId: gate.toolCallId,
           qadamName:
             typeof gateInput.qadamName === 'string' ? gateInput.qadamName : '',
           actionName:
@@ -83,15 +81,53 @@ function buildToolCallMetaFromGate(gate: {
       },
     };
   }
-  return {
-    [gate.gateId]: {
-      approvalRequest: {
-        toolCallId: gate.gateId,
-        toolName: gate.toolName,
-        displayName: gate.displayName,
-      },
-    },
+  // Everything else needs no meta at all: an approval card is rendered from the tool part's
+  // `approval-requested` state, which both the live stream and the replayed transcript produce.
+  return {};
+}
+
+// The card is driven by the tool part, so the fetched gate only has to be *represented* as one. It
+// normally already is — `mapHistoryToUIMessages` turns the persisted request part into exactly this —
+// and this synthesises it for the case where it is not, which is the case a gate raised in a run whose
+// assistant message has not been reconciled yet actually hits.
+function withGatePart({
+  messages,
+  gate,
+}: {
+  messages: ChatUIMessage[];
+  gate: PendingChatToolApproval;
+}): ChatUIMessage[] {
+  const alreadyPresent = messages.some((message) =>
+    message.parts.some(
+      (part) =>
+        chatPartUtils.isAnyToolPart(part) &&
+        chatPartUtils.getApprovalId(part) === gate.gateId,
+    ),
+  );
+  if (alreadyPresent) return messages;
+  const gatePart = {
+    type: 'dynamic-tool' as const,
+    toolCallId: gate.toolCallId,
+    toolName: gate.toolName,
+    title: gate.displayName,
+    state: 'approval-requested' as const,
+    input: gate.toolInput,
+    approval: { id: gate.gateId },
   };
+  const lastAssistantIdx = messages.findLastIndex(
+    (m) => m.role === 'assistant',
+  );
+  if (lastAssistantIdx === -1) {
+    return [
+      ...messages,
+      { id: `gate-${gate.gateId}`, role: 'assistant', parts: [gatePart] },
+    ];
+  }
+  return messages.map((message, idx) =>
+    idx === lastAssistantIdx
+      ? { ...message, parts: [...message.parts, gatePart] }
+      : message,
+  );
 }
 
 const ALLOWED_MIME_SET: ReadonlySet<string> = new Set(CHAT_ALLOWED_MIME_TYPES);
@@ -186,6 +222,9 @@ export function useAgentChat({
   persistedMessagesRef.current = persistedMessages;
   const [optimisticUserMessage, setOptimisticUserMessage] =
     useState<ChatUIMessage | null>(null);
+  const [liveGate, setLiveGate] = useState<PendingChatToolApproval | null>(
+    null,
+  );
 
   const pendingFilesRef = useRef<
     { name: string; mimeType: ChatAllowedMimeType; data: string }[] | undefined
@@ -245,11 +284,23 @@ export function useAgentChat({
     [store],
   );
 
+  // The live chunk stream already moves the gated tool part into `approval-requested`, so this event
+  // is not what draws the card. What it is for is the window the chunk cannot cover: a gate *ends* the
+  // run, so moments later `onStreamFinished` fires, the streaming message is discarded and the history
+  // is refetched — and until that refetch lands there is nothing on screen holding the gate. Keeping
+  // the gate here bridges it, and it costs nothing once the refetched transcript carries the part,
+  // because `withGatePart` then finds it already present.
   const handleToolApprovalRequest = useCallback(
     (event: ToolApprovalRequestEvent) => {
-      updateToolCallMeta('approvalRequest', event);
+      setLiveGate({
+        gateId: event.approvalId,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        displayName: event.displayName,
+        toolInput: event.toolInput,
+      });
     },
-    [updateToolCallMeta],
+    [],
   );
 
   const handleActionPreview = useCallback(
@@ -358,10 +409,12 @@ export function useAgentChat({
     if (optimisticUserMessage) base.push(optimisticUserMessage);
     if (streamingMessage) base.push(streamingMessage);
     return injectFilePartsIntoLastUserMessage({
-      messages: base,
+      messages: liveGate
+        ? withGatePart({ messages: base, gate: liveGate })
+        : base,
       fileNames: lastSentFileNamesRef.current,
     });
-  }, [persistedMessages, optimisticUserMessage, streamingMessage]);
+  }, [persistedMessages, optimisticUserMessage, streamingMessage, liveGate]);
 
   const error =
     sendStatus.type === 'error'
@@ -423,6 +476,8 @@ export function useAgentChat({
       };
 
       setOptimisticUserMessage(optimisticUser);
+      // The gate is auto-denied server-side when this message is admitted, so the card must go with it.
+      setLiveGate(null);
       store.getState().resetInteractions();
 
       if (files && files.length > 0) {
@@ -527,6 +582,7 @@ export function useAgentChat({
       pendingFilesRef.current = undefined;
       lastSentFileNamesRef.current = [];
       setOptimisticUserMessage(null);
+      setLiveGate(null);
 
       setIsLoadingHistory(true);
       const [historyResult, convResult] = await Promise.all([
@@ -597,7 +653,22 @@ export function useAgentChat({
           }));
         }
       } else {
-        setPersistedMessages(mapped);
+        // A gated run *finishes*: the gate ends the run and the conversation settles IDLE, so this is
+        // the branch a waiting approval actually lands in. Fetching the gate only while STREAMING
+        // meant the one state in which a gate can exist was the one state that never looked for it.
+        const { data: gate } = await tryCatch(() => chatApi.getPendingGate(id));
+        if (conversationIdRef.current !== id) return;
+        setPersistedMessages(
+          gate ? withGatePart({ messages: mapped, gate }) : mapped,
+        );
+        if (gate) {
+          store.setState((prev) => ({
+            toolCallMeta: {
+              ...prev.toolCallMeta,
+              ...buildToolCallMetaFromGate(gate),
+            },
+          }));
+        }
       }
       setIsLoadingHistory(false);
     },
@@ -619,40 +690,59 @@ export function useAgentChat({
       const hasChanged =
         mapped.length !== current.length ||
         mapped.some((m, i) => m.parts.length !== current[i]?.parts.length);
-      if (hasChanged) {
-        setPersistedMessages(mapped);
+      if (convResult.status !== ChatConversationStatus.STREAMING) {
+        setIsPollingForAgentReply(false);
+      }
+      // Checked in both states, not only while STREAMING. A gate ends the run, so by the time one
+      // exists the conversation is IDLE — the old `else` branch here could only ever run for a
+      // conversation that had no gate to find.
+      const hasBlockingCard = chatStoreSelectors.hasBlockingCard({
+        state: store.getState(),
+        lastAssistantMessage: mapped[mapped.length - 1],
+      });
+      const { data: gate } = hasBlockingCard
+        ? { data: null }
+        : await tryCatch(() => chatApi.getPendingGate(conversationId));
+      if (conversationIdRef.current !== conversationId) return null;
+      if (hasChanged || gate) {
+        setPersistedMessages(
+          gate ? withGatePart({ messages: mapped, gate }) : mapped,
+        );
         const restoredReplies =
           chatUtils.extractQuickRepliesFromHistory(mapped);
         if (restoredReplies.length > 0) {
           store.setState({ quickReplies: restoredReplies });
         }
       }
-      if (convResult.status !== ChatConversationStatus.STREAMING) {
-        setIsPollingForAgentReply(false);
-      } else {
-        const hasBlockingCard = chatStoreSelectors.hasBlockingCard({
-          state: store.getState(),
-          lastAssistantMessage: mapped[mapped.length - 1],
-        });
-        if (!hasBlockingCard) {
-          const { data: gate } = await tryCatch(() =>
-            chatApi.getPendingGate(conversationId),
-          );
-          if (gate && conversationIdRef.current === conversationId) {
-            store.setState((prev) => ({
-              toolCallMeta: {
-                ...prev.toolCallMeta,
-                ...buildToolCallMetaFromGate(gate),
-              },
-            }));
-          }
-        }
+      if (gate) {
+        store.setState((prev) => ({
+          toolCallMeta: {
+            ...prev.toolCallMeta,
+            ...buildToolCallMetaFromGate(gate),
+          },
+        }));
       }
       return mapped;
     },
     enabled: isPollingForAgentReply && !isStreamActive,
     refetchInterval: AGENT_POLL_INTERVAL_MS,
   });
+
+  // The approval cards live under the store, not under this hook's props, so the store is what has to
+  // know which conversation to post to — and how to hand the resumed run back so the reply streams
+  // instead of appearing only on the next poll.
+  useEffect(() => {
+    store.getState().bindConversation({
+      conversationId,
+      onRunResumed: (runId: string) => {
+        if (conversationIdRef.current !== conversationId || !conversationId) {
+          return;
+        }
+        startStream(conversationId);
+        setActiveRunId(runId);
+      },
+    });
+  }, [conversationId, store, startStream, setActiveRunId]);
 
   const setModelName = useCallback(async (newModelName: string) => {
     modelNameRef.current = newModelName;

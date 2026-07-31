@@ -45,7 +45,10 @@ function updateToolPartFields({
   state: StreamingState;
   idx: number;
   fields: Partial<
-    Pick<MutableToolPart, 'state' | 'input' | 'output' | 'errorText'>
+    Pick<
+      MutableToolPart,
+      'state' | 'input' | 'output' | 'errorText' | 'approval'
+    >
   >;
 }): void {
   const part = state.message.parts[idx] as MutableToolPart;
@@ -53,6 +56,7 @@ function updateToolPartFields({
   if ('input' in fields) part.input = fields.input;
   if ('output' in fields) part.output = fields.output;
   if ('errorText' in fields) part.errorText = fields.errorText;
+  if ('approval' in fields) part.approval = fields.approval;
 }
 
 function applyChunk({
@@ -262,11 +266,29 @@ function applyChunk({
       break;
     }
 
+    // The chunk carries only `{ approvalId, toolCallId }`, so it has to be folded onto the tool part
+    // the `tool-input-available` chunk already created — that is where the tool name and the
+    // arguments the card has to show live. No-oping this was why a gate raised in the current run
+    // never produced a card: the part stayed `input-available`, indistinguishable from a call that is
+    // simply still running, and nothing else in the stream ever says an approval is waiting.
+    case 'tool-approval-request': {
+      const idx = findToolPartIndex({ state, toolCallId: chunk.toolCallId });
+      if (idx === -1) break;
+      updateToolPartFields({
+        state,
+        idx,
+        fields: {
+          state: 'approval-requested',
+          approval: { id: chunk.approvalId },
+        },
+      });
+      break;
+    }
+
     case 'finish':
     case 'error':
     case 'abort':
     case 'message-metadata':
-    case 'tool-approval-request':
       break;
 
     default:
@@ -308,6 +330,7 @@ type MutableToolPart = Pick<
   input: unknown;
   output?: unknown;
   errorText?: string;
+  approval?: { id: string };
 };
 
 type StreamingState = {

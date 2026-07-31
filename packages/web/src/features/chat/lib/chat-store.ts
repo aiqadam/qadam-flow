@@ -2,25 +2,72 @@ import {
   ActionPreviewEvent,
   ActionReceiptEvent,
   BatchProgressData,
+  isObject,
   omit,
-  ToolApprovalRequestEvent,
 } from '@aiqadam/shared';
+import { t } from 'i18next';
+import { toast } from 'sonner';
 import { StoreApi, create } from 'zustand';
 
 import { chatApi } from './chat-api';
 import { MultiQuestion } from './chat-store-types';
 import { AnyToolPart, ChatUIMessage, chatPartUtils } from './chat-types';
+import { chatUtils } from './chat-utils';
 
+// The answer starts a run, and the run reaches the UI over the socket like any other, so the happy
+// path is fire-and-forget. The failure path is not: the card is dismissed optimistically, and the
+// server can legitimately refuse — a gate already answered, or one the conversation has moved past
+// and which therefore cannot resume. Swallowing that left the user looking at a dismissed card for
+// a destructive action that never happened, which is the same silent success the server was fixed
+// to stop producing. So a refusal restores the card and says why.
 function sendApprovalDecision({
+  conversationId,
   gateId,
   approved,
-  payload,
+  reason,
+  toolCallId,
+  onRunResumed,
+  onRefused,
 }: {
+  conversationId: string | null;
   gateId: string;
   approved: boolean;
-  payload?: Record<string, unknown>;
+  reason?: string;
+  toolCallId?: string;
+  onRunResumed: ((runId: string) => void) | null;
+  onRefused: () => void;
 }): void {
-  void chatApi.approveToolCall({ gateId, approved, payload });
+  if (!conversationId) return;
+  void chatApi
+    .approveToolCall({ conversationId, gateId, approved, reason, toolCallId })
+    .then((started) => onRunResumed?.(started.runId))
+    .catch((error: unknown) => {
+      onRefused();
+      toast.error(refusalMessage(error));
+    });
+}
+
+// The server's own wording where it has one — it is written for the user ("This action can no longer
+// be answered because the conversation has moved on."). Anything else is a transport failure, and
+// saying so is more honest than inventing a reason.
+function refusalMessage(error: unknown): string {
+  const params =
+    isObject(error) && isObject(error.response) && isObject(error.response.data)
+      ? error.response.data.params
+      : undefined;
+  const message = isObject(params) ? params.message : undefined;
+  return typeof message === 'string' && message.length > 0
+    ? message
+    : t('The action could not be answered. Please try again.');
+}
+
+// Undoes the optimistic dismissal so the card comes back and the user can see the action is still
+// unanswered.
+function restoreGate(
+  prev: ChatStoreState,
+  gateId: string,
+): Partial<ChatStoreState> {
+  return { dismissedGateIds: omit(prev.dismissedGateIds, [gateId]) };
 }
 
 function extractQuestionsFromInput(part: AnyToolPart | null): MultiQuestion[] {
@@ -37,9 +84,12 @@ function isNotDismissed(
   return !state.dismissedGateIds[chatPartUtils.getToolCallId(part)];
 }
 
+// `approvalRequest` used to live here, written only by a socket event nothing emitted and read only by
+// selectors that therefore never fired. A waiting approval is now a state on the tool part itself,
+// which is strictly better: the part is persisted and replayed, so the card survives a reload, while
+// anything held here is lost the moment the page does.
 export type ToolCallMeta = {
   batchProgress?: BatchProgressData;
-  approvalRequest?: ToolApprovalRequestEvent;
   actionPreview?: ActionPreviewEvent;
   actionReceipt?: ActionReceiptEvent;
 };
@@ -49,11 +99,31 @@ export type ChatStoreState = {
   toolCallMeta: Record<string, ToolCallMeta>;
   dismissedGateIds: Record<string, true>;
   lastDismissedFormId: string | null;
+  // Held here because the approval endpoint is addressed under the conversation, and the cards that
+  // answer a gate are rendered from this store rather than from the chat hook's props.
+  conversationId: string | null;
+  onRunResumed: ((runId: string) => void) | null;
 
-  approveGate: (gateId: string, payload?: Record<string, unknown>) => void;
-  rejectGate: (gateId: string) => void;
+  // #264's approval card, and nothing else. Addressed by approval id, reports a refusal to the user,
+  // and restores the card when the server says the gate can no longer be answered.
+  answerApprovalGate: (
+    approvalId: string,
+    params: { approved: boolean; reason?: string },
+  ) => void;
+  // The display-tool cards — connection picker, questions, project picker, plan approval, action
+  // preview — call these with a `toolCallId`, not an approval id. No gate exists for a display tool,
+  // so the answer has never reached a server that could act on it; these are a local dismissal and
+  // must stay silent. Reporting failures here would pop an error the user can do nothing about and
+  // bounce the card back so they cannot get past it. `_payload` is deliberately unread, and kept as
+  // the record of what those cards intend to send once something serves them.
+  approveGate: (gateId: string, _payload?: Record<string, unknown>) => void;
+  rejectGate: (gateId: string, reason?: string) => void;
   dismissGate: (gateId: string) => void;
   dismissForm: (messageId: string) => void;
+  bindConversation: (params: {
+    conversationId: string | null;
+    onRunResumed: ((runId: string) => void) | null;
+  }) => void;
   resetInteractions: () => void;
 };
 
@@ -70,19 +140,34 @@ function dismissAndCleanup(
 }
 
 export const createChatStore = () =>
-  create<ChatStoreState>((set) => ({
+  create<ChatStoreState>((set, get) => ({
     quickReplies: [],
     toolCallMeta: {},
     dismissedGateIds: {},
     lastDismissedFormId: null,
+    conversationId: null,
+    onRunResumed: null,
 
-    approveGate: (gateId: string, payload?: Record<string, unknown>) => {
+    answerApprovalGate: (
+      approvalId: string,
+      { approved, reason }: { approved: boolean; reason?: string },
+    ) => {
+      const { conversationId, onRunResumed } = get();
+      set((prev) => dismissAndCleanup(prev, approvalId));
+      sendApprovalDecision({
+        conversationId,
+        gateId: approvalId,
+        approved,
+        reason,
+        onRunResumed,
+        onRefused: () => set((prev) => restoreGate(prev, approvalId)),
+      });
+    },
+    approveGate: (gateId: string, _payload?: Record<string, unknown>) => {
       set((prev) => dismissAndCleanup(prev, gateId));
-      sendApprovalDecision({ gateId, approved: true, payload });
     },
     rejectGate: (gateId: string) => {
       set((prev) => dismissAndCleanup(prev, gateId));
-      sendApprovalDecision({ gateId, approved: false });
     },
     dismissGate: (gateId: string) => {
       set((prev) => dismissAndCleanup(prev, gateId));
@@ -90,6 +175,12 @@ export const createChatStore = () =>
     dismissForm: (messageId: string) => {
       set({ lastDismissedFormId: messageId });
     },
+    bindConversation: ({ conversationId, onRunResumed }) => {
+      set({ conversationId, onRunResumed });
+    },
+    // Deliberately does not clear `conversationId`/`onRunResumed`: those describe which conversation
+    // the store is bound to, not the interaction state of a turn, and dropping them on every send
+    // would leave the next card unable to post.
     resetInteractions: () => {
       set({
         quickReplies: [],
@@ -152,29 +243,40 @@ function selectPendingActionPreview({
   return state.toolCallMeta[toolCallId]?.actionPreview ?? null;
 }
 
+/**
+ * The approval card's data, read off the tool part itself.
+ *
+ * It used to require `state === 'input-available'` **and** `toolCallMeta[id].approvalRequest`, and
+ * the only thing that ever wrote that meta was a socket event nothing emitted — so the card could not
+ * appear at all, in either direction. `approval-requested` is the state both sources of truth already
+ * produce: `chunk-reducer.ts` sets it from the live SDK chunk, and `chat-utils.ts` sets it when a
+ * persisted `TOOL_APPROVAL_REQUEST` part is replayed after a reload. Nothing here depends on the
+ * socket, which is what makes the card survive a page load.
+ */
 function selectPendingMcpApproval({
   state,
   lastAssistantMessage,
 }: {
   state: ChatStoreState;
   lastAssistantMessage: ChatUIMessage | undefined;
-}): { toolCallId: string; toolName: string; displayName: string } | null {
+}): PendingApprovalCard | null {
   const part = chatPartUtils.findLastToolPart({
     message: lastAssistantMessage,
-    predicate: (_name, p) => {
-      if (p.state !== 'input-available') return false;
-      const id = chatPartUtils.getToolCallId(p);
-      return !!id && !!state.toolCallMeta[id]?.approvalRequest;
-    },
+    predicate: (_name, p) => chatPartUtils.isApprovalRequested(p),
   });
-  if (!isNotDismissed(part, state)) return null;
-  const toolCallId = chatPartUtils.getToolCallId(part);
-  const meta = state.toolCallMeta[toolCallId]?.approvalRequest;
-  if (!meta) return null;
+  if (!part) return null;
+  const approvalId = chatPartUtils.getApprovalId(part);
+  // Dismissal is keyed on the approval id, not the tool call id: the approval id is what the endpoint
+  // is addressed with, so keying them the same way is what makes "clicked Approve" and "hid the card"
+  // refer to the same thing.
+  if (!approvalId || state.dismissedGateIds[approvalId]) return null;
+  const toolName = chatPartUtils.getToolPartName(part);
   return {
-    toolCallId,
-    toolName: meta.toolName,
-    displayName: meta.displayName,
+    approvalId,
+    toolCallId: chatPartUtils.getToolCallId(part),
+    toolName,
+    displayName: chatUtils.formatToolActionName({ part }),
+    toolInput: isObject(part.input) ? part.input : {},
   };
 }
 
@@ -232,16 +334,19 @@ function selectHasBlockingCard({
   const part = chatPartUtils.findLastToolPart({
     message: lastAssistantMessage,
     predicate: (name, p) => {
+      // A waiting approval blocks the composer, and it is the one blocking card whose state is not
+      // `input-available` — a gated call ends the run, so the part settles into `approval-requested`.
+      if (chatPartUtils.isApprovalRequested(p)) {
+        const approvalId = chatPartUtils.getApprovalId(p);
+        return !!approvalId && !state.dismissedGateIds[approvalId];
+      }
       if (p.state !== 'input-available') return false;
       const id = chatPartUtils.getToolCallId(p);
       if (state.dismissedGateIds[id]) return false;
       if (chatPartUtils.isDisplayTool(name) && name !== 'ap_show_quick_replies')
         return true;
       if (name === 'ap_request_plan_approval') return true;
-      return (
-        !!state.toolCallMeta[id]?.approvalRequest ||
-        !!state.toolCallMeta[id]?.actionPreview
-      );
+      return !!state.toolCallMeta[id]?.actionPreview;
     },
   });
   return part !== null;
@@ -266,6 +371,14 @@ export const chatStoreSelectors = {
   hasActiveForm: selectHasActiveForm,
   hasBlockingCard: selectHasBlockingCard,
   batchProgress: selectBatchProgress,
+};
+
+export type PendingApprovalCard = {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  displayName: string;
+  toolInput: Record<string, unknown>;
 };
 
 export type SetChatStore = StoreApi<ChatStoreState>['setState'];
