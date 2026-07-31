@@ -19,7 +19,12 @@ export const chatTranscript = {
     // did not survive the round trip — but it is a property of this function, not something a
     // helper does for us. (`chatAiUtils.stripThinkingBlocks` exists and would do it; it has no
     // caller anywhere, so nothing here relies on it.) Tool-call/result pairs survive intact.
-    toModelMessages(uiMessages: PersistedChatMessage[]): ModelMessage[] {
+    // `resumingGate` is the caller stating what this transcript is for, and it must not be inferred
+    // from the array. Only the run started by an approval is about to execute a settled gate; every
+    // other run has to answer it. Inferring it from "is the gate the last message" was wrong,
+    // because `start` passes `uiMessages.slice(0, -1)` and re-adds the user turn afterwards — which
+    // makes an auto-denied gate the last element on exactly the path that needed the answer.
+    toModelMessages(uiMessages: PersistedChatMessage[], { resumingGate = false }: { resumingGate?: boolean } = {}): ModelMessage[] {
         const window = recentTurns(uiMessages)
         // Collected across the whole window rather than per message, so the check below asks the
         // question the SDK asks: is there a request for this response anywhere in what we are about
@@ -32,10 +37,9 @@ export const chatTranscript = {
             : toAssistantModelMessages({
                 parts: message.parts,
                 knownApprovalIds: requestedApprovalIds,
-                // Only the newest turn is the one a resume run is answering. Everywhere else an
-                // answered gate must carry a tool result, or the provider gets an assistant
-                // `tool-call` with nothing responding to it. See `toAssistantModelMessages`.
-                isNewestTurn: index === window.length - 1,
+                // Both conditions, and both matter: the run must actually be resuming a gate, AND
+                // this must be the turn that carries it. See `toAssistantModelMessages`.
+                isResumedGateTurn: resumingGate && index === window.length - 1,
             }))
     },
 }
@@ -68,7 +72,7 @@ function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
     return text.length === 0 ? [] : [{ role: 'user', content: text }]
 }
 
-function toAssistantModelMessages({ parts, knownApprovalIds, isNewestTurn }: { parts: PersistedChatPart[], knownApprovalIds: ReadonlySet<string>, isNewestTurn: boolean }): ModelMessage[] {
+function toAssistantModelMessages({ parts, knownApprovalIds, isResumedGateTurn }: { parts: PersistedChatPart[], knownApprovalIds: ReadonlySet<string>, isResumedGateTurn: boolean }): ModelMessage[] {
     const content: Array<TextPart | ToolCallPart | ToolApprovalRequest> = []
     const toolResults: Array<ToolResultPart | ToolApprovalResponse> = []
 
@@ -107,7 +111,7 @@ function toAssistantModelMessages({ parts, knownApprovalIds, isNewestTurn }: { p
             //
             // 1. Gate still pending → say so. Worded as a fact rather than a failure because the
             //    model's next move should be to wait, not to retry or apologise.
-            // 2. Gate answered, and this is NOT the newest turn → say how it ended. The SDK's
+            // 2. Gate answered, and this run is NOT resuming it → say how it ended. The SDK's
             //    `convertToLanguageModelPrompt` exempts an approval-carrying call from its own
             //    `MissingToolResultsError` (`ai/dist/index.mjs:1319-1331`), which is what made this
             //    look safe — but the exemption only stops the SDK throwing. It then strips the
@@ -117,7 +121,7 @@ function toAssistantModelMessages({ parts, knownApprovalIds, isNewestTurn }: { p
             //    tool_call_id"; Anthropic answers "tool_use ids were found without tool_result
             //    blocks". Every later turn in the conversation fails until the gated turn scrolls
             //    out of the window.
-            // 3. Gate answered and this IS the newest turn → emit nothing. This is the resume run:
+            // 3. Gate answered and this run IS resuming it → emit nothing. The resume run:
             //    `collectToolApprovals` skips a call that already has a result (`:2737`), so a
             //    result here would mean the approved tool silently never executes.
             //
@@ -134,7 +138,7 @@ function toAssistantModelMessages({ parts, knownApprovalIds, isNewestTurn }: { p
                     output: { type: 'text', value: AWAITING_APPROVAL_OUTPUT },
                 })
             }
-            else if (!isNewestTurn) {
+            else if (!isResumedGateTurn) {
                 const approved = parts.some((other) => other.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE
                     && other.approvalId === part.approvalId
                     && other.approved)
@@ -208,7 +212,7 @@ const AWAITING_APPROVAL_OUTPUT = 'Not executed. This action is waiting for the u
 // Replayed on later turns for a gate that has been answered, because the provider requires every
 // assistant tool call to be answered by something. Not the tool's real output — see the case list in
 // `toAssistantModelMessages` for why that is unavailable here.
-const APPROVED_OUTPUT = 'Executed after the user approved it.'
+const APPROVED_OUTPUT = 'The user approved this action.'
 const DECLINED_OUTPUT = 'Not executed. The user declined this action.'
 
 // Twenty messages is roughly ten exchanges — enough that a build session keeps its thread, while

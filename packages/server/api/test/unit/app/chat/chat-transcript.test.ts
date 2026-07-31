@@ -157,6 +157,8 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
     // must NOT be replayed, because `collectToolApprovals` skips any approval whose tool call
     // already has a result (`index.mjs:2739`) — the tool would then never run.
     it('replays an answered gate as the approval response alone, so the SDK executes the tool', () => {
+        // `resumingGate` is required for this shape: it is what suppresses the outcome tool-result
+        // that every other run must send. Without it the SDK would see a settled call and skip it.
         const replayed = chatTranscript.toModelMessages([
             {
                 role: PersistedChatRole.ASSISTANT,
@@ -165,7 +167,7 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
                     { type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE, approvalId: APPROVAL_ID, approved: true },
                 ],
             },
-        ])
+        ], { resumingGate: true })
 
         expect(replayed.at(-1)).toEqual({
             role: 'tool',
@@ -182,7 +184,7 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
                     { type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE, approvalId: APPROVAL_ID, approved: false, reason: 'wrong flow' },
                 ],
             },
-        ])
+        ], { resumingGate: true })
 
         expect(replayed.at(-1)).toEqual({
             role: 'tool',
@@ -356,6 +358,31 @@ describe('chatTranscript.toModelMessages — every replayed tool call is answere
         ).toEqual([])
     })
 
+    // The shape `chatAgentService.start` actually builds, and the one an earlier version of this fix
+    // got wrong: it converts `uiMessages.slice(0, -1)` and re-adds the user turn as a bare
+    // `ModelMessage` afterwards. That leaves the gate message LAST in the converted window, so any
+    // exception keyed on array position fires on precisely the path that needed the answer — the
+    // user who ignored the card and typed again. The exception is keyed on the caller's intent now,
+    // and this test is what holds that.
+    it.each([
+        ['approved', true],
+        ['denied', false],
+    ])('answers an %s gate when the next run is started, not resumed', (_label, approved) => {
+        const uiMessages = [
+            userTurn('delete that flow'),
+            gateMessage({ approved: approved as boolean }),
+            userTurn('never mind, list my flows'),
+        ]
+
+        // `resumingGate` deliberately left at its default: `start` is not resuming a gate.
+        const messages = chatTranscript.toModelMessages(uiMessages.slice(0, -1))
+
+        expect(
+            unansweredToolCallIds(messages),
+            'start() would send the provider an unanswered tool call, and every later turn would fail',
+        ).toEqual([])
+    })
+
     it('still answers a gate that is waiting for the user', () => {
         const messages = chatTranscript.toModelMessages([userTurn('delete that flow'), gateMessage({ approved: null })])
 
@@ -365,9 +392,14 @@ describe('chatTranscript.toModelMessages — every replayed tool call is answere
     // The one exception, and the reason this cannot simply always emit a result: on the newest turn
     // the resume run is about to execute the approved call, and `collectToolApprovals` skips a call
     // that already has a result — so a result here would make the approval silently do nothing.
-    it('leaves the newest answered gate unanswered, so the resume run still executes it', () => {
-        const messages = chatTranscript.toModelMessages([userTurn('delete that flow'), gateMessage({ approved: true })])
+    it('leaves the gate unanswered only for the run that is resuming it', () => {
+        const uiMessages = [userTurn('delete that flow'), gateMessage({ approved: true })]
 
-        expect(unansweredToolCallIds(messages)).toEqual(['call_gate'])
+        expect(
+            unansweredToolCallIds(chatTranscript.toModelMessages(uiMessages, { resumingGate: true })),
+            'the resume run must not see a result, or collectToolApprovals skips the call and the approved tool never runs',
+        ).toEqual(['call_gate'])
+        // Same array, ordinary run: it must be answered.
+        expect(unansweredToolCallIds(chatTranscript.toModelMessages(uiMessages))).toEqual([])
     })
 })

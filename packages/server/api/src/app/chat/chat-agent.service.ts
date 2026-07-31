@@ -148,7 +148,12 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             // No user turn is appended, so the transcript ends on the tool message carrying the
             // response — the only arrangement in which `collectToolApprovals` reads it at all
             // (`ai/dist/index.mjs:2690`: it returns empty unless the last message is a tool message).
-            messages: chatTranscript.toModelMessages(uiMessages),
+            // `resumingGate` is set ONLY here: this is the one run that must leave the settled gate
+            // without a tool result, because a result would make `collectToolApprovals` skip the
+            // call (`:2737`) and the approved tool would silently never execute. Every other run —
+            // `start` included, which is where an auto-denied gate is replayed — must answer it, or
+            // the provider rejects an assistant `tool-call` that nothing responds to.
+            messages: chatTranscript.toModelMessages(uiMessages, { resumingGate: true }),
             tools,
             log,
         }), log)
