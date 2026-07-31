@@ -1,5 +1,6 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
+import { safeHttp } from '@aiqadam/server-utils'
 import { AIProviderModel, AIProviderModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId } from '@aiqadam/shared'
 import { generateText } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
@@ -26,6 +27,10 @@ export const cloudflareGatewayProvider: AIProviderStrategy<CloudflareGatewayProv
                         headers: {
                             'cf-aig-authorization': `Bearer ${authConfig.apiKey}`,
                         },
+                        // Same factory, same operator-supplied URL segments as the chat path in
+                        // `chatAiUtils.createChatModel`; without this the SDK falls back to the
+                        // global fetch, which the SSRF filter cannot see.
+                        fetch: safeHttp.fetch,
                     })
                     const aiModel = providerConstructor(actualModelId)
                     await generateText({

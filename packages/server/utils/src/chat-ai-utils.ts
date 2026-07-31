@@ -24,6 +24,13 @@ import {
 } from '@aiqadam/shared'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
+import { safeHttp } from './safe-http'
+
+// Every provider gets `fetch: safeHttp.fetch`, not just CUSTOM. CUSTOM is the obvious SSRF case —
+// its `baseUrl` is admin config — but AZURE (`resourceName`) and CLOUDFLARE_GATEWAY
+// (`accountId`/`gatewayId`) also interpolate operator-supplied values into the URL, and
+// `.claude/rules/safe-http.md` requires the filtered client even for fixed, trusted endpoints.
+// Operators pointing chat at an in-cluster model server must allow-list it via AP_SSRF_ALLOW_LIST.
 
 function createChatModel({ provider, auth, config, modelId }: {
     provider: AIProviderName
@@ -34,25 +41,25 @@ function createChatModel({ provider, auth, config, modelId }: {
     switch (provider) {
         case AIProviderName.OPENAI: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            return createOpenAI({ apiKey }).chat(modelId)
+            return createOpenAI({ apiKey, fetch: safeHttp.fetch }).chat(modelId)
         }
         case AIProviderName.ANTHROPIC: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            return createAnthropic({ apiKey })(modelId)
+            return createAnthropic({ apiKey, fetch: safeHttp.fetch })(modelId)
         }
         case AIProviderName.GOOGLE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            return createGoogleGenerativeAI({ apiKey })(modelId)
+            return createGoogleGenerativeAI({ apiKey, fetch: safeHttp.fetch })(modelId)
         }
         case AIProviderName.AZURE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
             const { resourceName } = config as AzureProviderConfig
-            return createAzure({ resourceName, apiKey }).chat(modelId)
+            return createAzure({ resourceName, apiKey, fetch: safeHttp.fetch }).chat(modelId)
         }
         case AIProviderName.BEDROCK: {
             const { accessKeyId, secretAccessKey } = auth as BedrockProviderAuthConfig
             const { region } = config as BedrockProviderConfig
-            return createAmazonBedrock({ region, accessKeyId, secretAccessKey })(modelId)
+            return createAmazonBedrock({ region, accessKeyId, secretAccessKey, fetch: safeHttp.fetch })(modelId)
         }
         case AIProviderName.CLOUDFLARE_GATEWAY: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
@@ -60,6 +67,7 @@ function createChatModel({ provider, auth, config, modelId }: {
             const { model: actualModelId } = splitCloudflareGatewayModelId(modelId)
             return createOpenAICompatible({
                 name: 'cloudflare',
+                fetch: safeHttp.fetch,
                 baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/compat`,
                 headers: { 'cf-aig-authorization': `Bearer ${apiKey}` },
             }).chatModel(actualModelId)
@@ -69,6 +77,7 @@ function createChatModel({ provider, auth, config, modelId }: {
             const { apiKeyHeader, baseUrl, defaultHeaders } = config as OpenAICompatibleProviderConfig
             return createOpenAICompatible({
                 name: 'openai-compatible',
+                fetch: safeHttp.fetch,
                 baseURL: baseUrl,
                 headers: {
                     ...(defaultHeaders ?? {}),
@@ -79,7 +88,7 @@ function createChatModel({ provider, auth, config, modelId }: {
         case AIProviderName.MISTRAL:
         case AIProviderName.OPENROUTER: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            return createOpenRouter({ apiKey }).chat(modelId) as LanguageModel
+            return createOpenRouter({ apiKey, fetch: safeHttp.fetch }).chat(modelId) as LanguageModel
         }
         default: {
             const exhaustiveCheck: never = provider
