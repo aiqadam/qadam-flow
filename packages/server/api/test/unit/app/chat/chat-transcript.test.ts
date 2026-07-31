@@ -283,3 +283,91 @@ describe('chatTranscript.toModelMessages — a turn that produces nothing', () =
         expect(replayed[0].content).not.toBe('')
     })
 })
+
+// The defect this suite could not see before: every assistant `tool-call` we replay must be answered
+// by something in the following tool message, or the provider rejects the whole request (OpenAI:
+// "must be followed by tool messages responding to each tool_call_id"; Anthropic: "tool_use ids were
+// found without tool_result blocks"). The integration tests cannot catch it — their scripted provider
+// accepts any body — so the invariant is asserted here, on the shape we send.
+describe('chatTranscript.toModelMessages — every replayed tool call is answered', () => {
+    function gateMessage({ approved }: { approved: boolean | null }): PersistedChatMessage {
+        const parts: PersistedChatPart[] = [{
+            type: PersistedChatPartType.TOOL_APPROVAL_REQUEST,
+            approvalId: 'aitxt-abc',
+            toolCallId: 'call_gate',
+            toolName: 'ap_delete_flow',
+            input: { flowId: 'flow_1' },
+        }]
+        if (approved !== null) {
+            parts.push({
+                type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE,
+                approvalId: 'aitxt-abc',
+                approved,
+            })
+        }
+        return { role: PersistedChatRole.ASSISTANT, parts }
+    }
+
+    const userTurn = (text: string): PersistedChatMessage => ({
+        role: PersistedChatRole.USER,
+        parts: [{ type: PersistedChatPartType.TEXT, text }],
+    })
+
+    // Collects the ids the provider would see as unanswered, which is exactly what it rejects on.
+    function unansweredToolCallIds(messages: ReturnType<typeof chatTranscript.toModelMessages>): string[] {
+        const answered = new Set<string>()
+        for (const message of messages) {
+            if (message.role !== 'tool' || !Array.isArray(message.content)) {
+                continue
+            }
+            for (const part of message.content) {
+                if (part.type === 'tool-result') {
+                    answered.add(part.toolCallId)
+                }
+            }
+        }
+        const called: string[] = []
+        for (const message of messages) {
+            if (message.role !== 'assistant' || !Array.isArray(message.content)) {
+                continue
+            }
+            for (const part of message.content) {
+                if (part.type === 'tool-call') {
+                    called.push(part.toolCallId)
+                }
+            }
+        }
+        return called.filter((id) => !answered.has(id))
+    }
+
+    it.each([
+        ['approved', true],
+        ['denied', false],
+    ])('answers an %s gate once the conversation has moved on', (_label, approved) => {
+        const messages = chatTranscript.toModelMessages([
+            userTurn('delete that flow'),
+            gateMessage({ approved: approved as boolean }),
+            userTurn('never mind, list my flows'),
+        ])
+
+        expect(
+            unansweredToolCallIds(messages),
+            'the provider would reject this request: an assistant tool call has no tool result',
+        ).toEqual([])
+    })
+
+    it('still answers a gate that is waiting for the user', () => {
+        const messages = chatTranscript.toModelMessages([userTurn('delete that flow'), gateMessage({ approved: null })])
+
+        expect(unansweredToolCallIds(messages)).toEqual([])
+    })
+
+    // The one exception, and the reason this cannot simply always emit a result: on the newest turn
+    // the resume run is about to execute the approved call, and `collectToolApprovals` skips a call
+    // that already has a result — so a result here would make the approval silently do nothing.
+    it('leaves the newest answered gate unanswered, so the resume run still executes it', () => {
+        const messages = chatTranscript.toModelMessages([userTurn('delete that flow'), gateMessage({ approved: true })])
+
+        expect(unansweredToolCallIds(messages)).toEqual(['call_gate'])
+    })
+})

@@ -27,9 +27,16 @@ export const chatTranscript = {
         const requestedApprovalIds = new Set(window.flatMap((message) => message.parts.flatMap((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_REQUEST
             ? [part.approvalId]
             : [])))
-        return window.flatMap((message) => message.role === PersistedChatRole.USER
+        return window.flatMap((message, index) => message.role === PersistedChatRole.USER
             ? toUserModelMessages(message.parts)
-            : toAssistantModelMessages(message.parts, requestedApprovalIds))
+            : toAssistantModelMessages({
+                parts: message.parts,
+                knownApprovalIds: requestedApprovalIds,
+                // Only the newest turn is the one a resume run is answering. Everywhere else an
+                // answered gate must carry a tool result, or the provider gets an assistant
+                // `tool-call` with nothing responding to it. See `toAssistantModelMessages`.
+                isNewestTurn: index === window.length - 1,
+            }))
     },
 }
 
@@ -61,7 +68,7 @@ function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
     return text.length === 0 ? [] : [{ role: 'user', content: text }]
 }
 
-function toAssistantModelMessages(parts: PersistedChatPart[], knownApprovalIds: ReadonlySet<string>): ModelMessage[] {
+function toAssistantModelMessages({ parts, knownApprovalIds, isNewestTurn }: { parts: PersistedChatPart[], knownApprovalIds: ReadonlySet<string>, isNewestTurn: boolean }): ModelMessage[] {
     const content: Array<TextPart | ToolCallPart | ToolApprovalRequest> = []
     const toolResults: Array<ToolResultPart | ToolApprovalResponse> = []
 
@@ -94,17 +101,48 @@ function toAssistantModelMessages(parts: PersistedChatPart[], knownApprovalIds: 
             // when it finds none, so a resumed run cannot execute the tool without it.
             content.push({ type: 'tool-call', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input })
             content.push({ type: 'tool-approval-request', approvalId: part.approvalId, toolCallId: part.toolCallId })
-            // Only while the gate is unanswered. Once it is, this result would make
-            // `collectToolApprovals` treat the call as already settled and skip executing it — and
-            // before then its absence would make the next user turn throw `MissingToolResultsError`,
-            // which poisons the conversation for good. It is worded as a fact rather than as a
-            // failure because the model's next move should be to wait, not to retry or apologise.
-            if (!answeredApprovalIds.has(part.approvalId)) {
+            // The rebuilt `tool-call` must be answered by something in every case but one, and
+            // getting that one exception wrong breaks the conversation in a way no test with a mock
+            // provider can see. The three cases:
+            //
+            // 1. Gate still pending → say so. Worded as a fact rather than a failure because the
+            //    model's next move should be to wait, not to retry or apologise.
+            // 2. Gate answered, and this is NOT the newest turn → say how it ended. The SDK's
+            //    `convertToLanguageModelPrompt` exempts an approval-carrying call from its own
+            //    `MissingToolResultsError` (`ai/dist/index.mjs:1319-1331`), which is what made this
+            //    look safe — but the exemption only stops the SDK throwing. It then strips the
+            //    approval parts (`:1441`, `:1497`) and drops the emptied tool message (`:1393`), so
+            //    the provider receives an assistant `tool-call` with nothing responding to it.
+            //    OpenAI answers 400 "must be followed by tool messages responding to each
+            //    tool_call_id"; Anthropic answers "tool_use ids were found without tool_result
+            //    blocks". Every later turn in the conversation fails until the gated turn scrolls
+            //    out of the window.
+            // 3. Gate answered and this IS the newest turn → emit nothing. This is the resume run:
+            //    `collectToolApprovals` skips a call that already has a result (`:2737`), so a
+            //    result here would mean the approved tool silently never executes.
+            //
+            // The real tool output cannot be used for case 2: the resume run executes the call
+            // before the first `start-step`, which resets `recordedContent` (`:6714`), so it never
+            // reaches `buildStepParts` and is not persisted. Reporting the outcome is honest and
+            // enough for the model; persisting the real output is a separate change.
+            const answered = answeredApprovalIds.has(part.approvalId)
+            if (!answered) {
                 toolResults.push({
                     type: 'tool-result',
                     toolCallId: part.toolCallId,
                     toolName: part.toolName,
                     output: { type: 'text', value: AWAITING_APPROVAL_OUTPUT },
+                })
+            }
+            else if (!isNewestTurn) {
+                const approved = parts.some((other) => other.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE
+                    && other.approvalId === part.approvalId
+                    && other.approved)
+                toolResults.push({
+                    type: 'tool-result',
+                    toolCallId: part.toolCallId,
+                    toolName: part.toolName,
+                    output: { type: 'text', value: approved ? APPROVED_OUTPUT : DECLINED_OUTPUT },
                 })
             }
         }
@@ -167,6 +205,11 @@ function describeToolFailure(output: unknown): string {
 }
 
 const AWAITING_APPROVAL_OUTPUT = 'Not executed. This action is waiting for the user to approve it.'
+// Replayed on later turns for a gate that has been answered, because the provider requires every
+// assistant tool call to be answered by something. Not the tool's real output — see the case list in
+// `toAssistantModelMessages` for why that is unavailable here.
+const APPROVED_OUTPUT = 'Executed after the user approved it.'
+const DECLINED_OUTPUT = 'Not executed. The user declined this action.'
 
 // Twenty messages is roughly ten exchanges — enough that a build session keeps its thread, while
 // capping what any single turn re-sends.
