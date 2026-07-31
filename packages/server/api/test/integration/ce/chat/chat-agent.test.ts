@@ -422,6 +422,26 @@ describe('Chat agent API', () => {
             await waitForStatus(conversationId, ChatConversationStatus.IDLE)
         })
 
+        // The step cap bounds one run. Nothing bounded how many a single account starts, and each
+        // one is worth up to 25 paid round-trips on the operator's provider bill.
+        it('refuses to start more concurrent runs than one user is allowed', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const busy = await Promise.all([1, 2, 3].map(() => createConversation(ctx)))
+            for (const conversationId of busy) {
+                await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.STREAMING })
+            }
+            const fourth = await createConversation(ctx)
+
+            const response = await ctx.post(`/v1/chat/conversations/${fourth}/messages`, {
+                content: 'and one more',
+                runId: apId(),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response!.json().params.message).toContain('several replies generating')
+            expect(providerCalls).toEqual([])
+        })
+
         it('refuses a platform sibling attempt to post into someone else conversation', async () => {
             await enableChatProvider(ctx.platform.id)
             // Same platform on purpose — two createTestContext calls would give two different

@@ -11,6 +11,7 @@ import {
     spreadIfNotUndefined,
     UpdateChatConversationRequest,
 } from '@aiqadam/shared'
+import { MoreThan } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
@@ -124,6 +125,28 @@ export const chatConversationService = {
                     params: { message: 'This conversation is already generating a reply. Wait for it to finish or cancel it first.' },
                 })
             }
+            // Per-conversation limits bound one run; nothing bounded how many a user starts. A
+            // single account could open conversations without limit and fire a message into each,
+            // every one of them worth up to MAX_AGENT_STEPS paid round-trips on the operator's
+            // provider bill plus a detached loop holding a stream. Counted inside the same
+            // transaction as the admission so two simultaneous starts cannot both read "under".
+            // Stale rows are excluded, or a crashed run would hold a slot for five minutes and a
+            // few restarts would lock the user out of their own chat entirely.
+            const running = await entityManager.count(ChatConversationEntity, {
+                where: {
+                    platformId,
+                    userId,
+                    status: ChatConversationStatus.STREAMING,
+                    updated: MoreThan(new Date(Date.now() - ABANDONED_RUN_AFTER_MS).toISOString()),
+                },
+            })
+            if (running >= MAX_CONCURRENT_RUNS_PER_USER) {
+                throw new QadamFlowError({
+                    code: ErrorCode.VALIDATION,
+                    params: { message: 'You already have several replies generating. Wait for one to finish before starting another.' },
+                })
+            }
+
             await entityManager.save(ChatConversationEntity, {
                 ...conversation,
                 // Pinned on the first run so every later turn — and the connection picker —
@@ -177,6 +200,11 @@ export const chatConversationService = {
 // conversation is wedged permanently: nothing settles the row, every message 409s, and the client
 // spins on a status that will never change.
 const ABANDONED_RUN_AFTER_MS = 5 * 60 * 1000
+
+// Generous for a person — nobody reads three streaming replies at once — and low enough that one
+// account cannot turn the operator's provider bill into a denial-of-service. Abandoned rows do not
+// hold a slot: they are excluded by the takeover above the moment they go stale.
+const MAX_CONCURRENT_RUNS_PER_USER = 3
 
 function isAbandoned(conversation: ChatConversation): boolean {
     return Date.now() - new Date(conversation.updated).getTime() > ABANDONED_RUN_AFTER_MS

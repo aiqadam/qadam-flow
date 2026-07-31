@@ -88,3 +88,38 @@ describe('chatTranscript.toModelMessages', () => {
         expect(replayed).toEqual([{ role: 'user', content: 'one\ntwo' }])
     })
 })
+
+describe('chatTranscript.toModelMessages — history window', () => {
+    function turn(role: PersistedChatRole, text: string): PersistedChatMessage {
+        return { role, parts: [{ type: PersistedChatPartType.TEXT, text }] }
+    }
+
+    function longHistory(count: number): PersistedChatMessage[] {
+        return Array.from({ length: count }, (_unused, index) => turn(
+            index % 2 === 0 ? PersistedChatRole.USER : PersistedChatRole.ASSISTANT,
+            `turn ${index}`,
+        ))
+    }
+
+    it('replays a short conversation whole', () => {
+        expect(chatTranscript.toModelMessages(longHistory(6))).toHaveLength(6)
+    })
+
+    // Unbounded replay makes every turn cost more than the last; tool outputs dominate and a long
+    // build session accumulates a lot of them.
+    it('caps what a long conversation re-sends', () => {
+        const replayed = chatTranscript.toModelMessages(longHistory(60))
+
+        expect(replayed.length).toBeLessThanOrEqual(20)
+        expect(JSON.stringify(replayed)).toContain('turn 59')
+        expect(JSON.stringify(replayed)).not.toContain('turn 0')
+    })
+
+    // Opening on an assistant turn would show the model its own reply to a question that is no
+    // longer in the transcript.
+    it('starts the window on a user turn', () => {
+        const replayed = chatTranscript.toModelMessages(longHistory(61))
+
+        expect(replayed[0].role).toBe('user')
+    })
+})

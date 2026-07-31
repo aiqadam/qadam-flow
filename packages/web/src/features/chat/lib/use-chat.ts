@@ -501,7 +501,7 @@ export function useAgentChat({
         setOptimisticUserMessage(null);
         updateSendStatus({
           type: 'error',
-          message: sendError.message ?? 'Failed to send message',
+          message: chatUtils.describeSendError(sendError),
         });
       }
     },

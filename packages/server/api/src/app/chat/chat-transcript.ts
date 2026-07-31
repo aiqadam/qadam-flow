@@ -15,10 +15,26 @@ export const chatTranscript = {
     // that back would need a cast this repo does not allow. Nothing is lost: `chatAiUtils` strips
     // cross-turn reasoning for every provider anyway, and the tool-call/result pairs survive.
     toModelMessages(uiMessages: PersistedChatMessage[]): ModelMessage[] {
-        return uiMessages.flatMap((message) => message.role === PersistedChatRole.USER
+        return recentTurns(uiMessages).flatMap((message) => message.role === PersistedChatRole.USER
             ? toUserModelMessages(message.parts)
             : toAssistantModelMessages(message.parts))
     },
+}
+
+// Replaying the whole history every turn makes each message cost more than the last, without
+// bound: tool outputs are the bulk of it and a long build session accumulates a lot of them. The
+// entity carries `summary`/`summarizedUpToIndex` for a proper compaction pass, which nothing
+// writes yet — until it does, a window is the honest version of the same idea. It has to start on
+// a user turn, or the transcript can open with an assistant message answering a question the model
+// can no longer see, and it must never split an assistant turn from the tool results that answer
+// its calls, which is why the whole message is the unit.
+function recentTurns(uiMessages: PersistedChatMessage[]): PersistedChatMessage[] {
+    if (uiMessages.length <= MAX_REPLAYED_MESSAGES) {
+        return uiMessages
+    }
+    const window = uiMessages.slice(-MAX_REPLAYED_MESSAGES)
+    const firstUserTurn = window.findIndex((message) => message.role === PersistedChatRole.USER)
+    return firstUserTurn <= 0 ? window : window.slice(firstUserTurn)
 }
 
 function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
@@ -83,3 +99,7 @@ function describeToolFailure(output: unknown): string {
     }
     return JSON.stringify(output)
 }
+
+// Twenty messages is roughly ten exchanges — enough that a build session keeps its thread, while
+// capping what any single turn re-sends.
+const MAX_REPLAYED_MESSAGES = 20
