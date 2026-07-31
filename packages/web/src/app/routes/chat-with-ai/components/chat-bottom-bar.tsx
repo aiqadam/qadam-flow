@@ -69,6 +69,7 @@ export function ChatBottomBar({
 
   const approveGate = useChatStoreContext((s) => s.approveGate);
   const rejectGate = useChatStoreContext((s) => s.rejectGate);
+  const answerApprovalGate = useChatStoreContext((s) => s.answerApprovalGate);
   const dismissGate = useChatStoreContext((s) => s.dismissGate);
   const dismissForm = useChatStoreContext((s) => s.dismissForm);
 
@@ -100,8 +101,15 @@ export function ChatBottomBar({
         displayName={pendingMcpApproval.displayName}
         toolName={pendingMcpApproval.toolName}
         toolInput={pendingMcpApproval.toolInput}
-        onApprove={() => approveGate(pendingMcpApproval.approvalId)}
-        onReject={(reason) => rejectGate(pendingMcpApproval.approvalId, reason)}
+        onApprove={() =>
+          answerApprovalGate(pendingMcpApproval.approvalId, { approved: true })
+        }
+        onReject={(reason) =>
+          answerApprovalGate(pendingMcpApproval.approvalId, {
+            approved: false,
+            reason,
+          })
+        }
         onDismiss={() => dismissGate(pendingMcpApproval.approvalId)}
       />
     );

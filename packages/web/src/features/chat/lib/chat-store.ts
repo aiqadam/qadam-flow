@@ -104,11 +104,18 @@ export type ChatStoreState = {
   conversationId: string | null;
   onRunResumed: ((runId: string) => void) | null;
 
-  // `_payload` is deliberately unread. The display-tool cards (connection picker, questions, project
-  // picker) call `approveGate(toolCallId, answer)` and were never served by this endpoint — it is
-  // addressed by approval id and no gate exists for a display tool — so their payload has always gone
-  // nowhere. #264 does not wire them; dropping the parameter would rewrite five call sites and lose
-  // the record of what they intend to send.
+  // #264's approval card, and nothing else. Addressed by approval id, reports a refusal to the user,
+  // and restores the card when the server says the gate can no longer be answered.
+  answerApprovalGate: (
+    approvalId: string,
+    params: { approved: boolean; reason?: string },
+  ) => void;
+  // The display-tool cards — connection picker, questions, project picker, plan approval, action
+  // preview — call these with a `toolCallId`, not an approval id. No gate exists for a display tool,
+  // so the answer has never reached a server that could act on it; these are a local dismissal and
+  // must stay silent. Reporting failures here would pop an error the user can do nothing about and
+  // bounce the card back so they cannot get past it. `_payload` is deliberately unread, and kept as
+  // the record of what those cards intend to send once something serves them.
   approveGate: (gateId: string, _payload?: Record<string, unknown>) => void;
   rejectGate: (gateId: string, reason?: string) => void;
   dismissGate: (gateId: string) => void;
@@ -141,28 +148,26 @@ export const createChatStore = () =>
     conversationId: null,
     onRunResumed: null,
 
-    approveGate: (gateId: string, _payload?: Record<string, unknown>) => {
+    answerApprovalGate: (
+      approvalId: string,
+      { approved, reason }: { approved: boolean; reason?: string },
+    ) => {
       const { conversationId, onRunResumed } = get();
-      set((prev) => dismissAndCleanup(prev, gateId));
+      set((prev) => dismissAndCleanup(prev, approvalId));
       sendApprovalDecision({
         conversationId,
-        gateId,
-        approved: true,
-        onRunResumed,
-        onRefused: () => set((prev) => restoreGate(prev, gateId)),
-      });
-    },
-    rejectGate: (gateId: string, reason?: string) => {
-      const { conversationId, onRunResumed } = get();
-      set((prev) => dismissAndCleanup(prev, gateId));
-      sendApprovalDecision({
-        conversationId,
-        gateId,
-        onRefused: () => set((prev) => restoreGate(prev, gateId)),
-        approved: false,
+        gateId: approvalId,
+        approved,
         reason,
         onRunResumed,
+        onRefused: () => set((prev) => restoreGate(prev, approvalId)),
       });
+    },
+    approveGate: (gateId: string, _payload?: Record<string, unknown>) => {
+      set((prev) => dismissAndCleanup(prev, gateId));
+    },
+    rejectGate: (gateId: string) => {
+      set((prev) => dismissAndCleanup(prev, gateId));
     },
     dismissGate: (gateId: string) => {
       set((prev) => dismissAndCleanup(prev, gateId));
