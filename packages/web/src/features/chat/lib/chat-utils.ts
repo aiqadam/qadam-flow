@@ -235,6 +235,20 @@ function persistedPartToUIPart(
         errorText: part.errorText ?? 'Tool call failed',
       };
     }
+    // A gate the user has not answered is pending, not failed: the call never ran, and the state
+    // the SDK uses for exactly this is what a reload has to restore, or the card would come back as
+    // a failed tool call and invite the model's next turn to be an apology.
+    case PersistedChatPartType.TOOL_APPROVAL_REQUEST:
+      return {
+        type: 'dynamic-tool',
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        title: part.toolName,
+        state: 'approval-requested',
+        input: part.input,
+        approval: { id: part.approvalId },
+      };
+    case PersistedChatPartType.TOOL_APPROVAL_RESPONSE:
     case PersistedChatPartType.BATCH_PROGRESS:
     case PersistedChatPartType.ACTION_RECEIPT:
       return { type: 'text', text: '' } as ChatUIMessage['parts'][number];

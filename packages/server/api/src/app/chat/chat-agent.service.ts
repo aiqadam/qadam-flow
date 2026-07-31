@@ -319,6 +319,11 @@ function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {
         // A failed tool call carries its detail on `error`; `buildStepParts` reads it from
         // `output`, so it is folded in here rather than special-cased there.
         ...spreadIfDefined('output', 'error' in part ? part.error : undefined),
+        // A tool approval request carries no flat `toolCallId`/`toolName`/`input` at all — the
+        // gated call is nested under `toolCall` — so without these two the part arrives at
+        // `buildStepParts` as a bare type with nothing to persist.
+        ...spreadIfDefined('approvalId', 'approvalId' in part ? part.approvalId : undefined),
+        ...spreadIfDefined('toolCall', 'toolCall' in part ? part.toolCall : undefined),
     })))
 }
 

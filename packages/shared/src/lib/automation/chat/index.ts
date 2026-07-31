@@ -30,6 +30,8 @@ export enum PersistedChatPartType {
     THINKING_STATUS = 'thinking-status',
     BATCH_PROGRESS = 'batch-progress',
     ACTION_RECEIPT = 'action-receipt',
+    TOOL_APPROVAL_REQUEST = 'tool-approval-request',
+    TOOL_APPROVAL_RESPONSE = 'tool-approval-response',
 }
 
 export enum PersistedToolCallStatus {
@@ -86,6 +88,25 @@ const PersistedActionReceiptPartSchema = z.object({
     timestamp: z.string(),
 })
 
+// A gated tool call produces no result, so it cannot be stored as a tool call: a result-less call
+// replays to the model as a failure, and the model then apologises or retries instead of waiting
+// for the human. The pending gate is stored as itself, and carries everything the resumed run needs
+// to rebuild the tool call the SDK looks up by `toolCallId` when the approval is answered.
+const PersistedToolApprovalRequestPartSchema = z.object({
+    type: z.literal(PersistedChatPartType.TOOL_APPROVAL_REQUEST),
+    approvalId: z.string(),
+    toolCallId: z.string(),
+    toolName: z.string(),
+    input: z.record(z.string(), z.unknown()),
+})
+
+const PersistedToolApprovalResponsePartSchema = z.object({
+    type: z.literal(PersistedChatPartType.TOOL_APPROVAL_RESPONSE),
+    approvalId: z.string(),
+    approved: z.boolean(),
+    reason: z.string().optional(),
+})
+
 const PersistedChatPartSchema = z.discriminatedUnion('type', [
     PersistedTextPartSchema,
     PersistedReasoningPartSchema,
@@ -93,6 +114,8 @@ const PersistedChatPartSchema = z.discriminatedUnion('type', [
     PersistedThinkingStatusPartSchema,
     PersistedBatchProgressPartSchema,
     PersistedActionReceiptPartSchema,
+    PersistedToolApprovalRequestPartSchema,
+    PersistedToolApprovalResponsePartSchema,
 ])
 
 export const PersistedChatMessageSchema = z.object({
@@ -106,6 +129,8 @@ export type PersistedReasoningPart = z.infer<typeof PersistedReasoningPartSchema
 export type PersistedToolCallPart = z.infer<typeof PersistedToolCallPartSchema>
 export type PersistedThinkingStatusPart = z.infer<typeof PersistedThinkingStatusPartSchema>
 export type PersistedActionReceiptPart = z.infer<typeof PersistedActionReceiptPartSchema>
+export type PersistedToolApprovalRequestPart = z.infer<typeof PersistedToolApprovalRequestPartSchema>
+export type PersistedToolApprovalResponsePart = z.infer<typeof PersistedToolApprovalResponsePartSchema>
 export type PersistedChatPart = z.infer<typeof PersistedChatPartSchema>
 export type PersistedChatMessage = z.infer<typeof PersistedChatMessageSchema>
 

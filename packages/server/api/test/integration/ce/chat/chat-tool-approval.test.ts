@@ -18,6 +18,8 @@ import {
     ChatConversationStatus,
     FlowVersionState,
     isNil,
+    PersistedChatMessage,
+    PersistedChatPartType,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -202,6 +204,40 @@ describe('Chat tool approval gates (#264)', () => {
             await waitForStatus(conversationId, ChatConversationStatus.IDLE)
 
             expect(providerBodies.length, 'the run continued past the gated call').toBe(1)
+        })
+
+        // The gate stopping the call is only half of it. The gated call produces no result, and a
+        // result-less call used to be persisted as a failed one — so the next turn told the model
+        // "the tool failed", and it would apologise or retry rather than wait for the human. The
+        // pending gate has to be persisted as itself.
+        it('is persisted as a pending approval request, not as a failed tool call', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const flow = await createFlow()
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                toolCallStream({ toolName: 'ap_delete_flow', callId: 'call_1', args: JSON.stringify({ flowId: flow.id }) }),
+                completionStream('Done, I deleted it.'),
+            ]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'delete that flow', runId: apId() })
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const parts = (row['uiMessages'] as PersistedChatMessage[]).flatMap((message) => message.parts)
+            const approvalRequests = parts.filter((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_REQUEST)
+            expect(approvalRequests, 'the pending gate was not persisted').toEqual([
+                expect.objectContaining({
+                    toolCallId: 'call_1',
+                    toolName: 'ap_delete_flow',
+                    input: { flowId: flow.id },
+                }),
+            ])
+            expect(approvalRequests[0]).toHaveProperty('approvalId', expect.any(String))
+            // The bug itself: the same call recorded a second time as a failure is what tells the
+            // model on the next turn that deleting the flow was attempted and did not work.
+            expect(
+                parts.filter((part) => part.type === PersistedChatPartType.TOOL_CALL && part.toolCallId === 'call_1'),
+                'the gated call was also recorded as a tool call, so the model will be told it failed',
+            ).toEqual([])
         })
     })
 })

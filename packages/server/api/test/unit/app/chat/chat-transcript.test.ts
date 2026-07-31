@@ -1,4 +1,4 @@
-import { PersistedChatMessage, PersistedChatPartType, PersistedChatRole, PersistedToolCallStatus } from '@aiqadam/shared'
+import { PersistedChatMessage, PersistedChatPart, PersistedChatPartType, PersistedChatRole, PersistedToolCallStatus } from '@aiqadam/shared'
 import { describe, expect, it } from 'vitest'
 import { chatTranscript } from '../../../../src/app/chat/chat-transcript'
 
@@ -86,6 +86,126 @@ describe('chatTranscript.toModelMessages', () => {
         ])
 
         expect(replayed).toEqual([{ role: 'user', content: 'one\ntwo' }])
+    })
+})
+
+// A gated call is persisted as an approval request rather than as a tool call (`chat-ai-utils.ts`),
+// so replay has to rebuild the call from it. Two SDK preconditions decide the shape, both verified
+// in `ai@6.0.170`'s bundle: `collectToolApprovals` looks up the request's `toolCallId` among the
+// `tool-call` parts of earlier assistant messages and throws `ToolCallNotFoundForApprovalError`
+// when it is absent (`index.mjs:2741-2745`), and it does nothing at all unless the *last* message
+// is the `role: 'tool'` one carrying the responses (`:2687-2696`).
+describe('chatTranscript.toModelMessages — an approval gate', () => {
+    const APPROVAL_ID = 'approval_1'
+
+    function gatedCallPart(): PersistedChatPart {
+        return {
+            type: PersistedChatPartType.TOOL_APPROVAL_REQUEST,
+            approvalId: APPROVAL_ID,
+            toolCallId: 'call_1',
+            toolName: 'ap_delete_flow',
+            input: { flowId: 'flow_1' },
+        }
+    }
+
+    it('replays the gated call so the SDK can find it when the approval is answered', () => {
+        const replayed = chatTranscript.toModelMessages([
+            { role: PersistedChatRole.ASSISTANT, parts: [gatedCallPart()] },
+        ])
+
+        expect(replayed[0].content).toEqual([
+            { type: 'tool-call', toolCallId: 'call_1', toolName: 'ap_delete_flow', input: { flowId: 'flow_1' } },
+            { type: 'tool-approval-request', approvalId: APPROVAL_ID, toolCallId: 'call_1' },
+        ])
+    })
+
+    // The bug #264 leaves behind if the gate is replayed as a plain unresolved call: the model is
+    // told the delete was attempted and failed, so it apologises or retries rather than waiting.
+    it('never tells the model the gated call failed', () => {
+        const replayed = chatTranscript.toModelMessages([
+            { role: PersistedChatRole.ASSISTANT, parts: [gatedCallPart()] },
+        ])
+
+        const answer = replayed.find((message) => message.role === 'tool')
+        expect(answer, 'the gated call was left unanswered').toBeDefined()
+        expect(JSON.stringify(answer)).not.toContain('error-text')
+        expect(JSON.stringify(answer)).not.toContain('failed')
+    })
+
+    // An assistant `tool-call` with no answer of any kind makes `convertToLanguageModelPrompt`
+    // throw `MissingToolResultsError` on the next user turn (`index.mjs:1379-1391`), which would
+    // kill every later run in the conversation. Until the gate is answered, the honest answer is
+    // that the call did not run.
+    it('answers a still-pending gate, so a later turn is not rejected outright', () => {
+        const replayed = chatTranscript.toModelMessages([
+            { role: PersistedChatRole.ASSISTANT, parts: [gatedCallPart()] },
+            { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'actually, never mind' }] },
+        ])
+
+        expect(replayed[1]).toEqual({
+            role: 'tool',
+            content: [{
+                type: 'tool-result',
+                toolCallId: 'call_1',
+                toolName: 'ap_delete_flow',
+                output: { type: 'text', value: 'Not executed. This action is waiting for the user to approve it.' },
+            }],
+        })
+    })
+
+    // The mirror of the case above: once the user has answered, a `tool-result` for the gated call
+    // must NOT be replayed, because `collectToolApprovals` skips any approval whose tool call
+    // already has a result (`index.mjs:2739`) — the tool would then never run.
+    it('replays an answered gate as the approval response alone, so the SDK executes the tool', () => {
+        const replayed = chatTranscript.toModelMessages([
+            {
+                role: PersistedChatRole.ASSISTANT,
+                parts: [
+                    gatedCallPart(),
+                    { type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE, approvalId: APPROVAL_ID, approved: true },
+                ],
+            },
+        ])
+
+        expect(replayed.at(-1)).toEqual({
+            role: 'tool',
+            content: [{ type: 'tool-approval-response', approvalId: APPROVAL_ID, approved: true }],
+        })
+    })
+
+    it('carries the reason of a denial through', () => {
+        const replayed = chatTranscript.toModelMessages([
+            {
+                role: PersistedChatRole.ASSISTANT,
+                parts: [
+                    gatedCallPart(),
+                    { type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE, approvalId: APPROVAL_ID, approved: false, reason: 'wrong flow' },
+                ],
+            },
+        ])
+
+        expect(replayed.at(-1)).toEqual({
+            role: 'tool',
+            content: [{ type: 'tool-approval-response', approvalId: APPROVAL_ID, approved: false, reason: 'wrong flow' }],
+        })
+    })
+
+    // `collectToolApprovals` returns nothing unless `messages.at(-1).role === 'tool'`, so an
+    // approval that is not the final message resumes into a run that silently never executes it.
+    it('leaves the approval response as the last message of the transcript', () => {
+        const replayed = chatTranscript.toModelMessages([
+            { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'delete that flow' }] },
+            {
+                role: PersistedChatRole.ASSISTANT,
+                parts: [
+                    { type: PersistedChatPartType.TEXT, text: 'That will delete it permanently.' },
+                    gatedCallPart(),
+                    { type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE, approvalId: APPROVAL_ID, approved: true },
+                ],
+            },
+        ])
+
+        expect(replayed.at(-1)?.role).toBe('tool')
     })
 })
 

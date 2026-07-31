@@ -168,6 +168,14 @@ type ContentPartLike = {
     input?: unknown
     args?: unknown
     output?: unknown
+    approvalId?: string
+    // The SDK nests the gated call under the approval request rather than repeating its fields
+    // flat, so this shape is not interchangeable with the one above.
+    toolCall?: {
+        toolCallId?: string
+        toolName?: string
+        input?: unknown
+    }
 }
 
 function buildStepParts({ content }: {
@@ -180,6 +188,14 @@ function buildStepParts({ content }: {
         }
     }
 
+    // Collected in a pass of its own because the step content lists the gated call *before* its
+    // approval request (measured: `['text', 'tool-call', 'tool-approval-request']`), and the SDK
+    // enqueues the two from different streams that are merged — so deciding as we walk would depend
+    // on an order nothing guarantees.
+    const gatedToolCallIds = new Set(content.flatMap((part) => part.type === 'tool-approval-request' && !isNil(part.toolCall?.toolCallId)
+        ? [part.toolCall.toolCallId]
+        : []))
+
     const parts: PersistedChatPart[] = []
     for (const part of content) {
         switch (part.type) {
@@ -189,7 +205,28 @@ function buildStepParts({ content }: {
             case 'text':
                 if (part.text) parts.push({ type: PersistedChatPartType.TEXT, text: part.text })
                 break
+            case 'tool-approval-request': {
+                const gatedCall = part.toolCall
+                if (isNil(part.approvalId) || isNil(gatedCall?.toolCallId)) {
+                    break
+                }
+                parts.push({
+                    type: PersistedChatPartType.TOOL_APPROVAL_REQUEST,
+                    approvalId: part.approvalId,
+                    toolCallId: gatedCall.toolCallId,
+                    toolName: gatedCall.toolName ?? '',
+                    input: toRecord(gatedCall.input),
+                })
+                break
+            }
             case 'tool-call': {
+                // A gated call never ran, so it has no result — and a result-less call is recorded
+                // below as ERROR, which replays to the model as "the tool failed". It would then
+                // apologise or retry instead of waiting for the human the gate exists to ask. The
+                // approval request part carries everything needed to describe and to resume it.
+                if (!isNil(part.toolCallId) && gatedToolCallIds.has(part.toolCallId)) {
+                    break
+                }
                 const toolName = part.toolName ?? ''
                 const input = toRecord(part.args ?? part.input)
                 if (toolName === 'ap_update_thinking_status') {

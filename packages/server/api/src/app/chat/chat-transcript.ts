@@ -6,8 +6,9 @@ import {
     PersistedChatRole,
     PersistedToolCallPart,
     PersistedToolCallStatus,
+    spreadIfDefined,
 } from '@aiqadam/shared'
-import { ModelMessage, TextPart, ToolCallPart, ToolResultPart } from 'ai'
+import { ModelMessage, TextPart, ToolApprovalRequest, ToolApprovalResponse, ToolCallPart, ToolResultPart } from 'ai'
 
 export const chatTranscript = {
     // Rebuilt from `uiMessages`, which is a schema-validated shape we own, rather than from the raw
@@ -54,8 +55,12 @@ function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
 }
 
 function toAssistantModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
-    const content: Array<TextPart | ToolCallPart> = []
-    const toolResults: ToolResultPart[] = []
+    const content: Array<TextPart | ToolCallPart | ToolApprovalRequest> = []
+    const toolResults: Array<ToolResultPart | ToolApprovalResponse> = []
+
+    const answeredApprovalIds = new Set(parts.flatMap((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE
+        ? [part.approvalId]
+        : []))
 
     for (const part of parts) {
         if (part.type === PersistedChatPartType.TEXT) {
@@ -70,13 +75,44 @@ function toAssistantModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
                 output: toReplayedToolOutput(part),
             })
         }
+        if (part.type === PersistedChatPartType.TOOL_APPROVAL_REQUEST) {
+            // The `tool-call` is rebuilt here even though it was deliberately not persisted as one:
+            // `collectToolApprovals` resolves the approval's `toolCallId` against the `tool-call`
+            // parts of earlier assistant messages and throws `ToolCallNotFoundForApprovalError`
+            // when it finds none, so a resumed run cannot execute the tool without it.
+            content.push({ type: 'tool-call', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input })
+            content.push({ type: 'tool-approval-request', approvalId: part.approvalId, toolCallId: part.toolCallId })
+            // Only while the gate is unanswered. Once it is, this result would make
+            // `collectToolApprovals` treat the call as already settled and skip executing it — and
+            // before then its absence would make the next user turn throw `MissingToolResultsError`,
+            // which poisons the conversation for good. It is worded as a fact rather than as a
+            // failure because the model's next move should be to wait, not to retry or apologise.
+            if (!answeredApprovalIds.has(part.approvalId)) {
+                toolResults.push({
+                    type: 'tool-result',
+                    toolCallId: part.toolCallId,
+                    toolName: part.toolName,
+                    output: { type: 'text', value: AWAITING_APPROVAL_OUTPUT },
+                })
+            }
+        }
+        if (part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE) {
+            toolResults.push({
+                type: 'tool-approval-response',
+                approvalId: part.approvalId,
+                approved: part.approved,
+                ...spreadIfDefined('reason', part.reason),
+            })
+        }
     }
 
     if (content.length === 0) {
         return []
     }
     // A tool message must follow the assistant message that made the calls, or the provider
-    // rejects the transcript for having unanswered tool calls.
+    // rejects the transcript for having unanswered tool calls. It is also what puts an approval
+    // response last when the answered gate is the newest turn — the only arrangement in which
+    // `collectToolApprovals` looks at it at all.
     return toolResults.length === 0
         ? [{ role: 'assistant', content }]
         : [{ role: 'assistant', content }, { role: 'tool', content: toolResults }]
@@ -108,6 +144,8 @@ function describeToolFailure(output: unknown): string {
     }
     return JSON.stringify(output)
 }
+
+const AWAITING_APPROVAL_OUTPUT = 'Not executed. This action is waiting for the user to approve it.'
 
 // Twenty messages is roughly ten exchanges — enough that a build session keeps its thread, while
 // capping what any single turn re-sends.
