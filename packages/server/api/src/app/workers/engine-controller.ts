@@ -1,7 +1,8 @@
 
-import { FlowVersion, GetFlowVersionForWorkerRequest, ListFlowsRequest } from '@aiqadam/shared'
+import { FlowVersion, GetFlowVersionForWorkerRequest, ListFlowsRequest, OptionalArrayFromQuery } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
+import { z } from 'zod'
 import { entitiesMustBeOwnedByCurrentProject } from '../authentication/authorization'
 import { securityAccess } from '../core/security/authorization/fastify-security'
 import { flowService } from '../flows/flow/flow.service'
@@ -23,6 +24,7 @@ export const flowEngineWorker: FastifyPluginAsyncZod = async (app) => {
             connectionExternalIds: request.query.connectionExternalIds,
             agentExternalIds: request.query.agentExternalIds,
             externalIds: request.query.externalIds,
+            externalIdsOrIds: request.query.externalIdsOrIds,
         })
     })
 
@@ -38,12 +40,19 @@ export const flowEngineWorker: FastifyPluginAsyncZod = async (app) => {
 }
 
 
+// Engine-only, deliberately not on the public `ListFlowsRequest`: it resolves a stored flow
+// reference that may hold either an `externalId` or a primary-key `id`. `externalIds` keeps its
+// exact-field meaning for every other caller.
+const EngineListFlowsRequest = ListFlowsRequest.omit({ projectId: true }).extend({
+    externalIdsOrIds: OptionalArrayFromQuery(z.string()),
+})
+
 const GetAllFlowsByProjectParams = {
     config: {
         security: securityAccess.engine(),
     },
     schema: {
-        querystring: ListFlowsRequest.omit({ projectId: true }),
+        querystring: EngineListFlowsRequest,
     },
 }
 

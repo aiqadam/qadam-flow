@@ -150,6 +150,12 @@ export type StepContext = {
 
 export type ListFlowsContextParams = {
   externalIds?: string[]
+  /**
+   * Matches a flow whose `externalId` **or** primary-key `id` is in the list. Use it for
+   * references read back out of stored step settings, where either field may have been written.
+   * Prefer `externalIds` when the value is known to be an external id.
+   */
+  externalIdsOrIds?: string[]
 }
 
 

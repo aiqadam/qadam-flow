@@ -10,6 +10,11 @@ export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVe
                     queryParams.append('externalIds', id)
                 }
             }
+            if (params?.externalIdsOrIds) {
+                for (const id of params.externalIdsOrIds) {
+                    queryParams.append('externalIdsOrIds', id)
+                }
+            }
             const url = `${internalApiUrl}v1/engine/populated-flows?${queryParams.toString()}`
             const response = await fetch(url, {
                 method: 'GET',

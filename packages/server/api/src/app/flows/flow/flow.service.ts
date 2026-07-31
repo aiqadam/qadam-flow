@@ -35,7 +35,7 @@ import {
 } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
-import { EntityManager, In, IsNull, Not } from 'typeorm'
+import { Brackets, EntityManager, In, IsNull, Not } from 'typeorm'
 import { transaction } from '../../core/db/transaction'
 import { distributedLock } from '../../database/redis-connections'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
@@ -114,6 +114,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
         connectionExternalIds,
         agentExternalIds,
         externalIds,
+        externalIdsOrIds,
         versionState = FlowVersionState.DRAFT,
         includeTriggerSource = true,
     }: ListParams): Promise<SeekPage<PopulatedFlow>> {
@@ -199,6 +200,29 @@ export const flowService = (log: FastifyBaseLogger) => ({
 
         if (externalIds !== undefined) {
             queryBuilder.andWhere('ff."externalId" IN (:...externalIds)', { externalIds })
+        }
+
+        // Flow references stored in step settings (e.g. an agent's FLOW tool `externalFlowId`)
+        // are free text, and every MCP tool that surfaces a flow reports its primary key rather
+        // than its `externalId` — so a stored reference may legitimately be either. Matching both
+        // lets those already-stored configurations resolve without a migration. This stays ANDed
+        // with the projectId/platformId predicate above, so it never widens tenant scope.
+        //
+        // CONSTRAINT for anyone adding a caller-suppliable `externalId` path (git sync, template
+        // import, a public create/update field): callers of this filter resolve a tie by preferring
+        // the `externalId` match over the `id` match — see `constructFlowsTools` in the AI qadam.
+        // `externalId` is the forgeable column and `id` is not, so the moment a user can choose an
+        // `externalId`, setting it to another flow's `id` silently repoints any agent tool that
+        // referenced that flow by id. Today `create` only ever receives `externalId ?? apId()` from
+        // internal callers, which is what keeps this theoretical. If you open that door, this
+        // precedence is the thing that turns it into an in-project agent-hijack primitive — handle
+        // it there (reject an `externalId` that collides with an existing flow `id`) rather than by
+        // flipping the ordering here, which would only trade the hazard for a worse one.
+        if (externalIdsOrIds !== undefined) {
+            queryBuilder.andWhere(new Brackets((qb) => {
+                qb.where('ff."externalId" IN (:...externalIdsOrIds)', { externalIdsOrIds })
+                    .orWhere('ff.id IN (:...externalIdsOrIds)', { externalIdsOrIds })
+            }))
         }
 
         if (connectionExternalIds !== undefined) {
@@ -773,6 +797,7 @@ type ListParamsBase = {
     name?: string
     versionState?: FlowVersionState
     externalIds?: string[]
+    externalIdsOrIds?: string[]
     connectionExternalIds?: string[]
     agentExternalIds?: string[]
     includeTriggerSource?: boolean

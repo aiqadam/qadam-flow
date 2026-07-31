@@ -138,4 +138,97 @@ describe('GET /v1/engine/populated-flows', () => {
         // The comma-joined string matches no externalId, so the result must be empty
         expect(body.data).toHaveLength(0)
     })
+
+    describe('externalIdsOrIds', () => {
+        it('matches a flow by its primary-key id', async () => {
+            const { mockProject, engineToken } = await setupProject()
+
+            const flow = createMockFlow({ projectId: mockProject.id, externalId: apId() })
+            await db.save('flow', [flow])
+            await db.save('flow_version', [createMockFlowVersion({ flowId: flow.id })])
+
+            const body = await listPopulatedFlows({ engineToken, query: `externalIdsOrIds=${flow.id}` })
+
+            expect(body.data.map((f: { id: string }) => f.id)).toEqual([flow.id])
+        })
+
+        it('matches a flow by its externalId', async () => {
+            const { mockProject, engineToken } = await setupProject()
+
+            const externalId = apId()
+            const flow = createMockFlow({ projectId: mockProject.id, externalId })
+            await db.save('flow', [flow])
+            await db.save('flow_version', [createMockFlowVersion({ flowId: flow.id })])
+
+            const body = await listPopulatedFlows({ engineToken, query: `externalIdsOrIds=${externalId}` })
+
+            expect(body.data.map((f: { id: string }) => f.id)).toEqual([flow.id])
+        })
+
+        it('returns both rows when one flow\'s externalId equals another flow\'s id, so the caller can pick', async () => {
+            const { mockProject, engineToken } = await setupProject()
+
+            const idMatch = createMockFlow({ projectId: mockProject.id, externalId: apId() })
+            const externalIdMatch = createMockFlow({ projectId: mockProject.id, externalId: idMatch.id })
+            await db.save('flow', [idMatch, externalIdMatch])
+            await db.save('flow_version', [
+                createMockFlowVersion({ flowId: idMatch.id }),
+                createMockFlowVersion({ flowId: externalIdMatch.id }),
+            ])
+
+            const body = await listPopulatedFlows({ engineToken, query: `externalIdsOrIds=${idMatch.id}` })
+
+            expect(body.data.map((f: { id: string }) => f.id).sort()).toEqual([idMatch.id, externalIdMatch.id].sort())
+        })
+
+        it('never crosses a project boundary, by id or by externalId', async () => {
+            const { engineToken } = await setupProject()
+            const { mockProject: otherProject } = await setupProject()
+
+            const sharedExternalId = apId()
+            const otherFlow = createMockFlow({ projectId: otherProject.id, externalId: sharedExternalId })
+            await db.save('flow', [otherFlow])
+            await db.save('flow_version', [createMockFlowVersion({ flowId: otherFlow.id })])
+
+            const byId = await listPopulatedFlows({ engineToken, query: `externalIdsOrIds=${otherFlow.id}` })
+            const byExternalId = await listPopulatedFlows({ engineToken, query: `externalIdsOrIds=${sharedExternalId}` })
+
+            expect(byId.data).toHaveLength(0)
+            expect(byExternalId.data).toHaveLength(0)
+        })
+
+        it('does not let externalIds match a primary-key id — the widening is opt-in', async () => {
+            const { mockProject, engineToken } = await setupProject()
+
+            const flow = createMockFlow({ projectId: mockProject.id, externalId: apId() })
+            await db.save('flow', [flow])
+            await db.save('flow_version', [createMockFlowVersion({ flowId: flow.id })])
+
+            const body = await listPopulatedFlows({ engineToken, query: `externalIds=${flow.id}` })
+
+            expect(body.data).toHaveLength(0)
+        })
+    })
 })
+
+async function setupProject() {
+    const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+    const engineToken = await generateMockToken({
+        type: PrincipalType.ENGINE,
+        id: apId(),
+        projectId: mockProject.id,
+        platform: { id: mockPlatform.id },
+    })
+    return { mockPlatform, mockProject, engineToken }
+}
+
+async function listPopulatedFlows({ engineToken, query }: { engineToken: string, query: string }) {
+    const response = await app!.inject({
+        method: 'GET',
+        url: '/api/v1/engine/populated-flows',
+        query,
+        headers: { authorization: `Bearer ${engineToken}` },
+    })
+    expect(response.statusCode).toBe(StatusCodes.OK)
+    return response.json()
+}

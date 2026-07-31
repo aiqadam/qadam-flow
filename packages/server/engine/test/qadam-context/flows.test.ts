@@ -61,6 +61,22 @@ describe('createFlowsContext', () => {
             expect(calledUrl).not.toContain('externalIds')
         })
 
+        it('sends repeated externalIdsOrIds params, distinct from externalIds', async () => {
+            const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+                new Response(JSON.stringify(emptyPage), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+            )
+
+            const ctx = createFlowsContext(CONTEXT_PARAMS)
+            await ctx.list({ externalIdsOrIds: ['refA', 'refB'] })
+
+            const calledUrl = (fetchSpy.mock.calls[0][0] as string).toString()
+            expect(calledUrl).toContain('externalIdsOrIds=refA')
+            expect(calledUrl).toContain('externalIdsOrIds=refB')
+            expect(calledUrl).not.toContain('%2C')
+            // The narrow filter must not be sent as a side effect of the widened one
+            expect(calledUrl).not.toMatch(/[?&]externalIds=/)
+        })
+
         it('returns the parsed page from the server', async () => {
             const mockFlow = { id: 'flow-1', externalId: 'extA' } as unknown as PopulatedFlow
             const page: SeekPage<PopulatedFlow> = { data: [mockFlow], next: null, previous: null }

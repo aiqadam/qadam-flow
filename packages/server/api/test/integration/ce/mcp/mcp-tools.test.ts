@@ -1,9 +1,12 @@
 import { Property, QadamAuth } from '@aiqadam/qadams-framework'
 import {
+    AgentQadamProps,
+    AgentToolType,
     apId,
     FlowActionType,
     FlowCreatorType,
     FlowRunStatus,
+    flowStructureUtil,
     McpServerType,
     PackageType,
     ProjectScopedMcpServer,
@@ -42,7 +45,7 @@ import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-fl
 import { apValidateStepConfigTool } from '../../../../src/app/mcp/tools/ap-validate-step-config'
 import { mcpUtils } from '../../../../src/app/mcp/tools/mcp-utils'
 import { db } from '../../../helpers/db'
-import { createMockQadamMetadata } from '../../../helpers/mocks'
+import { createMockProject, createMockQadamMetadata } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -2595,5 +2598,162 @@ describe('MCP Tools integration', () => {
         expect(response.statusCode).toBe(StatusCodes.CREATED)
         const flow = await flowService(mockLog).getOnePopulatedOrThrow({ id: response.json().id, projectId: ctx.project.id })
         expect(flow.createdBy ?? null).toBeNull()
+    })
+
+    // ── agent FLOW tool references — see issue #70 ────────────────────
+    describe('agentTools externalFlowId normalisation', () => {
+        async function readStoredExternalFlowId({ flowId, projectId }: { flowId: string, projectId: string }): Promise<string> {
+            const flow = await flowService(mockLog).getOnePopulatedOrThrow({ id: flowId, projectId })
+            const step = flowStructureUtil.getStep('step_1', flow.version.trigger)
+            const input = (step?.settings as { input?: Record<string, unknown> }).input ?? {}
+            const tools = input[AgentQadamProps.AGENT_TOOLS] as Array<{ externalFlowId: string }>
+            return tools[0].externalFlowId
+        }
+
+        async function updateAgentToolsStep({ mcp, flowId, externalFlowId }: { mcp: ProjectScopedMcpServer, flowId: string, externalFlowId: string }) {
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.PIECE,
+                displayName: 'Run Agent',
+                qadamName: '@aiqadam/qadam-test-email',
+            })
+            return apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: {
+                    [AgentQadamProps.AGENT_TOOLS]: [
+                        { type: AgentToolType.FLOW, toolName: 'weather', externalFlowId },
+                    ],
+                },
+            })
+        }
+
+        it('ap_update_step — stores the flow externalId when given a flow id', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const agentFlowId = await createFlowAndGetId(mcp, 'Agent Flow')
+            const toolFlowId = await createFlowAndGetId(mcp, 'Tool Flow')
+            const toolFlow = await flowService(mockLog).getOnePopulatedOrThrow({ id: toolFlowId, projectId: ctx.project.id })
+
+            await updateAgentToolsStep({ mcp, flowId: agentFlowId, externalFlowId: toolFlowId })
+
+            expect(await readStoredExternalFlowId({ flowId: agentFlowId, projectId: ctx.project.id })).toBe(toolFlow.externalId)
+            expect(toolFlow.externalId).not.toBe(toolFlowId)
+        })
+
+        it('ap_update_step — leaves an externalId untouched', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const agentFlowId = await createFlowAndGetId(mcp, 'Agent Flow')
+            const toolFlowId = await createFlowAndGetId(mcp, 'Tool Flow')
+            const toolFlow = await flowService(mockLog).getOnePopulatedOrThrow({ id: toolFlowId, projectId: ctx.project.id })
+
+            await updateAgentToolsStep({ mcp, flowId: agentFlowId, externalFlowId: toolFlow.externalId })
+
+            expect(await readStoredExternalFlowId({ flowId: agentFlowId, projectId: ctx.project.id })).toBe(toolFlow.externalId)
+        })
+
+        it('ap_update_step — keeps the externalId reading when it collides with another flow\'s id', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const agentFlowId = await createFlowAndGetId(mcp, 'Agent Flow')
+            const idMatchFlowId = await createFlowAndGetId(mcp, 'Flow Referenced By Id')
+            const externalIdMatchFlowId = await createFlowAndGetId(mcp, 'Flow Whose ExternalId Collides')
+            await db.update('flow', externalIdMatchFlowId, { externalId: idMatchFlowId })
+
+            await updateAgentToolsStep({ mcp, flowId: agentFlowId, externalFlowId: idMatchFlowId })
+
+            // The stored value already *is* a valid externalId (of the colliding flow), so it must
+            // survive verbatim — rewriting it to the id-matched flow's externalId would silently
+            // repoint the tool at a different flow.
+            expect(await readStoredExternalFlowId({ flowId: agentFlowId, projectId: ctx.project.id })).toBe(idMatchFlowId)
+        })
+
+        it('ap_update_step — leaves a reference that matches no flow in the project alone', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const agentFlowId = await createFlowAndGetId(mcp, 'Agent Flow')
+
+            await updateAgentToolsStep({ mcp, flowId: agentFlowId, externalFlowId: 'no-such-flow' })
+
+            expect(await readStoredExternalFlowId({ flowId: agentFlowId, projectId: ctx.project.id })).toBe('no-such-flow')
+        })
+
+        it('ap_update_step — never resolves a flow id belonging to a sibling project', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+
+            // Sibling project on the *same platform*, so this also catches a lookup that scopes by
+            // platformId instead of projectId — a separate-platform fixture would pass either way.
+            const siblingProject = createMockProject({ platformId: ctx.platform.id, ownerId: ctx.user.id })
+            await db.save('project', siblingProject)
+            const siblingMcp = makeMcp(siblingProject.id)
+
+            const agentFlowId = await createFlowAndGetId(mcp, 'Agent Flow')
+            const foreignFlowId = await createFlowAndGetId(siblingMcp, 'Foreign Tool Flow')
+            const foreignFlow = await flowService(mockLog).getOnePopulatedOrThrow({ id: foreignFlowId, projectId: siblingProject.id })
+
+            await updateAgentToolsStep({ mcp, flowId: agentFlowId, externalFlowId: foreignFlowId })
+
+            // The normalisation lookup is project-scoped, so a foreign id resolves to nothing and the
+            // reference must survive verbatim. Rewriting it would hand this project a working handle
+            // to a flow it cannot see.
+            const stored = await readStoredExternalFlowId({ flowId: agentFlowId, projectId: ctx.project.id })
+            expect(stored).toBe(foreignFlowId)
+            expect(stored).not.toBe(foreignFlow.externalId)
+        })
+
+        it('ap_add_step — stores the flow externalId when given a flow id', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const agentFlowId = await createFlowAndGetId(mcp, 'Agent Flow')
+            const toolFlowId = await createFlowAndGetId(mcp, 'Tool Flow')
+            const toolFlow = await flowService(mockLog).getOnePopulatedOrThrow({ id: toolFlowId, projectId: ctx.project.id })
+
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId: agentFlowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.PIECE,
+                displayName: 'Run Agent',
+                qadamName: '@aiqadam/qadam-test-email',
+                input: {
+                    [AgentQadamProps.AGENT_TOOLS]: [
+                        { type: AgentToolType.FLOW, toolName: 'weather', externalFlowId: toolFlowId },
+                    ],
+                },
+            })
+
+            expect(await readStoredExternalFlowId({ flowId: agentFlowId, projectId: ctx.project.id })).toBe(toolFlow.externalId)
+        })
+
+        it('ap_build_flow — stores the flow externalId when given a flow id', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const toolFlowId = await createFlowAndGetId(mcp, 'Tool Flow')
+            const toolFlow = await flowService(mockLog).getOnePopulatedOrThrow({ id: toolFlowId, projectId: ctx.project.id })
+
+            const result = await apBuildFlowTool({ mcp, userId: ctx.user.id }, mockLog).execute({
+                flowName: 'Built Agent Flow',
+                trigger: { qadamName: '@aiqadam/qadam-test-email', triggerName: 'new_email' },
+                steps: [{
+                    type: FlowActionType.PIECE,
+                    displayName: 'Run Agent',
+                    qadamName: '@aiqadam/qadam-test-email',
+                    // No actionName on purpose: with a resolvable action the flow operation prunes
+                    // input keys the action does not declare, and the test piece has no agentTools prop.
+                    input: {
+                        [AgentQadamProps.AGENT_TOOLS]: [
+                            { type: AgentToolType.FLOW, toolName: 'weather', externalFlowId: toolFlowId },
+                        ],
+                    },
+                }],
+            })
+            const builtFlowId = text(result).match(/\(id: (\S+?)\)/)?.[1]
+
+            expect(await readStoredExternalFlowId({ flowId: builtFlowId!, projectId: ctx.project.id })).toBe(toolFlow.externalId)
+        })
     })
 })

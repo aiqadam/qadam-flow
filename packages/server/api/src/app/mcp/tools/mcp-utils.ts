@@ -1,8 +1,9 @@
 import { PropertyType, QadamMetadataModel, QadamPropertyMap } from '@aiqadam/qadams-framework'
-import { BranchOperator, FlowActionType, flowStructureUtil, isNil, isObject, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
+import { AgentQadamProps, AgentToolType, BranchOperator, FlowActionType, flowStructureUtil, isNil, isObject, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
 import type { RouterAction, Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
+import { flowService } from '../../flows/flow/flow.service'
 import { expressionRewriter } from '../../flows/flow-version/migrations/expression-rewriter'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
@@ -383,6 +384,64 @@ function rewriteAllReferences<C = unknown>({ input, loopItems, conditions, trigg
     }
 }
 
+// `externalFlowId` on an agent FLOW tool is a free-text property, and every MCP tool that surfaces
+// a flow reports its primary key rather than its `externalId` — so an MCP client can only ever put
+// an `id` there. Rewriting it at write time keeps what lands in the database unambiguous.
+// `externalId` wins over `id` on a collision, matching the runtime lookup in the AI qadam.
+function rewriteAgentFlowToolIds({ input, flows }: {
+    input: Record<string, unknown> | undefined
+    flows: Array<{ id: string, externalId: string }>
+}): Record<string, unknown> | undefined {
+    const tools = readAgentFlowTools(input)
+    if (isNil(input) || isNil(tools)) {
+        return input
+    }
+    const knownExternalIds = new Set(flows.map(flow => flow.externalId))
+    const externalIdById = new Map(flows.map(flow => [flow.id, flow.externalId]))
+    return {
+        ...input,
+        [AgentQadamProps.AGENT_TOOLS]: tools.map((tool) => {
+            const reference = readFlowToolReference(tool)
+            if (isNil(reference) || knownExternalIds.has(reference)) {
+                return tool
+            }
+            const externalId = externalIdById.get(reference)
+            if (isNil(externalId) || !isObject(tool)) {
+                return tool
+            }
+            return { ...tool, externalFlowId: externalId }
+        }),
+    }
+}
+
+async function normalizeAgentFlowToolIds({ input, projectId, log }: {
+    input: Record<string, unknown> | undefined
+    projectId: string
+    log: FastifyBaseLogger
+}): Promise<Record<string, unknown> | undefined> {
+    const references = (readAgentFlowTools(input) ?? [])
+        .map(readFlowToolReference)
+        .filter((reference): reference is string => !isNil(reference))
+    if (references.length === 0) {
+        return input
+    }
+    const flows = await flowService(log).list({ projectIds: [projectId], externalIdsOrIds: references })
+    return rewriteAgentFlowToolIds({ input, flows: flows.data })
+}
+
+function readAgentFlowTools(input: Record<string, unknown> | undefined): unknown[] | null {
+    const tools = input?.[AgentQadamProps.AGENT_TOOLS]
+    return Array.isArray(tools) ? tools : null
+}
+
+function readFlowToolReference(tool: unknown): string | null {
+    if (!isObject(tool) || tool.type !== AgentToolType.FLOW) {
+        return null
+    }
+    const externalFlowId = tool.externalFlowId
+    return typeof externalFlowId === 'string' && externalFlowId.length > 0 ? externalFlowId : null
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -417,6 +476,8 @@ export const mcpUtils = {
     isProjectScoped,
     withTimeout,
     rewriteAllReferences,
+    rewriteAgentFlowToolIds,
+    normalizeAgentFlowToolIds,
     extractOptionsArray,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
