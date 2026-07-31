@@ -2,7 +2,11 @@ import { ChatConversation, Platform, Project, User } from '@aiqadam/shared'
 import { EntitySchema } from 'typeorm'
 import { ApIdSchema, BaseColumnSchemaPart } from '../database/database-common'
 
+// `activeRunId` and `runHeartbeat` are deliberately not in the shared `ChatConversation` contract:
+// they are server-side run bookkeeping, not part of what a client is promised.
 export type ChatConversationSchema = ChatConversation & {
+    activeRunId: string | null
+    runHeartbeat: string | null
     platform: Platform
     project: Project | null
     user: User
@@ -37,6 +41,21 @@ export const ChatConversationEntity = new EntitySchema<ChatConversationSchema>({
         status: {
             type: String,
             nullable: false,
+        },
+        // Which run owns the STREAMING state, and when it last proved it was alive. Without an
+        // identity on the row, a run that finishes settles whatever run is current — so a cancel
+        // followed by a new message leaves the second run live but detached, with nothing able to
+        // cancel it and the row reading IDLE. Every lifecycle write is conditional on this id.
+        //
+        // The heartbeat is its own column rather than `updated`, which is an `@UpdateDateColumn`:
+        // renaming a conversation bumps `updated` and would silently extend a stale run's lease.
+        activeRunId: {
+            ...ApIdSchema,
+            nullable: true,
+        },
+        runHeartbeat: {
+            type: 'timestamp with time zone',
+            nullable: true,
         },
         // Two histories, because the shared `ChatConversation` contract declares both and the web
         // client reads `uiMessages`. `uiMessages` is the live one: it is schema-validated, it is

@@ -89,11 +89,9 @@ export const chatController: FastifyPluginAsyncZod = async (app) => {
             platformId: request.principal.platform.id,
             userId: request.principal.id,
         })
-        chatAgentService(request.log).cancel({ id: request.params.id })
-        // Settled here as well as in the loop, because the loop may not be running in this
-        // process — or at all, if the instance that owned it has since restarted. Without this a
-        // cancel answers 204 and changes nothing the user can see.
-        await chatConversationService.cancelRun({
+        // Settles the row and, if the displaced run happens to be looping in this process,
+        // aborts it. A cancel may land on an instance that never owned the run.
+        await chatAgentService(request.log).cancel({
             id: request.params.id,
             platformId: request.principal.platform.id,
             userId: request.principal.id,

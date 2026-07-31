@@ -18,6 +18,8 @@ export class AddChatConversation1785486141722 implements Migration {
                 "title" character varying,
                 "modelName" character varying,
                 "status" character varying NOT NULL,
+                "activeRunId" character varying(21),
+                "runHeartbeat" TIMESTAMP WITH TIME ZONE,
                 "messages" json NOT NULL DEFAULT '[]',
                 "uiMessages" json,
                 "summary" character varying,

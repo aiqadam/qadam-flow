@@ -15,7 +15,7 @@ import { MoreThan } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
-import { ChatConversationEntity } from './chat-conversation-entity'
+import { ChatConversationEntity, ChatConversationSchema } from './chat-conversation-entity'
 
 const repo = repoFactory(ChatConversationEntity)
 
@@ -104,8 +104,8 @@ export const chatConversationService = {
     // POSTs both read IDLE, both pass the guard and both append — losing one turn and billing the
     // operator twice — and the guard would look correct while never having held. The repo's
     // multi-server rule calls for exactly this on concurrent operations.
-    async startRun({ id, platformId, userId, projectId, userMessage }: StartRunParams): Promise<void> {
-        await repo().manager.transaction(async (entityManager) => {
+    async startRun({ id, platformId, userId, projectId, runId, userMessage }: StartRunParams): Promise<TakenOverRun> {
+        return repo().manager.transaction(async (entityManager) => {
             const conversation = await entityManager.findOne(ChatConversationEntity, {
                 where: { id, platformId, userId },
                 lock: { mode: 'pessimistic_write' },
@@ -137,7 +137,7 @@ export const chatConversationService = {
                     platformId,
                     userId,
                     status: ChatConversationStatus.STREAMING,
-                    updated: MoreThan(new Date(Date.now() - ABANDONED_RUN_AFTER_MS).toISOString()),
+                    runHeartbeat: MoreThan(new Date(Date.now() - ABANDONED_RUN_AFTER_MS).toISOString()),
                 },
             })
             if (running >= MAX_CONCURRENT_RUNS_PER_USER) {
@@ -153,44 +153,79 @@ export const chatConversationService = {
                 // resolves the same project, instead of drifting with the user's project list.
                 projectId,
                 status: ChatConversationStatus.STREAMING,
+                activeRunId: runId,
+                runHeartbeat: new Date().toISOString(),
                 uiMessages: [...(conversation.uiMessages ?? []), userMessage],
+            })
+
+            // Handed back so the caller can abort the loop it just displaced, if that loop happens
+            // to live in this process. Taking the row without stopping the incumbent is how one
+            // conversation ends up with two live loops writing it.
+            return { displacedRunId: conversation.activeRunId }
+        })
+    },
+
+    // Every write below is conditional on `activeRunId`. A run that was cancelled or displaced
+    // must not settle the row afterwards: it would report IDLE while a newer run is still
+    // streaming, and the next message would then be admitted alongside it.
+    async finishRun({ id, platformId, userId, runId, messages, assistantMessage }: FinishRunParams): Promise<void> {
+        await repo().manager.transaction(async (entityManager) => {
+            const conversation = await entityManager.findOne(ChatConversationEntity, {
+                where: { id, platformId, userId, activeRunId: runId },
+                lock: { mode: 'pessimistic_write' },
+            })
+            if (isNil(conversation)) {
+                return
+            }
+            await entityManager.save(ChatConversationEntity, {
+                ...conversation,
+                status: ChatConversationStatus.IDLE,
+                activeRunId: null,
+                runHeartbeat: null,
+                messages,
+                // Nullable because a run cancelled before the first token has no assistant turn to
+                // record, and an empty bubble reads worse than none — but the conversation still
+                // has to leave STREAMING or the client's stale-check spins forever.
+                uiMessages: isNil(assistantMessage)
+                    ? conversation.uiMessages
+                    : [...(conversation.uiMessages ?? []), assistantMessage],
             })
         })
     },
 
-    async finishRun({ id, platformId, userId, messages, assistantMessage }: FinishRunParams): Promise<void> {
-        const conversation = await this.getOneOrThrow({ id, platformId, userId })
-        await repo().save({
-            ...conversation,
-            status: ChatConversationStatus.IDLE,
-            messages,
-            // Nullable because a run cancelled before the first token has no assistant turn to
-            // record, and an empty bubble reads worse than none — but the conversation still has
-            // to leave STREAMING or the client's stale-check spins forever.
-            uiMessages: isNil(assistantMessage)
-                ? conversation.uiMessages
-                : [...(conversation.uiMessages ?? []), assistantMessage],
+    async failRun({ id, platformId, userId, runId }: RunScopedParams): Promise<void> {
+        await repo().update(
+            { id, platformId, userId, activeRunId: runId },
+            { status: ChatConversationStatus.ERROR, activeRunId: null, runHeartbeat: null },
+        )
+    },
+
+    // Proof of life, written at every step boundary. `runHeartbeat` rather than `updated` because
+    // `updated` is an `@UpdateDateColumn` that an unrelated rename would bump, silently extending
+    // a dead run's lease.
+    async touchRun({ id, platformId, userId, runId }: RunScopedParams): Promise<void> {
+        await repo().update({ id, platformId, userId, activeRunId: runId }, { runHeartbeat: new Date().toISOString() })
+    },
+
+    // Settling the row is the caller's job as well as the loop's: a cancel may reach an instance
+    // that is not running the loop, or one whose owner has since restarted. Returns the run it
+    // stopped so the caller can abort that loop locally if it happens to be here.
+    async cancelRun({ id, platformId, userId }: GetParams): Promise<TakenOverRun> {
+        return repo().manager.transaction(async (entityManager) => {
+            const conversation = await entityManager.findOne(ChatConversationEntity, {
+                where: { id, platformId, userId, status: ChatConversationStatus.STREAMING },
+                lock: { mode: 'pessimistic_write' },
+            })
+            if (isNil(conversation)) {
+                return { displacedRunId: null }
+            }
+            // Status only. `activeRunId` stays, so the loop being cancelled can still settle its
+            // own row and keep whatever it managed to stream — `finishRun` matches on that id.
+            // Clearing it here would silently discard the partial reply. A leftover id on an IDLE
+            // row is harmless: admission looks at the status, and `startRun` overwrites it.
+            await entityManager.update(ChatConversationEntity, { id }, { status: ChatConversationStatus.IDLE })
+            return { displacedRunId: conversation.activeRunId }
         })
-    },
-
-    async failRun({ id, platformId, userId }: GetParams): Promise<void> {
-        const conversation = await this.getOneOrThrow({ id, platformId, userId })
-        await repo().save({ ...conversation, status: ChatConversationStatus.ERROR })
-    },
-
-    // Called on every step boundary so `updated` keeps moving while a run is genuinely alive. That
-    // is what lets `isAbandoned` tell "still working" from "the process that owned this died", and
-    // it is why the staleness window can be short enough to be useful.
-    async touchRun({ id, platformId, userId }: GetParams): Promise<void> {
-        await repo().update({ id, platformId, userId, status: ChatConversationStatus.STREAMING }, { updated: new Date().toISOString() })
-    },
-
-    // Settling the row is the caller's job as well as the loop's. A cancel that reaches an API
-    // instance which is not the one running the loop — or a conversation whose owning process is
-    // simply gone — must still leave STREAMING, or the client polls forever and every later
-    // message 409s with nothing the user can do about it.
-    async cancelRun({ id, platformId, userId }: GetParams): Promise<void> {
-        await repo().update({ id, platformId, userId, status: ChatConversationStatus.STREAMING }, { status: ChatConversationStatus.IDLE })
     },
 }
 
@@ -206,8 +241,11 @@ const ABANDONED_RUN_AFTER_MS = 5 * 60 * 1000
 // hold a slot: they are excluded by the takeover above the moment they go stale.
 const MAX_CONCURRENT_RUNS_PER_USER = 3
 
-function isAbandoned(conversation: ChatConversation): boolean {
-    return Date.now() - new Date(conversation.updated).getTime() > ABANDONED_RUN_AFTER_MS
+function isAbandoned(conversation: ChatConversationSchema): boolean {
+    // No heartbeat at all means the row predates any heartbeat write, which can only be a run that
+    // never got one — treat it as abandoned rather than letting it hold the conversation forever.
+    return isNil(conversation.runHeartbeat)
+        || Date.now() - new Date(conversation.runHeartbeat).getTime() > ABANDONED_RUN_AFTER_MS
 }
 
 // Everything the conversation list needs to render a row, and nothing that grows with the
@@ -237,12 +275,20 @@ type UpdateParams = GetParams & {
     request: UpdateChatConversationRequest
 }
 
-type StartRunParams = GetParams & {
+type RunScopedParams = GetParams & {
+    runId: string
+}
+
+type StartRunParams = RunScopedParams & {
     projectId: string
     userMessage: PersistedChatMessage
 }
 
-type FinishRunParams = GetParams & {
+export type TakenOverRun = {
+    displacedRunId: string | null
+}
+
+type FinishRunParams = RunScopedParams & {
     messages: ChatConversation['messages']
     assistantMessage: PersistedChatMessage | null
 }

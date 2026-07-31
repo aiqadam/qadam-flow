@@ -42,7 +42,7 @@ let providerReply = 'Hello from the test model'
 let providerCalls: string[] = []
 let providerBodies: Record<string, unknown>[] = []
 let scriptedResponses: string[] = []
-let providerHold: Promise<void> | null = null
+let providerHolds: Promise<void>[] = []
 let providerFirstChunkOnly = ''
 let providerStreamedFirstChunk = false
 
@@ -57,9 +57,8 @@ beforeAll(async () => {
             // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream —
             // the only way to cancel something real rather than a conversation that is already
             // finished.
-            if (!isNil(providerHold)) {
-                const hold = providerHold
-                providerHold = null
+            const hold = providerHolds.shift()
+            if (!isNil(hold)) {
                 res.write(textChunk(providerFirstChunkOnly))
                 providerStreamedFirstChunk = true
                 void hold.then(() => res.end('data: [DONE]\n\n'))
@@ -90,7 +89,7 @@ afterEach(() => {
     providerBodies = []
     providerReply = 'Hello from the test model'
     scriptedResponses = []
-    providerHold = null
+    providerHolds = []
     providerFirstChunkOnly = ''
     providerStreamedFirstChunk = false
 })
@@ -190,6 +189,16 @@ function toolCallStream({ toolName, callId, args }: { toolName: string, callId: 
         }),
         'data: [DONE]\n\n',
     ].join('')
+}
+
+// A run is only live if it holds a run id and a fresh heartbeat. Setting the status alone
+// describes an abandoned run, which the takeover is entitled to claim.
+function streamingRun(): Record<string, unknown> {
+    return {
+        status: ChatConversationStatus.STREAMING,
+        activeRunId: apId(),
+        runHeartbeat: new Date().toISOString(),
+    }
 }
 
 async function waitForCondition(read: () => Promise<Record<string, unknown> | null>): Promise<Record<string, unknown>> {
@@ -390,7 +399,7 @@ describe('Chat agent API', () => {
         it('refuses a second message while the first is still generating, instead of losing a turn', async () => {
             await enableChatProvider(ctx.platform.id)
             const conversationId = await createConversation(ctx)
-            await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.STREAMING })
+            await db.update('chat_conversation', conversationId, streamingRun())
 
             const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, {
                 content: 'and another thing',
@@ -428,7 +437,7 @@ describe('Chat agent API', () => {
             await enableChatProvider(ctx.platform.id)
             const busy = await Promise.all([1, 2, 3].map(() => createConversation(ctx)))
             for (const conversationId of busy) {
-                await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.STREAMING })
+                await db.update('chat_conversation', conversationId, streamingRun())
             }
             const fourth = await createConversation(ctx)
 
@@ -440,6 +449,62 @@ describe('Chat agent API', () => {
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
             expect(response!.json().params.message).toContain('several replies generating')
             expect(providerCalls).toEqual([])
+        })
+
+        // The attack the run-identity work exists to stop. Cancel answers before the loop unwinds,
+        // so a second message is admitted; when the first loop finally settles it must not clear
+        // the second run's controller or flip its row to IDLE mid-stream, or a third message gets
+        // admitted alongside and the conversation ends up with several uncancellable loops.
+        it('does not let a settling run detach the run that replaced it', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            let releaseFirst: () => void = () => {}
+            let releaseSecond: () => void = () => {}
+            providerHolds = [
+                new Promise<void>((resolve) => {
+                    releaseFirst = resolve
+                }),
+                new Promise<void>((resolve) => {
+                    releaseSecond = resolve
+                }),
+            ]
+            providerFirstChunkOnly = 'first run'
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'one', runId: apId() })
+            await waitFor(() => providerStreamedFirstChunk)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
+
+            const second = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'two', runId: apId() })
+            expect(second?.statusCode).toBe(StatusCodes.OK)
+            const secondRunId = second!.json().runId
+
+            // Let the first loop unwind while the second is still mid-stream. This is the window
+            // the guard exists for: without it the first run settles the row to IDLE underneath a
+            // live run and removes its abort controller.
+            providerStreamedFirstChunk = false
+            await waitFor(() => providerStreamedFirstChunk)
+            releaseFirst()
+            await new Promise((resolve) => setTimeout(resolve, 300))
+
+            const midFlight = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+            expect(midFlight?.status).toBe(ChatConversationStatus.STREAMING)
+            expect(midFlight?.activeRunId).toBe(secondRunId)
+
+            releaseSecond()
+
+            const row = await waitForCondition(async () => {
+                const candidate = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return candidate?.status === ChatConversationStatus.IDLE ? candidate : null
+            })
+
+            // Both user turns survive and the second run's reply is the last thing recorded. Under
+            // the old conversation-keyed bookkeeping the first run settled the row on its way out,
+            // taking the second run's turn with it.
+            const persisted = row.uiMessages as any[]
+            const userTurns = persisted.filter((message) => message.role === PersistedChatRole.USER)
+            expect(userTurns.map((message) => message.parts[0].text)).toEqual(['one', 'two'])
+            expect(persisted[persisted.length - 1].role).toBe(PersistedChatRole.ASSISTANT)
+            expect(secondRunId).toBeDefined()
         })
 
         it('refuses a platform sibling attempt to post into someone else conversation', async () => {
@@ -573,7 +638,7 @@ describe('Chat agent API', () => {
             const restReleased = new Promise<void>((resolve) => {
                 releaseRest = resolve
             })
-            providerHold = restReleased
+            providerHolds = [restReleased]
             providerFirstChunkOnly = 'Partial answer so far'
 
             await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'say something long', runId: apId() })
@@ -602,7 +667,7 @@ describe('Chat agent API', () => {
         // user is left with a stop button that answers 204 and changes nothing.
         it('settles a conversation left streaming by another process', async () => {
             const conversationId = await createConversation(ctx)
-            await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.STREAMING })
+            await db.update('chat_conversation', conversationId, streamingRun())
 
             const response = await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
 

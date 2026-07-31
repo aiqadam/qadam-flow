@@ -1,6 +1,7 @@
-import { apId, ChatConversationStatus, DefaultProjectRole } from '@aiqadam/shared'
+import { apId, ChatConversationStatus, DefaultProjectRole, PersistedChatPartType, PersistedChatRole } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { chatConversationService } from '../../../../src/app/chat/chat-conversation.service'
 import { db } from '../../../helpers/db'
 import { createMemberContext, createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
@@ -162,6 +163,73 @@ describe('Chat conversations API', () => {
             expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
             const saved = await db.findOneBy('chat_conversation', { id: theirs['id'] })
             expect(saved).toMatchObject({ title: 'theirs' })
+        })
+    })
+
+    // These sit at the service, not the HTTP surface, on purpose. The interleaving they guard
+    // against — a displaced run settling the row after a newer run has taken it — cannot be forced
+    // through the API, because cancel aborts the old loop before the new message is admitted. An
+    // end-to-end test of it would pass whether or not the guard exists, which is worse than none.
+    describe('run ownership', () => {
+        async function streamingConversation(activeRunId: string): Promise<string> {
+            const conversation = await createConversation(ctx)
+            await db.update('chat_conversation', conversation['id'], {
+                status: ChatConversationStatus.STREAMING,
+                activeRunId,
+                runHeartbeat: new Date().toISOString(),
+            })
+            return conversation['id']
+        }
+
+        it('ignores a finish from a run that no longer owns the conversation', async () => {
+            const id = await streamingConversation('run-that-took-over')
+
+            await chatConversationService.finishRun({
+                id,
+                platformId: ctx.platform.id,
+                userId: ctx.user.id,
+                runId: 'run-that-was-displaced',
+                messages: [],
+                assistantMessage: { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: 'stale reply' }] },
+            })
+
+            const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id })
+            // Still streaming, still owned by the live run, and the stale reply is not recorded.
+            expect(row?.status).toBe(ChatConversationStatus.STREAMING)
+            expect(row?.activeRunId).toBe('run-that-took-over')
+            expect(row?.uiMessages).toBeNull()
+        })
+
+        it('ignores a failure from a run that no longer owns the conversation', async () => {
+            const id = await streamingConversation('run-that-took-over')
+
+            await chatConversationService.failRun({
+                id,
+                platformId: ctx.platform.id,
+                userId: ctx.user.id,
+                runId: 'run-that-was-displaced',
+            })
+
+            const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id })
+            expect(row?.status).toBe(ChatConversationStatus.STREAMING)
+        })
+
+        it('lets the owning run settle the conversation', async () => {
+            const id = await streamingConversation('the-live-run')
+
+            await chatConversationService.finishRun({
+                id,
+                platformId: ctx.platform.id,
+                userId: ctx.user.id,
+                runId: 'the-live-run',
+                messages: [],
+                assistantMessage: { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: 'real reply' }] },
+            })
+
+            const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id })
+            expect(row?.status).toBe(ChatConversationStatus.IDLE)
+            expect(row?.activeRunId).toBeNull()
+            expect((row?.uiMessages as any[])[0].parts[0].text).toBe('real reply')
         })
     })
 

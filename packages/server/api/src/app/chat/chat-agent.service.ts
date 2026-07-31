@@ -51,13 +51,18 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             buildUserMessage(request),
         ]
 
-        await chatConversationService.startRun({
+        const { displacedRunId } = await chatConversationService.startRun({
             id,
             platformId,
             userId,
             projectId,
+            runId,
             userMessage: { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: request.content }] },
         })
+
+        // A takeover only rewrites the row. If the run it displaced is still looping in this
+        // process, it has to be stopped too, or two loops stream the same conversation.
+        abortRun(displacedRunId)
 
         rejectedPromiseHandler(runAgentLoop({
             id,
@@ -78,12 +83,23 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
     // cross-instance abort channel in this scope. A cancel that lands on an instance which is not
     // running the loop leaves the run going; the client stops rendering it either way, and the
     // step cap bounds what it can still spend.
-    cancel({ id }: { id: string }): void {
-        activeRuns.get(id)?.abort()
+    async cancel({ id, platformId, userId }: GetRunParams): Promise<void> {
+        const { displacedRunId } = await chatConversationService.cancelRun({ id, platformId, userId })
+        abortRun(displacedRunId)
     },
 })
 
+// Keyed by run id, not conversation id. Keyed by conversation, a finishing run deleted whatever
+// controller was current — so cancel-then-send left the second run live with nothing able to stop
+// it, while the row read IDLE and admitted yet another.
 const activeRuns = new Map<string, AbortController>()
+
+function abortRun(runId: string | null): void {
+    if (isNil(runId)) {
+        return
+    }
+    activeRuns.get(runId)?.abort()
+}
 
 // Every step is one paid round-trip to the provider. `streamText` keeps looping while the model
 // keeps calling tools, so with no cap a single message can bill the operator without bound — an
@@ -100,7 +116,7 @@ const SYSTEM_PROMPT_PATH = 'packages/server/api/src/assets/prompts/chat-system-p
 
 async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, systemPrompt, messages, tools, log }: RunLoopParams): Promise<void> {
     const abortController = new AbortController()
-    activeRuns.set(id, abortController)
+    activeRuns.set(runId, abortController)
     const streamedText: string[] = []
 
     const { error } = await tryCatch(async () => {
@@ -115,7 +131,7 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             // process died, and the staleness window would have to be longer than the longest
             // possible run to be safe — which would make it useless.
             onStepFinish: () => {
-                rejectedPromiseHandler(chatConversationService.touchRun({ id, platformId, userId }), log)
+                rejectedPromiseHandler(chatConversationService.touchRun({ id, platformId, userId, runId }), log)
             },
         })
 
@@ -133,6 +149,7 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             id,
             platformId,
             userId,
+            runId,
             messages: [...messages, ...response.messages],
             assistantMessage: {
                 role: PersistedChatRole.ASSISTANT,
@@ -142,7 +159,7 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.FINISHED, data: { conversationId: id } } })
     })
 
-    activeRuns.delete(id)
+    activeRuns.delete(runId)
     if (isNil(error)) {
         return
     }
@@ -165,7 +182,7 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         errorName: error.name,
         errorMessage: error.message,
     }, '[chatAgentService#runAgentLoop] chat run failed')
-    await chatConversationService.failRun({ id, platformId, userId })
+    await chatConversationService.failRun({ id, platformId, userId, runId })
     emit({
         userId,
         conversationId: id,
@@ -190,6 +207,7 @@ async function finishCancelledRun({ id, platformId, userId, runId, messages, str
         id,
         platformId,
         userId,
+        runId,
         messages,
         // No assistant turn at all if the abort landed before the first token — an empty bubble is
         // worse than none, and `finishRun` is what returns the conversation to IDLE either way.
@@ -302,6 +320,12 @@ function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {
         // `output`, so it is folded in here rather than special-cased there.
         ...spreadIfDefined('output', 'error' in part ? part.error : undefined),
     })))
+}
+
+type GetRunParams = {
+    id: string
+    platformId: string
+    userId: string
 }
 
 type StartParams = {
