@@ -7,7 +7,7 @@ import { LOCKED_TOOL_NAMES, qadamFlowTools } from '../mcp/tools'
 
 export const chatTools = {
     async build({ mcp, userId, log }: BuildParams): Promise<ToolSet> {
-        const permissionChecker = await resolvePermissionChecker({ userId, projectId: mcp.projectId })
+        const permissionChecker = await resolvePermissionChecker({ userId, projectId: mcp.projectId, log })
         const disabledToolSet = new Set(mcp.disabledTools ?? [])
         // Same rule as mcp-server-builder.ts:172 — a locked tool stays available even when it is
         // listed as disabled, everything else honours the project's `disabledTools`. Chat must not

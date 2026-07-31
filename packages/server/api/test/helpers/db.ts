@@ -21,4 +21,8 @@ export const db = {
     find<T>(entity: string, where: Record<string, unknown>): Promise<T[]> {
         return databaseConnection().getRepository(entity).findBy(where) as Promise<T[]>
     },
+
+    delete(entity: string, where: Record<string, unknown>): Promise<unknown> {
+        return databaseConnection().getRepository(entity).delete(where)
+    },
 }

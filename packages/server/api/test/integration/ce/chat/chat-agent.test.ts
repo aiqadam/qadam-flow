@@ -8,6 +8,7 @@ import {
     AppConnectionType,
     ChatConversationStatus,
     DefaultProjectRole,
+    isNil,
     PersistedChatPartType,
     PersistedChatRole,
     Project,
@@ -40,6 +41,10 @@ let providerBaseUrl: string
 let providerReply = 'Hello from the test model'
 let providerCalls: string[] = []
 let providerBodies: Record<string, unknown>[] = []
+let scriptedResponses: string[] = []
+let providerHold: Promise<void> | null = null
+let providerFirstChunkOnly = ''
+let providerStreamedFirstChunk = false
 
 beforeAll(async () => {
     providerServer = http.createServer((req, res) => {
@@ -49,7 +54,20 @@ beforeAll(async () => {
             providerCalls.push(`${providerOrigin}${req.url}`)
             providerBodies.push(JSON.parse(Buffer.concat(chunks).toString()))
             res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
-            res.end(completionStream(providerReply))
+            // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream —
+            // the only way to cancel something real rather than a conversation that is already
+            // finished.
+            if (!isNil(providerHold)) {
+                const hold = providerHold
+                providerHold = null
+                res.write(textChunk(providerFirstChunkOnly))
+                providerStreamedFirstChunk = true
+                void hold.then(() => res.end('data: [DONE]\n\n'))
+                return
+            }
+            // A queued script when the test set one, so a turn that calls a tool can answer
+            // differently on the model's second request; otherwise the plain reply.
+            res.end(scriptedResponses.shift() ?? completionStream(providerReply))
         })
     })
     await new Promise<void>((resolve) => providerServer.listen(0, '127.0.0.1', resolve))
@@ -71,6 +89,10 @@ afterEach(() => {
     providerCalls = []
     providerBodies = []
     providerReply = 'Hello from the test model'
+    scriptedResponses = []
+    providerHold = null
+    providerFirstChunkOnly = ''
+    providerStreamedFirstChunk = false
 })
 
 async function createConversation(context: TestContext, body: Record<string, unknown> = {}): Promise<string> {
@@ -106,6 +128,26 @@ function sseChunk(payload: Record<string, unknown>): string {
     return `data: ${JSON.stringify(payload)}\n\n`
 }
 
+function textChunk(text: string): string {
+    return sseChunk({
+        id: 'chatcmpl-test',
+        object: 'chat.completion.chunk',
+        created: 1,
+        model: MODEL_ID,
+        choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+    })
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (condition()) {
+            return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error('Condition never became true')
+}
+
 function completionStream(text: string): string {
     return [
         sseChunk({
@@ -121,6 +163,30 @@ function completionStream(text: string): string {
             created: 1,
             model: MODEL_ID,
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        }),
+        'data: [DONE]\n\n',
+    ].join('')
+}
+
+function toolCallStream({ toolName, callId, args }: { toolName: string, callId: string, args: string }): string {
+    return [
+        sseChunk({
+            id: 'chatcmpl-tool',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: MODEL_ID,
+            choices: [{
+                index: 0,
+                delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: toolName, arguments: args } }] },
+                finish_reason: null,
+            }],
+        }),
+        sseChunk({
+            id: 'chatcmpl-tool',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: MODEL_ID,
+            choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
         }),
         'data: [DONE]\n\n',
     ].join('')
@@ -215,6 +281,83 @@ describe('Chat agent API', () => {
             expect(finished.projectId).toBe(ctx.project.id)
         })
 
+        // The suite otherwise only ever streams plain text, which proves the tools are *declared*
+        // to the provider and never that one can be *run*. This drives a real tool call through
+        // the adapter, the project-scoped handler and the persistence, and then a second turn so
+        // the replayed transcript is exercised too.
+        it('runs a tool the model asks for, and replays that turn to the model on the next message', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                toolCallStream({ toolName: 'ap_list_flows', callId: 'call_1', args: '{}' }),
+                completionStream('You have no flows yet.'),
+            ]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list my flows', runId: apId() })
+            const afterFirst = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            // Two provider round-trips: the tool call, then the answer built from its result.
+            expect(providerCalls).toHaveLength(2)
+            const toolMessage = (providerBodies[1].messages as any[]).find((message: any) => message.role === 'tool')
+            expect(toolMessage).toBeDefined()
+            const persistedParts = (afterFirst.uiMessages as any[])[1].parts
+            expect(persistedParts.some((part: any) => part.type === PersistedChatPartType.TOOL_CALL && part.toolName === 'ap_list_flows')).toBe(true)
+
+            // Second turn: the stored tool call and its result must come back as a valid
+            // assistant+tool pair, or the provider rejects the transcript for unanswered calls.
+            providerCalls = []
+            providerBodies = []
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'and now?', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const replayed = providerBodies[0].messages as any[]
+            const assistantWithCall = replayed.find((message: any) => message.role === 'assistant' && JSON.stringify(message).includes('ap_list_flows'))
+            expect(assistantWithCall).toBeDefined()
+            const replayedToolResult = replayed.find((message: any) => message.role === 'tool')
+            expect(replayedToolResult).toBeDefined()
+            expect(replayed.filter((message: any) => message.role === 'user')).toHaveLength(2)
+        })
+
+        // Chat drives the same tools the REST API guards with `Permission.*`. Until this landed,
+        // `resolvePermissionChecker` returned ALLOW_ALL, so a Viewer could ask the assistant to do
+        // what the API would have refused them.
+        it('refuses a write tool for a project member whose role does not grant it', async () => {
+            const viewer = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.VIEWER })
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(viewer)
+            scriptedResponses = [
+                toolCallStream({ toolName: 'ap_create_flow', callId: 'call_1', args: JSON.stringify({ flowName: 'sneaky flow' }) }),
+                completionStream('I could not do that.'),
+            ]
+
+            await viewer.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'create a flow', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const toolMessage = (providerBodies[1].messages as any[]).find((message: any) => message.role === 'tool')
+            expect(JSON.stringify(toolMessage)).toContain('do not have permission')
+            // The refusal has to be real, not just a message: nothing may have been created.
+            expect(await db.findOneBy('flow', { projectId: ctx.project.id })).toBeNull()
+        })
+
+        it('allows a read tool for that same member, so the check is a permission check and not a blanket block', async () => {
+            const viewer = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.VIEWER })
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(viewer)
+            scriptedResponses = [
+                toolCallStream({ toolName: 'ap_list_flows', callId: 'call_1', args: '{}' }),
+                completionStream('You have no flows.'),
+            ]
+
+            await viewer.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list my flows', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const toolMessage = (providerBodies[1].messages as any[]).find((message: any) => message.role === 'tool')
+            // Matches the whole refusal family, not one phrase: a blanket DENY_ALL answers with
+            // "cannot run here" instead, and an assertion that only looked for "do not have
+            // permission" would call that a pass.
+            expect(JSON.stringify(toolMessage)).not.toMatch(/do not have permission|cannot run here|do not have access/)
+        })
+
         // The provider is reachable and enabled; it just offers no text model. Exercises the
         // catalogue fallback added on top of the stored config — without it a platform on OpenAI,
         // Anthropic or Google (none of which store a catalogue) could never send a first message,
@@ -302,6 +445,36 @@ describe('Chat agent API', () => {
             expect(response!.json()[0].projectId).toBe(ctx.project.id)
         })
 
+        // Owning the conversation is not the same as still being entitled to the project it was
+        // pinned to. The run loop re-checks that on every turn; this path has to as well, or a
+        // removed member keeps a working read of the project's connection inventory.
+        it('stops listing a project connections once the caller loses access to that project', async () => {
+            const member = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.EDITOR })
+            await enableChatProvider(ctx.platform.id)
+            const connection = createMockConnection({
+                platformId: ctx.platform.id,
+                projectIds: [ctx.project.id],
+                qadamName: '@aiqadam/qadam-slack',
+                displayName: 'shared slack',
+                status: AppConnectionStatus.ACTIVE,
+            }, ctx.user.id)
+            await db.save('app_connection', {
+                ...connection,
+                value: await encryptUtils.encryptObject({ type: AppConnectionType.SECRET_TEXT, secret_text: 'shh' }),
+            })
+            const conversationId = await createConversation(member)
+            await db.update('chat_conversation', conversationId, { projectId: ctx.project.id })
+
+            const before = await member.get(`/v1/chat/conversations/${conversationId}/connections`, { qadamName: 'slack' })
+            expect(before!.json().map((row: Record<string, string>) => row.label)).toEqual(['shared slack'])
+
+            await db.delete('project_member', { userId: member.user.id, projectId: ctx.project.id })
+
+            const after = await member.get(`/v1/chat/conversations/${conversationId}/connections`, { qadamName: 'slack' })
+            expect(after?.statusCode).toBe(StatusCodes.OK)
+            expect(after!.json()).toEqual([])
+        })
+
         it('refuses to read a platform sibling conversation connections', async () => {
             const sibling = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.EDITOR })
             const conversationId = await createConversation(sibling)
@@ -338,6 +511,36 @@ describe('Chat agent API', () => {
             const response = await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
 
             expect(response?.statusCode).toBe(StatusCodes.NO_CONTENT)
+        })
+
+        // Cancelling an idle conversation, as the case above does, aborts nothing — there is no
+        // controller registered — so it proves only that the route answers. This cancels a run
+        // that is genuinely mid-stream and checks the two things that actually matter: the
+        // conversation settles back to IDLE rather than ERROR, and the partial reply survives.
+        it('stops a live run, keeps what was already streamed, and does not report it as a failure', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            let releaseRest: () => void = () => {}
+            const restReleased = new Promise<void>((resolve) => {
+                releaseRest = resolve
+            })
+            providerHold = restReleased
+            providerFirstChunkOnly = 'Partial answer so far'
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'say something long', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.STREAMING)
+            // Wait until the first token has actually been streamed, otherwise the cancel races
+            // the stream opening and there would be nothing partial to preserve.
+            await waitFor(() => providerStreamedFirstChunk)
+
+            const cancelled = await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
+            expect(cancelled?.statusCode).toBe(StatusCodes.NO_CONTENT)
+            releaseRest()
+
+            const settled = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(settled.status).not.toBe(ChatConversationStatus.ERROR)
+            const parts = (settled.uiMessages as any[])[1]?.parts
+            expect(parts?.[0]?.text).toContain('Partial answer so far')
         })
 
         it('refuses to cancel a platform sibling run', async () => {

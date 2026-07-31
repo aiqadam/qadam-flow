@@ -2,8 +2,8 @@ import { ConnectionOption, isNil } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { appConnectionService } from '../app-connection/app-connection-service/app-connection-service'
 import { mcpUtils } from '../mcp/tools/mcp-utils'
-import { projectService } from '../project/project-service'
 import { chatConversationService } from './chat-conversation.service'
+import { chatProjects } from './chat-projects'
 
 export const chatConnections = {
     // Feeds the connection picker in the chat composer. Scoped to the one project the conversation
@@ -14,10 +14,13 @@ export const chatConnections = {
         if (isNil(conversation.projectId)) {
             return []
         }
-        const project = await projectService(log).getOneOrThrow(conversation.projectId)
-        // Belt and braces against a row whose project was moved between platforms: the picker must
-        // never reach across a platform boundary even if the pinned id says otherwise.
-        if (project.platformId !== platformId) {
+        // Owning the conversation is not enough. The pinned project id was authorised when the
+        // first message ran; membership can be revoked afterwards, and the row would still point
+        // at it. Re-deriving the accessible list here — the same guard the run loop applies before
+        // every turn — is what stops a removed member enumerating that project's connections
+        // through a conversation they still own.
+        const project = await chatProjects.findAccessible({ projectId: conversation.projectId, platformId, userId, log })
+        if (isNil(project)) {
             return []
         }
 

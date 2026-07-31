@@ -51,7 +51,7 @@ export async function buildMcpServer({ mcp, userId, selectionScope, log, resolve
 
     if (projectId) {
         const permissionChecker = userId
-            ? await resolvePermissionChecker({ userId, projectId })
+            ? await resolvePermissionChecker({ userId, projectId, log })
             : ALLOW_ALL
         registerFlowTools({ server, mcp, projectId, permissionChecker, log })
         registerStaticTools({ server, mcp, projectId, userId, permissionChecker, log })
@@ -102,7 +102,7 @@ function registerPlatformTools({ server, mcp, userId, selectionScope, resolvePro
             }
             const projectMcp = await resolveProjectMcp(selectedProjectId)
             const projectScopedMcp: ProjectScopedMcpServer = { ...projectMcp, projectId: selectedProjectId }
-            const permissionChecker = await resolvePermissionChecker({ userId, projectId: selectedProjectId })
+            const permissionChecker = await resolvePermissionChecker({ userId, projectId: selectedProjectId, log })
             const realTools = qadamFlowTools(projectScopedMcp, userId, log)
             const realTool = realTools.find(t => t.title === tool.title)
             if (isNil(realTool)) {

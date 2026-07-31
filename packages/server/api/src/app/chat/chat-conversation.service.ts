@@ -88,25 +88,40 @@ export const chatConversationService = {
     // `save` rather than `update` throughout the run lifecycle: TypeORM's
     // `QueryDeepPartialEntity` cannot express a json column holding a discriminated union, so an
     // `update` of `messages`/`uiMessages` does not type-check at all.
+    // Admitting a run is a read-modify-write on `uiMessages` guarded by a status read, so it runs
+    // inside a transaction with the row locked `FOR UPDATE`. Without the lock two simultaneous
+    // POSTs both read IDLE, both pass the guard and both append — losing one turn and billing the
+    // operator twice — and the guard would look correct while never having held. The repo's
+    // multi-server rule calls for exactly this on concurrent operations.
     async startRun({ id, platformId, userId, projectId, userMessage }: StartRunParams): Promise<void> {
-        const conversation = await this.getOneOrThrow({ id, platformId, userId })
-        if (conversation.status === ChatConversationStatus.STREAMING) {
-            // Both `startRun` and `finishRun` read `uiMessages`, append, and write the whole array
-            // back, so two overlapping runs on one conversation silently lose one side's turn.
-            // Refusing the second is better than corrupting the history; the client already
-            // disables sending while a run is in flight, so this catches a second tab or a retry.
-            throw new QadamFlowError({
-                code: ErrorCode.VALIDATION,
-                params: { message: 'This conversation is already generating a reply. Wait for it to finish or cancel it first.' },
+        await repo().manager.transaction(async (entityManager) => {
+            const conversation = await entityManager.findOne(ChatConversationEntity, {
+                where: { id, platformId, userId },
+                lock: { mode: 'pessimistic_write' },
             })
-        }
-        await repo().save({
-            ...conversation,
-            // Pinned on the first run so every later turn — and the connection picker — resolves
-            // the same project, instead of drifting when the user's project list changes.
-            projectId,
-            status: ChatConversationStatus.STREAMING,
-            uiMessages: [...(conversation.uiMessages ?? []), userMessage],
+            if (isNil(conversation)) {
+                throw new QadamFlowError({
+                    code: ErrorCode.ENTITY_NOT_FOUND,
+                    params: { entityId: id, entityType: 'ChatConversation' },
+                })
+            }
+            if (conversation.status === ChatConversationStatus.STREAMING) {
+                // Refusing the second is better than corrupting the history; the client already
+                // disables sending while a run is in flight, so this catches a second tab or a
+                // retry rather than normal use.
+                throw new QadamFlowError({
+                    code: ErrorCode.VALIDATION,
+                    params: { message: 'This conversation is already generating a reply. Wait for it to finish or cancel it first.' },
+                })
+            }
+            await entityManager.save(ChatConversationEntity, {
+                ...conversation,
+                // Pinned on the first run so every later turn — and the connection picker —
+                // resolves the same project, instead of drifting with the user's project list.
+                projectId,
+                status: ChatConversationStatus.STREAMING,
+                uiMessages: [...(conversation.uiMessages ?? []), userMessage],
+            })
         })
     },
 
@@ -116,7 +131,12 @@ export const chatConversationService = {
             ...conversation,
             status: ChatConversationStatus.IDLE,
             messages,
-            uiMessages: [...(conversation.uiMessages ?? []), assistantMessage],
+            // Nullable because a run cancelled before the first token has no assistant turn to
+            // record, and an empty bubble reads worse than none — but the conversation still has
+            // to leave STREAMING or the client's stale-check spins forever.
+            uiMessages: isNil(assistantMessage)
+                ? conversation.uiMessages
+                : [...(conversation.uiMessages ?? []), assistantMessage],
         })
     },
 
@@ -156,5 +176,5 @@ type StartRunParams = GetParams & {
 
 type FinishRunParams = GetParams & {
     messages: ChatConversation['messages']
-    assistantMessage: PersistedChatMessage
+    assistantMessage: PersistedChatMessage | null
 }

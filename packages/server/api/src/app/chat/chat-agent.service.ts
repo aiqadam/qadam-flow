@@ -7,30 +7,28 @@ import {
     ChatConversation,
     ErrorCode,
     isNil,
-    PersistedChatMessage,
-    PersistedChatPart,
     PersistedChatPartType,
     PersistedChatRole,
-    Project,
     ProjectScopedMcpServer,
+    ProjectType,
     QadamFlowError,
     SendChatMessageRequest,
     spreadIfDefined,
     tryCatch,
     WebsocketClientEvent,
 } from '@aiqadam/shared'
-import { ModelMessage, stepCountIs, StepResult, streamText, TextPart, ToolCallPart, ToolResultPart, ToolSet, UserContent } from 'ai'
+import { ModelMessage, stepCountIs, StepResult, streamText, TextPart, ToolSet, UserContent } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { websocketService } from '../core/websockets.service'
 import { rejectedPromiseHandler } from '../helper/promise-handler'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { mcpServerService } from '../mcp/mcp-service'
-import { projectService } from '../project/project-service'
-import { userService } from '../user/user-service'
 import { chatConversationService } from './chat-conversation.service'
 import { chatModel, ResolvedChatModel } from './chat-model'
+import { chatProjects } from './chat-projects'
 import { chatTools } from './chat-tools'
+import { chatTranscript } from './chat-transcript'
 
 export const chatAgentService = (log: FastifyBaseLogger) => ({
     // Everything that can fail with a cause the caller deserves to read — no provider, no model,
@@ -49,7 +47,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
 
         const runId = request.runId ?? apId()
         const messages = [
-            ...toModelMessages(conversation.uiMessages ?? []),
+            ...chatTranscript.toModelMessages(conversation.uiMessages ?? []),
             buildUserMessage(request),
         ]
 
@@ -103,6 +101,7 @@ const SYSTEM_PROMPT_PATH = 'packages/server/api/src/assets/prompts/chat-system-p
 async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, systemPrompt, messages, tools, log }: RunLoopParams): Promise<void> {
     const abortController = new AbortController()
     activeRuns.set(id, abortController)
+    const streamedText: string[] = []
 
     const { error } = await tryCatch(async () => {
         const result = streamText({
@@ -115,6 +114,10 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         })
 
         for await (const chunk of result.toUIMessageStream()) {
+            // Accumulated as it goes rather than read off `result` at the end, because on an abort
+            // `result.steps` rejects along with the stream — this is the only copy of the partial
+            // reply that survives a cancel.
+            collectStreamedText({ chunk, into: streamedText })
             emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.CHUNK, data: chunk } })
         }
 
@@ -138,6 +141,15 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         return
     }
 
+    // A cancel is not a failure. `streamText` rejects on abort like any other error, so without
+    // this the user who pressed stop gets "the assistant could not finish this message", the
+    // conversation is left in ERROR, and everything already streamed is dropped on reload because
+    // `finishRun` never ran. Persist whatever the model produced before the abort and settle IDLE.
+    if (abortController.signal.aborted) {
+        await finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, log })
+        return
+    }
+
     // Only the error's name and message are logged, never the error object: an AI SDK
     // `APICallError` carries `requestBodyValues` and the response headers, which is where the
     // provider API key lives. The emitted payload is a fixed string for the same reason.
@@ -156,6 +168,34 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
     })
 }
 
+function collectStreamedText({ chunk, into }: { chunk: unknown, into: string[] }): void {
+    if (typeof chunk !== 'object' || isNil(chunk)) {
+        return
+    }
+    const { type, delta } = chunk as { type?: unknown, delta?: unknown }
+    if (type === 'text-delta' && typeof delta === 'string') {
+        into.push(delta)
+    }
+}
+
+async function finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, log }: CancelledRunParams): Promise<void> {
+    const text = streamedText.join('')
+    await chatConversationService.finishRun({
+        id,
+        platformId,
+        userId,
+        messages,
+        // No assistant turn at all if the abort landed before the first token — an empty bubble is
+        // worse than none, and `finishRun` is what returns the conversation to IDLE either way.
+        assistantMessage: text.length === 0 ? null : {
+            role: PersistedChatRole.ASSISTANT,
+            parts: [{ type: PersistedChatPartType.TEXT, text }],
+        },
+    })
+    log.info({ conversationId: id, runId }, '[chatAgentService#runAgentLoop] chat run cancelled by the user')
+    emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.FINISHED, data: { conversationId: id } } })
+}
+
 function emit({ userId, conversationId, runId, event }: EmitParams): void {
     // Room per user id — `websocketService.init` joins every USER socket to a room named after
     // its own principal id, so this reaches that user's tabs and nobody else's.
@@ -167,20 +207,8 @@ function emit({ userId, conversationId, runId, event }: EmitParams): void {
     })
 }
 
-// Deliberately the same list the projects page shows the user (project-controller.ts:43): the
-// chat must never reach a project the user could not open themselves, and must not refuse one
-// they can.
-async function accessibleProjects({ platformId, userId, log }: AccessibleProjectsParams): Promise<Project[]> {
-    const user = await userService(log).getOneOrFail({ id: userId })
-    return projectService(log).getAllForUser({
-        platformId,
-        userId,
-        isPrivileged: userService(log).isUserPrivileged(user),
-    })
-}
-
 async function resolveProjectId({ conversation, log }: { conversation: ChatConversation, log: FastifyBaseLogger }): Promise<string> {
-    const projects = await accessibleProjects({
+    const projects = await chatProjects.accessible({
         platformId: conversation.platformId,
         userId: conversation.userId,
         log,
@@ -199,24 +227,42 @@ async function resolveProjectId({ conversation, log }: { conversation: ChatConve
         return pinned.id
     }
 
-    const [firstProject] = projects
-    if (isNil(firstProject)) {
+    // A conversation that has already run has a pinned project; a null one here therefore means
+    // the project was deleted out from under it (the FK is ON DELETE SET NULL). Falling through to
+    // "first accessible project" would silently rebind the conversation to a different tenant's
+    // workspace while the replayed transcript still describes the old one.
+    if (!isNil(conversation.uiMessages) && conversation.uiMessages.length > 0) {
         throw new QadamFlowError({
             code: ErrorCode.ENTITY_NOT_FOUND,
             params: { entityId: conversation.id, entityType: 'Project' },
         })
     }
-    return firstProject.id
+
+    // Same preference the rest of the repo applies when it has to choose a project for someone
+    // (`projectService.getOneForUser`): their own personal project, and only then the first of the
+    // list. `getAllForUser` orders by type then display name, so without this a user on a
+    // multi-project platform silently gets whichever team project sorts first — and the choice is
+    // permanent, since nothing in this scope can repin a conversation.
+    const defaultProject = projects.find((project) => project.ownerId === conversation.userId && project.type === ProjectType.PERSONAL)
+        ?? projects[0]
+    if (isNil(defaultProject)) {
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: { entityId: conversation.userId, entityType: 'Project' },
+        })
+    }
+    return defaultProject.id
 }
 
 async function buildSystemPrompt({ projectId, platformId, userId, log }: BuildSystemPromptParams): Promise<string> {
     const template = await readFile(SYSTEM_PROMPT_PATH, 'utf-8')
-    const projects = await accessibleProjects({ platformId, userId, log })
-    const activeProject = projects.find((project) => project.id === projectId)
-    const projectList = projects.map((project) => `- ${project.displayName} (${project.id})`).join('\n')
+    // Only the one project the conversation is bound to. Listing the user's others told the model
+    // about workspaces it has no tool to reach — the tools are closed over this project alone —
+    // which invites it to offer something it cannot do, and puts other project names into a
+    // context that has no use for them.
+    const activeProject = await chatProjects.findAccessible({ projectId, platformId, userId, log })
 
     return template
-        .replaceAll('{{PROJECT_LIST}}', projectList)
         .replaceAll('{{PROJECT_CONTEXT}}', `You are working in the project "${activeProject?.displayName ?? projectId}" (${projectId}). Every tool call runs against it.`)
         .replaceAll('{{FRONTEND_URL}}', system.get(AppSystemProp.FRONTEND_URL) ?? '')
 }
@@ -236,54 +282,6 @@ function buildUserMessage({ content, files }: SendChatMessageRequest): ModelMess
         })),
     ]
     return { role: 'user', content: fileParts }
-}
-
-// The replay transcript is rebuilt from `uiMessages`, which is a schema-validated shape we own,
-// rather than from the raw `messages` JSON blob. Nothing is lost by it: `chatAiUtils`
-// deliberately strips cross-turn reasoning for every provider anyway, and the tool-call/result
-// pairs survive intact. `messages` stays as the persisted record of what was last sent.
-function toModelMessages(uiMessages: PersistedChatMessage[]): ModelMessage[] {
-    return uiMessages.flatMap((message) => message.role === PersistedChatRole.USER
-        ? toUserModelMessages(message.parts)
-        : toAssistantModelMessages(message.parts))
-}
-
-function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
-    const text = parts
-        .flatMap((part) => part.type === PersistedChatPartType.TEXT ? [part.text] : [])
-        .join('\n')
-    return text.length === 0 ? [] : [{ role: 'user', content: text }]
-}
-
-function toAssistantModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
-    const content: Array<TextPart | ToolCallPart> = []
-    const toolResults: ToolResultPart[] = []
-
-    for (const part of parts) {
-        if (part.type === PersistedChatPartType.TEXT) {
-            content.push({ type: 'text', text: part.text })
-        }
-        if (part.type === PersistedChatPartType.TOOL_CALL) {
-            content.push({ type: 'tool-call', toolCallId: part.toolCallId, toolName: part.toolName, input: part.input })
-            toolResults.push({
-                type: 'tool-result',
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                // Serialised as text rather than `{ type: 'json' }` because the persisted output
-                // is `unknown` and the JSON variant demands a proven `JSONValue`.
-                output: { type: 'text', value: JSON.stringify(part.output ?? null) },
-            })
-        }
-    }
-
-    if (content.length === 0) {
-        return []
-    }
-    // A tool message must follow the assistant message that made the calls, or the provider
-    // rejects the transcript for having unanswered tool calls.
-    return toolResults.length === 0
-        ? [{ role: 'assistant', content }]
-        : [{ role: 'assistant', content }, { role: 'tool', content: toolResults }]
 }
 
 function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {
@@ -319,17 +317,21 @@ type RunLoopParams = {
     log: FastifyBaseLogger
 }
 
+type CancelledRunParams = {
+    id: string
+    platformId: string
+    userId: string
+    runId: string
+    messages: ModelMessage[]
+    streamedText: string[]
+    log: FastifyBaseLogger
+}
+
 type EmitParams = {
     userId: string
     conversationId: string
     runId: string
     event: ChatAgentEvent
-}
-
-type AccessibleProjectsParams = {
-    platformId: string
-    userId: string
-    log: FastifyBaseLogger
 }
 
 type BuildSystemPromptParams = {
