@@ -66,6 +66,24 @@ export function ThemeProvider({
     () => (localStorage.getItem(storageKey) as Theme) || defaultTheme,
   );
   const [forceLightMode, setForceLightMode] = useState(false);
+  // Re-read on every OS change, not just on mount. Without this the setting is only honoured
+  // until the user flips their system theme with the app open, which is exactly when they would
+  // expect a setting called `system` to follow — verified by driving prefers-color-scheme on a
+  // running page and watching the class not move.
+  const [systemTheme, setSystemTheme] = useState<'dark' | 'light'>(
+    resolveSystemTheme,
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!query) {
+      return;
+    }
+    const onChange = (event: MediaQueryListEvent) =>
+      setSystemTheme(event.matches ? 'dark' : 'light');
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
   const branding = flagsHooks.useWebsiteBranding();
   useEffect(() => {
     if (!branding) {
@@ -77,7 +95,7 @@ export function ThemeProvider({
     const resolvedTheme = forceLightMode
       ? 'light'
       : theme === 'system'
-      ? resolveSystemTheme()
+      ? systemTheme
       : theme;
     root.classList.remove('light', 'dark');
     document.title = branding.websiteName;
@@ -115,7 +133,7 @@ export function ThemeProvider({
     }
 
     root.classList.add(resolvedTheme);
-  }, [theme, branding, forceLightMode]);
+  }, [theme, branding, forceLightMode, systemTheme]);
 
   const value = {
     theme,
