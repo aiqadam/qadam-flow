@@ -436,6 +436,7 @@
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
+        "vitest": "3.0.8",
       },
     },
     "packages/qadams/community/airtable": {
@@ -3519,7 +3520,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.106.0",
+      "version": "0.107.0",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",

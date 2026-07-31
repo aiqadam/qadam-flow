@@ -150,7 +150,8 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                     }
 
                     const rewritten = mcpUtils.rewriteAllReferences({ input: step.input, loopItems: step.loopItems, trigger: latestTrigger })
-                    const rewrittenStep = { ...step, input: rewritten.input, loopItems: rewritten.loopItems }
+                    const normalizedInput = await mcpUtils.normalizeAgentFlowToolIds({ input: rewritten.input, projectId, log })
+                    const rewrittenStep = { ...step, input: normalizedInput, loopItems: rewritten.loopItems }
                     const skeleton = buildSkeleton({ step: rewrittenStep, name: stepName, resolvedPieceVersion, resolvedPieceName })
                     const parseResult = UpdateActionRequest.safeParse(skeleton)
                     if (!parseResult.success) {

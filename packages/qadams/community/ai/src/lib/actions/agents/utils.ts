@@ -97,13 +97,31 @@ export const agentUtils = {
   },
   async constructFlowsTools(params: ConstructFlowsToolsParams): Promise<Record<string, Tool>> {
     const flowTools = params.tools
-    const flowExternalIds = flowTools.map((tool) => tool.externalFlowId)
-    const flows = await params.fetchFlows({ externalIds: flowExternalIds })
+    const flowReferences = flowTools.map((tool) => tool.externalFlowId)
+    const flows = await params.fetchFlows({ externalIdsOrIds: flowReferences })
 
+    // `externalFlowId` is a free-text step property. The UI writes a flow's `externalId`, but every
+    // MCP tool that surfaces a flow reports its primary key, so stored values may be either.
+    // `externalId` always wins: one flow's `externalId` can collide with another flow's `id`, and
+    // the field's declared meaning has to decide that tie.
+    //
+    // CONSTRAINT: this gives priority to the *forgeable* column. `flow.externalId` is a parameter of
+    // `flowService.create` (`externalId ?? apId()`), while `id` is always server-minted. No HTTP path
+    // reaches that parameter today, so every flow gets an `apId()` and the collision is an accident
+    // rather than an attack. If a git-sync or template importer ever lets a user choose an
+    // `externalId`, "set mine to your flow's id" becomes an in-project agent-hijack primitive
+    // *because* of this ordering. Fix it at the importer by rejecting such an `externalId`; do not
+    // flip the ordering here, which would make a legitimate `externalId` reference lose to a
+    // coincidental `id` instead.
     const flowsByExternalId = new Map(flows.data.map(f => [f.externalId, f]));
+    const flowsById = new Map(flows.data.map(f => [f.id, f]));
     const flowToolsWithPopulatedFlows = flowTools.map((tool) => {
-      const populatedFlow = flowsByExternalId.get(tool.externalFlowId);
-      return !isNil(populatedFlow) ? { ...tool, flow: populatedFlow } : undefined
+      const populatedFlow = flowsByExternalId.get(tool.externalFlowId) ?? flowsById.get(tool.externalFlowId);
+      if (isNil(populatedFlow)) {
+        console.warn(`Agent FLOW tool "${tool.toolName}" was skipped: no flow in this project has externalId or id "${tool.externalFlowId}".`)
+        return undefined
+      }
+      return { ...tool, flow: populatedFlow }
     }).filter(tool => !isNil(tool));
 
     const flowsToolsList = await Promise.all(flowToolsWithPopulatedFlows.map(async (tool) => {
@@ -217,7 +235,7 @@ function mcpPropertyToSchema(property: McpProperty): z.ZodTypeAny {
 
 type ConstructFlowsToolsParams = {
   tools: AgentFlowTool[]
-  fetchFlows: (params: { externalIds: string[] }) => Promise<SeekPage<PopulatedFlow>>
+  fetchFlows: (params: { externalIdsOrIds: string[] }) => Promise<SeekPage<PopulatedFlow>>
   publicUrl: string;
   token: string
 }

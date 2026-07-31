@@ -78,9 +78,10 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
             }
 
             const rewritten = mcpUtils.rewriteAllReferences({ input, loopItems, trigger: flow.version.trigger })
+            const normalizedInput = await mcpUtils.normalizeAgentFlowToolIds({ input: rewritten.input, projectId: mcp.projectId, log })
 
             const resolvedInput = {
-                ...(rewritten.input ?? {}),
+                ...(normalizedInput ?? {}),
                 ...(auth !== undefined && { auth: `{{connections['${auth}']}}` }),
             }
 

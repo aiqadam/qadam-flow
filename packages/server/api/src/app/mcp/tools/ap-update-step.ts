@@ -82,7 +82,11 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 return authError
             }
 
-            const rewritten = mcpUtils.rewriteAllReferences({ input, loopItems, trigger: flow.version.trigger })
+            const rewrittenInput = mcpUtils.rewriteAllReferences({ input, loopItems, trigger: flow.version.trigger })
+            const rewritten = {
+                ...rewrittenInput,
+                input: await mcpUtils.normalizeAgentFlowToolIds({ input: rewrittenInput.input, projectId: mcp.projectId, log }),
+            }
 
             const currentSettings = step.settings as Record<string, unknown>
             const updatedSettings: Record<string, unknown> = { ...currentSettings }
