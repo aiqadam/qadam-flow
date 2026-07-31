@@ -22,12 +22,22 @@ export const generateWorkerTokenCommand = new Command('token')
                     }
                     return true;
                 }
+            },
+            {
+                type: 'input',
+                name: 'workerGroupId',
+                message: 'Worker group id (leave empty for a shared worker):',
             }
         ]);
 
+        const workerGroupId = (answers.workerGroupId ?? '').trim();
+
+        // The group is bound into the token because it decides which queue the holder may poll.
+        // A worker cannot select it over the socket handshake any more (#207).
         const payload = {
             id: nanoid(),
             type: 'WORKER',
+            ...(workerGroupId ? { workerGroupId } : {}),
         };
 
         // 100 years in seconds

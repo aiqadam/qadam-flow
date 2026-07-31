@@ -55,9 +55,11 @@ let sandboxManagers: SandboxManager[] = []
 
 export const worker = {
     async start({ apiUrl, socketUrl, workerToken, withHealthServer = false }: WorkerStartParams): Promise<void> {
-        const workerGroupId = system.get(WorkerSystemProp.WORKER_GROUP_ID)
+        // The worker group is not sent in the handshake any more: the API reads it from the
+        // verified token principal, so a value asserted here would be ignored. AP_WORKER_GROUP_ID
+        // still gates the local sandbox-mode checks below, but it no longer selects a group (#207).
         socket = io(socketUrl.url, {
-            auth: { token: workerToken, workerId, workerGroupId },
+            auth: { token: workerToken, workerId },
             path: socketUrl.path,
             transports: ['websocket'],
             reconnection: true,

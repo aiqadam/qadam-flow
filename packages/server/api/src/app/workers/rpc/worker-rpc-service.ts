@@ -15,6 +15,7 @@ import {
     truncateFailedStepMessage,
     tryCatch,
     WebsocketClientEvent,
+    WorkerMachineHealthcheckRequest,
     WorkerToApiContract,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -41,24 +42,59 @@ const getPollQueueName = (workerGroupId?: string): string => {
     return workerGroupId ? getWorkerGroupQueueName(workerGroupId) : QueueName.WORKER_JOBS
 }
 
+// Narrow readers over the raw payload, used where the strict storage parse must not gate
+// behaviour. Deliberately not casts: an unreadable value comes back undefined and the caller
+// decides, rather than a wrong type flowing on as if it were right.
+function readWorkerId(input: unknown): string | undefined {
+    if (typeof input !== 'object' || input === null) return undefined
+    const workerId = (input as Record<string, unknown>).workerId
+    return typeof workerId === 'string' ? workerId : undefined
+}
+
+function readWorkerVersion(input: unknown): string | undefined {
+    if (typeof input !== 'object' || input === null) return undefined
+    const workerProps = (input as Record<string, unknown>).workerProps
+    if (typeof workerProps !== 'object' || workerProps === null) return undefined
+    const version = (workerProps as Record<string, unknown>).version
+    return typeof version === 'string' ? version : undefined
+}
+
 export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): WorkerToApiContract {
     return {
         async poll(input) {
-            log.info({ workerId: input.workerId, workerGroupId }, '[workerRpc#poll] Poll request received')
-            await machineService(log).onConnection(input, workerGroupId)
-            const workerVersion = input.workerProps.version
+            // Third writer of the worker registry, alongside the two websocket listeners in
+            // machine-controller — the entry it upserts is rendered in the platform admin
+            // workers table, so the payload is parsed before it is stored here too (#207).
+            const parsed = WorkerMachineHealthcheckRequest.safeParse(input)
+            if (!parsed.success) {
+                // Not stored, but not fatal either: these are machine-telemetry fields the worker
+                // does not choose, and refusing to hand out jobs over a NaN memory reading would
+                // trade a monitoring gap for an outage. Registration is skipped; polling is not.
+                log.warn({ issues: parsed.error.issues }, '[workerRpc#poll] Skipping registry update — malformed worker healthcheck payload')
+            }
+            const workerId = readWorkerId(input)
+            log.info({ workerId, workerGroupId }, '[workerRpc#poll] Poll request received')
+            if (parsed.success) {
+                await machineService(log).onConnection(parsed.data, workerGroupId)
+            }
+            // Read separately from the storage parse. The fields that realistically fail that
+            // parse are machine telemetry the worker does not choose (a `si.mem()` fallback
+            // yielding NaN is enough), and they say nothing about compatibility — but an
+            // unreadable version must still withhold the job, or a malformed payload would be a
+            // way around the gate. Unknown version is treated as a mismatch.
+            const workerVersion = readWorkerVersion(input)
             const appVersion = apVersionUtil.getCurrentRelease()
-            if (workerVersion !== appVersion) {
-                log.warn({ workerId: input.workerId, workerVersion, appVersion }, '[workerRpc#poll] Withholding job — worker version does not match app; worker will idle until upgraded')
+            if (isNil(workerVersion) || workerVersion !== appVersion) {
+                log.warn({ workerId, workerVersion, appVersion }, '[workerRpc#poll] Withholding job — worker version does not match app; worker will idle until upgraded')
                 return null
             }
             const pollQueueName = getPollQueueName(workerGroupId)
             const job = await jobBroker(log).poll(pollQueueName)
             if (job) {
-                log.info({ workerId: input.workerId, jobId: job.jobId, jobType: job.jobData.jobType }, '[workerRpc#poll] Returning job to worker')
+                log.info({ workerId, jobId: job.jobId, jobType: job.jobData.jobType }, '[workerRpc#poll] Returning job to worker')
             }
             else {
-                log.debug({ workerId: input.workerId }, '[workerRpc#poll] No job available, returning null')
+                log.debug({ workerId }, '[workerRpc#poll] No job available, returning null')
             }
             return job
         },

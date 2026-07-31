@@ -71,6 +71,12 @@ export const machineService = (log: FastifyBaseLogger) => {
             })
             await workerMachineCache().delete([request.workerId])
         },
+        // The settings a worker needs to boot, without recording anything. Used when a healthcheck
+        // payload fails validation: the payload must not reach the registry, but the worker still
+        // has to be told how to run — withholding the ack wedges it (see machine-controller).
+        async settingsOnly(): Promise<WorkerSettingsResponse> {
+            return buildSettingsResponse(log)
+        },
         async onConnection(request: WorkerMachineHealthcheckRequest, workerGroupId?: string | undefined): Promise<WorkerSettingsResponse> {
             const type = isNil(workerGroupId) ? 'SHARED' : 'DEDICATED'
             await workerMachineCache().upsert({
@@ -90,10 +96,11 @@ export const machineService = (log: FastifyBaseLogger) => {
         // `getPlan()` returns a hardcoded object that never sets it (#195, closed not-planned).
         //
         // Whoever implements real dedicated/worker-group listing must, in the same change:
-        //   1. make group -> platform a SERVER-side record. `workerGroupId` currently arrives
-        //      from the worker's own socket handshake over the single install-wide
-        //      AP_WORKER_TOKEN, so filtering on it would be isolation enforced by an untrusted
-        //      claim — worse than today's over-filter, because it would read as done (#207).
+        //   1. make group -> platform a SERVER-side record. `workerGroupId` is now a claim in
+        //      the verified worker token rather than a socket-handshake value (#207), so it is
+        //      no longer self-asserted — but it still says nothing about which platform owns the
+        //      group, and whoever mints a token chooses the string. Filtering on it alone would
+        //      still be isolation without a server-side group -> platform mapping.
         //   2. scope the other surface too, not just the filter below:
         //      `GET /v1/worker-machines/queue-metrics` returns every queue name — which embeds
         //      the group id — to any platform admin.
