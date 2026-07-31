@@ -329,3 +329,51 @@ describe('safeHttp.fetch', () => {
         })
     })
 })
+
+// #265: a cold local model sends nothing while it loads its weights and evaluates the prompt.
+// A single socket-inactivity timeout covers that silence as well as the gaps between chunks, so a
+// value tight enough to reclaim a dead provider killed every first message to an idle Ollama — at
+// 121s against a 120s timeout. The two waits are now bounded separately.
+describe('safeHttp.fetch timeouts', () => {
+    it('waits out a long silence before the first byte, then streams normally', async () => {
+        // Deliberately different: a generous first-byte budget and a tight inter-chunk one. Equal
+        // values would pass whichever of the two governed the wait, which is exactly the bug.
+        process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS'] = '10'
+        process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS'] = '1'
+        handler = (_req, res) => {
+            // Past the idle budget, well inside the first-byte one. Under the old single timeout
+            // this is the request that died at 121s against a 120s limit.
+            setTimeout(() => {
+                res.writeHead(200, { 'content-type': 'text/event-stream' })
+                res.end('data: woke up\n\n')
+            }, 2500)
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/cold-start`)
+
+        await expect(response.text()).resolves.toContain('woke up')
+        delete process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS']
+        delete process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS']
+    })
+
+    // The property the timeout exists for in the first place must survive the fix: a provider that
+    // starts answering and then stops must not pin the socket for the whole first-byte allowance.
+    it('gives up on a provider that goes silent part-way through the answer', async () => {
+        process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS'] = '30'
+        process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS'] = '1'
+        handler = (_req, res) => {
+            res.writeHead(200, { 'content-type': 'text/event-stream' })
+            res.write('data: first\n\n')
+            // and then nothing, ever
+        }
+
+        const response = await safeHttp.fetch(`${baseUrl}/stalls-midway`)
+        const reader = response.body!.getReader()
+        await reader.read()
+
+        await expect(reader.read()).rejects.toThrow(/stopped sending data/)
+        delete process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS']
+        delete process.env['AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS']
+    })
+
+})
