@@ -315,6 +315,21 @@ describe('chatTranscript.toModelMessages — every replayed tool call is answere
         parts: [{ type: PersistedChatPartType.TEXT, text }],
     })
 
+    // The text the model is actually shown for a settled gate.
+    function outcomeFor(messages: ReturnType<typeof chatTranscript.toModelMessages>, toolCallId: string): string {
+        for (const message of messages) {
+            if (message.role !== 'tool' || !Array.isArray(message.content)) {
+                continue
+            }
+            for (const part of message.content) {
+                if (part.type === 'tool-result' && part.toolCallId === toolCallId && part.output.type === 'text') {
+                    return part.output.value
+                }
+            }
+        }
+        throw new Error(`no tool-result for ${toolCallId}`)
+    }
+
     // Collects the ids the provider would see as unanswered, which is exactly what it rejects on.
     function unansweredToolCallIds(messages: ReturnType<typeof chatTranscript.toModelMessages>): string[] {
         const answered = new Set<string>()
@@ -356,6 +371,7 @@ describe('chatTranscript.toModelMessages — every replayed tool call is answere
             unansweredToolCallIds(messages),
             'the provider would reject this request: an assistant tool call has no tool result',
         ).toEqual([])
+        expect(outcomeFor(messages, 'call_gate')).toContain(approved ? 'approved' : 'declined')
     })
 
     // The shape `chatAgentService.start` actually builds, and the one an earlier version of this fix
@@ -381,6 +397,10 @@ describe('chatTranscript.toModelMessages — every replayed tool call is answere
             unansweredToolCallIds(messages),
             'start() would send the provider an unanswered tool call, and every later turn would fail',
         ).toEqual([])
+        // The decision itself, not just the presence of a result. Without this the ternary that
+        // picks the wording is untested: inverting it would tell the model a declined destructive
+        // action had been authorised, and every other assertion here would stay green.
+        expect(outcomeFor(messages, 'call_gate')).toContain(approved ? 'approved' : 'declined')
     })
 
     it('still answers a gate that is waiting for the user', () => {

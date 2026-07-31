@@ -454,6 +454,43 @@ describe('Chat tool approval gates (#264)', () => {
             expect(await db.findOneBy('flow', { id: first.id }), 'the gate that was addressed was executed anyway').not.toBeNull()
         })
 
+        // The second of two gates raised in one step. Approving the first appends the resume run's
+        // reply, so the gate message is no longer the newest — and `collectToolApprovals` reads
+        // approvals off the last message alone, so the second approval would return 200, stream a
+        // normal-looking reply, and execute nothing. Refusing is the honest answer; without the guard
+        // the user is shown a success for a destructive action that never happened.
+        it('refuses the second gate once the conversation has moved past it, rather than doing nothing', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const [first, second] = [await createFlow(), await createFlow()]
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                twoToolCallStream([
+                    { toolName: 'ap_delete_flow', callId: 'call_1', args: JSON.stringify({ flowId: first.id }) },
+                    { toolName: 'ap_delete_flow', callId: 'call_2', args: JSON.stringify({ flowId: second.id }) },
+                ]),
+                completionStream('Deleted the first one.'),
+                completionStream('Deleted the second one.'),
+            ]
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'delete both', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            const requests = (await readParts(conversationId))
+                .flatMap((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_REQUEST ? [part] : [])
+            expect(requests.length, 'the step did not produce two gates, so this case tests nothing').toBe(2)
+
+            const firstAnswer = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${requests[0].approvalId}`, { approved: true })
+            expect(firstAnswer?.statusCode).toBe(StatusCodes.OK)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(await db.findOneBy('flow', { id: first.id }), 'the first approval did not execute').toBeNull()
+
+            const secondAnswer = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${requests[1].approvalId}`, { approved: true })
+
+            expect(secondAnswer?.statusCode, 'a silent 200 here means the user was shown a success for a tool that never ran')
+                .toBeGreaterThanOrEqual(StatusCodes.BAD_REQUEST)
+            expect(secondAnswer?.statusCode).toBeLessThan(StatusCodes.INTERNAL_SERVER_ERROR)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(await db.findOneBy('flow', { id: second.id }), 'the refused approval executed anyway').not.toBeNull()
+        })
+
         // Approving actually runs it. Without the resume run the gate is a dead end: 13 tools the
         // model can reach and no way for a human to say yes.
         it('approving executes the gated call and closes the gate', async () => {

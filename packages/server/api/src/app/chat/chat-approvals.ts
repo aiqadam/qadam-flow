@@ -125,6 +125,19 @@ function assertAnswerable({ uiMessages, approvalId, expectedToolCallId }: Assert
             params: { message: 'This approval does not match the action it was raised for.' },
         })
     }
+    // A gate can only be resumed while its message is still the newest one, because
+    // `collectToolApprovals` reads approvals off the *last* message alone
+    // (`ai/dist/index.mjs:2690`). Two gated calls in one step reach this: approving the first appends
+    // the resume run's reply as a new assistant message, so the gate message is no longer last and
+    // approving the second would return 200, stream a normal-looking reply, and execute nothing.
+    // Refusing is the honest answer — the user is told the action can no longer be taken instead of
+    // being shown a success for a tool that never ran.
+    if (location.messageIndex !== messages.length - 1) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: 'This action can no longer be answered because the conversation has moved on.' },
+        })
+    }
     return location
 }
 
