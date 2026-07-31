@@ -1,4 +1,4 @@
-import { ALL_PRINCIPAL_TYPES, apId, EnginePrincipal, ErrorCode, PlatformId, Principal, PrincipalType, ProjectId, QadamFlowError, UserStatus, WorkerPrincipal } from '@aiqadam/shared'
+import { ALL_PRINCIPAL_TYPES, apId, EnginePrincipal, ErrorCode, PlatformId, Principal, PrincipalType, ProjectId, QadamFlowError, spreadIfDefined, UserStatus, WorkerPrincipal } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { jwtUtils } from '../../helper/jwt-utils'
@@ -37,10 +37,14 @@ export const accessTokenManager = (log: FastifyBaseLogger) => ({
         })
     },
 
-    async generateWorkerToken(): Promise<string> {
+    // `workerGroupId` is bound into the token here because it decides which queue the holder
+    // may poll. It used to be read from the worker's own socket handshake, so any holder of
+    // the install-wide AP_WORKER_TOKEN could name an arbitrary group (#207).
+    async generateWorkerToken({ workerGroupId }: GenerateWorkerTokenParams = {}): Promise<string> {
         const workerPrincipal: WorkerPrincipal = {
             id: apId(),
             type: PrincipalType.WORKER,
+            ...spreadIfDefined('workerGroupId', workerGroupId),
         }
 
         const secret = await jwtUtils.getJwtSecret()
@@ -123,4 +127,8 @@ type GenerateEngineTokenParams = {
     projectId: ProjectId
     jobId?: string
     platformId: PlatformId
+}
+
+type GenerateWorkerTokenParams = {
+    workerGroupId?: string
 }

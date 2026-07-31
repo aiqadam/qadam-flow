@@ -36,11 +36,16 @@ if [ -z "${AP_WORKER_TOKEN:-}" ] && [ -n "${AP_JWT_SECRET:-}" ]; then
     echo 'Auto-generating AP_WORKER_TOKEN...'
     # Passed as a command-prefix assignment so the secret never reaches argv,
     # where any process in the container could read it out of /proc.
-    AP_WORKER_TOKEN=$(AP_JWT_SECRET="$AP_JWT_SECRET" node -e "
+    # AP_WORKER_GROUP_ID is bound into the token here, not sent over the socket handshake: the
+    # API derives the group from the verified principal, so a worker cannot name its own group
+    # any more (#207). This container already holds AP_JWT_SECRET, so minting its own group
+    # claim grants it nothing it could not mint anyway.
+    AP_WORKER_TOKEN=$(AP_JWT_SECRET="$AP_JWT_SECRET" AP_WORKER_GROUP_ID="${AP_WORKER_GROUP_ID:-}" node -e "
         const jwt = require('jsonwebtoken');
         const crypto = require('crypto');
+        const workerGroupId = process.env.AP_WORKER_GROUP_ID || undefined;
         const token = jwt.sign(
-            { id: crypto.randomUUID(), type: 'WORKER' },
+            { id: crypto.randomUUID(), type: 'WORKER', ...(workerGroupId ? { workerGroupId } : {}) },
             process.env.AP_JWT_SECRET,
             { expiresIn: '100y', keyid: '1', algorithm: 'HS256', issuer: 'qadam-flow' }
         );

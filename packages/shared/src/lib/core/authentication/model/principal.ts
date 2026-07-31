@@ -6,6 +6,11 @@ import { PrincipalType } from './principal-type'
 export type WorkerPrincipal = {
     id: ApId
     type: PrincipalType.WORKER
+    // Bound into the token at mint time, never asserted by the worker over the socket
+    // handshake — the group decides which queue the worker is allowed to poll (#207).
+    // Optional because tokens minted before this claim existed must keep working; absent
+    // means SHARED, which is what every install has today.
+    workerGroupId?: string
 }
 
 export type AnnonymousPrincipal = {

@@ -40,6 +40,18 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### `AP_WORKER_GROUP_ID` on a worker container no longer selects a worker group
+
+The worker group used to arrive in the worker's own Socket.IO handshake, so any process holding the install-wide `AP_WORKER_TOKEN` could name any group — and the group decides which queue that worker polls. The API now reads the group from the `workerGroupId` claim of the verified worker token and ignores anything sent in the handshake.
+
+- **Nothing breaks on upgrade, and no token needs regenerating.** A token minted before this change carries no `workerGroupId` claim, which resolves to "no group" — a `SHARED` worker, polling the shared `WORKER_JOBS` queue.
+- **One case where behaviour does change, and it is worth reading if you used a group.** Dedicated routing is not implemented — `getQueueName` always *enqueues* to the shared queue — but a grouped worker *polls* `platform-<group>-jobs`, which nothing ever fills. So a grouped worker received no jobs at all. If you set `AP_WORKER_GROUP_ID` next to a **hand-set** `AP_WORKER_TOKEN`, that worker becomes `SHARED` after this change and starts taking jobs from the shared queue. If the group was how you kept a worker out of the pool, that is a live change, not a no-op — re-mint its token with the group, as below. Workers on the bundled compose install are unaffected: the entrypoint preserves the group when it mints.
+- **What an operator must do instead, if they were setting a group.** The group has to be in the token:
+  - On the bundled compose install the entrypoint mints `AP_WORKER_TOKEN` at container start whenever it is unset and `AP_JWT_SECRET` is set. It now reads `AP_WORKER_GROUP_ID` at that moment and bakes it into the token it mints, so a worker container that mints its own token keeps working unchanged — that container already holds the JWT secret, so it could mint any claim regardless.
+  - If you set `AP_WORKER_TOKEN` by hand, re-mint it with `qadam-flow token`, which now asks for an optional worker group id, and give the new token to the workers in that group. Setting `AP_WORKER_GROUP_ID` next to a hand-set token does nothing.
+- **`AP_WORKER_GROUP_ID` is still read by the worker itself** for its local start-up checks (a grouped worker requires a process-sandboxed `AP_EXECUTION_MODE` and an explicit `AP_REUSE_SANDBOX`). Those are unchanged; only the group *selection* moved into the token.
+- **Rolling back is free.** Tokens carrying a `workerGroupId` claim are ordinary worker tokens to the previous version, which ignores the extra field and falls back to the handshake value.
+
 #### JWTs are now issued as `qadam-flow` — and no action is required
 
 The `iss` claim on every token the platform mints changes from the inherited `activepieces` to `qadam-flow`. This includes the long-lived `AP_WORKER_TOKEN` that `docker-entrypoint.sh` and `qadam-flow token` generate.
