@@ -353,6 +353,10 @@ describe('Chat tool approval gates (#264)', () => {
         // ids — an approval id travels through a socket payload and a rendered card, so it is not a
         // secret — and must still be unable to spend the gate. 404 rather than 403 for the same
         // reason `getOneOrThrow` does it: a 403 would confirm the conversation exists.
+        // Note for the next reader: this pins the *outcome*, not a specific layer. Ownership is
+        // checked twice — `getOneOrThrow` in the approve path and `admitRun`'s own
+        // `{id, platformId, userId}` filter — so this test still passes with either one removed.
+        // Good defence in depth, but do not credit it with pinning `approve`'s own check.
         it('refuses another user answering the gate, and leaves the action untaken', async () => {
             const flow = await createFlow()
             const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
@@ -366,6 +370,22 @@ describe('Chat tool approval gates (#264)', () => {
             // would happen in a background loop and an immediate read would race past it and pass.
             await waitForStatus(conversationId, ChatConversationStatus.IDLE)
             expect(await db.findOneBy('flow', { id: flow.id }), 'someone else approved the delete').not.toBeNull()
+        })
+
+        // The read surface is guarded once, not twice, and it now returns the model's real arguments
+        // — a flow id, a table id, whatever `ap_run_action` was about to send. So a foreign reader
+        // would learn what another user is doing in their own project, not merely that a gate exists.
+        it('does not show another user the pending gate or its arguments', async () => {
+            const flow = await createFlow()
+            const { conversationId } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+            const other = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+
+            const response = await other.get(`/v1/chat/conversations/${conversationId}/pending-gate`)
+
+            // 404 rather than 403, matching `getOneOrThrow`'s deliberate non-disclosure: a foreign
+            // conversation and a missing one must be indistinguishable.
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+            expect(response?.body ?? '', 'the flow id leaked to a user who does not own the conversation').not.toContain(flow.id)
         })
 
         // Single-use. The resumed run executes the tool itself, so a replayable approval is a
