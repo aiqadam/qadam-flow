@@ -58,3 +58,32 @@ describe('chatAiUtils.buildStepParts — ap_execute_action batchProgress', () =>
         expect(parts.find((part) => part.type === PersistedChatPartType.BATCH_PROGRESS)).toBeUndefined()
     })
 })
+
+// The status recorded here is what the next turn's transcript is rebuilt from, so getting it
+// wrong is not cosmetic: a failed call recorded as COMPLETED replays to the model as "the tool
+// worked and returned nothing", and it neither retries nor explains.
+describe('chatAiUtils.buildStepParts — tool call status', () => {
+    function toolCall(result: ContentPartLike | null): ContentPartLike[] {
+        const call: ContentPartLike = { type: 'tool-call', toolCallId: 'call-1', toolName: 'ap_list_flows', input: {} }
+        return result === null ? [call] : [call, result]
+    }
+
+    function statusOf(content: ContentPartLike[]): string | undefined {
+        const part = chatAiUtils.buildStepParts({ content }).find((candidate) => candidate.type === PersistedChatPartType.TOOL_CALL)
+        return part !== undefined && 'status' in part ? part.status : undefined
+    }
+
+    it('records a successful call as completed', () => {
+        expect(statusOf(toolCall({ type: 'tool-result', toolCallId: 'call-1', output: { flows: [] } }))).toBe('completed')
+    })
+
+    // A `tool-error` part IS a result, so "any result means success" recorded every failure as
+    // completed — the whole reason this case exists.
+    it('records a tool-error result as an error, not as a completed call', () => {
+        expect(statusOf(toolCall({ type: 'tool-error', toolCallId: 'call-1', output: 'boom' }))).toBe('error')
+    })
+
+    it('records a call with no result at all as an error', () => {
+        expect(statusOf(toolCall(null))).toBe('error')
+    })
+})

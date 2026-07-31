@@ -7,6 +7,8 @@ import {
   PersistedChatPartType,
   PersistedToolCallStatus,
 } from '@aiqadam/shared';
+import { isAxiosError } from 'axios';
+import { t } from 'i18next';
 
 import { formatUtils } from '@/lib/format-utils';
 
@@ -331,7 +333,23 @@ function extractReceiptsFromHistory(
   return receipts;
 }
 
+// The server states the cause in `params.message` — "no AI provider is enabled for chat on this
+// platform", "this conversation is already generating a reply". `api.post` rethrows the raw
+// AxiosError, whose own `message` is only "Request failed with status code 400", so without this
+// the user is told nothing they can act on and the operator never learns what to configure.
+function describeSendError(error: unknown): string {
+  if (!isAxiosError<{ params?: { message?: unknown } }>(error)) {
+    return t('Failed to send message');
+  }
+  const message = error.response?.data?.params?.message;
+  if (typeof message === 'string' && message.length > 0) {
+    return message;
+  }
+  return t('Failed to send message');
+}
+
 export const chatUtils = {
+  describeSendError,
   formatToolLabel: ({ part }: { part: AnyToolPart }) =>
     formatToolName({ part }),
   formatToolActionName: ({ part }: { part: AnyToolPart }) =>

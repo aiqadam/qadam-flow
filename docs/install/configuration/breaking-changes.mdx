@@ -40,6 +40,16 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### MCP tools now enforce the caller's project role
+
+Every `ap_*` tool has always declared the permission it needs — `WRITE_FLOW`, `WRITE_TABLE`, `READ_RUN` and so on — and nothing ever read that declaration. The resolver returned "allow everything", so a project **Viewer** driving these tools over MCP could create, publish and delete flows, tables and records that the REST API would have refused them. The declarations are now enforced, using the same rules a normal API route applies.
+
+- **Who is affected.** Only members whose project role lacks a permission the tool needs. Platform admins and operators are unaffected, personal-project owners are unaffected, and a project **Admin** or **Editor** keeps everything they had — the Editor role already carries every write permission these tools ask for.
+- **What a blocked call looks like.** The tool returns an error result naming the missing permission rather than failing the whole request, so an assistant driving it can explain what happened instead of dying mid-turn.
+- **If you were relying on the old behaviour**, the fix is to grant the role the permission it needs, not to work around the check. A Viewer being able to delete a flow was a defect, not a feature.
+- **This also gates the new in-app Chat with AI**, which drives the same tool set.
+- **Rolling back is free** — no schema or token change is involved.
+
 #### `AP_WORKER_GROUP_ID` on a worker container no longer selects a worker group
 
 The worker group used to arrive in the worker's own Socket.IO handshake, so any process holding the install-wide `AP_WORKER_TOKEN` could name any group — and the group decides which queue that worker polls. The API now reads the group from the `workerGroupId` claim of the verified worker token and ignores anything sent in the handshake.

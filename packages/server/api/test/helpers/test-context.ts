@@ -1,11 +1,14 @@
 import {
     DefaultProjectRole,
+    isNil,
+    Permission,
     Platform,
     PlatformPlan,
     PlatformRole,
     PrincipalType,
     Project,
     ProjectRole,
+    rolePermissions,
     RoleType,
     User,
     UserIdentity,
@@ -64,6 +67,11 @@ export async function createMemberContext(
             name: params.projectRole,
             platformId: parentCtx.platform.id,
             type: RoleType.DEFAULT,
+            // The canonical set for that role, not `createMockProjectRole`'s empty default. A
+            // fixture "Viewer" holding no permissions at all cannot distinguish "the code checks
+            // permissions correctly" from "the code denies everything", so any test built on it
+            // proves less than it appears to.
+            permissions: defaultPermissionsFor(params.projectRole),
         })
         await db.save('project_role', projectRole)
     }
@@ -107,6 +115,13 @@ export async function createServiceContext(
         project: parentCtx.project,
         token: mockApiKey.value,
     })
+}
+
+// `projectRole` may be a custom role name rather than one of the three defaults, and a custom role
+// has no canonical permission set to look up — an empty list is the honest answer there.
+function defaultPermissionsFor(projectRole: DefaultProjectRole | string): Permission[] {
+    const known = Object.values(DefaultProjectRole).find((role) => role === projectRole)
+    return isNil(known) ? [] : rolePermissions[known]
 }
 
 function buildContext(app: FastifyInstance, data: ContextData): TestContext {

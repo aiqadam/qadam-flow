@@ -15,6 +15,7 @@ import {
     chatPersistenceUtils,
     CloudflareGatewayProviderConfig,
     isBatchProgressData,
+    isNil,
     OpenAICompatibleProviderConfig,
     PersistedChatPart,
     PersistedChatPartType,
@@ -210,7 +211,14 @@ function buildStepParts({ content }: {
                     ...spreadIfDefined('description', description),
                     input,
                     output: rawOutput,
-                    status: result ? PersistedToolCallStatus.COMPLETED : PersistedToolCallStatus.ERROR,
+                    // A `tool-error` part is a result, so "any result means it worked" recorded
+                    // every failed call as COMPLETED. That is the state the next turn's transcript
+                    // is rebuilt from, so the model was told a call that threw had succeeded and
+                    // returned nothing — it could neither retry nor explain. Absent result and
+                    // error result are both failures.
+                    status: isNil(result) || result.type === 'tool-error'
+                        ? PersistedToolCallStatus.ERROR
+                        : PersistedToolCallStatus.COMPLETED,
                 })
                 const batchProgress = toolName === 'ap_execute_action' ? extractBatchProgress(rawOutput) : undefined
                 if (batchProgress) {

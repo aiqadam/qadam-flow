@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { rejectedPromiseHandler } from '../helper/promise-handler'
 import { telemetry } from '../helper/telemetry.utils'
 import { WebhookFlowVersionToRun, webhookService } from '../webhooks/webhook.service'
-import { ALLOW_ALL, PermissionChecker, resolvePermissionChecker } from './mcp-permissions'
+import { DENY_ALL, PermissionChecker, resolvePermissionChecker } from './mcp-permissions'
 import { mcpProjectSelection, ProjectSelectionScope } from './mcp-project-selection'
 import { ALL_CONTROLLABLE_TOOL_NAMES, LOCKED_TOOL_NAMES, PLATFORM_LEVEL_TOOL_NAMES, qadamFlowTools } from './tools'
 import { apSetProjectContextTool } from './tools/ap-set-project-context'
@@ -50,9 +50,12 @@ export async function buildMcpServer({ mcp, userId, selectionScope, log, resolve
     })
 
     if (projectId) {
-        const permissionChecker = userId
-            ? await resolvePermissionChecker({ userId, projectId })
-            : ALLOW_ALL
+        // DENY_ALL, not ALLOW_ALL, when there is no user to check. The only live caller always
+        // supplies one, so this branch is unreachable today — but "we could not identify the
+        // caller" must not be the case that grants everything.
+        const permissionChecker = isNil(userId)
+            ? DENY_ALL
+            : await resolvePermissionChecker({ userId, projectId, log })
         registerFlowTools({ server, mcp, projectId, permissionChecker, log })
         registerStaticTools({ server, mcp, projectId, userId, permissionChecker, log })
     }
@@ -102,7 +105,7 @@ function registerPlatformTools({ server, mcp, userId, selectionScope, resolvePro
             }
             const projectMcp = await resolveProjectMcp(selectedProjectId)
             const projectScopedMcp: ProjectScopedMcpServer = { ...projectMcp, projectId: selectedProjectId }
-            const permissionChecker = await resolvePermissionChecker({ userId, projectId: selectedProjectId })
+            const permissionChecker = await resolvePermissionChecker({ userId, projectId: selectedProjectId, log })
             const realTools = qadamFlowTools(projectScopedMcp, userId, log)
             const realTool = realTools.find(t => t.title === tool.title)
             if (isNil(realTool)) {

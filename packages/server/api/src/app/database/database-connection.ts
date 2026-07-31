@@ -10,6 +10,7 @@ import { ApiKeyEntity } from '../api-keys/api-key.entity'
 import { AppConnectionEntity } from '../app-connection/app-connection.entity'
 import { OtpEntity } from '../authentication/otp/otp-entity'
 import { UserIdentityEntity } from '../authentication/user-identity/user-identity-entity'
+import { ChatConversationEntity } from '../chat/chat-conversation-entity'
 import { FileEntity } from '../file/file.entity'
 import { FlagEntity } from '../flags/flag.entity'
 import { FlowEntity } from '../flows/flow/flow.entity'
@@ -79,6 +80,7 @@ function getEntities(): EntitySchema<unknown>[] {
         QadamTagEntity,
         UserInvitationEntity,
         AIProviderEntity,
+        ChatConversationEntity,
         TableEntity,
         FieldEntity,
         RecordEntity,
