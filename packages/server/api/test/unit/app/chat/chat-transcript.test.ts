@@ -123,3 +123,24 @@ describe('chatTranscript.toModelMessages — history window', () => {
         expect(replayed[0].role).toBe('user')
     })
 })
+
+describe('chatTranscript.toModelMessages — a turn that produces nothing', () => {
+    // A files-only message is stored with empty text and replays as nothing. If the window opened
+    // on one, the transcript would start with an assistant turn — the shape a provider rejects.
+    it('skips past a user turn that replays as nothing when choosing where the window starts', () => {
+        // 21 messages, so the 20-message window opens exactly on index 1 — the files-only turn.
+        const history: PersistedChatMessage[] = [
+            { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'dropped by the window' }] },
+            { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: '' }] },
+            ...Array.from({ length: 19 }, (_unused, index): PersistedChatMessage => ({
+                role: index % 2 === 0 ? PersistedChatRole.ASSISTANT : PersistedChatRole.USER,
+                parts: [{ type: PersistedChatPartType.TEXT, text: `turn ${index}` }],
+            })),
+        ]
+
+        const replayed = chatTranscript.toModelMessages(history)
+
+        expect(replayed[0].role).toBe('user')
+        expect(replayed[0].content).not.toBe('')
+    })
+})

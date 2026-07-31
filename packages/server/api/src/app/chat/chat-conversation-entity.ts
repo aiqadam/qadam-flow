@@ -62,9 +62,8 @@ export const ChatConversationEntity = new EntitySchema<ChatConversationSchema>({
         // what the client renders, and it is what the next turn's transcript is rebuilt from.
         // `messages` is a write-only record of what was last sent to the provider — the AI SDK
         // exports no runtime schema for `ModelMessage`, so reading it back would need a cast this
-        // repo does not allow. Nothing is lost by replaying from `uiMessages`: cross-turn
-        // reasoning is stripped for every provider anyway (`chatAiUtils.stripThinkingBlocks`),
-        // and the tool-call/result pairs survive.
+        // repo does not allow. Replaying from `uiMessages` drops prior-turn reasoning, which is
+        // deliberate — see `chat-transcript.ts` — and keeps the tool-call/result pairs intact.
         messages: {
             type: 'json',
             nullable: false,

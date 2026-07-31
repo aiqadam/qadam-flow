@@ -7,7 +7,7 @@ import {
   PersistedChatPartType,
   PersistedToolCallStatus,
 } from '@aiqadam/shared';
-import { AxiosError } from 'axios';
+import { isAxiosError } from 'axios';
 import { t } from 'i18next';
 
 import { formatUtils } from '@/lib/format-utils';
@@ -338,10 +338,12 @@ function extractReceiptsFromHistory(
 // AxiosError, whose own `message` is only "Request failed with status code 400", so without this
 // the user is told nothing they can act on and the operator never learns what to configure.
 function describeSendError(error: unknown): string {
-  const params = (error as AxiosError<{ params?: { message?: unknown } }>)
-    ?.response?.data?.params;
-  if (typeof params?.message === 'string' && params.message.length > 0) {
-    return params.message;
+  if (!isAxiosError<{ params?: { message?: unknown } }>(error)) {
+    return t('Failed to send message');
+  }
+  const message = error.response?.data?.params?.message;
+  if (typeof message === 'string' && message.length > 0) {
+    return message;
   }
   return t('Failed to send message');
 }

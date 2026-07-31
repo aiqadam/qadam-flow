@@ -70,7 +70,7 @@ function deniedMessage({ toolTitle, permission }: { toolTitle: string, permissio
         : `You do not have permission to use ${toolTitle} in this project. It needs ${permission}; ask a project admin to grant it or to run this for you.`
 }
 
-export const ALLOW_ALL: PermissionChecker = {
+const ALLOW_ALL: PermissionChecker = {
     check: () => null,
     wrapExecute: ({ execute }) => execute,
 }

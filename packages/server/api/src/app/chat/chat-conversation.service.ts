@@ -11,8 +11,10 @@ import {
     spreadIfNotUndefined,
     UpdateChatConversationRequest,
 } from '@aiqadam/shared'
+import { FastifyBaseLogger } from 'fastify'
 import { MoreThan } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
+import { distributedLock } from '../database/redis-connections'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
 import { ChatConversationEntity, ChatConversationSchema } from './chat-conversation-entity'
@@ -104,64 +106,16 @@ export const chatConversationService = {
     // POSTs both read IDLE, both pass the guard and both append — losing one turn and billing the
     // operator twice — and the guard would look correct while never having held. The repo's
     // multi-server rule calls for exactly this on concurrent operations.
-    async startRun({ id, platformId, userId, projectId, runId, userMessage }: StartRunParams): Promise<TakenOverRun> {
-        return repo().manager.transaction(async (entityManager) => {
-            const conversation = await entityManager.findOne(ChatConversationEntity, {
-                where: { id, platformId, userId },
-                lock: { mode: 'pessimistic_write' },
-            })
-            if (isNil(conversation)) {
-                throw new QadamFlowError({
-                    code: ErrorCode.ENTITY_NOT_FOUND,
-                    params: { entityId: id, entityType: 'ChatConversation' },
-                })
-            }
-            if (conversation.status === ChatConversationStatus.STREAMING && !isAbandoned(conversation)) {
-                // Refusing the second is better than corrupting the history; the client already
-                // disables sending while a run is in flight, so this catches a second tab or a
-                // retry rather than normal use.
-                throw new QadamFlowError({
-                    code: ErrorCode.VALIDATION,
-                    params: { message: 'This conversation is already generating a reply. Wait for it to finish or cancel it first.' },
-                })
-            }
-            // Per-conversation limits bound one run; nothing bounded how many a user starts. A
-            // single account could open conversations without limit and fire a message into each,
-            // every one of them worth up to MAX_AGENT_STEPS paid round-trips on the operator's
-            // provider bill plus a detached loop holding a stream. Counted inside the same
-            // transaction as the admission so two simultaneous starts cannot both read "under".
-            // Stale rows are excluded, or a crashed run would hold a slot for five minutes and a
-            // few restarts would lock the user out of their own chat entirely.
-            const running = await entityManager.count(ChatConversationEntity, {
-                where: {
-                    platformId,
-                    userId,
-                    status: ChatConversationStatus.STREAMING,
-                    runHeartbeat: MoreThan(new Date(Date.now() - ABANDONED_RUN_AFTER_MS).toISOString()),
-                },
-            })
-            if (running >= MAX_CONCURRENT_RUNS_PER_USER) {
-                throw new QadamFlowError({
-                    code: ErrorCode.VALIDATION,
-                    params: { message: 'You already have several replies generating. Wait for one to finish before starting another.' },
-                })
-            }
-
-            await entityManager.save(ChatConversationEntity, {
-                ...conversation,
-                // Pinned on the first run so every later turn — and the connection picker —
-                // resolves the same project, instead of drifting with the user's project list.
-                projectId,
-                status: ChatConversationStatus.STREAMING,
-                activeRunId: runId,
-                runHeartbeat: new Date().toISOString(),
-                uiMessages: [...(conversation.uiMessages ?? []), userMessage],
-            })
-
-            // Handed back so the caller can abort the loop it just displaced, if that loop happens
-            // to live in this process. Taking the row without stopping the incumbent is how one
-            // conversation ends up with two live loops writing it.
-            return { displacedRunId: conversation.activeRunId }
+    // Admission is serialised per user, not just per conversation. The row lock below covers only
+    // the conversation being admitted; the concurrent-run cap counts the user's *other*
+    // conversations, which that lock says nothing about — two POSTs to two different conversations
+    // would each lock their own row, each count the same N, and each be let through. This lock is
+    // what makes the cap mean what it says.
+    async startRun({ id, platformId, userId, projectId, runId, userMessage, log }: StartRunParams): Promise<TakenOverRun> {
+        return distributedLock(log).runExclusive({
+            key: `chat-run-admission:${userId}`,
+            timeoutInSeconds: 10,
+            fn: () => admitRun({ id, platformId, userId, projectId, runId, userMessage }),
         })
     },
 
@@ -229,6 +183,68 @@ export const chatConversationService = {
     },
 }
 
+
+async function admitRun({ id, platformId, userId, projectId, runId, userMessage }: AdmitRunParams): Promise<TakenOverRun> {
+    return repo().manager.transaction(async (entityManager) => {
+        const conversation = await entityManager.findOne(ChatConversationEntity, {
+            where: { id, platformId, userId },
+            lock: { mode: 'pessimistic_write' },
+        })
+        if (isNil(conversation)) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: { entityId: id, entityType: 'ChatConversation' },
+            })
+        }
+        if (conversation.status === ChatConversationStatus.STREAMING && !isAbandoned(conversation)) {
+            // Refusing the second is better than corrupting the history; the client already
+            // disables sending while a run is in flight, so this catches a second tab or a
+            // retry rather than normal use.
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'This conversation is already generating a reply. Wait for it to finish or cancel it first.' },
+            })
+        }
+        // Per-conversation limits bound one run; nothing bounded how many a user starts. A
+        // single account could open conversations without limit and fire a message into each,
+        // every one of them worth up to MAX_AGENT_STEPS paid round-trips on the operator's
+        // provider bill plus a detached loop holding a stream. Counted inside the same
+        // transaction as the admission so two simultaneous starts cannot both read "under".
+        // Stale rows are excluded, or a crashed run would hold a slot for five minutes and a
+        // few restarts would lock the user out of their own chat entirely.
+        const running = await entityManager.count(ChatConversationEntity, {
+            where: {
+                platformId,
+                userId,
+                status: ChatConversationStatus.STREAMING,
+                runHeartbeat: MoreThan(new Date(Date.now() - ABANDONED_RUN_AFTER_MS).toISOString()),
+            },
+        })
+        if (running >= MAX_CONCURRENT_RUNS_PER_USER) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'You already have several replies generating. Wait for one to finish before starting another.' },
+            })
+        }
+
+        await entityManager.save(ChatConversationEntity, {
+            ...conversation,
+            // Pinned on the first run so every later turn — and the connection picker —
+            // resolves the same project, instead of drifting with the user's project list.
+            projectId,
+            status: ChatConversationStatus.STREAMING,
+            activeRunId: runId,
+            runHeartbeat: new Date().toISOString(),
+            uiMessages: [...(conversation.uiMessages ?? []), userMessage],
+        })
+
+        // Handed back so the caller can abort the loop it just displaced, if that loop happens
+        // to live in this process. Taking the row without stopping the incumbent is how one
+        // conversation ends up with two live loops writing it.
+        return { displacedRunId: conversation.activeRunId }
+    })
+}
+
 // A live run touches the row at every step, and the transport gives up on a silent provider after
 // 120s, so a STREAMING row untouched for this long belongs to a process that is no longer running
 // — an API restart mid-run, which is routine on a self-hosted upgrade. Without this the
@@ -279,9 +295,13 @@ type RunScopedParams = GetParams & {
     runId: string
 }
 
-type StartRunParams = RunScopedParams & {
+type AdmitRunParams = RunScopedParams & {
     projectId: string
     userMessage: PersistedChatMessage
+}
+
+type StartRunParams = AdmitRunParams & {
+    log: FastifyBaseLogger
 }
 
 export type TakenOverRun = {

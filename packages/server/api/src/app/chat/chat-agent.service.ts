@@ -57,6 +57,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             userId,
             projectId,
             runId,
+            log,
             userMessage: { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: request.content }] },
         })
 
@@ -192,12 +193,11 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
 }
 
 function collectStreamedText({ chunk, into }: { chunk: unknown, into: string[] }): void {
-    if (typeof chunk !== 'object' || isNil(chunk)) {
+    if (typeof chunk !== 'object' || isNil(chunk) || !('type' in chunk) || !('delta' in chunk)) {
         return
     }
-    const { type, delta } = chunk as { type?: unknown, delta?: unknown }
-    if (type === 'text-delta' && typeof delta === 'string') {
-        into.push(delta)
+    if (chunk.type === 'text-delta' && typeof chunk.delta === 'string') {
+        into.push(chunk.delta)
     }
 }
 

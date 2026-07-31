@@ -12,8 +12,12 @@ import { ModelMessage, TextPart, ToolCallPart, ToolResultPart } from 'ai'
 export const chatTranscript = {
     // Rebuilt from `uiMessages`, which is a schema-validated shape we own, rather than from the raw
     // `messages` JSON blob — the AI SDK exports no runtime schema for `ModelMessage`, so reading
-    // that back would need a cast this repo does not allow. Nothing is lost: `chatAiUtils` strips
-    // cross-turn reasoning for every provider anyway, and the tool-call/result pairs survive.
+    // that back would need a cast this repo does not allow. What is lost by that: prior-turn
+    // reasoning, because `toAssistantModelMessages` below emits only text and tool-call parts.
+    // That is the behaviour we want — Anthropic rejects a re-sent `thinking` block whose signature
+    // did not survive the round trip — but it is a property of this function, not something a
+    // helper does for us. (`chatAiUtils.stripThinkingBlocks` exists and would do it; it has no
+    // caller anywhere, so nothing here relies on it.) Tool-call/result pairs survive intact.
     toModelMessages(uiMessages: PersistedChatMessage[]): ModelMessage[] {
         return recentTurns(uiMessages).flatMap((message) => message.role === PersistedChatRole.USER
             ? toUserModelMessages(message.parts)
@@ -33,8 +37,13 @@ function recentTurns(uiMessages: PersistedChatMessage[]): PersistedChatMessage[]
         return uiMessages
     }
     const window = uiMessages.slice(-MAX_REPLAYED_MESSAGES)
-    const firstUserTurn = window.findIndex((message) => message.role === PersistedChatRole.USER)
-    return firstUserTurn <= 0 ? window : window.slice(firstUserTurn)
+    // The first user turn that actually produces a message, not merely the first user turn: a
+    // files-only message is persisted with empty text, `toUserModelMessages` drops it, and the
+    // transcript would then open with an assistant turn answering a question the model can no
+    // longer see — which is the one shape a provider rejects outright.
+    const firstReplayableTurn = window.findIndex((message) => message.role === PersistedChatRole.USER
+        && toUserModelMessages(message.parts).length > 0)
+    return firstReplayableTurn <= 0 ? window : window.slice(firstReplayableTurn)
 }
 
 function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
