@@ -177,6 +177,29 @@ export const SendChatMessageRequest = z.object({
 )
 export type SendChatMessageRequest = z.infer<typeof SendChatMessageRequest>
 
+// Deliberately only these two fields. The web client used to post a free-form `payload` alongside
+// them and the route validated no body at all, so an authorization endpoint accepted arbitrary
+// unvalidated JSON — and nothing on the server ever read it. The gated call's arguments come from
+// the persisted request part, never from whoever answers the gate; a body that could restate them
+// would let the person approving "Delete flow A" have flow B deleted instead.
+export const AnswerChatToolApprovalRequest = z.object({
+    approved: z.boolean(),
+    reason: z.string().max(500).optional(),
+    // Optional, and only ever compared — never used to select the call. A client that shows a card
+    // knows which call it drew, so a mismatch means the card and the transcript have diverged and
+    // the answer must not be applied to whatever the gate happens to point at now.
+    toolCallId: z.string().optional(),
+})
+export type AnswerChatToolApprovalRequest = z.infer<typeof AnswerChatToolApprovalRequest>
+
+export type PendingChatToolApproval = {
+    gateId: string
+    toolCallId: string
+    toolName: string
+    displayName: string
+    toolInput: Record<string, unknown>
+}
+
 export type ChatHistoryToolCall = {
     toolCallId: string
     title: string

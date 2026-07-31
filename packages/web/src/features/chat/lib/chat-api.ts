@@ -1,6 +1,7 @@
 import {
   type ChatHistoryMessage,
   type PersistedChatMessage,
+  type PendingChatToolApproval,
   ChatConversation,
   CreateChatConversationRequest,
   SeekPage,
@@ -68,19 +69,27 @@ async function sendMessage({
   );
 }
 
+// Addressed under the conversation, which is what binds the answer to its owner: the server resolves
+// the conversation by `{ id, platformId, userId }` and only then looks for the gate inside it. The
+// old flat `/v1/chat/tool-approvals/:gateId` is gone. `payload` is gone with it — the server never
+// read it, and the gated call's arguments must come from the transcript, not from the answer.
 async function approveToolCall({
+  conversationId,
   gateId,
   approved,
-  payload,
+  reason,
+  toolCallId,
 }: {
+  conversationId: string;
   gateId: string;
   approved: boolean;
-  payload?: Record<string, unknown>;
-}): Promise<void> {
-  return api.post<void>(`/v1/chat/tool-approvals/${gateId}`, {
-    approved,
-    payload,
-  });
+  reason?: string;
+  toolCallId?: string;
+}): Promise<{ conversationId: string; runId: string }> {
+  return api.post<{ conversationId: string; runId: string }>(
+    `/v1/chat/conversations/${conversationId}/tool-approvals/${gateId}`,
+    { approved, reason, toolCallId },
+  );
 }
 
 async function cancelConversation(conversationId: string): Promise<void> {
@@ -107,12 +116,9 @@ async function getPickerConnections({
   });
 }
 
-async function getPendingGate(conversationId: string): Promise<{
-  gateId: string;
-  toolName: string;
-  displayName: string;
-  toolInput: Record<string, unknown>;
-} | null> {
+async function getPendingGate(
+  conversationId: string,
+): Promise<PendingChatToolApproval | null> {
   return api.get(`/v1/chat/conversations/${conversationId}/pending-gate`);
 }
 

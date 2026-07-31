@@ -20,9 +20,16 @@ export const chatTranscript = {
     // helper does for us. (`chatAiUtils.stripThinkingBlocks` exists and would do it; it has no
     // caller anywhere, so nothing here relies on it.) Tool-call/result pairs survive intact.
     toModelMessages(uiMessages: PersistedChatMessage[]): ModelMessage[] {
-        return recentTurns(uiMessages).flatMap((message) => message.role === PersistedChatRole.USER
+        const window = recentTurns(uiMessages)
+        // Collected across the whole window rather than per message, so the check below asks the
+        // question the SDK asks: is there a request for this response anywhere in what we are about
+        // to send?
+        const requestedApprovalIds = new Set(window.flatMap((message) => message.parts.flatMap((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_REQUEST
+            ? [part.approvalId]
+            : [])))
+        return window.flatMap((message) => message.role === PersistedChatRole.USER
             ? toUserModelMessages(message.parts)
-            : toAssistantModelMessages(message.parts))
+            : toAssistantModelMessages(message.parts, requestedApprovalIds))
     },
 }
 
@@ -54,10 +61,15 @@ function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
     return text.length === 0 ? [] : [{ role: 'user', content: text }]
 }
 
-function toAssistantModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
+function toAssistantModelMessages(parts: PersistedChatPart[], knownApprovalIds: ReadonlySet<string>): ModelMessage[] {
     const content: Array<TextPart | ToolCallPart | ToolApprovalRequest> = []
     const toolResults: Array<ToolResultPart | ToolApprovalResponse> = []
 
+    // Scoped to this one message's parts, which is why the approval response has to be appended to
+    // the message that carries the request rather than written as a new one. `chatApprovals.answer`
+    // is coupled to this: a response in a separate message would be invisible here, so the gate
+    // would replay as still pending, and that message — carrying only a response, which produces no
+    // assistant `content` — is dropped entirely by the `content.length === 0` guard below.
     const answeredApprovalIds = new Set(parts.flatMap((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE
         ? [part.approvalId]
         : []))
@@ -97,6 +109,15 @@ function toAssistantModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
             }
         }
         if (part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE) {
+            // An orphan response is fatal, not cosmetic: `collectToolApprovals` throws
+            // `InvalidToolApprovalError` for a response whose request it cannot find among the
+            // replayed messages (`ai/dist/index.mjs:2735`), and that kills every later run in the
+            // conversation before its first token. Today the coupling above makes an orphan
+            // impossible — the two parts share a message, so the window cannot keep one and drop
+            // the other — and this check is what keeps that true if the coupling ever breaks.
+            if (!knownApprovalIds.has(part.approvalId)) {
+                continue
+            }
             toolResults.push({
                 type: 'tool-approval-response',
                 approvalId: part.approvalId,

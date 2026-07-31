@@ -1979,5 +1979,12 @@
   "{count} hours ago": "{count} hours ago",
   "Horizontal layout": "Horizontal layout",
   "Vertical layout": "Vertical layout",
-  "useInsteadPrefix": "Use"
+  "useInsteadPrefix": "Use",
+  "Approve this action?": "Approve this action?",
+  "The assistant wants to run": "The assistant wants to run",
+  "This action takes no arguments.": "This action takes no arguments.",
+  "Optional: why you are declining": "Optional: why you are declining",
+  "(hidden)": "(hidden)",
+  "Yes, proceed": "Yes, proceed",
+  "No, cancel": "No, cancel"
 }

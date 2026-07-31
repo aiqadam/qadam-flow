@@ -85,10 +85,16 @@ export type ToolProgressEvent = {
     }
 }
 
+// `approvalId` is what the approval endpoint is addressed by, and it is not the `toolCallId`: the
+// SDK mints a fresh one per gated call, and answering a gate by tool call id would let a client
+// name a different call than the one it was shown. `toolInput` is the security control the card
+// exists for — "Delete flow" tells the user nothing about *which* flow.
 export type ToolApprovalRequestEvent = {
+    approvalId: string
     toolCallId: string
     toolName: string
     displayName: string
+    toolInput: Record<string, unknown>
 }
 
 export type ActionPreviewEvent = {

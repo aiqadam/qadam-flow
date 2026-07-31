@@ -207,6 +207,25 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
 
         expect(replayed.at(-1)?.role).toBe('tool')
     })
+
+    // `collectToolApprovals` throws `InvalidToolApprovalError` for a response whose request it cannot
+    // find (`index.mjs:2735`), and that kills the run before its first token. The coupling in
+    // `chatApprovals.answer` means an orphan cannot occur today — request and response share a
+    // message, so the window cannot keep one and drop the other — and this is what keeps the transcript
+    // safe if that coupling is ever broken.
+    it('drops an approval response whose request is not in the replayed window', () => {
+        const replayed = chatTranscript.toModelMessages([
+            {
+                role: PersistedChatRole.ASSISTANT,
+                parts: [
+                    { type: PersistedChatPartType.TEXT, text: 'Right.' },
+                    { type: PersistedChatPartType.TOOL_APPROVAL_RESPONSE, approvalId: 'approval_from_a_lost_turn', approved: true },
+                ],
+            },
+        ])
+
+        expect(JSON.stringify(replayed)).not.toContain('approval_from_a_lost_turn')
+    })
 })
 
 describe('chatTranscript.toModelMessages — history window', () => {

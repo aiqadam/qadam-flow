@@ -1,9 +1,8 @@
 import {
+    AnswerChatToolApprovalRequest,
     ApId,
     CreateChatConversationRequest,
-    ErrorCode,
     PrincipalType,
-    QadamFlowError,
     SendChatMessageRequest,
     UpdateChatConversationRequest,
 } from '@aiqadam/shared'
@@ -11,6 +10,7 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { securityAccess } from '../core/security/authorization/fastify-security'
 import { chatAgentService } from './chat-agent.service'
+import { chatApprovals } from './chat-approvals'
 import { chatConnections } from './chat-connections'
 import { chatConversationService } from './chat-conversation.service'
 
@@ -109,24 +109,32 @@ export const chatController: FastifyPluginAsyncZod = async (app) => {
         })
     })
 
-    // Tool-approval gates are not implemented in this layer. Returning null is the honest answer
-    // and the shape the client already handles — a fabricated gate would make the UI wait for an
-    // approval nothing will ever consume.
+    // The gate lives in this conversation's transcript, so reading it is the same authorisation as
+    // reading the conversation. `null` when nothing is waiting, which is the shape the client has
+    // always handled.
     app.get('/conversations/:id/pending-gate', ConversationByIdRequest, async (request) => {
-        await chatConversationService.getOneOrThrow({
+        const conversation = await chatConversationService.getOneOrThrow({
             id: request.params.id,
             platformId: request.principal.platform.id,
             userId: request.principal.id,
         })
-        return null
+        return chatApprovals.findPending(conversation.uiMessages)
     })
 
-    // Same reason, from the other side: with no gates issued there is no gate to approve, so this
-    // 404s rather than reporting a success that approved nothing.
-    app.post('/tool-approvals/:gateId', ApproveToolCallRequest, async (request) => {
-        throw new QadamFlowError({
-            code: ErrorCode.ENTITY_NOT_FOUND,
-            params: { entityId: request.params.gateId, entityType: 'ChatToolApprovalGate' },
+    // Nested under the conversation on purpose, and this is the endpoint's main security property.
+    // The caller must name a conversation, `getOneOrThrow` filters it by `{ id, platformId, userId }`
+    // and 404s someone else's row, and only then is the gate id resolved *inside* that row. A
+    // flat `/tool-approvals/:gateId` would have to search every conversation for the id — which
+    // makes an id that travels through a socket payload and a rendered card into the whole
+    // authorisation, and turns any runtime owner check into a line someone can delete without
+    // failing a test. Here the binding is the route.
+    app.post('/conversations/:id/tool-approvals/:gateId', AnswerToolApprovalRequest, async (request) => {
+        return chatAgentService(request.log).approve({
+            id: request.params.id,
+            platformId: request.principal.platform.id,
+            userId: request.principal.id,
+            approvalId: request.params.gateId,
+            request: request.body,
         })
     })
 }
@@ -140,6 +148,10 @@ const chatSecurity = {
 
 const DEFAULT_CONVERSATION_PAGE_SIZE = 20
 const MAX_CONVERSATION_PAGE_SIZE = 100
+
+// Generous next to the 30 characters the SDK actually produces, and still bounded — the value is
+// compared against persisted ids, so there is no reason to accept a megabyte of path.
+const MAX_GATE_ID_LENGTH = 128
 
 const ConversationIdParams = z.object({
     id: ApId,
@@ -195,11 +207,22 @@ const ListConversationConnectionsRequest = {
     },
 }
 
-const ApproveToolCallRequest = {
+// The body used to be unvalidated while the client posted `{ approved, payload }` — an arbitrary
+// unvalidated object accepted by the one endpoint whose job is authorisation. `payload` is gone
+// rather than schematised: nothing on the server read it, and the gated call's arguments must come
+// from the persisted request part, never from whoever answers the gate.
+const AnswerToolApprovalRequest = {
     config: chatSecurity,
     schema: {
         params: z.object({
-            gateId: ApId,
+            id: ApId,
+            // Not `ApId`: the approval id is minted by the AI SDK, not by `apId()`. `streamText`
+            // uses `createIdGenerator({ prefix: 'aitxt', size: 24 })`, so a real gate id looks like
+            // `aitxt-<24 chars>` — 30 characters with a hyphen, which `ApId`'s
+            // `^[0-9a-zA-Z]{21}$` rejects outright. Validating it as an `ApId` would have 400'd
+            // every genuine approval while passing every hand-typed guess.
+            gateId: z.string().min(1).max(MAX_GATE_ID_LENGTH),
         }),
+        body: AnswerChatToolApprovalRequest,
     },
 }

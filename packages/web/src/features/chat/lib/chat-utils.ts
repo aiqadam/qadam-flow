@@ -193,6 +193,7 @@ function isPersistedFormat(data: unknown[]): data is PersistedChatMessage[] {
 function persistedPartToUIPart(
   part: PersistedChatPart,
   idx: number,
+  answeredApprovals: Map<string, boolean>,
 ): ChatUIMessage['parts'][number] {
   switch (part.type) {
     case PersistedChatPartType.TEXT:
@@ -238,16 +239,38 @@ function persistedPartToUIPart(
     // A gate the user has not answered is pending, not failed: the call never ran, and the state
     // the SDK uses for exactly this is what a reload has to restore, or the card would come back as
     // a failed tool call and invite the model's next turn to be an apology.
-    case PersistedChatPartType.TOOL_APPROVAL_REQUEST:
+    //
+    // An *answered* one must not come back as `approval-requested`, or the card reappears on every
+    // reload for a gate that has already been spent and clicking it 409s. `answeredApprovals` is
+    // built per message because that is where the response part lives — see the coupling comment in
+    // `chat-transcript.ts` on the server.
+    case PersistedChatPartType.TOOL_APPROVAL_REQUEST: {
+      const answer = answeredApprovals.get(part.approvalId);
+      if (answer === undefined) {
+        return {
+          type: 'dynamic-tool',
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          title: part.toolName,
+          state: 'approval-requested',
+          input: part.input,
+          approval: { id: part.approvalId },
+        };
+      }
+      // `approval-responded` rather than `output-available`, even for an approved gate: the SDK runs
+      // the approved call before the first provider round-trip of the resumed run, outside any
+      // recorded step, so there is no output to persist and claiming one would be a lie. The state
+      // says exactly what is known — a human answered, and this is what they said.
       return {
         type: 'dynamic-tool',
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         title: part.toolName,
-        state: 'approval-requested',
+        state: 'approval-responded',
         input: part.input,
-        approval: { id: part.approvalId },
+        approval: { id: part.approvalId, approved: answer },
       };
+    }
     case PersistedChatPartType.TOOL_APPROVAL_RESPONSE:
     case PersistedChatPartType.BATCH_PROGRESS:
     case PersistedChatPartType.ACTION_RECEIPT:
@@ -261,13 +284,25 @@ function persistedPartToUIPart(
   }
 }
 
+function answeredApprovalsIn(msg: PersistedChatMessage): Map<string, boolean> {
+  return new Map(
+    msg.parts.flatMap((p) =>
+      p.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE
+        ? ([[p.approvalId, p.approved]] as [string, boolean][])
+        : [],
+    ),
+  );
+}
+
 function mapPersistedToUIMessages(
   data: PersistedChatMessage[],
 ): ChatUIMessage[] {
   return data.map((msg, idx) => ({
     id: `hist-${idx}`,
     role: msg.role,
-    parts: msg.parts.map((p, i) => persistedPartToUIPart(p, i)),
+    parts: msg.parts.map((p, i) =>
+      persistedPartToUIPart(p, i, answeredApprovalsIn(msg)),
+    ),
     ...(msg.thinkingDurationMs !== undefined && {
       thinkingDurationMs: msg.thinkingDurationMs,
     }),

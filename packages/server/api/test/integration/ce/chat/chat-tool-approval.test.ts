@@ -16,17 +16,21 @@ import {
     AIProviderName,
     apId,
     ChatConversationStatus,
+    DefaultProjectRole,
+    FieldType,
     FlowVersionState,
     isNil,
+    PendingChatToolApproval,
     PersistedChatMessage,
+    PersistedChatPart,
     PersistedChatPartType,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { db } from '../../../helpers/db'
-import { createMockFlow, createMockFlowVersion } from '../../../helpers/mocks'
-import { createTestContext, TestContext } from '../../../helpers/test-context'
+import { createMockFlow, createMockFlowVersion, createMockTable } from '../../../helpers/mocks'
+import { createMemberContext, createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
@@ -59,6 +63,41 @@ function toolCallStream({ toolName, callId, args }: { toolName: string, callId: 
             choices: [{
                 index: 0,
                 delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: toolName, arguments: args } }] },
+                finish_reason: null,
+            }],
+        }),
+        sseChunk({
+            id: 'chatcmpl-tool',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: MODEL_ID,
+            choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+        }),
+        'data: [DONE]\n\n',
+    ].join('')
+}
+
+// Two gated calls in one step, which is the shape the `toolCallId` check exists for: the model can
+// ask for both at once, so the endpoint has to answer the gate it was addressed with rather than
+// whichever one the caller names.
+function twoToolCallStream(calls: { toolName: string, callId: string, args: string }[]): string {
+    return [
+        sseChunk({
+            id: 'chatcmpl-tool',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: MODEL_ID,
+            choices: [{
+                index: 0,
+                delta: {
+                    role: 'assistant',
+                    tool_calls: calls.map((call, index) => ({
+                        index,
+                        id: call.callId,
+                        type: 'function',
+                        function: { name: call.toolName, arguments: call.args },
+                    })),
+                },
                 finish_reason: null,
             }],
         }),
@@ -167,6 +206,47 @@ async function createFlow(): Promise<{ id: string }> {
     return { id: flow.id }
 }
 
+async function createTable(): Promise<{ id: string }> {
+    const table = createMockTable({ projectId: ctx.project.id })
+    await db.save('table', table)
+    return { id: table.id }
+}
+
+async function readPendingGate(conversationId: string): Promise<PendingChatToolApproval | null> {
+    const response = await ctx.get(`/v1/chat/conversations/${conversationId}/pending-gate`)
+    expect(response?.statusCode).toBe(StatusCodes.OK)
+    return response!.json()
+}
+
+async function readParts(conversationId: string): Promise<PersistedChatPart[]> {
+    const row = await db.findOneByOrFail<Record<string, unknown>>('chat_conversation', { id: conversationId })
+    return (row['uiMessages'] as PersistedChatMessage[] ?? []).flatMap((message) => message.parts)
+}
+
+// One place for "get a conversation into the state where a gate is waiting", because every case
+// below starts there and the interesting part of each is what happens next.
+async function raiseGate({ toolName, args, resumeReply = 'Done.' }: {
+    toolName: string
+    args: Record<string, unknown>
+    resumeReply?: string
+}): Promise<{ conversationId: string, gate: PendingChatToolApproval }> {
+    await enableChatProvider(ctx.platform.id)
+    const conversationId = await createConversation(ctx)
+    scriptedResponses = [
+        toolCallStream({ toolName, callId: 'call_1', args: JSON.stringify(args) }),
+        completionStream(resumeReply),
+    ]
+
+    await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'do the thing', runId: apId() })
+    await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+    const gate = await readPendingGate(conversationId)
+    if (isNil(gate)) {
+        throw new Error('no gate was raised, so nothing below is testing what it claims to')
+    }
+    return { conversationId, gate }
+}
+
 describe('Chat tool approval gates (#264)', () => {
     describe('a destructive tool the model asked for', () => {
         // The whole hole, in one assertion: today the model says "delete it" and the flow is gone,
@@ -238,6 +318,207 @@ describe('Chat tool approval gates (#264)', () => {
                 parts.filter((part) => part.type === PersistedChatPartType.TOOL_CALL && part.toolCallId === 'call_1'),
                 'the gated call was also recorded as a tool call, so the model will be told it failed',
             ).toEqual([])
+        })
+    })
+
+    describe('GET /conversations/:id/pending-gate', () => {
+        it('reports the waiting gate with the tool and the arguments it was asked with', async () => {
+            const flow = await createFlow()
+            const { gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+
+            // The input is the whole point. A card that says only "Delete flow" asks the user to
+            // approve an action they cannot see, which is indistinguishable from no gate at all.
+            expect(gate).toEqual({
+                gateId: expect.any(String),
+                toolCallId: 'call_1',
+                toolName: 'ap_delete_flow',
+                displayName: 'Delete flow',
+                toolInput: { flowId: flow.id },
+            })
+        })
+
+        it('reports nothing once the gate has been answered', async () => {
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: false })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            expect(await readPendingGate(conversationId), 'an answered gate is still offered, so the card never goes away').toBeNull()
+        })
+    })
+
+    describe('POST /conversations/:id/tool-approvals/:gateId', () => {
+        // Owner binding, and the reason the route is nested under the conversation. User B knows both
+        // ids — an approval id travels through a socket payload and a rendered card, so it is not a
+        // secret — and must still be unable to spend the gate. 404 rather than 403 for the same
+        // reason `getOneOrThrow` does it: a 403 would confirm the conversation exists.
+        it('refuses another user answering the gate, and leaves the action untaken', async () => {
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+            const other = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+
+            const response = await other.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: true })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+            // Waited on before reading the flow. A refused approval starts no run, so the row is
+            // already IDLE and this returns at once — but if the refusal ever regressed, the delete
+            // would happen in a background loop and an immediate read would race past it and pass.
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(await db.findOneBy('flow', { id: flow.id }), 'someone else approved the delete').not.toBeNull()
+        })
+
+        // Single-use. The resumed run executes the tool itself, so a replayable approval is a
+        // replayable destructive tool call. `ap_manage_fields` is used rather than a delete because
+        // adding a field is *countable*: a second execution leaves a second row, which a delete
+        // running twice would not.
+        it('refuses a second answer to the same gate, and the tool ran exactly once', async () => {
+            const table = await createTable()
+            const { conversationId, gate } = await raiseGate({
+                toolName: 'ap_manage_fields',
+                args: { tableId: table.id, operation: 'ADD', name: 'Approved column', type: FieldType.TEXT },
+                // Empty on purpose, and this is what makes the guard load-bearing rather than
+                // decorative. A resume reply with text is persisted as an assistant message, so the
+                // gate's tool message is no longer last and `collectToolApprovals` — which reads only
+                // `messages.at(-1)` — would decline to execute anything a second time all by itself.
+                // An empty reply produces a message with no parts, which the replay drops, leaving the
+                // gate's tool message last again. Removing the single-use check below then really does
+                // run the tool twice; with a chatty reply it would not, and the test would pass
+                // whether the check existed or not.
+                resumeReply: '',
+            })
+
+            const first = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: true })
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const replay = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: true })
+            expect(replay?.statusCode).toBeGreaterThanOrEqual(StatusCodes.BAD_REQUEST)
+            expect(replay?.statusCode).toBeLessThan(StatusCodes.INTERNAL_SERVER_ERROR)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const fields = await db.find('field', { tableId: table.id, name: 'Approved column' })
+            expect(fields.length, 'the approved tool executed more than once').toBe(1)
+        })
+
+        // The `toolCallId` in the body is compared and never used to select the call. Two gated calls
+        // sit in one step here, so naming the other one's id has to be refused rather than quietly
+        // applied to whichever gate the approval id resolves to.
+        it('refuses an answer that names a different tool call than the gate it addresses', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const [first, second] = [await createFlow(), await createFlow()]
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [
+                twoToolCallStream([
+                    { toolName: 'ap_delete_flow', callId: 'call_1', args: JSON.stringify({ flowId: first.id }) },
+                    { toolName: 'ap_delete_flow', callId: 'call_2', args: JSON.stringify({ flowId: second.id }) },
+                ]),
+                completionStream('Done.'),
+            ]
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'delete both', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const parts = await readParts(conversationId)
+            const requests = parts.flatMap((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_REQUEST ? [part] : [])
+            expect(requests.map((part) => part.toolCallId), 'the step did not produce two gates, so this case tests nothing').toEqual(['call_1', 'call_2'])
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${requests[0].approvalId}`, {
+                approved: true,
+                toolCallId: 'call_2',
+            })
+
+            expect(response?.statusCode).toBeGreaterThanOrEqual(StatusCodes.BAD_REQUEST)
+            expect(response?.statusCode).toBeLessThan(StatusCodes.INTERNAL_SERVER_ERROR)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(await db.findOneBy('flow', { id: second.id }), 'the call named in the body was executed').not.toBeNull()
+            expect(await db.findOneBy('flow', { id: first.id }), 'the gate that was addressed was executed anyway').not.toBeNull()
+        })
+
+        // Approving actually runs it. Without the resume run the gate is a dead end: 13 tools the
+        // model can reach and no way for a human to say yes.
+        it('approving executes the gated call and closes the gate', async () => {
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+            const bodiesBeforeResume = providerBodies.length
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: true })
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            expect(await db.findOneBy('flow', { id: flow.id }), 'the approved delete never ran').toBeNull()
+            expect(await readPendingGate(conversationId)).toBeNull()
+
+            // What the model is sent on resume. The SDK executes the approved call before the first
+            // provider round-trip, so the result must arrive as an ordinary tool message — and the
+            // `tool-approval-*` parts must not, because no provider has a wire shape for them.
+            const resumeBody = providerBodies[bodiesBeforeResume]
+            const resumeMessages = resumeBody['messages'] as { role: string, content?: unknown, tool_call_id?: string }[]
+            const toolMessages = resumeMessages.filter((message) => message.role === 'tool')
+            expect(toolMessages.length, 'the resume run sent the model no tool result for the call it just executed').toBeGreaterThan(0)
+            expect(toolMessages.some((message) => message.tool_call_id === 'call_1')).toBe(true)
+            expect(JSON.stringify(resumeBody), 'an approval part reached the provider').not.toContain('tool-approval-')
+        })
+
+        // Denying has to reach the model as a readable result, not as silence: the run resumes either
+        // way, and a model that is told nothing will report the action as done.
+        it('denying leaves the action untaken and tells the model why', async () => {
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+            const bodiesBeforeResume = providerBodies.length
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, {
+                approved: false,
+                reason: 'I still need that flow.',
+            })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            expect(await db.findOneBy('flow', { id: flow.id }), 'a denied delete ran anyway').not.toBeNull()
+            expect(JSON.stringify(providerBodies[bodiesBeforeResume])).toContain('I still need that flow.')
+
+            const parts = await readParts(conversationId)
+            expect(parts.filter((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE)).toEqual([
+                expect.objectContaining({ approvalId: gate.gateId, approved: false, reason: 'I still need that flow.' }),
+            ])
+        })
+    })
+
+    describe('a gate the user walked away from', () => {
+        // The abandoned gate. The user ignores the card and simply types again; the gate must be
+        // closed by that, or it keeps being offered on every reload and an approval clicked later
+        // resumes a run in which `collectToolApprovals` no longer reads the response at all — so the
+        // tool silently never runs and the model is never told why.
+        it('is denied when the next message is admitted, and the next run completes', async () => {
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+            scriptedResponses = [completionStream('Sure, something else then.')]
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'never mind, list my flows', runId: apId() })
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            expect(row['status'], 'the run that followed the abandoned gate failed').toBe(ChatConversationStatus.IDLE)
+            expect(await readPendingGate(conversationId), 'the abandoned gate is still waiting').toBeNull()
+            expect(await db.findOneBy('flow', { id: flow.id })).not.toBeNull()
+
+            const parts = await readParts(conversationId)
+            expect(parts.filter((part) => part.type === PersistedChatPartType.TOOL_APPROVAL_RESPONSE)).toEqual([
+                expect.objectContaining({ approvalId: gate.gateId, approved: false }),
+            ])
+        })
+
+        it('can no longer be approved after the user moved on', async () => {
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id } })
+            scriptedResponses = [completionStream('Sure, something else then.')]
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'never mind', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const late = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: true })
+
+            expect(late?.statusCode).toBeGreaterThanOrEqual(StatusCodes.BAD_REQUEST)
+            expect(late?.statusCode).toBeLessThan(StatusCodes.INTERNAL_SERVER_ERROR)
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(await db.findOneBy('flow', { id: flow.id }), 'a stale gate was still spendable').not.toBeNull()
         })
     })
 })

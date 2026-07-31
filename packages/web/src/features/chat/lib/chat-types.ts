@@ -98,6 +98,11 @@ function deriveToolStatus(part: AnyToolPart): ToolStatus {
   if (part.state === 'output-available') return 'completed';
   if (part.state === 'output-error') return 'failed';
   if (part.state === 'output-denied') return 'stopped';
+  // An answered gate is finished, not running. Without this the pill spins forever on a call that was
+  // approved (and ran) or denied (and never will) — the default below is for a call still in flight.
+  if (part.state === 'approval-responded') {
+    return getApprovalDecision(part) === false ? 'stopped' : 'completed';
+  }
   return 'running';
 }
 
@@ -147,6 +152,28 @@ function extractQadamNames(
 
 function getToolCallId(part: AnyToolPart): string {
   return 'toolCallId' in part ? (part.toolCallId as string) : '';
+}
+
+// The one tool state that means "a human has to answer this before anything else happens". Compared
+// as a string rather than against the SDK's union member because the same value is produced by our own
+// replay of a persisted approval request, not only by the live stream.
+function isApprovalRequested(part: AnyToolPart): boolean {
+  return part.state === 'approval-requested';
+}
+
+// The id the approval endpoint is addressed with. Distinct from `toolCallId` on purpose: the SDK mints
+// one approval per gated call, and answering by tool call id would let a stale card spend the wrong
+// gate.
+function getApprovalId(part: AnyToolPart): string {
+  if (!('approval' in part) || !isObject(part.approval)) return '';
+  return typeof part.approval.id === 'string' ? part.approval.id : '';
+}
+
+function getApprovalDecision(part: AnyToolPart): boolean | undefined {
+  if (!('approval' in part) || !isObject(part.approval)) return undefined;
+  return typeof part.approval.approved === 'boolean'
+    ? part.approval.approved
+    : undefined;
 }
 
 function findLastToolPart({
@@ -244,6 +271,9 @@ export const chatPartUtils = {
   isAnyToolPart,
   getToolPartName,
   getToolCallId,
+  isApprovalRequested,
+  getApprovalId,
+  getApprovalDecision,
   isReady,
   isDisplayTool,
   isThinkingStatusTool,

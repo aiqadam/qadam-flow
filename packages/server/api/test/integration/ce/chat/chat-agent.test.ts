@@ -680,8 +680,11 @@ describe('Chat agent API', () => {
         })
     })
 
-    describe('gates that are not implemented in this layer', () => {
-        it('reports no pending gate rather than inventing one', async () => {
+    // #264 implemented the gate, so the contract here is no longer "there are no gates". What is
+    // left to assert at this layer is the empty case and the shape of the route; the gate's own
+    // behaviour lives in `chat-tool-approval.test.ts`, which drives a real gated tool call.
+    describe('tool-approval gates', () => {
+        it('reports no pending gate on a conversation that never raised one', async () => {
             const conversationId = await createConversation(ctx)
 
             const response = await ctx.get(`/v1/chat/conversations/${conversationId}/pending-gate`)
@@ -690,10 +693,29 @@ describe('Chat agent API', () => {
             expect(response!.json()).toBeNull()
         })
 
-        it('404s a tool approval rather than reporting a success that approved nothing', async () => {
+        it('404s an approval id that names no gate in the conversation', async () => {
+            const conversationId = await createConversation(ctx)
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${apId()}`, { approved: true })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+        })
+
+        // The route is gone, and it has to stay gone. It took the gate id as the whole
+        // authorisation, so answering it meant searching every conversation for that id — see the
+        // comment on the replacement in `chat.controller.ts`.
+        it('no longer serves the conversation-less approval route', async () => {
             const response = await ctx.post(`/v1/chat/tool-approvals/${apId()}`, { approved: true })
 
             expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+        })
+
+        it('refuses a body that is not an approval decision', async () => {
+            const conversationId = await createConversation(ctx)
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${apId()}`, { payload: { anything: true } })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
     })
 
