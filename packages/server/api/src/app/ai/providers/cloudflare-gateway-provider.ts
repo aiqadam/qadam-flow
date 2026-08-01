@@ -1,10 +1,10 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
 import { safeHttp } from '@aiqadam/server-utils'
 import { AIProviderModel, AIProviderModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId } from '@aiqadam/shared'
 import { generateText } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
+import { providerHttp } from './provider-http'
 export const cloudflareGatewayProvider: AIProviderStrategy<CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig> = {
     name: 'Cloudflare Gateway',
     async validateConnection(authConfig: CloudflareGatewayProviderAuthConfig, config: CloudflareGatewayProviderConfig, log: FastifyBaseLogger): Promise<void> {
@@ -40,9 +40,9 @@ export const cloudflareGatewayProvider: AIProviderStrategy<CloudflareGatewayProv
                     })
                 }
                 else {
-                    await httpClient.sendRequest({
+                    await providerHttp.sendJson({
                         url: `https://gateway.ai.cloudflare.com/v1/${config.accountId}/${config.gatewayId}/compat/chat/completions`,
-                        method: HttpMethod.POST,
+                        method: 'POST',
                         headers: {
                             'cf-aig-authorization': `Bearer ${authConfig.apiKey}`,
                             'Content-Type': 'application/json',

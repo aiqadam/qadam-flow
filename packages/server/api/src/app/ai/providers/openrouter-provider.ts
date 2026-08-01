@@ -1,14 +1,14 @@
-import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
 import { AIProviderModel, AIProviderModelType, OpenRouterProviderAuthConfig, OpenRouterProviderConfig } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
+import { providerHttp } from './provider-http'
 
 export const openRouterProvider: AIProviderStrategy<OpenRouterProviderAuthConfig, OpenRouterProviderConfig> = {
     name: 'OpenRouter',
     async validateConnection(authConfig: OpenRouterProviderAuthConfig, _config: OpenRouterProviderConfig, _log: FastifyBaseLogger): Promise<void> {
-        await httpClient.sendRequest({
+        await providerHttp.sendJson({
             url: 'https://openrouter.ai/api/v1/auth/key',
-            method: HttpMethod.GET,
+            method: 'GET',
             headers: {
                 'Authorization': `Bearer ${authConfig.apiKey}`,
                 'Content-Type': 'application/json',
@@ -16,15 +16,13 @@ export const openRouterProvider: AIProviderStrategy<OpenRouterProviderAuthConfig
         })
     },
     async listModels(_authConfig: OpenRouterProviderAuthConfig, _config: OpenRouterProviderConfig): Promise<AIProviderModel[]> {
-        const res = await httpClient.sendRequest<{ data: OpenRouterModel[] }>({
+        const { data } = await providerHttp.sendJson<{ data: OpenRouterModel[] }>({
             url: 'https://openrouter.ai/api/v1/models',
-            method: HttpMethod.GET,
+            method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
             },
         })
-
-        const { data } = res.body
 
         return data.map((model: OpenRouterModel) => ({
             id: model.id,

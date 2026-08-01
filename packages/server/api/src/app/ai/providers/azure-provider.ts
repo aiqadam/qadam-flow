@@ -1,7 +1,7 @@
-import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
-import { AIProviderModel, AIProviderModelType, AzureProviderAuthConfig, AzureProviderConfig, DEFAULT_AZURE_API_VERSION } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, AzureProviderAuthConfig, AzureProviderConfig, DEFAULT_AZURE_API_VERSION, ErrorCode, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isValidAzureResourceName, QadamFlowError } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
+import { providerHttp } from './provider-http'
 
 export const azureProvider: AIProviderStrategy<AzureProviderAuthConfig, AzureProviderConfig> = {
     name: 'Azure OpenAI',
@@ -9,24 +9,33 @@ export const azureProvider: AIProviderStrategy<AzureProviderAuthConfig, AzurePro
         await azureProvider.listModels(authConfig, config)
     },
     async listModels(authConfig: AzureProviderAuthConfig, config: AzureProviderConfig): Promise<AIProviderModel[]> {
+        // `AzureProviderConfig` now rejects a `resourceName` that is not one, but the row this
+        // reads was written before that and is never re-parsed on the way out of the database —
+        // `listModels` is handed `aiProvider.config` verbatim. Checking at the sink is what stops
+        // a value stored under the old schema from still building the host and shipping the
+        // `api-key` header to it (#276).
+        if (!isValidAzureResourceName(config.resourceName)) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: INVALID_AZURE_RESOURCE_NAME_MESSAGE },
+            })
+        }
         const endpoint = `https://${config.resourceName}.openai.azure.com`
         const apiKey = authConfig.apiKey
         const apiVersion = config.apiVersion ?? DEFAULT_AZURE_API_VERSION
 
-        if (!endpoint || !apiKey) {
+        if (!apiKey) {
             return []
         }
 
-        const res = await httpClient.sendRequest<{ data: AzureModel[] }>({
+        const { data } = await providerHttp.sendJson<{ data: AzureModel[] }>({
             url: `${endpoint}/openai/deployments?api-version=${encodeURIComponent(apiVersion)}`,
-            method: HttpMethod.GET,
+            method: 'GET',
             headers: {
                 'api-key': apiKey,
                 'Content-Type': 'application/json',
             },
         })
-
-        const { data } = res.body
 
         return data.map((deployment: AzureModel) => ({
             id: deployment.name,
