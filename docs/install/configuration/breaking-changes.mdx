@@ -40,6 +40,22 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### A platform can hold more than one custom AI provider — and that makes a downgrade manual
+
+Every OpenAI-compatible endpoint (Ollama, DeepSeek, LM Studio, vLLM, a corporate gateway) registers under the single `custom` provider type, and a unique index on `(platformId, provider)` allowed exactly one of them per platform. That index is now **partial** — it still holds for the eight single-instance providers, and no longer applies to `custom`.
+
+- **Upgrading needs no action and cannot fail.** Every row that satisfied the old index satisfies the new one; the migration only replaces the index.
+- **Downgrading after you add a second custom provider requires deleting rows by hand.** The rollback recreates the full unique index, and Postgres refuses it while two `custom` rows share a platform:
+
+  ```
+  ERROR: could not create unique index "idx_ai_provider_platform_id_provider"
+  DETAIL: Key ("platformId", provider)=(…, custom) is duplicated.
+  ```
+
+  The migration is marked breaking, so `rollback-migrations` refuses to run it without `--force` rather than failing mid-chain. To downgrade deliberately, first delete the extra providers — in **Settings → AI Providers**, or with `DELETE FROM ai_provider WHERE id = '…'` — until one `custom` row per platform remains. Deleting a provider destroys its stored credentials; there is no way to keep them and go back.
+
+- **Nothing addressed by provider name changes meaning today.** Existing flow steps, and any published qadam version pinned in them, keep sending `custom`. That resolves to the **oldest** custom provider on the platform, which is the one that existed before the upgrade. Steps created after this release address a provider by its id instead.
+
 #### MCP tools now enforce the caller's project role
 
 Every `ap_*` tool has always declared the permission it needs — `WRITE_FLOW`, `WRITE_TABLE`, `READ_RUN` and so on — and nothing ever read that declaration. The resolver returned "allow everything", so a project **Viewer** driving these tools over MCP could create, publish and delete flows, tables and records that the REST API would have refused them. The declarations are now enforced, using the same rules a normal API route applies.

@@ -14,10 +14,10 @@ const setOverride = (value: string | undefined) => {
 }
 
 // The wired path can only report the resolved cap through a 403, and a 403 needs the platform to
-// already hold that many custom rows — which the unique index on (platformId, provider) makes
-// impossible for anything above one until #98/#274 remove it. So the integration file can prove
-// that an unusable override does not *remove* the cap, but not what the cap resolves to; a
-// fallback of Infinity or Number.MAX_SAFE_INTEGER would satisfy every assertion it can make.
+// already hold that many custom rows — twenty creates, each with its own HTTP round trip, to pin
+// one number. So the integration file pins the cap with a small override and proves that an
+// unusable override does not *remove* it; what the fallback resolves to is left here, where a
+// fallback of Infinity or Number.MAX_SAFE_INTEGER is caught for the cost of a function call.
 // These read the number back directly, and go through the real `system.getNumber` via the real
 // environment rather than a stub that reimplements its parse.
 describe('custom AI providers per platform cap', () => {

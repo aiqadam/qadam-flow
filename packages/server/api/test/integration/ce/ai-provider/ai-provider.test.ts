@@ -1,6 +1,7 @@
 import { AIProviderModelType, AIProviderName, apId, DefaultProjectRole, ErrorCode, isNil, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { AIProviderSchema } from '../../../../src/app/ai/ai-provider-entity'
 import { CUSTOM_PROVIDER_LIMIT_MESSAGE } from '../../../../src/app/ai/ai-provider-service'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { generateMockToken } from '../../../helpers/auth'
@@ -92,30 +93,46 @@ describe('AI Providers API', () => {
             })
         })
 
-        it('should reject a second provider of the same type with a conflict, not a database error', async () => {
-            const body = {
+        it('should allow a second custom provider, each addressable by its own id', async () => {
+            const deepseek = await ctx.post('/v1/ai-providers', {
                 provider: AIProviderName.CUSTOM,
                 displayName: 'DeepSeek',
-                config: {
-                    baseUrl: 'https://api.deepseek.com/v1',
-                    apiKeyHeader: 'Authorization',
-                    models: [],
-                },
+                config: { baseUrl: 'https://api.deepseek.com/v1', apiKeyHeader: 'Authorization', models: [] },
+                auth: { apiKey: 'test-key' },
+            })
+            const ollama = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Local Ollama',
+                config: { baseUrl: 'http://ollama.internal:11434/v1', apiKeyHeader: 'Authorization', models: [] },
+                auth: { apiKey: 'test-key' },
+            })
+
+            // This is the assertion issue #98 exists for.
+            expect(deepseek?.statusCode).toBe(StatusCodes.OK)
+            expect(ollama?.statusCode).toBe(StatusCodes.OK)
+
+            const rows = await db.find('ai_provider', { platformId: ctx.platform.id, provider: AIProviderName.CUSTOM })
+            expect(rows).toHaveLength(2)
+            expect(new Set(rows.map((r: any) => r.id)).size).toBe(2)
+        })
+
+        it('should still reject a second provider of a singleton type with a conflict, not a database error', async () => {
+            // CLOUDFLARE_GATEWAY, not CUSTOM: custom is legitimately duplicable now, and it is the
+            // only other provider whose validateConnection makes no network call with `models: []`.
+            const body = {
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
+                displayName: 'Gateway',
+                config: { accountId: 'acc', gatewayId: 'gw', models: [] },
                 auth: { apiKey: 'test-key' },
             }
 
             const first = await ctx.post('/v1/ai-providers', body)
             expect(first?.statusCode).toBe(StatusCodes.OK)
 
-            const second = await ctx.post('/v1/ai-providers', {
-                ...body,
-                displayName: 'Local Ollama',
-                config: { ...body.config, baseUrl: 'http://ollama.internal:11434/v1' },
-            })
+            const second = await ctx.post('/v1/ai-providers', { ...body, displayName: 'Gateway again' })
 
             expect(second?.statusCode).toBe(StatusCodes.CONFLICT)
             expect(second?.json().code).toBe(ErrorCode.EXISTING_AI_PROVIDER)
-            // The dialog renders params.message, so it has to say something a user can act on.
             expect(second?.json().params.message).toContain('already configured')
             // The Postgres error code and the index name used to reach the caller verbatim.
             expect(second?.body).not.toContain('23505')
@@ -188,13 +205,9 @@ describe('AI Providers API', () => {
 
         it('should not disable the existing chat provider when the create is rejected as a duplicate', async () => {
             const body = {
-                provider: AIProviderName.CUSTOM,
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
                 displayName: 'The one chat provider',
-                config: {
-                    baseUrl: 'https://api.example.com/v1',
-                    apiKeyHeader: 'Authorization',
-                    models: [],
-                },
+                config: { accountId: 'acc', gatewayId: 'gw', models: [] },
                 auth: { apiKey: 'test-key' },
                 enabledForChat: true,
             }
@@ -209,7 +222,7 @@ describe('AI Providers API', () => {
             // otherwise a 409 silently leaves the platform with no chat provider at all.
             const saved = await db.findOneByOrFail('ai_provider', {
                 platformId: ctx.platform.id,
-                provider: AIProviderName.CUSTOM,
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
             })
             expect((saved as any).displayName).toBe('The one chat provider')
             expect((saved as any).enabledForChat).toBe(true)
@@ -350,7 +363,7 @@ describe('AI Providers API', () => {
         })
     })
 
-    describe('GET /v1/ai-providers/:provider/config', () => {
+    describe('GET /v1/ai-providers/:providerRef/config', () => {
         it('should return config with defaultHeaders and platformId', async () => {
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
@@ -364,22 +377,15 @@ describe('AI Providers API', () => {
                 },
             })
 
-            const engineToken = await generateMockToken({
-                type: PrincipalType.ENGINE,
-                id: apId(),
-                projectId: ctx.project.id,
-                platform: { id: ctx.platform.id },
-            })
-
             const response = await app!.inject({
                 method: 'GET',
                 url: `/api/v1/ai-providers/${AIProviderName.CUSTOM}/config`,
-                headers: { authorization: `Bearer ${engineToken}` },
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
             const body = response?.json()
-           
+
             expect(body.provider).toBe(AIProviderName.CUSTOM)
             expect(body.platformId).toBe(ctx.platform.id)
             expect(body.config.defaultHeaders).toEqual({ 'X-Org': 'org-789' })
@@ -397,17 +403,10 @@ describe('AI Providers API', () => {
                 },
             })
 
-            const engineToken = await generateMockToken({
-                type: PrincipalType.ENGINE,
-                id: apId(),
-                projectId: ctx.project.id,
-                platform: { id: ctx.platform.id },
-            })
-
             const response = await app!.inject({
                 method: 'GET',
                 url: `/api/v1/ai-providers/${AIProviderName.CUSTOM}/config`,
-                headers: { authorization: `Bearer ${engineToken}` },
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
@@ -415,6 +414,73 @@ describe('AI Providers API', () => {
 
             expect(body.platformId).toBe(ctx.platform.id)
             expect(body.config.defaultHeaders).toBeUndefined()
+        })
+
+        it('should resolve a provider name to the oldest matching row', async () => {
+            // Seeded newest-first on purpose. An unordered read of a table this small is a
+            // sequential scan returning insertion order, so seeding in `created` order would let
+            // this pass with no ORDER BY at all — measured: that version stayed green with the
+            // clause deleted. Reversing the two makes the ordering the only thing under test.
+            const newest = await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'Added afterwards',
+                created: '2025-06-01T00:00:00.000Z',
+                baseUrl: 'https://newest.example.com/v1',
+            })
+            const oldest = await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'Configured before the upgrade',
+                created: '2024-01-01T00:00:00.000Z',
+                baseUrl: 'https://oldest.example.com/v1',
+            })
+
+            // `createMockAIProvider` defaults `created` to `faker.date.recent()`, so the explicit
+            // timestamps are the whole basis of this assertion — check they reached the rows rather
+            // than assume it, or the test is a coin flip that passes either way.
+            const storedOldest = await db.findOneByOrFail<any>('ai_provider', { id: oldest.id })
+            const storedNewest = await db.findOneByOrFail<any>('ai_provider', { id: newest.id })
+            expect(new Date(storedOldest.created).getTime())
+                .toBeLessThan(new Date(storedNewest.created).getTime())
+
+            const response = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/ai-providers/${AIProviderName.CUSTOM}/config`,
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            // Pinned qadam versions send the name and must keep reaching the row that existed when
+            // they were published, not whichever row Postgres returns first.
+            expect(response?.json().id).toBe(oldest.id)
+            expect(response?.json().config.baseUrl).toBe('https://oldest.example.com/v1')
+        })
+
+        it('should address a provider by its own id instead of resolving the name', async () => {
+            await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'The row the name path would win',
+                created: '2024-01-01T00:00:00.000Z',
+                baseUrl: 'https://oldest.example.com/v1',
+            })
+            // Deliberately the newer row: the name path resolves to the oldest, so an id lookup
+            // that degraded into a name lookup would answer 200 with the wrong provider's
+            // credentials — which no assertion on status or on id-distinctness can catch.
+            const target = await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'Addressed by id',
+                created: '2025-06-01T00:00:00.000Z',
+                baseUrl: 'https://target.example.com/v1',
+            })
+
+            const response = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/ai-providers/${target.id}/config`,
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().id).toBe(target.id)
+            expect(response?.json().config.baseUrl).toBe('https://target.example.com/v1')
         })
     })
 
@@ -681,6 +747,10 @@ describe('AI Providers API', () => {
     })
 
     describe('custom providers per platform cap', () => {
+        // The cap is the only thing refusing this row. The index that used to make a second custom
+        // provider impossible is partial now and skips `custom` entirely, so deleting the
+        // `assertCustomProviderLimitNotExceeded` call returns 200 here rather than the 409 it would
+        // have returned before #274 — the assertion discriminates the cap, not the index.
         it('should reject the (N+1)th custom provider with RESOURCE_LIMIT_EXCEEDED/403', async () => {
             setMaxCustomProvidersOverride('1')
             await mockAndSaveAIProvider({
@@ -746,8 +816,8 @@ describe('AI Providers API', () => {
         // `0 >= -1` on an empty platform, so both of these creates would be refused. That is the
         // half of `getMaxCustomProvidersPerPlatform` a create-succeeds assertion can actually see
         // from the wired path; the rest is pinned in test/unit/app/ai/ai-provider-limit.test.ts,
-        // because observing a resolved limit of twenty needs twenty custom rows and the unique
-        // index on (platformId, provider) allows one.
+        // because observing a resolved limit of twenty from here costs twenty creates to pin one
+        // number.
         it.each(['not-a-number', '0', '-1', ''])('should fall back to the built-in cap when the override is %j', async (override) => {
             setMaxCustomProvidersOverride(override)
 
@@ -757,3 +827,29 @@ describe('AI Providers API', () => {
         })
     })
 })
+
+async function mockEngineToken(): Promise<string> {
+    return generateMockToken({
+        type: PrincipalType.ENGINE,
+        id: apId(),
+        projectId: ctx.project.id,
+        platform: { id: ctx.platform.id },
+    })
+}
+
+async function mockAndSaveCustomProvider({ platformId, displayName, created, baseUrl }: MockCustomProviderParams): Promise<Omit<AIProviderSchema, 'platform'>> {
+    return mockAndSaveAIProvider({
+        platformId,
+        provider: AIProviderName.CUSTOM,
+        displayName,
+        created,
+        config: { baseUrl, apiKeyHeader: 'Authorization', models: [] },
+    })
+}
+
+type MockCustomProviderParams = {
+    platformId: string
+    displayName: string
+    created: string
+    baseUrl: string
+}

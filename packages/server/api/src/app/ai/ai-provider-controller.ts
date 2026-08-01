@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderName, CreateAIProviderRequest, PrincipalType, UpdateAIProviderRequest } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderName, ApId, CreateAIProviderRequest, PrincipalType, UpdateAIProviderRequest } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
@@ -10,13 +10,13 @@ export const aiProviderController: FastifyPluginAsyncZod = async (app) => {
         const platformId = request.principal.platform.id
         return aiProviderService(app.log).listProviders(platformId)
     })
-    app.get('/:provider/config', GetAIProviderConfig, async (request) => {
+    app.get('/:providerRef/config', GetAIProviderConfig, async (request) => {
         const platformId = request.principal.platform.id
-        return aiProviderService(app.log).getConfigOrThrow({ platformId, provider: request.params.provider })
+        return aiProviderService(app.log).getConfigOrThrow({ platformId, ref: request.params.providerRef })
     })
-    app.get('/:provider/models', ListModels, async (request) => {
+    app.get('/:providerRef/models', ListModels, async (request) => {
         const platformId = request.principal.platform.id
-        return aiProviderService(app.log).listModels(platformId, request.params.provider)
+        return aiProviderService(app.log).listModels({ platformId, ref: request.params.providerRef })
     })
     app.post('/', CreateAIProvider, async (request) => {
         const platformId = request.principal.platform.id
@@ -33,12 +33,19 @@ export const aiProviderController: FastifyPluginAsyncZod = async (app) => {
     })
 }
 
+// A row id or a provider name. The two forms cannot collide — `apId()` draws 21 characters from
+// `[0-9A-Za-z]` and the longest enum value is 18 characters, one of which contains a hyphen — and
+// `ai-provider-ref.test.ts` asserts that, so the union is a real discriminator rather than an
+// assumption. Validating it here turns a malformed ref into a 400 instead of a doomed lookup.
+const ProviderRefSchema = z.union([z.enum(AIProviderName), ApId])
+
 // Deliberately not admin-only: the builder's agent step settings render a model picker for any
 // project member who can edit a flow (`packages/web/src/features/agents/ai-model/hooks.ts`), and
 // it lists providers before listing that provider's models. The response carries no credentials —
-// `auth` is decrypted only by the engine-only `/:provider/config` route. It does still carry each
-// row's `config`, which for CUSTOM includes `baseUrl`, `apiKeyHeader` and `defaultHeaders`; that
-// is a separate contract question (an integration test asserts it today) and is not changed here.
+// `auth` is decrypted only by the engine-only `/:providerRef/config` route. It does still carry
+// each row's `config`, which for CUSTOM includes `baseUrl`, `apiKeyHeader` and `defaultHeaders`;
+// that is a separate contract question (an integration test asserts it today) and is not changed
+// here.
 const ListAIProviders = {
     config: {
         security: securityAccess.publicPlatform([PrincipalType.USER, PrincipalType.ENGINE]),
@@ -51,7 +58,7 @@ const GetAIProviderConfig = {
     },
     schema: {
         params: z.object({
-            provider: z.nativeEnum(AIProviderName),
+            providerRef: ProviderRefSchema,
         }),
     },
 }
@@ -63,7 +70,7 @@ const ListModels = {
     },
     schema: {
         params: z.object({
-            provider: z.nativeEnum(AIProviderName),
+            providerRef: ProviderRefSchema,
         }),
         response: {
             [StatusCodes.OK]: z.array(AIProviderModel),

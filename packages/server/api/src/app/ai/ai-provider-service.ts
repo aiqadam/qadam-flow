@@ -38,7 +38,10 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
     },
 
     async listProviders(platformId: PlatformId): Promise<AIProviderWithoutSensitiveData[]> {
-        const configuredProviders = await aiProviderRepo().findBy({ platformId })
+        // Same order as the name-keyed tiebreak in `findProviderOrThrow`, for the same reason: a
+        // caller that collapses several rows of one provider type to the first it sees — the
+        // settings page does, per card — must not get a different row between two page loads.
+        const configuredProviders = await aiProviderRepo().find({ where: { platformId }, order: { created: 'ASC', id: 'ASC' } })
 
         return configuredProviders.map((p): AIProviderWithoutSensitiveData => ({
             id: p.id,
@@ -49,8 +52,8 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         }))
     },
 
-    async listModels(platformId: PlatformId, provider: AIProviderName): Promise<AIProviderModel[]> {
-        const aiProvider = await findProviderOrThrow({ platformId, provider })
+    async listModels({ platformId, ref }: ProviderRef): Promise<AIProviderModel[]> {
+        const aiProvider = await findProviderOrThrow({ platformId, ref })
 
         // Keyed on the row, not on the credentials: two configs can share an api key and still
         // point at different endpoints (an Azure resource name, a base url), and a key in a
@@ -70,7 +73,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         }
 
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
-        const data = await aiProviders[provider].listModels(auth, config)
+        const data = await aiProviders[aiProvider.provider].listModels(auth, config)
 
         const models = data.map(model => ({
             id: model.id,
@@ -193,7 +196,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             return null
         }
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(chatProvider.auth)
-        return { provider: chatProvider.provider, auth, config: chatProvider.config, platformId }
+        return { id: chatProvider.id, provider: chatProvider.provider, auth, config: chatProvider.config, platformId }
     },
 
     async delete(platformId: PlatformId, providerId: string): Promise<void> {
@@ -223,12 +226,12 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             })
         }
     },
-    async getConfigOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<GetProviderConfigResponse> {
-        const aiProvider = await findProviderOrThrow({ platformId, provider })
+    async getConfigOrThrow({ platformId, ref }: ProviderRef): Promise<GetProviderConfigResponse> {
+        const aiProvider = await findProviderOrThrow({ platformId, ref })
 
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
 
-        return { provider: aiProvider.provider, auth, config: aiProvider.config, platformId }
+        return { id: aiProvider.id, provider: aiProvider.provider, auth, config: aiProvider.config, platformId }
     },
 })
 
@@ -242,9 +245,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
 // back": only a leading numeric prefix is read, so `12abc` resolves to a live cap of 12 and `1e3`
 // to a live cap of 1. Both are lower than the default, so the direction is fail-closed — but the
 // environment-variables doc says so rather than promising a fallback that does not happen.
-// Exported for the unit test that pins every one of those branches to a number; the wired path
-// can only observe the cap through a 403, and the unique index on (platformId, provider) puts
-// twenty custom rows out of reach until #98/#274 remove it.
+// Exported for the unit test that pins every one of those branches to a number.
 export function getMaxCustomProvidersPerPlatform(): number {
     const configuredValue = system.getNumber(AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM)
     if (isNil(configuredValue) || configuredValue <= 0) {
@@ -253,16 +254,24 @@ export function getMaxCustomProvidersPerPlatform(): number {
     return configuredValue
 }
 
-async function findProviderOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<AIProviderSchema> {
-    const aiProvider = await aiProviderRepo().findOneBy({
-        platformId,
-        provider,
-    })
+function isProviderName(ref: string): ref is AIProviderName {
+    const names: string[] = Object.values(AIProviderName)
+    return names.includes(ref)
+}
+
+async function findProviderOrThrow({ platformId, ref }: ProviderRef): Promise<AIProviderSchema> {
+    // A name can now match more than one row (custom providers), so the legacy name path needs a
+    // stated tiebreak rather than whichever row Postgres happens to return. Oldest wins: that is
+    // the row that already existed when every name-keyed caller was written. `id` breaks a tie on
+    // `created` — two rows can share that timestamp, and then `created` alone orders arbitrarily.
+    const aiProvider = isProviderName(ref)
+        ? await aiProviderRepo().findOne({ where: { platformId, provider: ref }, order: { created: 'ASC', id: 'ASC' } })
+        : await aiProviderRepo().findOneBy({ platformId, id: ref })
     if (isNil(aiProvider)) {
         throw new QadamFlowError({
             code: ErrorCode.ENTITY_NOT_FOUND,
             params: {
-                entityId: provider,
+                entityId: ref,
                 entityType: 'AIProvider',
             },
         })
@@ -329,9 +338,14 @@ export const DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM = 20
 // `i18n.exists` check finds it and renders the translated form.
 export const CUSTOM_PROVIDER_LIMIT_MESSAGE = 'This platform has reached its limit of custom AI providers'
 
-type GetOrCreateQadamFlowConfigResponse = {
+/**
+ * `ref` addresses one provider row: either its id, or an `AIProviderName`. The name form exists
+ * permanently, not as a transition — published qadam versions are pinned exactly and build
+ * `/v1/ai-providers/${provider}/config` from the enum, so those calls never stop arriving.
+ */
+type ProviderRef = {
     platformId: PlatformId
-    provider: AIProviderName
+    ref: string
 }
 
 type AssertCustomProviderLimitParams = {

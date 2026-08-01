@@ -31,7 +31,7 @@ export const chatModel = {
 
         const modelId = modelName
             ?? firstTextModelId(chatProvider.config)
-            ?? await firstTextModelFromProvider({ platformId, provider: chatProvider.provider, log })
+            ?? await firstTextModelFromProvider({ platformId, providerId: chatProvider.id, log })
         if (isNil(modelId)) {
             // Only reached when the provider itself reports no text model. Guessing a default here
             // would hardcode a model name, which is the thing this feature exists not to do.
@@ -62,8 +62,8 @@ export const chatModel = {
 // memoised in `ai-provider-service.ts` per provider row, invalidated when that row is edited, and
 // cleared once a day — so this costs one lookup per provider per instance per day. A provider that is unreachable throws, and
 // that is the right answer — the chat cannot run against a provider it cannot talk to.
-async function firstTextModelFromProvider({ platformId, provider, log }: FirstTextModelParams): Promise<string | null> {
-    const { data: models, error } = await tryCatch(() => aiProviderService(log).listModels(platformId, provider))
+async function firstTextModelFromProvider({ platformId, providerId, log }: FirstTextModelParams): Promise<string | null> {
+    const { data: models, error } = await tryCatch(() => aiProviderService(log).listModels({ platformId, ref: providerId }))
     if (!isNil(error) || isNil(models)) {
         throw new QadamFlowError({
             code: ErrorCode.AI_REQUEST_NOT_SUPPORTED,
@@ -87,7 +87,7 @@ function firstTextModelId(config: AIProviderConfig): string | null {
 
 type FirstTextModelParams = {
     platformId: string
-    provider: AIProviderName
+    providerId: string
     log: FastifyBaseLogger
 }
 

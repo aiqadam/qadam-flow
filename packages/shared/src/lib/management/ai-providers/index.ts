@@ -268,6 +268,7 @@ export type UpdateAIProviderRequest = z.infer<typeof UpdateAIProviderRequest>
 
 
 export const GetProviderConfigResponse = z.object({
+    id: z.string(),
     provider: z.nativeEnum(AIProviderName),
     config: AIProviderConfig,
     auth: AIProviderAuthConfig,

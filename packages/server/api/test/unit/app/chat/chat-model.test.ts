@@ -24,7 +24,7 @@ import { chatModel } from '../../../../src/app/chat/chat-model'
 const log = { error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
 
 function provider(config: Record<string, unknown>, name = AIProviderName.CUSTOM) {
-    return { provider: name, config, auth: { apiKey: 'k' }, platformId: 'plat' }
+    return { id: 'provider-row-id', provider: name, config, auth: { apiKey: 'k' }, platformId: 'plat' }
 }
 
 async function resolveError(modelName: string | null): Promise<QadamFlowError> {
@@ -83,7 +83,9 @@ describe('chatModel.resolve', () => {
         const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
 
         expect(resolved.modelId).toBe('from-provider')
-        expect(listModels).toHaveBeenCalledWith('plat', AIProviderName.AZURE)
+        // The row it already holds, not the provider name — with two rows of one name the name
+        // does not identify a provider, and re-resolving by it can reach a different one.
+        expect(listModels).toHaveBeenCalledWith({ platformId: 'plat', ref: 'provider-row-id' })
     })
 
     it('names the missing model when the provider reports no text model at all', async () => {

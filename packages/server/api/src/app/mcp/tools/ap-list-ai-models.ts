@@ -13,7 +13,7 @@ const listAiModelsInput = z.object({
 export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_list_ai_models',
-        description: 'List configured AI providers and their available models. Use this to discover valid provider and model values for configuring Run Agent steps. The output shows provider names and model IDs needed for the aiProviderModel input.',
+        description: 'List configured AI providers and their available models. Use this to discover valid provider and model values for configuring Run Agent steps. The output shows the provider names and model IDs needed for the aiProviderModel input, plus each provider\'s row id to tell two providers of the same type apart.',
         inputSchema: listAiModelsInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
         execute: async (args) => {
@@ -44,14 +44,15 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 }
 
                 const MAX_MODELS_PER_PROVIDER = 20
-                const structuredProviders: Array<{ provider: string, displayName: string, models: Array<{ id: string, name: string }> }> = []
+                const structuredProviders: Array<{ id: string, provider: string, displayName: string, models: Array<{ id: string, name: string }> }> = []
                 const sections = await Promise.all(
                     filteredProviders.map(async (p) => {
                         try {
-                            const models = await service.listModels(platformId, p.provider)
+                            const models = await service.listModels({ platformId, ref: p.id })
                             const textModels = models.filter(m => m.type === AIProviderModelType.TEXT)
                             const capped = textModels.slice(0, MAX_MODELS_PER_PROVIDER)
                             structuredProviders.push({
+                                id: p.id,
                                 provider: p.provider,
                                 displayName: p.name,
                                 models: capped.map(m => ({ id: m.id, name: m.name })),
@@ -62,16 +63,22 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                             const overflow = textModels.length > MAX_MODELS_PER_PROVIDER
                                 ? `\n    ... and ${textModels.length - MAX_MODELS_PER_PROVIDER} more${filterProvider ? '' : ` (use provider="${p.provider}" to see all)`}`
                                 : ''
-                            return `- ${p.provider} (${p.name}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
+                            return `- ${p.name} (${p.provider}, id: ${p.id}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
                         }
                         catch (err) {
                             log.warn({ err, provider: p.provider }, 'ap_list_ai_models: failed to fetch models for provider')
-                            structuredProviders.push({ provider: p.provider, displayName: p.name, models: [] })
-                            return `- ${p.provider} (${p.name})\n  (failed to fetch models)`
+                            structuredProviders.push({ id: p.id, provider: p.provider, displayName: p.name, models: [] })
+                            return `- ${p.name} (${p.provider}, id: ${p.id})\n  (failed to fetch models)`
                         }
                     }),
                 )
 
+                // The ids above disambiguate the listing, but they are deliberately absent from the
+                // usage line: `AgentProviderModel` is `{ provider, model }`, the step prop is a
+                // `Property.Object` that accepts and drops any extra key, and the AI qadam still
+                // builds `v1/ai-providers/${provider}/config` from the name. An agent told to send
+                // `providerId` would point a step at one custom provider and silently execute
+                // against the platform's oldest one. Advertise it once something reads it.
                 return {
                     content: [{
                         type: 'text',
