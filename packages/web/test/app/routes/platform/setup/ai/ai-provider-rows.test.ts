@@ -51,9 +51,11 @@ const PROVIDER_INFOS = [
   }),
 ];
 
+// Deliberately not the catalogue label: `defaultDisplayName` falls back from the stored row's
+// name to the catalogue's, and a fixture that names them the same cannot tell the two apart.
 const OPENAI_ROW: AIProviderWithoutSensitiveData = {
   id: 'row-openai',
-  name: 'OpenAI',
+  name: 'OpenAI (production)',
   provider: AIProviderName.OPENAI,
   config: {},
   enabledForChat: true,
@@ -75,6 +77,14 @@ describe('aiProviderRowUtils.buildProviderRows', () => {
     ]);
     expect(nonCustomRows[0].providerConfig).toBe(OPENAI_ROW);
     expect(nonCustomRows[1].providerConfig).toBeUndefined();
+    // Both operands of the fallback. A configured row seeds the dialog with the name the operator
+    // gave it; an unconfigured one seeds it with the catalogue label. Losing either one leaves the
+    // hidden `displayName` field empty, and `z.string().min(1)` then fails inside an element the
+    // dialog renders with `hidden`, so Save does nothing and no message is visible anywhere.
+    expect(nonCustomRows.map((row) => row.defaultDisplayName)).toEqual([
+      'OpenAI (production)',
+      'Anthropic',
+    ]);
   });
 
   it('gives every custom row its own card, keyed by row id, in the order the server sent them', () => {

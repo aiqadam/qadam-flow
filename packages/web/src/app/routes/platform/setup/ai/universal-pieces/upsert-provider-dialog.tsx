@@ -9,6 +9,7 @@ import {
   CloudflareGatewayProviderAuthConfig,
   CloudflareGatewayProviderConfig,
   CreateAIProviderRequest,
+  formErrors,
   GoogleProviderAuthConfig,
   GoogleProviderConfig,
   isNil,
@@ -317,7 +318,10 @@ const createFormSchema = (provider: AIProviderName, editMode: boolean) => {
   }
   if (provider === AIProviderName.CUSTOM) {
     return z.object({
-      displayName: z.string().min(1),
+      // The create slot seeds this empty on purpose, so an unnamed provider is the default state
+      // of this dialog rather than an edge case. Without a key here zod emits its own English
+      // sentence, which `FormMessage` passes through `t()` untranslated in every locale.
+      displayName: z.string().min(1, formErrors.required),
       provider: z.literal(AIProviderName.CUSTOM),
       config: OpenAICompatibleProviderConfig,
       auth: editMode ? OptionalAuthSchema : OpenAICompatibleProviderAuthConfig,
