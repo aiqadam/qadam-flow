@@ -14,6 +14,7 @@ import {
     BedrockProviderConfig,
     chatPersistenceUtils,
     CloudflareGatewayProviderConfig,
+    ErrorCode,
     INVALID_AWS_REGION_MESSAGE,
     INVALID_AZURE_RESOURCE_NAME_MESSAGE,
     isBatchProgressData,
@@ -24,6 +25,7 @@ import {
     PersistedChatPart,
     PersistedChatPartType,
     PersistedToolCallStatus,
+    QadamFlowError,
     splitCloudflareGatewayModelId,
     spreadIfDefined,
 } from '@aiqadam/shared'
@@ -64,7 +66,7 @@ function createChatModel({ provider, auth, config, modelId }: {
             // constraint existed would still reach `https://<it>.openai.azure.com` with the
             // `api-key` header attached (#276). safeHttp.fetch filters the address, not the name.
             if (!isValidAzureResourceName(resourceName)) {
-                throw new Error(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+                throw unusableProviderConfig(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
             }
             return createAzure({ resourceName, apiKey, fetch: safeHttp.fetch }).chat(modelId)
         }
@@ -75,7 +77,7 @@ function createChatModel({ provider, auth, config, modelId }: {
             // and this row is never re-parsed against `BedrockProviderConfig` on the way out of
             // the database.
             if (!isValidAwsRegion(region)) {
-                throw new Error(INVALID_AWS_REGION_MESSAGE)
+                throw unusableProviderConfig(INVALID_AWS_REGION_MESSAGE)
             }
             return createAmazonBedrock({ region, accessKeyId, secretAccessKey, fetch: safeHttp.fetch })(modelId)
         }
@@ -113,6 +115,14 @@ function createChatModel({ provider, auth, config, modelId }: {
             throw new Error(`Unsupported chat provider: ${exhaustiveCheck}`)
         }
     }
+}
+
+// `AI_REQUEST_NOT_SUPPORTED` for the same reason `chatModel.resolve` uses it for a missing
+// provider: it carries a free-text `message` the chat UI renders verbatim, and it is unmapped in
+// `error-handler.ts` so it falls through to 400. A plain `Error` here would answer 500 and file an
+// exception report on every chat turn of a platform holding one row written before the constraint.
+function unusableProviderConfig(message: string): QadamFlowError {
+    return new QadamFlowError({ code: ErrorCode.AI_REQUEST_NOT_SUPPORTED, params: { message } })
 }
 
 /**

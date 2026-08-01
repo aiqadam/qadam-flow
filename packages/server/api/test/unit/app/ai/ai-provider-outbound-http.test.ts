@@ -1,4 +1,4 @@
-import { AIProviderModelType, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE } from '@aiqadam/shared'
+import { AIProviderModelType, ErrorCode, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, QadamFlowError } from '@aiqadam/shared'
 import { ModelModality } from '@aws-sdk/client-bedrock'
 import pino from 'pino'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
@@ -32,16 +32,17 @@ vi.mock('@aiqadam/server-utils', async (importOriginal) => {
 
 // Bedrock is the exception to the stub above: its SDK takes a `requestHandler`, not an axios
 // instance or a `fetch` override, so what has to be asserted is the agents handed to that handler.
-const { bedrockClientConfigs, bedrockSend, nodeHttpHandlerOptions } = vi.hoisted(() => ({
-    bedrockClientConfigs: [] as Array<Record<string, unknown>>,
-    bedrockSend: vi.fn(),
-    nodeHttpHandlerOptions: [] as Array<Record<string, unknown>>,
-}))
+const { bedrockClientConfigs, bedrockSend, nodeHttpHandlers } = vi.hoisted(() => {
+    const bedrockClientConfigs: Array<Record<string, unknown>> = []
+    const nodeHttpHandlers: Array<{ options: Record<string, unknown>, handler: object }> = []
+    return { bedrockClientConfigs, bedrockSend: vi.fn(), nodeHttpHandlers }
+})
 
 vi.mock('@smithy/node-http-handler', () => ({
     NodeHttpHandler: vi.fn((options: Record<string, unknown>) => {
-        nodeHttpHandlerOptions.push(options)
-        return {}
+        const handler = { stubbedNodeHttpHandler: true }
+        nodeHttpHandlers.push({ options, handler })
+        return handler
     }),
 }))
 
@@ -76,6 +77,18 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
     return promise.then(() => null, (error: unknown) => error)
 }
 
+// The sinks throw a `QadamFlowError`, whose `.message` is only the code — the operator-facing text
+// rides on `params.message`, because that is the field `apiErrorUtils.extractServerMessage` reads.
+// Asserting on `.message` would pass on the string 'VALIDATION' and say nothing.
+function statedCause(error: unknown): { code: string, message: unknown } | null {
+    if (!(error instanceof QadamFlowError)) {
+        return null
+    }
+    const params: unknown = error.error.params
+    const message = typeof params === 'object' && params !== null && 'message' in params ? params.message : undefined
+    return { code: error.error.code, message }
+}
+
 describe('AI provider outbound HTTP goes through safeHttp', () => {
     beforeEach(() => {
         axiosRequest.mockReset()
@@ -91,6 +104,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
         const models = await openaiProvider.listModels(AUTH, {})
 
         expect(requestedUrls()).toEqual(['https://api.openai.com/v1/models'])
+        expect(lastRequest().headers['Authorization']).toBe(`Bearer ${AUTH.apiKey}`)
         expect(models).toEqual([
             { id: 'gpt-4.1', name: 'gpt-4.1', type: AIProviderModelType.TEXT },
             { id: 'dall-e-3', name: 'dall-e-3', type: AIProviderModelType.IMAGE },
@@ -103,6 +117,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
         const models = await anthropicProvider.listModels(AUTH, {})
 
         expect(requestedUrls()).toEqual(['https://api.anthropic.com/v1/models'])
+        expect(lastRequest().headers['x-api-key']).toBe(AUTH.apiKey)
         expect(models).toEqual([{ id: 'claude-opus-4-7', name: 'Claude Opus 4.7', type: AIProviderModelType.TEXT }])
     })
 
@@ -112,6 +127,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
         const models = await googleProvider.listModels(AUTH, {})
 
         expect(requestedUrls()).toEqual(['https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000'])
+        expect(lastRequest().headers['x-goog-api-key']).toBe(AUTH.apiKey)
         expect(models).toEqual([{ id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', type: AIProviderModelType.TEXT }])
     })
 
@@ -124,6 +140,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
         const models = await mistralProvider.listModels(AUTH, {})
 
         expect(requestedUrls()).toEqual(['https://api.mistral.ai/v1/models'])
+        expect(lastRequest().headers['Authorization']).toBe(`Bearer ${AUTH.apiKey}`)
         expect(models).toEqual([{ id: 'mistral-large', name: 'mistral-large', type: AIProviderModelType.TEXT }])
     })
 
@@ -137,6 +154,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
             'https://openrouter.ai/api/v1/models',
             'https://openrouter.ai/api/v1/auth/key',
         ])
+        expect(lastRequest().headers['Authorization']).toBe(`Bearer ${AUTH.apiKey}`)
         expect(models).toEqual([{ id: 'openai/gpt-4.1', name: 'GPT-4.1', type: AIProviderModelType.TEXT }])
     })
 
@@ -155,6 +173,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
 
         expect(requestedUrls()).toEqual(['https://gateway.ai.cloudflare.com/v1/acct/gw/compat/chat/completions'])
         expect(lastRequest().method).toBe('POST')
+        expect(lastRequest().headers['cf-aig-authorization']).toBe(`Bearer ${AUTH.apiKey}`)
     })
 
     it('azure lists models through the filtered client for a valid resource name', async () => {
@@ -164,6 +183,7 @@ describe('AI provider outbound HTTP goes through safeHttp', () => {
 
         expect(axiosRequest).toHaveBeenCalledTimes(1)
         expect(new URL(lastRequest().url).host).toBe('my-resource.openai.azure.com')
+        expect(lastRequest().headers['api-key']).toBe(AUTH.apiKey)
         expect(models).toEqual([{ id: 'gpt-4o-deployment', name: 'gpt-4o-deployment', type: AIProviderModelType.TEXT }])
     })
 })
@@ -183,9 +203,9 @@ describe('azure refuses a stored resource name it would otherwise have to trust'
         ['my.resource'],
         [''],
     ])('sends no request at all for %j', async (resourceName) => {
-        await expect(azureProvider.listModels(AUTH, { resourceName, apiVersion: undefined }))
-            .rejects.toThrow(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+        const thrown = await rejection(azureProvider.listModels(AUTH, { resourceName, apiVersion: undefined }))
 
+        expect(statedCause(thrown)).toEqual({ code: ErrorCode.VALIDATION, message: INVALID_AZURE_RESOURCE_NAME_MESSAGE })
         expect(axiosRequest).not.toHaveBeenCalled()
     })
 })
@@ -197,7 +217,7 @@ describe('azure refuses a stored resource name it would otherwise have to trust'
 describe('bedrock', () => {
     beforeEach(() => {
         bedrockClientConfigs.length = 0
-        nodeHttpHandlerOptions.length = 0
+        nodeHttpHandlers.length = 0
         bedrockSend.mockReset()
     })
 
@@ -207,9 +227,9 @@ describe('bedrock', () => {
         ['us-east-1.evil.com'],
         [''],
     ])('builds no client at all for a stored region of %j', async (region) => {
-        await expect(bedrockProvider.listModels(BEDROCK_AUTH, { region }))
-            .rejects.toThrow(INVALID_AWS_REGION_MESSAGE)
+        const thrown = await rejection(bedrockProvider.listModels(BEDROCK_AUTH, { region }))
 
+        expect(statedCause(thrown)).toEqual({ code: ErrorCode.VALIDATION, message: INVALID_AWS_REGION_MESSAGE })
         expect(bedrockClientConfigs).toHaveLength(0)
     })
 
@@ -234,10 +254,13 @@ describe('bedrock', () => {
 
         expect(bedrockClientConfigs[0].region).toBe('us-east-1')
         // The one provider whose SDK takes neither an axios instance nor a `fetch` override, so it
-        // reaches the same request-filtering-agent through `requestHandler`. Dropping that puts it
-        // back on the SDK's own unfiltered handler, and this goes red.
-        expect(nodeHttpHandlerOptions[0].httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
-        expect(nodeHttpHandlerOptions[0].httpAgent).toBeInstanceOf(RequestFilteringHttpAgent)
+        // reaches the same request-filtering-agent through `requestHandler`. Both halves matter:
+        // that the handler was built with the filtering agents, *and* that the client was given
+        // that handler. Asserting only the first passes even when the handler is built and then
+        // never wired, which leaves bedrock on the SDK's own unfiltered handler.
+        expect(nodeHttpHandlers[0].options.httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
+        expect(nodeHttpHandlers[0].options.httpAgent).toBeInstanceOf(RequestFilteringHttpAgent)
+        expect(bedrockClientConfigs[0].requestHandler).toBe(nodeHttpHandlers[0].handler)
         expect(models).toEqual([{ id: 'anthropic.claude-sonnet-4', name: 'Claude Sonnet 4', type: AIProviderModelType.TEXT }])
     })
 })

@@ -4,9 +4,11 @@ import {
     AIProviderModelType,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
+    ErrorCode,
     INVALID_AWS_REGION_MESSAGE,
     isNil,
     isValidAwsRegion,
+    QadamFlowError,
 } from '@aiqadam/shared'
 
 import {
@@ -46,7 +48,10 @@ BedrockProviderConfig
         // written before that constraint still needs stopping here. Same shape as Azure's
         // `resourceName` (#276).
         if (!isValidAwsRegion(config.region)) {
-            throw new Error(INVALID_AWS_REGION_MESSAGE)
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: INVALID_AWS_REGION_MESSAGE },
+            })
         }
         const client = new BedrockClient({
             region: config.region,

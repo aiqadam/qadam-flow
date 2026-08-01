@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, AzureProviderAuthConfig, AzureProviderConfig, DEFAULT_AZURE_API_VERSION, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isValidAzureResourceName } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, AzureProviderAuthConfig, AzureProviderConfig, DEFAULT_AZURE_API_VERSION, ErrorCode, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isValidAzureResourceName, QadamFlowError } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -15,7 +15,10 @@ export const azureProvider: AIProviderStrategy<AzureProviderAuthConfig, AzurePro
         // a value stored under the old schema from still building the host and shipping the
         // `api-key` header to it (#276).
         if (!isValidAzureResourceName(config.resourceName)) {
-            throw new Error(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: INVALID_AZURE_RESOURCE_NAME_MESSAGE },
+            })
         }
         const endpoint = `https://${config.resourceName}.openai.azure.com`
         const apiKey = authConfig.apiKey

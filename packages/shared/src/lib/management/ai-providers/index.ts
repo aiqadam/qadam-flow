@@ -109,9 +109,10 @@ export function isValidAzureResourceName(resourceName: unknown): resourceName is
 // Thrown at the two sinks that build the Azure host from a stored row (`azure-provider.listModels`
 // and `chatAiUtils.createChatModel`), which read `config` straight from the database and never
 // re-parse it — so the schema alone does not cover a row written before the constraint existed.
-// Reached only by an operator, so it says what to do rather than only what is wrong. Present
-// verbatim in packages/web/public/locales/en/translation.json, same as
-// `CUSTOM_PROVIDER_LIMIT_MESSAGE`, so the dialog's `i18n.exists` check renders the translated form.
+// Reached only by an operator, so it says what to do rather than only what is wrong. It travels as
+// a `QadamFlowError` `params.message`, which is what `apiErrorUtils.extractServerMessage` renders;
+// it is present verbatim in packages/web/public/locales/en/translation.json, same as
+// `CUSTOM_PROVIDER_LIMIT_MESSAGE`, so the dialog's `i18n.exists` check finds the translated form.
 export const INVALID_AZURE_RESOURCE_NAME_MESSAGE = 'The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.'
 
 // Same reasoning as the Azure message above, for the Bedrock `region` sink.

@@ -64,8 +64,12 @@
             "message": "Importing an already-constructed HTTP client bypasses request-filtering-agent's SSRF protection just as raw axios does, and the no-restricted-imports path entry above only sees the bare '@aiqadam/qadams-common' specifier — this catches any module path, including a deep import or a local re-export. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
           },
           {
-            "selector": "MemberExpression[property.name=/^(httpClient|AxiosHttpClient)$/]",
+            "selector": "MemberExpression[property.name=/^(httpClient|AxiosHttpClient|BaseHttpClient)$/]",
             "message": "Reaching an unfiltered HTTP client through a namespace import or require() bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+          },
+          {
+            "selector": "ObjectPattern > Property[key.name=/^(httpClient|AxiosHttpClient|BaseHttpClient)$/]",
+            "message": "Destructuring an unfiltered HTTP client out of a require() or a dynamic import() binds the name without an ImportSpecifier or a MemberExpression, so the two selectors above do not see it. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
           }
         ]
       }
