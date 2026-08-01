@@ -1,26 +1,63 @@
-import { AIProviderModelType, AIProviderName, apId, ErrorCode, PrincipalType } from '@aiqadam/shared'
+import { AIProviderModelType, AIProviderName, apId, DefaultProjectRole, ErrorCode, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { vi } from 'vitest'
+import { system } from '../../../../src/app/helper/system/system'
+import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import { mockAndSaveAIProvider } from '../../../helpers/mocks'
-import { createTestContext, TestContext } from '../../../helpers/test-context'
+import { createMemberContext, createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
 let ctx: TestContext
+let maxCustomProvidersOverride: string | undefined
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
+    const original = system.getNumber.bind(system)
+    vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
+        if (prop === AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM && maxCustomProvidersOverride !== undefined) {
+            // Mirror system.getNumber's own contract: an unparseable value becomes `null`, not
+            // `NaN`, because system-validator.ts only warns about one at startup.
+            const parsed = Number.parseInt(maxCustomProvidersOverride, 10)
+            return Number.isNaN(parsed) ? null : parsed
+        }
+        return original(prop)
+    })
 })
 
 afterAll(async () => {
+    vi.restoreAllMocks()
     await teardownTestEnvironment()
 })
 
 beforeEach(async () => {
     ctx = await createTestContext(app!)
 })
+
+afterEach(() => {
+    maxCustomProvidersOverride = undefined
+})
+
+const customProviderBody = (overrides?: Record<string, unknown>) => ({
+    provider: AIProviderName.CUSTOM,
+    displayName: 'A custom provider',
+    config: {
+        baseUrl: 'https://api.example.com/v1',
+        apiKeyHeader: 'Authorization',
+        models: [],
+    },
+    auth: { apiKey: 'test-key' },
+    ...overrides,
+})
+
+const modelList = (count: number) => Array.from({ length: count }, (_, index) => ({
+    modelId: `model-${index}`,
+    modelName: `Model ${index}`,
+    modelType: AIProviderModelType.TEXT,
+}))
 
 describe('AI Providers API', () => {
     describe('POST /v1/ai-providers (create)', () => {
@@ -402,6 +439,267 @@ describe('AI Providers API', () => {
             )
             expect(customProvider).toBeDefined()
             expect(customProvider.config.defaultHeaders).toEqual({ 'X-Test': 'test' })
+        })
+    })
+
+    describe('authorization on the mutating routes', () => {
+        // A platform MEMBER holding the *widest* project role there is. If even this principal is
+        // refused, so is the read-only member the ticket describes; a test built on VIEWER could
+        // not tell "platform-admin is required" from "some project permission is required".
+        const platformMember = () => createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+
+        it('should refuse a create from a platform member who is not a platform admin', async () => {
+            const member = await platformMember()
+
+            const response = await member.post('/v1/ai-providers', customProviderBody({
+                displayName: 'Attacker endpoint',
+                config: {
+                    baseUrl: 'https://attacker.example/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                enabledForChat: true,
+            }))
+
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(response?.json().code).toBe(ErrorCode.AUTHORIZATION)
+
+            const saved = await db.findOneBy('ai_provider', { platformId: ctx.platform.id })
+            expect(saved).toBeNull()
+        })
+
+        it('should refuse an update from a platform member who is not a platform admin', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'The real provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+            const member = await platformMember()
+
+            const response = await member.post(`/v1/ai-providers/${provider.id}`, {
+                config: {
+                    baseUrl: 'https://attacker.example/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                enabledForChat: true,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(response?.json().code).toBe(ErrorCode.AUTHORIZATION)
+
+            const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+            expect((saved as any).config.baseUrl).toBe('https://api.example.com/v1')
+            expect((saved as any).enabledForChat).toBe(false)
+        })
+
+        it('should refuse a delete from a platform member who is not a platform admin', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Not yours to delete',
+            })
+            const member = await platformMember()
+
+            const response = await member.delete(`/v1/ai-providers/${provider.id}`)
+
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(response?.json().code).toBe(ErrorCode.AUTHORIZATION)
+
+            const stillThere = await db.findOneBy('ai_provider', { id: provider.id })
+            expect(stillThere).not.toBeNull()
+        })
+
+        it('should still let a platform admin create, update and delete', async () => {
+            const created = await ctx.post('/v1/ai-providers', customProviderBody({ displayName: 'Admin created' }))
+            expect(created?.statusCode).toBe(StatusCodes.OK)
+
+            const saved = await db.findOneByOrFail('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+
+            const updated = await ctx.post(`/v1/ai-providers/${(saved as any).id}`, { displayName: 'Admin renamed' })
+            expect(updated?.statusCode).toBe(StatusCodes.OK)
+
+            const deleted = await ctx.delete(`/v1/ai-providers/${(saved as any).id}`)
+            expect(deleted?.statusCode).toBe(StatusCodes.NO_CONTENT)
+            expect(await db.findOneBy('ai_provider', { id: (saved as any).id })).toBeNull()
+        })
+
+        // The read routes are deliberately left open to any platform member: the builder's agent
+        // step settings list providers and then that provider's models. Pinning it here so a later
+        // blanket tightening has to argue with a test rather than silently break the picker.
+        it('should still let a platform member read the provider list and a provider\'s models', async () => {
+            await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Readable',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }],
+                },
+            })
+            const member = await platformMember()
+
+            const list = await member.get('/v1/ai-providers')
+            expect(list?.statusCode).toBe(StatusCodes.OK)
+            expect(list?.json()).toHaveLength(1)
+
+            const models = await member.get(`/v1/ai-providers/${AIProviderName.CUSTOM}/models`)
+            expect(models?.statusCode).toBe(StatusCodes.OK)
+            expect(models?.json()).toEqual([{ id: 'm', name: 'M', type: AIProviderModelType.TEXT }])
+        })
+    })
+
+    describe('config.models size caps', () => {
+        it('should accept a models list at the cap', async () => {
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: modelList(200),
+                },
+            }))
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('should reject a create whose models list is over the cap', async () => {
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: modelList(201),
+                },
+            }))
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            // The message has to be a key the web app can translate, not an English sentence.
+            expect(response?.body).toContain('tooManyModels')
+            expect(await db.findOneBy('ai_provider', { platformId: ctx.platform.id })).toBeNull()
+        })
+
+        it('should reject a create whose modelId is over the length cap', async () => {
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{
+                        modelId: 'm'.repeat(201),
+                        modelName: 'Oversized',
+                        modelType: AIProviderModelType.TEXT,
+                    }],
+                },
+            }))
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            expect(response?.body).toContain('modelIdentifierTooLong')
+            expect(await db.findOneBy('ai_provider', { platformId: ctx.platform.id })).toBeNull()
+        })
+
+        // The abuse loop in the ticket is `POST /:id` repeated, so the cap has to hold on the
+        // update path too. It lands as a 409 rather than a 400 because `UpdateAIProviderRequest`
+        // carries the untagged config union: an oversized custom config falls through to the
+        // union's empty tail and is then rejected by the per-provider re-parse added in #272.
+        it('should reject an update whose models list is over the cap', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Bounded',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: modelList(201),
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response?.json().code).toBe(ErrorCode.VALIDATION)
+
+            const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+            expect((saved as any).config.models).toHaveLength(0)
+        })
+    })
+
+    describe('custom providers per platform cap', () => {
+        it('should reject the (N+1)th custom provider with RESOURCE_LIMIT_EXCEEDED/403', async () => {
+            maxCustomProvidersOverride = '1'
+            await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'The one allowed custom provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({ displayName: 'One too many' }))
+
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            const body = response?.json()
+            expect(body.code).toBe(ErrorCode.RESOURCE_LIMIT_EXCEEDED)
+            expect(body.params.resource).toBe('custom_ai_providers')
+            expect(body.params.limit).toBe(1)
+        })
+
+        it('should still allow a custom provider while the platform is under the cap', async () => {
+            maxCustomProvidersOverride = '1'
+
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({ displayName: 'The first one' }))
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('should not apply the custom cap to the single-instance provider types', async () => {
+            maxCustomProvidersOverride = '1'
+            await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Fills the custom quota',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+
+            // Cloudflare Gateway with no models is the other provider whose validateConnection
+            // makes no network call, so this stays an offline test.
+            const response = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
+                displayName: 'Gateway',
+                config: { accountId: 'acc', gatewayId: 'gw', models: [] },
+                auth: { apiKey: 'test-key' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('should fall back to the built-in cap when the configured value is unusable', async () => {
+            // A malformed or non-positive override must not read as "no cap" — this cap exists so
+            // that a ceiling is always present, which is the opposite of the TEAM-projects one.
+            maxCustomProvidersOverride = 'not-a-number'
+
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({ displayName: 'Still allowed' }))
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
         })
     })
 })

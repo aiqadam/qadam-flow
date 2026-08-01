@@ -175,6 +175,9 @@ const systemPropValidators: {
     // Projects
     [AppSystemProp.MAX_TEAM_PROJECTS_PER_PLATFORM]: numberValidator,
 
+    // AI providers
+    [AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM]: numberValidator,
+
     [AppSystemProp.ENABLE_FLOW_ON_PUBLISH]: booleanValidator,
     [AppSystemProp.ISSUE_ARCHIVE_DAYS]: (value: string) => {
         const days = parseInt(value)

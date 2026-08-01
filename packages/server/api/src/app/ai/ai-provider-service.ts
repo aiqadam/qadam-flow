@@ -18,15 +18,16 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import cron from 'node-cron'
-import { QueryFailedError } from 'typeorm'
+import { EntityManager, QueryFailedError } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { encryptUtils } from '../helper/encryption'
+import { system } from '../helper/system/system'
+import { AppSystemProp } from '../helper/system/system-props'
 import { AIProviderEntity, AIProviderSchema } from './ai-provider-entity'
+import { modelsCache } from './models-cache'
 import { aiProviders } from './providers'
 
 const aiProviderRepo = repoFactory<AIProviderSchema>(AIProviderEntity)
-
-const modelsCache = new Map<string, AIProviderModel[]>()
 
 export const aiProviderService = (log: FastifyBaseLogger) => ({
     async setup(): Promise<void> {
@@ -57,20 +58,30 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         // whenever the config or the credentials are edited, which invalidates the entry.
         const cacheKey = `${aiProvider.id}-${new Date(aiProvider.updated).getTime()}`
         const config = aiProvider.config
-        if (modelsCache.has(cacheKey) && !('models' in config)) {
-            return modelsCache.get(cacheKey)!
+        // A config carrying its own `models` list is never read back from the cache, so writing
+        // it only ever cost memory — and it was the one path an attacker could grow for free,
+        // since CUSTOM's `validateConnection` makes no network call.
+        const cacheable = !('models' in config)
+        if (cacheable) {
+            const cached = modelsCache.get(cacheKey)
+            if (!isNil(cached)) {
+                return cached
+            }
         }
 
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
         const data = await aiProviders[provider].listModels(auth, config)
 
-        modelsCache.set(cacheKey, data.map(model => ({
+        const models = data.map(model => ({
             id: model.id,
             name: model.name,
             type: model.type,
-        })))
+        }))
+        if (cacheable) {
+            modelsCache.set({ key: cacheKey, models })
+        }
 
-        return modelsCache.get(cacheKey)!
+        return models
     },
 
     async create(platformId: PlatformId, request: CreateAIProviderRequest): Promise<void> {
@@ -86,12 +97,11 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         }
 
         const { error } = await tryCatch(async () => {
-            if (!newProvider.enabledForChat) {
-                await aiProviderRepo().insert(newProvider)
-                return
-            }
             await aiProviderRepo().manager.transaction(async (manager) => {
-                await manager.update(AIProviderEntity, { platformId }, { enabledForChat: false })
+                await assertCustomProviderLimitNotExceeded({ manager, platformId, provider: request.provider })
+                if (newProvider.enabledForChat) {
+                    await manager.update(AIProviderEntity, { platformId }, { enabledForChat: false })
+                }
                 await manager.insert(AIProviderEntity, newProvider)
             })
         })
@@ -239,6 +249,46 @@ async function findProviderOrThrow({ platformId, provider }: GetOrCreateQadamFlo
     return aiProvider
 }
 
+// The eight single-instance providers are capped at one row each by the unique index; `custom` is
+// the only kind a platform may hold many of, so it is the only one that needs a ceiling of its
+// own. It is enforced here rather than in the schema because it is a property of the platform,
+// not of the request.
+//
+// The advisory lock is taken inside the caller's transaction and released when that transaction
+// ends, so the count and the insert it guards are atomic together — a plain count-then-insert
+// under READ COMMITTED lets two concurrent creates both read "under the cap" and both write.
+// It is a Postgres transaction-scoped lock rather than the Redis `distributedLock` used for the
+// TEAM-projects cap precisely because it cannot expire before the insert commits.
+async function assertCustomProviderLimitNotExceeded({ manager, platformId, provider }: AssertCustomProviderLimitParams): Promise<void> {
+    if (provider !== AIProviderName.CUSTOM) {
+        return
+    }
+    const limit = getMaxCustomProvidersPerPlatform()
+    await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`ai-provider-custom-limit:${platformId}`])
+    const current = await manager.countBy(AIProviderEntity, { platformId, provider: AIProviderName.CUSTOM })
+    if (current >= limit) {
+        throw new QadamFlowError({
+            code: ErrorCode.RESOURCE_LIMIT_EXCEEDED,
+            params: {
+                resource: 'custom_ai_providers',
+                limit,
+            },
+        })
+    }
+}
+
+// Unlike the TEAM-projects cap, this one must never resolve to "unlimited": it exists so that a
+// ceiling is always present, and `system.getNumber` returns null for an unparseable value just as
+// it does for an unset one (the startup validator only warns). A missing, malformed or
+// non-positive override therefore falls back to the built-in default rather than removing the cap.
+function getMaxCustomProvidersPerPlatform(): number {
+    const configuredValue = system.getNumber(AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM)
+    if (isNil(configuredValue) || configuredValue <= 0) {
+        return DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM
+    }
+    return configuredValue
+}
+
 function isUniqueViolation(error: unknown): boolean {
     if (!(error instanceof QueryFailedError)) {
         return false
@@ -254,7 +304,20 @@ function isUniqueViolation(error: unknown): boolean {
 
 const POSTGRES_UNIQUE_VIOLATION = '23505'
 
+// Twenty is roughly twice the entire supported vendor list, and the settings page renders one card
+// per row — an operator fronting several self-hosted OpenAI-compatible endpoints (Ollama, LM
+// Studio, vLLM, a gateway or two) needs a handful. It replaces the ceiling the total unique index
+// used to provide incidentally, and it is an operator knob so that the rare deployment that needs
+// more is not blocked by a number chosen here.
+const DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM = 20
+
 type GetOrCreateQadamFlowConfigResponse = {
+    platformId: PlatformId
+    provider: AIProviderName
+}
+
+type AssertCustomProviderLimitParams = {
+    manager: EntityManager
     platformId: PlatformId
     provider: AIProviderName
 }

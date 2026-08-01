@@ -1855,6 +1855,8 @@
   "Highlights": "Highlights",
   "External ID can only contain letters, numbers and underscores": "External ID can only contain letters, numbers and underscores",
   "required": "Required",
+  "tooManyModels": "Too many models — remove some and try again",
+  "modelIdentifierTooLong": "Model id or name is too long",
   "Please connect your account first": "Please connect your account first",
   "Recommended": "Recommended",
   "Others": "Others",
