@@ -60,6 +60,7 @@ export type ApErrorParams =
     | DomainIsNotAllowedErrorParams
     | EmailAuthIsDisabledParams
     | ExistingAlertChannelErrorParams
+    | ExistingAIProviderErrorParams
     | EmailAlreadyHasActivationKey
     | AIProviderModelNotSupportedParams
     | AIProviderNotSupportedParams
@@ -402,6 +403,13 @@ ErrorCode.EXISTING_ALERT_CHANNEL,
     email: string
 }>
 
+export type ExistingAIProviderErrorParams = BaseErrorParams<
+ErrorCode.EXISTING_AI_PROVIDER,
+{
+    provider: string
+    message: string
+}>
+
 export type InvalidOtpParams = BaseErrorParams<ErrorCode.INVALID_OTP, Record<string, never>>
 
 export type InvalidLicenseKeyParams = BaseErrorParams<ErrorCode.INVALID_LICENSE_KEY, {
@@ -523,6 +531,7 @@ export enum ErrorCode {
     EMAIL_AUTH_DISABLED = 'EMAIL_AUTH_DISABLED',
     EXISTING_USER = 'EXISTING_USER',
     EXISTING_ALERT_CHANNEL = 'EXISTING_ALERT_CHANNEL',
+    EXISTING_AI_PROVIDER = 'EXISTING_AI_PROVIDER',
     PROJECT_EXTERNAL_ID_ALREADY_EXISTS = 'PROJECT_EXTERNAL_ID_ALREADY_EXISTS',
     FLOW_OPERATION_INVALID = 'FLOW_OPERATION_INVALID',
     FLOW_OPERATION_IN_PROGRESS = 'FLOW_OPERATION_IN_PROGRESS',

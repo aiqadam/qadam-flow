@@ -1,4 +1,4 @@
-import { AIProviderName, apId, PrincipalType } from '@aiqadam/shared'
+import { AIProviderModelType, AIProviderName, apId, ErrorCode, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { generateMockToken } from '../../../helpers/auth'
@@ -51,6 +51,129 @@ describe('AI Providers API', () => {
                 'X-Tenant': 'tenant-abc',
             })
         })
+
+        it('should reject a second provider of the same type with a conflict, not a database error', async () => {
+            const body = {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'DeepSeek',
+                config: {
+                    baseUrl: 'https://api.deepseek.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                auth: { apiKey: 'test-key' },
+            }
+
+            const first = await ctx.post('/v1/ai-providers', body)
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+
+            const second = await ctx.post('/v1/ai-providers', {
+                ...body,
+                displayName: 'Local Ollama',
+                config: { ...body.config, baseUrl: 'http://ollama.internal:11434/v1' },
+            })
+
+            expect(second?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(second?.json().code).toBe(ErrorCode.EXISTING_AI_PROVIDER)
+            // The dialog renders params.message, so it has to say something a user can act on.
+            expect(second?.json().params.message).toContain('already configured')
+            // The Postgres error code and the index name used to reach the caller verbatim.
+            expect(second?.body).not.toContain('23505')
+            expect(second?.body).not.toContain('idx_ai_provider')
+        })
+
+        it('should persist enabledForChat and clear it on the previous chat provider', async () => {
+            const previousChatProvider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.OPENAI,
+                displayName: 'Previous chat provider',
+            })
+            await db.update('ai_provider', previousChatProvider.id, { enabledForChat: true })
+
+            const response = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'New chat provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                auth: { apiKey: 'test-key' },
+                enabledForChat: true,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+
+            const created = await db.findOneByOrFail('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+            expect((created as any).enabledForChat).toBe(true)
+
+            const previous = await db.findOneByOrFail('ai_provider', { id: previousChatProvider.id })
+            expect((previous as any).enabledForChat).toBe(false)
+        })
+
+        it('should default enabledForChat to false and leave an existing chat provider alone', async () => {
+            const existingChatProvider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.OPENAI,
+                displayName: 'Still the chat provider',
+            })
+            await db.update('ai_provider', existingChatProvider.id, { enabledForChat: true })
+
+            const response = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Not a chat provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                auth: { apiKey: 'test-key' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+
+            const saved = await db.findOneByOrFail('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+            expect((saved as any).enabledForChat).toBe(false)
+
+            // Without this half the test cannot tell "defaulted to false" from "silently dropped".
+            const untouched = await db.findOneByOrFail('ai_provider', { id: existingChatProvider.id })
+            expect((untouched as any).enabledForChat).toBe(true)
+        })
+
+        it('should not disable the existing chat provider when the create is rejected as a duplicate', async () => {
+            const body = {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'The one chat provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                auth: { apiKey: 'test-key' },
+                enabledForChat: true,
+            }
+
+            const first = await ctx.post('/v1/ai-providers', body)
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+
+            const second = await ctx.post('/v1/ai-providers', { ...body, displayName: 'Rejected' })
+            expect(second?.statusCode).toBe(StatusCodes.CONFLICT)
+
+            // The clearing sweep runs before the insert, so a rejected create must roll it back —
+            // otherwise a 409 silently leaves the platform with no chat provider at all.
+            const saved = await db.findOneByOrFail('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+            expect((saved as any).displayName).toBe('The one chat provider')
+            expect((saved as any).enabledForChat).toBe(true)
+        })
     })
 
     describe('POST /v1/ai-providers/:id (update)', () => {
@@ -81,6 +204,109 @@ describe('AI Providers API', () => {
 
             const saved = await db.findOneBy('ai_provider', { id: provider.id })
             expect((saved as any).config.defaultHeaders).toEqual({ 'X-Custom': 'value-1' })
+        })
+
+        it('should keep the display name when the update does not carry one', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Name worth keeping',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {
+                config: {
+                    baseUrl: 'https://api.example.com/v2',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+
+            const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+            expect((saved as any).displayName).toBe('Name worth keeping')
+            expect((saved as any).config.baseUrl).toBe('https://api.example.com/v2')
+        })
+
+        it('should reject an update that carries no field this endpoint understands', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Untouched',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+
+            // Every field is optional now, so zod strips a misspelled key and leaves an empty
+            // body. Answering 200 to that would report a rename that never happened.
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, { display_name: 'renamed' })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response?.json().code).toBe(ErrorCode.VALIDATION)
+
+            const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+            expect((saved as any).displayName).toBe('Untouched')
+        })
+
+        it('should reject a config that does not fit the row\'s provider instead of blanking it', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Keeps its config',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }],
+                },
+            })
+
+            // `AIProviderConfig` is an untagged union ending in `z.object({})`, so a custom config
+            // missing `models` parses to `{}` and every field is dropped — silently wiping the
+            // base url, the header name and the model catalogue of a live provider.
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {
+                config: {
+                    baseUrl: 'https://api.example.com/v2',
+                    apiKeyHeader: 'Authorization',
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response?.json().code).toBe(ErrorCode.VALIDATION)
+
+            const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+            expect((saved as any).config.baseUrl).toBe('https://api.example.com/v1')
+            expect((saved as any).config.models).toHaveLength(1)
+        })
+
+        it('should move the updated timestamp, which is what expires the cached model list', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Cache key source',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+            const before = await db.findOneByOrFail('ai_provider', { id: provider.id })
+
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {
+                auth: { apiKey: 'rotated-key' },
+            })
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+
+            const after = await db.findOneByOrFail('ai_provider', { id: provider.id })
+            expect(new Date((after as any).updated).getTime())
+                .toBeGreaterThan(new Date((before as any).updated).getTime())
         })
     })
 

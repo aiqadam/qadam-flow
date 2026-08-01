@@ -59,8 +59,8 @@ export const chatModel = {
 // in `packages/web/src/app/routes/chat-with-ai/` does — so a platform configured with OpenAI,
 // Anthropic or Google reaches here with `modelName` null and no catalogue, and the very first
 // message of a fresh install would fail. `listModels` is not a per-turn network call: it is
-// memoised per provider+credential in `ai-provider-service.ts` and cleared once a day, so this
-// costs one lookup per provider per instance per day. A provider that is unreachable throws, and
+// memoised in `ai-provider-service.ts` per provider row, invalidated when that row is edited, and
+// cleared once a day — so this costs one lookup per provider per instance per day. A provider that is unreachable throws, and
 // that is the right answer — the chat cannot run against a provider it cannot talk to.
 async function firstTextModelFromProvider({ platformId, provider, log }: FirstTextModelParams): Promise<string | null> {
     const { data: models, error } = await tryCatch(() => aiProviderService(log).listModels(platformId, provider))
