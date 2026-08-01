@@ -52,7 +52,7 @@ Flows are the core automation primitive in Activepieces. Each flow is a versione
 
 **Flow**: id, projectId, folderId (nullable), status (ENABLED/DISABLED), externalId, publishedVersionId (nullable, unique FK), metadata (JSONB), operationStatus (NONE/DELETING/ENABLING/DISABLING), timeSavedPerRun, ownerId, templateId, createdBy (nullable JSONB — `FlowCreator`). Relations: project, folder, owner, publishedVersion (one-to-one), versions (one-to-many), runs, events, tableWebhooks.
 
-**FlowVersion**: id, flowId, displayName, schemaVersion (current latest: `'22'`), trigger (JSONB — full flow graph), connectionIds[], agentIds[], updatedBy, valid, state (DRAFT/LOCKED), backupFiles (JSONB), notes[] (JSONB). Relations: flow, updatedByUser.
+**FlowVersion**: id, flowId, displayName, schemaVersion (current latest: `'25'`), trigger (JSONB — full flow graph), connectionIds[], agentIds[], updatedBy, valid, state (DRAFT/LOCKED), backupFiles (JSONB), notes[] (JSONB). Relations: flow, updatedByUser.
 
 **Folder**: id, projectId, displayName. Used to organize flows and tables. Case-insensitive uniqueness.
 

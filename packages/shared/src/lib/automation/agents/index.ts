@@ -64,7 +64,27 @@ export enum AgentQadamProps {
     WEB_SEARCH_OPTIONS = 'webSearchOptions',
 }
 
+/**
+ * `providerId` addresses one AI provider *row*; `provider` names its *type*. Both are kept because
+ * they answer different questions and neither replaces the other.
+ *
+ * A platform may hold several rows of the same type (custom OpenAI-compatible endpoints), so only
+ * the id can pick one — the name resolves to the platform's oldest matching row. It is optional and
+ * always will be: steps stored before id-addressing carry no id, and a pinned qadam version builds
+ * `v1/ai-providers/${provider}/config` from the enum regardless of what is stored.
+ *
+ * The name cannot be dropped once an id is present either. Several capability decisions are keyed
+ * on the enum and are taken before any config is fetched, so a row id could not answer them even in
+ * principle: which web-search tool builder applies, whether the OpenAI responses API is used, which
+ * advancedOptions schema to render, and `getEffectiveProviderAndModel`'s gateway unwrapping.
+ *
+ * Not every name-keyed lookup is one of those, and the difference matters. `DEFAULT_EMBEDDING_MODELS`
+ * in the AI qadam's `ai-sdk.ts` is also keyed on the enum but is read *after* the fetch, so it reads
+ * the **answering row's** name rather than this one — as does the switch that builds the SDK client.
+ * Anything downstream of the fetch follows the row; only the decisions above follow this field.
+ */
 export type AgentProviderModel = {
+    providerId?: string
     provider: AIProviderName
     model: string
 }
