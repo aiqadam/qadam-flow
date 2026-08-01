@@ -7,4 +7,6 @@ export const formErrors = {
     invalidFileName: 'invalidFileName',
     invalidEmail: 'invalidEmail',
     messageRequiresContentOrFiles: 'messageRequiresContentOrFiles',
+    tooManyModels: 'tooManyModels',
+    modelIdentifierTooLong: 'modelIdentifierTooLong',
 } as const

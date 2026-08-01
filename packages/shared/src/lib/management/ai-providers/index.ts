@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BaseModelSchema } from '../../core/common/base-model'
+import { formErrors } from '../../form-errors'
 
 export enum AIProviderName {
     OPENAI = 'openai',
@@ -57,9 +58,18 @@ export type MistralProviderAuthConfig = z.infer<typeof MistralProviderAuthConfig
 export const AnthropicProviderConfig = z.object({})
 export type AnthropicProviderConfig = z.infer<typeof AnthropicProviderConfig>
 
+// A provider's model catalogue is operator-supplied and stored verbatim on the row, served back
+// from `GET /` and held in the in-process model cache. Nothing downstream bounds it, and the
+// server's body limit is 25 MB, so without these two caps one request decides how much memory a
+// row costs forever. The numbers are far above any real catalogue — the longest ids in use are
+// Cloudflare Gateway's `google-vertex-ai/<publisher>/<model>` form at well under 100 characters,
+// and the picker these lists feed is curated by hand.
+const MAX_MODEL_IDENTIFIER_LENGTH = 200
+const MAX_MODELS_PER_PROVIDER = 200
+
 export const ProviderModelConfig = z.object({
-    modelId: z.string(),
-    modelName: z.string(),
+    modelId: z.string().max(MAX_MODEL_IDENTIFIER_LENGTH, formErrors.modelIdentifierTooLong),
+    modelName: z.string().max(MAX_MODEL_IDENTIFIER_LENGTH, formErrors.modelIdentifierTooLong),
     modelType: z.nativeEnum(AIProviderModelType),
 })
 export type ProviderModelConfig = z.infer<typeof ProviderModelConfig>
@@ -67,7 +77,7 @@ export type ProviderModelConfig = z.infer<typeof ProviderModelConfig>
 export const OpenAICompatibleProviderConfig = z.object({
     apiKeyHeader: z.string(),
     baseUrl: z.string(),
-    models: z.array(ProviderModelConfig),
+    models: z.array(ProviderModelConfig).max(MAX_MODELS_PER_PROVIDER, formErrors.tooManyModels),
     defaultHeaders: z.record(z.string(), z.string()).optional(),
 })
 export type OpenAICompatibleProviderConfig = z.infer<typeof OpenAICompatibleProviderConfig>
@@ -76,7 +86,7 @@ export type OpenAICompatibleProviderConfig = z.infer<typeof OpenAICompatibleProv
 export const CloudflareGatewayProviderConfig = z.object({
     accountId: z.string(),
     gatewayId: z.string(),
-    models: z.array(ProviderModelConfig),
+    models: z.array(ProviderModelConfig).max(MAX_MODELS_PER_PROVIDER, formErrors.tooManyModels),
     vertexProject: z.string().optional(),
     vertexRegion: z.string().optional(),
 })
@@ -258,6 +268,7 @@ export type UpdateAIProviderRequest = z.infer<typeof UpdateAIProviderRequest>
 
 
 export const GetProviderConfigResponse = z.object({
+    id: z.string(),
     provider: z.nativeEnum(AIProviderName),
     config: AIProviderConfig,
     auth: AIProviderAuthConfig,

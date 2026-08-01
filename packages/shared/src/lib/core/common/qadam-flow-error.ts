@@ -352,6 +352,12 @@ ErrorCode.RESOURCE_LIMIT_EXCEEDED,
 {
     resource: string
     limit: number
+    // `resource` and `limit` are machine vocabulary. A form that renders an error body has nothing
+    // to show without a sentence, and the one dialog that hits this code used to fall back to
+    // `JSON.stringify(error)` — which on an AxiosError emits `config`, i.e. the request's
+    // Authorization header and its body. Optional because not every thrower is reached by a form;
+    // the dialog's own fallback is what makes omitting it safe rather than merely unhelpful.
+    message?: string
 }
 >
 
