@@ -33,6 +33,12 @@ export const aiProviderController: FastifyPluginAsyncZod = async (app) => {
     })
 }
 
+// Deliberately not admin-only: the builder's agent step settings render a model picker for any
+// project member who can edit a flow (`packages/web/src/features/agents/ai-model/hooks.ts`), and
+// it lists providers before listing that provider's models. The response carries no credentials —
+// `auth` is decrypted only by the engine-only `/:provider/config` route. It does still carry each
+// row's `config`, which for CUSTOM includes `baseUrl`, `apiKeyHeader` and `defaultHeaders`; that
+// is a separate contract question (an integration test asserts it today) and is not changed here.
 const ListAIProviders = {
     config: {
         security: securityAccess.publicPlatform([PrincipalType.USER, PrincipalType.ENGINE]),
@@ -50,6 +56,7 @@ const GetAIProviderConfig = {
     },
 }
 
+// Same call site, same reasoning as ListAIProviders — the picker is useless without it.
 const ListModels = {
     config: {
         security: securityAccess.publicPlatform([PrincipalType.USER, PrincipalType.ENGINE]),
@@ -64,9 +71,14 @@ const ListModels = {
     },
 }
 
+// Mutations are platform-admin only. `publicPlatform` is a principal-*type* check and nothing
+// more (`authorize.ts`), so it let any authenticated user of the platform — including a read-only
+// member of a single project — create, re-point or delete the platform's AI providers, and with
+// `enabledForChat` that re-routes every chat turn on the platform through their endpoint. These
+// routes are only reached from the platform-admin AI setup page.
 const CreateAIProvider = {
     config: {
-        security: securityAccess.publicPlatform([PrincipalType.USER]),
+        security: securityAccess.platformAdminOnly([PrincipalType.USER]),
     },
     schema: {
         body: CreateAIProviderRequest,
@@ -75,7 +87,7 @@ const CreateAIProvider = {
 
 const UpdateAIProvider = {
     config: {
-        security: securityAccess.publicPlatform([PrincipalType.USER]),
+        security: securityAccess.platformAdminOnly([PrincipalType.USER]),
     },
     schema: {
         params: z.object({
@@ -87,7 +99,7 @@ const UpdateAIProvider = {
 
 const DeleteAIProvider = {
     config: {
-        security: securityAccess.publicPlatform([PrincipalType.USER]),
+        security: securityAccess.platformAdminOnly([PrincipalType.USER]),
     },
     schema: {
         params: z.object({
