@@ -9,6 +9,7 @@ import {
     ErrorCode,
     GetProviderConfigResponse,
     isNil,
+    parseProviderConfig,
     PlatformId,
     QadamFlowError,
     spreadIfDefined,
@@ -54,7 +55,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         // point at different endpoints (an Azure resource name, a base url), and a key in a
         // process-wide map is a secret living somewhere it has no reason to be. `updated` moves
         // whenever the config or the credentials are edited, which invalidates the entry.
-        const cacheKey = `${aiProvider.id}-${String(aiProvider.updated)}`
+        const cacheKey = `${aiProvider.id}-${new Date(aiProvider.updated).getTime()}`
         const config = aiProvider.config
         if (modelsCache.has(cacheKey) && !('models' in config)) {
             return modelsCache.get(cacheKey)!
@@ -99,13 +100,16 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             return
         }
         if (isUniqueViolation(error)) {
+            const existing = await aiProviderRepo().findOneBy({ platformId, provider: request.provider })
             throw new QadamFlowError({
                 code: ErrorCode.EXISTING_AI_PROVIDER,
                 params: {
                     provider: request.provider,
                     // The dialog renders params.message, and what it used to render here was the
                     // raw Postgres message including the index name.
-                    message: `A ${aiProviders[request.provider].name} provider is already configured for this platform`,
+                    message: isNil(existing)
+                        ? 'This provider is already configured for this platform'
+                        : `This provider is already configured for this platform as "${existing.displayName}"`,
                 },
             })
         }
@@ -123,23 +127,42 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             })
         }
 
+        // `UpdateAIProviderRequest.config` is the untagged union, whose tail is several
+        // `z.object({})` members — so a config missing a required field for this provider does not
+        // fail validation, it parses to `{}` and every field is dropped. Re-checking it against
+        // this row's own provider is what stops an edit of one field wiping the rest.
+        const requestedConfig = isNil(request.config)
+            ? undefined
+            : parseProviderConfig({ provider: aiProvider.provider, config: request.config })
+        if (!isNil(request.config) && isNil(requestedConfig)) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Invalid configuration for a ${aiProvider.provider} provider` },
+            })
+        }
+
         const encryptedAuth = !isNil(request.auth) ? await encryptUtils.encryptObject(request.auth) : undefined
         const updates = {
             ...spreadIfDefined('auth', encryptedAuth),
-            ...spreadIfDefined('config', request.config),
+            ...spreadIfDefined('config', requestedConfig),
             ...spreadIfDefined('enabledForChat', request.enabledForChat),
             ...spreadIfDefined('displayName', request.displayName),
         }
 
-        // Every field is optional, so a request can now carry nothing at all. TypeORM rejects an
-        // empty update, and validating credentials for it would be an outbound call for no change.
+        // Every field is optional, so a request can carry nothing this endpoint understands — a
+        // misspelled key is stripped by zod and would otherwise be answered 200 having changed
+        // nothing. TypeORM rejects an empty update anyway.
         if (Object.keys(updates).length === 0) {
-            return
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'No updatable fields were provided' },
+            })
         }
 
-        const config = request.config ?? aiProvider.config
-        // The row being updated is already in hand — resolving its credentials by provider name
-        // would read whichever row that name happens to match, which is not necessarily this one.
+        const config = requestedConfig ?? aiProvider.config
+        // The row being updated is already in hand. Resolving its credentials by provider name
+        // returns the same row only because the unique index guarantees one row per name — that is
+        // latent rather than live today, and it is exactly what #98 removes.
         const auth = request.auth ?? await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
         await this.validateProviderCredentials(aiProvider.provider, auth, config)
 

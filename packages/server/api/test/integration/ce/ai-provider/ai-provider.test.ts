@@ -1,4 +1,4 @@
-import { AIProviderName, apId, ErrorCode, PrincipalType } from '@aiqadam/shared'
+import { AIProviderModelType, AIProviderName, apId, ErrorCode, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { generateMockToken } from '../../../helpers/auth'
@@ -114,7 +114,14 @@ describe('AI Providers API', () => {
             expect((previous as any).enabledForChat).toBe(false)
         })
 
-        it('should default enabledForChat to false when it is not sent', async () => {
+        it('should default enabledForChat to false and leave an existing chat provider alone', async () => {
+            const existingChatProvider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.OPENAI,
+                displayName: 'Still the chat provider',
+            })
+            await db.update('ai_provider', existingChatProvider.id, { enabledForChat: true })
+
             const response = await ctx.post('/v1/ai-providers', {
                 provider: AIProviderName.CUSTOM,
                 displayName: 'Not a chat provider',
@@ -133,6 +140,39 @@ describe('AI Providers API', () => {
                 provider: AIProviderName.CUSTOM,
             })
             expect((saved as any).enabledForChat).toBe(false)
+
+            // Without this half the test cannot tell "defaulted to false" from "silently dropped".
+            const untouched = await db.findOneByOrFail('ai_provider', { id: existingChatProvider.id })
+            expect((untouched as any).enabledForChat).toBe(true)
+        })
+
+        it('should not disable the existing chat provider when the create is rejected as a duplicate', async () => {
+            const body = {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'The one chat provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+                auth: { apiKey: 'test-key' },
+                enabledForChat: true,
+            }
+
+            const first = await ctx.post('/v1/ai-providers', body)
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+
+            const second = await ctx.post('/v1/ai-providers', { ...body, displayName: 'Rejected' })
+            expect(second?.statusCode).toBe(StatusCodes.CONFLICT)
+
+            // The clearing sweep runs before the insert, so a rejected create must roll it back —
+            // otherwise a 409 silently leaves the platform with no chat provider at all.
+            const saved = await db.findOneByOrFail('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+            expect((saved as any).displayName).toBe('The one chat provider')
+            expect((saved as any).enabledForChat).toBe(true)
         })
     })
 
@@ -193,7 +233,7 @@ describe('AI Providers API', () => {
             expect((saved as any).config.baseUrl).toBe('https://api.example.com/v2')
         })
 
-        it('should leave the row alone when the update carries no fields', async () => {
+        it('should reject an update that carries no field this endpoint understands', async () => {
             const provider = await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
@@ -205,13 +245,45 @@ describe('AI Providers API', () => {
                 },
             })
 
-            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {})
+            // Every field is optional now, so zod strips a misspelled key and leaves an empty
+            // body. Answering 200 to that would report a rename that never happened.
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, { display_name: 'renamed' })
 
-            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response?.json().code).toBe(ErrorCode.VALIDATION)
 
             const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
             expect((saved as any).displayName).toBe('Untouched')
+        })
+
+        it('should reject a config that does not fit the row\'s provider instead of blanking it', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Keeps its config',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }],
+                },
+            })
+
+            // `AIProviderConfig` is an untagged union ending in `z.object({})`, so a custom config
+            // missing `models` parses to `{}` and every field is dropped — silently wiping the
+            // base url, the header name and the model catalogue of a live provider.
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {
+                config: {
+                    baseUrl: 'https://api.example.com/v2',
+                    apiKeyHeader: 'Authorization',
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response?.json().code).toBe(ErrorCode.VALIDATION)
+
+            const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
             expect((saved as any).config.baseUrl).toBe('https://api.example.com/v1')
+            expect((saved as any).config.models).toHaveLength(1)
         })
 
         it('should move the updated timestamp, which is what expires the cached model list', async () => {

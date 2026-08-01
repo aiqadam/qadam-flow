@@ -193,6 +193,31 @@ const ProviderConfigUnion = z.discriminatedUnion('provider', [
     }),
 ])
 
+const providerConfigSchemas = {
+    [AIProviderName.OPENAI]: OpenAIProviderConfig,
+    [AIProviderName.OPENROUTER]: OpenRouterProviderConfig,
+    [AIProviderName.ANTHROPIC]: AnthropicProviderConfig,
+    [AIProviderName.AZURE]: AzureProviderConfig,
+    [AIProviderName.GOOGLE]: GoogleProviderConfig,
+    [AIProviderName.CLOUDFLARE_GATEWAY]: CloudflareGatewayProviderConfig,
+    [AIProviderName.CUSTOM]: OpenAICompatibleProviderConfig,
+    [AIProviderName.BEDROCK]: BedrockProviderConfig,
+    [AIProviderName.MISTRAL]: MistralProviderConfig,
+}
+
+/**
+ * Parses a config against the schema of one specific provider, returning null when it does not fit.
+ *
+ * `AIProviderConfig` is a plain union ending in several `z.object({})` members, so an incomplete
+ * config for a provider that has required fields does not fail — it falls through to an empty
+ * member and parses to `{}`, silently discarding every field. Anything holding a config together
+ * with the provider it belongs to must use this instead of the union.
+ */
+export function parseProviderConfig({ provider, config }: { provider: AIProviderName, config: unknown }): AIProviderConfig | null {
+    const parsed = providerConfigSchemas[provider].safeParse(config)
+    return parsed.success ? parsed.data : null
+}
+
 export const AIProvider = z.object({
     ...BaseModelSchema,
     displayName: z.string().min(1),
