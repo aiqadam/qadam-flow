@@ -53,6 +53,20 @@ describe('AI provider models cache', () => {
         expect(modelsCache.get('same')).toEqual(models('second'))
     })
 
+    it('treats a rewrite as a use, so a refreshed entry is not the next one evicted', () => {
+        fill(MODELS_CACHE_MAX_ENTRIES)
+
+        // `Map.set` on a key it already holds keeps that key's original insertion position, so
+        // without the delete-then-set in `set()` the oldest entry stays the oldest however often
+        // it is rewritten — and eviction order stops tracking use. Size and value alone cannot
+        // see that: a plain `Map.set` gives both.
+        modelsCache.set({ key: 'key-0', models: models('key-0-refreshed') })
+        modelsCache.set({ key: 'one-too-many', models: models('one-too-many') })
+
+        expect(modelsCache.get('key-0')).toEqual(models('key-0-refreshed'))
+        expect(modelsCache.get('key-1')).toBeUndefined()
+    })
+
     it('is emptied by clear(), which is what the daily cron calls', () => {
         fill(10)
 

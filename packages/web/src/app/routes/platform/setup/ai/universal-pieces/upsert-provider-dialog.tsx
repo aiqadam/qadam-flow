@@ -21,8 +21,7 @@ import {
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { AxiosError } from 'axios';
-import { t } from 'i18next';
+import i18n, { t } from 'i18next';
 import { useMemo, useState } from 'react';
 import {
   FieldErrors,
@@ -57,6 +56,7 @@ import {
   aiProviderApi,
   hasAnyAuthFieldFilled,
 } from '@/features/platform-admin';
+import { apiErrorUtils } from '@/lib/api-error-utils';
 
 import { ApMarkdown } from '../../../../../../components/custom/markdown';
 
@@ -181,15 +181,19 @@ export const UpsertAIProviderDialogContent = ({
       setOpen(false);
       onSave();
     },
-    onError: (
-      error: AxiosError<{ message?: string; params?: { message: string } }>,
-    ) => {
-      const data = error.response?.data;
+    onError: (error: unknown) => {
+      const message = apiErrorUtils.extractServerMessage({
+        error,
+        fallback: 'Something went wrong, please try again later',
+      });
 
       form.setError('root.serverError', {
         type: 'manual',
-        message:
-          data?.message ?? data?.params?.message ?? JSON.stringify(error),
+        // This message is rendered outside a `FormField`, so `FormMessage` passes it straight
+        // through as children without calling `t()`. Server prose is not a translation key and
+        // may quote an operator-supplied display name, which ICU would try to parse — so only
+        // translate a string the bundle actually knows.
+        message: i18n.exists(message) ? t(message) : message,
       });
     },
   });

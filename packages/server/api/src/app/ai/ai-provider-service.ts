@@ -232,6 +232,27 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
     },
 })
 
+// Unlike the TEAM-projects cap, this one must never resolve to "unlimited": it exists so that a
+// ceiling is always present, and `system.getNumber` returns null for a value `Number.parseInt`
+// cannot read at all, just as it does for an unset one (the startup validator only warns). An
+// unset, unparseable or non-positive override therefore falls back to the built-in default rather
+// than removing the cap.
+//
+// It does inherit `parseInt`'s prefix rule, which is not the same thing as "non-numeric falls
+// back": only a leading numeric prefix is read, so `12abc` resolves to a live cap of 12 and `1e3`
+// to a live cap of 1. Both are lower than the default, so the direction is fail-closed — but the
+// environment-variables doc says so rather than promising a fallback that does not happen.
+// Exported for the unit test that pins every one of those branches to a number; the wired path
+// can only observe the cap through a 403, and the unique index on (platformId, provider) puts
+// twenty custom rows out of reach until #98/#274 remove it.
+export function getMaxCustomProvidersPerPlatform(): number {
+    const configuredValue = system.getNumber(AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM)
+    if (isNil(configuredValue) || configuredValue <= 0) {
+        return DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM
+    }
+    return configuredValue
+}
+
 async function findProviderOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<AIProviderSchema> {
     const aiProvider = await aiProviderRepo().findOneBy({
         platformId,
@@ -272,21 +293,14 @@ async function assertCustomProviderLimitNotExceeded({ manager, platformId, provi
             params: {
                 resource: 'custom_ai_providers',
                 limit,
+                // Same reason as EXISTING_AI_PROVIDER above: the dialog renders `params.message`,
+                // and a body carrying only `resource` and `limit` used to send it down a fallback
+                // that serialised the AxiosError — request config, bearer token and typed api key
+                // included. Kept free of the number so it stays a translation key.
+                message: CUSTOM_PROVIDER_LIMIT_MESSAGE,
             },
         })
     }
-}
-
-// Unlike the TEAM-projects cap, this one must never resolve to "unlimited": it exists so that a
-// ceiling is always present, and `system.getNumber` returns null for an unparseable value just as
-// it does for an unset one (the startup validator only warns). A missing, malformed or
-// non-positive override therefore falls back to the built-in default rather than removing the cap.
-function getMaxCustomProvidersPerPlatform(): number {
-    const configuredValue = system.getNumber(AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM)
-    if (isNil(configuredValue) || configuredValue <= 0) {
-        return DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM
-    }
-    return configuredValue
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -309,7 +323,11 @@ const POSTGRES_UNIQUE_VIOLATION = '23505'
 // Studio, vLLM, a gateway or two) needs a handful. It replaces the ceiling the total unique index
 // used to provide incidentally, and it is an operator knob so that the rare deployment that needs
 // more is not blocked by a number chosen here.
-const DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM = 20
+export const DEFAULT_MAX_CUSTOM_PROVIDERS_PER_PLATFORM = 20
+
+// Present verbatim in packages/web/public/locales/en/translation.json, so the dialog's
+// `i18n.exists` check finds it and renders the translated form.
+export const CUSTOM_PROVIDER_LIMIT_MESSAGE = 'This platform has reached its limit of custom AI providers'
 
 type GetOrCreateQadamFlowConfigResponse = {
     platformId: PlatformId

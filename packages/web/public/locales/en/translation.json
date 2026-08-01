@@ -1857,6 +1857,7 @@
   "required": "Required",
   "tooManyModels": "Too many models — remove some and try again",
   "modelIdentifierTooLong": "Model id or name is too long",
+  "This platform has reached its limit of custom AI providers": "This platform has reached its limit of custom AI providers",
   "Please connect your account first": "Please connect your account first",
   "Recommended": "Recommended",
   "Others": "Others",

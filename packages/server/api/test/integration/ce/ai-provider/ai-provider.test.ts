@@ -1,8 +1,7 @@
-import { AIProviderModelType, AIProviderName, apId, DefaultProjectRole, ErrorCode, PrincipalType } from '@aiqadam/shared'
+import { AIProviderModelType, AIProviderName, apId, DefaultProjectRole, ErrorCode, isNil, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
-import { vi } from 'vitest'
-import { system } from '../../../../src/app/helper/system/system'
+import { CUSTOM_PROVIDER_LIMIT_MESSAGE } from '../../../../src/app/ai/ai-provider-service'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
@@ -12,24 +11,28 @@ import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/
 
 let app: FastifyInstance | null = null
 let ctx: TestContext
-let maxCustomProvidersOverride: string | undefined
+
+// The override is set as a real environment variable rather than by stubbing `system.getNumber`.
+// A stub has to reimplement that method's parse, and an earlier revision of this file did — which
+// meant the tests asserted against a copy of the contract instead of the contract, with nothing
+// keeping the two in sync. `environmentVariables.getEnvironment` reads `process.env` on every
+// call, so setting it here exercises the real path end to end.
+const MAX_CUSTOM_PROVIDERS_ENV_VAR = `AP_${AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM}`
+const originalMaxCustomProviders = process.env[MAX_CUSTOM_PROVIDERS_ENV_VAR]
+
+const setMaxCustomProvidersOverride = (value: string | undefined) => {
+    if (isNil(value)) {
+        delete process.env[MAX_CUSTOM_PROVIDERS_ENV_VAR]
+        return
+    }
+    process.env[MAX_CUSTOM_PROVIDERS_ENV_VAR] = value
+}
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
-    const original = system.getNumber.bind(system)
-    vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
-        if (prop === AppSystemProp.MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM && maxCustomProvidersOverride !== undefined) {
-            // Mirror system.getNumber's own contract: an unparseable value becomes `null`, not
-            // `NaN`, because system-validator.ts only warns about one at startup.
-            const parsed = Number.parseInt(maxCustomProvidersOverride, 10)
-            return Number.isNaN(parsed) ? null : parsed
-        }
-        return original(prop)
-    })
 })
 
 afterAll(async () => {
-    vi.restoreAllMocks()
     await teardownTestEnvironment()
 })
 
@@ -38,7 +41,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-    maxCustomProvidersOverride = undefined
+    setMaxCustomProvidersOverride(originalMaxCustomProviders)
 })
 
 const customProviderBody = (overrides?: Record<string, unknown>) => ({
@@ -604,6 +607,47 @@ describe('AI Providers API', () => {
             expect(await db.findOneBy('ai_provider', { platformId: ctx.platform.id })).toBeNull()
         })
 
+        it('should reject a create whose modelName is over the length cap', async () => {
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{
+                        modelId: 'fits',
+                        modelName: 'n'.repeat(201),
+                        modelType: AIProviderModelType.TEXT,
+                    }],
+                },
+            }))
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            expect(response?.body).toContain('modelIdentifierTooLong')
+            expect(await db.findOneBy('ai_provider', { platformId: ctx.platform.id })).toBeNull()
+        })
+
+        // Without this the cap is only pinned from above: tightening 200 to 199 would break real
+        // catalogues and every assertion would stay green, exactly as the array cap's own
+        // at-the-cap case exists to prevent.
+        it('should accept identifiers of exactly the cap length', async () => {
+            const response = await ctx.post('/v1/ai-providers', customProviderBody({
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{
+                        modelId: 'm'.repeat(200),
+                        modelName: 'n'.repeat(200),
+                        modelType: AIProviderModelType.TEXT,
+                    }],
+                },
+            }))
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+
+            const saved = await db.findOneByOrFail('ai_provider', { platformId: ctx.platform.id })
+            expect((saved as any).config.models[0].modelId).toHaveLength(200)
+            expect((saved as any).config.models[0].modelName).toHaveLength(200)
+        })
+
         // The abuse loop in the ticket is `POST /:id` repeated, so the cap has to hold on the
         // update path too. It lands as a 409 rather than a 400 because `UpdateAIProviderRequest`
         // carries the untagged config union: an oversized custom config falls through to the
@@ -638,7 +682,7 @@ describe('AI Providers API', () => {
 
     describe('custom providers per platform cap', () => {
         it('should reject the (N+1)th custom provider with RESOURCE_LIMIT_EXCEEDED/403', async () => {
-            maxCustomProvidersOverride = '1'
+            setMaxCustomProvidersOverride('1')
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
@@ -657,10 +701,15 @@ describe('AI Providers API', () => {
             expect(body.code).toBe(ErrorCode.RESOURCE_LIMIT_EXCEEDED)
             expect(body.params.resource).toBe('custom_ai_providers')
             expect(body.params.limit).toBe(1)
+            // `resource` and `limit` are machine vocabulary. Without a sentence the upsert dialog
+            // fell through to `JSON.stringify(error)`, which on an AxiosError serialises `config`
+            // — the Authorization header and the request body, i.e. the admin's own bearer token
+            // and the provider api key they had just typed — straight into the form.
+            expect(body.params.message).toBe(CUSTOM_PROVIDER_LIMIT_MESSAGE)
         })
 
         it('should still allow a custom provider while the platform is under the cap', async () => {
-            maxCustomProvidersOverride = '1'
+            setMaxCustomProvidersOverride('1')
 
             const response = await ctx.post('/v1/ai-providers', customProviderBody({ displayName: 'The first one' }))
 
@@ -668,7 +717,7 @@ describe('AI Providers API', () => {
         })
 
         it('should not apply the custom cap to the single-instance provider types', async () => {
-            maxCustomProvidersOverride = '1'
+            setMaxCustomProvidersOverride('1')
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
@@ -692,10 +741,15 @@ describe('AI Providers API', () => {
             expect(response?.statusCode).toBe(StatusCodes.OK)
         })
 
-        it('should fall back to the built-in cap when the configured value is unusable', async () => {
-            // A malformed or non-positive override must not read as "no cap" — this cap exists so
-            // that a ceiling is always present, which is the opposite of the TEAM-projects one.
-            maxCustomProvidersOverride = 'not-a-number'
+        // A non-positive override must not read as "no cap", and must not read as a *literal* cap
+        // either: with the `<= 0` half of the fallback removed, `current >= limit` is `0 >= 0` and
+        // `0 >= -1` on an empty platform, so both of these creates would be refused. That is the
+        // half of `getMaxCustomProvidersPerPlatform` a create-succeeds assertion can actually see
+        // from the wired path; the rest is pinned in test/unit/app/ai/ai-provider-limit.test.ts,
+        // because observing a resolved limit of twenty needs twenty custom rows and the unique
+        // index on (platformId, provider) allows one.
+        it.each(['not-a-number', '0', '-1', ''])('should fall back to the built-in cap when the override is %j', async (override) => {
+            setMaxCustomProvidersOverride(override)
 
             const response = await ctx.post('/v1/ai-providers', customProviderBody({ displayName: 'Still allowed' }))
 
