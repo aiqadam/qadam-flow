@@ -36,7 +36,7 @@ git push -f origin v1.2.0
 
 The gate then passes and prints the tagger's name, email and reason into the job log and the run summary. The reason is stored in the tag object, so `git show v1.2.0` shows it forever. This is deliberately a little more work than writing the changelog entry, and deliberately impossible to do invisibly — a lightweight tag cannot carry an override. Do not delete the check instead; the whole reason it exists is that the previous control was somebody remembering.
 
-## Unreleased
+## 2.0.0
 
 ### What has changed?
 
@@ -153,14 +153,12 @@ This is an important behavior change in how flow run logs are stored and capped,
 - See [Technical Limits → Files & flow run logs](/flows/known-limits#files-flow-run-logs) for the full behavior, environment variables, and defaults.
 - Embedding now requires setting allowed embed origins, which means only the domains listed in the field can embed the app (wildcards are supported). There is also a new env variable `AP_ALLOWED_EMBED_ORIGINS` for setting pre-allowed origins, and a new endpoint for adding these origins — [check docs](/endpoints/embedding/add-allowed-embed-origins).
 
+#### Workers and app servers must run the same version
+Now both workers and app servers must be on the same version to run flows (to avoid mismatch errors and unpredictability).
+
 ### Do you need to take action?
 - **Embedding** — if you are embedding your self-hosted Qadam Flow somewhere make sure it's on the allow list
-
-
-## 0.84.0
-
-### What has changed?
-Now both workers and app servers must be on the same version to run flows (to avoid mismatch errors and unpredictability).
+- **Upgrading** — upgrade your workers and your app servers together; running them on different versions is no longer supported
 
 ## 0.83.0 
 
