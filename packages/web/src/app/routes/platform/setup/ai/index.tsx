@@ -20,6 +20,7 @@ import { userHooks } from '@/hooks/user-hooks';
 
 import LockedFeatureGuard from '../../../../components/locked-feature-guard';
 
+import { aiProviderRowUtils } from './ai-provider-rows';
 import { AIProviderCard } from './universal-pieces/ai-provider-card';
 
 export default function AIProvidersPage() {
@@ -40,6 +41,10 @@ export default function AIProvidersPage() {
 
   const configuredProviders = providers ?? [];
   const chatProvider = providers?.find((p) => p.enabledForChat);
+  const providerRows = aiProviderRowUtils.buildProviderRows({
+    providerInfos: SUPPORTED_AI_PROVIDERS,
+    providers: configuredProviders,
+  });
 
   return (
     <LockedFeatureGuard
@@ -73,22 +78,20 @@ export default function AIProvidersPage() {
         )}
 
         <div className="flex flex-col gap-4">
-          {SUPPORTED_AI_PROVIDERS.map((providerDef) => {
-            const config = providers?.find(
-              (p) => p.provider === providerDef.provider,
-            );
-
-            return (
-              <AIProviderCard
-                key={providerDef.provider}
-                providerInfo={providerDef}
-                providerConfig={config}
-                onDelete={(id) => deleteProvider(id)}
-                onSave={() => refetch()}
-                allowWrite={allowWrite}
-              />
-            );
-          })}
+          {providerRows.map((row) => (
+            <AIProviderCard
+              key={row.key}
+              providerInfo={row.providerInfo}
+              providerConfig={row.providerConfig}
+              defaultDisplayName={row.defaultDisplayName}
+              createLabel={
+                row.isCustomCreateSlot ? t('Add Provider') : undefined
+              }
+              onDelete={(id) => deleteProvider(id)}
+              onSave={() => refetch()}
+              allowWrite={allowWrite}
+            />
+          ))}
         </div>
       </CenteredPage>
     </LockedFeatureGuard>
