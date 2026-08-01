@@ -1,7 +1,7 @@
-import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
 import { AIProviderModel, AIProviderModelType, GoogleProviderAuthConfig, GoogleProviderConfig } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
+import { providerHttp } from './provider-http'
 
 export const googleProvider: AIProviderStrategy<GoogleProviderAuthConfig, GoogleProviderConfig> = {
     name: 'Google',
@@ -9,15 +9,15 @@ export const googleProvider: AIProviderStrategy<GoogleProviderAuthConfig, Google
         await googleProvider.listModels(authConfig, config)
     },
     async listModels(authConfig: GoogleProviderAuthConfig, _config: GoogleProviderConfig): Promise<AIProviderModel[]> {
-        const res = await httpClient.sendRequest<{ models: GoogleModel[] }>({
+        const body = await providerHttp.sendJson<{ models: GoogleModel[] }>({
             url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
-            method: HttpMethod.GET,
+            method: 'GET',
             headers: {
                 'x-goog-api-key': authConfig.apiKey,
                 'Content-Type': 'application/json',
             },
         })
-        return res.body.models.map((model: GoogleModel) => ({
+        return body.models.map((model: GoogleModel) => ({
             id: stripModelsPrefix(model.name),
             name: model.displayName,
             type: model.name.includes('image') ? AIProviderModelType.IMAGE : AIProviderModelType.TEXT,

@@ -14,8 +14,12 @@ import {
     BedrockProviderConfig,
     chatPersistenceUtils,
     CloudflareGatewayProviderConfig,
+    INVALID_AWS_REGION_MESSAGE,
+    INVALID_AZURE_RESOURCE_NAME_MESSAGE,
     isBatchProgressData,
     isNil,
+    isValidAwsRegion,
+    isValidAzureResourceName,
     OpenAICompatibleProviderConfig,
     PersistedChatPart,
     PersistedChatPartType,
@@ -55,11 +59,24 @@ function createChatModel({ provider, auth, config, modelId }: {
         case AIProviderName.AZURE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
             const { resourceName } = config as AzureProviderConfig
+            // The schema rejects a `resourceName` that could move the host, but this row is read
+            // straight from the database and never re-parsed, so a value stored before that
+            // constraint existed would still reach `https://<it>.openai.azure.com` with the
+            // `api-key` header attached (#276). safeHttp.fetch filters the address, not the name.
+            if (!isValidAzureResourceName(resourceName)) {
+                throw new Error(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+            }
             return createAzure({ resourceName, apiKey, fetch: safeHttp.fetch }).chat(modelId)
         }
         case AIProviderName.BEDROCK: {
             const { accessKeyId, secretAccessKey } = auth as BedrockProviderAuthConfig
             const { region } = config as BedrockProviderConfig
+            // Same reason as AZURE above: the SDK interpolates `region` into the endpoint host,
+            // and this row is never re-parsed against `BedrockProviderConfig` on the way out of
+            // the database.
+            if (!isValidAwsRegion(region)) {
+                throw new Error(INVALID_AWS_REGION_MESSAGE)
+            }
             return createAmazonBedrock({ region, accessKeyId, secretAccessKey, fetch: safeHttp.fetch })(modelId)
         }
         case AIProviderName.CLOUDFLARE_GATEWAY: {

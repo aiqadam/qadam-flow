@@ -1,9 +1,12 @@
+import { safeHttp } from '@aiqadam/server-utils'
 import {
     AIProviderModel,
     AIProviderModelType,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
+    INVALID_AWS_REGION_MESSAGE,
     isNil,
+    isValidAwsRegion,
 } from '@aiqadam/shared'
 
 import {
@@ -13,6 +16,7 @@ import {
     ModelModality,
 } from '@aws-sdk/client-bedrock'
 
+import { NodeHttpHandler } from '@smithy/node-http-handler'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 
@@ -34,12 +38,27 @@ BedrockProviderConfig
         authConfig: BedrockProviderAuthConfig,
         config: BedrockProviderConfig,
     ): Promise<AIProviderModel[]> {
+        // `region` is interpolated into the endpoint by the SDK with no validation of its own:
+        // `evil.com/` resolves to host `bedrock.evil.com`, `x@evil.com` to `evil.com.amazonaws.com`
+        // (checked against the installed `@aws-sdk/client-bedrock`). The SigV4 `Authorization`
+        // header — access key id plus signature — would go with it. `BedrockProviderConfig` now
+        // refuses such a value, but this reads the row verbatim and never re-parses it, so a row
+        // written before that constraint still needs stopping here. Same shape as Azure's
+        // `resourceName` (#276).
+        if (!isValidAwsRegion(config.region)) {
+            throw new Error(INVALID_AWS_REGION_MESSAGE)
+        }
         const client = new BedrockClient({
             region: config.region,
             credentials: {
                 accessKeyId: authConfig.accessKeyId,
                 secretAccessKey: authConfig.secretAccessKey,
             },
+            // The AWS SDK takes neither an axios instance nor a `fetch` override, so it is the
+            // one call in this directory that reaches the filter through the agents directly.
+            // Without this it runs on the SDK's own unfiltered handler and is outside the SSRF
+            // filter entirely, which is the other half of #276.
+            requestHandler: new NodeHttpHandler(safeHttp.buildDefaultAgents()),
         })
 
         const [foundationResponse, profileByModelArn] = await Promise.all([

@@ -94,8 +94,31 @@ export type CloudflareGatewayProviderConfig = z.infer<typeof CloudflareGatewayPr
 
 export const DEFAULT_AZURE_API_VERSION = '2024-10-21'
 
+// `resourceName` is the leftmost label of `<resourceName>.openai.azure.com`, so an unconstrained
+// string is a host injection rather than a typo risk: `attacker.example.com/` resolves the request
+// to `https://attacker.example.com/.openai.azure.com/...`, with the `api-key` header attached
+// (#276). Azure itself only ever issues names of letters, digits and hyphens, 2–64 characters, so
+// nothing legitimate is excluded — and every character that could re-point the host (`/`, `.`,
+// `:`, `@`, whitespace, `\`, `?`, `#`) is.
+const AZURE_RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9-]{2,64}$/
+
+export function isValidAzureResourceName(resourceName: unknown): resourceName is string {
+    return typeof resourceName === 'string' && AZURE_RESOURCE_NAME_PATTERN.test(resourceName)
+}
+
+// Thrown at the two sinks that build the Azure host from a stored row (`azure-provider.listModels`
+// and `chatAiUtils.createChatModel`), which read `config` straight from the database and never
+// re-parse it — so the schema alone does not cover a row written before the constraint existed.
+// Reached only by an operator, so it says what to do rather than only what is wrong. Present
+// verbatim in packages/web/public/locales/en/translation.json, same as
+// `CUSTOM_PROVIDER_LIMIT_MESSAGE`, so the dialog's `i18n.exists` check renders the translated form.
+export const INVALID_AZURE_RESOURCE_NAME_MESSAGE = 'The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.'
+
+// Same reasoning as the Azure message above, for the Bedrock `region` sink.
+export const INVALID_AWS_REGION_MESSAGE = 'The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.'
+
 export const AzureProviderConfig = z.object({
-    resourceName: z.string(),
+    resourceName: z.string().regex(AZURE_RESOURCE_NAME_PATTERN, formErrors.invalidAzureResourceName),
     apiVersion: z.preprocess(
         (v) => (typeof v === 'string' && v.trim().length === 0 ? undefined : v),
         z.string().optional(),
@@ -112,8 +135,21 @@ export type OpenAIProviderConfig = z.infer<typeof OpenAIProviderConfig>
 export const OpenRouterProviderConfig = z.object({})
 export type OpenRouterProviderConfig = z.infer<typeof OpenRouterProviderConfig>
 
+// The same defect as `resourceName`, verified against the installed SDK rather than inferred:
+// `@aws-sdk/client-bedrock`'s endpoint resolver builds `https://bedrock.{region}.amazonaws.com`
+// with no validation, so a region of `evil.com/` resolves to host `bedrock.evil.com` and
+// `x@evil.com` to `evil.com.amazonaws.com`. What leaks there is a SigV4 `Authorization` header —
+// the access key id and a signature — rather than a raw key, so it is a smaller loss than #276's
+// `api-key`, but it is the identical shape and is closed the identical way. Every AWS region id
+// is lowercase letters, digits and hyphens.
+const AWS_REGION_PATTERN = /^[a-z0-9-]{1,64}$/
+
+export function isValidAwsRegion(region: unknown): region is string {
+    return typeof region === 'string' && AWS_REGION_PATTERN.test(region)
+}
+
 export const BedrockProviderConfig = z.object({
-    region: z.string().min(1),
+    region: z.string().regex(AWS_REGION_PATTERN, formErrors.invalidAwsRegion),
 })
 export type BedrockProviderConfig = z.infer<typeof BedrockProviderConfig>
 

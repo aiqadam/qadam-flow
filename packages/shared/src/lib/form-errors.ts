@@ -9,4 +9,6 @@ export const formErrors = {
     messageRequiresContentOrFiles: 'messageRequiresContentOrFiles',
     tooManyModels: 'tooManyModels',
     modelIdentifierTooLong: 'modelIdentifierTooLong',
+    invalidAzureResourceName: 'invalidAzureResourceName',
+    invalidAwsRegion: 'invalidAwsRegion',
 } as const
