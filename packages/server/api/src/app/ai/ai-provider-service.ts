@@ -48,8 +48,8 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         }))
     },
 
-    async listModels(platformId: PlatformId, provider: AIProviderName): Promise<AIProviderModel[]> {
-        const aiProvider = await findProviderOrThrow({ platformId, provider })
+    async listModels({ platformId, ref }: ProviderRef): Promise<AIProviderModel[]> {
+        const aiProvider = await findProviderOrThrow({ platformId, ref })
 
         // Keyed on the row, not on the credentials: two configs can share an api key and still
         // point at different endpoints (an Azure resource name, a base url), and a key in a
@@ -62,7 +62,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         }
 
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
-        const data = await aiProviders[provider].listModels(auth, config)
+        const data = await aiProviders[aiProvider.provider].listModels(auth, config)
 
         modelsCache.set(cacheKey, data.map(model => ({
             id: model.id,
@@ -183,7 +183,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             return null
         }
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(chatProvider.auth)
-        return { provider: chatProvider.provider, auth, config: chatProvider.config, platformId }
+        return { id: chatProvider.id, provider: chatProvider.provider, auth, config: chatProvider.config, platformId }
     },
 
     async delete(platformId: PlatformId, providerId: string): Promise<void> {
@@ -213,25 +213,32 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             })
         }
     },
-    async getConfigOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<GetProviderConfigResponse> {
-        const aiProvider = await findProviderOrThrow({ platformId, provider })
+    async getConfigOrThrow({ platformId, ref }: ProviderRef): Promise<GetProviderConfigResponse> {
+        const aiProvider = await findProviderOrThrow({ platformId, ref })
 
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
 
-        return { provider: aiProvider.provider, auth, config: aiProvider.config, platformId }
+        return { id: aiProvider.id, provider: aiProvider.provider, auth, config: aiProvider.config, platformId }
     },
 })
 
-async function findProviderOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<AIProviderSchema> {
-    const aiProvider = await aiProviderRepo().findOneBy({
-        platformId,
-        provider,
-    })
+function isProviderName(ref: string): ref is AIProviderName {
+    const names: string[] = Object.values(AIProviderName)
+    return names.includes(ref)
+}
+
+async function findProviderOrThrow({ platformId, ref }: ProviderRef): Promise<AIProviderSchema> {
+    // A name can now match more than one row (custom providers), so the legacy name path needs a
+    // stated tiebreak rather than whichever row Postgres happens to return. Oldest wins: that is
+    // the row that already existed when every name-keyed caller was written.
+    const aiProvider = isProviderName(ref)
+        ? await aiProviderRepo().findOne({ where: { platformId, provider: ref }, order: { created: 'ASC' } })
+        : await aiProviderRepo().findOneBy({ platformId, id: ref })
     if (isNil(aiProvider)) {
         throw new QadamFlowError({
             code: ErrorCode.ENTITY_NOT_FOUND,
             params: {
-                entityId: provider,
+                entityId: ref,
                 entityType: 'AIProvider',
             },
         })
@@ -254,7 +261,12 @@ function isUniqueViolation(error: unknown): boolean {
 
 const POSTGRES_UNIQUE_VIOLATION = '23505'
 
-type GetOrCreateQadamFlowConfigResponse = {
+/**
+ * `ref` addresses one provider row: either its id, or an `AIProviderName`. The name form exists
+ * permanently, not as a transition — published qadam versions are pinned exactly and build
+ * `/v1/ai-providers/${provider}/config` from the enum, so those calls never stop arriving.
+ */
+type ProviderRef = {
     platformId: PlatformId
-    provider: AIProviderName
+    ref: string
 }

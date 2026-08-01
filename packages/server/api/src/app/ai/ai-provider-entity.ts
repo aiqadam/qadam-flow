@@ -52,9 +52,14 @@ export const AIProviderEntity = new EntitySchema<AIProviderSchema>({
     },
     indices: [
         {
-            name: 'idx_ai_provider_platform_id_provider',
+            // Renamed, not amended. TypeORM's schema builder compares an index by name, uniqueness
+            // and columns and never reads `where`, so adding the predicate under the old name
+            // generates an empty migration and check-migrations reports no drift — the entity and
+            // the database would disagree silently and permanently.
+            name: 'idx_ai_provider_platform_id_provider_not_custom',
             columns: ['platformId', 'provider'],
             unique: true,
+            where: '"provider" <> \'custom\'',
         },
     ],
     relations: {

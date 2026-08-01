@@ -13,6 +13,7 @@ import { AddAlertEntity1784724891352 } from './migration/postgres/1784724891352-
 import { AddApiKey1784922234136 } from './migration/postgres/1784922234136-AddApiKey'
 import { FixEntityMetadataDrift1785100000000 } from './migration/postgres/1785100000000-FixEntityMetadataDrift'
 import { AddChatConversation1785486141722 } from './migration/postgres/1785486141722-AddChatConversation'
+import { AllowMultipleCustomAIProviders1785490000000 } from './migration/postgres/1785490000000-AllowMultipleCustomAIProviders'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -33,6 +34,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddApiKey1784922234136,
         FixEntityMetadataDrift1785100000000,
         AddChatConversation1785486141722,
+        AllowMultipleCustomAIProviders1785490000000,
     ]
 }
 

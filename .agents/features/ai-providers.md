@@ -20,11 +20,14 @@ The AI Providers module lets platform admins configure one or more LLM backends 
 - **AIProvider**: A platform-scoped entity linking an LLM vendor's credentials to the platform.
 - **AIProviderName**: Enum of supported vendors (`openai`, `openrouter`, `anthropic`, `azure`, `google`, `cloudflare-gateway`, `custom`, `bedrock`, `mistral`).
 - **EncryptedObject**: The `auth` field is AES-256-encrypted at rest; decrypted only for engine access.
-- **Model cache**: In-memory cache of models per provider, cleared daily at midnight via cron.
+- **Model cache**: In-memory cache of models per provider *row*, cleared daily at midnight via cron.
+- **Provider ref**: How a provider is addressed — its row id, or an `AIProviderName`. The name form resolves to the platform's **oldest** row of that type and exists permanently, because published qadam versions are pinned and build their URLs from the enum.
 
 ## Entity
 
-**AIProvider**: id, displayName, platformId (UNIQUE with provider), provider (AIProviderName enum), auth (EncryptedObject), config (JSON), enabledForChat (boolean, default false). Relation: platform (CASCADE).
+**AIProvider**: id, displayName, platformId, provider (AIProviderName enum), auth (EncryptedObject), config (JSON), enabledForChat (boolean, default false). Relation: platform (CASCADE).
+
+Unique on `(platformId, provider)` **only where `provider <> 'custom'`** — a platform may hold any number of custom (OpenAI-compatible) providers and exactly one of each other type. The index is partial, so `ON CONFLICT ('platformId','provider')` no longer has a matching arbiter (`42P10`); conflict on `id` instead.
 
 ## Supported Providers (9)
 
@@ -44,20 +47,20 @@ Registered in `packages/server/api/src/app/ai/providers/index.ts`; auth/config s
 
 ## Model Caching
 
-Models listed per provider are cached in an in-process `Map`, keyed by provider plus a fingerprint of its auth/config. Providers whose config carries an explicit `models` list bypass the cache. `aiProviderService.setup()` registers a `0 0 * * *` node-cron job that clears the whole cache daily at midnight.
+Models listed per provider are cached in an in-process `Map`, keyed by the provider row's `id` and its `updated` timestamp — so editing credentials or config invalidates the entry, and two rows never share one. Providers whose config carries an explicit `models` list bypass the cache. `aiProviderService.setup()` registers a `0 0 * * *` node-cron job that clears the whole cache daily at midnight.
 
 ## Endpoints
 
 - `GET /` — list providers
-- `GET /:provider/config` — get provider config + decrypted auth (engine-only access)
-- `GET /:provider/models` — list available models (cached)
+- `GET /:providerRef/config` — get provider config + decrypted auth (engine-only access). `providerRef` is a row id or a provider name
+- `GET /:providerRef/models` — list available models (cached)
 - `POST /` — create provider (validates credentials first)
 - `POST /:id` — update provider (re-validates if auth changed)
 - `DELETE /:id` — delete provider
 
 ## Engine Integration
 
-During flow execution, AI pieces call `GET /v1/ai-providers/{provider}/config` to get credentials. The engine token provides authorization.
+During flow execution, AI pieces call `GET /v1/ai-providers/{providerRef}/config` to get credentials. Versions pinned before id-addressing send the provider name and get the oldest matching row. The engine token provides authorization.
 
 ## Frontend
 

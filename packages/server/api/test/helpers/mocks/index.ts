@@ -665,7 +665,10 @@ export const createMockAIProvider = async (aiProvider?: Partial<AIProvider>): Pr
 
 export const mockAndSaveAIProvider = async (params?: Partial<AIProvider>): Promise<Omit<AIProviderSchema, 'platform'>> => {
     const mockAIProvider = await createMockAIProvider(params)
-    await databaseConnection().getRepository('ai_provider').upsert(mockAIProvider, ['platformId', 'provider'])
+    // Conflict on the primary key, not on (platformId, provider): that index is partial now
+    // (`WHERE provider <> 'custom'`), and Postgres rejects an ON CONFLICT whose inferred arbiter
+    // has a predicate the statement does not repeat — 42P10, in every test using this helper.
+    await databaseConnection().getRepository('ai_provider').upsert(mockAIProvider, ['id'])
     return mockAIProvider
 }
 

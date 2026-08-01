@@ -52,30 +52,46 @@ describe('AI Providers API', () => {
             })
         })
 
-        it('should reject a second provider of the same type with a conflict, not a database error', async () => {
-            const body = {
+        it('should allow a second custom provider, each addressable by its own id', async () => {
+            const deepseek = await ctx.post('/v1/ai-providers', {
                 provider: AIProviderName.CUSTOM,
                 displayName: 'DeepSeek',
-                config: {
-                    baseUrl: 'https://api.deepseek.com/v1',
-                    apiKeyHeader: 'Authorization',
-                    models: [],
-                },
+                config: { baseUrl: 'https://api.deepseek.com/v1', apiKeyHeader: 'Authorization', models: [] },
+                auth: { apiKey: 'test-key' },
+            })
+            const ollama = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Local Ollama',
+                config: { baseUrl: 'http://ollama.internal:11434/v1', apiKeyHeader: 'Authorization', models: [] },
+                auth: { apiKey: 'test-key' },
+            })
+
+            // This is the assertion issue #98 exists for.
+            expect(deepseek?.statusCode).toBe(StatusCodes.OK)
+            expect(ollama?.statusCode).toBe(StatusCodes.OK)
+
+            const rows = await db.find('ai_provider', { platformId: ctx.platform.id, provider: AIProviderName.CUSTOM })
+            expect(rows).toHaveLength(2)
+            expect(new Set(rows.map((r: any) => r.id)).size).toBe(2)
+        })
+
+        it('should still reject a second provider of a singleton type with a conflict, not a database error', async () => {
+            // CLOUDFLARE_GATEWAY, not CUSTOM: custom is legitimately duplicable now, and it is the
+            // only other provider whose validateConnection makes no network call with `models: []`.
+            const body = {
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
+                displayName: 'Gateway',
+                config: { accountId: 'acc', gatewayId: 'gw', models: [] },
                 auth: { apiKey: 'test-key' },
             }
 
             const first = await ctx.post('/v1/ai-providers', body)
             expect(first?.statusCode).toBe(StatusCodes.OK)
 
-            const second = await ctx.post('/v1/ai-providers', {
-                ...body,
-                displayName: 'Local Ollama',
-                config: { ...body.config, baseUrl: 'http://ollama.internal:11434/v1' },
-            })
+            const second = await ctx.post('/v1/ai-providers', { ...body, displayName: 'Gateway again' })
 
             expect(second?.statusCode).toBe(StatusCodes.CONFLICT)
             expect(second?.json().code).toBe(ErrorCode.EXISTING_AI_PROVIDER)
-            // The dialog renders params.message, so it has to say something a user can act on.
             expect(second?.json().params.message).toContain('already configured')
             // The Postgres error code and the index name used to reach the caller verbatim.
             expect(second?.body).not.toContain('23505')
@@ -148,13 +164,9 @@ describe('AI Providers API', () => {
 
         it('should not disable the existing chat provider when the create is rejected as a duplicate', async () => {
             const body = {
-                provider: AIProviderName.CUSTOM,
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
                 displayName: 'The one chat provider',
-                config: {
-                    baseUrl: 'https://api.example.com/v1',
-                    apiKeyHeader: 'Authorization',
-                    models: [],
-                },
+                config: { accountId: 'acc', gatewayId: 'gw', models: [] },
                 auth: { apiKey: 'test-key' },
                 enabledForChat: true,
             }
@@ -169,7 +181,7 @@ describe('AI Providers API', () => {
             // otherwise a 409 silently leaves the platform with no chat provider at all.
             const saved = await db.findOneByOrFail('ai_provider', {
                 platformId: ctx.platform.id,
-                provider: AIProviderName.CUSTOM,
+                provider: AIProviderName.CLOUDFLARE_GATEWAY,
             })
             expect((saved as any).displayName).toBe('The one chat provider')
             expect((saved as any).enabledForChat).toBe(true)
