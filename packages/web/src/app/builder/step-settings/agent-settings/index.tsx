@@ -9,6 +9,7 @@ import {
 import { useFormContext } from 'react-hook-form';
 
 import { AgentTools } from '@/app/builder/step-settings/agent-settings/agent-tools';
+import { aiProviderModelValue } from '@/app/builder/step-settings/agent-settings/ai-provider-model-value';
 import { FormField } from '@/components/ui/form';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AIModelSelector, AgentStructuredOutput } from '@/features/agents';
@@ -128,7 +129,14 @@ const selectAgentFormComponentForProperty = (
         <AIModelSelector
           defaultModel={model}
           defaultProvider={provider}
-          onChange={field.onChange}
+          onChange={(selection) =>
+            field.onChange(
+              aiProviderModelValue.applySelection({
+                storedValue: field.value,
+                selection,
+              }),
+            )
+          }
           disabled={disabled}
         />
       );
