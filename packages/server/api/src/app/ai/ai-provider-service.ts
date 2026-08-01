@@ -37,7 +37,10 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
     },
 
     async listProviders(platformId: PlatformId): Promise<AIProviderWithoutSensitiveData[]> {
-        const configuredProviders = await aiProviderRepo().findBy({ platformId })
+        // Same order as the name-keyed tiebreak in `findProviderOrThrow`, for the same reason: a
+        // caller that collapses several rows of one provider type to the first it sees — the
+        // settings page does, per card — must not get a different row between two page loads.
+        const configuredProviders = await aiProviderRepo().find({ where: { platformId }, order: { created: 'ASC', id: 'ASC' } })
 
         return configuredProviders.map((p): AIProviderWithoutSensitiveData => ({
             id: p.id,
@@ -230,9 +233,10 @@ function isProviderName(ref: string): ref is AIProviderName {
 async function findProviderOrThrow({ platformId, ref }: ProviderRef): Promise<AIProviderSchema> {
     // A name can now match more than one row (custom providers), so the legacy name path needs a
     // stated tiebreak rather than whichever row Postgres happens to return. Oldest wins: that is
-    // the row that already existed when every name-keyed caller was written.
+    // the row that already existed when every name-keyed caller was written. `id` breaks a tie on
+    // `created` — two rows can share that timestamp, and then `created` alone orders arbitrarily.
     const aiProvider = isProviderName(ref)
-        ? await aiProviderRepo().findOne({ where: { platformId, provider: ref }, order: { created: 'ASC' } })
+        ? await aiProviderRepo().findOne({ where: { platformId, provider: ref }, order: { created: 'ASC', id: 'ASC' } })
         : await aiProviderRepo().findOneBy({ platformId, id: ref })
     if (isNil(aiProvider)) {
         throw new QadamFlowError({

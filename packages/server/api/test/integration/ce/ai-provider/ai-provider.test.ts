@@ -1,6 +1,7 @@
 import { AIProviderModelType, AIProviderName, apId, ErrorCode, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { AIProviderSchema } from '../../../../src/app/ai/ai-provider-entity'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import { mockAndSaveAIProvider } from '../../../helpers/mocks'
@@ -322,7 +323,7 @@ describe('AI Providers API', () => {
         })
     })
 
-    describe('GET /v1/ai-providers/:provider/config', () => {
+    describe('GET /v1/ai-providers/:providerRef/config', () => {
         it('should return config with defaultHeaders and platformId', async () => {
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
@@ -336,22 +337,15 @@ describe('AI Providers API', () => {
                 },
             })
 
-            const engineToken = await generateMockToken({
-                type: PrincipalType.ENGINE,
-                id: apId(),
-                projectId: ctx.project.id,
-                platform: { id: ctx.platform.id },
-            })
-
             const response = await app!.inject({
                 method: 'GET',
                 url: `/api/v1/ai-providers/${AIProviderName.CUSTOM}/config`,
-                headers: { authorization: `Bearer ${engineToken}` },
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
             const body = response?.json()
-           
+
             expect(body.provider).toBe(AIProviderName.CUSTOM)
             expect(body.platformId).toBe(ctx.platform.id)
             expect(body.config.defaultHeaders).toEqual({ 'X-Org': 'org-789' })
@@ -369,17 +363,10 @@ describe('AI Providers API', () => {
                 },
             })
 
-            const engineToken = await generateMockToken({
-                type: PrincipalType.ENGINE,
-                id: apId(),
-                projectId: ctx.project.id,
-                platform: { id: ctx.platform.id },
-            })
-
             const response = await app!.inject({
                 method: 'GET',
                 url: `/api/v1/ai-providers/${AIProviderName.CUSTOM}/config`,
-                headers: { authorization: `Bearer ${engineToken}` },
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
@@ -387,6 +374,73 @@ describe('AI Providers API', () => {
 
             expect(body.platformId).toBe(ctx.platform.id)
             expect(body.config.defaultHeaders).toBeUndefined()
+        })
+
+        it('should resolve a provider name to the oldest matching row', async () => {
+            // Seeded newest-first on purpose. An unordered read of a table this small is a
+            // sequential scan returning insertion order, so seeding in `created` order would let
+            // this pass with no ORDER BY at all — measured: that version stayed green with the
+            // clause deleted. Reversing the two makes the ordering the only thing under test.
+            const newest = await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'Added afterwards',
+                created: '2025-06-01T00:00:00.000Z',
+                baseUrl: 'https://newest.example.com/v1',
+            })
+            const oldest = await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'Configured before the upgrade',
+                created: '2024-01-01T00:00:00.000Z',
+                baseUrl: 'https://oldest.example.com/v1',
+            })
+
+            // `createMockAIProvider` defaults `created` to `faker.date.recent()`, so the explicit
+            // timestamps are the whole basis of this assertion — check they reached the rows rather
+            // than assume it, or the test is a coin flip that passes either way.
+            const storedOldest = await db.findOneByOrFail<any>('ai_provider', { id: oldest.id })
+            const storedNewest = await db.findOneByOrFail<any>('ai_provider', { id: newest.id })
+            expect(new Date(storedOldest.created).getTime())
+                .toBeLessThan(new Date(storedNewest.created).getTime())
+
+            const response = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/ai-providers/${AIProviderName.CUSTOM}/config`,
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            // Pinned qadam versions send the name and must keep reaching the row that existed when
+            // they were published, not whichever row Postgres returns first.
+            expect(response?.json().id).toBe(oldest.id)
+            expect(response?.json().config.baseUrl).toBe('https://oldest.example.com/v1')
+        })
+
+        it('should address a provider by its own id instead of resolving the name', async () => {
+            await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'The row the name path would win',
+                created: '2024-01-01T00:00:00.000Z',
+                baseUrl: 'https://oldest.example.com/v1',
+            })
+            // Deliberately the newer row: the name path resolves to the oldest, so an id lookup
+            // that degraded into a name lookup would answer 200 with the wrong provider's
+            // credentials — which no assertion on status or on id-distinctness can catch.
+            const target = await mockAndSaveCustomProvider({
+                platformId: ctx.platform.id,
+                displayName: 'Addressed by id',
+                created: '2025-06-01T00:00:00.000Z',
+                baseUrl: 'https://target.example.com/v1',
+            })
+
+            const response = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/ai-providers/${target.id}/config`,
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().id).toBe(target.id)
+            expect(response?.json().config.baseUrl).toBe('https://target.example.com/v1')
         })
     })
 
@@ -417,3 +471,29 @@ describe('AI Providers API', () => {
         })
     })
 })
+
+async function mockEngineToken(): Promise<string> {
+    return generateMockToken({
+        type: PrincipalType.ENGINE,
+        id: apId(),
+        projectId: ctx.project.id,
+        platform: { id: ctx.platform.id },
+    })
+}
+
+async function mockAndSaveCustomProvider({ platformId, displayName, created, baseUrl }: MockCustomProviderParams): Promise<Omit<AIProviderSchema, 'platform'>> {
+    return mockAndSaveAIProvider({
+        platformId,
+        provider: AIProviderName.CUSTOM,
+        displayName,
+        created,
+        config: { baseUrl, apiKeyHeader: 'Authorization', models: [] },
+    })
+}
+
+type MockCustomProviderParams = {
+    platformId: string
+    displayName: string
+    created: string
+    baseUrl: string
+}

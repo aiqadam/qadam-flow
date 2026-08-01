@@ -13,7 +13,7 @@ const listAiModelsInput = z.object({
 export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_list_ai_models',
-        description: 'List configured AI providers and their available models. Use this to discover valid provider and model values for configuring Run Agent steps. The output shows provider names and model IDs needed for the aiProviderModel input.',
+        description: 'List configured AI providers and their available models. Use this to discover valid provider and model values for configuring Run Agent steps. The output shows the provider names and model IDs needed for the aiProviderModel input, plus each provider\'s row id to tell two providers of the same type apart.',
         inputSchema: listAiModelsInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
         execute: async (args) => {
@@ -73,10 +73,16 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                     }),
                 )
 
+                // The ids above disambiguate the listing, but they are deliberately absent from the
+                // usage line: `AgentProviderModel` is `{ provider, model }`, the step prop is a
+                // `Property.Object` that accepts and drops any extra key, and the AI qadam still
+                // builds `v1/ai-providers/${provider}/config` from the name. An agent told to send
+                // `providerId` would point a step at one custom provider and silently execute
+                // against the platform's oldest one. Advertise it once something reads it.
                 return {
                     content: [{
                         type: 'text',
-                        text: `Configured AI Providers:\n\n${sections.join('\n\n')}\n\nUsage: Set aiProviderModel to {"providerId": "<id>", "provider": "<provider>", "model": "<model id>"} when configuring a Run Agent step.`,
+                        text: `Configured AI Providers:\n\n${sections.join('\n\n')}\n\nUsage: Set aiProviderModel to {"provider": "<provider>", "model": "<model id>"} when configuring a Run Agent step.`,
                     }],
                     structuredContent: { providers: structuredProviders },
                 }
