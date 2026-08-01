@@ -25,7 +25,13 @@ const applySelection = ({
   if (!isPlainObject(storedValue)) {
     return { ...selection };
   }
-  if (storedValue.provider !== selection.provider) {
+  // Only a selection that names a provider can tell us the provider changed. Every emission site
+  // sends one today, but a future one that sends only a model must not be read as "the provider
+  // became undefined" — that would drop the stored provider along with the extras.
+  if (
+    selection.provider !== undefined &&
+    storedValue.provider !== selection.provider
+  ) {
     return { ...selection };
   }
   return { ...storedValue, ...selection };

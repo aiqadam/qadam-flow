@@ -90,4 +90,24 @@ describe('aiProviderModelValue.applySelection', () => {
       }),
     ).toEqual({ provider: 'openai', model: 'gpt-4o' });
   });
+
+  // Every emission site names a provider today, so this is a guard against a future one that does
+  // not. Reading an absent provider as a change would drop the stored provider along with the pin,
+  // which is a worse outcome than the bug this helper exists to prevent.
+  it('treats a selection with no provider as a model-only change, not a provider change', () => {
+    expect(
+      aiProviderModelValue.applySelection({
+        storedValue: {
+          provider: 'custom',
+          model: 'deepseek-chat',
+          providerId: 'row-2',
+        },
+        selection: { model: 'deepseek-reasoner' },
+      }),
+    ).toEqual({
+      provider: 'custom',
+      model: 'deepseek-reasoner',
+      providerId: 'row-2',
+    });
+  });
 });
