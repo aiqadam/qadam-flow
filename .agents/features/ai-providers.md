@@ -27,7 +27,9 @@ The AI Providers module lets platform admins configure one or more LLM backends 
 
 **AIProvider**: id, displayName, platformId, provider (AIProviderName enum), auth (EncryptedObject), config (JSON), enabledForChat (boolean, default false). Relation: platform (CASCADE).
 
-Unique on `(platformId, provider)` **only where `provider <> 'custom'`** — a platform may hold any number of custom (OpenAI-compatible) providers and exactly one of each other type. The index is partial, so `ON CONFLICT ('platformId','provider')` no longer has a matching arbiter (`42P10`); conflict on `id` instead.
+Unique on `(platformId, provider)` **only where `provider <> 'custom'`** — a platform may hold many custom (OpenAI-compatible) providers and exactly one of each other type. The index is partial, so `ON CONFLICT ('platformId','provider')` no longer has a matching arbiter (`42P10`); conflict on `id` instead.
+
+Custom rows are not unbounded: `create()` caps them at `AP_MAX_CUSTOM_AI_PROVIDERS_PER_PLATFORM` (default 20) inside its own transaction, behind a `pg_advisory_xact_lock`. That cap is the only ceiling on custom rows now that the unique index no longer covers them.
 
 ## Supported Providers (9)
 
@@ -47,7 +49,7 @@ Registered in `packages/server/api/src/app/ai/providers/index.ts`; auth/config s
 
 ## Model Caching
 
-Models listed per provider are cached in an in-process `Map`, keyed by the provider row's `id` and its `updated` timestamp — so editing credentials or config invalidates the entry, and two rows never share one. Providers whose config carries an explicit `models` list bypass the cache. `aiProviderService.setup()` registers a `0 0 * * *` node-cron job that clears the whole cache daily at midnight.
+Models listed per provider are cached in an in-process LRU bounded at 200 entries (`packages/server/api/src/app/ai/models-cache.ts`), keyed by the provider row's `id` and its `updated` timestamp — so editing credentials or config invalidates the entry, and two rows never share one. Providers whose config carries an explicit `models` list bypass the cache. `aiProviderService.setup()` registers a `0 0 * * *` node-cron job that clears the whole cache daily at midnight.
 
 ## Endpoints
 
