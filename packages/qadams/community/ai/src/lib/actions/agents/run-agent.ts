@@ -159,6 +159,7 @@ export const runAgent = createAction({
     const model = await createAIModel({
       modelId: agentProviderModel.model,
       provider,
+      ...spreadIfDefined('providerId', agentProviderModel.providerId),
       engineToken: context.server.token,
       apiUrl: context.server.apiUrl,
       projectId: context.project.id,
@@ -182,7 +183,8 @@ export const runAgent = createAction({
     if (hasKbFileTools) {
       try {
         const result = await createEmbeddingModel({
-          provider: agentProviderModel.provider as AIProviderName,
+          provider,
+          ...spreadIfDefined('providerId', agentProviderModel.providerId),
           engineToken: context.server.token,
           apiUrl: context.server.apiUrl,
         });

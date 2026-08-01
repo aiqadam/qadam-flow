@@ -140,7 +140,7 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
     it('migrates a version sitting at exactly 22 instead of skipping the rename', async () => {
         const migrated = await flowVersionMigrationService(mockLog).migrate(preRenameFlowVersion('22'))
 
-        expect(migrated.schemaVersion).toBe('24')
+        expect(migrated.schemaVersion).toBe('25')
         expect(readNames(migrated)).toEqual({
             trigger: { name: '@aiqadam/qadam-gmail', version: '~0.1.0' },
             action: { name: '@aiqadam/qadam-slack', version: '~0.2.0' },
@@ -172,7 +172,7 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
         await flowVersionMigrationService(mockLog).migrate(preRenameFlowVersion('22'))
 
         expect(mockRepoUpdate).toHaveBeenCalledTimes(1)
-        expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: '24' })
+        expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: '25' })
     })
 })
 

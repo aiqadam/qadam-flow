@@ -45,8 +45,26 @@ The agent step is a `PIECE` action on `@aiqadam/qadam-agent`. Its `settings.inpu
 - `structuredOutput` — `AgentOutputField[]`
 - `prompt` — string (may include `{{variables}}`)
 - `maxSteps` — number
-- `aiProviderModel` — `AgentProviderModel` (`{ provider, model }`)
+- `aiProviderModel` — `AgentProviderModel` (`{ providerId?, provider, model }`)
 - `webSearch` / `webSearchOptions` — optional web search tool configuration
+
+`providerId` addresses one AI provider **row**; `provider` names its **type**. Both are stored,
+because they answer different questions:
+
+- Only the id can pick between several rows of the same type — a platform may hold many custom
+  OpenAI-compatible providers, and a bare name resolves to its oldest matching row. `providerId` is
+  optional and permanently so: steps written before id-addressing carry none, and a pinned qadam
+  version builds `v1/ai-providers/${provider}/config` from the enum whatever is stored.
+- The name cannot be dropped once an id is present. Capability decisions happen before any config is
+  fetched and are keyed on the enum — which web-search tool builder applies (`common/web-search.ts`),
+  whether the OpenAI responses API is used (`run-agent.ts`), which advancedOptions schema is
+  rendered, and `getEffectiveProviderAndModel`'s Cloudflare-Gateway unwrapping. None of those can
+  consume a row id.
+
+`createAIModel` and `createEmbeddingModel` (`packages/qadams/community/ai/src/lib/common/ai-sdk.ts`)
+both take `providerId ?? provider` as the route's `providerRef`, and then build their SDK client
+from the **answering row's** `provider`, not from the name the step stored — the row's `auth` and
+`config` are shaped by its own type.
 
 ## Tool Validation
 External MCP servers configured as agent tools are validated server-side via `POST /v1/projects/:projectId/agent-tools/mcp/validate` (see `packages/server/api/src/app/agents/`). The handler performs the JSON-RPC `initialize` → `notifications/initialized` → `tools/list` handshake against the target and returns its tool names. The outbound call is routed through `safeHttp.axios` from `@aiqadam/server-utils` (see `packages/server/utils/src/safe-http.ts`), whose http/https agents are built on `request-filtering-agent` to reject private / loopback / link-local / meta IPs by default. Operators can allow specific ranges via `AP_SSRF_ALLOW_LIST` (CIDR supported). All error paths collapse to a single generic message to avoid leaking reachability signal.

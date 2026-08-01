@@ -12,10 +12,15 @@ import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockP
 import { createAiGateway } from 'ai-gateway-provider';
 import { createAnthropic as createAnthropicGateway } from 'ai-gateway-provider/providers/anthropic';
 import { createGoogleGenerativeAI as createGoogleGateway } from 'ai-gateway-provider/providers/google';
-async function fetchProviderConfig(params: { provider: AIProviderName, engineToken: string, apiUrl: string }) {
+// `providerRef` is a row id or a provider name. A platform can hold several rows of the same type
+// (custom endpoints), so only the id addresses one of them; the name resolves to the oldest row and
+// stays supported forever, because published qadam versions are pinned exactly and build this URL
+// from the enum. The ref reaches here from step input, so it is escaped rather than concatenated —
+// it must stay one path segment under the engine token's authority.
+async function fetchProviderConfig(params: { providerRef: string, engineToken: string, apiUrl: string }) {
     const { body } = await httpClient.sendRequest<GetProviderConfigResponse>({
         method: HttpMethod.GET,
-        url: `${params.apiUrl}v1/ai-providers/${params.provider}/config`,
+        url: `${params.apiUrl}v1/ai-providers/${encodeURIComponent(params.providerRef)}/config`,
         headers: {
             Authorization: `Bearer ${params.engineToken}`,
         },
@@ -24,6 +29,7 @@ async function fetchProviderConfig(params: { provider: AIProviderName, engineTok
 }
 
 type CreateAIModelParams<IsImage extends boolean = false> = {
+    providerId?: string;
     provider: AIProviderName;
     modelId: string;
     engineToken: string;
@@ -38,6 +44,7 @@ type CreateAIModelParams<IsImage extends boolean = false> = {
 export function createAIModel(params: CreateAIModelParams<false>): Promise<LanguageModel>;
 export function createAIModel(params: CreateAIModelParams<true>): Promise<ImageModel>;
 export async function createAIModel({
+    providerId,
     provider,
     modelId,
     engineToken,
@@ -48,9 +55,14 @@ export async function createAIModel({
     openaiResponsesModel = false,
     isImage,
 }: CreateAIModelParams<boolean>): Promise<ImageModel | LanguageModel> {
-    const { config, auth, platformId } = await fetchProviderConfig({ provider, engineToken, apiUrl });
+    // The row that answered decides which SDK client can talk to it — its `auth` and `config` are
+    // shaped by its own type. Switching on the name the step stored would hand, say, an OpenAI auth
+    // blob to the openai-compatible factory whenever the two disagree. The stored name keeps its
+    // separate job: capability gating (web search, responses API), which is decided before the
+    // fetch and cannot consume an id.
+    const { config, auth, platformId, provider: resolvedProvider } = await fetchProviderConfig({ providerRef: providerId ?? provider, engineToken, apiUrl });
 
-    switch (provider) {
+    switch (resolvedProvider) {
         case AIProviderName.OPENAI: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
             const provider = createOpenAI({ apiKey })
@@ -208,7 +220,7 @@ export async function createAIModel({
             return openRouterProvider.chat(modelId) as LanguageModel
         }
         default:
-            throw new Error(`Provider ${provider} is not supported`)
+            throw new Error(`Provider ${resolvedProvider} is not supported`)
     }
 }
 
@@ -232,26 +244,31 @@ const OPENAI_EMBEDDING_PROVIDER_OPTIONS = {
 }
 
 type CreateEmbeddingModelParams = {
+    providerId?: string
     provider: AIProviderName
     engineToken: string
     apiUrl: string
 }
 
+// The second name-resolving entry point into the config route, and the one that is easy to miss:
+// knowledge-base tools reach it from `run-agent`. It takes a ref for the same reasons
+// `createAIModel` does, and reads the answering row's type rather than the stored name.
 export async function createEmbeddingModel({
+    providerId,
     provider,
     engineToken,
     apiUrl,
 }: CreateEmbeddingModelParams): Promise<CreateEmbeddingModelResult> {
-    const { config, auth } = await fetchProviderConfig({ provider, engineToken, apiUrl })
+    const { config, auth, provider: resolvedProvider } = await fetchProviderConfig({ providerRef: providerId ?? provider, engineToken, apiUrl })
 
-    const embeddingModelId = DEFAULT_EMBEDDING_MODELS[provider]
+    const embeddingModelId = DEFAULT_EMBEDDING_MODELS[resolvedProvider]
     if (!embeddingModelId) {
-        throw new Error(`Provider ${provider} does not have a default embedding model configured`)
+        throw new Error(`Provider ${resolvedProvider} does not have a default embedding model configured`)
     }
 
     const { apiKey } = auth as BaseAIProviderAuthConfig
 
-    switch (provider) {
+    switch (resolvedProvider) {
         case AIProviderName.OPENAI: {
             const p = createOpenAI({ apiKey })
             return { model: p.embeddingModel(embeddingModelId), embeddingModelId, providerOptions: OPENAI_EMBEDDING_PROVIDER_OPTIONS }
@@ -270,7 +287,7 @@ export async function createEmbeddingModel({
             return { model: openRouterProvider.textEmbeddingModel(embeddingModelId), embeddingModelId, providerOptions: OPENAI_EMBEDDING_PROVIDER_OPTIONS }
         }
         default:
-            throw new Error(`Provider ${provider} does not support embedding models`)
+            throw new Error(`Provider ${resolvedProvider} does not support embedding models`)
     }
 }
 

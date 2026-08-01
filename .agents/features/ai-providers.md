@@ -64,6 +64,8 @@ Models listed per provider are cached in an in-process LRU bounded at 200 entrie
 
 During flow execution, AI pieces call `GET /v1/ai-providers/{providerRef}/config` to get credentials. Versions pinned before id-addressing send the provider name and get the oldest matching row. The engine token provides authorization.
 
+From `@aiqadam/qadam-ai` 0.4.4, the Run Agent step sends the row id when its `aiProviderModel` carries a `providerId`, through both `createAIModel` and `createEmbeddingModel`; the SDK client is then built from the answering row's `provider` rather than from the name stored in the step. The other five AI actions still send the name only.
+
 ## Frontend
 
 The platform admin AI setup page lives at `/platform/setup/ai`. It renders an `ai-provider-card` for each configured provider and an "Add Provider" button that opens `upsert-provider-dialog`. The `upsert-provider-config-form` adapts its fields to the selected `AIProviderName`. The `model-form-popover` lets admins configure which models are exposed per provider.
