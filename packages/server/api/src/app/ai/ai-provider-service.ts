@@ -5,9 +5,6 @@ import {
     AIProviderName,
     AIProviderWithoutSensitiveData,
     apId,
-    BaseAIProviderAuthConfig,
-    BedrockProviderAuthConfig,
-    BedrockProviderConfig,
     CreateAIProviderRequest,
     ErrorCode,
     GetProviderConfigResponse,
@@ -15,10 +12,12 @@ import {
     PlatformId,
     QadamFlowError,
     spreadIfDefined,
+    tryCatch,
     UpdateAIProviderRequest,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import cron from 'node-cron'
+import { QueryFailedError } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { encryptUtils } from '../helper/encryption'
 import { AIProviderEntity, AIProviderSchema } from './ai-provider-entity'
@@ -49,13 +48,19 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
     },
 
     async listModels(platformId: PlatformId, provider: AIProviderName): Promise<AIProviderModel[]> {
-        const { config, auth } = await this.getConfigOrThrow({ platformId, provider })
+        const aiProvider = await findProviderOrThrow({ platformId, provider })
 
-        const cacheKey = `${provider}-${getAuthCacheFingerprint({ provider, auth, config })}`
+        // Keyed on the row, not on the credentials: two configs can share an api key and still
+        // point at different endpoints (an Azure resource name, a base url), and a key in a
+        // process-wide map is a secret living somewhere it has no reason to be. `updated` moves
+        // whenever the config or the credentials are edited, which invalidates the entry.
+        const cacheKey = `${aiProvider.id}-${String(aiProvider.updated)}`
+        const config = aiProvider.config
         if (modelsCache.has(cacheKey) && !('models' in config)) {
             return modelsCache.get(cacheKey)!
         }
 
+        const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
         const data = await aiProviders[provider].listModels(auth, config)
 
         modelsCache.set(cacheKey, data.map(model => ({
@@ -69,14 +74,42 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
 
     async create(platformId: PlatformId, request: CreateAIProviderRequest): Promise<void> {
         await this.validateProviderCredentials(request.provider, request.auth, request.config)
-        await aiProviderRepo().save({
+        const newProvider = {
             id: apId(),
             auth: await encryptUtils.encryptObject(request.auth),
             config: request.config,
             provider: request.provider,
             displayName: request.displayName,
+            enabledForChat: request.enabledForChat ?? false,
             platformId,
+        }
+
+        const { error } = await tryCatch(async () => {
+            if (!newProvider.enabledForChat) {
+                await aiProviderRepo().insert(newProvider)
+                return
+            }
+            await aiProviderRepo().manager.transaction(async (manager) => {
+                await manager.update(AIProviderEntity, { platformId }, { enabledForChat: false })
+                await manager.insert(AIProviderEntity, newProvider)
+            })
         })
+
+        if (isNil(error)) {
+            return
+        }
+        if (isUniqueViolation(error)) {
+            throw new QadamFlowError({
+                code: ErrorCode.EXISTING_AI_PROVIDER,
+                params: {
+                    provider: request.provider,
+                    // The dialog renders params.message, and what it used to render here was the
+                    // raw Postgres message including the index name.
+                    message: `A ${aiProviders[request.provider].name} provider is already configured for this platform`,
+                },
+            })
+        }
+        throw error
     },
     async update(platformId: PlatformId, providerId: string, request: UpdateAIProviderRequest): Promise<void> {
         const aiProvider = await aiProviderRepo().findOneBy({
@@ -90,22 +123,25 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             })
         }
 
-        const config = request.config ?? aiProvider.config
-        if (!isNil(request.auth)) {
-            await this.validateProviderCredentials(aiProvider.provider, request.auth, config)
-        }
-        else {
-            const { auth } = await this.getConfigOrThrow({ platformId, provider: aiProvider.provider })
-            await this.validateProviderCredentials(aiProvider.provider, auth, config)
-        }
-
         const encryptedAuth = !isNil(request.auth) ? await encryptUtils.encryptObject(request.auth) : undefined
         const updates = {
             ...spreadIfDefined('auth', encryptedAuth),
             ...spreadIfDefined('config', request.config),
             ...spreadIfDefined('enabledForChat', request.enabledForChat),
-            displayName: request.displayName,
+            ...spreadIfDefined('displayName', request.displayName),
         }
+
+        // Every field is optional, so a request can now carry nothing at all. TypeORM rejects an
+        // empty update, and validating credentials for it would be an outbound call for no change.
+        if (Object.keys(updates).length === 0) {
+            return
+        }
+
+        const config = request.config ?? aiProvider.config
+        // The row being updated is already in hand — resolving its credentials by provider name
+        // would read whichever row that name happens to match, which is not necessarily this one.
+        const auth = request.auth ?? await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
+        await this.validateProviderCredentials(aiProvider.provider, auth, config)
 
         if (request.enabledForChat === true) {
             await aiProviderRepo().manager.transaction(async (manager) => {
@@ -155,19 +191,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         }
     },
     async getConfigOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<GetProviderConfigResponse> {
-        const aiProvider = await aiProviderRepo().findOneBy({
-            platformId,
-            provider,
-        })
-        if (isNil(aiProvider)) {
-            throw new QadamFlowError({
-                code: ErrorCode.ENTITY_NOT_FOUND,
-                params: {
-                    entityId: provider,
-                    entityType: 'AIProvider',
-                },
-            })
-        }
+        const aiProvider = await findProviderOrThrow({ platformId, provider })
 
         const auth = await encryptUtils.decryptObject<AIProviderAuthConfig>(aiProvider.auth)
 
@@ -175,21 +199,39 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
     },
 })
 
+async function findProviderOrThrow({ platformId, provider }: GetOrCreateQadamFlowConfigResponse): Promise<AIProviderSchema> {
+    const aiProvider = await aiProviderRepo().findOneBy({
+        platformId,
+        provider,
+    })
+    if (isNil(aiProvider)) {
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: {
+                entityId: provider,
+                entityType: 'AIProvider',
+            },
+        })
+    }
+    return aiProvider
+}
+
+function isUniqueViolation(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+        return false
+    }
+    const driverError: unknown = error.driverError
+    return (
+        typeof driverError === 'object' &&
+        driverError !== null &&
+        'code' in driverError &&
+        driverError.code === POSTGRES_UNIQUE_VIOLATION
+    )
+}
+
+const POSTGRES_UNIQUE_VIOLATION = '23505'
+
 type GetOrCreateQadamFlowConfigResponse = {
     platformId: PlatformId
     provider: AIProviderName
-}
-
-function getAuthCacheFingerprint({ provider, auth, config }: { provider: AIProviderName, auth: AIProviderAuthConfig, config: AIProviderConfig }): string {
-    switch (provider) {
-        case AIProviderName.BEDROCK: {
-            const { accessKeyId, secretAccessKey } = auth as BedrockProviderAuthConfig
-            const { region } = config as BedrockProviderConfig
-            return `${accessKeyId}-${secretAccessKey}-${region}`
-        }
-        default: {
-            const { apiKey } = auth as BaseAIProviderAuthConfig
-            return apiKey
-        }
-    }
 }

@@ -217,12 +217,14 @@ export const AIProviderModel = z.object({
 })
 export type AIProviderModel = z.infer<typeof AIProviderModel>
 
-export const CreateAIProviderRequest = ProviderConfigUnion
+export const CreateAIProviderRequest = ProviderConfigUnion.and(z.object({
+    enabledForChat: z.boolean().optional(),
+}))
 export type CreateAIProviderRequest = z.infer<typeof CreateAIProviderRequest>
 
 
 export const UpdateAIProviderRequest = z.object({
-    displayName: z.string().min(1),
+    displayName: z.string().min(1).optional(),
     config: AIProviderConfig.optional(),
     auth: AIProviderAuthConfig.optional(),
     enabledForChat: z.boolean().optional(),
