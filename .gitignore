@@ -64,6 +64,7 @@ activepieces-engine.js
 
 # scratch pad
 scratch.md
+tmpcheck/
 
 # environment variables
 .env*
