@@ -8,24 +8,61 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { EmbeddingModel, ImageModel, LanguageModel } from 'ai'
 import { ProviderOptions } from '@ai-sdk/provider-utils'
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
-import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
+import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, isNil, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
 import { createAiGateway } from 'ai-gateway-provider';
 import { createAnthropic as createAnthropicGateway } from 'ai-gateway-provider/providers/anthropic';
 import { createGoogleGenerativeAI as createGoogleGateway } from 'ai-gateway-provider/providers/google';
-// `providerRef` is a row id or a provider name. A platform can hold several rows of the same type
-// (custom endpoints), so only the id addresses one of them; the name resolves to the oldest row and
-// stays supported forever, because published qadam versions are pinned exactly and build this URL
-// from the enum. The ref reaches here from step input, so it is escaped rather than concatenated —
-// it must stay one path segment under the engine token's authority.
-async function fetchProviderConfig(params: { providerRef: string, engineToken: string, apiUrl: string }) {
+// The single entry point into the config route, shared by both resolvers so the ref is derived,
+// validated and reported on in exactly one place.
+//
+// A platform can hold several rows of the same type (custom endpoints), so only the id addresses
+// one of them; the name resolves to the oldest row and stays supported forever, because published
+// qadam versions are pinned exactly and build this URL from the enum.
+async function fetchProviderConfig({ providerId, provider, engineToken, apiUrl }: FetchProviderConfigParams): Promise<GetProviderConfigResponse> {
+    const providerRef = resolveProviderRef({ providerId, provider })
     const { body } = await httpClient.sendRequest<GetProviderConfigResponse>({
         method: HttpMethod.GET,
-        url: `${params.apiUrl}v1/ai-providers/${encodeURIComponent(params.providerRef)}/config`,
+        url: `${apiUrl}v1/ai-providers/${encodeURIComponent(providerRef)}/config`,
         headers: {
-            Authorization: `Bearer ${params.engineToken}`,
+            Authorization: `Bearer ${engineToken}`,
         },
     })
+    // Only the model client follows the answering row. Everything keyed on the stored name still
+    // follows the stored name — `buildWebSearchConfig` builds a provider-specific `ToolSet` from it
+    // and `run-agent` merges that into the tool set handed to `streamText`, so an Anthropic name
+    // paired with an OpenAI row and web search on sends an Anthropic tool to an OpenAI model. That
+    // fails at the provider naming nothing; this line is what names it.
+    if (body.provider !== provider) {
+        console.warn(`AI provider mismatch: the step stores provider "${provider}" but row "${providerRef}" is of type "${body.provider}". The model client follows the row; web search, the OpenAI responses API and any other capability gated on the stored name still follow "${provider}" and may not apply to this model.`)
+    }
     return body
+}
+
+// `providerId` reaches here from step input — a `Property.Object` in the builder, an MCP agent
+// filling every advertised key, or a picker writing `''` for "no selection". Empty is absent, not a
+// ref: `''` would build `.../ai-providers//config`, a 404.
+//
+// Whatever survives that becomes one path segment under the engine token's authority, so it is
+// checked against the shape the server enforces on `:providerRef` (`ProviderRefSchema` in
+// `ai-provider-controller.ts`) and escaped. Escaping alone is not the check it reads as:
+// `encodeURIComponent` leaves `.` untouched, so a bare `..` passes through it intact and the URL
+// parser then collapses `/v1/ai-providers/../config` to `/v1/config`.
+function resolveProviderRef({ providerId, provider }: { providerId?: string, provider: AIProviderName }): string {
+    const ref = isNil(providerId) || providerId.length === 0 ? provider : providerId
+    if (!PROVIDER_NAMES.includes(ref) && !PROVIDER_ROW_ID_PATTERN.test(ref)) {
+        throw new Error(`AI provider reference "${ref}" is neither a provider name nor a provider row id`)
+    }
+    return ref
+}
+
+const PROVIDER_ROW_ID_PATTERN = /^[0-9A-Za-z]{21}$/
+const PROVIDER_NAMES: string[] = Object.values(AIProviderName)
+
+type FetchProviderConfigParams = {
+    providerId?: string;
+    provider: AIProviderName;
+    engineToken: string;
+    apiUrl: string;
 }
 
 type CreateAIModelParams<IsImage extends boolean = false> = {
@@ -60,7 +97,7 @@ export async function createAIModel({
     // blob to the openai-compatible factory whenever the two disagree. The stored name keeps its
     // separate job: capability gating (web search, responses API), which is decided before the
     // fetch and cannot consume an id.
-    const { config, auth, platformId, provider: resolvedProvider } = await fetchProviderConfig({ providerRef: providerId ?? provider, engineToken, apiUrl });
+    const { config, auth, platformId, provider: resolvedProvider } = await fetchProviderConfig({ providerId, provider, engineToken, apiUrl });
 
     switch (resolvedProvider) {
         case AIProviderName.OPENAI: {
@@ -75,7 +112,7 @@ export async function createAIModel({
             const { apiKey } = auth as BaseAIProviderAuthConfig
             const provider = createAnthropic({ apiKey })
             if (isImage) {
-                throw new Error(`Provider ${provider} does not support image models`)
+                throw new Error(`Provider ${AIProviderName.ANTHROPIC} does not support image models`)
             }
             return provider(modelId)
         }
@@ -259,7 +296,7 @@ export async function createEmbeddingModel({
     engineToken,
     apiUrl,
 }: CreateEmbeddingModelParams): Promise<CreateEmbeddingModelResult> {
-    const { config, auth, provider: resolvedProvider } = await fetchProviderConfig({ providerRef: providerId ?? provider, engineToken, apiUrl })
+    const { config, auth, provider: resolvedProvider } = await fetchProviderConfig({ providerId, provider, engineToken, apiUrl })
 
     const embeddingModelId = DEFAULT_EMBEDDING_MODELS[resolvedProvider]
     if (!embeddingModelId) {

@@ -31,6 +31,9 @@ vi.mock('ai', () => ({
 
 import { runAgent } from '../../src/lib/actions/agents/run-agent'
 
+// A real `apId()` — the shape `resolveProviderRef` accepts for a row id.
+const ROW_ID = 'kJ3mQ8xL2nP5vB7cR1tZa'
+
 type ProviderModelInput = { providerId?: string, provider: AIProviderName, model: string }
 
 function runAgentContext(aiProviderModel: ProviderModelInput, knowledgeBaseTools: unknown[] = []) {
@@ -69,10 +72,10 @@ beforeEach(() => {
 
 describe('run_agent forwards the provider ref it was configured with', () => {
   it('passes the stored providerId to createAIModel alongside the provider name', async () => {
-    await invokeRunAgent({ providerId: 'row-second-custom', provider: AIProviderName.CUSTOM, model: 'llama-3' })
+    await invokeRunAgent({ providerId: ROW_ID, provider: AIProviderName.CUSTOM, model: 'llama-3' })
 
     expect(createAIModel).toHaveBeenCalledWith(expect.objectContaining({
-      providerId: 'row-second-custom',
+      providerId: ROW_ID,
       provider: AIProviderName.CUSTOM,
       modelId: 'llama-3',
     }))
@@ -83,18 +86,21 @@ describe('run_agent forwards the provider ref it was configured with', () => {
   // row than the chat call.
   it('passes the stored providerId to createEmbeddingModel too', async () => {
     await invokeRunAgent(
-      { providerId: 'row-second-custom', provider: AIProviderName.OPENAI, model: 'gpt-4.1' },
+      { providerId: ROW_ID, provider: AIProviderName.OPENAI, model: 'gpt-4.1' },
       knowledgeBaseFileTool,
     )
 
     expect(createEmbeddingModel).toHaveBeenCalledWith(expect.objectContaining({
-      providerId: 'row-second-custom',
+      providerId: ROW_ID,
       provider: AIProviderName.OPENAI,
     }))
   })
 
-  // A step stored before id-addressing has no id at all. Sending `providerId: undefined` would make
-  // the ref `undefined` rather than the provider name once the resolver reads `providerId ?? provider`.
+  // A step stored before id-addressing has no id at all. This is a call-shape pin, not a claim
+  // about the ref: `resolveProviderRef` reads an absent key and an explicit `undefined` the same
+  // way, so both build `.../ai-providers/openai/config`. What it guards is `spreadIfDefined`, which
+  // reads like a needlessly indirect `providerId: agentProviderModel.providerId` and is the only
+  // thing keeping `run_agent` from widening every legacy step's call with a key it never stored.
   it('sends no providerId key at all when the step carries none', async () => {
     await invokeRunAgent({ provider: AIProviderName.OPENAI, model: 'gpt-4.1' }, knowledgeBaseFileTool)
 

@@ -14,6 +14,15 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version-backup.service',
     flowVersionBackupService: (): { store: typeof mockBackupStore } => ({ store: mockBackupStore }),
 }))
 
+// v24 reads the qadam registry to find the version it should pin AI steps to, so every path here
+// that walks the chain past 24 needs one. None of these fixtures carries an AI step, so the
+// contents only have to be a list.
+vi.mock('../../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
+    qadamMetadataService: (): { registry: () => Promise<unknown[]> } => ({
+        registry: async (): Promise<unknown[]> => [{ name: '@aiqadam/qadam-ai', version: '0.4.4' }],
+    }),
+}))
+
 import { flowVersionMigrationService } from '../../../../../src/app/flows/flow-version/flow-version-migration.service'
 import { flowMigrations } from '../../../../../src/app/flows/flow-version/migrations'
 import { migrateV22RenamePieceToQadam } from '../../../../../src/app/flows/flow-version/migrations/migrate-v22-rename-piece-to-qadam'
