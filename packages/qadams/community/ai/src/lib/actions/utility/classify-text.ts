@@ -2,7 +2,7 @@ import { createAction, Property } from '@aiqadam/qadams-framework';
 import { generateText } from 'ai';
 import { createAIModel } from '../../common/ai-sdk';
 import { aiProps } from '../../common/props';
-import { AIProviderName } from '@aiqadam/shared';
+import { AIProviderName, spreadIfDefined } from '@aiqadam/shared';
 
 export const classifyText = createAction({
   name: 'classifyText',
@@ -10,6 +10,7 @@ export const classifyText = createAction({
   description: 'Categorize any text input using custom labels, so your flow knows what to do next.',
   props: {
     provider: aiProps({ modelType: 'text' }).provider,
+    providerId: aiProps({ modelType: 'text' }).providerId,
     model: aiProps({ modelType: 'text' }).model,
     text: Property.LongText({
       displayName: 'Text to Classify',
@@ -29,6 +30,7 @@ export const classifyText = createAction({
 
     const model = await createAIModel({
       provider: provider as AIProviderName,
+      ...spreadIfDefined('providerId', context.propsValue.providerId),
       modelId,
       engineToken: context.server.token,
       apiUrl: context.server.apiUrl,

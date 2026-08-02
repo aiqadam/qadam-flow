@@ -14,6 +14,7 @@ export const askAI = createAction({
   description: 'A flexible AI step. ask it to analyze data, explain, draft, or decide based on your flow\'s data.',
   props: {
     provider: aiProps({ modelType: 'text' }).provider,
+    providerId: aiProps({ modelType: 'text' }).providerId,
     model: aiProps({ modelType: 'text' }).model,
     prompt: Property.LongText({
       displayName: 'Prompt',
@@ -70,6 +71,7 @@ export const askAI = createAction({
     });
     const model = await createAIModel({
       provider: provider as AIProviderName,
+      ...spreadIfDefined('providerId', context.propsValue.providerId),
       modelId,
       engineToken: context.server.token,
       apiUrl: context.server.apiUrl,
