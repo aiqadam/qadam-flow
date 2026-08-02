@@ -172,7 +172,14 @@ function readTimeoutSeconds(name: string, fallbackSeconds: number): number {
     const raw = Number(process.env[name])
     // An unset, empty, non-numeric or non-positive value is not a reason to disable the timeout —
     // that failure mode is a permanently pinned socket, so it falls back rather than fails open.
-    return Number.isFinite(raw) && raw > 0 ? raw : fallbackSeconds
+    if (!Number.isFinite(raw) || raw <= 0) {
+        return fallbackSeconds
+    }
+    // Clamped from above for the opposite reason, and it is not tidiness: `setTimeout` truncates its
+    // delay to a signed 32-bit integer, so `AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS=3000000` — a plausible
+    // way to write "effectively unlimited" — wraps to a 1ms delay and every provider call fails
+    // instantly. Since #289 publishes this value to the browser, that would now break both sides.
+    return Math.min(raw, httpTimeouts.MAX_TIMEOUT_SECONDS)
 }
 
 // Exposed in seconds, not milliseconds, because the browser has to outlast these too and reads them

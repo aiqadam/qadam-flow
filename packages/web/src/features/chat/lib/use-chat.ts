@@ -1,4 +1,5 @@
 import {
+  ABANDONED_CHAT_RUN_AFTER_MS,
   ActionPreviewEvent,
   ActionReceiptEvent,
   apId,
@@ -43,10 +44,6 @@ function restoreReceiptsIntoStore({
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const AGENT_POLL_INTERVAL_MS = 5_000;
-// The server stops honouring a STREAMING conversation five minutes after its last heartbeat
-// (`ABANDONED_RUN_AFTER_MS` in `chat-conversation.service.ts`), so a poll that outlives that is
-// waiting on a run nobody is running.
-const AGENT_POLL_MAX_MS = 5 * 60 * 1000;
 
 function buildToolCallMetaFromGate(
   gate: PendingChatToolApproval,
@@ -384,7 +381,12 @@ export function useAgentChat({
         const conv = await chatApi.getConversation(convId);
         if (isNil(conv) || conversationIdRef.current !== convId) return;
         if (conv.status === ChatConversationStatus.STREAMING) {
-          pollDeadlineRef.current = Date.now() + AGENT_POLL_MAX_MS;
+          // The server's own bound, imported rather than restated: it stops honouring a STREAMING
+          // conversation this long after its last heartbeat, so a poll that outlives it is waiting
+          // on a run nobody is running. `getConversation` never applies that bound — only the
+          // admission path does — so this side is the only thing that ends the spinner, and a
+          // second literal here is the same drift #289 was.
+          pollDeadlineRef.current = Date.now() + ABANDONED_CHAT_RUN_AFTER_MS;
           setIsPollingForAgentReply(true);
         }
       });

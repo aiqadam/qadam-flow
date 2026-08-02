@@ -322,6 +322,12 @@ async function deleteFlowViaUI(page: Page, displayName: string): Promise<void> {
 // `httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS` in `@aiqadam/shared` — and the value the single
 // pre-#266 timer used for the first byte as well, which is what made a cold model fail. The browser
 // used to carry a second copy of it; since #289 it reads the server's own value off `/v1/flags`.
+//
+// This is the one copy #289 did not remove, and it is a copy: `packages/tests-e2e` declares no
+// dependency on `@aiqadam/shared`, so it cannot import the constant and nothing checks that the two
+// agree. The blast radius is small — it is read only to phrase the log line below and to sanity-check
+// that the stub really did outlast the bound, so a drift makes this test lie in its output rather
+// than pass something broken — but it is not "no second literal left".
 const STREAM_IDLE_BOUND_SECONDS = 120;
 
 // Comfortably past that bound and comfortably inside the 300 s first-byte allowance that replaced

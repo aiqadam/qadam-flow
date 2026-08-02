@@ -65,16 +65,14 @@ export function useStreamingReducer({
   );
   const streamTimeoutsRef = useRef({ firstToken: 0, interChunk: 0 });
   streamTimeoutsRef.current = {
-    firstToken:
-      (serverFirstByteTimeoutSeconds ??
-        httpTimeouts.DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS) *
-        1000 +
-      CLIENT_GRACE_MS,
-    interChunk:
-      (serverStreamIdleTimeoutSeconds ??
-        httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS) *
-        1000 +
-      CLIENT_GRACE_MS,
+    firstToken: clientBoundMs({
+      serverSeconds: serverFirstByteTimeoutSeconds,
+      fallbackSeconds: httpTimeouts.DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS,
+    }),
+    interChunk: clientBoundMs({
+      serverSeconds: serverStreamIdleTimeoutSeconds,
+      fallbackSeconds: httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+    }),
   };
 
   const [streamingMessage, setStreamingMessage] =
@@ -334,6 +332,28 @@ export function useStreamingReducer({
     stopStream,
     clearStreamingState,
   };
+}
+
+// Resolved the same way the server resolves the env var it published (`readTimeoutSeconds` in
+// `packages/server/utils/src/safe-http.ts`), because the two numbers have to stay ordered: the
+// browser is only useful as the *later* timer. `??` alone would not do it — it lets `0` through,
+// and a bound of `0 + grace` fires below the server's rather than above it, which is #289 again.
+// The upper clamp is the 32-bit `setTimeout` overflow, where an oversized value silently becomes a
+// 1ms delay.
+function clientBoundMs({
+  serverSeconds,
+  fallbackSeconds,
+}: {
+  serverSeconds: number | null | undefined;
+  fallbackSeconds: number;
+}): number {
+  const seconds =
+    typeof serverSeconds === 'number' &&
+    Number.isFinite(serverSeconds) &&
+    serverSeconds > 0
+      ? Math.min(serverSeconds, httpTimeouts.MAX_TIMEOUT_SECONDS)
+      : fallbackSeconds;
+  return seconds * 1000 + CLIENT_GRACE_MS;
 }
 
 type SocketEvent = {

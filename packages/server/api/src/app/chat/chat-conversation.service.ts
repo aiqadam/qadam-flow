@@ -1,4 +1,5 @@
 import {
+    ABANDONED_CHAT_RUN_AFTER_MS,
     apId,
     ChatConversation,
     ChatConversationStatus,
@@ -237,7 +238,7 @@ async function admitRun({ id, platformId, userId, projectId, runId, userMessage,
                 platformId,
                 userId,
                 status: ChatConversationStatus.STREAMING,
-                runHeartbeat: MoreThan(new Date(Date.now() - ABANDONED_RUN_AFTER_MS).toISOString()),
+                runHeartbeat: MoreThan(new Date(Date.now() - ABANDONED_CHAT_RUN_AFTER_MS).toISOString()),
             },
         })
         if (running >= MAX_CONCURRENT_RUNS_PER_USER) {
@@ -293,13 +294,6 @@ function nextUiMessages({ conversation, userMessage, answered }: NextUiMessagesP
 // on. Rule 27's "diagnose the error" has nothing to diagnose here.
 const ABANDONED_GATE_REASON = 'The user moved on without approving this action.'
 
-// A live run touches the row at every step, and the transport gives up on a silent provider after
-// 120s, so a STREAMING row untouched for this long belongs to a process that is no longer running
-// — an API restart mid-run, which is routine on a self-hosted upgrade. Without this the
-// conversation is wedged permanently: nothing settles the row, every message 409s, and the client
-// spins on a status that will never change.
-const ABANDONED_RUN_AFTER_MS = 5 * 60 * 1000
-
 // Generous for a person — nobody reads three streaming replies at once — and low enough that one
 // account cannot turn the operator's provider bill into a denial-of-service. Abandoned rows do not
 // hold a slot: they are excluded by the takeover above the moment they go stale.
@@ -309,7 +303,7 @@ function isAbandoned(conversation: ChatConversationSchema): boolean {
     // No heartbeat at all means the row predates any heartbeat write, which can only be a run that
     // never got one — treat it as abandoned rather than letting it hold the conversation forever.
     return isNil(conversation.runHeartbeat)
-        || Date.now() - new Date(conversation.runHeartbeat).getTime() > ABANDONED_RUN_AFTER_MS
+        || Date.now() - new Date(conversation.runHeartbeat).getTime() > ABANDONED_CHAT_RUN_AFTER_MS
 }
 
 // Everything the conversation list needs to render a row, and nothing that grows with the

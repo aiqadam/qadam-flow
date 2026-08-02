@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { ChatAgentEventType, WebsocketClientEvent } from '@aiqadam/shared';
+import {
+  ABANDONED_CHAT_RUN_AFTER_MS,
+  ChatAgentEventType,
+  httpTimeouts,
+  WebsocketClientEvent,
+} from '@aiqadam/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 import { act } from 'react';
@@ -21,10 +26,15 @@ const PROMPT = 'how cold is this model';
 
 const harness = vi.hoisted(() => {
   const socketHandlers = new Map<string, Set<(payload: unknown) => void>>();
-  const state = {
+  const state: {
+    conversationStatus: string;
+    messages: { role: string; parts: { type: string; text: string }[] }[];
+    flags: Record<string, number>;
+    getMessagesCalls: number;
+  } = {
     conversationStatus: 'STREAMING',
-    messages: [] as { role: string; parts: { type: string; text: string }[] }[],
-    flags: {} as Record<string, number>,
+    messages: [],
+    flags: {},
     getMessagesCalls: 0,
   };
   return {
@@ -231,6 +241,41 @@ describe('how long the open tab waits for a cold model', () => {
     expect(rendered()).toContain('a very cold model finally answered');
   });
 
+  // The grace is the whole mechanism and nothing above pinned it from below. With the server at its
+  // own default, a first token this late is one the server itself was still waiting for — so the
+  // browser must outlast it, not match it. Taking the server's number as-is reads as *more* correct
+  // under this file's own single-source-of-truth framing, and it is #289 verbatim: the browser's
+  // timer starts at `startStream`, before the job is queued and before the server's outbound request
+  // exists, so it reliably wins that race.
+  it('outlasts the server on the first token instead of matching it', async () => {
+    await mountChat();
+    await sendMessage();
+
+    await advance(
+      httpTimeouts.DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS * 1000 + 30_000,
+    );
+    emitToken({ id: 'text-1', text: 'the server was still waiting for this' });
+    await advance(200);
+
+    expect(rendered()).toContain('the server was still waiting for this');
+  });
+
+  // The server resolves a non-positive value to the default before publishing it, so this is the
+  // browser refusing to be the earlier timer even when handed a number that would make it one. `??`
+  // alone does not do it: it lets `0` through, and a bound of nothing-but-grace fires a minute into
+  // a cold start.
+  it('falls back to the default when the published bound is not a usable number', async () => {
+    harness.state.flags.HTTP_FIRST_BYTE_TIMEOUT_SECONDS = 0;
+    await mountChat();
+    await sendMessage();
+
+    await advance(200_000);
+    emitToken({ id: 'text-1', text: 'still inside the default allowance' });
+    await advance(200);
+
+    expect(rendered()).toContain('still inside the default allowance');
+  });
+
   it('gives up once even the first-token allowance has passed', async () => {
     await mountChat();
     await sendMessage();
@@ -254,6 +299,25 @@ describe('how long the open tab waits for a cold model', () => {
     await advance(200);
 
     expect(rendered()).not.toContain('far too late to matter');
+  });
+
+  // The idle flag needs a non-default value of its own: every other case leaves it at the default,
+  // so a browser that ignored `HTTP_STREAM_IDLE_TIMEOUT_SECONDS` entirely and fell back to the
+  // shared constant would satisfy all of them. An operator raising
+  // `AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS` for a provider that stalls mid-answer would then get a
+  // server that honours it and a tab that still gives up at two minutes.
+  it('holds the gap between chunks to what the operator configured, not the default', async () => {
+    harness.state.flags.HTTP_STREAM_IDLE_TIMEOUT_SECONDS = 600;
+    await mountChat();
+    await sendMessage();
+    emitToken({ id: 'text-1', text: 'thinking about it' });
+    await advance(200);
+
+    await advance(500_000);
+    emitToken({ id: 'text-2', text: 'the provider stalled but came back' });
+    await advance(200);
+
+    expect(rendered()).toContain('the provider stalled but came back');
   });
 });
 
@@ -283,6 +347,28 @@ describe('the fallback poll after a stream ends with no reply', () => {
     expect(rendered()).toContain('the answer the tab never saw');
   });
 
+  // Both sides of the deadline, expressed against the server's own constant rather than a literal
+  // of this file's. A deadline pinned only from above is half a bound: 30s would satisfy it while
+  // abandoning a live run four and a half minutes early, which is the defect this whole change is
+  // about, one file over.
+  it('keeps polling while the server would still honour the run', async () => {
+    await mountChat();
+    await sendMessage();
+
+    emitChatEvent({
+      conversationId: 'conv-1',
+      type: ChatAgentEventType.ERROR,
+      data: { message: 'the socket dropped' },
+    });
+    await advance(ABANDONED_CHAT_RUN_AFTER_MS - 60_000);
+    const callsBeforeTheServerWritesItOff = harness.state.getMessagesCalls;
+    await advance(6_000);
+
+    expect(harness.state.getMessagesCalls).toBeGreaterThan(
+      callsBeforeTheServerWritesItOff,
+    );
+  });
+
   it('stops once the run has been silent for longer than the server keeps it', async () => {
     await mountChat();
     await sendMessage();
@@ -295,7 +381,7 @@ describe('the fallback poll after a stream ends with no reply', () => {
     await advance(6_000);
     expect(harness.state.getMessagesCalls).toBeGreaterThan(1);
 
-    await advance(6 * 60 * 1000);
+    await advance(ABANDONED_CHAT_RUN_AFTER_MS + 60_000);
     const callsOnceAbandoned = harness.state.getMessagesCalls;
     await advance(60_000);
 

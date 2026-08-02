@@ -13,4 +13,10 @@ export const httpTimeouts = {
     DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS: 300,
     // Once bytes are flowing, silence means broken rather than busy.
     DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS: 120,
+    // A day, and the ceiling both sides clamp a configured value to. `setTimeout` truncates its
+    // delay to a signed 32-bit integer, so a plausible "effectively unlimited" fat-finger such as
+    // 3000000 wraps round to a 1ms delay and every provider call fails instantly rather than never
+    // — and since the resolved value is published to the browser, it would fail on both sides at
+    // once. Nothing legitimate waits longer than this for a first byte.
+    MAX_TIMEOUT_SECONDS: 86_400,
 }
