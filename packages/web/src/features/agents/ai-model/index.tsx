@@ -1,8 +1,9 @@
-import { AIProviderName } from '@aiqadam/shared';
+import { AIProviderName, isNil } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
 import * as React from 'react';
 
+import { TextWithTooltip } from '@/components/custom/text-with-tooltip';
 import { Button } from '@/components/ui/button';
 import {
   Command,
@@ -16,30 +17,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { SUPPORTED_AI_PROVIDERS } from '@/features/agents/ai-providers';
 import { cn } from '@/lib/utils';
 
 import { aiModelHooks } from './hooks';
-
-export const PROVIDER_EMBEDDING_MODELS: Partial<
-  Record<AIProviderName, string>
-> = {
-  [AIProviderName.OPENAI]: 'text-embedding-3-small',
-  [AIProviderName.GOOGLE]: 'text-embedding-004',
-  [AIProviderName.AZURE]: 'text-embedding-3-small',
-  [AIProviderName.OPENROUTER]: 'openai/text-embedding-3-small',
-};
-
-type AIModelSelectorProps = {
-  defaultProvider?: AIProviderName;
-  defaultModel?: string;
-  disabled?: boolean;
-  onChange: (value: { provider?: string; model?: string }) => void;
-};
-
-const ALL_PROVIDERS = [...SUPPORTED_AI_PROVIDERS];
+import { AIProviderOption, aiProviderOptions } from './provider-options';
 
 export function AIModelSelector({
+  defaultProviderId,
   defaultProvider,
   defaultModel,
   disabled = false,
@@ -47,79 +31,73 @@ export function AIModelSelector({
 }: AIModelSelectorProps) {
   const [providerOpen, setProviderOpen] = React.useState(false);
   const [modelOpen, setModelOpen] = React.useState(false);
-  const [selectedProvider, setSelectedProvider] = React.useState<
-    AIProviderName | undefined
-  >(defaultProvider);
+  const [pickedProviderId, setPickedProviderId] = React.useState<
+    string | undefined
+  >(undefined);
   const [selectedModel, setSelectedModel] = React.useState<string | undefined>(
     defaultModel,
   );
 
   const { data: providers = [], isLoading: providersLoading } =
     aiModelHooks.useListProviders();
-  const { data: models = [], isLoading: modelsLoading } =
-    aiModelHooks.useGetModelsForProvider(selectedProvider);
 
-  const getProviderLogo = React.useCallback((providerName: string) => {
-    return ALL_PROVIDERS.find((p) => p.provider === providerName)?.logoUrl;
-  }, []);
-
-  const getProviderName = React.useCallback(
-    (providerName: string) => {
-      return (
-        providers.find((p) => p.provider === providerName)?.name ?? providerName
-      );
-    },
+  const options = React.useMemo(
+    () => aiProviderOptions.build({ providers }),
     [providers],
   );
+  const { option: selectedOption, unresolvedRef } =
+    aiProviderOptions.resolveSelected({
+      options,
+      selectedProviderId: pickedProviderId,
+      defaultProviderId,
+      defaultProvider,
+    });
+  // While the list is in flight there is nothing to resolve against, so every stored ref looks
+  // dead. Only report the fault once the answer is in.
+  const showsUnresolvedRef =
+    unresolvedRef && !providersLoading && options.length > 0;
 
-  const sortedProviders = React.useMemo(() => {
-    return [...providers];
-  }, [providers]);
+  const { data: models = [], isLoading: modelsLoading } =
+    aiModelHooks.useGetModelsForProvider({ row: selectedOption });
 
+  // Reconciles the stored model with the catalogue the server answers with, which only arrives
+  // after render: a step can hold no model at all, or one this provider no longer serves, and
+  // either leaves it unrunnable. Selecting a provider row is a user interaction and lives in
+  // `handleProviderChange`; this is the one part that cannot, because it is waiting on a fetch.
   React.useEffect(() => {
-    if (!selectedProvider && !providersLoading && providers.length > 0) {
-      const preferred = providers[0]?.provider;
-      if (preferred) {
-        setSelectedProvider(preferred as AIProviderName);
-      }
+    if (isNil(selectedOption) || modelsLoading || models.length === 0) {
+      return;
     }
-  }, [providers, providersLoading, selectedProvider]);
-
-  React.useEffect(() => {
-    if (
-      selectedProvider &&
-      models.length > 0 &&
-      !selectedModel &&
-      !modelsLoading
-    ) {
-      const firstModel = models[0].id;
-      setSelectedModel(firstModel);
-      onChange({ provider: selectedProvider, model: firstModel });
+    if (!isNil(selectedModel) && models.some((m) => m.id === selectedModel)) {
+      return;
     }
-  }, [models, modelsLoading, selectedProvider, selectedModel, onChange]);
+    const fallback = models[0].id;
+    setSelectedModel(fallback);
+    onChange({
+      providerId: selectedOption.id,
+      provider: selectedOption.provider,
+      model: fallback,
+    });
+  }, [models, modelsLoading, selectedOption, selectedModel, onChange]);
 
-  React.useEffect(() => {
-    if (
-      selectedModel &&
-      models.length > 0 &&
-      !models.some((m) => m.id === selectedModel)
-    ) {
-      const fallback = models[0]?.id;
-      setSelectedModel(fallback);
-      onChange({ provider: selectedProvider, model: fallback });
-    }
-  }, [models, selectedModel, selectedProvider, onChange]);
-
-  const handleProviderChange = (provider: AIProviderName) => {
-    setSelectedProvider(provider);
+  const handleProviderChange = (option: AIProviderOption) => {
+    setPickedProviderId(option.id);
     setSelectedModel(undefined);
-    onChange({ provider, model: undefined });
+    onChange({
+      providerId: option.id,
+      provider: option.provider,
+      model: undefined,
+    });
     setProviderOpen(false);
   };
 
   const handleModelChange = (modelId: string) => {
     setSelectedModel(modelId);
-    onChange({ provider: selectedProvider, model: modelId });
+    onChange({
+      providerId: selectedOption?.id,
+      provider: selectedOption?.provider,
+      model: modelId,
+    });
     setModelOpen(false);
   };
 
@@ -135,30 +113,21 @@ export function AIModelSelector({
               role="combobox"
               aria-expanded={providerOpen}
               className="flex-1 justify-between border-0 rounded-none focus-visible:ring-1 focus-visible:ring-offset-0 max-w-72 h-auto"
-              disabled={disabled || providersLoading || providers.length === 0}
+              disabled={disabled || providersLoading || options.length === 0}
             >
               {providersLoading ? (
                 <div className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>{t('Loading...')}</span>
                 </div>
-              ) : selectedProvider ? (
-                <div className="flex items-center gap-2">
-                  {getProviderLogo(selectedProvider) && (
-                    <img
-                      src={getProviderLogo(selectedProvider)}
-                      alt={selectedProvider}
-                      className="h-4 w-4 object-contain"
-                    />
-                  )}
-                  <span className="truncate">
-                    {getProviderName(selectedProvider)}
-                  </span>
-                </div>
+              ) : selectedOption ? (
+                <AIProviderOptionLabel option={selectedOption} />
               ) : (
                 <span className="text-muted-foreground">
-                  {providers.length === 0
+                  {options.length === 0
                     ? t('No providers')
+                    : showsUnresolvedRef
+                    ? t('Provider no longer available')
                     : t('Select provider')}
                 </span>
               )}
@@ -173,29 +142,22 @@ export function AIModelSelector({
               <CommandInput placeholder={t('Search providers...')} />
               <CommandEmpty>{t('No provider found.')}</CommandEmpty>
               <CommandGroup className="max-h-64 overflow-auto">
-                {sortedProviders.map((provider) => (
+                {options.map((option) => (
                   <CommandItem
-                    key={provider.id}
-                    value={provider.provider}
-                    onSelect={() =>
-                      handleProviderChange(provider.provider as AIProviderName)
-                    }
+                    key={option.id}
+                    // The row id, because cmdk both filters and selects on `value` and two custom
+                    // rows can carry the same display name. `keywords` is what the search reads,
+                    // so typing a name or a base url still finds the entry.
+                    value={option.id}
+                    keywords={option.searchKeywords}
+                    onSelect={() => handleProviderChange(option)}
                     className="cursor-pointer"
                   >
-                    <div className="flex items-center gap-2 flex-1">
-                      {getProviderLogo(provider.provider) && (
-                        <img
-                          src={getProviderLogo(provider.provider)}
-                          alt={provider.provider}
-                          className="h-4 w-4 object-contain"
-                        />
-                      )}
-                      <span>{provider.name}</span>
-                    </div>
+                    <AIProviderOptionLabel option={option} />
                     <Check
                       className={cn(
                         'ml-auto h-4 w-4',
-                        selectedProvider === provider.provider
+                        selectedOption?.id === option.id
                           ? 'opacity-100'
                           : 'opacity-0',
                       )}
@@ -218,7 +180,7 @@ export function AIModelSelector({
               className="flex-1 justify-between border-0 rounded-none focus-visible:ring-1 focus-visible:ring-offset-0 min-w-32 h-auto"
               disabled={
                 disabled ||
-                !selectedProvider ||
+                isNil(selectedOption) ||
                 modelsLoading ||
                 models.length === 0
               }
@@ -235,7 +197,7 @@ export function AIModelSelector({
                 </span>
               ) : (
                 <span className="text-muted-foreground">
-                  {!selectedProvider
+                  {isNil(selectedOption)
                     ? t('Select provider first')
                     : models.length === 0
                     ? t('No models')
@@ -277,11 +239,22 @@ export function AIModelSelector({
         </Popover>
       </div>
 
-      {selectedProvider && (
+      {showsUnresolvedRef && (
+        <p
+          className="text-xs text-destructive"
+          data-testid="ai-provider-unresolved-ref"
+        >
+          {t(
+            'This step points at an AI provider that no longer exists. Pick another one to run it.',
+          )}
+        </p>
+      )}
+
+      {selectedOption && (
         <p className="text-xs text-muted-foreground">
-          {PROVIDER_EMBEDDING_MODELS[selectedProvider]
+          {PROVIDER_EMBEDDING_MODELS[selectedOption.provider]
             ? t('Embedding model for knowledge base: {model}', {
-                model: PROVIDER_EMBEDDING_MODELS[selectedProvider],
+                model: PROVIDER_EMBEDDING_MODELS[selectedOption.provider],
               })
             : t('This provider does not support knowledge base embeddings.')}
         </p>
@@ -289,3 +262,58 @@ export function AIModelSelector({
     </div>
   );
 }
+
+function AIProviderOptionLabel({ option }: AIProviderOptionLabelProps) {
+  return (
+    <div className="flex items-center gap-2 flex-1 min-w-0">
+      {option.logoUrl && (
+        <img
+          src={option.logoUrl}
+          alt={option.provider}
+          className="h-4 w-4 object-contain"
+        />
+      )}
+      <div className="flex flex-col items-start min-w-0">
+        <TextWithTooltip tooltipMessage={option.name}>
+          <div className="max-w-full">{option.name}</div>
+        </TextWithTooltip>
+        {option.baseUrl && (
+          <TextWithTooltip tooltipMessage={option.baseUrl}>
+            <div className="max-w-full text-xs font-normal text-muted-foreground">
+              {option.baseUrl}
+            </div>
+          </TextWithTooltip>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export const PROVIDER_EMBEDDING_MODELS: Partial<
+  Record<AIProviderName, string>
+> = {
+  [AIProviderName.OPENAI]: 'text-embedding-3-small',
+  [AIProviderName.GOOGLE]: 'text-embedding-004',
+  [AIProviderName.AZURE]: 'text-embedding-3-small',
+  [AIProviderName.OPENROUTER]: 'openai/text-embedding-3-small',
+};
+
+type AIModelSelectorProps = {
+  /**
+   * The row the step is pinned to, when it carries one. Optional forever: steps stored before
+   * id-addressing hold only a provider name, and that name still resolves.
+   */
+  defaultProviderId?: string;
+  defaultProvider?: AIProviderName;
+  defaultModel?: string;
+  disabled?: boolean;
+  onChange: (value: {
+    providerId?: string;
+    provider?: string;
+    model?: string;
+  }) => void;
+};
+
+type AIProviderOptionLabelProps = {
+  option: AIProviderOption;
+};

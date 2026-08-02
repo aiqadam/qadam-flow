@@ -69,6 +69,51 @@ describe('aiProviderModelValue.applySelection', () => {
     ).toEqual({ provider: 'openai', model: undefined });
   });
 
+  // The provider-name comparison below cannot see this one: a platform may hold several custom
+  // rows, so moving from custom row A to custom row B is a provider change that leaves
+  // `provider` at 'custom'. An extra chosen against row A would otherwise ride onto row B.
+  it('drops extras when the row changes but the provider type does not', () => {
+    expect(
+      aiProviderModelValue.applySelection({
+        storedValue: {
+          provider: 'custom',
+          model: 'deepseek-chat',
+          providerId: 'row-2',
+          chosenAgainstRow2: true,
+        },
+        selection: {
+          providerId: 'row-3',
+          provider: 'custom',
+          model: undefined,
+        },
+      }),
+    ).toEqual({ providerId: 'row-3', provider: 'custom', model: undefined });
+  });
+
+  // The picker pins a step that only ever stored a name to the row that name already resolved to.
+  // Reading that as a row change would drop extras on a step nothing actually moved.
+  it('does not read a newly added row id as a row change', () => {
+    expect(
+      aiProviderModelValue.applySelection({
+        storedValue: {
+          provider: 'custom',
+          model: 'deepseek-chat',
+          storedBeforeIdAddressing: true,
+        },
+        selection: {
+          providerId: 'row-1',
+          provider: 'custom',
+          model: 'deepseek-chat',
+        },
+      }),
+    ).toEqual({
+      provider: 'custom',
+      model: 'deepseek-chat',
+      providerId: 'row-1',
+      storedBeforeIdAddressing: true,
+    });
+  });
+
   it('does not mutate the stored value', () => {
     const storedValue = {
       provider: 'custom',
