@@ -5,6 +5,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 
 import { ChartLineIcon } from '@/components/icons/chart-line';
 import { CompassIcon } from '@/components/icons/compass';
+import { MessageCircleIcon } from '@/components/icons/message-circle';
 import { TrophyIcon } from '@/components/icons/trophy';
 import { useEmbedding } from '@/components/providers/embed-provider';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar-shadcn';
@@ -80,7 +81,7 @@ export function ProjectDashboardLayout({
       to: '/chat',
       label: t('Chat'),
       show: !isEmbedded,
-      icon: CompassIcon,
+      icon: MessageCircleIcon,
       hasPermission: true,
     },
   ];

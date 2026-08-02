@@ -14,7 +14,7 @@ import { useDebounce } from 'use-debounce';
 import { SearchInput } from '@/components/custom/search-input';
 import { ChartLineIcon } from '@/components/icons/chart-line';
 import { CompassIcon } from '@/components/icons/compass';
-import { SendIcon } from '@/components/icons/send';
+import { MessageCircleIcon } from '@/components/icons/message-circle';
 import { ShieldIcon } from '@/components/icons/shield';
 import { TrophyIcon } from '@/components/icons/trophy';
 import { useEmbedding } from '@/components/providers/embed-provider';
@@ -145,7 +145,7 @@ export function ProjectDashboardSidebar({
     to: '/chat',
     label: t('Chat'),
     show: platform.plan.chatEnabled,
-    icon: SendIcon,
+    icon: MessageCircleIcon,
     hasPermission: true,
     isSubItem: false,
     badge: t('Beta'),
