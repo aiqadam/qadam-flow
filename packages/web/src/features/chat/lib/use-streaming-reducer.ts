@@ -1,7 +1,9 @@
 import {
   ActionPreviewEvent,
   ActionReceiptEvent,
+  ApFlagId,
   ChatAgentEventType,
+  httpTimeouts,
   ToolApprovalRequestEvent,
   ToolProgressEvent,
   WebsocketClientEvent,
@@ -10,13 +12,19 @@ import { UIMessageChunk } from 'ai';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useSocket } from '@/components/providers/socket-provider';
+import { flagsHooks } from '@/hooks/flags-hooks';
 
 import { ChatUIMessage } from './chat-types';
 import { chunkReducer, StreamingState } from './chunk-reducer';
 
 const THROTTLE_MS = 100;
-const STREAM_TIMEOUT_MS = 2 * 60 * 1000;
 const STALE_CHECK_INTERVAL_MS = 15_000;
+
+// The browser is the second timer on a wait the server already bounds, and it must be the later of
+// the two: when the server gives up it says why, and this timer can only say "Stream timed out". The
+// grace also covers the legs the server's own bound does not — the job waiting for a worker, the
+// engine starting, the chunk travelling back over the socket.
+const CLIENT_GRACE_MS = 60_000;
 
 export function useStreamingReducer({
   onTitleUpdate,
@@ -42,6 +50,30 @@ export function useStreamingReducer({
   onStaleCheck: (conversationId: string) => void;
 }) {
   const socket = useSocket();
+
+  // Both bounds are the server's, not this file's. It enforces the same two waits on the provider
+  // (`firstByteTimeoutSeconds` / `streamIdleTimeoutSeconds` in
+  // `packages/server/utils/src/safe-http.ts`) and publishes whatever the operator configured. A
+  // browser-side copy of the number is exactly what #289 was: #266 raised the server's first-token
+  // allowance, the copy here stayed at a flat two minutes, and the tab gave up on answers the server
+  // went on to produce and persist.
+  const { data: serverFirstByteTimeoutSeconds } = flagsHooks.useFlag<number>(
+    ApFlagId.HTTP_FIRST_BYTE_TIMEOUT_SECONDS,
+  );
+  const { data: serverStreamIdleTimeoutSeconds } = flagsHooks.useFlag<number>(
+    ApFlagId.HTTP_STREAM_IDLE_TIMEOUT_SECONDS,
+  );
+  const streamTimeoutsRef = useRef({ firstToken: 0, interChunk: 0 });
+  streamTimeoutsRef.current = {
+    firstToken: clientBoundMs({
+      serverSeconds: serverFirstByteTimeoutSeconds,
+      fallbackSeconds: httpTimeouts.DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS,
+    }),
+    interChunk: clientBoundMs({
+      serverSeconds: serverStreamIdleTimeoutSeconds,
+      fallbackSeconds: httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+    }),
+  };
 
   const [streamingMessage, setStreamingMessage] =
     useState<ChatUIMessage | null>(null);
@@ -179,6 +211,22 @@ export function useStreamingReducer({
         onStreamErrorRef.current({ conversationId, errorMessage, errorCode });
       };
 
+      // Which of the two bounds applies is a property of the stream, so it is read at arming time
+      // rather than fixed when the stream starts: silence before the first token is a model loading,
+      // silence after one is a broken connection, and they are not worth the same wait.
+      const armStreamTimeout = () => {
+        if (streamTimeoutRef.current !== null) {
+          clearTimeout(streamTimeoutRef.current);
+        }
+        const { firstToken, interChunk } = streamTimeoutsRef.current;
+        streamTimeoutRef.current = setTimeout(
+          () => {
+            handleError({ errorMessage: 'Stream timed out' });
+          },
+          streamPhaseRef.current === 'streaming' ? interChunk : firstToken,
+        );
+      };
+
       const expectedGeneration = streamGenerationRef.current;
 
       const handler = (event: SocketEvent) => {
@@ -196,12 +244,7 @@ export function useStreamingReducer({
           }
           scheduleFlush();
 
-          if (streamTimeoutRef.current !== null) {
-            clearTimeout(streamTimeoutRef.current);
-          }
-          streamTimeoutRef.current = setTimeout(() => {
-            handleError({ errorMessage: 'Stream timed out' });
-          }, STREAM_TIMEOUT_MS);
+          armStreamTimeout();
         } else if (event.type === ChatAgentEventType.ERROR) {
           const errorData = event.data as { message?: string; code?: string };
           handleError({
@@ -241,9 +284,7 @@ export function useStreamingReducer({
       };
       socket.on('connect', reconnectHandler);
 
-      streamTimeoutRef.current = setTimeout(() => {
-        handleError({ errorMessage: 'Stream timed out' });
-      }, STREAM_TIMEOUT_MS);
+      armStreamTimeout();
 
       staleCheckTimerRef.current = setInterval(() => {
         const timeSinceLastChunk = Date.now() - lastChunkTimeRef.current;
@@ -291,6 +332,28 @@ export function useStreamingReducer({
     stopStream,
     clearStreamingState,
   };
+}
+
+// Resolved the same way the server resolves the env var it published (`readTimeoutSeconds` in
+// `packages/server/utils/src/safe-http.ts`), because the two numbers have to stay ordered: the
+// browser is only useful as the *later* timer. `??` alone would not do it — it lets `0` through,
+// and a bound of `0 + grace` fires below the server's rather than above it, which is #289 again.
+// The upper clamp is the 32-bit `setTimeout` overflow, where an oversized value silently becomes a
+// 1ms delay.
+function clientBoundMs({
+  serverSeconds,
+  fallbackSeconds,
+}: {
+  serverSeconds: number | null | undefined;
+  fallbackSeconds: number;
+}): number {
+  const seconds =
+    typeof serverSeconds === 'number' &&
+    Number.isFinite(serverSeconds) &&
+    serverSeconds > 0
+      ? Math.min(serverSeconds, httpTimeouts.MAX_TIMEOUT_SECONDS)
+      : fallbackSeconds;
+  return seconds * 1000 + CLIENT_GRACE_MS;
 }
 
 type SocketEvent = {
