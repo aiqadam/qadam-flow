@@ -1,5 +1,4 @@
 import {
-  AIProviderConfig,
   AIProviderName,
   AnthropicProviderAuthConfig,
   AnthropicProviderConfig,
@@ -10,6 +9,7 @@ import {
   CloudflareGatewayProviderAuthConfig,
   CloudflareGatewayProviderConfig,
   CreateAIProviderRequest,
+  formErrors,
   GoogleProviderAuthConfig,
   GoogleProviderConfig,
   isNil,
@@ -59,13 +59,13 @@ import {
 import { apiErrorUtils } from '@/lib/api-error-utils';
 
 import { ApMarkdown } from '../../../../../../components/custom/markdown';
+import { UpsertAIProviderTarget } from '../ai-provider-rows';
 
 import { UpsertProviderConfigForm } from './upsert-provider-config-form';
 
 type UpsertAIProviderDialogProps = {
   provider: AIProviderName;
-  providerId?: string;
-  config?: AIProviderConfig;
+  target: UpsertAIProviderTarget;
   children: React.ReactNode;
   onSave: () => void;
   defaultDisplayName?: string;
@@ -93,9 +93,8 @@ export const UpsertAIProviderDialog = (params: UpsertAIProviderDialogProps) => {
 export const UpsertAIProviderDialogContent = ({
   children,
   onSave,
-  config,
   provider,
-  providerId,
+  target,
   defaultDisplayName = '',
   setOpen,
 }: UpsertAIProviderDialogProps & { setOpen: (val: boolean) => void }) => {
@@ -104,6 +103,9 @@ export const UpsertAIProviderDialogContent = ({
     [provider],
   );
 
+  const isEditMode = target.type === 'edit';
+  const config = target.type === 'edit' ? target.config : undefined;
+
   const form = useForm<CreateAIProviderRequest>({
     resolver: ((
       values: CreateAIProviderRequest,
@@ -111,7 +113,7 @@ export const UpsertAIProviderDialogContent = ({
       options: ResolverOptions<CreateAIProviderRequest>,
     ) => {
       const originalResolve = zodResolver(
-        createFormSchema(provider, !isNil(providerId)),
+        createFormSchema(provider, isEditMode),
       ) as unknown as (
         values: CreateAIProviderRequest,
         context: unknown,
@@ -166,16 +168,15 @@ export const UpsertAIProviderDialogContent = ({
 
   const { mutate, isPending } = useMutation({
     mutationFn: (data: CreateAIProviderRequest): Promise<void> => {
-      if (providerId) {
+      if (target.type === 'edit') {
         const updateData: UpdateAIProviderRequest = {
           displayName: data.displayName,
           config: data.config,
           ...(hasAnyAuthFieldFilled(data.auth) ? { auth: data.auth } : {}),
         };
-        return aiProviderApi.update(providerId, updateData);
-      } else {
-        return aiProviderApi.upsert(data);
+        return aiProviderApi.update(target.providerId, updateData);
       }
+      return aiProviderApi.upsert(data);
     },
     onSuccess: () => {
       setOpen(false);
@@ -208,7 +209,7 @@ export const UpsertAIProviderDialogContent = ({
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {providerId ? t('Update AI Provider') : t('Add AI Provider')}
+            {isEditMode ? t('Update AI Provider') : t('Add AI Provider')}
           </DialogTitle>
         </DialogHeader>
 
@@ -253,9 +254,9 @@ export const UpsertAIProviderDialogContent = ({
                 <UpsertProviderConfigForm
                   form={form}
                   provider={provider}
-                  apiKeyRequired={!config}
+                  apiKeyRequired={!isEditMode}
                   isLoading={isPending}
-                  isEditMode={!!providerId}
+                  isEditMode={isEditMode}
                 />
 
                 {form.formState.errors.root?.serverError && (
@@ -317,7 +318,10 @@ const createFormSchema = (provider: AIProviderName, editMode: boolean) => {
   }
   if (provider === AIProviderName.CUSTOM) {
     return z.object({
-      displayName: z.string().min(1),
+      // The create slot seeds this empty on purpose, so an unnamed provider is the default state
+      // of this dialog rather than an edge case. Without a key here zod emits its own English
+      // sentence, which `FormMessage` passes through `t()` untranslated in every locale.
+      displayName: z.string().min(1, formErrors.required),
       provider: z.literal(AIProviderName.CUSTOM),
       config: OpenAICompatibleProviderConfig,
       auth: editMode ? OptionalAuthSchema : OpenAICompatibleProviderAuthConfig,

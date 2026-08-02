@@ -211,6 +211,14 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             await providerStrategy.validateConnection(auth, config, log)
         }
         catch (error: unknown) {
+            // A strategy that already named a cause is not relabelled. Re-wrapping it would put
+            // the actionable text in `httpErrorResponse`, which nothing in `packages/web` reads —
+            // `apiErrorUtils.extractServerMessage` looks only at `message` and `params.message` —
+            // so the operator holding a row with an out-of-range `resourceName` or `region` would
+            // be told only "Failed to validate credentials", with no way to learn which field.
+            if (error instanceof QadamFlowError) {
+                throw error
+            }
             const errorMessage = error instanceof Error ? error.message : 'Unknown error'
             const includeHttpErrorInMessage = provider === AIProviderName.CLOUDFLARE_GATEWAY
             log.error({ err: error }, '[aiProviderService#validateProviderCredentials] Failed to validate provider credentials')

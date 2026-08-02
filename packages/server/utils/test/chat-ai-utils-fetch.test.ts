@@ -1,4 +1,4 @@
-import { AIProviderName } from '@aiqadam/shared'
+import { AIProviderName, ErrorCode, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, QadamFlowError } from '@aiqadam/shared'
 import { describe, expect, it, vi } from 'vitest'
 import { chatAiUtils } from '../src/chat-ai-utils'
 import { safeHttp } from '../src/safe-http'
@@ -56,5 +56,67 @@ describe('createChatModel SSRF wiring', () => {
     // on the unfiltered global fetch.
     it('covers every provider the enum declares', () => {
         expect(new Set(CASES.map((testCase) => testCase.provider))).toEqual(new Set(Object.values(AIProviderName)))
+    })
+})
+
+// The sinks throw a `QadamFlowError`, whose `.message` is only the code. The operator-facing text
+// rides on `params.message`, and the code has to be `AI_REQUEST_NOT_SUPPORTED` — a plain `Error`
+// here would answer 500 and file an exception report on every chat turn.
+function statedCause(fn: () => unknown): { code: string, message: unknown } | null {
+    try {
+        fn()
+        return null
+    }
+    catch (error) {
+        if (!(error instanceof QadamFlowError)) {
+            return null
+        }
+        const params: unknown = error.error.params
+        const message = typeof params === 'object' && params !== null && 'message' in params ? params.message : undefined
+        return { code: error.error.code, message }
+    }
+}
+
+// safeHttp.fetch filters the address the host resolves to, not which host was named — an
+// attacker-chosen public host passes it. The row is read from the database and never re-parsed
+// against `AzureProviderConfig`, so a `resourceName` stored before that constraint existed has to
+// be refused here or it still builds the request host (#276).
+describe('createChatModel rejects a stored config value that would move the host', () => {
+    it.each([
+        ['attacker.example.com/'],
+        ['attacker.example.com@resource'],
+        ['my.resource'],
+        [''],
+    ])('refuses to construct the provider for %j', (resourceName) => {
+        captured.clear()
+
+        expect(statedCause(() => chatAiUtils.createChatModel({
+            provider: AIProviderName.AZURE,
+            auth: { apiKey: 'k' },
+            config: { resourceName },
+            modelId: 'gpt-4o',
+        }))).toEqual({ code: ErrorCode.AI_REQUEST_NOT_SUPPORTED, message: INVALID_AZURE_RESOURCE_NAME_MESSAGE })
+
+        expect(captured.has('azure')).toBe(false)
+    })
+
+    // `@aws-sdk/client-bedrock` resolves `region` into the endpoint host the same way — `evil.com/`
+    // gives host `bedrock.evil.com` — and it is read from the same never-re-parsed row.
+    it.each([
+        ['evil.com/'],
+        ['x@evil.com'],
+        ['us-east-1.evil.com'],
+        [''],
+    ])('refuses to construct the bedrock provider for a region of %j', (region) => {
+        captured.clear()
+
+        expect(statedCause(() => chatAiUtils.createChatModel({
+            provider: AIProviderName.BEDROCK,
+            auth: { accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'secret' },
+            config: { region },
+            modelId: 'anthropic.claude-sonnet-4',
+        }))).toEqual({ code: ErrorCode.AI_REQUEST_NOT_SUPPORTED, message: INVALID_AWS_REGION_MESSAGE })
+
+        expect(captured.has('bedrock')).toBe(false)
     })
 })

@@ -26,6 +26,16 @@ function buildAgents({ allowList, httpsAgentOptions }: BuildAgentsParams): SsrfA
     }
 }
 
+// For a client that takes neither an axios instance nor a `fetch` override, but does take Node
+// `http.Agent`s — the AWS SDK's `requestHandler` is the case this exists for. It is the same
+// `request-filtering-agent` the axios instances wear, reading the same `AP_SSRF_ALLOW_LIST`, so
+// the process still holds exactly one SSRF implementation. `buildAgents` alone is not enough for
+// a caller outside this file: the allow list would have to be re-parsed there, and a second copy
+// of that parse is precisely how the live filter and the configured one drift apart.
+function buildDefaultAgents({ httpsAgentOptions }: SafeAxiosOptions = {}): SsrfAgents {
+    return buildAgents({ allowList: parseAllowListFromEnv(), httpsAgentOptions })
+}
+
 function isSsrfFilterError(error: unknown): boolean {
     if (!(error instanceof Error)) return false
     const message = typeof error.message === 'string' ? error.message : ''
@@ -247,6 +257,7 @@ const SSRF_REMEDIATION_HINT = 'the target is blocked by the SSRF filter. If it i
 
 export const safeHttp = {
     buildAgents,
+    buildDefaultAgents,
     createAxios,
     createRetryingAxios,
     fetch: safeFetch,

@@ -1,7 +1,7 @@
-import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
 import { AIProviderModel, AIProviderModelType, MistralProviderAuthConfig, MistralProviderConfig } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
+import { providerHttp } from './provider-http'
 
 export const mistralProvider: AIProviderStrategy<MistralProviderAuthConfig, MistralProviderConfig> = {
     name: 'Mistral AI',
@@ -9,16 +9,14 @@ export const mistralProvider: AIProviderStrategy<MistralProviderAuthConfig, Mist
         await mistralProvider.listModels(authConfig, config)
     },
     async listModels(authConfig: MistralProviderAuthConfig, _config: MistralProviderConfig): Promise<AIProviderModel[]> {
-        const res = await httpClient.sendRequest<{ data: MistralModel[] }>({
+        const { data } = await providerHttp.sendJson<{ data: MistralModel[] }>({
             url: 'https://api.mistral.ai/v1/models',
-            method: HttpMethod.GET,
+            method: 'GET',
             headers: {
                 'Authorization': `Bearer ${authConfig.apiKey}`,
                 'Content-Type': 'application/json',
             },
         })
-
-        const { data } = res.body
 
         return data
             .filter((model) => model.capabilities?.completion_chat)

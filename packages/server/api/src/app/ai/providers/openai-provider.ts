@@ -1,7 +1,7 @@
-import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
 import { AIProviderModel, AIProviderModelType, OpenAIProviderAuthConfig, OpenAIProviderConfig } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
+import { providerHttp } from './provider-http'
 
 export const openaiProvider: AIProviderStrategy<OpenAIProviderAuthConfig, OpenAIProviderConfig> = {
     name: 'OpenAI',
@@ -9,16 +9,14 @@ export const openaiProvider: AIProviderStrategy<OpenAIProviderAuthConfig, OpenAI
         await openaiProvider.listModels(authConfig, config)
     },
     async listModels(authConfig: OpenAIProviderAuthConfig, _config: OpenAIProviderConfig): Promise<AIProviderModel[]> {
-        const res = await httpClient.sendRequest<{ data: OpenAIModel[] }>({
+        const { data } = await providerHttp.sendJson<{ data: OpenAIModel[] }>({
             url: 'https://api.openai.com/v1/models',
-            method: HttpMethod.GET,
+            method: 'GET',
             headers: {
                 'Authorization': `Bearer ${authConfig.apiKey}`,
                 'Content-Type': 'application/json',
             },
         })
-
-        const { data } = res.body
 
         const openaiImageModels = [
             'gpt-image-1',

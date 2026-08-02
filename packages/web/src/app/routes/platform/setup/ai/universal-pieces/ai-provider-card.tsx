@@ -14,17 +14,22 @@ import { ItemMediaImage } from '@/components/custom/item-media-image';
 import { Button } from '@/components/ui/button';
 import { AiProviderInfo } from '@/features/agents';
 
+import { aiProviderRowUtils } from '../ai-provider-rows';
+
 import { UpsertAIProviderDialog } from './upsert-provider-dialog';
 
 const AIProviderCard = ({
   providerInfo,
   providerConfig,
+  defaultDisplayName,
+  createLabel,
   onDelete,
   onSave,
   allowWrite = true,
 }: AIProviderCardProps) => {
   const logoUrl = providerInfo.logoUrl;
   const displayName = providerConfig?.name ?? providerInfo.name;
+  const target = aiProviderRowUtils.buildUpsertTarget({ providerConfig });
 
   return (
     <Item variant="outline">
@@ -43,10 +48,9 @@ const AIProviderCard = ({
         <ItemActions>
           <UpsertAIProviderDialog
             key={providerConfig?.id ?? providerInfo.provider}
-            providerId={providerConfig?.id}
-            config={providerConfig?.config}
+            target={target}
             provider={providerInfo.provider}
-            defaultDisplayName={displayName}
+            defaultDisplayName={defaultDisplayName}
             onSave={onSave}
           >
             {providerConfig ? (
@@ -55,7 +59,7 @@ const AIProviderCard = ({
               </Button>
             ) : (
               <Button variant={'basic'} size={'sm'}>
-                {t('Enable')}
+                {createLabel ?? t('Enable')}
               </Button>
             )}
           </UpsertAIProviderDialog>
@@ -85,6 +89,10 @@ const AIProviderCard = ({
 type AIProviderCardProps = {
   providerInfo: AiProviderInfo;
   providerConfig?: AIProviderWithoutSensitiveData;
+  /** Seeds the dialog's Display Name field; a card's title still comes from the row itself. */
+  defaultDisplayName: string;
+  /** Label for the button that opens the dialog in create mode. Defaults to "Enable". */
+  createLabel?: string;
   onDelete: (id: string) => Promise<void>;
   onSave: () => void;
   allowWrite?: boolean;

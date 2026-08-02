@@ -1,29 +1,37 @@
 import { AIProviderModelType, AIProviderName, ALLOWED_CHAT_MODELS_BY_PROVIDER } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockSendRequest } = vi.hoisted(() => ({ mockSendRequest: vi.fn() }))
+// Stubs the SSRF-filtered client rather than `@aiqadam/qadams-common`'s `httpClient`: that import
+// is what #276 removed, and a mock of it would have gone on passing while the provider talked to
+// the real network through an unfiltered axios instance.
+const { axiosRequest } = vi.hoisted(() => ({ axiosRequest: vi.fn() }))
 
-vi.mock('@aiqadam/qadams-common', () => ({
-    httpClient: { sendRequest: mockSendRequest },
-    HttpMethod: { GET: 'GET' },
-}))
+vi.mock('@aiqadam/server-utils', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@aiqadam/server-utils')>()
+    return {
+        ...actual,
+        safeHttp: { ...actual.safeHttp, axios: { request: axiosRequest } },
+    }
+})
 
 import { googleProvider } from '../../../../../src/app/ai/providers/google-provider'
 
+function respondWith(data: unknown): void {
+    axiosRequest.mockResolvedValue({ status: 200, statusText: 'OK', data, headers: {} })
+}
+
 describe('googleProvider.listModels', () => {
     beforeEach(() => {
-        mockSendRequest.mockReset()
+        axiosRequest.mockReset()
     })
 
     it('strips the models/ prefix from every emitted model id', async () => {
-        mockSendRequest.mockResolvedValue({
-            body: {
-                models: [
-                    { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
-                    { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
-                    { name: 'models/imagen-3.0-generate', displayName: 'Imagen 3' },
-                ],
-            },
+        respondWith({
+            models: [
+                { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
+                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+                { name: 'models/imagen-3.0-generate', displayName: 'Imagen 3' },
+            ],
         })
 
         const models = await googleProvider.listModels({ apiKey: 'test-key' }, {})
@@ -34,13 +42,11 @@ describe('googleProvider.listModels', () => {
     })
 
     it('emits ids that intersect the Google chat allow-list so the picker populates', async () => {
-        mockSendRequest.mockResolvedValue({
-            body: {
-                models: [
-                    { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
-                    { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
-                ],
-            },
+        respondWith({
+            models: [
+                { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
+                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+            ],
         })
 
         const models = await googleProvider.listModels({ apiKey: 'test-key' }, {})
@@ -54,13 +60,11 @@ describe('googleProvider.listModels', () => {
     })
 
     it('still classifies image models by their name', async () => {
-        mockSendRequest.mockResolvedValue({
-            body: {
-                models: [
-                    { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
-                    { name: 'models/imagen-3.0-generate-image', displayName: 'Imagen 3' },
-                ],
-            },
+        respondWith({
+            models: [
+                { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+                { name: 'models/imagen-3.0-generate-image', displayName: 'Imagen 3' },
+            ],
         })
 
         const models = await googleProvider.listModels({ apiKey: 'test-key' }, {})

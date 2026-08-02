@@ -14,6 +14,15 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version-backup.service',
     flowVersionBackupService: (): { store: typeof mockBackupStore } => ({ store: mockBackupStore }),
 }))
 
+// v24 reads the qadam registry to find the version it should pin AI steps to, so every path here
+// that walks the chain past 24 needs one. None of these fixtures carries an AI step, so the
+// contents only have to be a list.
+vi.mock('../../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
+    qadamMetadataService: (): { registry: () => Promise<unknown[]> } => ({
+        registry: async (): Promise<unknown[]> => [{ name: '@aiqadam/qadam-ai', version: '0.4.4' }],
+    }),
+}))
+
 import { flowVersionMigrationService } from '../../../../../src/app/flows/flow-version/flow-version-migration.service'
 import { flowMigrations } from '../../../../../src/app/flows/flow-version/migrations'
 import { migrateV22RenamePieceToQadam } from '../../../../../src/app/flows/flow-version/migrations/migrate-v22-rename-piece-to-qadam'
@@ -140,7 +149,7 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
     it('migrates a version sitting at exactly 22 instead of skipping the rename', async () => {
         const migrated = await flowVersionMigrationService(mockLog).migrate(preRenameFlowVersion('22'))
 
-        expect(migrated.schemaVersion).toBe('24')
+        expect(migrated.schemaVersion).toBe('25')
         expect(readNames(migrated)).toEqual({
             trigger: { name: '@aiqadam/qadam-gmail', version: '~0.1.0' },
             action: { name: '@aiqadam/qadam-slack', version: '~0.2.0' },
@@ -172,7 +181,7 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
         await flowVersionMigrationService(mockLog).migrate(preRenameFlowVersion('22'))
 
         expect(mockRepoUpdate).toHaveBeenCalledTimes(1)
-        expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: '24' })
+        expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: '25' })
     })
 })
 
