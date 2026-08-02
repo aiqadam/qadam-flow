@@ -74,6 +74,49 @@ AP_SMTP_HOST=127.0.0.1 AP_SMTP_PORT=2525 AP_SMTP_USERNAME=dev AP_SMTP_PASSWORD=d
 AP_SMTP_SENDER_EMAIL=no-reply@qadam.test AP_SMTP_SENDER_NAME='Qadam Flow' npm run dev
 ```
 
+## Opt-in specs: Chat with AI (`scenarios/ce/chat/`)
+
+Two specs, both **skipped unless you opt in with an env var**, because neither can run under the
+bundled `docker-compose.yml` as shipped. A skip is loud (Playwright prints the reason); do not read
+a green CI run as evidence that either of them passed.
+
+- **`chat-with-ai.spec.ts`** (#174 wiring, #264, #265, #267) drives the chat against
+  `scenarios/ce/chat/openai-stub.ts` — a small OpenAI-compatible SSE server started inside the
+  Playwright worker and pointed at by a CUSTOM provider row the spec creates through the platform
+  AI settings UI. The stub is what makes the three *small local model* behaviours reachable on
+  demand: a first token withheld past the idle bound, and a numeric tool argument arriving as a
+  JSON string. A real model does neither when asked.
+
+  Requires `E2E_CHAT_STUB_HOST` **and** a stack whose SSRF filter lets the server call back to the
+  worker. Provider calls go through `safeHttp.fetch`, which rejects private and loopback addresses,
+  so the instance needs `AP_SSRF_ALLOW_LIST` covering the Docker gateway and an `extra_hosts` entry
+  for `host.docker.internal`:
+
+  ```yaml
+  # docker-compose override for the app service
+  extra_hosts: ['host.docker.internal:host-gateway']
+  environment: ['AP_SSRF_ALLOW_LIST=172.16.0.0/12,127.0.0.1']
+  ```
+  ```bash
+  E2E_CHAT_STUB_HOST=host.docker.internal npx playwright test scenarios/ce/chat --workers=1
+  ```
+
+  Budget ~2.5 min for the file: the #265 case deliberately spends 130 s in silence, which is the
+  point of it.
+
+- **`chat-real-provider.spec.ts`** (#174) runs the same feature against a genuine third-party
+  OpenAI-compatible endpoint, which is the stronger evidence for "the operator's own provider".
+  Needs `E2E_REAL_AI_API_KEY` (optionally `E2E_REAL_AI_BASE_URL` / `E2E_REAL_AI_MODEL_ID`; the
+  defaults describe DeepSeek). It spends exactly one completion, and deletes the provider row —
+  and with it the stored key — in `afterAll`.
+
+  **Never screenshot the AI settings page while a real key is in it.** `#apiKey` in the Add AI
+  Provider dialog is a plain text `Input` with no masking
+  (`packages/web/src/app/routes/platform/setup/ai/universal-pieces/upsert-provider-config-form.tsx`),
+  so a frame of that dialog carries the key in the clear.
+
+Screenshots land in `screenshots/chat-with-ai/` (git-ignored), named `NN-what-it-proves.png`.
+
 ## Environment limitations
 
 - **Single platform on localhost.** `platformUtils.getPlatformIdForRequest` routes anonymous requests to `getOldestPlatform()`, so once dev-seed has created a platform, every anonymous sign-up joins it (invitation-only). Multi-platform tests need SaaS host routing (`legacy_custom_domain`), not present locally. Prefer same-platform isolation scenarios over cross-platform ones — the former exercises `applyProjectsAccessFilters` directly, which is what user-facing isolation actually relies on.
