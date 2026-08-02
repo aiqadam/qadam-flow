@@ -1,7 +1,7 @@
 import http from 'node:http'
 import https from 'node:https'
 import { Readable } from 'node:stream'
-import { isNil } from '@aiqadam/shared'
+import { httpTimeouts, isNil } from '@aiqadam/shared'
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
@@ -116,7 +116,7 @@ async function safeFetch(input: string | URL | Request, init?: RequestInit): Pro
         // evaluates the prompt without sending anything. A 120s value here killed every first
         // message to an idle Ollama at 121s (#265). Generous by default, and configurable, because
         // how long "cold" takes is a property of the operator's hardware, not of this code.
-        timeout: firstByteTimeoutMs(),
+        timeout: firstByteTimeoutSeconds() * 1000,
         signal: request.signal,
     })
 
@@ -141,7 +141,7 @@ async function safeFetch(input: string | URL | Request, init?: RequestInit): Pro
 // allowance would be the very leak the timeout exists to prevent. axios' own timer stays armed at
 // the first-byte value, so this is the stricter of the two and the one that governs in practice.
 function withIdleGuard(stream: Readable): Readable {
-    const idleMs = streamIdleTimeoutMs()
+    const idleMs = streamIdleTimeoutSeconds() * 1000
     let timer: NodeJS.Timeout | undefined
 
     const stop = (): void => {
@@ -172,15 +172,19 @@ function readTimeoutSeconds(name: string, fallbackSeconds: number): number {
     const raw = Number(process.env[name])
     // An unset, empty, non-numeric or non-positive value is not a reason to disable the timeout —
     // that failure mode is a permanently pinned socket, so it falls back rather than fails open.
-    return Number.isFinite(raw) && raw > 0 ? raw * 1000 : fallbackSeconds * 1000
+    return Number.isFinite(raw) && raw > 0 ? raw : fallbackSeconds
 }
 
-function firstByteTimeoutMs(): number {
-    return readTimeoutSeconds('AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS', DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS)
+// Exposed in seconds, not milliseconds, because the browser has to outlast these too and reads them
+// off the `HTTP_FIRST_BYTE_TIMEOUT_SECONDS` / `HTTP_STREAM_IDLE_TIMEOUT_SECONDS` flags. Resolving
+// the env var once, here, is what keeps the value the operator configured and the value the tab
+// waits for from drifting apart (#289).
+function firstByteTimeoutSeconds(): number {
+    return readTimeoutSeconds('AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS', httpTimeouts.DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS)
 }
 
-function streamIdleTimeoutMs(): number {
-    return readTimeoutSeconds('AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS', DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
+function streamIdleTimeoutSeconds(): number {
+    return readTimeoutSeconds('AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS', httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
 }
 
 // An `AxiosError` carries the whole request config as an own enumerable property, and that config
@@ -242,14 +246,6 @@ let lazyRetryingAxios: AxiosInstance | undefined
 
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304]
 
-// Five minutes of silence before the first byte. A cold local model loading gigabytes and
-// evaluating a large prompt routinely needs more than two (#265); a provider that is genuinely dead
-// still gets reclaimed rather than pinning the socket.
-const DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS = 300
-
-// Once bytes are flowing, silence means broken rather than busy.
-const DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 120
-
 const WIRE_ONLY_RESPONSE_HEADERS = ['content-length', 'transfer-encoding', 'connection', 'keep-alive']
 
 const SSRF_FILTER_MESSAGE_REGEX = /(DNS lookup .* not allowed|IP .* is not allowed)/i
@@ -261,6 +257,8 @@ export const safeHttp = {
     createAxios,
     createRetryingAxios,
     fetch: safeFetch,
+    firstByteTimeoutSeconds,
+    streamIdleTimeoutSeconds,
     get axios(): AxiosInstance {
         lazyDefaultAxios ??= createAxios()
         return lazyDefaultAxios

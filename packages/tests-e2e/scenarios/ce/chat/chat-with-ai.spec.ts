@@ -52,6 +52,8 @@ import {
  *          `expected number, received string` and the model then leaked a raw tool call as prose.
  *   #265 — a model that sends nothing for longer than the *inter-chunk* idle bound still completes,
  *          because #266 gave the first byte its own, much larger deadline.
+ *   #289 — and the answer appears in the tab that asked, because the browser now takes both bounds
+ *          from the server instead of enforcing a flat two minutes of its own.
  *
  * **Requires a stack the SSRF filter lets reach the stub.** Provider calls go through
  * `safeHttp.fetch`, which rejects private and loopback addresses, so the instance under test must
@@ -60,7 +62,7 @@ import {
  * unless `E2E_CHAT_STUB_HOST` names the address the server should call back on
  * (`host.docker.internal` for a Docker stack reached from the host network).
  */
-test.describe('Chat with AI on a scripted operator-configured provider (#174, #264, #265, #267)', () => {
+test.describe('Chat with AI on a scripted operator-configured provider (#174, #264, #265, #267, #289)', () => {
   test.skip(
     process.env.E2E_CHAT_STUB_HOST === undefined,
     'needs a stack booted with AP_SSRF_ALLOW_LIST so the server can reach the local OpenAI stub; set E2E_CHAT_STUB_HOST to the address it should call back on',
@@ -255,17 +257,15 @@ test.describe('Chat with AI on a scripted operator-configured provider (#174, #2
   // included, because the headers are the first byte — for longer than the inter-chunk idle bound
   // and then streams normally.
   //
-  // **The tab has to be reopened, and that is a finding rather than a convenience.** The server
-  // side of #265 works: the run survives the silence and the answer is persisted. The *browser*
-  // still carries the same 120 s bound that #266 removed from the server —
-  // `STREAM_TIMEOUT_MS = 2 * 60 * 1000` in `packages/web/src/features/chat/lib/use-streaming-reducer.ts`
-  // — so at 120 s the open tab tears down its socket handler and reconciles against a conversation
-  // that has not answered yet. The fallback poll that would have caught the answer eight seconds
-  // later cannot run either: `isPollingForAgentReply` in `use-chat.ts` is only ever set to `false`,
-  // by three call sites, and to `true` by none. So the answer lands and the open tab never shows
-  // it. Reopening the conversation is what the test does instead of asserting that defect, which
-  // would go red the day someone fixes it.
-  test('completes when the model withholds its first token past the inter-chunk idle bound (#265)', async ({
+  // **No reload: the tab that asked is the tab that has to show the answer.** This used to reopen
+  // the conversation, because the browser carried its own flat 120 s copy of the bound #266 split
+  // on the server, tore down its socket handler at two minutes and reconciled against a
+  // conversation that had not answered yet — the answer landed in the database and the open tab
+  // never showed it (#289). The browser now derives both bounds from the server's own
+  // (`HTTP_FIRST_BYTE_TIMEOUT_SECONDS` / `HTTP_STREAM_IDLE_TIMEOUT_SECONDS` on `/v1/flags`), so the
+  // reopen is no longer needed and asserting on the open tab is what makes this the whole
+  // behaviour rather than half of it.
+  test('completes when the model withholds its first token past the inter-chunk idle bound (#265, #289)', async ({
     page,
   }) => {
     const answer = 'Sorry for the wait — I had to load first.';
@@ -279,11 +279,8 @@ test.describe('Chat with AI on a scripted operator-configured provider (#174, #2
       `Cold start: the stub model will send nothing at all for ${COLD_START_DELAY_MS / 1000}s, past the ${STREAM_IDLE_BOUND_SECONDS}s inter-chunk bound.`,
     );
 
-    await expect(async () => {
-      await page.reload();
-      await expect(page.getByText(answer)).toBeVisible({ timeout: 10_000 });
-    }).toPass({ timeout: 240_000 });
-    await shot(page, '06-cold-start-answer-survives-and-renders-on-reopen');
+    await expect(page.getByText(answer)).toBeVisible({ timeout: 240_000 });
+    await shot(page, '06-cold-start-answer-renders-in-the-tab-that-asked');
 
     // Guards against a stub that quietly answered at once: the answer is only evidence for #265 if
     // the silence really outlasted the inter-chunk bound.
@@ -322,8 +319,9 @@ async function deleteFlowViaUI(page: Page, displayName: string): Promise<void> {
   await expect(page.getByText(displayName)).toHaveCount(0, { timeout: 15_000 });
 }
 
-// `DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS` in `packages/server/utils/src/safe-http.ts` — and the value
-// the single pre-#266 timer used for the first byte as well, which is what made a cold model fail.
+// `httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS` in `@aiqadam/shared` — and the value the single
+// pre-#266 timer used for the first byte as well, which is what made a cold model fail. The browser
+// used to carry a second copy of it; since #289 it reads the server's own value off `/v1/flags`.
 const STREAM_IDLE_BOUND_SECONDS = 120;
 
 // Comfortably past that bound and comfortably inside the 300 s first-byte allowance that replaced
