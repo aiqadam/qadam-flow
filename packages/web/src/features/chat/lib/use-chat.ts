@@ -1,4 +1,5 @@
 import {
+  ABANDONED_CHAT_RUN_AFTER_MS,
   ActionPreviewEvent,
   ActionReceiptEvent,
   apId,
@@ -212,6 +213,7 @@ export function useAgentChat({
   const [modelName, setModelNameState] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isPollingForAgentReply, setIsPollingForAgentReply] = useState(false);
+  const pollDeadlineRef = useRef(0);
   const [sendStatus, setSendStatus] = useState<SendStatus>({ type: 'idle' });
   const sendStatusRef = useRef<SendStatus>({ type: 'idle' });
 
@@ -367,8 +369,27 @@ export function useAgentChat({
     onStreamFinished: (convId) => {
       reconcileAndClearRef.current(convId);
     },
+    // A stream can end while the run does not — a dropped socket, this side's own timeout, an error
+    // raised for one turn of a conversation the server is still working through. The reconcile above
+    // refetches once and finds nothing, and teardown has already stopped the stale check, so nothing
+    // else will ever look again: the answer lands in the database and the open tab never shows it
+    // (#289). Handing the wait to the poll is what closes that, and the poll ends itself as soon as
+    // the conversation leaves STREAMING.
     onStreamError: ({ conversationId: convId }) => {
       reconcileAndClearRef.current(convId);
+      void tryCatch(async () => {
+        const conv = await chatApi.getConversation(convId);
+        if (isNil(conv) || conversationIdRef.current !== convId) return;
+        if (conv.status === ChatConversationStatus.STREAMING) {
+          // The server's own bound, imported rather than restated: it stops honouring a STREAMING
+          // conversation this long after its last heartbeat, so a poll that outlives it is waiting
+          // on a run nobody is running. `getConversation` never applies that bound — only the
+          // admission path does — so this side is the only thing that ends the spinner, and a
+          // second literal here is the same drift #289 was.
+          pollDeadlineRef.current = Date.now() + ABANDONED_CHAT_RUN_AFTER_MS;
+          setIsPollingForAgentReply(true);
+        }
+      });
     },
     onStaleCheck: (convId) => {
       void tryCatch(async () => {
@@ -680,6 +701,12 @@ export function useAgentChat({
     queryFn: async () => {
       if (!conversationId || conversationIdRef.current !== conversationId)
         return null;
+      // Past the deadline the STREAMING status describes a run the server itself has written off,
+      // and polling it is a spinner with nothing behind it.
+      if (Date.now() > pollDeadlineRef.current) {
+        setIsPollingForAgentReply(false);
+        return null;
+      }
       const [messagesResult, convResult] = await Promise.all([
         chatApi.getMessages(conversationId),
         chatApi.getConversation(conversationId),

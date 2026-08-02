@@ -1,3 +1,4 @@
+import { ApFlagId, httpTimeouts } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { defaultTheme } from '../../../../src/app/flags/theme'
@@ -88,6 +89,38 @@ describe('Flags API', () => {
             expect(body.THEME.websiteName).toBe('Empty Favicon Co')
             expect(body.THEME.logos.favIconUrl).toBe(defaultTheme.logos.favIconUrl)
             expect(body.THEME.logos.fullLogoUrl).toBe('https://example.com/full-logo.png')
+        })
+
+        it('publishes the provider timeouts the browser has to outlast', async () => {
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/flags',
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+
+            expect(body[ApFlagId.HTTP_FIRST_BYTE_TIMEOUT_SECONDS]).toBe(httpTimeouts.DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS)
+            expect(body[ApFlagId.HTTP_STREAM_IDLE_TIMEOUT_SECONDS]).toBe(httpTimeouts.DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS)
+        })
+
+        // The browser arms its own timers off these, so serving the default while the operator has
+        // raised the server's own allowance would put the tab straight back to giving up on a cold
+        // model the server is still waiting for (#289).
+        it('publishes the allowance the operator configured, not the default', async () => {
+            process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS'] = '900'
+            try {
+                const response = await app?.inject({
+                    method: 'GET',
+                    url: '/api/v1/flags',
+                })
+
+                expect(response?.statusCode).toBe(StatusCodes.OK)
+                expect(response?.json()[ApFlagId.HTTP_FIRST_BYTE_TIMEOUT_SECONDS]).toBe(900)
+            }
+            finally {
+                delete process.env['AP_HTTP_FIRST_BYTE_TIMEOUT_SECONDS']
+            }
         })
     })
 })
