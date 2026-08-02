@@ -51,17 +51,16 @@ test.describe('Per-member failure alerts toggle (#88, UI)', { tag: '@smtp' }, ()
     };
 
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-    const ownerInviteLink = await issuePlatformMemberInviteViaUI(page, ownerEmail, shot);
+    const ownerInviteLink = await issuePlatformMemberInviteViaUI(page, ownerEmail);
 
     const ownerCtx = await browser.newContext();
     const owner = await acceptInviteAndSignUp(
       ownerCtx,
       ownerInviteLink,
       { firstName: 'Nadia', lastName: 'NonAdmin', password: OWNER_PASSWORD },
-      shot,
     );
 
-    await createTeamProjectViaUI(owner, projectName, shot);
+    await createTeamProjectViaUI(owner, projectName);
     let dialog = await openTeamTab(owner);
 
     // SMTP is configured → no hint, toggles enabled.
@@ -92,7 +91,6 @@ test.describe('Per-member failure alerts toggle (#88, UI)', { tag: '@smtp' }, ()
       memberCtx,
       memberInviteLink,
       { firstName: 'Marat', lastName: 'Member', password: MEMBER_PASSWORD },
-      shot,
     );
     await memberCtx.close();
 

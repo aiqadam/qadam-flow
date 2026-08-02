@@ -47,7 +47,7 @@ test.describe('Non-admin project owner manages team members (UI)', () => {
 
     // Admin mints the non-admin actor (only non-UI step).
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
-    const ownerInviteLink = await issuePlatformMemberInviteViaUI(page, ownerEmail, shot);
+    const ownerInviteLink = await issuePlatformMemberInviteViaUI(page, ownerEmail);
 
     // owner2 enters like a real user: opens the invite link → accepts → signs up.
     const ownerCtx = await browser.newContext();
@@ -55,7 +55,6 @@ test.describe('Non-admin project owner manages team members (UI)', () => {
       ownerCtx,
       ownerInviteLink,
       { firstName: 'Nadia', lastName: 'NonAdmin', password: OWNER_PASSWORD },
-      shot,
     );
     await shot(owner, 'owner-dashboard-non-admin');
 
@@ -65,7 +64,7 @@ test.describe('Non-admin project owner manages team members (UI)', () => {
     await shot(owner, 'blocked-from-platform');
 
     // owner2 creates a team project from the sidebar (becomes its project ADMIN).
-    await createTeamProjectViaUI(owner, projectName, shot);
+    await createTeamProjectViaUI(owner, projectName);
     await shot(owner, 'team-project-created');
 
     // owner2 opens Settings → Team and invites a member.
@@ -81,7 +80,6 @@ test.describe('Non-admin project owner manages team members (UI)', () => {
       memberCtx,
       memberInviteLink,
       { firstName: 'Marat', lastName: 'Member', password: MEMBER_PASSWORD },
-      shot,
     );
     await memberCtx.close();
 
