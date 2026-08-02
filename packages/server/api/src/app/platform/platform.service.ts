@@ -239,7 +239,7 @@ async function getPlan(_log: FastifyBaseLogger, _platform: PlatformWithoutFedera
         embeddingEnabled: false,
         agentsEnabled: true,
         aiProvidersEnabled: true,
-        chatEnabled: false,
+        chatEnabled: true,
         dataManipulationEnabled: false,
         globalConnectionsEnabled: false,
         customRolesEnabled: false,
