@@ -1,4 +1,4 @@
-import { apVersionUtil } from '@aiqadam/server-utils'
+import { apVersionUtil, safeHttp } from '@aiqadam/server-utils'
 import { ApFlagId, ExecutionMode, Flag, isNil } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger, FastifyRequest } from 'fastify'
@@ -215,6 +215,21 @@ export const flagService = (_log: FastifyBaseLogger) => ({
             {
                 id: ApFlagId.WEBHOOK_TIMEOUT_SECONDS,
                 value: system.getNumber(AppSystemProp.WEBHOOK_TIMEOUT_SECONDS),
+                created,
+                updated,
+            },
+            // Read off `safeHttp` rather than re-parsed from the environment here: the browser arms
+            // its own timers over the same wait, and a second parse of the same variable is how the
+            // value the operator set and the value the tab honours come apart (#289).
+            {
+                id: ApFlagId.HTTP_FIRST_BYTE_TIMEOUT_SECONDS,
+                value: safeHttp.firstByteTimeoutSeconds(),
+                created,
+                updated,
+            },
+            {
+                id: ApFlagId.HTTP_STREAM_IDLE_TIMEOUT_SECONDS,
+                value: safeHttp.streamIdleTimeoutSeconds(),
                 created,
                 updated,
             },

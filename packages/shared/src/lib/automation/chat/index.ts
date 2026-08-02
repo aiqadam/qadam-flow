@@ -304,3 +304,13 @@ export { isBatchProgressData }
 
 export type ChatAllowedMimeType = typeof CHAT_ALLOWED_MIME_TYPES[number]
 export { CHAT_ALLOWED_MIME_TYPES }
+
+// A live run touches its conversation row at every step, so a STREAMING row untouched for this long
+// belongs to a process that is no longer running — an API restart mid-run, which is routine on a
+// self-hosted upgrade. Two processes act on the same number and neither can see the other's: the
+// server stops honouring the row (`isAbandoned` in `chat-conversation.service.ts`) and the browser
+// stops polling it (`use-chat.ts`). It has to be one literal rather than two, for the same reason
+// the provider timeouts above do — `isAbandoned` is consulted only on the admission path, so
+// `getConversation` keeps reporting STREAMING for a run nobody is running, and a browser copy that
+// drifted above the server's would spin on that status forever.
+export const ABANDONED_CHAT_RUN_AFTER_MS = 5 * 60 * 1000
