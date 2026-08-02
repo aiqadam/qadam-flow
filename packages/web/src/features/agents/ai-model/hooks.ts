@@ -10,11 +10,11 @@ import { aiProviderApi } from '@/features/platform-admin/api/ai-provider-api';
 
 type AIModelType = 'text' | 'image';
 
-function getAllowedModelsForProvider(
-  provider: AIProviderName,
-  allModels: AIProviderModel[],
-  modelType: AIModelType,
-): AIProviderModel[] {
+function getAllowedModelsForProvider({
+  provider,
+  allModels,
+  modelType,
+}: GetAllowedModelsForProviderParams): AIProviderModel[] {
   const allowedIds = ALLOWED_CHAT_MODELS_BY_PROVIDER[provider];
 
   return allModels
@@ -44,17 +44,43 @@ export const aiModelHooks = {
     });
   },
 
-  useGetModelsForProvider: (provider?: AIProviderName) => {
+  /**
+   * Both halves of the reference are needed and neither can stand in for the other.
+   *
+   * `providerId` addresses one row, so it is what the request is keyed and cached on: a platform
+   * may hold several custom rows, and keying on the provider *name* served the second one the
+   * first one's catalogue out of the query cache. `provider` is the type, which is what
+   * `ALLOWED_CHAT_MODELS_BY_PROVIDER` is keyed on — a row id could not answer that.
+   */
+  useGetModelsForProvider: ({
+    providerId,
+    provider,
+  }: GetModelsForProviderParams) => {
     return useQuery({
-      queryKey: ['ai-models', provider],
-      enabled: !!provider,
+      queryKey: ['ai-models', providerId],
+      enabled: !isNil(providerId) && !isNil(provider),
       queryFn: async () => {
-        if (isNil(provider)) return [];
+        if (isNil(providerId) || isNil(provider)) return [];
 
-        const allModels = await aiProviderApi.listModelsForProvider(provider);
+        const allModels = await aiProviderApi.listModelsForProvider(providerId);
 
-        return getAllowedModelsForProvider(provider, allModels, 'text');
+        return getAllowedModelsForProvider({
+          provider,
+          allModels,
+          modelType: 'text',
+        });
       },
     });
   },
+};
+
+type GetModelsForProviderParams = {
+  providerId?: string;
+  provider?: AIProviderName;
+};
+
+type GetAllowedModelsForProviderParams = {
+  provider: AIProviderName;
+  allModels: AIProviderModel[];
+  modelType: AIModelType;
 };
