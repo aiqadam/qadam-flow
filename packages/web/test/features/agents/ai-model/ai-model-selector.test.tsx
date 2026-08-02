@@ -3,6 +3,7 @@ import {
   AIProviderModel,
   AIProviderModelType,
   AIProviderName,
+  AIProviderWithoutSensitiveData,
 } from '@aiqadam/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
@@ -24,7 +25,7 @@ const openAICompatibleConfig = (baseUrl: string) => ({
 
 // Two custom rows deliberately share a display name: nothing enforces uniqueness on it, so the
 // picker cannot use it to tell them apart.
-const PROVIDERS = [
+const PROVIDERS: AIProviderWithoutSensitiveData[] = [
   {
     id: FIRST_CUSTOM_ROW_ID,
     name: 'Ollama',
@@ -50,48 +51,27 @@ const PROVIDERS = [
   },
 ];
 
-const MODELS_BY_REF: Record<string, AIProviderModel[]> = {
-  [MISTRAL_ROW_ID]: [
-    {
-      id: 'mistral-large',
-      name: 'mistral-large',
-      type: AIProviderModelType.TEXT,
-    },
-  ],
+const textModel = (id: string): AIProviderModel => ({
+  id,
+  name: id,
+  type: AIProviderModelType.TEXT,
+});
+
+// Keyed by row id only. The picker never sends a provider *name* to this endpoint — it resolves
+// the row first and asks by id — so a name-keyed entry here would be fixture that dresses the file
+// as covering the server's name tiebreak while nothing ever reads it.
+const MODELS_BY_ROW_ID: Record<string, AIProviderModel[]> = {
+  [MISTRAL_ROW_ID]: [textModel('mistral-large')],
+  // Two, so that "the picker reverted the model the user chose" is a thing this fixture can show.
   [FIRST_CUSTOM_ROW_ID]: [
-    {
-      id: 'first-row-model',
-      name: 'first-row-model',
-      type: AIProviderModelType.TEXT,
-    },
+    textModel('first-row-model'),
+    textModel('first-row-model-mini'),
   ],
-  [SECOND_CUSTOM_ROW_ID]: [
-    {
-      id: 'second-row-model',
-      name: 'second-row-model',
-      type: AIProviderModelType.TEXT,
-    },
-  ],
-  // What the server answers for a name-keyed ref: the platform's oldest row of that type
-  // (`findProviderOrThrow`'s `created ASC, id ASC` tiebreak).
-  [AIProviderName.CUSTOM]: [
-    {
-      id: 'first-row-model',
-      name: 'first-row-model',
-      type: AIProviderModelType.TEXT,
-    },
-  ],
-  [AIProviderName.MISTRAL]: [
-    {
-      id: 'mistral-large',
-      name: 'mistral-large',
-      type: AIProviderModelType.TEXT,
-    },
-  ],
+  [SECOND_CUSTOM_ROW_ID]: [textModel('second-row-model')],
 };
 
-const listModelsForProvider = vi.fn(async (ref: string) => {
-  return MODELS_BY_REF[ref] ?? [];
+const listModelsForProvider = vi.fn(async (rowId: string) => {
+  return MODELS_BY_ROW_ID[rowId] ?? [];
 });
 
 vi.mock('@/features/platform-admin/api/ai-provider-api', () => ({
@@ -162,6 +142,21 @@ const openProviderDropdown = async () => {
 const openModelDropdown = async () => {
   await click(comboboxes()[1]);
 };
+
+// cmdk renders each item's `value` — the identity it filters and selects on — as `data-value`.
+const itemValues = () =>
+  [...document.querySelectorAll('[cmdk-item]')].map(
+    (item) => item.getAttribute('data-value') ?? '',
+  );
+
+const checkedItems = () =>
+  [...document.querySelectorAll('[cmdk-item] .opacity-100')].map(
+    (mark) => mark.closest('[cmdk-item]')?.textContent ?? '',
+  );
+
+const unresolvedRefHints = () => [
+  ...document.querySelectorAll('[data-testid="ai-provider-unresolved-ref"]'),
+];
 
 const itemTexts = () =>
   [...document.querySelectorAll('[cmdk-item]')].map(
@@ -243,6 +238,13 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
     expect(entries.filter((entry) => entry.includes('Ollama'))).toHaveLength(2);
     expect(entries).toContain('Ollamahttps://first.example.com/v1');
     expect(entries).toContain('Ollamahttps://second.example.com/v1');
+
+    // The collision itself, as cmdk sees it. `value` is the identity cmdk filters and selects on,
+    // and it reaches the DOM as `data-value` — two rows named "Ollama" gave it one identity for
+    // two entries. Keying on the row id is what separates them.
+    expect([...itemValues()].sort()).toEqual(
+      [MISTRAL_ROW_ID, FIRST_CUSTOM_ROW_ID, SECOND_CUSTOM_ROW_ID].sort(),
+    );
   });
 
   it('still searches by display name and by base url, though entries are keyed by row id', async () => {
@@ -272,10 +274,7 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
 
     await openProviderDropdown();
 
-    const checked = [
-      ...document.querySelectorAll('[cmdk-item] .opacity-100'),
-    ].map((mark) => mark.closest('[cmdk-item]')?.textContent ?? '');
-    expect(checked).toEqual(['Ollamahttps://second.example.com/v1']);
+    expect(checkedItems()).toEqual(['Ollamahttps://second.example.com/v1']);
   });
 
   it('emits the picked row id when the second custom row is selected', async () => {
@@ -307,7 +306,7 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
     });
 
     await openModelDropdown();
-    expect(itemTexts()).toEqual(['first-row-model']);
+    expect(itemTexts()).toEqual(['first-row-model', 'first-row-model-mini']);
     await click(comboboxes()[1]);
 
     await openProviderDropdown();
@@ -323,10 +322,97 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
     });
   });
 
-  it('resolves a stored row id that no longer exists by provider name, without rewriting the step to another type', async () => {
+  // Picking a model is the most common interaction here, and it is an emission like any other:
+  // before #282 landed, an emission that omitted the row id erased the pin on every model pick.
+  it('emits the pinned row id when the user picks a model, not just the model', async () => {
+    const onChange = vi.fn();
+    await mountSelector({
+      defaultProviderId: FIRST_CUSTOM_ROW_ID,
+      defaultProvider: AIProviderName.CUSTOM,
+      defaultModel: 'first-row-model',
+      onChange,
+    });
+
+    await openModelDropdown();
+    await click(findItem('first-row-model-mini'));
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      providerId: FIRST_CUSTOM_ROW_ID,
+      provider: AIProviderName.CUSTOM,
+      model: 'first-row-model-mini',
+    });
+  });
+
+  // The catalogue effect exists only to replace a model the provider no longer serves. Without its
+  // "the stored model is still in the catalogue" guard it also overwrites a model the operator just
+  // chose, on the very next render, with whatever happens to be first.
+  it('leaves a model the user picked alone instead of reverting it to the first in the catalogue', async () => {
+    const onChange = vi.fn();
+    await mountSelector({
+      defaultProviderId: FIRST_CUSTOM_ROW_ID,
+      defaultProvider: AIProviderName.CUSTOM,
+      defaultModel: 'first-row-model',
+      onChange,
+    });
+
+    await openModelDropdown();
+    await click(findItem('first-row-model-mini'));
+    await flush();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const modelTriggerText = comboboxes()[1].textContent ?? '';
+    expect(modelTriggerText).toContain('first-row-model-mini');
+  });
+
+  // The name path answers with the platform's *oldest* row of that type, which is only a claim a
+  // provider with more than one row can test — `MISTRAL` has one, so it cannot see a reversed scan.
+  it('resolves a name-only step to the oldest row of that type, not the newest', async () => {
+    const onChange = vi.fn();
+    await mountSelector({
+      defaultProvider: AIProviderName.CUSTOM,
+      defaultModel: 'first-row-model',
+      onChange,
+    });
+
+    await openProviderDropdown();
+
+    expect(checkedItems()).toEqual(['Ollamahttps://first.example.com/v1']);
+    expect(listModelsForProvider).toHaveBeenCalledWith(FIRST_CUSTOM_ROW_ID);
+    expect(listModelsForProvider).not.toHaveBeenCalledWith(
+      SECOND_CUSTOM_ROW_ID,
+    );
+  });
+
+  // The reachable form of the swap: `provider` is non-optional on a stored `aiProviderModel`, so a
+  // deleted row leaves a ref whose *type* still matches a sibling. Merely opening the step must not
+  // re-point it at that sibling — the server answers a dead id with ENTITY_NOT_FOUND, and a picker
+  // that quietly substitutes turns that hard failure into prompts sent to another endpoint.
+  it('leaves the picker unresolved when the stored row id no longer exists, and writes nothing', async () => {
     const onChange = vi.fn();
     await mountSelector({
       defaultProviderId: 'a-row-that-was-deleted',
+      defaultProvider: AIProviderName.CUSTOM,
+      // Absent from the surviving sibling's catalogue, which is what makes the catalogue effect
+      // want to emit.
+      defaultModel: 'second-row-model',
+      onChange,
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(listModelsForProvider).not.toHaveBeenCalled();
+    // Asserted by test id, not by copy: i18next is not initialised here, so `t()` answers ''.
+    expect(unresolvedRefHints()).toHaveLength(1);
+
+    await openProviderDropdown();
+
+    expect(checkedItems()).toEqual([]);
+  });
+
+  // The other half of the same rule: a step stored before id-addressing carries only a name, and
+  // that name must still resolve the way the server resolves it.
+  it('still resolves a step that stores a provider name and no row id', async () => {
+    const onChange = vi.fn();
+    await mountSelector({
       defaultProvider: AIProviderName.MISTRAL,
       defaultModel: 'mistral-large',
       onChange,
@@ -334,10 +420,9 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
 
     await openProviderDropdown();
 
-    const checked = [
-      ...document.querySelectorAll('[cmdk-item] .opacity-100'),
-    ].map((mark) => mark.closest('[cmdk-item]')?.textContent ?? '');
-    expect(checked).toEqual(['Mistral AI']);
+    expect(checkedItems()).toEqual(['Mistral AI']);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(unresolvedRefHints()).toHaveLength(0);
   });
 
   it('pins a step that stores no provider reference at all to the first row, id included', async () => {

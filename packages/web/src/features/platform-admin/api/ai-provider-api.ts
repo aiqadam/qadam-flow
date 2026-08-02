@@ -11,8 +11,10 @@ export const aiProviderApi = {
   list() {
     return api.get<AIProviderWithoutSensitiveData[]>('/v1/ai-providers');
   },
-  listModelsForProvider(provider: string) {
-    return api.get<AIProviderModel[]>(`/v1/ai-providers/${provider}/models`);
+  // `providerRef`, not `provider`: the server's route parameter is `:providerRef` and accepts
+  // either a row id or a provider name. The picker only ever sends a row id.
+  listModelsForProvider(providerRef: string) {
+    return api.get<AIProviderModel[]>(`/v1/ai-providers/${providerRef}/models`);
   },
   upsert(request: CreateAIProviderRequest): Promise<void> {
     return api.post('/v1/ai-providers', request);

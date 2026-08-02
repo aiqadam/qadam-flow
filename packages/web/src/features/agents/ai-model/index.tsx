@@ -45,18 +45,20 @@ export function AIModelSelector({
     () => aiProviderOptions.build({ providers }),
     [providers],
   );
-  const selectedOption = aiProviderOptions.resolveSelected({
-    options,
-    selectedProviderId: pickedProviderId,
-    defaultProviderId,
-    defaultProvider,
-  });
+  const { option: selectedOption, unresolvedRef } =
+    aiProviderOptions.resolveSelected({
+      options,
+      selectedProviderId: pickedProviderId,
+      defaultProviderId,
+      defaultProvider,
+    });
+  // While the list is in flight there is nothing to resolve against, so every stored ref looks
+  // dead. Only report the fault once the answer is in.
+  const showsUnresolvedRef =
+    unresolvedRef && !providersLoading && options.length > 0;
 
   const { data: models = [], isLoading: modelsLoading } =
-    aiModelHooks.useGetModelsForProvider({
-      providerId: selectedOption?.id,
-      provider: selectedOption?.provider,
-    });
+    aiModelHooks.useGetModelsForProvider({ row: selectedOption });
 
   // Reconciles the stored model with the catalogue the server answers with, which only arrives
   // after render: a step can hold no model at all, or one this provider no longer serves, and
@@ -124,6 +126,8 @@ export function AIModelSelector({
                 <span className="text-muted-foreground">
                   {options.length === 0
                     ? t('No providers')
+                    : showsUnresolvedRef
+                    ? t('Provider no longer available')
                     : t('Select provider')}
                 </span>
               )}
@@ -234,6 +238,17 @@ export function AIModelSelector({
           </PopoverContent>
         </Popover>
       </div>
+
+      {showsUnresolvedRef && (
+        <p
+          className="text-xs text-destructive"
+          data-testid="ai-provider-unresolved-ref"
+        >
+          {t(
+            'This step points at an AI provider that no longer exists. Pick another one to run it.',
+          )}
+        </p>
+      )}
 
       {selectedOption && (
         <p className="text-xs text-muted-foreground">

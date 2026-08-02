@@ -27,8 +27,13 @@ vi.mock('@/app/builder/step-settings/step-settings-context', () => ({
 
 vi.mock('@/features/agents/ai-model/hooks', () => ({
   aiModelHooks: {
+    // `row-2` has to exist for "a pinned row survives" to have a premise: the picker now resolves
+    // the stored ref against this list rather than carrying it as an opaque extra.
     useListProviders: () => ({
-      data: [{ id: 'row-1', provider: 'custom', name: 'DeepSeek' }],
+      data: [
+        { id: 'row-1', provider: 'custom', name: 'DeepSeek' },
+        { id: 'row-2', provider: 'custom', name: 'DeepSeek' },
+      ],
       isLoading: false,
     }),
     useGetModelsForProvider: () => ({
@@ -150,5 +155,22 @@ describe('the builder model picker, wired to the aiProviderModel field', () => {
       model: 'deepseek-reasoner',
       providerId: 'row-2',
     });
+  });
+
+  // The whole write-back chain, executed rather than read: picker effect → `onChange` →
+  // `applySelection` → `field.onChange` → the form value the step-settings resolver hands to
+  // `applyOperation`. If the picker substituted a sibling row here, this is where it would become
+  // a flow-version rewrite that nobody asked for.
+  it('writes nothing when the pinned row no longer exists, rather than re-pinning the step', async () => {
+    const storedValue = {
+      provider: 'custom',
+      model: 'a-model-the-catalogue-no-longer-lists',
+      providerId: 'row-deleted-by-an-admin',
+    };
+    const form = await mountAgentSettings({ ...storedValue });
+
+    expect(form.getValues('settings.input.aiProviderModel')).toEqual(
+      storedValue,
+    );
   });
 });

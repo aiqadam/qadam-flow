@@ -3,17 +3,25 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
 };
 
 /**
- * The model picker only knows about `provider` and `model`, but the stored
- * `aiProviderModel` can carry more than that — `providerId`, which pins a step
- * to one specific AI provider row rather than the oldest row of that type.
- * Handing the picker's emission straight to `field.onChange` replaces the
- * stored object and drops those keys, so a pinned step silently loses its pin
- * and later runs against a different row.
+ * The stored `aiProviderModel` can carry keys the picker does not emit, and handing the picker's
+ * emission straight to `field.onChange` replaces the stored object and drops them. `providerId` —
+ * the key that pins a step to one specific AI provider row rather than the oldest row of that
+ * type — is no longer one of them: the picker now chooses the row deliberately and emits its id,
+ * so this helper carries it like any other selected key. It still exists for the keys nothing has
+ * added yet, and for whatever a later part stores alongside the model.
  *
- * Keys the picker does not know about are kept, except when the provider
- * itself changes: they were chosen against the previous provider, and a row id
- * belonging to another provider outranks the provider name at resolution time,
- * which would run the step against a provider the builder is no longer showing.
+ * Keys the picker does not know about are kept, except when the *row* changes: they were chosen
+ * against the previous row and would otherwise ride onto the new one. Two ways a row changes, and
+ * the first cannot see the second:
+ *
+ * - the provider type changed — a different kind of endpoint entirely;
+ * - the type stayed the same but the id did. A platform may hold several custom
+ *   (OpenAI-compatible) rows, so moving from one to another leaves `provider` at `custom`. Only
+ *   the id says these are different endpoints.
+ *
+ * Both comparisons require the selection to actually carry the key. A selection that omits one is
+ * not evidence that it became `undefined`, and reading it that way would drop the stored value
+ * this helper exists to protect.
  */
 const applySelection = ({
   storedValue,
@@ -25,13 +33,16 @@ const applySelection = ({
   if (!isPlainObject(storedValue)) {
     return { ...selection };
   }
-  // Only a selection that names a provider can tell us the provider changed. Every emission site
-  // sends one today, but a future one that sends only a model must not be read as "the provider
-  // became undefined" — that would drop the stored provider along with the extras.
-  if (
+  // A stored value with no id was resolved by name, and the picker pins it to the very row that
+  // name already resolved to — so an id appearing where there was none is not a move.
+  const rowChanged =
+    storedValue.providerId !== undefined &&
+    selection.providerId !== undefined &&
+    storedValue.providerId !== selection.providerId;
+  const providerChanged =
     selection.provider !== undefined &&
-    storedValue.provider !== selection.provider
-  ) {
+    storedValue.provider !== selection.provider;
+  if (rowChanged || providerChanged) {
     return { ...selection };
   }
   return { ...storedValue, ...selection };
@@ -40,6 +51,7 @@ const applySelection = ({
 export const aiProviderModelValue = { applySelection };
 
 export type AIProviderModelSelection = {
+  providerId?: string;
   provider?: string;
   model?: string;
 };

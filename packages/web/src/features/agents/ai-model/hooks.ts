@@ -45,27 +45,26 @@ export const aiModelHooks = {
   },
 
   /**
-   * Both halves of the reference are needed and neither can stand in for the other.
+   * Takes the whole row rather than its id and its type separately, because both halves are needed
+   * and neither can stand in for the other — and passing them apart invites a caller to supply one
+   * without the other, which is a state that cannot exist.
    *
-   * `providerId` addresses one row, so it is what the request is keyed and cached on: a platform
-   * may hold several custom rows, and keying on the provider *name* served the second one the
-   * first one's catalogue out of the query cache. `provider` is the type, which is what
-   * `ALLOWED_CHAT_MODELS_BY_PROVIDER` is keyed on — a row id could not answer that.
+   * The **id** addresses one row, so it is what the request is keyed and cached on: a platform may
+   * hold several custom rows, and keying on the provider *name* served the second one the first
+   * one's catalogue out of the query cache. The **type** is what `ALLOWED_CHAT_MODELS_BY_PROVIDER`
+   * is keyed on, and a row id could not answer that.
    */
-  useGetModelsForProvider: ({
-    providerId,
-    provider,
-  }: GetModelsForProviderParams) => {
+  useGetModelsForProvider: ({ row }: GetModelsForProviderParams) => {
     return useQuery({
-      queryKey: ['ai-models', providerId],
-      enabled: !isNil(providerId) && !isNil(provider),
+      queryKey: ['ai-models', row?.id],
+      enabled: !isNil(row),
       queryFn: async () => {
-        if (isNil(providerId) || isNil(provider)) return [];
+        if (isNil(row)) return [];
 
-        const allModels = await aiProviderApi.listModelsForProvider(providerId);
+        const allModels = await aiProviderApi.listModelsForProvider(row.id);
 
         return getAllowedModelsForProvider({
-          provider,
+          provider: row.provider,
           allModels,
           modelType: 'text',
         });
@@ -75,8 +74,7 @@ export const aiModelHooks = {
 };
 
 type GetModelsForProviderParams = {
-  providerId?: string;
-  provider?: AIProviderName;
+  row?: { id: string; provider: AIProviderName };
 };
 
 type GetAllowedModelsForProviderParams = {

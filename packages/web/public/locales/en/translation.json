@@ -1432,6 +1432,8 @@
   "No actions found": "No actions found",
   "AI Model *": "AI Model *",
   "No providers": "No providers",
+  "Provider no longer available": "Provider no longer available",
+  "This step points at an AI provider that no longer exists. Pick another one to run it.": "This step points at an AI provider that no longer exists. Pick another one to run it.",
   "Search providers...": "Search providers...",
   "No provider found.": "No provider found.",
   "Select provider first": "Select provider first",
