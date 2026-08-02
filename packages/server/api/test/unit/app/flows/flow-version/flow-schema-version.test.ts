@@ -14,12 +14,12 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version-backup.service',
     flowVersionBackupService: (): { store: typeof mockBackupStore } => ({ store: mockBackupStore }),
 }))
 
-// v24 reads the qadam registry to find the version it should pin AI steps to, so every path here
-// that walks the chain past 24 needs one. None of these fixtures carries an AI step, so the
-// contents only have to be a list.
+// v24 and v25 both read the qadam registry to find the version they should pin AI steps to, so
+// every path here that walks the chain past 24 needs one. None of these fixtures carries an AI
+// step, so the contents only have to be a list.
 vi.mock('../../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: (): { registry: () => Promise<unknown[]> } => ({
-        registry: async (): Promise<unknown[]> => [{ name: '@aiqadam/qadam-ai', version: '0.4.4' }],
+        registry: async (): Promise<unknown[]> => [{ name: '@aiqadam/qadam-ai', version: '0.4.5' }],
     }),
 }))
 
@@ -149,7 +149,7 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
     it('migrates a version sitting at exactly 22 instead of skipping the rename', async () => {
         const migrated = await flowVersionMigrationService(mockLog).migrate(preRenameFlowVersion('22'))
 
-        expect(migrated.schemaVersion).toBe('25')
+        expect(migrated.schemaVersion).toBe(LATEST_FLOW_SCHEMA_VERSION)
         expect(readNames(migrated)).toEqual({
             trigger: { name: '@aiqadam/qadam-gmail', version: '~0.1.0' },
             action: { name: '@aiqadam/qadam-slack', version: '~0.2.0' },
@@ -181,7 +181,7 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
         await flowVersionMigrationService(mockLog).migrate(preRenameFlowVersion('22'))
 
         expect(mockRepoUpdate).toHaveBeenCalledTimes(1)
-        expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: '25' })
+        expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: LATEST_FLOW_SCHEMA_VERSION })
     })
 })
 

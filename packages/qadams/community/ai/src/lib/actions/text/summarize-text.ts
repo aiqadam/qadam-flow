@@ -1,4 +1,4 @@
-import { AIProviderName } from '@aiqadam/shared';
+import { AIProviderName, spreadIfDefined } from '@aiqadam/shared';
 import { createAIModel } from '../../common/ai-sdk';
 import { createAction, Property } from '@aiqadam/qadams-framework';
 import { generateText } from 'ai';
@@ -10,6 +10,7 @@ export const summarizeText = createAction({
   description: 'Summarize long emails, articles, or documents into what matters.',
   props: {
     provider: aiProps({ modelType: 'text' }).provider,
+    providerId: aiProps({ modelType: 'text' }).providerId,
     model: aiProps({ modelType: 'text' }).model,
     text: Property.LongText({
       displayName: 'Text',
@@ -33,6 +34,7 @@ export const summarizeText = createAction({
 
     const model = await createAIModel({
       provider: provider as AIProviderName,
+      ...spreadIfDefined('providerId', context.propsValue.providerId),
       modelId,
       engineToken: context.server.token,
       apiUrl: context.server.apiUrl,

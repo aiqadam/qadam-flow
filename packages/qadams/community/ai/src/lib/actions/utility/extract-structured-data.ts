@@ -4,7 +4,7 @@ import { generateText, tool, jsonSchema, ModelMessage, UserModelMessage } from '
 import mime from 'mime-types';
 import Ajv from 'ajv';
 import { aiProps } from '../../common/props';
-import { AIProviderName } from '@aiqadam/shared';
+import { AIProviderName, spreadIfDefined } from '@aiqadam/shared';
 
 export const extractStructuredData = createAction({
 	name: 'extractStructuredData',
@@ -12,6 +12,7 @@ export const extractStructuredData = createAction({
 	description: 'Accurately Pull names, amounts, and other structured data from emails, invoices, and scanned documents.',
 	props: {
 		provider: aiProps({ modelType: 'text' }).provider,
+		providerId: aiProps({ modelType: 'text' }).providerId,
 		model: aiProps({ modelType: 'text' }).model,
 		text: Property.LongText({
 			displayName: 'Text',
@@ -139,6 +140,7 @@ export const extractStructuredData = createAction({
 
 		const model = await createAIModel({
 			provider: provider as AIProviderName,
+			...spreadIfDefined('providerId', context.propsValue.providerId),
 			modelId,
 			engineToken: context.server.token,
 			apiUrl: context.server.apiUrl,
