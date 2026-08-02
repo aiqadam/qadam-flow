@@ -47,7 +47,12 @@ async function fetchProviderConfig({ providerId, provider, engineToken, apiUrl }
 // `ai-provider-controller.ts`) and escaped. Escaping alone is not the check it reads as:
 // `encodeURIComponent` leaves `.` untouched, so a bare `..` passes through it intact and the URL
 // parser then collapses `/v1/ai-providers/../config` to `/v1/config`.
-function resolveProviderRef({ providerId, provider }: { providerId?: string, provider: AIProviderName }): string {
+//
+// Exported because `props.ts` builds the models route from the same pair and must land on the same
+// row the run will: two rows of one type serve different catalogues. `provider` is typed `string`
+// rather than `AIProviderName` because that caller reads it out of `Record<string, unknown>`, and
+// narrowing it with a cast would only assert what the `PROVIDER_NAMES` check below actually proves.
+export function resolveProviderRef({ providerId, provider }: { providerId?: string, provider: string }): string {
     const ref = isNil(providerId) || providerId.length === 0 ? provider : providerId
     if (!PROVIDER_NAMES.includes(ref) && !PROVIDER_ROW_ID_PATTERN.test(ref)) {
         throw new Error(`AI provider reference "${ref}" is neither a provider name nor a provider row id`)

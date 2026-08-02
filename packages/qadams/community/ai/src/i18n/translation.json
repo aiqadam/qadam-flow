@@ -43,5 +43,7 @@
   "The number of iterations the agent can do": "The number of iterations the agent can do",
   "Whether to use web search to find information for the AI to use.": "Whether to use web search to find information for the AI to use.",
   "Simple": "Simple",
-  "Advanced": "Advanced"
+  "Advanced": "Advanced",
+  "Provider Configuration": "Provider Configuration",
+  "Which of the configured providers to run against. Only needed when the platform holds more than one configuration of the selected provider.": "Which of the configured providers to run against. Only needed when the platform holds more than one configuration of the selected provider."
 }

@@ -16,7 +16,7 @@ import {
 } from 'ai';
 import { generateImage } from 'ai';
 import mime from 'mime-types';
-import { isNil, getEffectiveProviderAndModel } from '@aiqadam/shared';
+import { isNil, getEffectiveProviderAndModel, spreadIfDefined } from '@aiqadam/shared';
 import { createAIModel } from '../../common/ai-sdk';
 import { AIProviderName } from '@aiqadam/shared';
 import { aiProps } from '../../common/props';
@@ -27,6 +27,7 @@ export const generateImageAction = createAction({
   description: 'Create unique, high-quality images from simple text descriptions using AI.',
   props: {
     provider: aiProps({ modelType: 'image' }).provider,
+    providerId: aiProps({ modelType: 'image' }).providerId,
     model: aiProps({ modelType: 'image' }).model,
     prompt: Property.LongText({
       displayName: 'Prompt',
@@ -56,12 +57,14 @@ export const generateImageAction = createAction({
           provider: rawProvider,
           model: rawModel,
         });
-        const providerId = effectiveProvider ?? rawProvider;
+        // A provider *name*, not a row id — `providerId` means a row id everywhere else in this
+        // package, and a same-named-but-different symbol is how the next reader gets it wrong.
+        const effectiveProviderName = effectiveProvider ?? rawProvider;
         const modelId = effectiveModel ?? rawModel;
 
         let options: InputPropertyMap = {};
 
-        if (providerId === AIProviderName.OPENAI) {
+        if (effectiveProviderName === AIProviderName.OPENAI) {
           options = {
             quality: Property.StaticDropdown({
               options: {
@@ -147,6 +150,7 @@ export const generateImageAction = createAction({
 
     const image = await getGeneratedImage({
       provider: provider as AIProviderName,
+      ...spreadIfDefined('providerId', context.propsValue.providerId),
       modelId,
       engineToken: context.server.token,
       apiUrl: context.server.apiUrl,
@@ -203,6 +207,7 @@ const extractImageFiles = (value: unknown): ApFile[] => {
 
 const getGeneratedImage = async ({
   provider,
+  providerId,
   modelId,
   engineToken,
   apiUrl,
@@ -214,6 +219,7 @@ const getGeneratedImage = async ({
   advancedOptions,
 }: {
   provider: AIProviderName;
+  providerId?: string;
   modelId: string;
   engineToken: string;
   apiUrl: string;
@@ -226,6 +232,7 @@ const getGeneratedImage = async ({
 }): Promise<GeneratedFile> => {
   const model = await createAIModel({
     provider,
+    ...spreadIfDefined('providerId', providerId),
     modelId,
     engineToken,
     apiUrl,
