@@ -265,6 +265,45 @@ describe('Chat agent API', () => {
             expect(saved?.status).toBe(ChatConversationStatus.IDLE)
         })
 
+        // DoD 3 of #265: a provider that stops sending data mid-answer must end the run with a
+        // classified, actionable error rather than a silent generic one. The server-side idle
+        // bound is read from the environment per request (safe-http), so a 1s bound forces the
+        // guard without waiting out the 120s default.
+        it('ends the run in ERROR when the provider stalls mid-stream, with the classified timeout path', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            const previousIdleTimeout = process.env.AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS
+            process.env.AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS = '1'
+            let releaseHold: () => void = () => undefined
+            try {
+                const hold = new Promise<void>((resolve) => {
+                    releaseHold = resolve
+                })
+                providerHolds.push(hold)
+                providerFirstChunkOnly = 'Hello from a slow model'
+
+                const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, {
+                    content: 'say something slow',
+                    runId: apId(),
+                })
+                expect(response?.statusCode).toBe(StatusCodes.OK)
+
+                // One chunk is streamed, then the guard fires after the 1s bound and the loop
+                // classifies the failure (message-only, never the error object).
+                const failed = await waitForStatus(conversationId, ChatConversationStatus.ERROR)
+                expect(failed?.status).toBe(ChatConversationStatus.ERROR)
+            }
+            finally {
+                releaseHold()
+                if (previousIdleTimeout === undefined) {
+                    delete process.env.AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS
+                }
+                else {
+                    process.env.AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS = previousIdleTimeout
+                }
+            }
+        })
+
         it('starts the run and answers with the conversation and run ids when a provider is configured', async () => {
             await enableChatProvider(ctx.platform.id)
             const conversationId = await createConversation(ctx)

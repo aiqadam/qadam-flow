@@ -28,6 +28,7 @@ import { AppSystemProp } from '../helper/system/system-props'
 import { mcpServerService } from '../mcp/mcp-service'
 import { chatApprovals } from './chat-approvals'
 import { chatConversationService } from './chat-conversation.service'
+import { classifyChatError } from './chat-error-classify'
 import { chatModel, ResolvedChatModel } from './chat-model'
 import { chatProjects } from './chat-projects'
 import { chatTools } from './chat-tools'
@@ -266,21 +267,26 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         return
     }
 
-    // Only the error's name and message are logged, never the error object: an AI SDK
+    // Only the error's name and message are read, never the error object: an AI SDK
     // `APICallError` carries `requestBodyValues` and the response headers, which is where the
-    // provider API key lives. The emitted payload is a fixed string for the same reason.
+    // provider API key lives. classifyChatError is deliberately pure and message-only, so the
+    // user-facing payload stays a fixed string per class (DoD 3 of #265).
     log.error({
         conversationId: id,
         runId,
         errorName: error.name,
         errorMessage: error.message,
     }, '[chatAgentService#runAgentLoop] chat run failed')
+    // Classified before failRun is persisted: the ERROR status then proves the classifier
+    // ran without throwing (it is total — any input maps to a code), so an integration
+    // test asserting ERROR also pins the classified path, not just the failure itself.
+    const { code, message } = classifyChatError(error)
     await chatConversationService.failRun({ id, platformId, userId, runId })
     emit({
         userId,
         conversationId: id,
         runId,
-        event: { type: ChatAgentEventType.ERROR, data: { message: 'The assistant could not finish this message. Please try again.' } },
+        event: { type: ChatAgentEventType.ERROR, data: { message, code } },
     })
 }
 
