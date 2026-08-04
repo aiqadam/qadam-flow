@@ -1977,5 +1977,12 @@
   "{count} hours ago": "{count} сағат бұрын",
   "Horizontal layout": "Көлденең орналасу",
   "Vertical layout": "Тік орналасу",
-  "useInsteadPrefix": "Оның орнына"
+  "useInsteadPrefix": "Оның орнына",
+  "version unknown": "нұсқасы белгісіз",
+  "Add Provider": "Провайдерді қосу",
+  "invalidAzureResourceName": "Azure ресурс атауы 2–64 әріп, цифр немесе дефис болуы керек — URL немесе хост атауы емес",
+  "The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.": "Сақталған Azure ресурс атауы жарамсыз. Провайдерді 2–64 әріп, цифр және дефис атауымен қайта сақтаңыз.",
+  "invalidAwsRegion": "AWS аймағы кіші әріптер, цифрлар немесе дефис болуы керек — мысалы us-east-1",
+  "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "Сақталған AWS аймағы жарамсыз. Провайдерді us-east-1 сияқты аймақпен қайта сақтаңыз.",
+  "This platform has reached its limit of custom AI providers": "Бұл платформада теңшелетін AI провайдерлерінің шегіне жетілді"
 }
