@@ -169,7 +169,11 @@ export function flowIdFromTranscript({
 }): string {
   // Matched against the JSON-encoded transcript, where the receipt's own quotes arrive escaped —
   // hence `[^(]*` between the name and the id rather than a literal `" (`.
-  const pattern = new RegExp(`${displayName}[^(]*\\(id: ([0-9a-zA-Z]+)\\)`);
+  // `displayName` is operator-controlled (it is whatever the test — or a real user typing a flow
+  // name — chose), so it must be escaped before going into a RegExp: unescaped, a name containing
+  // `(`, `)`, `.`, `*`, etc. throws `SyntaxError: Invalid regular expression` instead of failing the
+  // assertion it was meant to drive.
+  const pattern = new RegExp(`${escapeRegExp(displayName)}[^(]*\\(id: ([0-9a-zA-Z]+)\\)`);
   const match = pattern.exec(JSON.stringify(request.body['messages'] ?? []));
   if (match === null) {
     throw new Error(`no ap_create_flow receipt for "${displayName}" in the transcript the model was shown`);
@@ -202,6 +206,13 @@ export function replayedToolArguments(request: StubRequest): string[] {
       return typeof args === 'string' ? [args] : [];
     });
   });
+}
+
+// `RegExp.escape` would say this better, but it is not available on the Node versions this suite
+// actually runs on (undefined on the Node 22 used locally; not something to gate a shared test
+// helper on for a Node 24-only CI job). This is the standard MDN-documented replacement.
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function stubAdvertisedHost(): string {
