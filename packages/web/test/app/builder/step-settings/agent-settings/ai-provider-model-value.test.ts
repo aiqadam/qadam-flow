@@ -90,9 +90,11 @@ describe('aiProviderModelValue.applySelection', () => {
     ).toEqual({ providerId: 'row-3', provider: 'custom', model: undefined });
   });
 
-  // The picker pins a step that only ever stored a name to the row that name already resolved to.
-  // Reading that as a row change would drop extras on a step nothing actually moved.
-  it('does not read a newly added row id as a row change', () => {
+  // Nothing moved here: same provider, same model. A stored value with no id must not pick one up
+  // from a call that did not decide to pin anything — only a genuine row/provider change does that
+  // (see the two cases above). Extras are still kept, since reading this as a row change would
+  // drop them on a step nothing actually moved.
+  it('does not pick up a resolved row id when nothing moved', () => {
     expect(
       aiProviderModelValue.applySelection({
         storedValue: {
@@ -109,8 +111,31 @@ describe('aiProviderModelValue.applySelection', () => {
     ).toEqual({
       provider: 'custom',
       model: 'deepseek-chat',
-      providerId: 'row-1',
       storedBeforeIdAddressing: true,
+    });
+  });
+
+  // The reconcile effect in the model picker fires when a step opens with a name-only ref whose
+  // model the catalogue no longer serves, and it re-resolves both the row and a fallback model with
+  // no user gesture involved. Merging its `providerId` would convert a self-healing name ref into a
+  // hard pin — silently, and only visible later if that row is ever deleted. This is the case #299
+  // found untested.
+  it('re-resolves a stale model on a name-only ref without pinning a providerId', () => {
+    expect(
+      aiProviderModelValue.applySelection({
+        storedValue: {
+          provider: 'custom',
+          model: 'a-model-the-catalogue-no-longer-lists',
+        },
+        selection: {
+          providerId: 'row-1',
+          provider: 'custom',
+          model: 'deepseek-chat',
+        },
+      }),
+    ).toEqual({
+      provider: 'custom',
+      model: 'deepseek-chat',
     });
   });
 
