@@ -67,7 +67,11 @@ test.describe('Chat with AI on a scripted operator-configured provider (#174, #2
     process.env.E2E_CHAT_STUB_HOST === undefined,
     'needs a stack booted with AP_SSRF_ALLOW_LIST so the server can reach the local OpenAI stub; set E2E_CHAT_STUB_HOST to the address it should call back on',
   );
-  test.describe.configure({ mode: 'serial', timeout: 300_000 });
+  // The #264 test below awaits seven 90s/30s-bounded assertions back to back (90+90+90+30+90+90+30
+  // = 510s worst case), which already exceeds a 300s per-test timeout — so a genuine failure on the
+  // last one used to surface as "Test timeout of 300000ms exceeded" instead of that assertion's own
+  // message. 600s clears the 510s worst case with headroom for the clicks/navigations between them.
+  test.describe.configure({ mode: 'serial', timeout: 600_000 });
 
   const suffix = Date.now().toString().slice(-6);
   const provider = {
