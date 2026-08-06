@@ -59,12 +59,15 @@ async function isPrivilegedAIProviderReader({ principal, log }: { principal: Pri
 // project member who can edit a flow (`packages/web/src/features/agents/ai-model/hooks.ts`), and
 // it lists providers before listing that provider's models. The response carries no credentials —
 // `auth` is decrypted only by the engine-only `/:providerRef/config` route. It does still carry each
-// row's `config`, which for CUSTOM includes `baseUrl`, `apiKeyHeader`, `models` and `defaultHeaders`
-// — of those, only `defaultHeaders` (an operator-defined record that commonly carries a second
-// bearer/signing header) is actually credential-shaped, so `redactAIProviderConfig` strips it for
-// any caller that is neither ENGINE nor a platform admin (#297). The other three fields stay because
-// the model picker (`provider-options.ts`) and the qadam's own picker (`props.ts`) both read
-// `baseUrl` off this exact response to disambiguate two rows of the same provider type.
+// row's `config`, which for CUSTOM includes `baseUrl`, `apiKeyHeader`, `models` and `defaultHeaders`.
+// #297 (echoing #277) names `baseUrl` and `defaultHeaders` as the same class of leak — an
+// unconstrained `baseUrl` can carry userinfo or a query-string credential exactly like
+// `defaultHeaders` can carry a second bearer header, and can disclose an internal hostname besides
+// — so `redactAIProviderConfig` strips `defaultHeaders` outright and masks `baseUrl` down to its
+// origin for any caller that is neither ENGINE nor a platform admin. `apiKeyHeader` and `models`
+// stay untouched: a header *name* is not a credential value. The masked origin is still enough for
+// the model picker (`provider-options.ts`) and the qadam's own picker (`props.ts`), which both read
+// `baseUrl` off this exact response only to disambiguate two rows of the same provider type.
 const ListAIProviders = {
     config: {
         security: securityAccess.publicPlatform([PrincipalType.USER, PrincipalType.ENGINE]),

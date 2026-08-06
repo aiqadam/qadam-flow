@@ -485,13 +485,13 @@ describe('AI Providers API', () => {
     })
 
     describe('GET /v1/ai-providers (list)', () => {
-        it('should include config with defaultHeaders when a platform admin lists providers', async () => {
+        it('should include the full baseUrl and defaultHeaders when a platform admin lists providers', async () => {
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
                 displayName: 'Listed Provider',
                 config: {
-                    baseUrl: 'https://api.example.com/v1',
+                    baseUrl: 'https://api.example.com/v1/chat',
                     apiKeyHeader: 'Authorization',
                     models: [],
                     defaultHeaders: { 'X-Test': 'test' },
@@ -507,21 +507,24 @@ describe('AI Providers API', () => {
                 (p: any) => p.provider === AIProviderName.CUSTOM,
             )
             expect(customProvider).toBeDefined()
+            expect(customProvider.config.baseUrl).toBe('https://api.example.com/v1/chat')
             expect(customProvider.config.defaultHeaders).toEqual({ 'X-Test': 'test' })
         })
 
-        // #297: `defaultHeaders` is an operator-defined record that commonly carries a second
-        // bearer/signing header, so it must not reach a caller who is neither the engine nor a
-        // platform admin. `baseUrl` and `apiKeyHeader` are not secret values and the model picker
-        // (`provider-options.ts`) reads `baseUrl` off this exact response to disambiguate two rows
-        // of the same provider type, so those stay.
-        it('should redact defaultHeaders when a non-admin platform member lists providers', async () => {
+        // #297 (echoing #277): `defaultHeaders` is an operator-defined record that commonly carries
+        // a second bearer/signing header, and an unconstrained `baseUrl` can carry the same class of
+        // credential in its userinfo or query string (plus disclose an internal hostname) — neither
+        // may reach a caller who is neither the engine nor a platform admin. `apiKeyHeader` is a
+        // header *name*, not a value, and the model picker (`provider-options.ts`) still needs enough
+        // of `baseUrl` to disambiguate two rows of the same provider type, so it is masked to its
+        // origin rather than dropped outright.
+        it('should mask baseUrl to its origin and redact defaultHeaders when a non-admin platform member lists providers', async () => {
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
                 displayName: 'Listed Provider',
                 config: {
-                    baseUrl: 'https://api.example.com/v1',
+                    baseUrl: 'https://user:secret-token@api.example.com/v1/chat?api_key=leaked',
                     apiKeyHeader: 'Authorization',
                     models: [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }],
                     defaultHeaders: { 'X-Test': 'test' },
@@ -539,18 +542,43 @@ describe('AI Providers API', () => {
             )
             expect(customProvider).toBeDefined()
             expect(customProvider.config.defaultHeaders).toBeUndefined()
-            expect(customProvider.config.baseUrl).toBe('https://api.example.com/v1')
+            expect(customProvider.config.baseUrl).toBe('https://api.example.com')
             expect(customProvider.config.apiKeyHeader).toBe('Authorization')
             expect(customProvider.config.models).toEqual([{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }])
         })
 
-        it('should include config with defaultHeaders when the engine lists providers', async () => {
+        it('should drop an unparseable baseUrl entirely for a non-admin platform member instead of passing it through', async () => {
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
                 displayName: 'Listed Provider',
                 config: {
-                    baseUrl: 'https://api.example.com/v1',
+                    baseUrl: 'not-a-url',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                },
+            })
+            const member = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+
+            const response = await member.get('/v1/ai-providers')
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+
+            const customProvider = body.find(
+                (p: any) => p.provider === AIProviderName.CUSTOM,
+            )
+            expect(customProvider).toBeDefined()
+            expect(customProvider.config.baseUrl).toBeUndefined()
+        })
+
+        it('should include the full baseUrl and defaultHeaders when the engine lists providers', async () => {
+            await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Listed Provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1/chat',
                     apiKeyHeader: 'Authorization',
                     models: [],
                     defaultHeaders: { 'X-Test': 'test' },
@@ -570,6 +598,7 @@ describe('AI Providers API', () => {
                 (p: any) => p.provider === AIProviderName.CUSTOM,
             )
             expect(customProvider).toBeDefined()
+            expect(customProvider.config.baseUrl).toBe('https://api.example.com/v1/chat')
             expect(customProvider.config.defaultHeaders).toEqual({ 'X-Test': 'test' })
         })
     })
