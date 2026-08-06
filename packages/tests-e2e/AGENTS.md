@@ -80,6 +80,16 @@ Two specs, both **skipped unless you opt in with an env var**, because neither c
 bundled `docker-compose.yml` as shipped. A skip is loud (Playwright prints the reason); do not read
 a green CI run as evidence that either of them passed.
 
+**Always invoke this whole directory, never a single file in it, and always with `--workers=1`.**
+Each spec sets `enabledForChat` on its own provider row, but that flag lives on the platform, not
+on the row — it is a global singleton. `playwright.config.ts` runs files in parallel workers by
+default (`fullyParallel: true`, `workers: undefined` outside CI), so invoking `chat-with-ai.spec.ts`
+and `chat-real-provider.spec.ts` without `--workers=1` — including running them from two separate
+terminals, or letting a sharded run schedule them in different workers — lets one spec's
+`selectChatProviderViaUI` flip the platform's chat provider out from under the other mid-run. Pass
+`scenarios/ce/chat` (the directory), not a filename, so a future third chat spec is covered without
+anyone remembering to update this note.
+
 - **`chat-with-ai.spec.ts`** (#174 wiring, #264, #265, #267) drives the chat against
   `scenarios/ce/chat/openai-stub.ts` — a small OpenAI-compatible SSE server started inside the
   Playwright worker and pointed at by a CUSTOM provider row the spec creates through the platform
@@ -109,6 +119,10 @@ a green CI run as evidence that either of them passed.
   Needs `E2E_REAL_AI_API_KEY` (optionally `E2E_REAL_AI_BASE_URL` / `E2E_REAL_AI_MODEL_ID`; the
   defaults describe DeepSeek). It spends exactly one completion, and deletes the provider row —
   and with it the stored key — in `afterAll`.
+
+  ```bash
+  E2E_REAL_AI_API_KEY=sk-... npx playwright test scenarios/ce/chat --workers=1
+  ```
 
   **Never screenshot the AI settings page while a real key is in it.** `#apiKey` in the Add AI
   Provider dialog is a plain text `Input` with no masking
