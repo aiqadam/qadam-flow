@@ -8,9 +8,10 @@
  * missing" is trivially true. Every assertion here is therefore pinned to a counted, named
  * expectation rather than to a filter that can quietly return nothing.
  */
-import { ProjectScopedMcpServer } from '@aiqadam/shared'
+import { McpToolDefinition, ProjectScopedMcpServer } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { chatToolGating } from '../../../../src/app/chat/chat-tool-gating'
 import { qadamFlowTools } from '../../../../src/app/mcp/tools'
 
@@ -21,8 +22,36 @@ const fakeLog = { info: () => undefined, error: () => undefined, warn: () => und
 
 const TOTAL_REGISTERED_TOOLS = 41
 
+// Matches the verb an `operation`-style enum would use to spell a destructive action — this is the
+// shape #302 slipped through: `ap_manage_notes` sat in "Additive only" with a plain-looking
+// `operation: z.enum([...])` field that happened to contain `DELETE`.
+const DESTRUCTIVE_OPERATION_PATTERN = /DELETE|REMOVE|DROP|DESTROY|OVERWRITE/i
+
+function registeredTools(): McpToolDefinition[] {
+    return qadamFlowTools(fakeMcp, 'test-user', fakeLog)
+}
+
 function registeredTitles(): string[] {
-    return qadamFlowTools(fakeMcp, 'test-user', fakeLog).map((tool) => tool.title)
+    return registeredTools().map((tool) => tool.title)
+}
+
+// Walks every field of a tool's `inputSchema` looking for a Zod enum (directly, or wrapped in
+// `.optional()`/`.nullable()`) whose options include a destructive-shaped verb.
+function findDestructiveOperationField(tool: McpToolDefinition): string | undefined {
+    return Object.entries(tool.inputSchema).find(([, schema]) => {
+        const options = enumOptionsOf(schema)
+        return options?.some((option) => DESTRUCTIVE_OPERATION_PATTERN.test(option))
+    })?.[0]
+}
+
+function enumOptionsOf(schema: unknown): string[] | undefined {
+    if (schema instanceof z.ZodEnum) {
+        return schema.options.filter((option): option is string => typeof option === 'string')
+    }
+    if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+        return enumOptionsOf(schema.unwrap())
+    }
+    return undefined
 }
 
 describe('chatToolGating (#264)', () => {
@@ -83,5 +112,35 @@ describe('chatToolGating (#264)', () => {
         for (const name of ['ap_list_flows', 'ap_flow_structure', 'ap_research_pieces', 'ap_add_step', 'ap_update_step', 'ap_create_flow']) {
             expect(chatToolGating.requiresApproval(name), `${name} must not need approval`).toBe(false)
         }
+    })
+
+    // #302. The "additive only" group's whole safety story is "nothing existing is overwritten or
+    // destroyed" — a name check can't verify that, only a group *membership* diff can, and that is
+    // exactly what let `ap_manage_notes` sit here for a release with `operation: 'DELETE'`. This reads
+    // the real input schema of every current member, so a future PR that adds a fourth tool with a
+    // DELETE/UPDATE-shaped `operation` enum fails here immediately, without anyone having to notice
+    // during review.
+    it('additive-only tools have no DELETE/UPDATE-shaped operation field', () => {
+        const additiveOnlyTools = registeredTools().filter((tool) => chatToolGating.additiveOnlyNames().has(tool.title))
+
+        expect(additiveOnlyTools.map((tool) => tool.title).sort()).toEqual([...chatToolGating.additiveOnlyNames()].sort())
+
+        for (const tool of additiveOnlyTools) {
+            expect(findDestructiveOperationField(tool), `${tool.title} is additive-only but its schema has a destructive-looking field`).toBeUndefined()
+        }
+    })
+
+    // #302. `ap_manage_notes` supports `operation: 'DELETE'` (verified against its real schema below,
+    // so this doesn't just trust the ticket) and stays ungated — but only because notes are canvas
+    // annotations inside a draft `flowVersion` that no engine/worker code path ever reads, never
+    // because the tool is "additive". It must not be filed under the additive-only group, whose
+    // invariant its own DELETE operation would violate.
+    it('ap_manage_notes: DELETE is ungated as a canvas annotation, not as additive', () => {
+        const notesTool = registeredTools().find((tool) => tool.title === 'ap_manage_notes')
+        expect(notesTool, 'ap_manage_notes must still be a registered tool').toBeDefined()
+
+        expect(findDestructiveOperationField(notesTool as McpToolDefinition)).toBe('operation')
+        expect(chatToolGating.requiresApproval('ap_manage_notes'), 'ap_manage_notes must not need approval').toBe(false)
+        expect(chatToolGating.additiveOnlyNames().has('ap_manage_notes'), 'ap_manage_notes must not be counted as additive-only').toBe(false)
     })
 })
