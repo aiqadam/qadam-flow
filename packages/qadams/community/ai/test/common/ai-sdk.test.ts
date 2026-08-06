@@ -98,33 +98,35 @@ describe('createAIModel provider addressing', () => {
     },
   )
 
-  // The id decides which row answers, and that row's own type decides which SDK client can talk to
-  // it. Building from the name the step stored would hand an OpenAI auth blob to the
-  // openai-compatible factory and produce a client pointed at `undefined`.
-  it('builds the client from the row the id resolved to, not the name stored in the step', async () => {
-    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-
-    const model = await createAIModel(languageModelParams({
-      providerId: ROW_ID,
-      provider: AIProviderName.CUSTOM,
-    }))
-
-    expect((model as { provider: string }).provider).toBe('openai.chat')
-  })
-
-  // The mismatch above is reachable and only half-honoured: `buildWebSearchConfig` still builds a
-  // provider-specific `ToolSet` from the stored name and `run-agent` merges it into the tool set
-  // handed to `streamText`. The resulting provider-side failure names nothing, so the log has to.
-  it('warns when the answering row disagrees with the name the step stored', async () => {
+  // A mismatch used to be honoured: the model client was built from the row the id resolved to
+  // while `buildWebSearchConfig` and every other name-keyed capability kept reading the stale
+  // `provider` field, so the run's actual model silently diverged from what the UI showed (#298).
+  // Building from the name would also hand an OpenAI auth blob to the openai-compatible factory
+  // and produce a client pointed at `undefined` — but that path is unreachable now: a mismatch is
+  // rejected before any client is built.
+  it('rejects instead of building a client when the answering row disagrees with the name the step stored', async () => {
     stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    await createAIModel(languageModelParams({ providerId: ROW_ID, provider: AIProviderName.ANTHROPIC }))
+    await expect(createAIModel(languageModelParams({
+      providerId: ROW_ID,
+      provider: AIProviderName.CUSTOM,
+    }))).rejects.toThrow('AI provider mismatch')
 
-    expect(warn).toHaveBeenCalledTimes(1)
-    expect(warn.mock.calls[0][0]).toContain('anthropic')
-    expect(warn.mock.calls[0][0]).toContain('openai')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  // Also covers the caller shape #305 briefly gated behind `requireProviderMatch: webSearchEnabled`
+  // (`run-agent`/`ask-ai` with web search on): that gate is gone (#298 makes the check unconditional
+  // for every caller), so this same mismatch rejects regardless of whether web search is in play.
+  it('names both the stored provider and the answering row type in the mismatch error', async () => {
+    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(
+      createAIModel(languageModelParams({ providerId: ROW_ID, provider: AIProviderName.ANTHROPIC })),
+    ).rejects.toThrow(/anthropic.*openai/)
+    expect(warn).not.toHaveBeenCalled()
   })
 
   // Each case shadows `provider` with the SDK client it just built, so interpolating that name into
@@ -138,6 +140,10 @@ describe('createAIModel provider addressing', () => {
     }))).rejects.toThrow('Provider anthropic does not support image models')
   })
 
+  // No `requireProviderMatch` gate survives here (#305 briefly added one, scoped to web-search
+  // callers; #298 makes the check unconditional because every name-keyed capability — not just
+  // web search — can silently diverge from the answering row, so there is no caller for whom
+  // warn-and-continue is still safe).
   it('stays quiet when the answering row is the type the step stored', async () => {
     stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -147,51 +153,6 @@ describe('createAIModel provider addressing', () => {
     expect(warn).not.toHaveBeenCalled()
   })
 
-  // `buildWebSearchConfig` builds a provider-specific `ToolSet` from the stored name, and `run-agent`
-  // / `ask-ai` merge that tool set into the request they hand to the AI SDK. Warning and continuing
-  // there just delays the failure to a point where the SDK error names neither provider — so a
-  // caller that is about to attach web-search tools opts into a named failure here instead (#305).
-  it('throws a named error instead of warning when a web-search caller requires a provider match', async () => {
-    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-
-    const rejection: unknown = await createAIModel(languageModelParams({
-      providerId: ROW_ID,
-      provider: AIProviderName.ANTHROPIC,
-      requireProviderMatch: true,
-    })).catch((error: unknown) => error)
-
-    expect(rejection).toBeInstanceOf(Error)
-    expect((rejection as Error).message).toContain('AI provider mismatch')
-    expect((rejection as Error).message).toContain('anthropic')
-    expect((rejection as Error).message).toContain('openai')
-    expect(warn).not.toHaveBeenCalled()
-  })
-
-  // A caller that does not attach web-search tools (e.g. `summarize-text`, `generate-image`) must
-  // keep today's warn-and-continue behaviour — the model client itself is fine to build from the
-  // row, and there is no name-keyed capability downstream to fail loudly for.
-  it('still only warns when requireProviderMatch is not set', async () => {
-    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-
-    await expect(createAIModel(languageModelParams({
-      providerId: ROW_ID,
-      provider: AIProviderName.ANTHROPIC,
-    }))).resolves.toBeDefined()
-    expect(warn).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not throw when requireProviderMatch is set but the row matches the stored name', async () => {
-    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-
-    await expect(createAIModel(languageModelParams({
-      providerId: ROW_ID,
-      requireProviderMatch: true,
-    }))).resolves.toBeDefined()
-    expect(warn).not.toHaveBeenCalled()
-  })
 })
 
 describe('createEmbeddingModel provider addressing', () => {
@@ -235,23 +196,17 @@ describe('createEmbeddingModel provider addressing', () => {
     expect(requestedUrl(spy)).toBe(`${API_URL}v1/ai-providers/google/config`)
   })
 
-  // Two independent decisions read the answering row here, and only one of them shows up in
-  // `embeddingModelId`. The table lookup picks the model id; the switch under it picks the SDK
-  // client. Asserting the id alone leaves the switch free to read the step's stale name, which
-  // hands a Google API key to an OpenAI client asking for a Google model id — so pin the client's
-  // own identity too, the way the `createAIModel` sibling above does.
-  it('builds the embedding client and picks its model from the row the id resolved to', async () => {
+  // A mismatch here would have picked the model id from the answering row's type while the switch
+  // built the SDK client from whichever provider won the race between the two — reachable, and
+  // exactly the divergence #298 closes. Rejected before either decision is made.
+  it('rejects instead of building an embedding client when the answering row disagrees with the name the step stored', async () => {
     stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.GOOGLE })
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    const result = await createEmbeddingModel({
+    await expect(createEmbeddingModel({
       providerId: ROW_ID,
       provider: AIProviderName.OPENAI,
       engineToken: 'engine-token',
       apiUrl: API_URL,
-    })
-
-    expect(result.embeddingModelId).toBe('text-embedding-004')
-    expect((result.model as { provider: string }).provider).toBe('google.generative-ai')
+    })).rejects.toThrow('AI provider mismatch')
   })
 })

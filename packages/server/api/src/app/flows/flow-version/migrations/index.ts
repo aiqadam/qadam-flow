@@ -21,6 +21,7 @@ import { migrateV24AiQadamVersion } from './migrate-v24-ai-qadam-version'
 import { migrateV25AiQadamVersionRedo } from './migrate-v25-ai-qadam-version-redo'
 import { migrateV26AgentToolMetadataRename } from './migrate-v26-agent-tool-metadata-rename'
 import { migrateV27AiQadamVersionRedo2 } from './migrate-v27-ai-qadam-version-redo-2'
+import { migrateV28AiQadamVersionRedo3 } from './migrate-v28-ai-qadam-version-redo-3'
 import { migrateAgentPieceV3 } from './migrate-v3-agent-piece'
 import { migrateAgentPieceV4 } from './migrate-v4-agent-piece'
 import { migrateHttpToWebhookV5 } from './migrate-v5-http-to-webhook'
@@ -68,6 +69,7 @@ const migrations: Migration[] = [
     migrateV25AiQadamVersionRedo,
     migrateV26AgentToolMetadataRename,
     migrateV27AiQadamVersionRedo2,
+    migrateV28AiQadamVersionRedo3,
 ] as const
 
 export const flowMigrations = {

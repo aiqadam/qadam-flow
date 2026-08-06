@@ -5,6 +5,7 @@ import {
     flowStructureUtil,
     isNil,
     McpToolDefinition,
+    omit,
     Permission,
     ProjectScopedMcpServer,
     QadamActionSettings,
@@ -92,11 +93,16 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
             const updatedSettings: Record<string, unknown> = { ...currentSettings }
 
             if (rewritten.input !== undefined || auth !== undefined) {
-                updatedSettings.input = {
+                const mergedInput = {
                     ...(currentSettings.input as Record<string, unknown> ?? {}),
                     ...(rewritten.input ?? {}),
                     ...(auth !== undefined && { auth: `{{connections['${auth}']}}` }),
                 }
+                updatedSettings.input = dropStaleAiProviderId({
+                    mergedInput,
+                    incomingInput: rewritten.input,
+                    currentInput: currentSettings.input as Record<string, unknown> | undefined,
+                })
             }
             if (actionName !== undefined) {
                 if (step.type === FlowActionType.PIECE) {
@@ -204,6 +210,30 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
             }
         },
     }
+}
+
+// AI qadams' `providerId` only names a row of the `provider` type it was picked alongside
+// (`packages/qadams/community/ai/src/lib/common/props.ts`). The builder clears a stale
+// `providerId` itself whenever `provider` changes (`dynamic-dropdown-qadam-property.tsx`'s
+// refresher-driven clear), but this tool merges `input` with a plain spread and has no such
+// gesture to hook into — an MCP caller that sets a new `provider` without also repeating or
+// clearing `providerId` would otherwise leave the previous pin in place, now naming a row of the
+// wrong type. The server rejects that mismatch outright at run time (`ai-sdk.ts`), but dropping it
+// here keeps the stored step consistent with what a caller who only touched `provider` intended,
+// instead of leaving a call that reaches `ENTITY_NOT_FOUND`/a mismatch error the caller never asked for.
+function dropStaleAiProviderId({ mergedInput, incomingInput, currentInput }: {
+    mergedInput: Record<string, unknown>
+    incomingInput?: Record<string, unknown>
+    currentInput?: Record<string, unknown>
+}): Record<string, unknown> {
+    const providerChanged = !isNil(incomingInput)
+        && 'provider' in incomingInput
+        && incomingInput.provider !== currentInput?.provider
+    const providerIdExplicitlySet = !isNil(incomingInput) && 'providerId' in incomingInput
+    if (providerChanged && !providerIdExplicitlySet && 'providerId' in mergedInput) {
+        return omit(mergedInput, ['providerId'])
+    }
+    return mergedInput
 }
 
 async function diagnoseMissingInputs({ settings, platformId, log }: {

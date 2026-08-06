@@ -108,20 +108,3 @@ describe('run_agent forwards the provider ref it was configured with', () => {
     expect(createEmbeddingModel.mock.calls[0][0]).not.toHaveProperty('providerId')
   })
 })
-
-// `buildWebSearchConfig` builds its provider-specific `ToolSet` from the stored name before
-// `createAIModel` resolves the answering row, so a mismatched row would otherwise only surface as
-// an unnamed failure once `streamText` sends that tool to the wrong SDK client (#305).
-describe('run_agent requires a provider match only when web search is on', () => {
-  it('asks createAIModel to fail loudly on a mismatch when web search is enabled', async () => {
-    await invokeRunAgent({ providerId: ROW_ID, provider: AIProviderName.OPENAI, model: 'gpt-4.1' }, [], true)
-
-    expect(createAIModel).toHaveBeenCalledWith(expect.objectContaining({ requireProviderMatch: true }))
-  })
-
-  it('leaves createAIModel free to warn-and-continue when web search is off', async () => {
-    await invokeRunAgent({ providerId: ROW_ID, provider: AIProviderName.OPENAI, model: 'gpt-4.1' }, [], false)
-
-    expect(createAIModel).toHaveBeenCalledWith(expect.objectContaining({ requireProviderMatch: false }))
-  })
-})
