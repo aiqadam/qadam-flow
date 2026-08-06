@@ -21,9 +21,19 @@
  * - **Read-only.** No writes at all.
  * - **Draft-only flow edits.** They change a draft `flowVersion`; what a published flow does cannot
  *   change until `ap_lock_and_publish`, which is gated.
+ * - **Canvas annotations.** `ap_manage_notes` (including its `DELETE` path) only mutates
+ *   `flowVersion.notes` (`notes-operations.ts`), a field no code path in the engine or worker ever
+ *   reads (verified 2026-08-07) — so unlike the draft-only group above, a note's effect never
+ *   surfaces even after `ap_lock_and_publish`. This tool was previously and incorrectly grouped under
+ *   "Additive table writes" below; its comment claimed nothing is destroyed, which was false the
+ *   moment `operation: 'DELETE'` (`ap-manage-notes.ts:19,109-121`) shipped. The group membership was
+ *   still accidentally safe — deleting a note destroys a visual annotation, never live data — but the
+ *   stated reason was wrong, which is why it has its own category now instead of borrowing this one's.
  * - **Additive table writes.** They add an empty table or new rows; nothing existing is overwritten
  *   or destroyed. Note the asymmetry with `ap_update_record` and `ap_manage_fields`, gated precisely
- *   because they are not additive.
+ *   because they are not additive. This group must never contain a tool with a DELETE/UPDATE-shaped
+ *   `operation` — `chat-tool-gating.test.ts` enforces that by inspecting each member's input schema,
+ *   not just its name.
  *
  * Gated beyond the ticket's agreed nine, each for a reason review established rather than for
  * symmetry:
@@ -61,10 +71,12 @@ export const chatToolGating = {
     ungatedNames(): ReadonlySet<string> {
         return UNGATED_TOOL_NAMES
     },
+    additiveOnlyNames(): ReadonlySet<string> {
+        return ADDITIVE_ONLY_TOOL_NAMES
+    },
 }
 
-const UNGATED_TOOL_NAMES: ReadonlySet<string> = new Set([
-    // Read-only.
+const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_find_records',
     'ap_flow_structure',
     'ap_get_piece_props',
@@ -81,7 +93,10 @@ const UNGATED_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_setup_guide',
     'ap_validate_flow',
     'ap_validate_step_config',
-    // Draft-only: cannot change what a published flow does without `ap_lock_and_publish`.
+])
+
+// Cannot change what a published flow does without `ap_lock_and_publish`.
+const DRAFT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_add_branch',
     'ap_add_step',
     'ap_build_flow',
@@ -91,8 +106,24 @@ const UNGATED_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_update_branch',
     'ap_update_step',
     'ap_update_trigger',
-    // Additive only: nothing existing is overwritten or destroyed.
+])
+
+// Notes never reach the engine/worker, so even DELETE only destroys a visual annotation, never
+// live data — see the "Canvas annotations" rationale above.
+const CANVAS_ANNOTATION_TOOL_NAMES: ReadonlySet<string> = new Set([
+    'ap_manage_notes',
+])
+
+// Nothing existing is overwritten or destroyed. Must never grow a DELETE/UPDATE-shaped `operation` —
+// see the drift test's schema-level check.
+const ADDITIVE_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_create_table',
     'ap_insert_records',
-    'ap_manage_notes',
+])
+
+const UNGATED_TOOL_NAMES: ReadonlySet<string> = new Set([
+    ...READ_ONLY_TOOL_NAMES,
+    ...DRAFT_ONLY_TOOL_NAMES,
+    ...CANVAS_ANNOTATION_TOOL_NAMES,
+    ...ADDITIVE_ONLY_TOOL_NAMES,
 ])
