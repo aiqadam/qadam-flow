@@ -101,7 +101,10 @@ const mountSelector = async ({
   defaultProviderId?: string;
   defaultProvider?: AIProviderName;
   defaultModel?: string;
-  onChange: (value: Partial<AgentProviderModelSelection>) => void;
+  onChange: (
+    value: Partial<AgentProviderModelSelection>,
+    meta: { userGesture: boolean },
+  ) => void;
 }) => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -289,11 +292,14 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
     await openProviderDropdown();
     await click(findItem('https://second.example.com/v1'));
 
-    expect(onChange).toHaveBeenCalledWith({
-      providerId: SECOND_CUSTOM_ROW_ID,
-      provider: AIProviderName.CUSTOM,
-      model: undefined,
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        providerId: SECOND_CUSTOM_ROW_ID,
+        provider: AIProviderName.CUSTOM,
+        model: undefined,
+      },
+      { userGesture: true },
+    );
   });
 
   it('shows the picked row its own model catalogue, not the oldest row of the same type', async () => {
@@ -315,11 +321,17 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
 
     expect(itemTexts()).toEqual(['second-row-model']);
     expect(listModelsForProvider).toHaveBeenCalledWith(SECOND_CUSTOM_ROW_ID);
-    expect(onChange).toHaveBeenLastCalledWith({
-      providerId: SECOND_CUSTOM_ROW_ID,
-      provider: AIProviderName.CUSTOM,
-      model: 'second-row-model',
-    });
+    // The picker's own click already emitted the row pick (model: undefined, a user gesture); this
+    // last emission is the catalogue-reconcile effect filling in a fallback model with no gesture
+    // of its own, once the second row's models arrive.
+    expect(onChange).toHaveBeenLastCalledWith(
+      {
+        providerId: SECOND_CUSTOM_ROW_ID,
+        provider: AIProviderName.CUSTOM,
+        model: 'second-row-model',
+      },
+      { userGesture: false },
+    );
   });
 
   // Picking a model is the most common interaction here, and it is an emission like any other:
@@ -336,11 +348,14 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
     await openModelDropdown();
     await click(findItem('first-row-model-mini'));
 
-    expect(onChange).toHaveBeenLastCalledWith({
-      providerId: FIRST_CUSTOM_ROW_ID,
-      provider: AIProviderName.CUSTOM,
-      model: 'first-row-model-mini',
-    });
+    expect(onChange).toHaveBeenLastCalledWith(
+      {
+        providerId: FIRST_CUSTOM_ROW_ID,
+        provider: AIProviderName.CUSTOM,
+        model: 'first-row-model-mini',
+      },
+      { userGesture: true },
+    );
   });
 
   // The catalogue effect exists only to replace a model the provider no longer serves. Without its
@@ -429,11 +444,14 @@ describe('AIModelSelector, against a platform holding two custom provider rows',
     const onChange = vi.fn();
     await mountSelector({ onChange });
 
-    expect(onChange).toHaveBeenLastCalledWith({
-      providerId: FIRST_CUSTOM_ROW_ID,
-      provider: AIProviderName.CUSTOM,
-      model: 'first-row-model',
-    });
+    expect(onChange).toHaveBeenLastCalledWith(
+      {
+        providerId: FIRST_CUSTOM_ROW_ID,
+        provider: AIProviderName.CUSTOM,
+        model: 'first-row-model',
+      },
+      { userGesture: false },
+    );
   });
 });
 

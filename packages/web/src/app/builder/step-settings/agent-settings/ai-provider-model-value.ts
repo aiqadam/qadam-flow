@@ -26,19 +26,23 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
  * not evidence that it became `undefined`, and reading it that way would drop the stored value
  * this helper exists to protect.
  *
- * Neither of those two signals fires when the stored value has no id at all — a name-only ref
- * always reads as "same row, same provider", because there is nothing to compare the incoming id
- * against. That call still needs to merge a re-resolved model or other keys, but it must not merge
- * a `providerId` in the process: no migration writes an id into a step, and nothing that hasn't
- * moved should either. Only a call that did move (a genuine row or provider change) is trusted to
- * carry `providerId` forward.
+ * Neither of those two signals can fire when the stored value has no id at all: `rowChanged` is
+ * defined to require both sides to already carry one, so a name-only ref always reads as "same
+ * row, same provider" no matter what the selection carries — there is nothing to compare the
+ * incoming id against. That is exactly the shape of two different calls: the picker's `onChange`
+ * from a deliberate row pick (`handleProviderChange` / `handleModelChange` in the model selector),
+ * which must still be allowed to pin a name-only ref, and the picker's reconcile effect
+ * re-resolving a stale model with no user gesture at all, which must not. `userGesture` is the
+ * caller's own record of which one this is — the value diff alone cannot tell them apart.
  */
 const applySelection = ({
   storedValue,
   selection,
+  userGesture,
 }: {
   storedValue: unknown;
   selection: AIProviderModelSelection;
+  userGesture: boolean;
 }): AIProviderModelSelection & Record<string, unknown> => {
   if (!isPlainObject(storedValue)) {
     return { ...selection };
@@ -55,11 +59,11 @@ const applySelection = ({
   if (rowChanged || providerChanged) {
     return { ...selection };
   }
-  // Neither the row nor the provider actually changed, so this call did not decide to pin
-  // anything — it is a reconcile (e.g. re-resolving a stale model on open), not a user gesture.
-  // A stored value with no id must stay self-healing by name; merging in whatever `providerId`
-  // the reconcile happened to resolve would silently convert it into a hard pin.
-  if (storedValue.providerId === undefined) {
+  // Neither signal can fire for a name-only ref (see above), so a reconcile call and a deliberate
+  // pick of the same row look identical here. Only the caller-supplied `userGesture` tells them
+  // apart: a reconcile must stay self-healing by name, but a deliberate pick is trusted to carry
+  // `providerId` forward even from a name-only ref, same as PR #285 intended.
+  if (!userGesture && storedValue.providerId === undefined) {
     return { ...storedValue, ...omit(selection, ['providerId']) };
   }
   return { ...storedValue, ...selection };

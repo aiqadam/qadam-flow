@@ -129,11 +129,12 @@ const selectAgentFormComponentForProperty = (
           defaultModel={providerModel.model}
           defaultProvider={providerModel.provider}
           defaultProviderId={providerModel.providerId}
-          onChange={(selection) =>
+          onChange={(selection, meta) =>
             field.onChange(
               aiProviderModelValue.applySelection({
                 storedValue: field.value,
                 selection,
+                userGesture: meta.userGesture,
               }),
             )
           }

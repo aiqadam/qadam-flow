@@ -73,31 +73,40 @@ export function AIModelSelector({
     }
     const fallback = models[0].id;
     setSelectedModel(fallback);
-    onChange({
-      providerId: selectedOption.id,
-      provider: selectedOption.provider,
-      model: fallback,
-    });
+    onChange(
+      {
+        providerId: selectedOption.id,
+        provider: selectedOption.provider,
+        model: fallback,
+      },
+      { userGesture: false },
+    );
   }, [models, modelsLoading, selectedOption, selectedModel, onChange]);
 
   const handleProviderChange = (option: AIProviderOption) => {
     setPickedProviderId(option.id);
     setSelectedModel(undefined);
-    onChange({
-      providerId: option.id,
-      provider: option.provider,
-      model: undefined,
-    });
+    onChange(
+      {
+        providerId: option.id,
+        provider: option.provider,
+        model: undefined,
+      },
+      { userGesture: true },
+    );
     setProviderOpen(false);
   };
 
   const handleModelChange = (modelId: string) => {
     setSelectedModel(modelId);
-    onChange({
-      providerId: selectedOption?.id,
-      provider: selectedOption?.provider,
-      model: modelId,
-    });
+    onChange(
+      {
+        providerId: selectedOption?.id,
+        provider: selectedOption?.provider,
+        model: modelId,
+      },
+      { userGesture: true },
+    );
     setModelOpen(false);
   };
 
@@ -307,11 +316,16 @@ type AIModelSelectorProps = {
   defaultProvider?: AIProviderName;
   defaultModel?: string;
   disabled?: boolean;
-  onChange: (value: {
-    providerId?: string;
-    provider?: string;
-    model?: string;
-  }) => void;
+  /**
+   * `meta.userGesture` tells the caller whether this emission came from the user explicitly
+   * picking a provider/model, or from the reconcile effect re-resolving a stale model with no
+   * gesture at all. The two must be told apart downstream: a name-only step should stay
+   * self-healing by name through a reconcile, but still be pinnable by a deliberate pick.
+   */
+  onChange: (
+    value: { providerId?: string; provider?: string; model?: string },
+    meta: { userGesture: boolean },
+  ) => void;
 };
 
 type AIProviderOptionLabelProps = {
