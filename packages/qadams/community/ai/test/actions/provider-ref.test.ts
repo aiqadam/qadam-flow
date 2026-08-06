@@ -169,3 +169,33 @@ describe.each(actions)('$label validity for a step stored before providerId exis
     expect(providerIdSchema().safeParse(ROW_ID).success).toBe(true)
   })
 })
+
+// `ask-ai` is the only one of these five actions that can attach a provider-specific web-search
+// `ToolSet` built from the stored name. Warning and letting a mismatched row through there just
+// delays the failure to a point where the AI SDK error names neither provider, so `ask-ai` opts
+// `createAIModel` into failing loudly precisely when that tool set is in play (#305).
+describe('ask-ai requires a provider match only when web search is on', () => {
+  it('asks createAIModel to fail loudly on a mismatch when web search is enabled', async () => {
+    await invoke(asAction(askAI), {
+      prompt: 'why',
+      webSearch: true,
+      provider: AIProviderName.OPENAI,
+      model: 'gpt-4.1',
+      providerId: ROW_ID,
+    })
+
+    expect(createAIModel).toHaveBeenCalledWith(expect.objectContaining({ requireProviderMatch: true }))
+  })
+
+  it('leaves createAIModel free to warn-and-continue when web search is off', async () => {
+    await invoke(asAction(askAI), {
+      prompt: 'why',
+      webSearch: false,
+      provider: AIProviderName.OPENAI,
+      model: 'gpt-4.1',
+      providerId: ROW_ID,
+    })
+
+    expect(createAIModel).toHaveBeenCalledWith(expect.objectContaining({ requireProviderMatch: false }))
+  })
+})
