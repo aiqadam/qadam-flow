@@ -19,6 +19,7 @@ import { migrateV22RenamePieceToQadam } from './migrate-v22-rename-piece-to-qada
 import { migrateV23AgentQadamToolNamesRedo } from './migrate-v23-agent-piece-tool-names-redo'
 import { migrateV24AiQadamVersion } from './migrate-v24-ai-qadam-version'
 import { migrateV25AiQadamVersionRedo } from './migrate-v25-ai-qadam-version-redo'
+import { migrateV26AgentToolMetadataRename } from './migrate-v26-agent-tool-metadata-rename'
 import { migrateAgentPieceV3 } from './migrate-v3-agent-piece'
 import { migrateAgentPieceV4 } from './migrate-v4-agent-piece'
 import { migrateHttpToWebhookV5 } from './migrate-v5-http-to-webhook'
@@ -64,6 +65,7 @@ const migrations: Migration[] = [
     migrateV23AgentQadamToolNamesRedo,
     migrateV24AiQadamVersion,
     migrateV25AiQadamVersionRedo,
+    migrateV26AgentToolMetadataRename,
 ] as const
 
 export const flowMigrations = {
@@ -75,6 +77,10 @@ export const flowMigrations = {
         }
         return flowVersion
     },
+    // Derived from the same array `apply` walks, so it can never drift from the chain the way
+    // `LATEST_FLOW_SCHEMA_VERSION` can — see `flow-schema-version.test.ts` for the guard that pins
+    // this against that constant. #294.
+    terminalSchemaVersion: computeTerminalSchemaVersion(migrations),
 }
 
 export const migrateFlowVersionTemplate = async ({ trigger, schemaVersion, notes, valid, displayName }: Pick<FlowVersionTemplate, 'trigger' | 'schemaVersion' | 'notes' | 'valid' | 'displayName'>): Promise<FlowVersionTemplate> => {
@@ -93,5 +99,17 @@ export const migrateFlowVersionTemplate = async ({ trigger, schemaVersion, notes
         schemaVersion,
         notes: notes ?? [],
     })
+}
+
+// `targetSchemaVersion` values are contiguous integers-as-strings with no gap (checked against the
+// array above), so the version one past the highest target is the schema version nothing in the
+// chain advances further from — the fixed point `LATEST_FLOW_SCHEMA_VERSION` is supposed to name.
+function computeTerminalSchemaVersion(migrationsList: readonly Migration[]): string {
+    const highestTarget = migrationsList.reduce((max, migration) => {
+        return migration.targetSchemaVersion === undefined
+            ? max
+            : Math.max(max, Number(migration.targetSchemaVersion))
+    }, 0)
+    return String(highestTarget + 1)
 }
 
