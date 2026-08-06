@@ -75,6 +75,10 @@ export const flowMigrations = {
         }
         return flowVersion
     },
+    // Derived from the same array `apply` walks, so it can never drift from the chain the way
+    // `LATEST_FLOW_SCHEMA_VERSION` can — see `flow-schema-version.test.ts` for the guard that pins
+    // this against that constant. #294.
+    terminalSchemaVersion: computeTerminalSchemaVersion(migrations),
 }
 
 export const migrateFlowVersionTemplate = async ({ trigger, schemaVersion, notes, valid, displayName }: Pick<FlowVersionTemplate, 'trigger' | 'schemaVersion' | 'notes' | 'valid' | 'displayName'>): Promise<FlowVersionTemplate> => {
@@ -93,5 +97,17 @@ export const migrateFlowVersionTemplate = async ({ trigger, schemaVersion, notes
         schemaVersion,
         notes: notes ?? [],
     })
+}
+
+// `targetSchemaVersion` values are contiguous integers-as-strings with no gap (checked against the
+// array above), so the version one past the highest target is the schema version nothing in the
+// chain advances further from — the fixed point `LATEST_FLOW_SCHEMA_VERSION` is supposed to name.
+function computeTerminalSchemaVersion(migrationsList: readonly Migration[]): string {
+    const highestTarget = migrationsList.reduce((max, migration) => {
+        return migration.targetSchemaVersion === undefined
+            ? max
+            : Math.max(max, Number(migration.targetSchemaVersion))
+    }, 0)
+    return String(highestTarget + 1)
 }
 

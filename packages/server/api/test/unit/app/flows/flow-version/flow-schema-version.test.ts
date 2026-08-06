@@ -183,6 +183,17 @@ describe('LATEST_FLOW_SCHEMA_VERSION vs the migration chain — #273 item 3', ()
         expect(mockRepoUpdate).toHaveBeenCalledTimes(1)
         expect(mockRepoUpdate.mock.calls[0][1]).toMatchObject({ schemaVersion: LATEST_FLOW_SCHEMA_VERSION })
     })
+
+    // The bug this suite is named after was the constant lagging the chain ('22' while the chain
+    // produced '24'); #294 is the same invariant violated from the chain having advanced further
+    // *or* the constant having been bumped further, either one leaving `migrate`'s early exit
+    // (`schemaVersion === LATEST_FLOW_SCHEMA_VERSION`) never true for a flow that reaches the real
+    // terminal. `flowMigrations.terminalSchemaVersion` is derived from the same array `apply` walks
+    // (one past the highest `targetSchemaVersion`), so this fails the moment either side of the pair
+    // moves without the other, independently of what the migration bodies themselves do.
+    it('is exactly the terminal of the migration chain (#294)', () => {
+        expect(flowMigrations.terminalSchemaVersion).toBe(LATEST_FLOW_SCHEMA_VERSION)
+    })
 })
 
 // Raising the constant makes v22 run over every version currently stamped '22'. Two producers write
