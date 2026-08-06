@@ -12,6 +12,7 @@ import {
     parseProviderConfig,
     PlatformId,
     QadamFlowError,
+    redactAIProviderConfig,
     spreadIfDefined,
     tryCatch,
     UpdateAIProviderRequest,
@@ -37,7 +38,7 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         })
     },
 
-    async listProviders(platformId: PlatformId): Promise<AIProviderWithoutSensitiveData[]> {
+    async listProviders({ platformId, includeConfigSecrets }: ListProvidersParams): Promise<AIProviderWithoutSensitiveData[]> {
         // Same order as the name-keyed tiebreak in `findProviderOrThrow`, for the same reason: a
         // caller that collapses several rows of one provider type to the first it sees — the
         // settings page does, per card — must not get a different row between two page loads.
@@ -47,7 +48,10 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
             id: p.id,
             name: p.displayName,
             provider: p.provider,
-            config: p.config,
+            // `config` still isn't credential-free even with `auth` held back — a CUSTOM row's
+            // `defaultHeaders` is an operator-defined record that commonly carries a second bearer
+            // header (#297). Only the engine and a platform admin get that field back.
+            config: includeConfigSecrets ? p.config : redactAIProviderConfig({ provider: p.provider, config: p.config }),
             enabledForChat: p.enabledForChat ?? false,
         }))
     },
@@ -360,4 +364,9 @@ type AssertCustomProviderLimitParams = {
     manager: EntityManager
     platformId: PlatformId
     provider: AIProviderName
+}
+
+type ListProvidersParams = {
+    platformId: PlatformId
+    includeConfigSecrets: boolean
 }

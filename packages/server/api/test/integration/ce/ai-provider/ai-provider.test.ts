@@ -485,7 +485,7 @@ describe('AI Providers API', () => {
     })
 
     describe('GET /v1/ai-providers (list)', () => {
-        it('should include config with defaultHeaders when listing providers', async () => {
+        it('should include config with defaultHeaders when a platform admin lists providers', async () => {
             await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,
                 provider: AIProviderName.CUSTOM,
@@ -499,6 +499,69 @@ describe('AI Providers API', () => {
             })
 
             const response = await ctx.get('/v1/ai-providers')
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+
+            const customProvider = body.find(
+                (p: any) => p.provider === AIProviderName.CUSTOM,
+            )
+            expect(customProvider).toBeDefined()
+            expect(customProvider.config.defaultHeaders).toEqual({ 'X-Test': 'test' })
+        })
+
+        // #297: `defaultHeaders` is an operator-defined record that commonly carries a second
+        // bearer/signing header, so it must not reach a caller who is neither the engine nor a
+        // platform admin. `baseUrl` and `apiKeyHeader` are not secret values and the model picker
+        // (`provider-options.ts`) reads `baseUrl` off this exact response to disambiguate two rows
+        // of the same provider type, so those stay.
+        it('should redact defaultHeaders when a non-admin platform member lists providers', async () => {
+            await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Listed Provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }],
+                    defaultHeaders: { 'X-Test': 'test' },
+                },
+            })
+            const member = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
+
+            const response = await member.get('/v1/ai-providers')
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+
+            const customProvider = body.find(
+                (p: any) => p.provider === AIProviderName.CUSTOM,
+            )
+            expect(customProvider).toBeDefined()
+            expect(customProvider.config.defaultHeaders).toBeUndefined()
+            expect(customProvider.config.baseUrl).toBe('https://api.example.com/v1')
+            expect(customProvider.config.apiKeyHeader).toBe('Authorization')
+            expect(customProvider.config.models).toEqual([{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }])
+        })
+
+        it('should include config with defaultHeaders when the engine lists providers', async () => {
+            await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Listed Provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                    defaultHeaders: { 'X-Test': 'test' },
+                },
+            })
+
+            const response = await app!.inject({
+                method: 'GET',
+                url: '/api/v1/ai-providers',
+                headers: { authorization: `Bearer ${await mockEngineToken()}` },
+            })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
             const body = response?.json()

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BaseModelSchema } from '../../core/common/base-model'
+import { omit } from '../../core/common/utils/object-utils'
 import { formErrors } from '../../form-errors'
 
 export enum AIProviderName {
@@ -263,6 +264,28 @@ const providerConfigSchemas = {
 export function parseProviderConfig({ provider, config }: { provider: AIProviderName, config: unknown }): AIProviderConfig | null {
     const parsed = providerConfigSchemas[provider].safeParse(config)
     return parsed.success ? parsed.data : null
+}
+
+/**
+ * Strips the one field of a stored config that can itself carry a credential: `defaultHeaders` is
+ * an operator-defined record, and the second-header pattern (a signing header alongside the primary
+ * `apiKeyHeader`) puts a live secret there. `baseUrl`, `apiKeyHeader` and `models` are not secret
+ * values — they are read directly off a redacted list response by the builder's model picker
+ * (`provider-options.ts`'s `readBaseUrl`) and by the qadam's own picker (`props.ts`'s
+ * `shareableLabels`) to disambiguate two rows of the same provider type, so they stay.
+ *
+ * Every provider other than CUSTOM has no field shaped like a credential in its `config` at all
+ * (`resourceName`, `region`, etc. are not secrets), so this is a no-op for them.
+ */
+export function redactAIProviderConfig({ provider, config }: { provider: AIProviderName, config: AIProviderConfig }): AIProviderConfig {
+    if (provider !== AIProviderName.CUSTOM) {
+        return config
+    }
+    const parsed = OpenAICompatibleProviderConfig.safeParse(config)
+    if (!parsed.success) {
+        return config
+    }
+    return omit(parsed.data, ['defaultHeaders'])
 }
 
 export const AIProvider = z.object({
