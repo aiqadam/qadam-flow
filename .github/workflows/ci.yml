@@ -386,15 +386,35 @@ jobs:
   # publishes and a failed build on main never reaches the push step. (This comment used to
   # claim the opposite; it was corrected after being cited as a reason to block a merge.)
   # Gated by the same deny-by-default classifier: a docs-only diff cannot change the image.
+  # Matrix over both platforms release.yml ships, on their native runners — no QEMU, matching
+  # release.yml's own build job so the two pipelines can't silently diverge on how an arch is
+  # built. On a push each leg pushes its half by digest only; `image_publish` below merges both
+  # into one multi-arch manifest, because two independent `docker push` calls for the same tag
+  # would just have the later-finishing platform overwrite the earlier one's single-arch
+  # manifest — the exact trap release.yml's own build/publish split already exists to avoid.
+  # On a PR/dispatch neither leg pushes anything; arm64 here is a build-only Dockerfile check
+  # (native runner, so no slower than amd64's leg — matrix legs run in parallel).
   image:
-    name: Docker Image
+    name: Docker Image (${{ matrix.platform }})
     needs: [changes, verify]
     if: needs.changes.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            cacheScope: monolith-linux-amd64
+            artifactSuffix: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            cacheScope: monolith-linux-arm64
+            artifactSuffix: linux-arm64
     steps:
       - uses: actions/checkout@v5
 
@@ -430,24 +450,108 @@ jobs:
             org.opencontainers.image.description=Open-source AI-first workflow automation platform
             org.opencontainers.image.source=https://github.com/aiqadam/qadam-flow
 
-      - name: Build (and push on main)
+      # PR / manual dispatch: build-only, exactly as before this became a matrix — just now
+      # exercising both platforms' Dockerfile path instead of only amd64's.
+      - name: Build (no push)
+        if: github.event_name != 'push'
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
-          push: ${{ github.event_name == 'push' }}
+          platforms: ${{ matrix.platform }}
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Scope must stay in sync with release.yml's matrix.cacheScope so a
-          # tag build reuses the layers main just produced for the same arch.
-          cache-from: type=gha,scope=monolith-linux-amd64
-          cache-to: type=gha,mode=max,scope=monolith-linux-amd64
+          cache-from: type=gha,scope=${{ matrix.cacheScope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cacheScope }}
           allow: |
             network.host
           build-args: |
             TURBO_API=${{ env.TURBO_API }}
             TURBO_TOKEN=${{ env.TURBO_TOKEN }}
             TURBO_TEAM=${{ env.TURBO_TEAM }}
+
+      - name: Build and push by digest (main)
+        id: build
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.cacheScope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cacheScope }}
+          allow: |
+            network.host
+          build-args: |
+            TURBO_API=${{ env.TURBO_API }}
+            TURBO_TOKEN=${{ env.TURBO_TOKEN }}
+            TURBO_TEAM=${{ env.TURBO_TEAM }}
+          outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.artifactSuffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merges the two per-arch digests `image` pushed above into the one multi-arch manifest under
+  # `:main` / `:sha-<short>` that run.sh, docker-compose.yml and `e2e` below actually pull. Split
+  # out for the same reason release.yml splits `build` from `publish`: a manifest-list push needs
+  # both platforms' digests to exist first, and a matrix job has no way to wait for its own other
+  # legs. Skipped entirely off a push event — `needs.image` then reads 'skipped' rather than
+  # 'success', which is why `e2e` below tolerates that result explicitly instead of relying on the
+  # default all-needs-succeeded gate.
+  image_publish:
+    name: Publish multi-arch manifest
+    needs: [image]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/aiqadam/qadam-flow
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short,prefix=sha-
+
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/aiqadam/qadam-flow@sha256:%s ' *)
 
   # The only job that exercises a DEPLOYED instance: the bundled docker-compose.yml, booted
   # from the image `image` just published, driven through a real browser by the Playwright
@@ -472,16 +576,21 @@ jobs:
   # `verify` and `integration` are built.
   e2e:
     name: E2E Suite (docker compose)${{ github.event_name != 'push' && ' — against last published :main, not this PR' || '' }}
-    # `image` is a need, not just an ordering hint: on a push to main this job must test the
-    # image that run just pushed. It also means a failed or skipped `image` skips this job
-    # rather than testing a stale tag under a fresh SHA's name.
-    needs: [changes, image]
+    # `image` and `image_publish` are needs, not just an ordering hint: on a push to main this
+    # job must test the manifest `image_publish` just published. `image_publish` only runs on a
+    # push event (see its own `if:`), so on a PR/dispatch it reports 'skipped' — and a bare
+    # `needs:` list defaults to requiring every needed job to have *succeeded*, which would
+    # silently skip this job on every PR. The explicit `always() && ...` below is what tolerates
+    # that skip instead of falling into it; do not simplify this back to a plain needs list.
+    needs: [changes, image, image_publish]
     # push and workflow_dispatch always run it. A pull_request only does when it touches the
     # suite or this workflow: the real trigger cannot be proven on the PR that adds it, and
     # ~10 min on every unrelated PR is not worth paying for a signal about `main`.
     if: >-
-      github.event_name != 'pull_request'
-      || needs.changes.outputs.e2e_relevant == 'true'
+      always()
+      && needs.image.result == 'success'
+      && (needs.image_publish.result == 'success' || needs.image_publish.result == 'skipped')
+      && (github.event_name != 'pull_request' || needs.changes.outputs.e2e_relevant == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
