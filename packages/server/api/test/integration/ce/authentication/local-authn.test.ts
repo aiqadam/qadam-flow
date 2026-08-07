@@ -1,4 +1,5 @@
 import { OtpState, OtpType, UserIdentity } from '@aiqadam/shared'
+import dayjs from 'dayjs'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
@@ -54,6 +55,55 @@ describe('Local Authn / OTP API', () => {
             expect(response?.statusCode).toBe(StatusCodes.NO_CONTENT)
             const count = await databaseConnection().getRepository('otp').count()
             expect(count).toBe(0)
+        })
+
+        it('throttles a resend while the existing OTP is still pending and within the window', async () => {
+            const identity = await saveIdentity()
+            const otp = createMockOtp({
+                identityId: identity.id,
+                type: OtpType.PASSWORD_RESET,
+                state: OtpState.PENDING,
+                updated: dayjs().toISOString(),
+            })
+            await databaseConnection().getRepository('otp').save(otp)
+
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/otp',
+                body: { email: identity.email, type: OtpType.PASSWORD_RESET },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.NO_CONTENT)
+            const otpAfter = await databaseConnection().getRepository('otp').findOneBy({
+                identityId: identity.id,
+                type: OtpType.PASSWORD_RESET,
+            })
+            expect(otpAfter?.value).toBe(otp.value)
+        })
+
+        it('issues a new pending OTP when the previous one was already confirmed, even within the throttle window', async () => {
+            const identity = await saveIdentity()
+            const otp = createMockOtp({
+                identityId: identity.id,
+                type: OtpType.PASSWORD_RESET,
+                state: OtpState.CONFIRMED,
+                updated: dayjs().toISOString(),
+            })
+            await databaseConnection().getRepository('otp').save(otp)
+
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/otp',
+                body: { email: identity.email, type: OtpType.PASSWORD_RESET },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.NO_CONTENT)
+            const otpAfter = await databaseConnection().getRepository('otp').findOneBy({
+                identityId: identity.id,
+                type: OtpType.PASSWORD_RESET,
+            })
+            expect(otpAfter?.state).toBe(OtpState.PENDING)
+            expect(otpAfter?.value).not.toBe(otp.value)
         })
     })
 
