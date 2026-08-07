@@ -1,6 +1,7 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
 import { API_KEY_PREFIX, API_KEY_SECRET_LENGTH, apId, ApId, ApiKey, ApiKeyResponseWithValue, CreateApiKeyRequest, ErrorCode, isNil, omit, QadamFlowError, ResponseApiKey, secureApId, SeekPage } from '@aiqadam/shared'
 import dayjs from 'dayjs'
+import { EntityManager } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
@@ -10,16 +11,6 @@ const repo = repoFactory(ApiKeyEntity)
 
 export const apiKeyService = {
     async create({ platformId, request }: { platformId: ApId, request: CreateApiKeyRequest }): Promise<ApiKeyResponseWithValue> {
-        const keyCount = await repo().countBy({ platformId })
-        if (keyCount >= MAX_API_KEYS_PER_PLATFORM) {
-            throw new QadamFlowError({
-                code: ErrorCode.VALIDATION,
-                params: {
-                    message: `A platform can have at most ${MAX_API_KEYS_PER_PLATFORM} API keys`,
-                },
-            })
-        }
-
         const value = generateSecret()
         const apiKey: ApiKey = {
             id: apId(),
@@ -30,7 +21,12 @@ export const apiKeyService = {
             hashedValue: cryptoUtils.hashSHA256(value),
             truncatedValue: value.slice(-4),
         }
-        await repo().insert(apiKey)
+
+        await repo().manager.transaction(async (manager) => {
+            await assertApiKeyLimitNotExceeded({ manager, platformId })
+            await repo(manager).insert(apiKey)
+        })
+
         return {
             ...omit(apiKey, ['hashedValue']),
             value,
@@ -73,4 +69,27 @@ function generateSecret(): string {
     return `${API_KEY_PREFIX}${secureApId(API_KEY_SECRET_LENGTH)}`
 }
 
+// The advisory lock is taken inside the caller's transaction and released when that transaction
+// ends, so the count and the insert it guards are atomic together — a plain count-then-insert
+// under READ COMMITTED lets two concurrent creates both read "under the cap" and both write.
+// Same pattern as `assertCustomProviderLimitNotExceeded` in ai-provider-service.ts, keyed on
+// platformId alone here since the cap is per-platform regardless of key type.
+async function assertApiKeyLimitNotExceeded({ manager, platformId }: AssertApiKeyLimitParams): Promise<void> {
+    await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`api-key-limit:${platformId}`])
+    const keyCount = await manager.countBy(ApiKeyEntity, { platformId })
+    if (keyCount >= MAX_API_KEYS_PER_PLATFORM) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: {
+                message: `A platform can have at most ${MAX_API_KEYS_PER_PLATFORM} API keys`,
+            },
+        })
+    }
+}
+
 export const MAX_API_KEYS_PER_PLATFORM = 50
+
+type AssertApiKeyLimitParams = {
+    manager: EntityManager
+    platformId: ApId
+}
