@@ -14,9 +14,9 @@ export const agentTools = {
     async tools({ engineConstants, tools, model }: ConstructToolParams): Promise<Record<string, Tool>> {
         const qadamTools = await Promise.all(tools.map(async (tool) => {
             const { qadamAction } = await qadamLoader.getQadamAndActionOrThrow({
-                qadamName: tool.pieceMetadata.qadamName,
-                qadamVersion: tool.pieceMetadata.qadamVersion,
-                actionName: tool.pieceMetadata.actionName,
+                qadamName: tool.qadamMetadata.qadamName,
+                qadamVersion: tool.qadamMetadata.qadamVersion,
+                actionName: tool.qadamMetadata.actionName,
                 devQadams: EngineConstants.DEV_QADAMS,
             })
             return {
@@ -29,10 +29,10 @@ export const agentTools = {
                     execute({
                         ...engineConstants,
                         instruction,
-                        qadamName: tool.pieceMetadata.qadamName,
-                        qadamVersion: tool.pieceMetadata.qadamVersion,
-                        actionName: tool.pieceMetadata.actionName,
-                        predefinedInput: tool.pieceMetadata.predefinedInput,
+                        qadamName: tool.qadamMetadata.qadamName,
+                        qadamVersion: tool.qadamMetadata.qadamVersion,
+                        actionName: tool.qadamMetadata.actionName,
+                        predefinedInput: tool.qadamMetadata.predefinedInput,
                         model,
                     }),
             }

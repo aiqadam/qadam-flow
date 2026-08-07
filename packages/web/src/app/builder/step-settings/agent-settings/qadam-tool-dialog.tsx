@@ -88,7 +88,7 @@ export function AgentPieceDialog({
     if (!showAddQadamDialog) return;
     if (!isNil(editingQadamTool) && qadamMetadata.length > 0) {
       const piece = qadamMetadata.find(
-        (p) => p.qadamName === editingQadamTool.pieceMetadata.qadamName,
+        (p) => p.qadamName === editingQadamTool.qadamMetadata.qadamName,
       );
 
       if (piece) {

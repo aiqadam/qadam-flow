@@ -69,7 +69,7 @@ export const useQadamToolsDialogStore = create<QadamsToolDialogsState>(
         showAddQadamDialog: true,
         selectedPage: page,
         editingQadamTool: tool,
-        predefinedInputs: tool?.pieceMetadata.predefinedInput,
+        predefinedInputs: tool?.qadamMetadata.predefinedInput,
         selectedQadam: piece,
       });
     },
@@ -133,7 +133,7 @@ export const useQadamToolsDialogStore = create<QadamsToolDialogsState>(
           selectedQadam.qadamName,
           selectedAction.name,
         ),
-        pieceMetadata: {
+        qadamMetadata: {
           qadamVersion: selectedQadam.qadamVersion,
           qadamName: selectedQadam.qadamName,
           actionName: selectedAction.name,

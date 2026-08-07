@@ -40,7 +40,7 @@ const agentToolArrayItems: ArraySubProps<boolean> = {
     required: true,
   }),
 
-  pieceMetadata: Property.Json({
+  qadamMetadata: Property.Json({
     displayName: 'Qadam Metadata',
     required: false,
   }),
