@@ -31,7 +31,8 @@ export const otpService = (log: FastifyBaseLogger) => ({
             identityId: userIdentity.id,
             type,
         })
-        const otpIsNotExpired = existingOtp && dayjs().diff(existingOtp.updated, 'milliseconds') < TEN_MINUTES
+        const otpIsNotExpired = existingOtp?.state === OtpState.PENDING
+            && dayjs().diff(existingOtp.updated, 'milliseconds') < TEN_MINUTES
         if (otpIsNotExpired) {
             return
         }
