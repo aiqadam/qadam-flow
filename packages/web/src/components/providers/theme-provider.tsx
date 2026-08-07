@@ -4,8 +4,7 @@ import * as RippleHook from 'use-ripple-hook';
 
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { colorsUtils } from '@/lib/color-utils';
-
-type Theme = 'dark' | 'light' | 'system';
+import { themeUtils, type ResolvedTheme, type Theme } from '@/lib/theme-utils';
 
 type ThemeProviderProps = {
   children: React.ReactNode;
@@ -15,6 +14,7 @@ type ThemeProviderProps = {
 
 type ThemeProviderState = {
   theme: Theme;
+  resolvedTheme: ResolvedTheme;
   setTheme: (theme: Theme) => void;
   forceLightMode: boolean;
   setForceLightMode: (value: boolean) => void;
@@ -22,6 +22,7 @@ type ThemeProviderState = {
 
 const initialState: ThemeProviderState = {
   theme: 'system',
+  resolvedTheme: 'light',
   setTheme: () => null,
   forceLightMode: false,
   setForceLightMode: () => null,
@@ -50,7 +51,7 @@ export const setFavicon = (url: string) => {
 // dark by hand. Honouring the preference is the conventional behaviour and what the setting's own
 // name promises (#178, item 3). This changes only what `system` means; the default is still
 // `system`, so anyone who has explicitly chosen light or dark is unaffected.
-function resolveSystemTheme(): 'dark' | 'light' {
+function resolveSystemTheme(): ResolvedTheme {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches
     ? 'dark'
     : 'light';
@@ -70,9 +71,8 @@ export function ThemeProvider({
   // until the user flips their system theme with the app open, which is exactly when they would
   // expect a setting called `system` to follow — verified by driving prefers-color-scheme on a
   // running page and watching the class not move.
-  const [systemTheme, setSystemTheme] = useState<'dark' | 'light'>(
-    resolveSystemTheme,
-  );
+  const [systemTheme, setSystemTheme] =
+    useState<ResolvedTheme>(resolveSystemTheme);
 
   useEffect(() => {
     const query = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -85,6 +85,11 @@ export function ThemeProvider({
     return () => query.removeEventListener('change', onChange);
   }, []);
   const branding = flagsHooks.useWebsiteBranding();
+  const resolvedTheme = themeUtils.resolveTheme({
+    theme,
+    systemTheme,
+    forceLightMode,
+  });
   useEffect(() => {
     if (!branding) {
       console.warn('Website brand is not defined');
@@ -92,11 +97,6 @@ export function ThemeProvider({
     }
     const root = window.document.documentElement;
 
-    const resolvedTheme = forceLightMode
-      ? 'light'
-      : theme === 'system'
-      ? systemTheme
-      : theme;
     root.classList.remove('light', 'dark');
     document.title = branding.websiteName;
     document.documentElement.style.setProperty(
@@ -133,10 +133,11 @@ export function ThemeProvider({
     }
 
     root.classList.add(resolvedTheme);
-  }, [theme, branding, forceLightMode, systemTheme]);
+  }, [resolvedTheme, branding]);
 
   const value = {
     theme,
+    resolvedTheme,
     setTheme: (theme: Theme) => {
       localStorage.setItem(storageKey, theme);
       setTheme(theme);
@@ -162,10 +163,10 @@ export const useTheme = () => {
 };
 
 export const useApRipple = () => {
-  const { theme } = useTheme();
+  const { resolvedTheme } = useTheme();
   return RippleHook.default({
     color:
-      theme === 'dark'
+      resolvedTheme === 'dark'
         ? 'rgba(233, 233, 233, 0.2)'
         : 'rgba(155, 155, 155, 0.2)',
     cancelAutomatically: true,
