@@ -173,4 +173,50 @@ describe('the builder model picker, wired to the aiProviderModel field', () => {
       storedValue,
     );
   });
+
+  // #299: merely opening a name-only step whose model the catalogue no longer serves must not pin
+  // it. The reconcile effect resolves `row-1` to fill in a fallback model, but that resolution is
+  // not a gesture, so the step must stay addressed by name, still able to heal if `row-1` moves.
+  it('re-resolves a stale model on a name-only step without pinning a providerId', async () => {
+    const form = await mountAgentSettings({
+      provider: 'custom',
+      model: 'a-model-the-catalogue-no-longer-lists',
+    });
+
+    expect(form.getValues('settings.input.aiProviderModel')).toEqual({
+      provider: 'custom',
+      model: 'deepseek-chat',
+    });
+  });
+
+  // The other half of the same pair: a deliberate pick on a name-only step must still pin it, the
+  // same capability #285 added. Only the reconcile effect above is exempt.
+  it('pins a name-only step to the resolved row when the user picks a model', async () => {
+    const form = await mountAgentSettings({
+      provider: 'custom',
+      model: 'deepseek-chat',
+    });
+
+    const modelTrigger = document.querySelectorAll(
+      'button[role="combobox"]',
+    )[1];
+    await act(async () => {
+      modelTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const option = [...document.querySelectorAll('[cmdk-item]')].find(
+      (item) => item.textContent === 'deepseek-reasoner',
+    );
+    if (!option) {
+      throw new Error('the model dropdown never opened');
+    }
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(form.getValues('settings.input.aiProviderModel')).toEqual({
+      provider: 'custom',
+      model: 'deepseek-reasoner',
+      providerId: 'row-1',
+    });
+  });
 });
