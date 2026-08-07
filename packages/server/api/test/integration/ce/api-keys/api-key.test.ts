@@ -64,6 +64,39 @@ describe('POST /v1/api-keys', () => {
         expect(res.statusCode).toBe(StatusCodes.CONFLICT)
     })
 
+    it('never lets concurrent creates push a platform past the cap', async () => {
+        const ctx = await createTestContext(app!)
+
+        const now = new Date().toISOString()
+        const seededKeys = Array.from({ length: MAX_API_KEYS_PER_PLATFORM - 1 }, () => ({
+            id: apId(),
+            created: now,
+            updated: now,
+            displayName: faker.lorem.word(),
+            platformId: ctx.platform.id,
+            hashedValue: apId(),
+            truncatedValue: 'abcd',
+        }))
+        await db.save('api_key', seededKeys)
+
+        const concurrentRequests = 5
+        const responses = await Promise.all(
+            Array.from({ length: concurrentRequests }, () => ctx.post('/v1/api-keys', { displayName: faker.lorem.word() })),
+        )
+
+        const created = responses.filter((res) => res.statusCode === StatusCodes.CREATED)
+        const rejected = responses.filter((res) => res.statusCode === StatusCodes.CONFLICT)
+
+        // Exactly one request can legally take the platform from 49 to the cap of 50; every other
+        // concurrent request must observe the cap and be rejected rather than also inserting. A
+        // check-then-act race (the bug this test guards against) lets more than one through.
+        expect(created.length).toBe(1)
+        expect(rejected.length).toBe(concurrentRequests - 1)
+
+        const finalKeys = await db.find('api_key', { platformId: ctx.platform.id })
+        expect(finalKeys.length).toBe(MAX_API_KEYS_PER_PLATFORM)
+    })
+
     it('forbids non-admin platform members', async () => {
         const ctx = await createTestContext(app!)
         const { mockUser } = await mockBasicUser({
