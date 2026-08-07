@@ -2756,4 +2756,95 @@ describe('MCP Tools integration', () => {
             expect(await readStoredExternalFlowId({ flowId: builtFlowId!, projectId: ctx.project.id })).toBe(toolFlow.externalId)
         })
     })
+
+    // ── stale AI `providerId` surviving a `provider` switch — see issue #298 ──────────
+    describe('ap_update_step — stale AI providerId on a provider switch', () => {
+        async function readStoredInput({ flowId, projectId }: { flowId: string, projectId: string }): Promise<Record<string, unknown>> {
+            const flow = await flowService(mockLog).getOnePopulatedOrThrow({ id: flowId, projectId })
+            const step = flowStructureUtil.getStep('step_1', flow.version.trigger)
+            return (step?.settings as { input?: Record<string, unknown> }).input ?? {}
+        }
+
+        async function createCodeStepWithInput({ mcp, flowId, input }: { mcp: ProjectScopedMcpServer, flowId: string, input: Record<string, unknown> }) {
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.CODE,
+                displayName: 'Ask AI',
+            })
+            return apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                sourceCode: 'export const code = async () => ({});',
+                input,
+            })
+        }
+
+        it('drops a pinned providerId when provider changes without also repeating providerId', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Stale Provider Id Flow')
+
+            await createCodeStepWithInput({ mcp, flowId, input: { provider: 'openai', providerId: 'row-openai' } })
+            await apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: { provider: 'anthropic' },
+            })
+
+            const input = await readStoredInput({ flowId, projectId: ctx.project.id })
+            expect(input.provider).toBe('anthropic')
+            expect(input).not.toHaveProperty('providerId')
+        })
+
+        it('keeps providerId when the caller sets a new one alongside the new provider', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Repinned Provider Id Flow')
+
+            await createCodeStepWithInput({ mcp, flowId, input: { provider: 'openai', providerId: 'row-openai' } })
+            await apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: { provider: 'anthropic', providerId: 'row-anthropic' },
+            })
+
+            const input = await readStoredInput({ flowId, projectId: ctx.project.id })
+            expect(input.provider).toBe('anthropic')
+            expect(input.providerId).toBe('row-anthropic')
+        })
+
+        it('leaves providerId alone when provider is not part of this update', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Untouched Provider Id Flow')
+
+            await createCodeStepWithInput({ mcp, flowId, input: { provider: 'openai', providerId: 'row-openai' } })
+            await apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: { model: 'gpt-4.1' },
+            })
+
+            const input = await readStoredInput({ flowId, projectId: ctx.project.id })
+            expect(input.providerId).toBe('row-openai')
+        })
+
+        it('leaves providerId alone when provider is set to the same value it already had', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Reasserted Provider Id Flow')
+
+            await createCodeStepWithInput({ mcp, flowId, input: { provider: 'openai', providerId: 'row-openai' } })
+            await apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: { provider: 'openai' },
+            })
+
+            const input = await readStoredInput({ flowId, projectId: ctx.project.id })
+            expect(input.providerId).toBe('row-openai')
+        })
+    })
 })

@@ -18,7 +18,7 @@ import { createGoogleGenerativeAI as createGoogleGateway } from 'ai-gateway-prov
 // A platform can hold several rows of the same type (custom endpoints), so only the id addresses
 // one of them; the name resolves to the oldest row and stays supported forever, because published
 // qadam versions are pinned exactly and build this URL from the enum.
-async function fetchProviderConfig({ providerId, provider, engineToken, apiUrl, requireProviderMatch }: FetchProviderConfigParams): Promise<GetProviderConfigResponse> {
+async function fetchProviderConfig({ providerId, provider, engineToken, apiUrl }: FetchProviderConfigParams): Promise<GetProviderConfigResponse> {
     const providerRef = resolveProviderRef({ providerId, provider })
     const { body } = await httpClient.sendRequest<GetProviderConfigResponse>({
         method: HttpMethod.GET,
@@ -31,14 +31,21 @@ async function fetchProviderConfig({ providerId, provider, engineToken, apiUrl, 
     // follows the stored name — `buildWebSearchConfig` builds a provider-specific `ToolSet` from it
     // and `run-agent`/`ask-ai` merge that into the tool set handed to the AI SDK, so an Anthropic
     // name paired with an OpenAI row and web search on sends an Anthropic tool to an OpenAI model.
-    // That failed at the provider naming nothing, so a caller building web-search tools passes
-    // `requireProviderMatch` and gets a named error before the mismatched tool ever reaches the SDK.
+    //
+    // A mismatch here means the step's `providerId` no longer names a row of the type its own
+    // `provider` field claims — most commonly because the builder pinned a row, the operator then
+    // switched `provider` to a different type, and the stale id survived. Warning and continuing
+    // (the previous behaviour, and briefly a behaviour gated on `requireProviderMatch` and opted
+    // into only by web-search callers, #305) built the model client from the right row but let
+    // every name-keyed capability decision silently diverge from it whenever a caller did not ask
+    // for the strict check — exactly the class of silent misexecution #286 set out to kill, and the
+    // mismatch is unsafe regardless of whether the caller happens to attach web-search tools:
+    // `openaiResponsesModel` and the AI-SDK `providerOptions` namespace key are also keyed on the
+    // stored name and just as capable of silently talking past the row that actually answered.
+    // Failing loudly here, unconditionally, means the run stops instead of quietly answering with a
+    // provider the UI never showed.
     if (body.provider !== provider) {
-        const message = `AI provider mismatch: the step stores provider "${provider}" but row "${providerRef}" is of type "${body.provider}". The model client follows the row; web search, the OpenAI responses API and any other capability gated on the stored name still follow "${provider}" and may not apply to this model.`
-        if (requireProviderMatch) {
-            throw new Error(message)
-        }
-        console.warn(message)
+        throw new Error(`AI provider mismatch: the step stores provider "${provider}" but row "${providerRef}" is of type "${body.provider}". Re-select the provider configuration for this step.`)
     }
     return body
 }
@@ -73,7 +80,6 @@ type FetchProviderConfigParams = {
     provider: AIProviderName;
     engineToken: string;
     apiUrl: string;
-    requireProviderMatch?: boolean;
 }
 
 type CreateAIModelParams<IsImage extends boolean = false> = {
@@ -87,12 +93,6 @@ type CreateAIModelParams<IsImage extends boolean = false> = {
     apiUrl: string;
     openaiResponsesModel?: boolean;
     isImage?: IsImage;
-    // Set by a caller that is about to build a provider-specific web-search `ToolSet` from the
-    // stored name (`buildWebSearchConfig`). That tool set is not portable across provider types, so
-    // a mismatched row must fail here, named, rather than downstream at the SDK with a message that
-    // names nothing. Callers that do not attach web-search tools leave this unset and keep the
-    // warn-and-continue behaviour, because the model client itself is fine to build from the row.
-    requireProviderMatch?: boolean;
 }
 
 export function createAIModel(params: CreateAIModelParams<false>): Promise<LanguageModel>;
@@ -108,14 +108,13 @@ export async function createAIModel({
     apiUrl,
     openaiResponsesModel = false,
     isImage,
-    requireProviderMatch,
 }: CreateAIModelParams<boolean>): Promise<ImageModel | LanguageModel> {
     // The row that answered decides which SDK client can talk to it — its `auth` and `config` are
     // shaped by its own type. Switching on the name the step stored would hand, say, an OpenAI auth
     // blob to the openai-compatible factory whenever the two disagree. The stored name keeps its
     // separate job: capability gating (web search, responses API), which is decided before the
     // fetch and cannot consume an id.
-    const { config, auth, platformId, provider: resolvedProvider } = await fetchProviderConfig({ providerId, provider, engineToken, apiUrl, requireProviderMatch });
+    const { config, auth, platformId, provider: resolvedProvider } = await fetchProviderConfig({ providerId, provider, engineToken, apiUrl });
 
     switch (resolvedProvider) {
         case AIProviderName.OPENAI: {
