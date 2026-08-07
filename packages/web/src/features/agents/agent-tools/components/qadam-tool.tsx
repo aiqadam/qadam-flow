@@ -46,7 +46,7 @@ export const AgentQadamToolComponent = ({
   }, [metadata]);
 
   const qadamMetadata = piecesMetadata?.find(
-    (p) => p.qadamName === tools[0].pieceMetadata.qadamName,
+    (p) => p.qadamName === tools[0].qadamMetadata.qadamName,
   );
 
   if (!qadamMetadata) {

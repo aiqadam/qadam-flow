@@ -156,13 +156,13 @@ function getToolMetadata({
 
   switch (tool.type) {
     case AgentToolType.PIECE: {
-      assertNotNullOrUndefined(tool.pieceMetadata, 'Qadam metadata is required');
+      assertNotNullOrUndefined(tool.qadamMetadata, 'Qadam metadata is required');
       return {
         ...baseTool,
         toolCallType: ToolCallType.PIECE,
-        qadamName: tool.pieceMetadata.qadamName,
-        qadamVersion: tool.pieceMetadata.qadamVersion,
-        actionName: tool.pieceMetadata.actionName,
+        qadamName: tool.qadamMetadata.qadamName,
+        qadamVersion: tool.qadamMetadata.qadamVersion,
+        actionName: tool.qadamMetadata.actionName,
       };
     }
     case AgentToolType.FLOW: {

@@ -59,7 +59,7 @@ export const AgentTools = ({
   const pieceToToolMap = tools
     .filter((tool) => tool.type === AgentToolType.PIECE)
     .reduce<Record<string, AgentQadamTool[]>>((acc, tool) => {
-      const key = tool.pieceMetadata?.qadamName;
+      const key = tool.qadamMetadata?.qadamName;
 
       if (!key) return acc;
 

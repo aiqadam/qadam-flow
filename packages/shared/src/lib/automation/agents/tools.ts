@@ -88,7 +88,7 @@ export type AgentQadamToolMetadata = z.infer<typeof AgentQadamToolMetadata>
 export const AgentQadamTool = z.object({
     type: z.literal(AgentToolType.PIECE),
     ...AgentToolBase,
-    pieceMetadata: AgentQadamToolMetadata,
+    qadamMetadata: AgentQadamToolMetadata,
 })
 export type AgentQadamTool = z.infer<typeof AgentQadamTool>
 
