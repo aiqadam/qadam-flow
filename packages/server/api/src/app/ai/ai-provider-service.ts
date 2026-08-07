@@ -1,9 +1,9 @@
 import {
     AIProviderAuthConfig,
     AIProviderConfig,
+    AIProviderListItem,
     AIProviderModel,
     AIProviderName,
-    AIProviderWithoutSensitiveData,
     apId,
     CreateAIProviderRequest,
     ErrorCode,
@@ -12,6 +12,7 @@ import {
     parseProviderConfig,
     PlatformId,
     QadamFlowError,
+    redactAIProviderConfig,
     spreadIfDefined,
     tryCatch,
     UpdateAIProviderRequest,
@@ -37,17 +38,20 @@ export const aiProviderService = (log: FastifyBaseLogger) => ({
         })
     },
 
-    async listProviders(platformId: PlatformId): Promise<AIProviderWithoutSensitiveData[]> {
+    async listProviders({ platformId, includeConfigSecrets }: ListProvidersParams): Promise<AIProviderListItem[]> {
         // Same order as the name-keyed tiebreak in `findProviderOrThrow`, for the same reason: a
         // caller that collapses several rows of one provider type to the first it sees — the
         // settings page does, per card — must not get a different row between two page loads.
         const configuredProviders = await aiProviderRepo().find({ where: { platformId }, order: { created: 'ASC', id: 'ASC' } })
 
-        return configuredProviders.map((p): AIProviderWithoutSensitiveData => ({
+        return configuredProviders.map((p): AIProviderListItem => ({
             id: p.id,
             name: p.displayName,
             provider: p.provider,
-            config: p.config,
+            // `config` still isn't credential-free even with `auth` held back — a CUSTOM row's
+            // `baseUrl` and `defaultHeaders` can each carry the same class of operator credential
+            // (#297). Only the engine and a platform admin get the unredacted row back.
+            config: includeConfigSecrets ? p.config : redactAIProviderConfig({ provider: p.provider, config: p.config }),
             enabledForChat: p.enabledForChat ?? false,
         }))
     },
@@ -360,4 +364,9 @@ type AssertCustomProviderLimitParams = {
     manager: EntityManager
     platformId: PlatformId
     provider: AIProviderName
+}
+
+type ListProvidersParams = {
+    platformId: PlatformId
+    includeConfigSecrets: boolean
 }

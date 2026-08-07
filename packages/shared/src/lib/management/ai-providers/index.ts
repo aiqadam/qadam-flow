@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { BaseModelSchema } from '../../core/common/base-model'
+import { tryCatchSync } from '../../core/common/try-catch'
+import { omit } from '../../core/common/utils/object-utils'
 import { formErrors } from '../../form-errors'
 
 export enum AIProviderName {
@@ -265,6 +267,59 @@ export function parseProviderConfig({ provider, config }: { provider: AIProvider
     return parsed.success ? parsed.data : null
 }
 
+// `baseUrl` on a CUSTOM row is an unconstrained `z.string()` (#276/#297's own text: an operator
+// can put userinfo `https://user:token@host` or a query-string `?api_key=...` in it, and either
+// leaks to a low-privileged reader the same way `defaultHeaders` does), so a redacted row keeps
+// only the origin — enough for the model picker's disambiguation, nothing past the host.
+// `apiKeyHeader` and `models` are unaffected: a header *name* is not a credential value, and
+// `parseProviderConfig`/every other reader of a stored config still gets a real `AIProviderConfig`
+// for the two fields that could not have carried a secret in the first place.
+export const PublicOpenAICompatibleProviderConfig = OpenAICompatibleProviderConfig.omit({ defaultHeaders: true }).extend({
+    baseUrl: z.string().optional(),
+})
+export type PublicOpenAICompatibleProviderConfig = z.infer<typeof PublicOpenAICompatibleProviderConfig>
+
+/**
+ * Strips or masks the fields of a stored CUSTOM config that can themselves carry a credential:
+ * `defaultHeaders` is an operator-defined record, and the second-header pattern (a signing header
+ * alongside the primary `apiKeyHeader`) puts a live secret there; `baseUrl` is a free-form string
+ * that can carry the same secret in its userinfo or query string, and can disclose an internal
+ * hostname besides. Both are the exact fields issue #297 (echoing #277) names as leaking "the same
+ * class of operator credentials". `apiKeyHeader` and `models` are not secret-shaped and stay as-is
+ * — they are read directly off a redacted list response by the builder's model picker
+ * (`provider-options.ts`'s `readBaseUrl`) and by the qadam's own picker (`props.ts`'s
+ * `shareableLabels`) to disambiguate two rows of the same provider type, which is why `baseUrl` is
+ * masked to its origin rather than dropped outright.
+ *
+ * Every provider other than CUSTOM has no field shaped like a credential in its `config` at all
+ * (`resourceName`, `region`, etc. are not secrets), so this is a no-op for them.
+ */
+export function redactAIProviderConfig({ provider, config }: { provider: AIProviderName, config: AIProviderConfig }): AIProviderConfig | PublicOpenAICompatibleProviderConfig {
+    if (provider !== AIProviderName.CUSTOM) {
+        return config
+    }
+    const parsed = OpenAICompatibleProviderConfig.safeParse(config)
+    if (!parsed.success) {
+        return config
+    }
+    const withoutHeaders = omit(parsed.data, ['defaultHeaders'])
+    return {
+        ...withoutHeaders,
+        baseUrl: originOnly(withoutHeaders.baseUrl),
+    }
+}
+
+// A `baseUrl` that fails to parse as a URL at all has nothing safe to disambiguate rows with —
+// dropping it entirely (rather than passing the raw, unparseable string through) is the fail-closed
+// side of the same choice `isValidAzureResourceName`/`isValidAwsRegion` make elsewhere in this file.
+function originOnly(baseUrl: string): string | undefined {
+    const parsed = tryCatchSync(() => new URL(baseUrl))
+    if (parsed.error !== null) {
+        return undefined
+    }
+    return parsed.data.origin
+}
+
 export const AIProvider = z.object({
     ...BaseModelSchema,
     displayName: z.string().min(1),
@@ -281,6 +336,18 @@ export const AIProviderWithoutSensitiveData = z.object({
     enabledForChat: z.boolean(),
 })
 export type AIProviderWithoutSensitiveData = z.infer<typeof AIProviderWithoutSensitiveData>
+
+// What `GET /v1/ai-providers` actually serves: `AIProviderWithoutSensitiveData` with `auth` held
+// back, plus — for a caller that is neither the engine nor a platform admin — `redactAIProviderConfig`
+// swapping a CUSTOM row's `config` for the narrower `PublicOpenAICompatibleProviderConfig` (#297).
+export const AIProviderListItem = z.object({
+    id: z.string(),
+    name: z.string(),
+    provider: z.enum(AIProviderName),
+    config: z.union([AIProviderConfig, PublicOpenAICompatibleProviderConfig]),
+    enabledForChat: z.boolean(),
+})
+export type AIProviderListItem = z.infer<typeof AIProviderListItem>
 
 export const AIProviderModel = z.object({
     id: z.string(),
