@@ -22,7 +22,9 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const platformId = await mcpUtils.resolvePlatformId({ mcp, log })
                 const service = aiProviderService(log)
-                const providers = await service.listProviders(platformId)
+                // Neither this tool nor `structuredProviders` below reads `config` at all, so it
+                // gets the same non-privileged view as the builder's model picker (#297).
+                const providers = await service.listProviders({ platformId, includeConfigSecrets: false })
 
                 if (providers.length === 0) {
                     return {

@@ -146,6 +146,52 @@ describe('createAIModel provider addressing', () => {
 
     expect(warn).not.toHaveBeenCalled()
   })
+
+  // `buildWebSearchConfig` builds a provider-specific `ToolSet` from the stored name, and `run-agent`
+  // / `ask-ai` merge that tool set into the request they hand to the AI SDK. Warning and continuing
+  // there just delays the failure to a point where the SDK error names neither provider — so a
+  // caller that is about to attach web-search tools opts into a named failure here instead (#305).
+  it('throws a named error instead of warning when a web-search caller requires a provider match', async () => {
+    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const rejection: unknown = await createAIModel(languageModelParams({
+      providerId: ROW_ID,
+      provider: AIProviderName.ANTHROPIC,
+      requireProviderMatch: true,
+    })).catch((error: unknown) => error)
+
+    expect(rejection).toBeInstanceOf(Error)
+    expect((rejection as Error).message).toContain('AI provider mismatch')
+    expect((rejection as Error).message).toContain('anthropic')
+    expect((rejection as Error).message).toContain('openai')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  // A caller that does not attach web-search tools (e.g. `summarize-text`, `generate-image`) must
+  // keep today's warn-and-continue behaviour — the model client itself is fine to build from the
+  // row, and there is no name-keyed capability downstream to fail loudly for.
+  it('still only warns when requireProviderMatch is not set', async () => {
+    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(createAIModel(languageModelParams({
+      providerId: ROW_ID,
+      provider: AIProviderName.ANTHROPIC,
+    }))).resolves.toBeDefined()
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not throw when requireProviderMatch is set but the row matches the stored name', async () => {
+    stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.OPENAI })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(createAIModel(languageModelParams({
+      providerId: ROW_ID,
+      requireProviderMatch: true,
+    }))).resolves.toBeDefined()
+    expect(warn).not.toHaveBeenCalled()
+  })
 })
 
 describe('createEmbeddingModel provider addressing', () => {

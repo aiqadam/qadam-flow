@@ -79,6 +79,7 @@ export const askAI = createAction({
       flowId: context.flows.current.id,
       runId: context.run.id,
       ...spreadIfDefined('openaiResponsesModel', webSearchEnabled && effectiveProvider === AIProviderName.OPENAI ? true : undefined),
+      requireProviderMatch: webSearchEnabled,
     });
 
     const conversationKey = context.propsValue.conversationKey

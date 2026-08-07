@@ -189,7 +189,9 @@ function formatAuthSteps({ auth, displayName }: { auth: Record<string, unknown>,
 
 async function aiProviderGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): Promise<{ content: [{ type: 'text', text: string }] }> {
     const project = await projectService(log).getOneOrThrow(mcp.projectId)
-    const providers = await aiProviderService(log).listProviders(project.platformId)
+    // Only `p.provider` is read below, so this guide gets the same non-privileged view as the
+    // builder's model picker (#297).
+    const providers = await aiProviderService(log).listProviders({ platformId: project.platformId, includeConfigSecrets: false })
 
     const lines: string[] = []
 
