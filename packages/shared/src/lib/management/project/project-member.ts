@@ -35,3 +35,15 @@ export const ListProjectMembersParams = z.object({
 })
 
 export type ListProjectMembersParams = z.infer<typeof ListProjectMembersParams>
+
+export const GetProjectMemberRoleParams = z.object({
+    projectId: ApId,
+})
+
+export type GetProjectMemberRoleParams = z.infer<typeof GetProjectMemberRoleParams>
+
+export const ProjectMemberRoleResponse = z.object({
+    role: z.enum([DefaultProjectRole.ADMIN, DefaultProjectRole.EDITOR, DefaultProjectRole.VIEWER]),
+})
+
+export type ProjectMemberRoleResponse = z.infer<typeof ProjectMemberRoleResponse>
