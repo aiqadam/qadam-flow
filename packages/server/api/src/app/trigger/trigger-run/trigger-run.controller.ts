@@ -11,8 +11,15 @@ export const triggerRunController: FastifyPluginAsyncZod = async (app) => {
     })
 }
 
+// Platform-admin only. The report aggregates every trigger execution on the platform — per-qadam
+// success and failure counts across all projects, which names the third-party integrations other
+// teams run and how badly they are failing. Its only caller is the platform Trigger Health page
+// (`packages/web/src/app/routes/platform/infra/triggers/index.tsx`), which `PlatformLayout` already
+// gates on `useIsPlatformAdmin()` — so the previous `publicPlatform` was a client-side-only gate:
+// `publicPlatform` checks the principal's *type* and nothing else (`authorize.ts`), leaving the
+// route readable by any authenticated platform user, embedded JWT users included.
 const GetStatusReportSchema = {
     config: {
-        security: securityAccess.publicPlatform([PrincipalType.USER]),
+        security: securityAccess.platformAdminOnly([PrincipalType.USER]),
     },
 }

@@ -1,5 +1,5 @@
 import { httpClient } from '@aiqadam/qadams-common'
-import { AIProviderName } from '@aiqadam/shared'
+import { AIProviderName, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE } from '@aiqadam/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAIModel, createEmbeddingModel } from '../../src/lib/common/ai-sdk'
 
@@ -155,6 +155,37 @@ describe('createAIModel provider addressing', () => {
 
 })
 
+// The row is read straight from the database and never re-parsed against `AzureProviderConfig` /
+// `BedrockProviderConfig` on the way out, so a `resourceName`/`region` stored before those
+// constraints existed would still build the request host from an attacker-chosen value and attach
+// the real Azure `api-key` / AWS SigV4 auth to it (#276/#284). Same sinks as
+// `chatAiUtils.createChatModel`'s AZURE/BEDROCK branches, checked here for the qadam's own copy.
+describe('createAIModel rejects a stored config value that would move the host', () => {
+  it.each(['attacker.example.com/', 'attacker.example.com@resource', 'my.resource', ''])(
+    'refuses to construct the azure provider for a resourceName of %j',
+    async (resourceName) => {
+      stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.AZURE, config: { resourceName } })
+
+      await expect(createAIModel(languageModelParams({
+        provider: AIProviderName.AZURE,
+        providerId: ROW_ID,
+      }))).rejects.toThrow(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+    },
+  )
+
+  it.each(['evil.com/', 'x@evil.com', 'us-east-1.evil.com', ''])(
+    'refuses to construct the bedrock provider for a region of %j',
+    async (region) => {
+      stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.BEDROCK, config: { region } })
+
+      await expect(createAIModel(languageModelParams({
+        provider: AIProviderName.BEDROCK,
+        providerId: ROW_ID,
+      }))).rejects.toThrow(INVALID_AWS_REGION_MESSAGE)
+    },
+  )
+})
+
 describe('createEmbeddingModel provider addressing', () => {
   it('addresses the config route by row id when one is passed', async () => {
     const spy = stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.GOOGLE })
@@ -209,4 +240,18 @@ describe('createEmbeddingModel provider addressing', () => {
       apiUrl: API_URL,
     })).rejects.toThrow('AI provider mismatch')
   })
+
+  it.each(['attacker.example.com/', 'attacker.example.com@resource', 'my.resource', ''])(
+    'refuses to construct the azure embedding provider for a resourceName of %j',
+    async (resourceName) => {
+      stubProviderConfigRoute({ id: ROW_ID, provider: AIProviderName.AZURE, config: { resourceName } })
+
+      await expect(createEmbeddingModel({
+        providerId: ROW_ID,
+        provider: AIProviderName.AZURE,
+        engineToken: 'engine-token',
+        apiUrl: API_URL,
+      })).rejects.toThrow(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+    },
+  )
 })

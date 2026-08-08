@@ -86,3 +86,7 @@ For polling triggers — prevents duplicate payloads:
 `triggerRunStats` tracks per-platform success/failure rates:
 - Redis key: `trigger_run:{platformId}:{pieceName}:{date}:{status}`
 - 14-day retention. Displayed in Platform Admin → Infrastructure → Triggers.
+- `GET /v1/trigger-runs/status` is `securityAccess.platformAdminOnly([USER])`. It was
+  `publicPlatform` until #270 — a principal-*type* check only, so the platform-wide report was
+  readable by any authenticated platform user (embedded JWT users included) while the only UI that
+  renders it sits behind `useIsPlatformAdmin()`.

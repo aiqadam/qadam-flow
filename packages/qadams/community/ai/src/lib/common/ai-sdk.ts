@@ -8,7 +8,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { EmbeddingModel, ImageModel, LanguageModel } from 'ai'
 import { ProviderOptions } from '@ai-sdk/provider-utils'
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
-import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, isNil, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
+import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isNil, isValidAwsRegion, isValidAzureResourceName, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
 import { createAiGateway } from 'ai-gateway-provider';
 import { createAnthropic as createAnthropicGateway } from 'ai-gateway-provider/providers/anthropic';
 import { createGoogleGenerativeAI as createGoogleGateway } from 'ai-gateway-provider/providers/google';
@@ -142,6 +142,13 @@ export async function createAIModel({
         case AIProviderName.AZURE: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
             const { resourceName, apiVersion } = config as AzureProviderConfig
+            // The schema rejects a `resourceName` that could move the host, but this row is read
+            // straight from the database and never re-parsed, so a value stored before that
+            // constraint existed would still reach `https://<it>.openai.azure.com` with the
+            // `api-key` header attached (#276/#284).
+            if (!isValidAzureResourceName(resourceName)) {
+                throw new Error(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+            }
             const provider = createAzure({ resourceName, apiKey, apiVersion })
             if (isImage) {
                 return provider.imageModel(modelId)
@@ -219,6 +226,13 @@ export async function createAIModel({
         case AIProviderName.BEDROCK: {
             const { accessKeyId, secretAccessKey } = auth as BedrockProviderAuthConfig
             const { region } = config as BedrockProviderConfig
+            // `region` is interpolated into the endpoint by the SDK with no validation of its own
+            // and this row is never re-parsed against `BedrockProviderConfig` on the way out of the
+            // database, so a value stored before that constraint existed would still ship the SigV4
+            // `Authorization` header to an attacker-chosen host (#276/#284).
+            if (!isValidAwsRegion(region)) {
+                throw new Error(INVALID_AWS_REGION_MESSAGE)
+            }
             const provider = createAmazonBedrock({
                 region,
                 accessKeyId,
@@ -333,6 +347,10 @@ export async function createEmbeddingModel({
         }
         case AIProviderName.AZURE: {
             const { resourceName, apiVersion } = config as AzureProviderConfig
+            // Same reasoning as the AZURE branch of `createAIModel` above (#276/#284).
+            if (!isValidAzureResourceName(resourceName)) {
+                throw new Error(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
+            }
             const p = createAzure({ resourceName, apiKey, apiVersion })
             return { model: p.embeddingModel(embeddingModelId), embeddingModelId, providerOptions: OPENAI_EMBEDDING_PROVIDER_OPTIONS }
         }
