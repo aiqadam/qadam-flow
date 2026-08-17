@@ -1,5 +1,6 @@
 import { AddressInfo } from 'node:net'
 import { SMTPServer } from 'smtp-server'
+import { defaultTheme } from '../../../../src/app/flags/theme'
 import { emailSender } from '../../../../src/app/helper/mail/email-sender/email-sender'
 import { isSmtpConfigured, smtpEmailSender, toAbsoluteAssetUrl } from '../../../../src/app/helper/mail/email-sender/smtp-email-sender'
 import { system } from '../../../../src/app/helper/system/system'
@@ -64,17 +65,17 @@ type CapturedMessage = {
     raw: string
 }
 
-// nodemailer sends the HTML part quoted-printable, which does two things a substring assertion
-// has to undo: it soft-wraps long lines with a trailing '=' (a URL is exactly the kind of token
-// that gets split), and it escapes '=' itself as '=3D' — so an un-decoded body contains
-// `src=3D"..."`, never `src="..."`. Soft breaks first, then the hex escapes; the other order would
-// mangle a line that wraps immediately after an escape.
-// Mustache escapes {{fullLogoUrl}}, so a URL arrives as http:&#x2F;&#x2F;host&#x2F;logo.svg. That is
-// valid in an href/src and renders fine — it only has to be undone to compare against the plain
-// URL the assertion is written in terms of.
+// Mustache escapes {{fullLogoUrl}}, so a URL arrives as `http:&#x2F;&#x2F;host&#x2F;logo.png`.
+// That is valid in a src and renders fine — it only has to be undone to compare against the plain
+// URL an assertion is naturally written in terms of.
 const decodeHtmlEntities = (html: string): string =>
     html.replace(/&(?:amp|lt|gt|quot|#39|#x60|#x3D|#x2F);/g, (entity) => MUSTACHE_ENTITIES[entity])
 
+// nodemailer sends the HTML part quoted-printable, which does two things a substring assertion has
+// to undo: it soft-wraps long lines with a trailing '=' (a URL is exactly the kind of token that
+// gets split), and it escapes '=' itself as '=3D' — so an un-decoded body contains `src=3D"..."`
+// and never `src="..."`. Soft breaks first, then the hex escapes; the other order would mangle a
+// line that happens to wrap immediately after an escape.
 const decodeQuotedPrintable = (raw: string): string =>
     raw
         .replace(/=\r?\n/g, '')
@@ -176,7 +177,7 @@ describe('smtpEmailSender', () => {
             expect(message.raw).toContain('inviteToken123')
         })
 
-        // An email carries no base URL, so the `/logo.svg` that `defaultTheme` ships — and that a
+        // An email carries no base URL, so the root-relative path `defaultTheme` ships — and that a
         // stock platform row stores — renders as a broken image in every mail client. It looked
         // fine from inside the product, where the same path resolves against the app's own origin,
         // which is why it survived to a release.
@@ -194,10 +195,20 @@ describe('smtpEmailSender', () => {
             })
 
             const html = decodeHtmlEntities(decodeQuotedPrintable(capturedMessages[0].raw))
-            // The exact string, not just "contains http": asserting the shape is what catches a
-            // regression back to the relative path, since `/logo.svg` also "contains" nothing.
-            expect(html).toContain(`src="${process.env.AP_FRONTEND_URL}/logo.svg"`)
-            expect(html).not.toContain('src="/logo.svg"')
+            const logoPath = defaultTheme.logos.fullLogoUrl
+            // Read off the theme rather than hardcoded, so changing the default asset does not
+            // silently turn this into an assertion about a file nobody ships any more.
+            expect(html).toContain(`src="${process.env.AP_FRONTEND_URL}${logoPath}"`)
+            // The exact string above, not merely "contains http": the relative form is a substring
+            // of the absolute one, so only pinning the whole `src` catches a regression to it.
+            expect(html).not.toContain(`src="${logoPath}"`)
+        })
+
+        // Not style: Gmail strips SVG from an email body outright and Outlook's Word engine cannot
+        // render it, so a vector default would be invisible to most recipients even once the URL
+        // is absolute. The same reasoning is why og:image points at a PNG.
+        it('ships a raster default logo, because email clients do not render SVG', () => {
+            expect(defaultTheme.logos.fullLogoUrl).toMatch(/\.(png|jpe?g|gif)$/)
         })
 
         it.each([
