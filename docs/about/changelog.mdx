@@ -4,6 +4,113 @@ description: "A log of all notable changes to Qadam Flow"
 icon: "code-commit"
 ---
 
+<Update label="August 2026" description="v2.0.0 — Chat with AI, multi-provider AI, and a hard security pass">
+
+### v2.0.0 — Chat with AI, multi-provider AI, and a hard security pass
+
+The first major release. Two headlines: **Chat with AI**, an in-app assistant that drives your flows, tables and connections through the same tool set MCP clients use, and **multi-provider AI**, which lifts the one-custom-provider-per-platform limit and lets any step name the exact provider it should run on.
+
+Alongside them, a batch of platform features that only existed in the upstream enterprise edition now ship in the core product, and a security pass closes a family of authorization gaps across the platform-scoped API.
+
+**Docker:**
+
+```bash
+docker pull ghcr.io/aiqadam/qadam-flow:2.0.0
+```
+
+Images are now published for **`linux/amd64` and `linux/arm64`**, so Apple Silicon and Graviton hosts run natively instead of under emulation.
+
+<Warning>
+**This release contains breaking changes.** Read [Breaking Changes](/install/configuration/breaking-changes#2-0-0) before upgrading. In short: the all-in-one container mode, the embedded PGLite database and the embedded Redis are gone, `AP_CONTAINER_TYPE` is now required, nine UI languages were removed, and three platform API routes now require a platform admin. A stock `docker-compose.yml` or `run.sh` install needs no action. Schema migrations run automatically on first start.
+</Warning>
+
+#### Chat with AI
+
+A conversational surface inside the product, running on **your** configured AI provider — including a local one. It can read and build flows, query and edit tables, inspect runs and manage connections, because it drives the same `ap_*` tool set your MCP clients already use.
+
+- **Approval gates for destructive tools.** Anything that deletes or overwrites asks first; additive operations run straight through. Note that a tool's approval group is decided by what it *can* do, not by what it is called.
+- **It respects your project role.** The tools now enforce the permission each one declares, so Chat cannot do anything through you that the API would refuse you directly.
+- **Built for slow local models.** A cold Ollama or LM Studio model that takes minutes to emit its first token is no longer killed by an idle timeout — the wait for the *first* token is bounded separately from the gaps between later ones, and a timeout now says which of the two ran out.
+- **Tolerant of small models' quirks.** A model that sends a number as `"7"` instead of `7` no longer fails the tool call.
+- Chat has its own entry in the dashboard sidebar.
+
+#### AI providers
+
+- **More than one custom provider per platform.** Ollama, DeepSeek, LM Studio, vLLM and a corporate gateway all register as `custom`, and previously only one of them could exist per platform. Now you can register as many as you need, each with its own display name, and see them all on the platform settings page.
+- **Steps address a provider row, not a provider type.** The model picker in the builder lists actual providers rather than provider families, so a Run Agent step — or `ask-ai`, `summarize-text`, `generate-image` — can be pinned to exactly the endpoint you want, and stays pinned.
+- **Duplicate registration returns a clear conflict** instead of a generic failure, and partial updates no longer wipe the fields you left out.
+- Several silent-wrong-answer bugs are now loud: a step whose pinned provider no longer matches its provider type fails instead of quietly running somewhere else, and a provider mismatch with web search enabled reports rather than degrading.
+
+#### Platform features, now in the core product
+
+These lived only in the upstream enterprise edition. They are part of Qadam Flow itself, with no tier, no licence key and no gating.
+
+- **API keys** — platform-scoped `sk-` keys for the REST API, with a per-platform cap.
+- **Email verification, forgot password and password reset**, over one-time codes.
+- **SMTP mailer** — configure your own SMTP server; the platform reports whether it is configured.
+- **Invitations delivered by email**, with the invite link also shown in the UI for installs with no mail server.
+- **Flow-failure email alerts**, with a per-member toggle so each person chooses whether they are notified.
+- **Real permission gating in the UI.** The client previously showed every control to every member and let the server reject the click. It now reflects your actual project role, so a Viewer no longer sees buttons that would only ever return "permission denied".
+
+#### Qadams and formulas
+
+- **A formula pack** — object and JSON helpers, list operations, operators and `build_object`, for the transformations that used to need a CODE step.
+- **`in` / `not_in` filters** in the Tables `find-records` action.
+- Formula inputs are size-bounded, so an oversized payload cannot stall a worker.
+
+#### Language, dates and branding
+
+- **Russian, Uzbek and Kazakh** are fully translated, including everything added in this release. The language picker now offers English, Russian, Uzbek and Kazakh only — see the breaking-changes page if your users read one of the nine removed languages.
+- **Dates, numbers and typed table dates render in the active locale**, rather than always in English formatting.
+- **Cyrillic text renders properly** — the shipped Inter subsets now cover it, loaded by `unicode-range` so Latin-only pages pay nothing for it.
+- The product now wears the **AI Qadam brand**: the brand teal as the default platform colour instead of the inherited purple, a correct favicon on a default install, and a Qadam Flow social preview card.
+- **Theme fixes** — `system` follows the OS preference, keeps following it while the app is open, and the pre-hydration paint no longer flashes a colour the product does not use.
+
+#### Security
+
+A deliberate pass over the platform-scoped API, the AI provider module and the worker handshake. The three items that change what a caller can do are covered in [Breaking Changes](/install/configuration/breaking-changes#2-0-0).
+
+- **Platform-scoped routes audited.** `securityAccess.publicPlatform` only ever checked the *type* of principal, never their platform role, so several platform-wide routes were reachable by any authenticated user. The AI provider mutations, the trigger-run status report, platform invitation creation and deletion are now admin-only.
+- **AI provider credentials are no longer served to non-admins.** The provider list route redacts the fields that can carry an operator's secret.
+- **Every AI provider's outbound HTTP goes through the SSRF filter**, including the paths that had been importing a pre-built, unfiltered HTTP client. Azure resource names and Bedrock regions — which are interpolated into the request host — are validated before use, so a stored value cannot relocate the request while your credentials still attach to it.
+- **A worker's group comes from its signed token**, not from what the worker asserts in its handshake.
+- **JWTs are issued as `qadam-flow`** instead of the inherited `activepieces`, with the legacy issuer still accepted so nothing needs regenerating.
+- **The public signed-download endpoint pins its token audience**, so a token minted for something else cannot read files.
+- **Alert receivers are re-validated at send time** and capped per project; alert rows are swept when a project is deleted.
+- **OTP and invitation flows are throttled and validated**, and mail templates are allowlisted with TLS enforced.
+
+#### Reliability
+
+- **Agent tools that resolve to a flow** work when the tool was stored by flow id, not only by external id.
+- **Agent piece tools no longer throw at run time** — the engine and the rest of the system had drifted onto two different names for the same field.
+- **Flow schema migrations actually run.** The "latest schema version" constant had fallen behind the migration chain, which both skipped fixes and made every read of an up-to-date flow write a fresh backup and an update.
+- **The worker cache is evicted on startup**, so a cache version bump stops leaking disk.
+- **Stale worker registry entries expire in Redis** instead of lingering until someone opens a page.
+- **Per-project `maxConcurrentJobs` is enforced**, and a stranded `RESUME` job no longer wedges the worker.
+- **An unsupported OAuth2 connection returns 400**, not 500.
+- Engine SSRF DNS guard honours the address family; files written by the engine return a worker-reachable URL; the update check points at this project's releases rather than upstream's.
+
+#### Operations
+
+- **The image runs one process under Docker's own supervision.** PM2 is gone, so a crash exits the container and is visible in `docker ps` and `docker events` instead of being restarted in place behind an `Up` status. `AP_CONTAINER_TYPE` must be `APP` or `WORKER`.
+- **PostgreSQL and a real Redis are the only supported backends.** The embedded PGLite database and the embedded Redis existed for the all-in-one container, which is gone. Both bundled install paths already use the supported configuration.
+- **`QF_` environment variables.** Every `AP_<NAME>` the server reads can now also be set as `QF_<NAME>`; `AP_*` keeps working and will be removed only with advance notice here. The bundled shell scripts still require `AP_*` — the breaking-changes page has the exact list.
+- **`linux/arm64` images**, published alongside amd64.
+
+#### Developer experience
+
+- **Lint, type-check and unit tests now run over every package.** They previously ran over enumerated lists that silently omitted whole packages — including one whose test suite had been failing for months in no CI job at all. Closing the type-check gap alone surfaced hundreds of errors, two of which were live bugs.
+- **A release cannot ship an undocumented breaking change**: a tag push is gated on the breaking-changes page carrying an entry for the version being released.
+- The CE integration suite runs on every PR; commits require a DCO sign-off; the e2e suite runs on every push to `main`; raw `fetch` and `axios.create` are lint-banned in the server packages.
+
+#### Compatibility
+
+- **Breaking changes: yes.** See [Breaking Changes](/install/configuration/breaking-changes#2-0-0) — it lists every one with the action required.
+- **Database migrations: yes**, applied automatically at startup. Take a backup before upgrading, as always.
+- **Upgrade the `APP` container before the workers** on a staged or multi-server rollout.
+
+</Update>
+
 <Update label="July 2026" description="v1.1.0 — Team Project Collaboration + Reliability Fixes">
 
 ### v1.1.0 — team collaboration and a batch of reliability fixes

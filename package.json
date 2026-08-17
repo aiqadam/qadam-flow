@@ -1,6 +1,6 @@
 {
   "name": "qadam-flow",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "packageManager": "bun@1.3.3",
   "scripts": {
     "prebuild": "node tools/scripts/install-bun.js",
