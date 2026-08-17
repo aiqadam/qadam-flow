@@ -56,6 +56,21 @@ Every OpenAI-compatible endpoint (Ollama, DeepSeek, LM Studio, vLLM, a corporate
 
 - **Nothing addressed by provider name changes meaning today.** Existing flow steps, and any published qadam version pinned in them, keep sending `custom`. That resolves to the **oldest** custom provider on the platform, which is the one that existed before the upgrade. Steps created after this release address a provider by its id instead.
 
+#### Managing AI providers now requires a platform admin, and the list route no longer returns the full config
+
+Every route under `/v1/ai-providers` used to be reachable by any authenticated platform member. `securityAccess.publicPlatform` is a principal-*type* check and nothing more — it asserts that the caller is a `USER`, not that the user administers this platform — so a member whose only membership was a read-only role on one project could create, re-point or delete the platform's AI providers, and read every provider's stored configuration. Both halves are closed in this release.
+
+- **Mutations are admin-only.** `POST /v1/ai-providers`, `POST /v1/ai-providers/:id` and `DELETE /v1/ai-providers/:id` now require the caller's platform role to be **Admin**. A non-admin gets `403`. This was the exploitable half: with `enabledForChat`, a read-only member could point the platform's chat at their own endpoint and receive every prompt sent through it.
+- **The list route redacts credential-shaped config.** `GET /v1/ai-providers` still answers for any platform member — the builder's model picker needs it — but for a caller that is neither the engine nor a platform admin, a `custom` provider's `config` comes back with **`defaultHeaders` removed** and **`baseUrl` reduced to its origin** (`https://gateway.internal.example/v1/tenants/acme?key=…` becomes `https://gateway.internal.example`). `defaultHeaders` is a free-form operator-defined record, which is where a second bearer or signing header lives when one API key is not enough; `baseUrl` can carry the same secret in its userinfo or query string. `apiKeyHeader` and `models` are not credential-shaped and are unchanged, because the model pickers read them to tell two rows of the same provider type apart. Providers other than `custom` have no credential-shaped field in `config`, so nothing changes for them.
+- **Who is affected.** Only a platform **member** — a non-admin — driving these routes directly. Platform admins see no change at all, and neither does the engine. The UI never offered provider management to a non-admin in the first place, so an install that only uses the web app will not notice.
+- **If you script provider setup**, the API key or token you use must belong to a platform admin. If you parse `GET /v1/ai-providers` and depend on the full `config`, read it as an admin — the redaction keys off the caller, not off the row.
+- **Rolling back is free** — no schema, token or stored-row change is involved.
+
+Two smaller changes in the same area, both of which turn a silent wrong answer into a loud one:
+
+- **A stored Azure `resourceName` or Bedrock `region` that could relocate the request host is now rejected at use.** These fields are interpolated into the outbound hostname, and a row written before the constraint existed was never re-validated — so a value like `attacker.example.com/` moved the request while the real Azure api-key or AWS SigV4 signature still attached to it. A real Azure resource name (2–64 letters, digits and hyphens) and a real AWS region are unaffected; anything else now fails with a message telling the operator to re-save the provider.
+- **A step whose pinned `providerId` does not match its `provider` now fails instead of executing against the wrong row.** Previously the server logged a warning and ran the step against whichever provider the stale id resolved to. The reachable way to get into that state was `ap_update_step` changing `provider` without supplying a new `providerId`; that tool now drops the stale id, and the server refuses the mismatch regardless of how it arrived. Re-pick the provider on the affected step.
+
 #### MCP tools now enforce the caller's project role
 
 Every `ap_*` tool has always declared the permission it needs — `WRITE_FLOW`, `WRITE_TABLE`, `READ_RUN` and so on — and nothing ever read that declaration. The resolver returned "allow everything", so a project **Viewer** driving these tools over MCP could create, publish and delete flows, tables and records that the REST API would have refused them. The declarations are now enforced, using the same rules a normal API route applies.
@@ -65,6 +80,14 @@ Every `ap_*` tool has always declared the permission it needs — `WRITE_FLOW`, 
 - **If you were relying on the old behaviour**, the fix is to grant the role the permission it needs, not to work around the check. A Viewer being able to delete a flow was a defect, not a feature.
 - **This also gates the new in-app Chat with AI**, which drives the same tool set.
 - **Rolling back is free** — no schema or token change is involved.
+
+#### `GET /v1/trigger-runs/status` now requires a platform admin
+
+The platform-wide trigger health report aggregates every trigger execution on the install: per-qadam success and failure counts across all projects, which names the third-party integrations every team runs and how badly they are failing. It was reachable by any authenticated platform user, embedded-JWT users included, because it too used a principal-type check where a platform-role check was meant.
+
+- **The UI is unaffected.** Its only caller is the platform **Trigger Health** page, which `PlatformLayout` already gated on being a platform admin — the check simply now exists on the server as well as in the browser.
+- **A non-admin caller gets `403`.** If you scrape this endpoint for monitoring, use a platform admin's credentials.
+- **Rolling back is free.**
 
 #### `AP_WORKER_GROUP_ID` on a worker container no longer selects a worker group
 
@@ -154,6 +177,7 @@ Nine UI locales have been removed: Dutch, German, French, Spanish, Japanese, Por
 - Yes, if `AP_REDIS_TYPE=MEMORY` **or** the legacy `AP_QUEUE_MODE=MEMORY` is set: switch to `STANDALONE` and run Redis as its own service. The bundled `docker-compose.yml` and `run.sh` already do this, so a stock install needs nothing.
 
 - Only if your users read the interface in Dutch, German, French, Spanish, Japanese, Portuguese, Arabic or Chinese: those interface languages are gone and those users will see English. Nothing needs migrating; it is a display change.
+- Yes, if anything outside the web app calls the REST API as a **non-admin platform member**. Three routes that any authenticated platform user could reach now require the platform **Admin** role — the three `/v1/ai-providers` mutations and `GET /v1/trigger-runs/status` — and `GET /v1/ai-providers` redacts a `custom` row's `defaultHeaders` and trims its `baseUrl` for a non-admin caller. Give those scripts admin credentials. Nothing changes for a platform admin, for the engine, or for anyone using only the UI.
 
 
 ## 0.84.0
