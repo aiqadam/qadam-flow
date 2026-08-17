@@ -1,4 +1,6 @@
+import { readdir, readFile } from 'node:fs/promises'
 import { AddressInfo } from 'node:net'
+import path from 'node:path'
 import { SMTPServer } from 'smtp-server'
 import { defaultTheme } from '../../../../src/app/flags/theme'
 import { emailSender } from '../../../../src/app/helper/mail/email-sender/email-sender'
@@ -211,6 +213,31 @@ describe('smtpEmailSender', () => {
             expect(defaultTheme.logos.fullLogoUrl).toMatch(/\.(png|jpe?g|gif)$/)
         })
 
+        // Also not style. U+2709 and U+26A0 are Unicode 1.1 dingbats whose *default* presentation
+        // is text, so they render as a grey outline anywhere the VS16 selector is ignored — while
+        // the U+1F511 / U+2705 sitting next to them in other templates always came out in colour.
+        // One template therefore looked broken beside another. Rather than curate a per-client list
+        // of "safe" codepoints, no template carries any.
+        it('keeps emoji out of every subject and template', async () => {
+            const emailsDir = path.resolve(__dirname, '../../../../src/assets/emails')
+            const templates = (await readdir(emailsDir)).filter((f) => f.endsWith('.html'))
+            const sources: [string, string][] = await Promise.all(
+                templates.map(async (f): Promise<[string, string]> => [f, await readFile(path.join(emailsDir, f), 'utf-8')]),
+            )
+            // The subjects live in code, not in a template, and were the more visible half.
+            sources.push(['getEmailSubject', await readFile(
+                path.resolve(__dirname, '../../../../src/app/helper/mail/email-sender/smtp-email-sender.ts'),
+                'utf-8',
+            )])
+
+            const offenders = sources
+                .map(([name, body]): [string, string[]] => [name, [...new Set(body.match(EMOJI) ?? [])]])
+                .filter(([, found]) => found.length > 0)
+                .map(([name, found]) => `${name}: ${found.join(' ')}`)
+
+            expect(offenders).toEqual([])
+        })
+
         it.each([
             ['an operator CDN URL', 'https://cdn.example/brand/logo.png'],
             ['a data URI', 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='],
@@ -302,3 +329,8 @@ const MUSTACHE_ENTITIES: Record<string, string> = {
     '&#x3D;': '=',
     '&#x2F;': '/',
 }
+
+// The pictograph and dingbat blocks the copy actually drew from, plus the variation selector that
+// makes a text-default glyph try to present as emoji. Deliberately not every emoji range in
+// Unicode: a narrow pattern cannot misfire on ordinary prose or on the Cyrillic in a translation.
+const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}\u{FE0F}]/gu
