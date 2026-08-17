@@ -66,9 +66,44 @@ jobs:
       - name: Check the released range against the breaking-changes changelog
         run: tools/ci/check-breaking-change-changelog.sh "${{ github.ref_name }}"
 
+  # The tag must agree with the version the image will report about itself.
+  #
+  # WHY THIS JOB EXISTS. `apVersionUtil.getCurrentRelease()` reads the root
+  # package.json at runtime, and nothing bumps that file — both prior releases
+  # did it in a hand-written `chore(release): vX.Y.Z` commit. So a tag cut
+  # against a tree that still says the old version builds, publishes `:2.0.0`
+  # *and* `:latest`, and cuts a GitHub Release, all green, while the running
+  # image tells every operator it is the previous version and offers them an
+  # upgrade to what they are already running (#326, #327). Like the gate above,
+  # the previous control was somebody remembering.
+  #
+  # WHY IT IS ITS OWN JOB. A one-second string comparison should not wait behind
+  # a two-platform Docker build, nor run twice inside that matrix.
+  #
+  # WHY IT IS NOT IN ci.yml. There is no tag on a pull request, so there is
+  # nothing to compare against — same reasoning as the breaking-change gate.
+  #
+  # There is deliberately no override trailer: unlike "does this breaking change
+  # need a changelog entry", a tag that disagrees with the version the binary
+  # reports is never correct. tools/ci/test-version-tag-gate.sh exercises the
+  # reject and UNKNOWN cases, and runs in the `verify` job above.
+  version-tag-gate:
+    name: Tag matches the declared version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Check the tag against the root package.json version
+        run: tools/ci/check-version-matches-tag.sh "${{ github.ref_name }}"
+
   build:
     name: Build ${{ matrix.platform }}
-    needs: [verify, breaking-change-gate]
+    needs: [verify, breaking-change-gate, version-tag-gate]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
