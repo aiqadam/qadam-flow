@@ -3,10 +3,15 @@
      the wordmark and dropping the tagline strip; the artwork itself is copied verbatim.
      Regenerate logo-flow.png beside this file if this changes — email clients do not render SVG
      (Gmail strips it outright), which is the same reason og:image points at a PNG.
+     The viewBox is the measured ink box plus 12 units of padding, not a hand-picked frame: an
+     eyeballed crop silently cut the heel off the mark, and at email size that read as a design
+     choice rather than a bug. After regenerating, check that no pixel of the PNG touches an edge
+     (scan the alpha channel of row 0, the last row, and both edge columns) instead of judging it
+     from a thumbnail.
      AI Qadam footprint mark (c) 2026 AI Qadam Community - a trademark, not MIT. Embedded for the
      official Qadam Flow project under the community brand-use policy
      (https://brand.aiqadam.org/brand-use.html). Do not alter the mark. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="72 76 730 190" fill="none" role="img" aria-label="Qadam Flow, an AI Qadam build project">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="77 63 706 233" fill="none" role="img" aria-label="Qadam Flow, an AI Qadam build project">
   <!--
     AI Qadam footprint mark © 2026 AI Qadam Community — a trademark, not MIT.
     Embedded for the official Qadam Flow project under the community brand-use
