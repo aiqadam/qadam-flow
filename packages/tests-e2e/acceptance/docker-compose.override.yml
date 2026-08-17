@@ -1,0 +1,62 @@
+# Acceptance-only override. NOT part of the shipped install and NOT used by CI — see README.md in
+# this directory for what it is for and how to run it.
+#
+# Two things it adds, both so a human can watch the product behave rather than take a log's word
+# for it:
+#
+#   1. Mailpit — a fake SMTP server with a web UI on http://localhost:8025. Every message the
+#      platform sends lands there and nothing leaves the machine.
+#   2. host.docker.internal, so the chat e2e spec's in-worker OpenAI stub is reachable from the
+#      server. Docker Desktop resolves it for free; this entry makes the same stack work on plain
+#      Linux docker too.
+#
+# WHY THE CERTIFICATE. `smtp-email-sender.ts#initSmtpClient` sets `requireTLS: !useSSL` and passes
+# no `tls` options, so nodemailer performs a mandatory STARTTLS upgrade with certificate
+# verification left ON. A stock Mailpit serves a self-signed cert, which that connection rejects —
+# which is exactly why the CI e2e job points SMTP at a dead 127.0.0.1:2525 and asserts only that
+# nothing crashes. Rather than weaken the sender, this mounts a CA the app is told to trust via
+# NODE_EXTRA_CA_CERTS, and issues the cert for the name the app dials (`mailpit`), so the hostname
+# check passes too. The app's TLS behaviour is therefore unchanged from production.
+services:
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      # 8025 = web UI, the point of this file. 1025 is left unpublished: only the app needs it,
+      # and it is reachable over the compose network.
+      - '8025:8025'
+      # published only so the acceptance run can deliver from the host, not part of the stack
+      - '1025:1025'
+    environment:
+      - MP_SMTP_TLS_CERT=/certs/mailpit.crt
+      - MP_SMTP_TLS_KEY=/certs/mailpit.key
+      # Accept whatever credentials the app is configured with. Auth over an encrypted channel,
+      # so Mailpit does not need --smtp-auth-allow-insecure.
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=false
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      - qadam-flow
+
+  app:
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      - AP_CONTAINER_TYPE=APP
+      - NODE_EXTRA_CA_CERTS=/certs/mailpit.crt
+    volumes:
+      - ./cache:/usr/src/app/cache
+      - ./certs:/certs:ro
+
+  worker:
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      - AP_CONTAINER_TYPE=WORKER
+      - AP_WORKER_API_URL=http://app:80
+      - NODE_EXTRA_CA_CERTS=/certs/mailpit.crt
+    volumes:
+      - ./cache:/usr/src/app/cache
+      - ./certs:/certs:ro
