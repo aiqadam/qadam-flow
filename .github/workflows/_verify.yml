@@ -78,6 +78,17 @@ jobs:
         with:
           node-version: 24
 
+      # The other release gate (release.yml's `version-tag-gate`): the tag being
+      # published must agree with the version `apVersionUtil.getCurrentRelease()`
+      # reads out of the root package.json at runtime. Same rationale as the
+      # breaking-change suite above — it only runs for real on a tag push, so its
+      # reject cases are pinned here on every PR. It sits below setup-node rather
+      # than with the pure-shell suites because the gate parses package.json with
+      # node instead of hand-rolling a JSON regex.
+      - name: Test the release version/tag gate
+        timeout-minutes: 2
+        run: tools/ci/test-version-tag-gate.sh
+
       - uses: oven-sh/setup-bun@v2
         id: bun
         with:
