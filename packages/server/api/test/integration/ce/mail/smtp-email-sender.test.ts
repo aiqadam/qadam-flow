@@ -1,7 +1,10 @@
+import { readdir, readFile } from 'node:fs/promises'
 import { AddressInfo } from 'node:net'
+import path from 'node:path'
 import { SMTPServer } from 'smtp-server'
+import { defaultTheme } from '../../../../src/app/flags/theme'
 import { emailSender } from '../../../../src/app/helper/mail/email-sender/email-sender'
-import { isSmtpConfigured, smtpEmailSender } from '../../../../src/app/helper/mail/email-sender/smtp-email-sender'
+import { isSmtpConfigured, smtpEmailSender, toAbsoluteAssetUrl } from '../../../../src/app/helper/mail/email-sender/smtp-email-sender'
 import { system } from '../../../../src/app/helper/system/system'
 
 // The sender enforces STARTTLS on non-SSL ports; accept the throwaway
@@ -63,6 +66,22 @@ type CapturedMessage = {
     mailFrom: string
     raw: string
 }
+
+// Mustache escapes {{fullLogoUrl}}, so a URL arrives as `http:&#x2F;&#x2F;host&#x2F;logo.png`.
+// That is valid in a src and renders fine — it only has to be undone to compare against the plain
+// URL an assertion is naturally written in terms of.
+const decodeHtmlEntities = (html: string): string =>
+    html.replace(/&(?:amp|lt|gt|quot|#39|#x60|#x3D|#x2F);/g, (entity) => MUSTACHE_ENTITIES[entity])
+
+// nodemailer sends the HTML part quoted-printable, which does two things a substring assertion has
+// to undo: it soft-wraps long lines with a trailing '=' (a URL is exactly the kind of token that
+// gets split), and it escapes '=' itself as '=3D' — so an un-decoded body contains `src=3D"..."`
+// and never `src="..."`. Soft breaks first, then the hex escapes; the other order would mangle a
+// line that happens to wrap immediately after an escape.
+const decodeQuotedPrintable = (raw: string): string =>
+    raw
+        .replace(/=\r?\n/g, '')
+        .replace(/=([0-9A-F]{2})/g, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
 
 const capturedMessages: CapturedMessage[] = []
 let smtpServer: SMTPServer
@@ -160,6 +179,87 @@ describe('smtpEmailSender', () => {
             expect(message.raw).toContain('inviteToken123')
         })
 
+        // An email carries no base URL, so the root-relative path `defaultTheme` ships — and that a
+        // stock platform row stores — renders as a broken image in every mail client. It looked
+        // fine from inside the product, where the same path resolves against the app's own origin,
+        // which is why it survived to a release.
+        it('renders the logo as an absolute URL so it resolves in a mail client', async () => {
+            await smtpEmailSender(system.globalLogger()).send({
+                emails: ['invitee@qadam.test'],
+                platformId: undefined,
+                templateData: {
+                    name: 'invitation-email',
+                    vars: {
+                        projectName: 'QadamTestProject',
+                        setupLink: 'https://flow.test/invitation?token=inviteToken123',
+                    },
+                },
+            })
+
+            const html = decodeHtmlEntities(decodeQuotedPrintable(capturedMessages[0].raw))
+            const logoPath = defaultTheme.logos.fullLogoUrl
+            // Read off the theme rather than hardcoded, so changing the default asset does not
+            // silently turn this into an assertion about a file nobody ships any more.
+            expect(html).toContain(`src="${process.env.AP_FRONTEND_URL}${logoPath}"`)
+            // The exact string above, not merely "contains http": the relative form is a substring
+            // of the absolute one, so only pinning the whole `src` catches a regression to it.
+            expect(html).not.toContain(`src="${logoPath}"`)
+        })
+
+        // Not style: Gmail strips SVG from an email body outright and Outlook's Word engine cannot
+        // render it, so a vector default would be invisible to most recipients even once the URL
+        // is absolute. The same reasoning is why og:image points at a PNG.
+        it('ships a raster default logo, because email clients do not render SVG', () => {
+            expect(defaultTheme.logos.fullLogoUrl).toMatch(/\.(png|jpe?g|gif)$/)
+        })
+
+        // Also not style. U+2709 and U+26A0 are Unicode 1.1 dingbats whose *default* presentation
+        // is text, so they render as a grey outline anywhere the VS16 selector is ignored — while
+        // the U+1F511 / U+2705 sitting next to them in other templates always came out in colour.
+        // One template therefore looked broken beside another. Rather than curate a per-client list
+        // of "safe" codepoints, no template carries any.
+        it('keeps emoji out of every subject and template', async () => {
+            const emailsDir = path.resolve(__dirname, '../../../../src/assets/emails')
+            const templates = (await readdir(emailsDir)).filter((f) => f.endsWith('.html'))
+            const sources: [string, string][] = await Promise.all(
+                templates.map(async (f): Promise<[string, string]> => [f, await readFile(path.join(emailsDir, f), 'utf-8')]),
+            )
+            // The subjects live in code, not in a template, and were the more visible half.
+            sources.push(['getEmailSubject', await readFile(
+                path.resolve(__dirname, '../../../../src/app/helper/mail/email-sender/smtp-email-sender.ts'),
+                'utf-8',
+            )])
+
+            const offenders = sources
+                .map(([name, body]): [string, string[]] => [name, [...new Set(body.match(EMOJI) ?? [])]])
+                .filter(([, found]) => found.length > 0)
+                .map(([name, found]) => `${name}: ${found.join(' ')}`)
+
+            expect(offenders).toEqual([])
+        })
+
+        it.each([
+            ['an operator CDN URL', 'https://cdn.example/brand/logo.png'],
+            ['a data URI', 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='],
+            ['a plain http URL', 'http://assets.internal/logo.png'],
+        ])('leaves %s untouched — prefixing it would corrupt it', async (_label, absolute) => {
+            expect(await toAbsoluteAssetUrl(absolute, system.globalLogger())).toBe(absolute)
+        })
+
+        it('falls back to the original value rather than failing the send when the frontend URL is unset', async () => {
+            // `domainHelper.getPublicUrl` is `getOrThrow(FRONTEND_URL)`. An install missing that
+            // prop currently still delivers invitations, with a broken logo; turning that into an
+            // undelivered invitation would be a worse trade than the defect being fixed.
+            const frontendUrl = process.env.AP_FRONTEND_URL
+            delete process.env.AP_FRONTEND_URL
+            try {
+                expect(await toAbsoluteAssetUrl('/logo.svg', system.globalLogger())).toBe('/logo.svg')
+            }
+            finally {
+                process.env.AP_FRONTEND_URL = frontendUrl
+            }
+        })
+
         it('is a no-op (no throw, no delivery) when SMTP is not configured', async () => {
             delete process.env.AP_SMTP_HOST
 
@@ -218,3 +318,19 @@ describe('smtpEmailSender', () => {
         })
     })
 })
+
+const MUSTACHE_ENTITIES: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': '\'',
+    '&#x60;': '`',
+    '&#x3D;': '=',
+    '&#x2F;': '/',
+}
+
+// The pictograph and dingbat blocks the copy actually drew from, plus the variation selector that
+// makes a text-default glyph try to present as emoji. Deliberately not every emoji range in
+// Unicode: a narrow pattern cannot misfire on ordinary prose or on the Cyrillic in a translation.
+const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}\u{FE0F}]/gu

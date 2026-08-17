@@ -66,7 +66,15 @@ export function generateTheme({
 export const defaultTheme = generateTheme({
     primaryColor: '#3CA29E',
     websiteName: 'Qadam Flow',
-    fullLogoUrl: '/logo.svg',
+    // The Qadam Flow lockup — mark, "AN AI QADAM BUILD PROJECT" and the product name — not the
+    // bare footprint. `/logo.svg` is square, so every consumer that sizes by width rendered it as
+    // a 210px-tall foot with nothing identifying the product; the email header was the worst case.
+    //
+    // PNG rather than SVG on purpose: this value is embedded in email, and Gmail strips SVG
+    // outright while Outlook's Word engine cannot render it. It is the same reason og:image points
+    // at a PNG (see the note in packages/web/public/og-image.svg). Regenerate it from
+    // logo-flow.svg if the artwork changes.
+    fullLogoUrl: '/logo-flow.png',
     // Matches the AP_FAVICON shipped by packages/web/vite.config.mts so a
     // fresh, unbranded install still renders an icon instead of an empty href.
     favIconUrl: '/logo-192.png',
