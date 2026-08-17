@@ -64,6 +64,7 @@ These lived only in the upstream enterprise edition. They are part of Qadam Flow
 - **Dates, numbers and typed table dates render in the active locale**, rather than always in English formatting.
 - **Cyrillic text renders properly** — the shipped Inter subsets now cover it, loaded by `unicode-range` so Latin-only pages pay nothing for it.
 - The product now wears the **AI Qadam brand**: the brand teal as the default platform colour instead of the inherited purple, a correct favicon on a default install, and a Qadam Flow social preview card.
+- **The logo now renders in emails, and it says which product sent them.** Every template embedded the bare footprint mark as the root-relative `/logo.svg` — which a mail client has no base URL to resolve, and which is square, so where it did resolve it filled the header with a 210px-tall foot and no product name. Emails now carry the Qadam Flow lockup, as an absolute URL and as a PNG, since Gmail strips SVG from a message body outright. A logo you have already set to a full URL, or to a `data:` URI, is left alone.
 - **Theme fixes** — `system` follows the OS preference, keeps following it while the app is open, and the pre-hydration paint no longer flashes a colour the product does not use.
 
 #### Security
