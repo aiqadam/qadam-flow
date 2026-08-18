@@ -37,11 +37,35 @@ mkdir -p certs && openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
   -subj "/CN=mailpit" -addext "subjectAltName=DNS:mailpit,DNS:localhost,IP:127.0.0.1"
 chmod 644 certs/mailpit.key certs/mailpit.crt
 
-# 3. the same .env generator every real install uses, then point it at the image under test
+# 3. the same .env generator every real install uses, then point it at the image under test.
+#    NOTE: no AP_SMTP_* yet — see the first gotcha below. They go in after the first sign-up.
 NO_COLOR=1 QADAM_FLOW_SOURCE_ONLY=1 bash -c '. ./run.sh && generate_env'
-sed -i '' 's|^QADAM_FLOW_IMAGE=.*|QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:sha-<short-sha>|' .env
+perl -pi -e 's|^QADAM_FLOW_IMAGE=.*|QADAM_FLOW_IMAGE=ghcr.io/aiqadam/qadam-flow:sha-<short-sha>|' .env
 cat >> .env <<'ENV'
 AP_SSRF_ALLOW_LIST=172.16.0.0/12,192.168.0.0/16,10.0.0.0/8
+ENV
+
+docker compose up -d
+<repo>/tools/ci/wait-for-api.sh http://localhost:8080/api/v1/flags 300
+```
+
+Then, from `packages/tests-e2e`, **phase 1** — everything that needs no mail. This is also what
+creates the platform: `global-setup.ts` signs up, and that sign-up is the one that must not hit SMTP.
+
+```bash
+AP_FRONTEND_URL=http://localhost:8080 \
+AP_API_URL=http://localhost:8080 \
+E2E_CHAT_STUB_HOST=host.docker.internal \
+  npx playwright test scenarios/ce --workers=1 --timeout=180000 --reporter=list \
+  --grep-invert @smtp
+```
+
+**Phase 2** — turn SMTP on against Mailpit, recreate the sender processes, and run the rest. Sign-up
+is invitation-only now that a platform exists, so global-setup must sign *in* as the user phase 1
+created (`E2E_EMAIL` / `E2E_PASSWORD`), which is why they appear here and not above.
+
+```bash
+cat >> .env <<'ENV'
 AP_SMTP_HOST=mailpit
 AP_SMTP_PORT=1025
 AP_SMTP_USERNAME=qadam
@@ -49,18 +73,14 @@ AP_SMTP_PASSWORD=qadam
 AP_SMTP_SENDER_EMAIL=no-reply@qadam.test
 AP_SMTP_SENDER_NAME=Qadam Flow
 ENV
-
-docker compose up -d
+docker compose up -d --force-recreate app worker
 <repo>/tools/ci/wait-for-api.sh http://localhost:8080/api/v1/flags 300
-```
 
-Then, from `packages/tests-e2e`:
-
-```bash
 AP_FRONTEND_URL=http://localhost:8080 \
 AP_API_URL=http://localhost:8080 \
 E2E_MAILPIT_URL=http://localhost:8025 \
-E2E_CHAT_STUB_HOST=host.docker.internal \
+E2E_EMAIL=<the address global-setup signed up with> \
+E2E_PASSWORD=<its password> \
   npx playwright test scenarios/ce --workers=1 --timeout=180000 --reporter=list
 ```
 
@@ -69,13 +89,16 @@ parallel flip the provider out from under each other. See `../CLAUDE.md`.
 
 ## Gotchas that cost time the first run
 
-- **SMTP has to be off for the very first sign-up.** `authentication.service.ts` auto-verifies a new
-  identity only when SMTP is *not* configured; with it on, the first sign-up emails an OTP
-  synchronously and `global-setup.ts` dies before any test runs. Boot without `AP_SMTP_*`, let
-  global-setup create the platform, then add them and `docker compose up -d --force-recreate app`.
-  This is the same two-phase dance the CI job does, for the same reason.
-- **`@smtp`-tagged specs need `E2E_EMAIL` / `E2E_PASSWORD`**, since sign-up is invitation-only once a
-  platform exists.
+- **SMTP has to be off for the very first sign-up** — this is why the run above is split in two.
+  `authentication.service.ts` auto-verifies a new identity only when SMTP is *not* configured; with
+  it on, the first sign-up emails an OTP synchronously and `global-setup.ts` dies before any test
+  runs. It is the same two-phase dance the CI job does, for the same reason. Putting `AP_SMTP_*` in
+  `.env` before the first `docker compose up` is the single easiest way to lose an hour here.
+- **The acceptance mail cases are gated on `E2E_MAILPIT_URL`, not on the `@smtp` tag.** They sit in a
+  serial describe with the Viewer / locale / theme cases, which have no mail dependency and should
+  not be held back to phase 2 — so the describe stays untagged and the two mail tests skip on their
+  own when the variable is unset. Phase 1 above therefore runs them and they skip; phase 2 runs them
+  for real.
 - **The OTP throttle is not a bug.** A PENDING code younger than ten minutes suppresses a resend, so
   a second password-reset request within that window sends nothing. Confirm the first code before
   expecting a second mail.
