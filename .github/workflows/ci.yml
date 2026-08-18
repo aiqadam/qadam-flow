@@ -750,6 +750,11 @@ jobs:
       #
       # AP_SMTP_* is deliberately NOT set yet — see the "Configure SMTP" step below for why the
       # suite runs in two phases.
+      #
+      # Task #337: Chat specs require SSRF allow-list for localhost OpenAI stub.
+      # The docker-compose.override.yml below permits Docker's internal gateway range.
+      # WARNING: This stack is NOT byte-identical to the stock install — it includes
+      # AP_SSRF_ALLOW_LIST to unblock Chat E2E specs that call a localhost service.
       - name: Boot the stack from the bundled docker-compose.yml
         env:
           QADAM_FLOW_IMAGE: ${{ steps.target.outputs.image }}
@@ -759,6 +764,21 @@ jobs:
           set -euo pipefail
           . ./run.sh
           generate_env
+
+          # Task #337: Create docker-compose override to enable Chat specs.
+          # The Chat specs invoke an OpenAI-compatible stub on localhost inside the container.
+          # The stock safeHttp.fetch middleware blocks private-range connections by default,
+          # so we permit Docker's internal ranges (172.16.0.0/12, 192.168.0.0/16, 10.0.0.0/8)
+          # to unblock this test group. This override is E2E-only and does not affect production.
+          cat > docker-compose.override.yml <<'OVERRIDE'
+          services:
+            app:
+              extra_hosts:
+                - "host.docker.internal:host-gateway"
+              environment:
+                - AP_SSRF_ALLOW_LIST=172.16.0.0/12,192.168.0.0/16,10.0.0.0/8
+          OVERRIDE
+
           docker compose up -d
 
       # Deliberately not run.sh's `wait_for_app`: its 3-minute deadline is tuned for a
@@ -780,12 +800,32 @@ jobs:
       # That is the fresh-instance path a real deployment takes, and it is the one worth guarding.
       # AP_API_URL points at the compose origin because docker-compose.yml serves the API there
       # rather than on the dev stack's :3000.
+      #
+      # Task #337: Chat specs are now enabled via AP_SSRF_ALLOW_LIST override.
+      # Output is piped to a temp file so we can verify the chat spec count didn't regress.
       - name: Run the Playwright suite (no SMTP)
         working-directory: packages/tests-e2e
+        id: e2e_phase1
         env:
           AP_FRONTEND_URL: http://localhost:8080
           AP_API_URL: http://localhost:8080
-        run: npx playwright test --grep-invert '@smtp' --workers=1 --timeout=180000 --reporter=list,github
+        run: |
+          set -euo pipefail
+          output_file="/tmp/e2e-phase1-output.txt"
+          npx playwright test --grep-invert '@smtp' --workers=1 --timeout=180000 --reporter=list,github 2>&1 | tee "$output_file"
+
+          # Task #337: Verify Chat specs are running (not skipped).
+          # Expected: 12 passed / 1 skipped (Chat passed, only one unrelated spec skipped)
+          # This is a regression check — if Chat gets skipped again, the job fails loudly.
+          passed=$(grep -oP '(?<=passed )[\d]+' "$output_file" | tail -1 || echo "0")
+          skipped=$(grep -oP '(?<=skipped ?)[\d]+' "$output_file" | tail -1 || echo "0")
+
+          echo "E2E phase 1 results: $passed passed, $skipped skipped"
+
+          if [ "$passed" -lt 12 ]; then
+            echo "::error::Chat spec regression: expected at least 12 passed, got $passed. Check if AP_SSRF_ALLOW_LIST is working."
+            exit 1
+          fi
 
       # Why SMTP is switched on only now, after the first sign-up has already happened.
       #
