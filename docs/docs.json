@@ -3,9 +3,9 @@
    "theme": "mint",
    "name": "Qadam Flow",
    "colors": {
-      "primary": "#9675FF",
-      "light": "#9675FF",
-      "dark": "#9675FF"
+      "primary": "#008d89",
+      "light": "#39b3af",
+      "dark": "#008d89"
    },
    "navbar": {
       "links": [
