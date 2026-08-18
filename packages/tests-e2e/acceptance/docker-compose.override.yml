@@ -23,11 +23,10 @@ services:
     container_name: mailpit
     restart: unless-stopped
     ports:
-      # 8025 = web UI, the point of this file. 1025 is left unpublished: only the app needs it,
-      # and it is reachable over the compose network.
+      # 8025 = the web UI, which is the point of this file. SMTP (1025) is deliberately NOT
+      # published: only the app and worker dial it, over the compose network, and publishing an
+      # auth-accept-any SMTP listener on a laptop's interfaces is a gratuitous exposure.
       - '8025:8025'
-      # published only so the acceptance run can deliver from the host, not part of the stack
-      - '1025:1025'
     environment:
       - MP_SMTP_TLS_CERT=/certs/mailpit.crt
       - MP_SMTP_TLS_KEY=/certs/mailpit.key

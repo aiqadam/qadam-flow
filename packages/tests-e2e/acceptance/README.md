@@ -21,7 +21,9 @@ Mailpit serves a self-signed cert, which that connection rejects. Rather than we
 testing, the compose override mounts a certificate issued for the name the app dials (`mailpit`) and
 points `NODE_EXTRA_CA_CERTS` at it. The app's TLS behaviour is therefore identical to production.
 
-The key is generated locally and **never committed** — `certs/` is git-ignored.
+The key is generated locally and **never committed**. The run below keeps it in a scratch directory
+outside the repo; if you would rather work in-tree, `packages/tests-e2e/acceptance/certs/` is
+git-ignored for exactly that.
 
 ## Running it
 
@@ -60,9 +62,14 @@ E2E_CHAT_STUB_HOST=host.docker.internal \
   --grep-invert @smtp
 ```
 
-**Phase 2** — turn SMTP on against Mailpit, recreate the sender processes, and run the rest. Sign-up
+**Phase 2** — turn SMTP on against Mailpit, recreate the sender processes, and run the suite again,
+this time with a reachable inbox so the two mail cases stop skipping. It re-runs everything rather
+than only the mail cases; at ~2 min for the rest of `scenarios/ce`, filtering is not worth the
+bookkeeping. (The chat stub host is dropped here, so the chat specs skip on this pass — they already
+ran in phase 1.) Sign-up
 is invitation-only now that a platform exists, so global-setup must sign *in* as the user phase 1
-created (`E2E_EMAIL` / `E2E_PASSWORD`), which is why they appear here and not above.
+created, which is why `E2E_EMAIL` / `E2E_PASSWORD` appear here and not above. Those are the
+literals from `global-setup.ts` — phase 1 ran without them, so it signed up exactly that user.
 
 ```bash
 cat >> .env <<'ENV'
@@ -79,8 +86,8 @@ docker compose up -d --force-recreate app worker
 AP_FRONTEND_URL=http://localhost:8080 \
 AP_API_URL=http://localhost:8080 \
 E2E_MAILPIT_URL=http://localhost:8025 \
-E2E_EMAIL=<the address global-setup signed up with> \
-E2E_PASSWORD=<its password> \
+E2E_EMAIL=test@aiqadam.org \
+E2E_PASSWORD='TestPassword123!@#' \
   npx playwright test scenarios/ce --workers=1 --timeout=180000 --reporter=list
 ```
 

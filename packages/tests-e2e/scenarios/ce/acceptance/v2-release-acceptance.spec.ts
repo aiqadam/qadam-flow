@@ -9,6 +9,7 @@ import {
   acceptInviteAndSignUp,
   createTeamProjectViaUI,
   issuePlatformMemberInviteViaUI,
+  OWNER_PASSWORD,
   openTeamTab,
   signIn,
 } from '../projects/member-helpers';
@@ -19,11 +20,13 @@ import {
  * Everything asserted here is already covered at some layer: #93 by
  * `project-member.test.ts`, #304 by `locale-utils.test.ts`, #300 by `theme-utils.test.ts`,
  * the mailer by `mail/` integration tests. None of that shows what a person actually sees,
- * which is what a release acceptance is for. Every assertion below is a DOM assertion after a
- * real click, and every step writes a numbered frame to `screenshots/v2-acceptance/`.
+ * which is what a release acceptance is for. Every *product* assertion below is a DOM assertion
+ * after a real click; the two Mailpit polls are `request.get` only to decide when to take the
+ * frame. Every step writes a numbered frame to `screenshots/v2-acceptance/`, numbered in
+ * execution order.
  *
- * Serial and single-worker: the tests share one platform, and the locale/theme cases mutate
- * settings that are per-user rather than per-tab.
+ * Serial and single-worker: the tests share one platform, and the Viewer case provisions users
+ * and a team project on it that the later cases must not race.
  *
  * **Mail needs Mailpit, and Mailpit needs a certificate the app trusts.**
  * `smtp-email-sender.ts#initSmtpClient` sets `requireTLS: !useSSL` and passes no `tls` options,
@@ -38,11 +41,11 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
   test('an invitation sent from the UI arrives as a real email (#SMTP, mailer)', async ({
     page,
   }) => {
-    test.skip(
-      process.env.E2E_MAILPIT_URL === undefined,
-      'needs a Mailpit whose TLS certificate the app trusts; set E2E_MAILPIT_URL',
-    );
-    const mailpit = process.env.E2E_MAILPIT_URL as string;
+    // `?? ''` rather than `=== undefined`: an exported-but-empty E2E_MAILPIT_URL is easy to
+    // produce from a .env line, and it would otherwise run the test against `''` and fail on a
+    // request to the app's own origin instead of skipping.
+    const mailpit = process.env.E2E_MAILPIT_URL ?? '';
+    test.skip(mailpit === '', 'needs a Mailpit whose TLS certificate the app trusts; set E2E_MAILPIT_URL');
     const invitee = `mail-acceptance+${Date.now().toString().slice(-6)}@example.com`;
 
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD);
@@ -73,21 +76,21 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     await shot(page, '04-the-invitation-email-as-the-recipient-sees-it');
   });
 
-  test('a password reset sends a real email with a working link (mailer, OTP)', async ({
-    page,
-  }) => {
-    test.skip(
-      process.env.E2E_MAILPIT_URL === undefined,
-      'needs a Mailpit whose TLS certificate the app trusts; set E2E_MAILPIT_URL',
-    );
-    const mailpit = process.env.E2E_MAILPIT_URL as string;
+  test('a password reset request sends a real email (mailer, OTP)', async ({ page }) => {
+    const mailpit = process.env.E2E_MAILPIT_URL ?? '';
+    test.skip(mailpit === '', 'needs a Mailpit whose TLS certificate the app trusts; set E2E_MAILPIT_URL');
     const before = await messageCount(page, mailpit);
 
     await page.goto('/forget-password');
-    await page.locator('#email').fill(ADMIN_EMAIL);
+    // NOT `#email`. `reset-password-form.tsx` renders the input outside a `<FormControl>`, which is
+    // the only thing that assigns `id={formItemId}` — react-hook-form's `field` spread supplies
+    // `name` and no `id`, so the `<Label htmlFor="email">` beside it points at nothing and `#email`
+    // matches nowhere on this page. (Sign-in and sign-up do set it, which is what makes the wrong
+    // selector look right.)
+    await page.locator('input[name="email"]').fill(ADMIN_EMAIL);
     await page.getByRole('button', { name: /Send Password Reset Link/i }).click();
     await expect(page.getByText(/Check Your Inbox/i)).toBeVisible({ timeout: 30_000 });
-    await shot(page, '16-password-reset-requested');
+    await shot(page, '05-password-reset-requested');
 
     // The UI says "check your inbox"; this is the part that checks the inbox.
     await expect
@@ -98,7 +101,9 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     const resetRow = page.getByText(/Reset your password/i).first();
     await expect(resetRow).toBeVisible({ timeout: 30_000 });
     await resetRow.click();
-    await shot(page, '17-the-password-reset-email');
+    // Delivery and subject only. This deliberately does not follow the link: confirming the OTP
+    // would consume it, and the ten-minute throttle then suppresses the next test run's mail.
+    await shot(page, '06-the-password-reset-email');
   });
 
   test('a project Viewer is not offered controls the server would refuse (#93)', async ({
@@ -120,7 +125,7 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     const ownerPage = await acceptInviteAndSignUp(ownerContext, ownerLink, {
       firstName: 'Acc',
       lastName: 'Owner',
-      password: 'Owner2Pass!23',
+      password: OWNER_PASSWORD,
     });
     const projectId = await createTeamProjectViaUI(ownerPage, `Acceptance ${suffix}`);
 
@@ -133,7 +138,7 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     );
     await dialog.getByRole('button', { name: 'Invite' }).click();
     const link = (await (await invitePromise).json()).link as string;
-    await shot(ownerPage, '05-project-admin-invited-a-viewer');
+    await shot(ownerPage, '07-project-admin-invited-a-viewer');
     await ownerPage.keyboard.press('Escape');
 
     // The project ADMIN's own view of the page the Viewer is about to see, for the side-by-side.
@@ -145,7 +150,7 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     // which only exists once the project has flows.
     const adminCreate = ownerPage.getByRole('button', { name: 'Start from scratch' }).first();
     await expect(adminCreate).toBeEnabled({ timeout: 30_000 });
-    await shot(ownerPage, '06-project-admin-sees-an-enabled-start-from-scratch');
+    await shot(ownerPage, '08-project-admin-sees-an-enabled-start-from-scratch');
 
     const viewerContext = await browser.newContext();
     const viewerPage = await acceptInviteAndSignUp(viewerContext, link, {
@@ -155,7 +160,7 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     });
     await viewerPage.goto(`/projects/${projectId}/automations`);
     await viewerPage.waitForLoadState('networkidle');
-    await shot(viewerPage, '07-the-same-page-as-a-viewer');
+    await shot(viewerPage, '09-the-same-page-as-a-viewer');
 
     // The gate is what this asserts: pre-#325 `checkAccess` was a CE stub returning true, so this
     // control was offered to a Viewer and only failed on click with PERMISSION_DENIED.
@@ -188,21 +193,32 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
       await languageCombobox(page).click();
       await page.getByRole('option', { name: label }).click();
       await expect(page.getByText(marker).first()).toBeVisible({ timeout: 30_000 });
-      await shot(page, `${String(8 + index).padStart(2, '0')}-ui-in-${label}`);
+      await shot(page, `${String(10 + index).padStart(2, '0')}-ui-in-${label}`);
       await page.keyboard.press('Escape');
     }
 
-    // The nine removed locales must not be on offer — that is the other half of #237.
+    // The removed locales must not be on offer — that is the other half of #237.
     await openAccountSettings(page);
     await languageCombobox(page).click();
-    for (const gone of ['Deutsch', 'Français', 'Español', '日本語', '中文']) {
-      await expect(page.getByRole('option', { name: gone })).toHaveCount(0);
-    }
-    await shot(page, '11-language-list-offers-only-the-four-supported-locales');
 
-    // Back to English, so the next test does not inherit a Kazakh UI. The locale is per-user and
-    // persists across reloads, which is the point of the feature and the trap for a serial suite.
-    await page.getByRole('option', { name: 'English' }).click();
+    // The positive control comes first, and it is what makes the negatives below mean anything:
+    // `toHaveCount(0)` is satisfied by a blank page, so a click that silently missed the trigger
+    // would pass every one of them instantly. Asserting the list is exactly the four supported
+    // locales pins the popover open AND is the real assertion — `localesMap` has four entries.
+    await expect(page.getByRole('option')).toHaveCount(4);
+    // Exact labels from the localesMap entries #237 deleted. Playwright's `name` match is
+    // substring-based by default, so a near-miss like '中文' would "pass" against 简体中文 while
+    // asserting nothing about the label the picker actually rendered.
+    for (const gone of ['Deutsch', 'Français', 'Español', '日本語', '简体中文', '繁體中文', 'Nederlands', 'Português']) {
+      await expect(page.getByRole('option', { name: gone, exact: true })).toHaveCount(0);
+    }
+    await shot(page, '13-language-list-offers-only-the-four-supported-locales');
+
+    // Back to English so the next test does not inherit a Kazakh UI. Note the locale is per browser
+    // context, not per user: `LanguageToggle` only calls `i18n.changeLanguage` and the choice is
+    // cached in localStorage by i18next-browser-languagedetector — no server write. Playwright
+    // hands each test a fresh context, so this reset is belt-and-braces rather than load-bearing.
+    await page.getByRole('option', { name: 'English', exact: true }).click();
     await expect(page.getByText('Automations').first()).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press('Escape');
   });
@@ -213,21 +229,21 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     await openAccountSettings(page);
     await selectTheme(page, 'Dark');
     await expect(page.locator('html')).toHaveClass(/dark/, { timeout: 15_000 });
-    await shot(page, '12-dark-theme-applied');
+    await shot(page, '14-dark-theme-applied');
 
     await selectTheme(page, 'Light');
     await expect(page.locator('html')).not.toHaveClass(/dark/, { timeout: 15_000 });
-    await shot(page, '13-light-theme-applied');
+    await shot(page, '15-light-theme-applied');
 
     // `system` must follow the OS preference, not fall back to a fixed value — the #300 defect.
     await selectTheme(page, 'System');
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveClass(/dark/, { timeout: 15_000 });
-    await shot(page, '14-system-theme-follows-the-os-into-dark');
+    await shot(page, '16-system-theme-follows-the-os-into-dark');
 
     await page.emulateMedia({ colorScheme: 'light' });
     await expect(page.locator('html')).not.toHaveClass(/dark/, { timeout: 15_000 });
-    await shot(page, '15-system-theme-follows-the-os-back-to-light');
+    await shot(page, '17-system-theme-follows-the-os-back-to-light');
   });
 });
 
