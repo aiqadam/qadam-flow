@@ -101,7 +101,7 @@ decision is taken, all line counts verified:
 | File | Lines | What changes |
 | --- | --- | --- |
 | `packages/web/src/styles.css` | 891 | `--primary-100` / `--primary` / `--primary-300` light (413-415) + dark (499-501); `--sidebar-primary` (471, 525) |
-| `packages/server/api/src/app/flags/theme.ts` | 72 | default `primaryColor` (67) |
+| `packages/server/api/src/app/flags/theme.ts` | 83 | default `primaryColor` (67) |
 | `docs/docs.json` | 457 | `colors.primary` / `.light` / `.dark` (6-8) |
 | `docs/favicon.svg` | 3 | purple `#8142E3` mark → teal footprint |
 | `docs/favicon.png` | binary, 2.7 KB | same |
@@ -115,9 +115,12 @@ Verified **not** in scope, contrary to what you might assume:
   There is nothing at `tailwind.config.*` anywhere in the repo.
 - **Email templates carry no brand colour.** `packages/server/api/src/assets/emails/*.html`
   (8 files) use only `#ffffff`, `#2f2e2e`, `#a3a3a3`, `#0a0a0a`, `#e5e5e5`.
-- **Web logos and app icons are already teal** (`#3CA29E`). `favicon.ico` ships but the app
-  replaces the favicon at runtime from platform branding
-  (`theme-provider.tsx:31-37`), so it follows branding, not the file.
+- **Web logos and app icons are already teal** (`#3CA29E`), including `favicon.ico` (a PNG-in-ICO
+  payload of the mark, not the historical Windows-icon-format purple Activepieces "A"). The app
+  also replaces the browser-tab favicon at runtime from platform branding
+  (`theme-provider.tsx:33-47`), so the *tab icon* follows branding, not the file — but a direct GET
+  of `/favicon.ico` (crawlers, link unfurlers, bookmark managers) is served straight from disk and
+  no runtime DOM manipulation reaches it, so that file still has to be correct on its own.
 - A recolour changes **no** `.agents/` or `.claude/` file: after this rewrite they name the brand
   value and the shipping value separately.
 
