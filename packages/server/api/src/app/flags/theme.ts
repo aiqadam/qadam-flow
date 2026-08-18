@@ -67,8 +67,9 @@ export const defaultTheme = generateTheme({
     primaryColor: '#3CA29E',
     websiteName: 'Qadam Flow',
     // The Qadam Flow lockup — mark, "AN AI QADAM BUILD PROJECT" and the product name — not the
-    // bare footprint. `/logo.svg` is square, so every consumer that sizes by width rendered it as
-    // a 210px-tall foot with nothing identifying the product; the email header was the worst case.
+    // bare footprint. `/logo.svg`'s viewBox is 206x340 (tall, not square), so every consumer that
+    // sizes by width rendered it as a 210px-tall foot with nothing identifying the product; the
+    // email header was the worst case.
     //
     // PNG rather than SVG on purpose: this value is embedded in email, and Gmail strips SVG
     // outright while Outlook's Word engine cannot render it. It is the same reason og:image points
