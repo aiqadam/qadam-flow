@@ -209,7 +209,7 @@ const InstallQadamDialog = ({
                     }}
                     defaultValue={PackageType.REGISTRY}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="packageType">
                       <SelectValue defaultValue={PackageType.REGISTRY} />
                     </SelectTrigger>
                     <SelectContent>
