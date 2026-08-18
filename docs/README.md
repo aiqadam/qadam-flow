@@ -1,43 +1,47 @@
-# Mintlify Starter Kit
+# Qadam Flow documentation
 
-Use the starter kit to get your docs deployed and ready to customize.
+The source of https://docs.aiqadam.org. A [Mintlify](https://mintlify.com) project: 171 MDX
+pages, an OpenAPI spec under `endpoints/`, and the navigation in `docs.json`.
 
-Click the green **Use this template** button at the top of this repo to copy the Mintlify starter kit. The starter kit contains examples with
+## How it is published
 
-- Guide pages
-- Navigation
-- Customizations
-- API reference pages
-- Use of popular components
+The Mintlify GitHub App is installed on `aiqadam/qadam-flow` and watches the **`main`** branch
+with `docs` as its content directory. Every merge to `main` that touches this folder redeploys
+the site automatically — there is no workflow in `.github/workflows/` that builds or uploads
+docs, and nothing to run by hand.
 
-**[Follow the full quickstart guide](https://starter.mintlify.com/quickstart)**
+Two consequences worth internalising before editing:
 
-## Development
+- **A docs change is a production deploy.** There is no staging step and no approval gate. A
+  broken link merged to `main` is a broken link on the public site minutes later.
+- **A page is only reachable if `docs.json` lists it.** Adding an `.mdx` file is not enough;
+  Mintlify builds its navigation from `docs.json`, so an unlisted page ships as a 404 for
+  anyone without the direct URL.
 
-Install the [Mintlify CLI](https://www.npmjs.com/package/mint) to preview your documentation changes locally. To install, use the following command:
+## Working on the docs
 
+```bash
+npm i -g mint     # the Mintlify CLI
+cd docs           # must be the folder holding docs.json
+mint dev          # preview at http://localhost:3000
 ```
-npm i -g mint
+
+Before opening a PR, run the same check CI runs:
+
+```bash
+cd docs && npx mint broken-links
 ```
 
-Run the following command at the root of your documentation, where your `docs.json` is located:
+**Read its output, not its exit code.** `mint broken-links` exits `0` whether it finds six
+broken links or none — the count is only in the text it prints. This is why the `Docs` job in
+`.github/workflows/ci.yml` greps the output instead of trusting `$?`, and why six broken links
+sat in this folder unnoticed until the site was first published.
 
-```
-mint dev
-```
+## Conventions
 
-View your local preview at `http://localhost:3000`.
+Writing style, component usage and frontmatter rules are in
+[`.agents/rules/mintlify.md`](../.agents/rules/mintlify.md). The `mintlify` skill
+(`.agents/skills/mintlify/`) covers navigation and API-reference setup.
 
-## Publishing changes
-
-Install our GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app) to propagate changes from your repo to your deployment. Changes are deployed to production automatically after pushing to the default branch.
-
-## Need help?
-
-### Troubleshooting
-
-- If your dev environment isn't running: Run `mint update` to ensure you have the most recent version of the CLI.
-- If a page loads as a 404: Make sure you are running in a folder with a valid `docs.json`.
-
-### Resources
-- [Mintlify documentation](https://mintlify.com/docs)
+Brand colours in `docs.json` follow the AI Qadam brand teal, not the product's shipping
+purple — see `.agents/skills/design/` for which of the two applies to a given surface.

@@ -83,7 +83,7 @@ rebrand the product. Verified against the tree:
 | Platform-branding default | teal | `primaryColor: '#3CA29E'` | `packages/server/api/src/app/flags/theme.ts:67` |
 | Product logo | teal footprint mark | **already teal** | `packages/web/public/logo.svg`, `logo-full.svg`, `logo-192.png`, `logo-180.png`, `og-image.svg` |
 | Docs logo + favicon | teal footprint mark | still the purple Activepieces "A" | `docs/resources/logo/light.svg`, `docs/resources/logo/dark.svg`, `docs/favicon.svg`, `docs/favicon.png` |
-| Docs site accent | teal | `#9675FF` | `docs/docs.json:6-8` |
+| Docs site accent | teal | **done** — `#008d89` light / `#39b3af` dark, the brand pair, taken ahead of the product recolour because the docs site went live (#3) and a live surface could not keep shipping the purple | `docs/docs.json:6-8` |
 | Body font | Inter, Latin **and** Cyrillic equally legible | Inter, **Latin subset only** | `packages/web/src/assets/fonts/inter-v20-latin-*` |
 | Display font | Geist | not present; `Sentient-Variable.woff2` is loaded instead — and it **is in use**, via `font-sentient` on the sign-in/signup headings, platform creation, and the chat empty state | `packages/web/src/styles.css:7-12`; used in `create-platform.tsx`, `chat-with-ai/components/chat-empty-state.tsx`, `authentication/components/auth-form-template.tsx`, `authentication/components/auth-animation.tsx` |
 | Mono font | JetBrains Mono | not loaded | — |
@@ -102,7 +102,7 @@ decision is taken, all line counts verified:
 | --- | --- | --- |
 | `packages/web/src/styles.css` | 891 | `--primary-100` / `--primary` / `--primary-300` light (413-415) + dark (499-501); `--sidebar-primary` (471, 525) |
 | `packages/server/api/src/app/flags/theme.ts` | 72 | default `primaryColor` (67) |
-| `docs/docs.json` | 457 | `colors.primary` / `.light` / `.dark` (6-8) |
+| ~~`docs/docs.json`~~ | 457 | ~~`colors.primary` / `.light` / `.dark` (6-8)~~ — **already done**, see the row above; nothing left here |
 | `docs/favicon.svg` | 3 | purple `#8142E3` mark → teal footprint |
 | `docs/favicon.png` | binary, 2.7 KB | same |
 | `docs/resources/logo/light.svg` | 15 | purple `#8142E3` Activepieces wordmark → AI Qadam lockup |

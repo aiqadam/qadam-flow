@@ -378,6 +378,75 @@ jobs:
           fi
           echo "All commits are signed off. ✅"
 
+  # The docs site deploys straight from `main` via the Mintlify GitHub App — no build step in
+  # this pipeline, no staging, no approval gate. So this job is the only thing standing between
+  # a merged PR and a broken public page, and it is why it exists at all (#3).
+  #
+  # It ALWAYS runs and always resolves, even on a diff that touches no docs. A required context
+  # that is skipped via `paths-ignore` or a job-level `if:` never reports a conclusion, and under
+  # this repo's ruleset that leaves the PR permanently unmergeable — so the short-circuit is a
+  # step inside the job, not a condition on it.
+  docs:
+    name: Docs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Does this diff touch the docs?
+        id: touched
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA".."$HEAD_SHA" | grep -q '^docs/'; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "No path under docs/ changed; nothing to check. ✅"
+          fi
+
+      - uses: actions/setup-node@v5
+        if: steps.touched.outputs.touched == 'true'
+        with:
+          node-version: 24
+
+      # Pinned, not `@latest`: this check's verdict must change when we decide it does, not when
+      # the CLI publishes. Bump deliberately.
+      - name: Check for broken links
+        if: steps.touched.outputs.touched == 'true'
+        working-directory: docs
+        run: |
+          # `mint broken-links` exits 0 whether it finds six broken links or none — the count is
+          # only ever in the text it prints. Reading $? here would be the exact "command that
+          # looks like verification but verifies nothing" trap AGENTS.md catalogues, and it is
+          # how six broken links survived in this folder until the site was first published.
+          # So: capture the output, show it, and decide from the words.
+          set -o pipefail
+          out="$(npx --yes mint@4.2.808 broken-links 2>&1 | tee /dev/stderr)"
+
+          # Order matters, and it is the whole trap: the success line is
+          # "success no broken links found" and the failure line is "found 6 broken links in 4
+          # files". A grep for 'broken links' matches BOTH, so testing for failure first fails
+          # every green run. Match the success wording first, and treat everything else as bad.
+          if printf '%s' "$out" | grep -q 'no broken links found'; then
+            echo "No broken links. ✅"
+            exit 0
+          fi
+
+          if printf '%s' "$out" | grep -Eq '[0-9]+ broken links?'; then
+            echo "::error::mint found broken links in docs/ — see the list above."
+            exit 1
+          fi
+
+          # Neither verdict means the CLI never got far enough to have one (network, a docs.json
+          # it could not parse). Do not read that silence as a pass.
+          echo "::error::mint produced no verdict — it did not complete. Treating as a failure."
+          exit 1
+
   # Kept on PRs: it is the only place the Dockerfile path itself is built, including the
   # vite bundle and the engine's esbuild, which no other job exercises — `verify` type-checks
   # but does not bundle. Not a required status check, so a PR can be merged while it is still
