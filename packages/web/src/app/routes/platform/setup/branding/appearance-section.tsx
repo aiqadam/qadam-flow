@@ -163,6 +163,7 @@ export const AppearanceSection = () => {
                     <FormLabel htmlFor="color">{t('Primary Color')}</FormLabel>
                     <div className="flex flex-row gap-2 items-center">
                       <ColorPicker
+                        id="color"
                         value={field.value as string}
                         onChange={(color: string) => field.onChange(color)}
                         className="flex flex-row gap-2 items-center"
