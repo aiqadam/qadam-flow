@@ -16,9 +16,15 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Form, FormField, FormItem, FormMessage } from '@/components/ui/form';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { CheckEmailNote } from '@/features/authentication/components/check-email-note';
 import { HttpError } from '@/lib/api';
 
@@ -81,12 +87,14 @@ const ResetPasswordForm = () => {
                 name="email"
                 render={({ field }) => (
                   <FormItem className="w-full grid space-y-2">
-                    <Label htmlFor="email">{t('Email')}</Label>
-                    <Input
-                      {...field}
-                      type="text"
-                      placeholder={'email@example.com'}
-                    />
+                    <FormLabel>{t('Email')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type="text"
+                        placeholder={'email@example.com'}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
