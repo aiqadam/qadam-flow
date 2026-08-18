@@ -92,10 +92,11 @@ export const isSmtpConfigured = (): boolean => {
 
 /**
  * An email has no base URL, so a root-relative asset path can never resolve in a mail client.
- * `defaultTheme.logos.fullLogoUrl` is `/logo.svg` and the platform row stores the same value on a
- * stock install, so of the five templates in `ALLOWED_TEMPLATE_NAMES`, all five shipped a broken
- * image. It is invisible from inside the product, where the identical path resolves against the
- * app's own origin.
+ * `defaultTheme.logos.fullLogoUrl` was `/logo.svg` until #333, and `platform.service.ts` persists
+ * that default into the platform row at creation time, so any platform created before #333 still
+ * holds the relative path — meaning all five templates in `ALLOWED_TEMPLATE_NAMES` shipped a broken
+ * image for those installs. It is invisible from inside the product, where the identical path
+ * resolves against the app's own origin.
  *
  * Resolution goes through `domainHelper.getPublicUrl`, the same helper that builds the invitation
  * and OTP links in these very emails, so the logo cannot end up on a different host from the button
@@ -109,12 +110,12 @@ export const isSmtpConfigured = (): boolean => {
  * It degrades instead of throwing, and that is deliberate. `domainHelper.getPublicUrl` is
  * `getOrThrow(FRONTEND_URL)`, and that prop is required for the process to boot at all: `main.ts`
  * awaits `appPostBoot` right after `app.listen`, which itself awaits `getPublicApiUrl` and therefore
- * the same `getOrThrow`, and a throw there is caught by `main.ts` and exits the process — so an
- * app-mode server missing that prop never stays up to serve this send path in the first place. The
- * non-throwing behaviour here is still correct as defence in depth against a future caller of this
- * function that boots without going through that path: it turns a cosmetic defect into a returned
- * relative URL rather than an unhandled rejection. The caller gets the original relative value back,
- * i.e. exactly the behaviour that shipped before.
+ * the same `getOrThrow`; a throw there is caught by `main.ts`, which exits the process within
+ * milliseconds of binding the port — so an app-mode server missing that prop cannot sit in a state
+ * where it serves this send path. The non-throwing behaviour here is still correct as defence in
+ * depth against a future caller of this function that boots without going through that path: it
+ * turns a cosmetic defect into a returned relative URL rather than an unhandled rejection. The
+ * caller gets the original relative value back, i.e. exactly the behaviour that shipped before.
  */
 export async function toAbsoluteAssetUrl({ assetUrl, log }: ToAbsoluteAssetUrlArgs): Promise<string> {
     const { data: parsed } = tryCatchSync(() => new URL(assetUrl))

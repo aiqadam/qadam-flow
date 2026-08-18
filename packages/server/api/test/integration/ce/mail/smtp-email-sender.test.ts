@@ -248,10 +248,10 @@ describe('smtpEmailSender', () => {
 
         it('falls back to the original value rather than throwing when getPublicUrl rejects', async () => {
             // `domainHelper.getPublicUrl` is `getOrThrow(FRONTEND_URL)`, which is unset here only to
-            // force the rejection this unit guards against. A real app process cannot reach `send`
-            // in that state: `main.ts` awaits `appPostBoot` -> `getPublicApiUrl` -> the same
-            // `getOrThrow` right after `app.listen`, and a throw there exits the process before it
-            // serves anything. This case exists for defence in depth, not as a state a deployment
+            // force the rejection this unit guards against. A real app process cannot sit in that
+            // state: `main.ts` awaits `appPostBoot` -> `getPublicApiUrl` -> the same `getOrThrow`
+            // right after `app.listen`, and a throw there exits the process within milliseconds of
+            // binding the port. This case exists for defence in depth, not as a state a deployment
             // can be running in.
             const frontendUrl = process.env.AP_FRONTEND_URL
             delete process.env.AP_FRONTEND_URL
