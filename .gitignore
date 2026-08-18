@@ -94,3 +94,6 @@ deploy/terraform/**/*.tfstate.backup
 deploy/terraform/**/.terraform.lock.hcl
 deploy/terraform/**/terraform.tfvars
 deploy/terraform/**/terraform-*.tfvars
+
+# Acceptance harness: the Mailpit TLS key is generated locally, never committed.
+packages/tests-e2e/acceptance/certs/
