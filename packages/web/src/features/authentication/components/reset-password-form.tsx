@@ -84,6 +84,7 @@ const ResetPasswordForm = () => {
                     <Label htmlFor="email">{t('Email')}</Label>
                     <Input
                       {...field}
+                      id="email"
                       type="text"
                       placeholder={'email@example.com'}
                     />

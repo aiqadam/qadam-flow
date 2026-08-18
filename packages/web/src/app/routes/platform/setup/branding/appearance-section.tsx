@@ -138,7 +138,7 @@ export const AppearanceSection = () => {
                 name="faviconUrl"
                 render={() => (
                   <FormItem className="grid space-y-2">
-                    <FormLabel htmlFor="faviconUrl">
+                    <FormLabel htmlFor="faviconFile">
                       {t('Favicon URL')}
                     </FormLabel>
                     <div className="flex flex-row gap-2 items-center">

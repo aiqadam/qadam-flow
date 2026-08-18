@@ -82,11 +82,11 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     const before = await messageCount(page, mailpit);
 
     await page.goto('/forget-password');
-    // NOT `#email`. `reset-password-form.tsx` renders the input outside a `<FormControl>`, which is
-    // the only thing that assigns `id={formItemId}` — react-hook-form's `field` spread supplies
-    // `name` and no `id`, so the `<Label htmlFor="email">` beside it points at nothing and `#email`
-    // matches nowhere on this page. (Sign-in and sign-up do set it, which is what makes the wrong
-    // selector look right.)
+    // The email input on `reset-password-form.tsx` is now properly labelled: `<Label
+    // htmlFor="email">` is paired with an `id="email"` on the `Input`, the same pattern
+    // sign-in and sign-up already used (#341). This selects by `input[name="email"]` rather
+    // than `#email` anyway, purely for consistency with the rest of this file — not because
+    // `#email` would fail.
     await page.locator('input[name="email"]').fill(ADMIN_EMAIL);
     await page.getByRole('button', { name: /Send Password Reset Link/i }).click();
     await expect(page.getByText(/Check Your Inbox/i)).toBeVisible({ timeout: 30_000 });
