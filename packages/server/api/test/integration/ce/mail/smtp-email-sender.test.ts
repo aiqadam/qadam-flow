@@ -243,17 +243,20 @@ describe('smtpEmailSender', () => {
             ['a data URI', 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='],
             ['a plain http URL', 'http://assets.internal/logo.png'],
         ])('leaves %s untouched — prefixing it would corrupt it', async (_label, absolute) => {
-            expect(await toAbsoluteAssetUrl(absolute, system.globalLogger())).toBe(absolute)
+            expect(await toAbsoluteAssetUrl({ assetUrl: absolute, log: system.globalLogger() })).toBe(absolute)
         })
 
-        it('falls back to the original value rather than failing the send when the frontend URL is unset', async () => {
-            // `domainHelper.getPublicUrl` is `getOrThrow(FRONTEND_URL)`. An install missing that
-            // prop currently still delivers invitations, with a broken logo; turning that into an
-            // undelivered invitation would be a worse trade than the defect being fixed.
+        it('falls back to the original value rather than throwing when getPublicUrl rejects', async () => {
+            // `domainHelper.getPublicUrl` is `getOrThrow(FRONTEND_URL)`, which is unset here only to
+            // force the rejection this unit guards against. A real app process cannot reach `send`
+            // in that state: `main.ts` awaits `appPostBoot` -> `getPublicApiUrl` -> the same
+            // `getOrThrow` right after `app.listen`, and a throw there exits the process before it
+            // serves anything. This case exists for defence in depth, not as a state a deployment
+            // can be running in.
             const frontendUrl = process.env.AP_FRONTEND_URL
             delete process.env.AP_FRONTEND_URL
             try {
-                expect(await toAbsoluteAssetUrl('/logo.svg', system.globalLogger())).toBe('/logo.svg')
+                expect(await toAbsoluteAssetUrl({ assetUrl: '/logo.svg', log: system.globalLogger() })).toBe('/logo.svg')
             }
             finally {
                 process.env.AP_FRONTEND_URL = frontendUrl
