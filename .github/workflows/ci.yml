@@ -817,8 +817,8 @@ jobs:
           # Task #337: Verify Chat specs are running (not skipped).
           # Expected: 12 passed / 1 skipped (Chat passed, only one unrelated spec skipped)
           # This is a regression check — if Chat gets skipped again, the job fails loudly.
-          passed=$(grep -oP '(?<=passed )[\d]+' "$output_file" | tail -1 || echo "0")
-          skipped=$(grep -oP '(?<=skipped ?)[\d]+' "$output_file" | tail -1 || echo "0")
+          passed=$(grep -oP '\d+(?= passed)' "$output_file" | tail -1 || echo "0")
+          skipped=$(grep -oP '\d+(?= skipped)' "$output_file" | tail -1 || echo "0")
 
           echo "E2E phase 1 results: $passed passed, $skipped skipped"
 
