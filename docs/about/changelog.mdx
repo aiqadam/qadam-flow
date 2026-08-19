@@ -49,6 +49,7 @@ These lived only in the upstream enterprise edition. They are part of Qadam Flow
 - **Email verification, forgot password and password reset**, over one-time codes.
 - **SMTP mailer** — configure your own SMTP server; the platform reports whether it is configured.
 - **Invitations delivered by email**, with the invite link also shown in the UI for installs with no mail server.
+- **An Invite user dialog on the platform Users page.** Platform-level invitations previously existed only as an API endpoint, so there was no way to invite a platform user from the UI at all. Platform admins can now open **Users → Invite user**, enter an email, pick a platform role (Member, Admin or Operator) and get the invitation link on the spot. Creating and deleting platform invitations requires a platform admin.
 - **Flow-failure email alerts**, with a per-member toggle so each person chooses whether they are notified.
 - **Real permission gating in the UI.** The client previously showed every control to every member and let the server reject the click. It now reflects your actual project role, so a Viewer no longer sees buttons that would only ever return "permission denied".
 
@@ -274,7 +275,7 @@ A comprehensive visual refresh across all Platform Admin and Project pages with 
 **Platform Admin**
 
 - **Projects** — filter chips, inline edit icons, and cleaner sidebar without branding
-- **Users** — new Role and Last Active columns, dedicated Invite button, and per-row action menus
+- **Users** — new Role and Last Active columns, and per-row action menus
 - **Project Roles** — switched from table to card-based layout with permission viewing
 - **Audit Logs** — fully enabled with Action, Performed By, Project, and Date Range filters, plus detail slide-over panels with a full JSON payload viewer
 - **Secret Managers** — card-based layout with Hashicorp Vault, AWS Secrets Manager, Cyberark Conjur, and 1Password
