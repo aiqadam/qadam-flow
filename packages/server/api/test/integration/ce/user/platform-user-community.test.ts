@@ -275,4 +275,86 @@ describe('User API', () => {
             expect(responseBody?.code).toBe('AUTHORIZATION')
         })
     })
+
+    describe('Get current user endpoint (/me)', () => {
+        it('Returns current authenticated user profile', async () => {
+            // arrange
+            const { mockOwner, mockPlatform } = await mockAndSaveBasicSetup()
+
+            const testToken = await generateMockToken({
+                id: mockOwner.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+                headers: {
+                    authorization: `Bearer ${testToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const responseBody = response?.json()
+
+            expect(responseBody.id).toBe(mockOwner.id)
+            expect(responseBody.password).toBeUndefined()
+            expect(responseBody.badges).toBeDefined()
+            expect(Array.isArray(responseBody.badges)).toBe(true)
+        })
+
+        it('Allows non-admin users to get their own profile', async () => {
+            // arrange
+            const { mockPlatform } = await mockAndSaveBasicSetup()
+
+            const { mockUser: normalUser } = await mockBasicUser({
+                user: {
+                    platformId: mockPlatform.id,
+                    platformRole: PlatformRole.MEMBER,
+                    status: UserStatus.ACTIVE,
+                },
+            })
+
+            const testToken = await generateMockToken({
+                id: normalUser.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+                headers: {
+                    authorization: `Bearer ${testToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const responseBody = response?.json()
+
+            expect(responseBody.id).toBe(normalUser.id)
+            expect(responseBody.platformRole).toBe(PlatformRole.MEMBER)
+            expect(responseBody.password).toBeUndefined()
+        })
+
+        it('Requires authentication', async () => {
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.UNAUTHORIZED)
+        })
+    })
 })
