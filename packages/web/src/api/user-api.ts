@@ -6,6 +6,9 @@ export const userApi = {
   getUserById(id: string) {
     return api.get<UserWithBadges>(`/v1/users/${id}`);
   },
+  getCurrentUser(): Promise<UserWithBadges> {
+    return api.get<UserWithBadges>('/v1/users/me');
+  },
   updateMe(profilePicture?: File): Promise<UpdateMeResponse> {
     const formData = new FormData();
     if (profilePicture) {
