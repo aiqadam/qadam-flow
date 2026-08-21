@@ -5,33 +5,31 @@ import {
   useQuery,
   useSuspenseQuery,
 } from '@tanstack/react-query';
-import { t } from 'i18next';
-import { toast } from 'sonner';
 
 import { userApi } from '@/api/user-api';
 import { authenticationSession } from '@/lib/authentication-session';
 
 export const userHooks = {
   useCurrentUser: () => {
+    const userId = authenticationSession.getCurrentUserId();
     const token = authenticationSession.getToken();
     const expired = authenticationSession.isJwtExpired(token!);
     return useSuspenseQuery<UserWithBadges | null, Error>({
-      queryKey: ['currentUser'],
+      queryKey: ['currentUser', userId],
       queryFn: async () => {
         // Skip user data fetch if JWT is expired to prevent redirect to sign-in page
         // This is especially important for embedding scenarios where we need to accept
         // a new JWT token rather than triggering the global error handler
 
-        if (expired) {
+        if (!userId || expired) {
           return null;
         }
         try {
-          const result = await userApi.getCurrentUser();
+          const result = await userApi.getUserById(userId);
           return result;
         } catch (error) {
-          console.error('Failed to fetch current user:', error);
-          toast.error(t('Failed to load profile. Please refresh the page.'));
-          throw error;
+          console.error(error);
+          return null;
         }
       },
       staleTime: Infinity,
@@ -53,7 +51,8 @@ export const userHooks = {
     });
   },
   invalidateCurrentUser: (queryClient: QueryClient) => {
-    queryClient.invalidateQueries({ queryKey: ['currentUser'] });
+    const userId = authenticationSession.getCurrentUserId();
+    queryClient.invalidateQueries({ queryKey: ['currentUser', userId] });
   },
   getCurrentUserPlatformRole: () => {
     const { data: user } = userHooks.useCurrentUser();
