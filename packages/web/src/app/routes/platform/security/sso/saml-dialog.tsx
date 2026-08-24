@@ -403,9 +403,6 @@ const SamlStep = ({
           <ApMarkdown
             markdown={t(
               `
-**Setup Instructions**:
-Please check the following documentation: [SAML SSO](https://flow.aiqadam.org/docs/security/sso)
-
 **Single sign-on URL**:
 \`\`\`text
 {samlAcs}
