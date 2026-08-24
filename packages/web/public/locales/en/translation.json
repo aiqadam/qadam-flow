@@ -592,6 +592,7 @@
   "You tried to access a project that you do not have access to.": "You tried to access a project that you do not have access to.",
   "Failed to load data": "Failed to load data",
   "Something went wrong while loading your data. Your data is safe — please try again by refreshing the page.": "Something went wrong while loading your data. Your data is safe — please try again by refreshing the page.",
+  "We couldn't load your profile. Try refreshing the page.": "We couldn't load your profile. Try refreshing the page.",
   "New Table": "New Table",
   "Response stopped": "Response stopped",
   "Retry": "Retry",
