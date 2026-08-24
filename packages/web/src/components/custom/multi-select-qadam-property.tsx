@@ -14,6 +14,7 @@ import {
 import { CommandEmpty } from '@/components/ui/command';
 
 type MultiSelectQadamPropertyProps = {
+  id?: string;
   placeholder: string;
   options: {
     value: unknown;
@@ -36,6 +37,7 @@ type MultiSelectQadamPropertyProps = {
 };
 
 const MultiSelectQadamProperty = ({
+  id,
   placeholder,
   options,
   onChange,
@@ -112,6 +114,7 @@ const MultiSelectQadamProperty = ({
       }}
     >
       <MultiSelectTrigger
+        id={id}
         showDeselect={showDeselect && !disabled}
         onDeselect={() => onChange([])}
         showRefresh={showRefresh && !disabled}

@@ -76,8 +76,9 @@ export const ManagePiecesDialog = React.memo(
                 name="pieces"
                 render={({ field }) => (
                   <FormItem className="grid space-y-2">
-                    <Label htmlFor="pieces">{t('Qadams')}</Label>
+                    <Label htmlFor="qadams">{t('Qadams')}</Label>
                     <MultiSelectQadamProperty
+                      id="qadams"
                       placeholder={t('Qadams')}
                       options={
                         allQadams?.map((piece) => ({
