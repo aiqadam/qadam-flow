@@ -17,6 +17,16 @@ import { userService } from '../user-service'
 
 export const platformUserController: FastifyPluginAsyncZod = async (app) => {
 
+    app.get('/me', GetCurrentUserRequest, async (req) => {
+        const platformId = req.principal.platform.id
+        assertNotNullOrUndefined(platformId, 'platformId')
+
+        return userService(req.log).getOneByIdAndPlatformIdOrThrow({
+            id: req.principal.id,
+            platformId,
+        })
+    })
+
     app.get('/:id', GetUserRequest, async (req) => {
         const platformId = req.principal.platform.id
         assertNotNullOrUndefined(platformId, 'platformId')
@@ -63,6 +73,20 @@ export const platformUserController: FastifyPluginAsyncZod = async (app) => {
 
         return res.status(StatusCodes.NO_CONTENT).send()
     })
+}
+
+const GetCurrentUserRequest = {
+    schema: {
+        response: {
+            [StatusCodes.OK]: UserWithBadges,
+        },
+        tags: ['users'],
+        description: 'Get the current user',
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+    },
+    config: {
+        security: securityAccess.publicPlatform([PrincipalType.USER, PrincipalType.SERVICE]),
+    },
 }
 
 const GetUserRequest = {

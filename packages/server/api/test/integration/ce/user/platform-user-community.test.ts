@@ -23,6 +23,81 @@ afterAll(async () => {
     await teardownTestEnvironment()
 })
 describe('User API', () => {
+    describe('Get current user endpoint', () => {
+        it('Returns the calling user\'s own record', async () => {
+            // arrange
+            const { mockPlatform } = await mockAndSaveBasicSetup()
+
+            const { mockUser: normalUser } = await mockBasicUser({
+                user: {
+                    platformId: mockPlatform.id,
+                    platformRole: PlatformRole.MEMBER,
+                    status: UserStatus.ACTIVE,
+                },
+            })
+            const testToken = await generateMockToken({
+                id: normalUser.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+                headers: {
+                    authorization: `Bearer ${testToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const responseBody = response?.json()
+
+            expect(responseBody.id).toBe(normalUser.id)
+            expect(responseBody.password).toBeUndefined()
+        })
+    })
+
+    describe('Get user by id endpoint', () => {
+        it('A non-admin cannot read another user\'s record', async () => {
+            // arrange
+            const { mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+
+            const { mockUser: normalUser } = await mockBasicUser({
+                user: {
+                    platformId: mockPlatform.id,
+                    platformRole: PlatformRole.MEMBER,
+                    status: UserStatus.ACTIVE,
+                },
+            })
+            const testToken = await generateMockToken({
+                id: normalUser.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: `/api/v1/users/${mockOwner.id}`,
+                headers: {
+                    authorization: `Bearer ${testToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            const responseBody = response?.json()
+
+            expect(responseBody?.code).toBe('AUTHORIZATION')
+        })
+    })
+
     describe('List users endpoint', () => {
         it('Returns a list of users', async () => {
             // arrange
