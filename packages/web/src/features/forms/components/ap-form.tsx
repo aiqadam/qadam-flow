@@ -220,10 +220,7 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
                                       checked={field.value as boolean}
                                     ></Checkbox>
                                   </FormControl>
-                                  <FormLabel
-                                    htmlFor={input.name}
-                                    className="flex items-center"
-                                  >
+                                  <FormLabel className="flex items-center">
                                     {input.displayName}
                                   </FormLabel>
                                 </FormItem>

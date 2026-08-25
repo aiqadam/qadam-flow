@@ -33,6 +33,7 @@ export function MultiQuestionForm({
   const [focusedRow, setFocusedRow] = useState<number | 'custom' | null>(null);
   const [hoveredRow, setHoveredRow] = useState<number | 'custom' | null>(null);
   const fieldId = useId();
+  const questionControlId = useId();
   const firstOptionRef = useRef<HTMLDivElement | null>(null);
   const lastOptionRef = useRef<HTMLDivElement | null>(null);
   const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -172,12 +173,28 @@ export function MultiQuestionForm({
               exit={{ opacity: 0, x: -12 }}
               transition={{ duration: 0.2 }}
             >
-              <Label
-                htmlFor={fieldId}
-                className="block text-base font-semibold leading-snug text-foreground"
-              >
-                {q.question}
-              </Label>
+              {q.type === 'choice' ? (
+                // Not a <Label>: a div[role="menuitemradio"] is not a labelable element, so
+                // `htmlFor` here would be invalid HTML forwarding no native click-to-focus
+                // behavior anyway. Keep the manual focus without claiming a label association
+                // the browser wouldn't honor — the option's own accessible name (its option
+                // text) must stay unmodified by an aria-labelledby override.
+                <span
+                  onClick={() =>
+                    document.getElementById(questionControlId)?.focus()
+                  }
+                  className="block text-base font-semibold leading-snug text-foreground"
+                >
+                  {q.question}
+                </span>
+              ) : (
+                <Label
+                  htmlFor={questionControlId}
+                  className="block text-base font-semibold leading-snug text-foreground"
+                >
+                  {q.question}
+                </Label>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -251,6 +268,7 @@ export function MultiQuestionForm({
                           </div>
                         )}
                         <div
+                          id={isFirst ? questionControlId : undefined}
                           role="menuitemradio"
                           tabIndex={
                             focusedRow === i || (focusedRow === null && isFirst)
@@ -417,7 +435,7 @@ export function MultiQuestionForm({
 
             {q.type === 'text' && (
               <label
-                htmlFor={fieldId}
+                htmlFor={questionControlId}
                 className={cn(
                   'group flex items-center gap-3 rounded-xl px-2 py-2 text-sm font-normal cursor-text transition-colors hover:bg-muted focus-within:bg-muted',
                   currentAnswer && 'bg-muted',
@@ -434,7 +452,7 @@ export function MultiQuestionForm({
                 </span>
                 <Input
                   ref={setTextInputEl}
-                  id={fieldId}
+                  id={questionControlId}
                   className="h-auto flex-1 min-w-0 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:border-0 dark:bg-transparent"
                   placeholder={q.placeholder}
                   value={answers[currentStep] ?? ''}
