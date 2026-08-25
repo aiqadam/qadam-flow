@@ -1098,7 +1098,7 @@
   "When a user enters this domain on the sign-in page, they will be redirected to your SAML identity provider.": "Пайдаланушы кіру бетінде осы доменді енгізгенде, ол сіздің SAML сәйкестендіру провайдеріңізге бағытталады.",
   "Update SSO domain?": "SSO домені жаңартылсын ба?",
   "Users won't be able to sign in via SSO until you verify the new domain.": "Жаңа доменді растамағанша пайдаланушылар SSO арқылы кіре алмайды.",
-  "\n**Setup Instructions**:\nPlease check the following documentation: [SAML SSO](https://flow.aiqadam.org/docs/security/sso)\n\n**Single sign-on URL**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n": "\n**Баптау нұсқаулығы**:\nМына құжаттаманы қараңыз: [SAML SSO](https://flow.aiqadam.org/docs/security/sso)\n\n**Бірыңғай кіру URL-і**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n",
+  "\n**Single sign-on URL**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n": "\n**\u0411\u0456\u0440\u044b\u04a3\u0493\u0430\u0439 \u043a\u0456\u0440\u0443 URL-\u0456**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n",
   "IDP Metadata": "IDP метадеректері",
   "Paste the metadata XML contents or the metadata URL provided by your identity provider.": "Сәйкестендіру провайдеріңіз берген метадеректер XML мазмұнын немесе метадеректер URL-ін қойыңыз.",
   "IDP Certificate": "IDP сертификаты",
