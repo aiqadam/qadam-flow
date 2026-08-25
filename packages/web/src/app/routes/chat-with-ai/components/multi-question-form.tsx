@@ -173,15 +173,28 @@ export function MultiQuestionForm({
               exit={{ opacity: 0, x: -12 }}
               transition={{ duration: 0.2 }}
             >
-              <Label
-                htmlFor={questionControlId}
-                onClick={() =>
-                  document.getElementById(questionControlId)?.focus()
-                }
-                className="block text-base font-semibold leading-snug text-foreground"
-              >
-                {q.question}
-              </Label>
+              {q.type === 'choice' ? (
+                // Not a <Label>: a div[role="menuitemradio"] is not a labelable element, so
+                // `htmlFor` here would be invalid HTML forwarding no native click-to-focus
+                // behavior anyway. Keep the manual focus without claiming a label association
+                // the browser wouldn't honor — the option's own accessible name (its option
+                // text) must stay unmodified by an aria-labelledby override.
+                <span
+                  onClick={() =>
+                    document.getElementById(questionControlId)?.focus()
+                  }
+                  className="block text-base font-semibold leading-snug text-foreground"
+                >
+                  {q.question}
+                </span>
+              ) : (
+                <Label
+                  htmlFor={questionControlId}
+                  className="block text-base font-semibold leading-snug text-foreground"
+                >
+                  {q.question}
+                </Label>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>

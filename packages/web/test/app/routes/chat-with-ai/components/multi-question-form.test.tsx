@@ -75,11 +75,16 @@ describe('MultiQuestionForm label association', () => {
     expect(document.activeElement).toBe(control);
   });
 
-  // This is the case a literal `htmlFor`/`id` grep cannot see failing: before the fix, the title
-  // label's `htmlFor` pointed at the same id as the unrelated "type your own answer" input, so a
-  // naive check ("does *some* element have this id?") would report the tree as clean. Resolving
-  // *through the label* to the actual choice control is what catches it.
-  it('associates a choice question label with the first choice option, not the free-text fallback', async () => {
+  // This is the case a literal `htmlFor`/`id` grep cannot see failing: before the fix, the title's
+  // `htmlFor` pointed at the same id as the unrelated "type your own answer" input, so a naive
+  // check ("does *some* element have this id?") would report the tree as clean. Resolving from the
+  // title to the actual choice control is what catches it.
+  //
+  // The title itself is a plain <span>, not a <label>: a div[role="menuitemradio"] is not a
+  // labelable element, so `htmlFor` there is invalid HTML that forwards no native click behavior —
+  // and an `aria-labelledby` override would have replaced the option's own accessible name ("Apple")
+  // with the question text, breaking screen-reader announcement of which option is which.
+  it('resolves the choice question title to the first choice option, not the free-text fallback', async () => {
     await mount([
       {
         question: 'Which fruit do you like?',
@@ -88,17 +93,24 @@ describe('MultiQuestionForm label association', () => {
       },
     ]);
 
-    const control = findLabelledControl('Which fruit do you like?');
-    expect(control).not.toBeNull();
-    expect(control?.getAttribute('role')).toBe('menuitemradio');
-    expect(control?.textContent).toContain('Apple');
-
-    const label = [...(container?.querySelectorAll('label') ?? [])].find(
-      (el) => el.textContent?.includes('Which fruit do you like?'),
+    const title = [...(container?.querySelectorAll('span') ?? [])].find((el) =>
+      el.textContent?.includes('Which fruit do you like?'),
     );
+    expect(title).toBeDefined();
+    expect(title?.tagName).not.toBe('LABEL');
+
     await act(async () => {
-      label?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      title?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(document.activeElement).toBe(control);
+
+    const focused = document.activeElement;
+    expect(focused?.getAttribute('role')).toBe('menuitemradio');
+    expect(focused?.textContent).toContain('Apple');
+
+    // Keyboard reachability is unaffected by the span: neither a <label> nor a plain <span> is
+    // ever in the tab order (no tabIndex on either), so a keyboard user never lands on the title
+    // either way. What must stay reachable is the option itself, via the tabIndex this component
+    // already manages — confirmed here directly, not inferred from the title's tag name.
+    expect(focused?.getAttribute('tabindex')).toBe('0');
   });
 });
