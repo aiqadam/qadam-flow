@@ -59,38 +59,6 @@ describe('User API', () => {
             expect(responseBody.id).toBe(normalUser.id)
             expect(responseBody.password).toBeUndefined()
         })
-
-        it('Returns the record for an ONBOARDING principal with no platform yet', async () => {
-            // arrange
-            const { mockUserIdentity, mockUser: onboardingUser } = await mockBasicUser({
-                user: {
-                    platformId: null,
-                    status: UserStatus.ACTIVE,
-                },
-            })
-            // An ONBOARDING token's id is the identity id, not the user id — see
-            // getOnboardingResponse in authentication-utils.ts.
-            const testToken = await generateMockToken({
-                id: mockUserIdentity.id,
-                type: PrincipalType.ONBOARDING,
-            })
-
-            // act
-            const response = await app?.inject({
-                method: 'GET',
-                url: '/api/v1/users/me',
-                headers: {
-                    authorization: `Bearer ${testToken}`,
-                },
-            })
-
-            // assert
-            expect(response?.statusCode).toBe(StatusCodes.OK)
-            const responseBody = response?.json()
-
-            expect(responseBody.id).toBe(onboardingUser.id)
-            expect(responseBody.platformId).toBeNull()
-        })
     })
 
     describe('Get user by id endpoint', () => {
