@@ -109,23 +109,28 @@ const AuthBrandLockup = () => (
   </div>
 );
 
-const AuthImage = () => (
-  <div
-    aria-hidden
-    className="absolute inset-0 w-full h-full flex flex-col items-center justify-center px-12 text-center"
-    style={{ backgroundColor: '#3CA29E' }}
-  >
-    <h2 className="text-white text-[44px] leading-[1.1] font-medium max-w-md">
-      Automation that&rsquo;s yours.
-    </h2>
-    <p className="text-white/85 text-lg mt-6 max-w-md leading-relaxed">
-      Open-source AI workflows. No vendor lock-in, no phone-home.
-    </p>
-    <div className="absolute bottom-6 left-0 right-0 text-center text-white/75 text-[13px] tracking-wide font-medium">
-      an AI Qadam Build project
+const AuthImage = () => {
+  const branding = flagsHooks.useWebsiteBranding();
+
+  return (
+    <div
+      aria-hidden
+      className="absolute inset-0 w-full h-full flex flex-col items-center justify-center px-12 text-center bg-primary"
+    >
+      <h2 className="text-primary-foreground text-[44px] leading-[1.1] font-medium max-w-md">
+        {t('Automation that’s yours.')}
+      </h2>
+      <p className="text-primary-foreground/85 text-lg mt-6 max-w-md leading-relaxed">
+        {t('Open-source AI workflows. No vendor lock-in, no phone-home.')}
+      </p>
+      <div className="absolute bottom-6 left-0 right-0 text-center text-primary-foreground/75 text-[13px] tracking-wide font-medium">
+        {t('a {websiteName} Build project', {
+          websiteName: branding.websiteName,
+        })}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const AuthLayout = ({
   children,
