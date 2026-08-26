@@ -17,6 +17,7 @@ export const userHooks = {
     const userId = authenticationSession.getCurrentUserId();
     const token = authenticationSession.getToken();
     const expired = authenticationSession.isJwtExpired(token!);
+    const onboarding = authenticationSession.isOnboarding();
     return useSuspenseQuery<UserWithBadges | null, Error>({
       queryKey: ['currentUser', userId],
       queryFn: async () => {
@@ -24,7 +25,12 @@ export const userHooks = {
         // This is especially important for embedding scenarios where we need to accept
         // a new JWT token rather than triggering the global error handler
 
-        if (!userId || expired) {
+        // An ONBOARDING principal (issued right after sign-up, before a platform exists)
+        // has no `platform` on it — GetCurrentUserRequest requires USER/SERVICE, and there
+        // is no route that widens it, because the principal type itself can't carry a
+        // platform id. Calling anyway means a guaranteed 403 on every render of
+        // /create-platform, which react-query then retries with backoff.
+        if (!userId || expired || onboarding) {
           return null;
         }
         try {
