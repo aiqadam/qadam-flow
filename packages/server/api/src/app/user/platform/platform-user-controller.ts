@@ -17,6 +17,24 @@ import { userService } from '../user-service'
 
 export const platformUserController: FastifyPluginAsyncZod = async (app) => {
 
+    app.get('/me', GetCurrentUserRequest, async (req) => {
+        // ONBOARDING principals exist between sign-up and platform creation and are never
+        // platform-scoped (see OnboardingPrincipal in principal.ts). Their principal.id is the
+        // identity id, not a user id (getOnboardingResponse in authentication-utils.ts) — looking
+        // it up is safe because that id always comes from the caller's own token, never input.
+        if (req.principal.type === PrincipalType.ONBOARDING) {
+            return userService(req.log).getOneByIdentityForOnboardingOrThrow({ identityId: req.principal.id })
+        }
+
+        const platformId = req.principal.platform.id
+        assertNotNullOrUndefined(platformId, 'platformId')
+
+        return userService(req.log).getOneByIdAndPlatformIdOrThrow({
+            id: req.principal.id,
+            platformId,
+        })
+    })
+
     app.get('/:id', GetUserRequest, async (req) => {
         const platformId = req.principal.platform.id
         assertNotNullOrUndefined(platformId, 'platformId')
@@ -63,6 +81,20 @@ export const platformUserController: FastifyPluginAsyncZod = async (app) => {
 
         return res.status(StatusCodes.NO_CONTENT).send()
     })
+}
+
+const GetCurrentUserRequest = {
+    schema: {
+        response: {
+            [StatusCodes.OK]: UserWithBadges,
+        },
+        tags: ['users'],
+        description: 'Get the current user',
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+    },
+    config: {
+        security: securityAccess.unscoped([PrincipalType.USER, PrincipalType.SERVICE, PrincipalType.ONBOARDING]),
+    },
 }
 
 const GetUserRequest = {
