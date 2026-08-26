@@ -5,8 +5,11 @@ import {
   useQuery,
   useSuspenseQuery,
 } from '@tanstack/react-query';
+import { t } from 'i18next';
 
 import { userApi } from '@/api/user-api';
+import { useApErrorDialogStore } from '@/components/custom/ap-error-dialog/ap-error-dialog-store';
+import { api } from '@/lib/api';
 import { authenticationSession } from '@/lib/authentication-session';
 
 export const userHooks = {
@@ -25,10 +28,27 @@ export const userHooks = {
           return null;
         }
         try {
-          const result = await userApi.getUserById(userId);
+          const result = await userApi.getCurrentUser();
           return result;
         } catch (error) {
           console.error(error);
+          // Unlike the expired-JWT case above, this is a real failure (network, 5xx, an
+          // unexpectedly invalid session) and must not disappear into the console — the
+          // caller (sidebar) would otherwise render as if there were deliberately no
+          // profile block to show.
+          const { openDialog } = useApErrorDialogStore.getState();
+          openDialog({
+            title: t('Failed to load data'),
+            description: t(
+              "We couldn't load your profile. Try refreshing the page.",
+            ),
+            error: {
+              queryKey: ['currentUser', userId],
+              details: api.isError(error)
+                ? error.response?.data
+                : String(error),
+            },
+          });
           return null;
         }
       },
