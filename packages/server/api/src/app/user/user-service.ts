@@ -166,6 +166,26 @@ export const userService = (log: FastifyBaseLogger) => ({
             })),
         }
     },
+    async getOneByIdentityForOnboardingOrThrow({ identityId }: GetOneByIdentityForOnboardingParams): Promise<UserWithBadges> {
+        // An ONBOARDING principal's id is the identity id, not a user id (see
+        // getOnboardingResponse in authentication-utils.ts) — and onboarding is definitionally
+        // pre-platform, so the row we want is the one this identity has with no platform yet.
+        const user = await userRepo().findOne({ where: { identityId, platformId: IsNull() }, relations: { badges: true } })
+        if (isNil(user)) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: { entityType: 'user', entityId: identityId },
+            })
+        }
+        const meta = await this.getMetaInformation({ id: user.id })
+        return {
+            ...meta,
+            badges: user.badges.map((badge) => ({
+                name: badge.name,
+                created: badge.created,
+            })),
+        }
+    },
     async delete({ id, platformId }: DeleteParams): Promise<void> {
         await assertNotPlatformOwner({ id, platformId, log })
         await userRepo().delete({
@@ -297,6 +317,10 @@ type GetByIdentityId = {
 type GetOneByIdentityIdParams = {
     identityId: string
     platformId: PlatformId | null
+}
+
+type GetOneByIdentityForOnboardingParams = {
+    identityId: string
 }
 
 type UpdateParams = {
