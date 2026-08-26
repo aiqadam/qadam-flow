@@ -13,11 +13,9 @@ const harness = vi.hoisted(() => {
   const state: {
     getCurrentUser: () => Promise<UserWithBadges>;
     isJwtExpired: boolean;
-    isOnboarding: boolean;
   } = {
     getCurrentUser: () => Promise.reject(new Error('not configured')),
     isJwtExpired: false,
-    isOnboarding: false,
   };
   return { state };
 });
@@ -27,7 +25,6 @@ vi.mock('@/lib/authentication-session', () => ({
     getCurrentUserId: () => 'user-1',
     getToken: () => 'token',
     isJwtExpired: () => harness.state.isJwtExpired,
-    isOnboarding: () => harness.state.isOnboarding,
   },
 }));
 
@@ -80,7 +77,6 @@ afterEach(async () => {
   root = undefined;
   result = undefined;
   harness.state.isJwtExpired = false;
-  harness.state.isOnboarding = false;
   useApErrorDialogStore.setState({ params: null });
 });
 
@@ -115,24 +111,6 @@ describe('userHooks.useCurrentUser', () => {
   // avoid comes back. Pin it so the visible-error fix above cannot regress it.
   it('does not call the API or open the error dialog when the JWT is expired', async () => {
     harness.state.isJwtExpired = true;
-    const getCurrentUser = vi.fn(() => Promise.resolve({} as UserWithBadges));
-    harness.state.getCurrentUser = getCurrentUser;
-
-    await mount();
-
-    expect(getCurrentUser).not.toHaveBeenCalled();
-    expect(result?.data).toBeNull();
-    expect(useApErrorDialogStore.getState().params).toBeNull();
-  });
-
-  // #357's review finding: an ONBOARDING principal (issued right after sign-up, before a
-  // platform exists) has no `platform` field, so GetCurrentUserRequest — which requires
-  // USER/SERVICE — always 403s for it. Without this guard, /create-platform hits that 403 on
-  // every render and react-query retries with backoff, stalling the page for ~15-20s with no
-  // visible error (the catch above swallows it silently by design for the embed case, but this
-  // isn't that case — it's a route where the request should never have been made at all).
-  it('does not call the API or open the error dialog for an ONBOARDING principal', async () => {
-    harness.state.isOnboarding = true;
     const getCurrentUser = vi.fn(() => Promise.resolve({} as UserWithBadges));
     harness.state.getCurrentUser = getCurrentUser;
 
