@@ -54,7 +54,16 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             throw resumeLogsFileMissingError
         }
 
-        const sandbox = ctx.sandboxManager.acquire({ log: ctx.log, apiClient: ctx.apiClient })
+        const sandbox = ctx.sandboxManager.acquire({
+            log: ctx.log,
+            apiClient: ctx.apiClient,
+            jobContext: {
+                projectId: data.projectId,
+                platformId: data.platformId,
+                parentRunId: data.runId,
+                environment: data.environment,
+            },
+        })
         try {
             await sandbox.start({
                 flowVersionId: flowVersion.id,

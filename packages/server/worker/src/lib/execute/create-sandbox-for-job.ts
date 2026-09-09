@@ -1,4 +1,4 @@
-import { ExecutionMode, maxSocketHttpBufferSizeBytes, NetworkMode, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
+import { ExecutionMode, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
 import { getEnginePath, getGlobalCacheCommonPath, getGlobalCodeCachePath } from '../cache/cache-paths'
@@ -8,6 +8,8 @@ import { simpleProcess } from '../sandbox/fork'
 import { isolateProcess } from '../sandbox/isolate'
 import { createSandbox } from '../sandbox/sandbox'
 import { Sandbox, SandboxMount } from '../sandbox/types'
+import { InlineJobContext } from './sandbox-manager'
+import { provisionFlowPieces } from './utils/flow-helpers'
 
 export function createSandboxForJob(params: {
     log: Logger
@@ -15,8 +17,9 @@ export function createSandboxForJob(params: {
     boxId: number
     reusable: boolean
     proxyPort: number | null
+    getCurrentJobContext: () => InlineJobContext | null
 }): Sandbox {
-    const { log, apiClient, boxId, reusable, proxyPort } = params
+    const { log, apiClient, boxId, reusable, proxyPort, getCurrentJobContext } = params
     const settings = workerSettings.getSettings()
     const sandboxId = nanoid()
 
@@ -25,6 +28,7 @@ export function createSandboxForJob(params: {
         uploadRunLog: (input) => apiClient.uploadRunLog(input),
         sendFlowResponse: (input) => apiClient.sendFlowResponse(input),
         updateStepProgress: (input) => apiClient.updateStepProgress(input),
+        resolveInlineFlow: (input) => resolveInlineFlow({ input, log, apiClient, getCurrentJobContext }),
     }
 
     const memoryLimitMb = parseMemoryLimit(settings.SANDBOX_MEMORY_LIMIT)
@@ -56,6 +60,49 @@ export function createSandboxForJob(params: {
 
 export function isIsolateMode(mode: ExecutionMode): boolean {
     return mode === ExecutionMode.SANDBOX_PROCESS || mode === ExecutionMode.SANDBOX_CODE_AND_PROCESS
+}
+
+async function resolveInlineFlow(params: {
+    input: { flowId: string, payload: unknown }
+    log: Logger
+    apiClient: WorkerToApiContract
+    getCurrentJobContext: () => InlineJobContext | null
+}): Promise<ResolveInlineFlowResult> {
+    const { input, log, apiClient, getCurrentJobContext } = params
+    const jobContext = getCurrentJobContext()
+    if (isNil(jobContext)) {
+        return { ok: false, error: 'Inline subflows are only supported when called from a running flow.' }
+    }
+
+    // The API call is what actually scopes/validates/depth-guards the target — using
+    // ONLY the worker's own trusted current-job identity, never anything the engine
+    // process supplied. This call cannot fail open: a rejected/unreachable API means
+    // no inline execution happens, same as any other worker->API RPC failure.
+    const started = await apiClient.startInlineFlowRun({
+        callerProjectId: jobContext.projectId,
+        callerPlatformId: jobContext.platformId,
+        parentRunId: jobContext.parentRunId,
+        environment: jobContext.environment,
+        flowId: input.flowId,
+        payload: input.payload,
+    })
+    if (!started.ok) {
+        return started
+    }
+
+    const provisioned = await provisionFlowPieces({
+        flowVersion: started.flowVersion,
+        platformId: jobContext.platformId,
+        flowId: started.flowVersion.flowId,
+        projectId: jobContext.projectId,
+        log,
+        apiClient,
+    })
+    if (!provisioned) {
+        return { ok: false, error: 'Failed to provision the subflow\'s pieces.' }
+    }
+
+    return started
 }
 
 function getProcessMaker(executionMode: string, log: Logger, boxId: number) {

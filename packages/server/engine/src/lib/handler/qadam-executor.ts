@@ -15,6 +15,7 @@ import { propsProcessor } from '../variables/props-processor'
 import { workerSocket } from '../worker-socket'
 import { ActionHandler, BaseExecutor } from './base-executor'
 import { EngineConstants } from './context/engine-constants'
+import { callFlowInline } from './inline-flow-executor'
 
 const AP_PAUSED_FLOW_TIMEOUT_DAYS = Number(process.env.AP_PAUSED_FLOW_TIMEOUT_DAYS)
 
@@ -140,6 +141,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 respond: createRespondHook(params),
                 createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params }),
                 waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params }),
+                callFlowInline: (req) => callFlowInline({ constants, flowId: req.flowId, payload: req.payload }),
             },
             project: {
                 id: constants.projectId,

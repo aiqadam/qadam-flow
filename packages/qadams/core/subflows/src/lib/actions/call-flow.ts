@@ -99,6 +99,19 @@ export const callFlow = createAction({
       required: false,
       defaultValue: false,
     }),
+    executionMode: Property.StaticDropdown({
+      displayName: 'Execution Mode',
+      required: true,
+      description: 'Queue dispatches the subflow as a separate worker job (default, works for every subflow). Inline runs it synchronously in the same engine process for much lower latency — use it for chains of lightweight subflows. The subflow must not pause (Delay, Human Input/Approval, or its own Queue-mode Call Flow) when run inline.',
+      defaultValue: 'queue',
+      options: {
+        disabled: false,
+        options: [
+          { label: 'Queue', value: 'queue' },
+          { label: 'Inline', value: 'inline' },
+        ],
+      },
+    }),
   },
   async run(context) {
     if (context.executionType === ExecutionType.RESUME) {
@@ -124,6 +137,18 @@ export const callFlow = createAction({
         externalId: context.propsValue.flow?.externalId,
         flowName: flow.version.displayName,
       }));
+    }
+
+    if (context.propsValue.executionMode === 'inline') {
+      const inlineResponse = await context.run.callFlowInline({
+        flowId: flow.id,
+        payload,
+      });
+      const shouldFailParentRun = inlineResponse.status === 'error' && context.propsValue.waitForResponse;
+      if (shouldFailParentRun) {
+        throw new Error(JSON.stringify(inlineResponse.data, null, 2));
+      }
+      return inlineResponse;
     }
 
     let callbackUrl: string | undefined

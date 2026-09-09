@@ -59,6 +59,8 @@ export const response = createAction({
     const callbackUrl = await context.store.get<string>(callableFlowKey(context.run.id), StoreScope.FLOW);
     const isNotTestFlow = callbackUrl !== MOCK_CALLBACK_IN_TEST_FLOW_URL;
     if (isNotTestFlow && !isNil(callbackUrl)) {
+      // Queue execution mode: the parent is paused on a waitpoint, reachable only via
+      // this callback POST.
       await httpClient.sendRequest<CallableFlowResponse>({
         method: HttpMethod.POST,
         url: callbackUrl,
@@ -67,6 +69,19 @@ export const response = createAction({
           data: response
         },
         retries: 10,
+      });
+    }
+    else if (isNil(callbackUrl)) {
+      // No callback was stored: either an inline `callFlow` call (synchronous,
+      // in-process — nothing to POST to) or the flow was hit directly, e.g. via
+      // `/v1/webhooks/:flowId/sync`. Either way, stop the flow here and hand back the
+      // response synchronously, so whoever is waiting on this run gets the real value
+      // instead of the default empty response.
+      context.run.stop({
+        response: {
+          status: 200,
+          body: { status: 'success', data: response } as CallableFlowResponse,
+        },
       });
     }
     return response;

@@ -56,7 +56,7 @@ afterAll(async () => {
     await app.close()
 }, 15_000)
 
-async function setupSubflowFixtures() {
+async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue') {
     const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
 
     const webhookPiece = createMockQadamMetadata({
@@ -186,6 +186,7 @@ async function setupSubflowFixtures() {
                     },
                 },
                 waitForResponse: true,
+                executionMode,
             },
             propertySettings: {},
             errorHandlingOptions: {},
@@ -700,6 +701,46 @@ describe('Execute Flow E2E', () => {
                 },
             }),
         )
+    }, 180_000)
+
+    it('executes parent → child subflow with executionMode "inline"', async () => {
+        const { parentFlow, parentFlowVersion, mockPlatform, mockProject } = await setupSubflowFixtures('inline')
+
+        const flowRun = await flowRunService(app.log).start({
+            flowId: parentFlow.id,
+            payload: { body: { name: 'Alice' } },
+            platformId: mockPlatform.id,
+            executionType: ExecutionType.BEGIN,
+            environment: RunEnvironment.TESTING,
+            streamStepProgress: StreamStepProgress.NONE,
+            executeTrigger: false,
+            flowVersionId: parentFlowVersion.id,
+            projectId: mockProject.id,
+            workerHandlerId: undefined,
+            httpRequestId: undefined,
+            failParentOnFailure: undefined,
+        })
+
+        const result = await pollFlowRunToCompletion(flowRun.id, mockProject.id)
+
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+        expect(result.steps.step_1.output).toEqual(
+            expect.objectContaining({
+                status: 'success',
+                data: {
+                    greeting: 'Hello Alice',
+                    processed: true,
+                },
+            }),
+        )
+
+        // Observability: the inline child still gets a real FlowRun row with
+        // parentRunId set, even though it never touched BullMQ.
+        const childRun = await db.findOneBy<{ id: string, status: string, flowId: string }>('flow_run', {
+            parentRunId: flowRun.id,
+        })
+        expect(childRun).not.toBeNull()
+        expect(childRun!.status).toBe(FlowRunStatus.SUCCEEDED)
     }, 180_000)
 
     it('executes a webhook → delay_for → code flow without infinite loop', async () => {

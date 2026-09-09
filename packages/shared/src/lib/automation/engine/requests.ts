@@ -3,8 +3,33 @@ import { RunInternalError } from '../flow-run/execution/execution-output'
 import { FlowRunStatus } from '../flow-run/execution/flow-execution'
 import { StepOutput } from '../flow-run/execution/step-output'
 import { FailedStep, FlowRun } from '../flow-run/flow-run'
+import { FlowVersion } from '../flows/flow-version'
 import { StepRunResponse } from '../flows/sample-data'
 import { StreamStepProgress } from './engine-operation'
+
+export const INLINE_SUBFLOW_DEPTH_LIMIT = 50
+
+export const ResolveInlineFlowRequest = z.object({
+    flowId: z.string(),
+    payload: z.unknown(),
+})
+export type ResolveInlineFlowRequest = z.infer<typeof ResolveInlineFlowRequest>
+
+const ResolveInlineFlowSuccess = z.object({
+    ok: z.literal(true),
+    flowVersion: z.custom<FlowVersion>(),
+    childRunId: z.string(),
+    childLogsFileId: z.string(),
+    inlineDepth: z.number(),
+})
+
+const ResolveInlineFlowFailure = z.object({
+    ok: z.literal(false),
+    error: z.string(),
+})
+
+export const ResolveInlineFlowResult = z.discriminatedUnion('ok', [ResolveInlineFlowSuccess, ResolveInlineFlowFailure])
+export type ResolveInlineFlowResult = z.infer<typeof ResolveInlineFlowResult>
 
 
 
