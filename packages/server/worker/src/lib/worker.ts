@@ -4,12 +4,16 @@ import { apVersionUtil, systemUsage } from '@aiqadam/server-utils'
 import {
     ConsumeJobRequest,
     createRpcClient,
+    EngineOperationType,
     EngineResponseStatus,
     ExecutionMode,
+    ExecutionType,
+    FlowRunStatus,
     isNil,
     JobData,
     QadamFlowError,
     SandboxInformation,
+    StreamStepProgress,
     tryCatch,
     tryCatchSync,
     WebsocketServerEvent,
@@ -21,6 +25,7 @@ import {
 import { trace } from '@opentelemetry/api'
 import { nanoid } from 'nanoid'
 import { io, Socket } from 'socket.io-client'
+import { flowCache } from './cache/flow/flow-cache'
 import { qadamInstaller } from './cache/qadams/qadam-installer'
 import { getApiUrl, system, WorkerSystemProp } from './config/configs'
 import { logger } from './config/logger'
@@ -29,6 +34,7 @@ import { EgressStack, startEgressStack } from './egress/lifecycle'
 import { getHandler } from './execute/job-registry'
 import { ActiveSandboxInfo, createSandboxManager, SandboxManager } from './execute/sandbox-manager'
 import { JobContext, JobResult, JobResultKind } from './execute/types'
+import { provisionFlowPieces } from './execute/utils/flow-helpers'
 
 
 const tracer = trace.getTracer('worker')
@@ -81,6 +87,7 @@ export const worker = {
                 }
                 egressStack = data
             }
+            void setupInlineFlowListener(apiClient)
             void warmupPiecesOnStartup(apiClient)
             void startPollingWorkers(apiClient).catch((err) => {
                 logger.error({ error: err }, 'Polling workers crashed unexpectedly')
@@ -421,4 +428,172 @@ type WorkerStartParams = {
     socketUrl: { url: string, path: string }
     workerToken: string
     withHealthServer?: boolean
+}
+
+async function setupInlineFlowListener(apiClient: WorkerToApiContract): Promise<void> {
+    const inlineFlowHandlerCache = new Set<string>()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    socket?.on(WebsocketServerEvent.EXECUTE_INLINE_FLOW, async (data: any) => {
+        if (!apiClient || !socket) {
+            return
+        }
+
+        const requestId = data.requestId ?? data.runId
+        if (!requestId) {
+            logger.warn('[setupInlineFlowListener] Missing requestId in inline flow command')
+            return
+        }
+
+        if (inlineFlowHandlerCache.has(requestId)) {
+            logger.info({ requestId }, '[setupInlineFlowListener] Skipping duplicate inline flow command')
+            return
+        }
+        inlineFlowHandlerCache.add(requestId)
+
+        const log = logger.child({ requestId })
+        try {
+            await handleExecuteInlineFlow(log as typeof logger, apiClient, data)
+        }
+        catch (err) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (log as any).error({ error: err }, '[handleExecuteInlineFlow] Failed to execute inline flow')
+        }
+        finally {
+            setTimeout(() => {
+                inlineFlowHandlerCache.delete(requestId)
+            }, 300_000)
+        }
+    })
+}
+
+type InlineFlowCommandData = {
+    requestId: string
+    platformId: string
+    projectId: string
+    schemaVersion: number
+    payload: unknown
+    environment: string
+    streamStepProgress: string
+    flowId: string
+    flowVersionId: string
+    runId: string
+    workerHandlerId: string | null
+    httpRequestId: string
+    traceContext: Record<string, string>
+    inlineDepth: number
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleExecuteInlineFlow(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    log: any,
+    apiClient: WorkerToApiContract,
+    data: InlineFlowCommandData,
+): Promise<void> {
+    const timeoutInSeconds = Number(workerSettings.getSettings().FLOW_TIMEOUT_SECONDS)
+
+    const fv = await flowCache(log as typeof logger, apiClient).getVersion({ flowVersionId: data.flowVersionId })
+    if (isNil(fv)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (log as any).info({ flowVersionId: data.flowVersionId }, 'Flow version not found for inline execution')
+        return
+    }
+
+    const provisioned = await tryCatch(() =>
+        provisionFlowPieces({
+            flowVersion: fv,
+            platformId: data.platformId,
+            flowId: data.flowId,
+            projectId: data.projectId,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            log: log as any,
+            apiClient,
+        }),
+    )
+    if (provisioned.error || !provisioned.data) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (log as any).warn({ error: provisioned.error }, '[handleExecuteInlineFlow] Provision failed')
+        return
+    }
+
+    const sbManagerIdx = Math.floor(Math.random() * sandboxManagers.length) || 0
+    const sbManager = sandboxManagers[sbManagerIdx] ?? createSandboxManager({ boxId: 1, proxyPort: null })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sandbox = sbManager.acquire({ log: log as any, apiClient })
+
+    try {
+        await sandbox.start({
+            flowVersionId: fv.id,
+            platformId: data.platformId,
+            mounts: [],
+        })
+
+        const operation: Record<string, unknown> = {
+            flowVersion: fv,
+            flowRunId: data.runId,
+            projectId: data.projectId,
+            workerHandlerId: data.workerHandlerId ?? '',
+            runEnvironment: data.environment,
+            httpRequestId: data.httpRequestId ?? '',
+            streamStepProgress: data.streamStepProgress as StreamStepProgress,
+            stepNameToTest: null,
+            logsFileId: undefined,
+            timeoutInSeconds,
+            platformId: data.platformId,
+            executionType: ExecutionType.BEGIN,
+            triggerPayload: data.payload,
+            executeTrigger: true,
+        }
+
+        const result = await sandbox.execute(
+            EngineOperationType.EXECUTE_FLOW,
+            operation as never,
+            { timeoutInSeconds },
+        )
+
+        const httpRequestId = data.httpRequestId ?? ''
+        if (httpRequestId) {
+            await apiClient.sendFlowResponse({
+                workerHandlerId: data.workerHandlerId ?? '',
+                httpRequestId,
+                runResponse: {
+                    status: result.status === EngineResponseStatus.OK ? 200 : 500,
+                    body: { status: result.status, data: undefined },
+                    headers: {},
+                },
+            })
+        }
+
+        await apiClient.uploadRunLog({
+            runId: data.runId,
+            status: engineStatusToFlowRunStatus(result.status),
+            projectId: data.projectId,
+            streamStepProgress: data.streamStepProgress as StreamStepProgress,
+            finishTime: new Date().toISOString(),
+            logsFileId: undefined,
+        })
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(log as any).info({ status: result.status }, '[handleExecuteInlineFlow] Inline flow completed')
+    }
+    finally {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await sbManager.release(log as any)
+    }
+}
+
+function engineStatusToFlowRunStatus(status: EngineResponseStatus): FlowRunStatus {
+    switch (status) {
+        case EngineResponseStatus.OK:
+            return FlowRunStatus.SUCCEEDED
+        case EngineResponseStatus.TIMEOUT:
+            return FlowRunStatus.TIMEOUT
+        case EngineResponseStatus.MEMORY_ISSUE:
+            return FlowRunStatus.MEMORY_LIMIT_EXCEEDED
+        case EngineResponseStatus.LOG_SIZE_EXCEEDED:
+            return FlowRunStatus.LOG_SIZE_EXCEEDED
+        default:
+            return FlowRunStatus.INTERNAL_ERROR
+    }
 }

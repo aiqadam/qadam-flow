@@ -30,6 +30,7 @@ export enum WebsocketServerEvent {
     UNLOCK_RESOURCE = 'UNLOCK_RESOURCE',
     JOIN_PRESENCE = 'JOIN_PRESENCE',
     LEAVE_PRESENCE = 'LEAVE_PRESENCE',
+    EXECUTE_INLINE_FLOW = 'EXECUTE_INLINE_FLOW',
 }
 
 export const BadgeAwarded = z.object({

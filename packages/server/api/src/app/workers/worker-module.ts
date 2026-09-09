@@ -3,6 +3,7 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { runsMetadataQueue } from '../flows/flow-run/flow-runs-queue'
 import { pubsub } from '../helper/pubsub'
 import { flowEngineWorker } from './engine-controller'
+import { inlineSubflowModule } from './inline-subflow/inline-subflow.module'
 import { setupBullMQBoard } from './job-queue/bullboard'
 import { jobBroker } from './job-queue/job-broker'
 import { jobQueue } from './job-queue/job-queue'
@@ -12,6 +13,7 @@ export const workerModule: FastifyPluginAsyncZod = async (app) => {
     await app.register(flowEngineWorker, {
         prefix: '/v1/engine',
     })
+    await app.register(inlineSubflowModule)
     await app.register(workerMachineController, {
         prefix: '/v1/worker-machines',
     })

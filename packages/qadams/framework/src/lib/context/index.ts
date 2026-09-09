@@ -194,6 +194,8 @@ export type WaitForWaitpointHook = (waitpointId: string) => void;
 
 export type RunContext = {
   id: FlowRunId;
+  /** Inline depth counter for subflow chains. Incremented per /run-inline hop and enforced against a hard limit (50). */
+  inlineDepth?: number;
   stop: StopHook;
   /** @deprecated Use createWaitpoint + waitForWaitpoint instead */
   pause?: PauseHook;

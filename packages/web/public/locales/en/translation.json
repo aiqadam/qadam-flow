@@ -1997,5 +1997,9 @@
   "(hidden)": "(hidden)",
   "Yes, proceed": "Yes, proceed",
   "No, cancel": "No, cancel",
-  "The action could not be answered. Please try again.": "The action could not be answered. Please try again."
+  "The action could not be answered. Please try again.":   "The action could not be answered. Please try again.",
+  "Execution Mode": "Execution Mode",
+  "Inline": "Inline",
+  "Queue": "Queue",
+  "How to execute the child flow. Queue dispatches a separate worker job (original behavior). Inline runs the child in-process for significantly lower latency."
 }

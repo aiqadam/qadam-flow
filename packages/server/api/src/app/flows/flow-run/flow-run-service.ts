@@ -300,6 +300,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         platformId,
         stepNameToTest,
         environment,
+        inlineDepth,
     }: StartParams): Promise<FlowRun> {
         return tracer.startActiveSpan('flowRun.start', {
             attributes: {
@@ -335,12 +336,68 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     workerHandlerId,
                     httpRequestId,
                     streamStepProgress,
+                    inlineDepth,
                 }, log)
 
                 span.setAttribute('flowRun.queued', true)
                 await flowRunSideEffects(log).onStart(newFlowRun)
                 log.info({ runId: newFlowRun.id, flowId, projectId, executionType }, 'Flow run started')
                 return newFlowRun
+            }
+            finally {
+                span.end()
+            }
+        })
+    },
+
+    async startForInline({
+        flowId,
+        flowVersionId,
+        projectId,
+        environment,
+        parentRunId,
+        failParentOnFailure,
+    }: {
+        flowId: FlowId
+        flowVersionId: FlowVersionId
+        projectId: ProjectId
+        environment: RunEnvironment
+        parentRunId?: string
+        failParentOnFailure?: boolean
+    }): Promise<FlowRun> {
+        return tracer.startActiveSpan('flowRun.startForInline', {
+            attributes: {
+                'flowRun.flowVersionId': flowVersionId,
+                'flowRun.projectId': projectId,
+                'flowRun.parentRunId': parentRunId,
+            },
+        }, async (span) => {
+            try {
+                span.setAttribute('flowRun.flowId', flowId)
+
+                const now = new Date().toISOString()
+                const flowRun: FlowRun = {
+                    id: apId(),
+                    projectId,
+                    flowId,
+                    flowVersionId,
+                    environment,
+                    parentRunId,
+                    failParentOnFailure: failParentOnFailure ?? true,
+                    status: FlowRunStatus.RUNNING,
+                    created: now,
+                    updated: now,
+                    tags: [],
+                    steps: {},
+                }
+
+                if (environment === RunEnvironment.TESTING) {
+                    const saved = flowRunRepo().save(flowRun) as unknown as FlowRun
+                    return saved
+                }
+
+                await runsMetadataQueue(log).add(flowRun)
+                return flowRun
             }
             finally {
                 span.end()
@@ -612,6 +669,7 @@ export async function addToQueue(params: AddToQueueParams, log: FastifyBaseLogge
         sampleData: params.sampleData,
         logsFileId,
         traceContext,
+        inlineDepth: params.inlineDepth,
     }
     const data: ExecuteFlowJobData = params.executionType === ExecutionType.RESUME
         ? {
@@ -737,6 +795,7 @@ type AddToQueueParamsCommon = {
     httpRequestId: string | undefined
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
+    inlineDepth?: number
 }
 
 export type AddToQueueParams = AddToQueueParamsCommon & (
@@ -761,6 +820,7 @@ type StartParams = {
     httpRequestId: string | undefined
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
+    inlineDepth?: number
 }
 
 

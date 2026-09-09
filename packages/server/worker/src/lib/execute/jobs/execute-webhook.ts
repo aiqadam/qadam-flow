@@ -148,6 +148,7 @@ export const executeWebhookJob: JobHandler<WebhookJobData, FireAndForgetJobResul
                     streamStepProgress: StreamStepProgress.NONE,
                     parentRunId: data.parentRunId,
                     failParentOnFailure: data.failParentOnFailure,
+                    inlineDepth: data.inlineDepth,
                 })
             }
         }

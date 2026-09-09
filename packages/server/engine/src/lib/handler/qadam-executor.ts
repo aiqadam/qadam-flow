@@ -136,6 +136,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
             }),
             run: {
                 id: constants.flowRunId,
+                inlineDepth: constants.inlineDepth > 0 ? constants.inlineDepth : undefined,
                 stop: createStopHook(params),
                 respond: createRespondHook(params),
                 createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params }),

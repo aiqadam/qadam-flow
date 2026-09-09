@@ -1,5 +1,6 @@
 import { EngineResponseStatus, JobData, WorkerJobType } from '@aiqadam/shared'
 import { executeFlowJob } from './jobs/execute-flow'
+import { executeInlineFlowJob } from './jobs/execute-inline'
 import { executePollingJob } from './jobs/execute-polling'
 import { executePropertyJob } from './jobs/execute-property'
 import { executeTriggerHookJob } from './jobs/execute-trigger-hook'
@@ -21,6 +22,7 @@ const chatAgentStub: JobHandler = {
 
 const registry: Record<WorkerJobType, JobHandler> = {
     [WorkerJobType.EXECUTE_FLOW]: executeFlowJob,
+    [WorkerJobType.EXECUTE_INLINE]: executeInlineFlowJob,
     [WorkerJobType.EXECUTE_POLLING]: executePollingJob,
     [WorkerJobType.EXECUTE_WEBHOOK]: executeWebhookJob,
     [WorkerJobType.RENEW_WEBHOOK]: renewWebhookJob,

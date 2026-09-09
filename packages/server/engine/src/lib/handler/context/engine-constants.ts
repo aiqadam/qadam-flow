@@ -29,6 +29,7 @@ type EngineConstantsParams = {
     timeoutInSeconds: number
     platformId: PlatformId
     stepNames: string[]
+    inlineDepth?: number
 }
 
 const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
@@ -67,6 +68,7 @@ export class EngineConstants {
     public readonly stepNameToTest?: string
     public readonly logsFileId?: string
     public readonly stepNames: string[] = []
+    public readonly inlineDepth: number
     private project: Project | null = null
 
     public get isRunningApTests(): boolean {
@@ -113,6 +115,7 @@ export class EngineConstants {
         this.platformId = params.platformId
         this.timeoutInSeconds = params.timeoutInSeconds
         this.stepNames = params.stepNames
+        this.inlineDepth = params.inlineDepth ?? 0
     }
   
     public static fromExecuteFlowInput(input: ResolvedExecuteFlowOperation): EngineConstants {
@@ -137,6 +140,7 @@ export class EngineConstants {
             timeoutInSeconds: input.timeoutInSeconds,
             platformId: input.platformId,
             stepNames: flowStructureUtil.getAllSteps(input.flowVersion.trigger).map((step) => step.name),
+            inlineDepth: 'inlineDepth' in input ? (input.inlineDepth ?? 0) : 0,
         })
     }
 

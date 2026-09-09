@@ -1,5 +1,3 @@
-import { inspect } from 'node:util'
-import { onCallService } from '@aiqadam/server-utils'
 import {
     BeginExecuteFlowOperation,
     EngineOperationType,
@@ -12,46 +10,31 @@ import {
     isNil,
     QadamFlowError,
     ResumeExecuteFlowOperation,
-    RunInternalError,
-    RunInternalErrorSource,
     tryCatch,
     WorkerJobType,
 } from '@aiqadam/shared'
 import { flowCache } from '../../cache/flow/flow-cache'
-import { system, WorkerSystemProp } from '../../config/configs'
 import { workerSettings } from '../../config/worker-settings'
 import { FireAndForgetJobResult, JobContext, JobHandler, JobResultKind } from '../types'
 import { provisionFlowPieces } from '../utils/flow-helpers'
 
-export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResult> = {
-    jobType: WorkerJobType.EXECUTE_FLOW,
+export const executeInlineFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResult> = {
+    jobType: WorkerJobType.EXECUTE_INLINE,
     async execute(ctx: JobContext, data: ExecuteFlowJobData): Promise<FireAndForgetJobResult> {
         const timeoutInSeconds = workerSettings.getSettings().FLOW_TIMEOUT_SECONDS
 
         const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })
         if (isNil(flowVersion)) {
-            ctx.log.info({ flowVersionId: data.flowVersionId }, 'Flow version not found, skipping')
-            await reportFlowStatus(ctx, data, FlowRunStatus.FAILED)
+            ctx.log.info({ flowVersionId: data.flowVersionId }, 'Flow version not found for inline execution, skipping')
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
         }
 
         const { data: provisioned, error: provisionError } = await tryCatch(() => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }))
         if (provisionError) {
-            await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, toInternalError(RunInternalErrorSource.WORKER, provisionError))
             throw provisionError
         }
         if (!provisioned) {
-            await reportFlowStatus(ctx, data, FlowRunStatus.FAILED)
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
-        }
-
-        if (data.executionType === ExecutionType.RESUME && isNil(data.logsFileId)) {
-            const resumeLogsFileMissingError = new QadamFlowError({
-                code: ErrorCode.RESUME_LOGS_FILE_MISSING,
-                params: { runId: data.runId },
-            }, 'logsFileId is missing for RESUME operation')
-            await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, toInternalError(RunInternalErrorSource.WORKER, resumeLogsFileMissingError))
-            throw resumeLogsFileMissingError
         }
 
         const sandbox = ctx.sandboxManager.acquire({ log: ctx.log, apiClient: ctx.apiClient })
@@ -69,39 +52,38 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                 { timeoutInSeconds },
             )
 
-            if (result.status === EngineResponseStatus.LOG_SIZE_EXCEEDED) {
-                await reportFlowStatus(ctx, data, FlowRunStatus.LOG_SIZE_EXCEEDED)
-                return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED, logs: result.logs }
-            }
-
-            if (result.status === EngineResponseStatus.INTERNAL_ERROR) {
-                await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, {
-                    source: RunInternalErrorSource.ENGINE,
-                    message: result.error ?? 'Engine reported an internal error without details',
-                    occurredAt: new Date().toISOString(),
+            // Inline execution skips log upload — state lives only in memory ExecutionState
+            const httpRequestId = data.httpRequestId ?? ''
+            if (httpRequestId) {
+                await ctx.apiClient.sendFlowResponse({
+                    workerHandlerId: data.workerHandlerId,
+                    httpRequestId,
+                    runResponse: {
+                        status: result.status === EngineResponseStatus.OK ? 200 : 500,
+                        body: { status: result.status, data: undefined },
+                        headers: {},
+                    },
                 })
-                return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, logs: result.logs }
             }
 
-            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK, logs: result.logs }
+            // Update flow run status so runs-metadata queue can process completion
+            await reportFlowStatus(ctx, data, engineStatusToFlowRunStatus(result.status))
+
+            return { kind: JobResultKind.FIRE_AND_FORGET, status: result.status === EngineResponseStatus.OK ? EngineResponseStatus.OK : result.status, logs: result.logs }
         }
         catch (e) {
             await ctx.sandboxManager.invalidate(ctx.log)
             if (e instanceof QadamFlowError) {
                 if (e.error.code === ErrorCode.SANDBOX_EXECUTION_TIMEOUT) {
-                    await reportFlowStatus(ctx, data, FlowRunStatus.TIMEOUT)
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.TIMEOUT }
                 }
                 if (e.error.code === ErrorCode.SANDBOX_MEMORY_ISSUE) {
-                    await reportFlowStatus(ctx, data, FlowRunStatus.MEMORY_LIMIT_EXCEEDED)
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.MEMORY_ISSUE }
                 }
                 if (e.error.code === ErrorCode.SANDBOX_LOG_SIZE_EXCEEDED) {
-                    await reportFlowStatus(ctx, data, FlowRunStatus.LOG_SIZE_EXCEEDED)
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED }
                 }
             }
-            await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, toInternalError(RunInternalErrorSource.WORKER, e))
             throw e
         }
         finally {
@@ -125,7 +107,7 @@ function buildFlowOperation(
         httpRequestId: data.httpRequestId ?? null,
         streamStepProgress: data.streamStepProgress,
         stepNameToTest: data.stepNameToTest ?? null,
-        logsFileId: data.logsFileId,
+        logsFileId: undefined, // No logs file for inline — state lives only in memory
         timeoutInSeconds,
         platformId: data.platformId,
         engineToken: ctx.engineToken,
@@ -134,34 +116,11 @@ function buildFlowOperation(
         inlineDepth: data.inlineDepth,
     }
 
-    if (data.executionType === ExecutionType.RESUME) {
-        return {
-            ...base,
-            executionType: ExecutionType.RESUME,
-            resumePayload: data.payload,
-            resumeReason: data.resumeReason,
-        }
-    }
-
     return {
         ...base,
         executionType: ExecutionType.BEGIN,
         triggerPayload: data.payload,
-        executeTrigger: data.executeTrigger ?? false,
-        sampleData: data.sampleData,
-    }
-}
-
-function toInternalError(source: RunInternalErrorSource, error: unknown): RunInternalError {
-    const isApError = error instanceof QadamFlowError
-    const base = error instanceof Error
-        ? [error.name, error.message, error.stack].filter(Boolean).join('\n')
-        : inspect(error, { depth: 1 })
-    return {
-        source,
-        message: base,
-        code: isApError ? error.error.code : undefined,
-        occurredAt: new Date().toISOString(),
+        executeTrigger: true,
     }
 }
 
@@ -169,7 +128,6 @@ async function reportFlowStatus(
     ctx: JobContext,
     data: ExecuteFlowJobData,
     status: FlowRunStatus,
-    internalError?: RunInternalError,
 ): Promise<void> {
     await ctx.apiClient.uploadRunLog({
         runId: data.runId,
@@ -177,19 +135,21 @@ async function reportFlowStatus(
         projectId: data.projectId,
         streamStepProgress: data.streamStepProgress,
         finishTime: new Date().toISOString(),
-        logsFileId: data.logsFileId,
-        internalError,
+        logsFileId: undefined, // No logs for inline
     })
-
-    if (status === FlowRunStatus.INTERNAL_ERROR && isDedicatedWorker()) {
-        onCallService(ctx.log, workerSettings.getSettings().PAGE_ONCALL_WEBHOOK).page({
-            code: ErrorCode.ENGINE_OPERATION_FAILURE,
-            message: `Flow run ${data.runId} ended with INTERNAL_ERROR`,
-            params: { runId: data.runId, flowId: data.flowId, projectId: data.projectId },
-        }).catch((e) => ctx.log.error({ runId: data.runId, error: inspect(e) }, 'Failed to send on-call page for INTERNAL_ERROR'))
-    }
 }
 
-function isDedicatedWorker(): boolean {
-    return !isNil(system.get(WorkerSystemProp.WORKER_GROUP_ID))
+function engineStatusToFlowRunStatus(status: EngineResponseStatus): FlowRunStatus {
+    switch (status) {
+        case EngineResponseStatus.OK:
+            return FlowRunStatus.SUCCEEDED
+        case EngineResponseStatus.TIMEOUT:
+            return FlowRunStatus.TIMEOUT
+        case EngineResponseStatus.MEMORY_ISSUE:
+            return FlowRunStatus.MEMORY_LIMIT_EXCEEDED
+        case EngineResponseStatus.LOG_SIZE_EXCEEDED:
+            return FlowRunStatus.LOG_SIZE_EXCEEDED
+        default:
+            return FlowRunStatus.INTERNAL_ERROR
+    }
 }

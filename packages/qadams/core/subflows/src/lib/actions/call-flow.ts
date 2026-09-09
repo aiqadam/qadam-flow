@@ -99,6 +99,16 @@ export const callFlow = createAction({
       required: false,
       defaultValue: false,
     }),
+    executionMode: Property.StaticDropdown({
+      displayName: 'Execution Mode',
+      required: true,
+      description: 'How to execute the child flow. Queue dispatches a separate worker job (original behavior). Inline runs the child in-process for significantly lower latency.',
+      defaultValue: 'queue',
+      options: [
+        { label: 'Queue', value: 'queue' },
+        { label: 'Inline', value: 'inline' },
+      ],
+    }),
   },
   async run(context) {
     if (context.executionType === ExecutionType.RESUME) {
@@ -124,6 +134,36 @@ export const callFlow = createAction({
         externalId: context.propsValue.flow?.externalId,
         flowName: flow.version.displayName,
       }));
+    }
+
+    const executionMode = context.propsValue.executionMode ?? 'queue';
+
+    if (executionMode === 'inline') {
+      let callbackUrl: string | undefined
+      if (context.propsValue.waitForResponse) {
+        const waitpoint = await context.run.createWaitpoint({ type: 'WEBHOOK' });
+        callbackUrl = waitpoint.buildResumeUrl({ queryParams: {} });
+        context.run.waitForWaitpoint(waitpoint.id);
+      }
+
+        const response = await httpClient.sendRequest<{ status: string; data?: unknown }>({
+        method: HttpMethod.POST,
+        url: `${context.server.apiUrl}v1/worker/flow-runs/run-inline`,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${context.server.token}`,
+        },
+        body: {
+          flowId: flow.id,
+          payload,
+          parentRunId: context.run.id,
+          failParentOnFailure: context.propsValue.waitForResponse,
+          callbackUrl,
+          inlineDepth: context.run.inlineDepth,
+        },
+      });
+
+      return response.body;
     }
 
     let callbackUrl: string | undefined

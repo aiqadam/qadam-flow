@@ -8,7 +8,7 @@ import { FlowVersion } from '../flows/flow-version'
 import { FlowTriggerType } from '../flows/triggers/trigger'
 import { QadamPackage } from '../qadams/qadam'
 
-export const LATEST_JOB_DATA_SCHEMA_VERSION = 10
+export const LATEST_JOB_DATA_SCHEMA_VERSION = 11
 
 export const InlineJobPayload = z.object({
     type: z.literal('inline'),
@@ -71,6 +71,7 @@ export enum WorkerJobType {
     EXECUTE_POLLING = 'EXECUTE_POLLING',
     EXECUTE_WEBHOOK = 'EXECUTE_WEBHOOK',
     EXECUTE_FLOW = 'EXECUTE_FLOW',
+    EXECUTE_INLINE = 'EXECUTE_INLINE',
     EXECUTE_VALIDATION = 'EXECUTE_VALIDATION',
     EXECUTE_TRIGGER_HOOK = 'EXECUTE_TRIGGER_HOOK',
     EXECUTE_PROPERTY = 'EXECUTE_PROPERTY',
@@ -118,6 +119,7 @@ const ExecuteFlowJobDataCommon = z.object({
     sampleData: z.record(z.string(), z.unknown()).optional(),
     logsFileId: z.string(),
     traceContext: z.record(z.string(), z.string()).optional(),
+    inlineDepth: z.number().optional(),
 })
 
 export const BeginExecuteFlowJobData = ExecuteFlowJobDataCommon.extend({
@@ -150,6 +152,7 @@ export const WebhookJobData = z.object({
     parentRunId: z.string().optional(),
     failParentOnFailure: z.boolean().optional(),
     traceContext: z.record(z.string(), z.string()).optional(),
+    inlineDepth: z.number().optional(),
 })
 export type WebhookJobData = z.infer<typeof WebhookJobData>
 
@@ -253,3 +256,6 @@ export const JobData = z.union([
 ])
 export type JobData = z.infer<typeof JobData>
 export type JobPayload = z.infer<typeof JobPayload>
+
+// Note: EXECUTE_INLINE jobs use the same data structure as ExecuteFlowJobData
+// They are distinguished by jobType enum value and handled differently in worker

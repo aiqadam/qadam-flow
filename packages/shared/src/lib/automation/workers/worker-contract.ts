@@ -46,6 +46,7 @@ export type WorkerToApiContract = {
     getUsedQadams(input: Record<string, never>): Promise<QadamPackage[]>
     markQadamAsUsed(input: { pieces: QadamPackage[] }): Promise<void>
     disableFlow(input: DisableFlowRequest): Promise<void>
+    executeInlineFlow(input: ExecuteInlineFlowRequest): Promise<ExecuteInlineFlowResult>
     sendChatEvent(input: SendChatEventRequest): Promise<void>
     getChatConfig(input: GetChatConfigRequest): Promise<ChatConfigResponse>
     saveChatMessages(input: SaveChatMessagesRequest): Promise<void>
@@ -187,4 +188,37 @@ export type ExecuteChatToolResponse = {
 export type DisableFlowRequest = {
     flowId: string
     projectId: string
+}
+
+export type ExecuteInlineFlowRequest = {
+    platformId: string
+    projectId: string
+    schemaVersion: number
+    requestId: string
+    payload: unknown
+    jobType: 'EXECUTE_INLINE'
+    environment: string
+    streamStepProgress: string
+    flowId: string
+    flowVersionId: string
+    runId: string
+    workerHandlerId: string | null
+    httpRequestId: string
+    traceContext: Record<string, string>
+    inlineDepth: number
+}
+
+export type ExecuteInlineFlowResult = {
+    ok: boolean
+    data?: {
+        status: string
+        data?: unknown
+        runId: string
+    }
+    errorMessage?: string
+    logs?: string
+}
+
+export type ExecuteInlineFlowHandler = {
+    handle(data: ExecuteInlineFlowRequest): Promise<ExecuteInlineFlowResult>
 }
