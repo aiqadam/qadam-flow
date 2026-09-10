@@ -78,6 +78,11 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
             dispatchMode: FlowRunDispatchMode.enum.INLINE,
             failParentOnFailure: true,
             status: FlowRunStatus.RUNNING,
+            // Execution starts synchronously right after this row is created — unlike a
+            // queued run, there is no separate dequeue moment to mark as the real start.
+            // Without this the run-history duration column (startTime && finishTime) never
+            // renders for inline child runs, since finalizeInlineChildRun does set finishTime.
+            startTime: now,
             created: now,
             updated: now,
             tags: [],
