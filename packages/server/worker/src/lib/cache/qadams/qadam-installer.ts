@@ -1,6 +1,6 @@
 import { rm, writeFile } from 'node:fs/promises'
 import path, { dirname, join } from 'node:path'
-import { fileSystemUtils, memoryLock } from '@aiqadam/server-utils'
+import { fileLock, fileSystemUtils } from '@aiqadam/server-utils'
 import {
     ExecutionMode,
     getQadamNameFromAlias,
@@ -66,8 +66,14 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
         qadamsToInstall: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
     }, '[qadamInstaller] Installing qadams in workspace')
 
-    await memoryLock.runExclusive({
-        key: `install-pieces-${rootWorkspace}`,
+    // rootWorkspace is a shared cache directory bind-mounted into every worker replica
+    // (docker-compose.yml runs several worker containers against the same host path), so an
+    // in-process memoryLock here would only serialize installs within one container — two
+    // replicas installing the same not-yet-cached qadam at the same time would still race on
+    // the files underneath. fileLock puts the lock on disk next to rootWorkspace itself, which
+    // every replica sharing that mount observes.
+    await fileLock.runExclusive({
+        path: rootWorkspace,
         fn: async () => {
             const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, pieces)
             if (isEmpty(qadamsToInstall)) {

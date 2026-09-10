@@ -155,6 +155,11 @@ export const callFlow = createAction({
     if (context.propsValue.waitForResponse) {
       const waitpoint = await context.run.createWaitpoint({
         type: 'WEBHOOK',
+        // Resumed exclusively by the child flow's own Return Response step
+        // POSTing back into this same server instance — never by a human or
+        // an external service — so its resume URL should be built from the
+        // deployment's internal address, not the externally reachable one.
+        internal: true,
       });
       callbackUrl = waitpoint.buildResumeUrl({
         queryParams: {},
