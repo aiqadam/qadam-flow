@@ -286,6 +286,7 @@ function createWaitpointHook({ constants, stepName, hookParams }: { constants: E
             responseToSend: req.responseToSend,
             workerHandlerId: constants.workerHandlerId ?? undefined,
             httpRequestId: constants.httpRequestId ?? undefined,
+            internal: req.internal,
         })
         return {
             ...result,
