@@ -1,14 +1,17 @@
 import {
     apId,
     EngineHttpResponse,
+    ErrorCode,
     ExecutionType,
     FlowRun,
     FlowRunId,
     FlowRunStatus,
     isFlowRunStateTerminal,
+    QadamFlowError,
     ResumeReason,
     RunEnvironment,
     StreamStepProgress,
+    tryCatch,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -21,7 +24,23 @@ import { Waitpoint, WaitpointResumePayload } from './waitpoint-types'
 
 export const resumeService = (log: FastifyBaseLogger) => ({
     async resumeFromWaitpoint({ flowRunId, waitpointId, resumePayload, workerHandlerId, httpRequestId }: ResumeFromWaitpointParams): Promise<ResumeFromWaitpointResult> {
-        const flowRun = await findFlowRunOrThrow(flowRunId)
+        // A resume POST can legitimately arrive after its own flow run's row
+        // is gone from under it — not because the run never existed, but
+        // because a slow-to-respond original request raced a client-side
+        // timeout: the client retried, the retry lands after the original
+        // request already finished resuming/deleting everything, and by then
+        // even the parent flow_run lookup can come up empty under load. That
+        // is exactly the same "stale, not an error" case handleResumeSignal
+        // already treats as benign below — ENTITY_NOT_FOUND here deserves
+        // the same tolerance, not a 404 that fails the calling flow.
+        const { data: flowRun, error: notFound } = await tryCatch(() => findFlowRunOrThrow(flowRunId))
+        if (notFound) {
+            if (notFound instanceof QadamFlowError && notFound.error.code === ErrorCode.ENTITY_NOT_FOUND) {
+                log.info({ flowRunId, waitpointId }, '[resumeService#resumeFromWaitpoint] Flow run no longer exists, treating resume as stale')
+                return { flowRun: undefined, stale: true }
+            }
+            throw notFound
+        }
         const processed = await waitpointService(log).handleResumeSignal({
             flowRunId,
             waitpointId,
@@ -160,7 +179,9 @@ type LegacyResumeParams = {
 }
 
 type ResumeFromWaitpointResult = {
-    flowRun: FlowRun
+    // Absent exactly when stale is true because the flow run itself was
+    // gone by the time this resume was processed — see resumeFromWaitpoint.
+    flowRun: FlowRun | undefined
     stale: boolean
 }
 
