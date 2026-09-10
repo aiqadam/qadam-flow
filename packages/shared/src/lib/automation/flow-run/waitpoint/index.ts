@@ -14,6 +14,14 @@ export const CreateWaitpointRequest = z.object({
     responseToSend: RespondResponse.optional(),
     workerHandlerId: z.string().optional(),
     httpRequestId: z.string().optional(),
+    // True only for a waitpoint that will exclusively be resumed by a POST
+    // from this same server instance (e.g. callFlow's queue-mode wait-for-
+    // response, resumed by the child flow's own Return Response step) — not
+    // for one a human or external service resumes (e.g. an Approval link
+    // clicked in an email, or a third-party webhook). Controls whether the
+    // resume URL is built from the internal service address or the public
+    // one; see waitpoint-controller.ts.
+    internal: z.boolean().optional(),
 })
 export type CreateWaitpointRequest = z.infer<typeof CreateWaitpointRequest>
 

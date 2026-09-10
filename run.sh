@@ -256,6 +256,16 @@ QADAM_FLOW_PORT=${QADAM_FLOW_PORT}
 
 AP_ENVIRONMENT=prod
 AP_FRONTEND_URL=http://localhost:${QADAM_FLOW_PORT}
+# Distinct from AP_FRONTEND_URL/AP_WEBHOOK_URL on purpose: those are the
+# externally reachable address (what a browser or an external webhook
+# sender uses — localhost:${QADAM_FLOW_PORT}, the published port). This is
+# what the app uses to call back into itself over the compose-internal
+# network (the \`app\` service listens on port 80 inside the container,
+# which is not the same as the port docker-compose publishes it on) — e.g.
+# callFlow's queue-mode wait-for-response resume callback. Falls back to
+# AP_FRONTEND_URL if unset, so leaving this out is safe, just slower/less
+# reliable for that one path — see AppSystemProp.INTERNAL_URL.
+AP_INTERNAL_URL=http://app:80
 AP_WEBHOOK_TIMEOUT_SECONDS=30
 AP_TRIGGER_DEFAULT_POLL_INTERVAL=5
 

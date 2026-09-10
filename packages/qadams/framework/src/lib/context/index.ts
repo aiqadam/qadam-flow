@@ -181,6 +181,10 @@ export type CreateWaitpointParams = {
   version?: 'V0' | 'V1';
   resumeDateTime?: string;
   responseToSend?: RespondResponse;
+  // True only when this waitpoint will exclusively be resumed by a POST
+  // from this same server instance, never by a human or external service —
+  // see CreateWaitpointRequest in @aiqadam/shared for the full rationale.
+  internal?: boolean;
 };
 
 export type CreateWaitpointResult = {
