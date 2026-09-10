@@ -14,6 +14,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { flowRunRepo } from '../../flows/flow-run/flow-run-service'
 import { flowRunSideEffects } from '../../flows/flow-run/flow-run-side-effects'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
+import { projectService } from '../../project/project-service'
 
 const CALLABLE_FLOW_QADAM_NAME = '@aiqadam/qadam-subflows'
 const CALLABLE_FLOW_TRIGGER_NAME = 'callableFlow'
@@ -24,6 +25,15 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
         // the SAME project as the worker's own current job. This is the exact check
         // that was missing from the earlier (reverted) attempt at this feature.
         const flow = await flowService(log).getOneOrThrow({ id: request.flowId, projectId: request.callerProjectId })
+        const flowPlatformId = await projectService(log).getPlatformId(flow.projectId)
+        if (flowPlatformId !== request.callerPlatformId) {
+            // Defense in depth: a project always belongs to exactly one platform, so
+            // this can only fire if `callerPlatformId`/`callerProjectId` themselves
+            // ever disagreed — but the child run must never be created under a
+            // mismatched platform, so check it explicitly rather than trusting the
+            // project scope alone to imply it.
+            return { ok: false, error: 'The selected subflow does not belong to the caller\'s platform.' }
+        }
         if (flow.status !== FlowStatus.ENABLED) {
             return { ok: false, error: 'The selected subflow is disabled.' }
         }
@@ -38,6 +48,17 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
             && trigger.settings.triggerName === CALLABLE_FLOW_TRIGGER_NAME
         if (!isCallableFlowTrigger) {
             return { ok: false, error: 'The selected flow does not have a "Callable Flow" trigger.' }
+        }
+
+        // `parentRunId` is supplied by the engine (the run this call is nested
+        // under — see inline-flow-executor.ts) and MUST be re-verified server-side:
+        // it must be a real run in the caller's own project, never trusted at face
+        // value. Otherwise a compromised engine process could attach a child under a
+        // foreign project's run (a data-isolation violation) or dodge the depth
+        // guard by naming an unrelated run with a short ancestry chain.
+        const parentRun = await flowRunRepo().findOneBy({ id: request.parentRunId, projectId: request.callerProjectId })
+        if (isNil(parentRun)) {
+            return { ok: false, error: 'The parent run could not be verified.' }
         }
 
         const inlineDepth = await computeChildDepth(request.parentRunId)

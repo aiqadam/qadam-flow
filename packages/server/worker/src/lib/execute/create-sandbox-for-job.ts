@@ -1,4 +1,4 @@
-import { ExecutionMode, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
+import { ExecutionMode, FlowRunStatus, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
 import { getEnginePath, getGlobalCacheCommonPath, getGlobalCodeCachePath } from '../cache/cache-paths'
@@ -63,7 +63,7 @@ export function isIsolateMode(mode: ExecutionMode): boolean {
 }
 
 async function resolveInlineFlow(params: {
-    input: { flowId: string, payload: unknown }
+    input: { flowId: string, payload: unknown, parentRunId: string }
     log: Logger
     apiClient: WorkerToApiContract
     getCurrentJobContext: () => InlineJobContext | null
@@ -74,14 +74,19 @@ async function resolveInlineFlow(params: {
         return { ok: false, error: 'Inline subflows are only supported when called from a running flow.' }
     }
 
-    // The API call is what actually scopes/validates/depth-guards the target — using
-    // ONLY the worker's own trusted current-job identity, never anything the engine
-    // process supplied. This call cannot fail open: a rejected/unreachable API means
-    // no inline execution happens, same as any other worker->API RPC failure.
+    // callerProjectId/callerPlatformId/environment come from the worker's own
+    // trusted current-job identity — never from the engine. parentRunId is the
+    // one field that MUST come from the engine's own current run (`input.parentRunId`,
+    // not `jobContext.parentRunId`): a nested inline call (child calling another
+    // child inline) is nested under the immediate parent's run, not the outermost
+    // job's — using the job-level value here would let cyclic inline flows recurse
+    // unbounded, since every nested call would report the same ancestor to the depth
+    // guard. The API cross-checks `parentRunId` actually belongs to `callerProjectId`
+    // before trusting it, so this can't be used to attach a child under a foreign run.
     const started = await apiClient.startInlineFlowRun({
         callerProjectId: jobContext.projectId,
         callerPlatformId: jobContext.platformId,
-        parentRunId: jobContext.parentRunId,
+        parentRunId: input.parentRunId,
         environment: jobContext.environment,
         flowId: input.flowId,
         payload: input.payload,
@@ -99,6 +104,15 @@ async function resolveInlineFlow(params: {
         apiClient,
     })
     if (!provisioned) {
+        // The child FlowRun row already exists (created above) — leaving it RUNNING
+        // forever would be a stuck run with no reaper anywhere in the codebase, since
+        // execution never reaches inline-flow-executor.ts's own finalize step.
+        await apiClient.uploadRunLog({
+            runId: started.childRunId,
+            projectId: jobContext.projectId,
+            status: FlowRunStatus.INTERNAL_ERROR,
+            finishTime: new Date().toISOString(),
+        })
         return { ok: false, error: 'Failed to provision the subflow\'s pieces.' }
     }
 

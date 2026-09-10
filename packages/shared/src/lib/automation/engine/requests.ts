@@ -12,6 +12,11 @@ export const INLINE_SUBFLOW_DEPTH_LIMIT = 50
 export const ResolveInlineFlowRequest = z.object({
     flowId: z.string(),
     payload: z.unknown(),
+    // The run this call is being made FROM — the immediate parent for depth/ancestry
+    // purposes. Sent by the engine from its own EngineConstants.flowRunId (never from
+    // anything an action's own input controls), so nested inline calls each report the
+    // run they're actually nested under rather than the outermost job's run id.
+    parentRunId: z.string(),
 })
 export type ResolveInlineFlowRequest = z.infer<typeof ResolveInlineFlowRequest>
 

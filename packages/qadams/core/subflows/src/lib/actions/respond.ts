@@ -77,10 +77,11 @@ export const response = createAction({
       // `/v1/webhooks/:flowId/sync`. Either way, stop the flow here and hand back the
       // response synchronously, so whoever is waiting on this run gets the real value
       // instead of the default empty response.
+      const stopResponseBody: CallableFlowResponse = { status: 'success', data: response };
       context.run.stop({
         response: {
           status: 200,
-          body: { status: 'success', data: response } as CallableFlowResponse,
+          body: stopResponseBody,
         },
       });
     }

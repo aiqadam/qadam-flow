@@ -25,11 +25,6 @@ import { flowExecutor } from './flow-executor'
 
 const zstdCompress = promisify(zstdCompressCallback)
 
-export type CallFlowInlineResult = {
-    status: string
-    data: unknown
-}
-
 // Runs a `callFlow` "inline" target as a normal nested flow execution, in the SAME
 // engine process as the parent — no queue job, no new sandbox, no waitpoint/HTTP
 // round trip. Trust boundary: the target flow, its pieces already being provisioned,
@@ -40,7 +35,14 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
     const { constants: parentConstants, flowId, payload } = params
 
     const resolved = await utils.tryCatchAndThrowOnEngineError(() =>
-        workerSocket.getWorkerClient().resolveInlineFlow({ flowId, payload }),
+        // `parentRunId: parentConstants.flowRunId` is the run THIS call is nested
+        // under — for a top-level callFlow that's the job's own run; for a nested
+        // inline call (a child calling another child inline) it's the immediate
+        // parent's run, not the outermost job's. Anchoring the depth guard on
+        // anything job-level instead of this would let cyclic inline flows
+        // (A calls B inline, B calls A inline, ...) recurse unbounded within one
+        // process, since every nested call would report the same ancestor.
+        workerSocket.getWorkerClient().resolveInlineFlow({ flowId, payload, parentRunId: parentConstants.flowRunId }),
     )
     if (resolved.error) {
         throw new EngineGenericError('ResolveInlineFlowError', 'Failed to resolve inline subflow', resolved.error)
@@ -49,6 +51,11 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         throw new Error(resolved.data.error)
     }
     const { flowVersion, childRunId, childLogsFileId } = resolved.data
+
+    const runEnvironment = parentConstants.runEnvironment
+    if (isNil(runEnvironment)) {
+        throw new EngineGenericError('MissingRunEnvironmentError', 'Parent run has no environment set; cannot execute an inline subflow')
+    }
 
     // Matches the envelope `callableFlow.run()` hands back on the queue path
     // (`{ data: <payload>, callbackUrl }`, from the raw webhook POST body callFlow's
@@ -70,7 +77,7 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         streamStepProgress: parentConstants.streamStepProgress,
         workerHandlerId: null,
         httpRequestId: null,
-        runEnvironment: parentConstants.runEnvironment,
+        runEnvironment,
         logsFileId: childLogsFileId,
         timeoutInSeconds: parentConstants.timeoutInSeconds,
         platformId: parentConstants.platformId,
@@ -87,28 +94,39 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         input: {},
     }).setOutput(triggerOutput))
 
-    const finalContext = (await flowExecutor.executeFromTrigger({
-        executionState: withTriggerStep,
-        constants: childConstants,
-        input: {
-            flowVersion,
-            executionType: ExecutionType.BEGIN,
-            triggerPayload: triggerOutput,
-            executeTrigger: false,
-            flowRunId: childRunId,
-            projectId: childConstants.projectId,
-            engineToken: childConstants.engineToken,
-            internalApiUrl: childConstants.internalApiUrl,
-            publicApiUrl: childConstants.publicApiUrl,
-            timeoutInSeconds: childConstants.timeoutInSeconds,
-            platformId: childConstants.platformId,
-            runEnvironment: childConstants.runEnvironment!,
-            workerHandlerId: null,
-            httpRequestId: null,
-            streamStepProgress: childConstants.streamStepProgress,
-            stepNameToTest: null,
-        },
-    })).finishExecution()
+    // Any failure past this point (including an unexpected engine-level throw, not
+    // just a normal FAILED verdict) still needs the child FlowRun row finalized —
+    // it was already created by resolveInlineFlow, and nothing else in the codebase
+    // reaps a run stuck RUNNING forever.
+    let finalContext: FlowExecutorContext
+    try {
+        finalContext = (await flowExecutor.executeFromTrigger({
+            executionState: withTriggerStep,
+            constants: childConstants,
+            input: {
+                flowVersion,
+                executionType: ExecutionType.BEGIN,
+                triggerPayload: triggerOutput,
+                executeTrigger: false,
+                flowRunId: childRunId,
+                projectId: childConstants.projectId,
+                engineToken: childConstants.engineToken,
+                internalApiUrl: childConstants.internalApiUrl,
+                publicApiUrl: childConstants.publicApiUrl,
+                timeoutInSeconds: childConstants.timeoutInSeconds,
+                platformId: childConstants.platformId,
+                runEnvironment,
+                workerHandlerId: null,
+                httpRequestId: null,
+                streamStepProgress: childConstants.streamStepProgress,
+                stepNameToTest: null,
+            },
+        })).finishExecution()
+    }
+    catch (error) {
+        await finalizeInlineChildRunOnUnexpectedError({ constants: childConstants })
+        throw error
+    }
 
     await finalizeInlineChildRun({ constants: childConstants, finalContext })
 
@@ -124,14 +142,29 @@ function toCallFlowResult(finalContext: FlowExecutorContext): CallFlowInlineResu
         return { status: 'error', data: verdict.failedStep.message }
     }
     if (verdict.status === FlowRunStatus.SUCCEEDED && !isNil(verdict.stopResponse)) {
-        const body = verdict.stopResponse.body as { status?: string, data?: unknown } | undefined
-        return { status: body?.status ?? 'success', data: body?.data }
+        const { status, data } = readRespondBody(verdict.stopResponse.body)
+        return { status: status ?? 'success', data }
     }
     return { status: 'success', data: undefined }
 }
 
+function readRespondBody(body: unknown): { status: string | undefined, data: unknown } {
+    if (typeof body !== 'object' || isNil(body)) {
+        return { status: undefined, data: undefined }
+    }
+    const record = body as Record<string, unknown>
+    return {
+        status: typeof record.status === 'string' ? record.status : undefined,
+        data: record.data,
+    }
+}
+
 async function finalizeInlineChildRun(params: { constants: EngineConstants, finalContext: FlowExecutorContext }): Promise<void> {
     const { constants, finalContext } = params
+    const logsFileId = constants.logsFileId
+    if (isNil(logsFileId)) {
+        throw new EngineGenericError('MissingLogsFileIdError', 'Inline child run has no logsFileId set')
+    }
     const status = finalContext.verdict.status
     const isTerminal = isFlowRunStateTerminal({ status, ignoreInternalError: false })
 
@@ -146,7 +179,7 @@ async function finalizeInlineChildRun(params: { constants: EngineConstants, fina
     await engineFileApi.upload({
         engineToken: constants.engineToken,
         apiUrl: constants.internalApiUrl,
-        fileId: constants.logsFileId!,
+        fileId: logsFileId,
         type: FileType.FLOW_RUN_LOG,
         compression: FileCompression.ZSTD,
         data: compressed,
@@ -156,7 +189,7 @@ async function finalizeInlineChildRun(params: { constants: EngineConstants, fina
         runId: constants.flowRunId,
         projectId: constants.projectId,
         status,
-        logsFileId: constants.logsFileId,
+        logsFileId,
         failedStep: 'failedStep' in finalContext.verdict ? finalContext.verdict.failedStep : undefined,
         finishTime: isTerminal ? dayjs().toISOString() : undefined,
         tags: Array.from(finalContext.tags),
@@ -166,4 +199,19 @@ async function finalizeInlineChildRun(params: { constants: EngineConstants, fina
     if (error) {
         throw new EngineGenericError('FinalizeInlineFlowRunError', 'Failed to finalize inline subflow run', error)
     }
+}
+
+async function finalizeInlineChildRunOnUnexpectedError(params: { constants: EngineConstants }): Promise<void> {
+    const { constants } = params
+    await tryCatch(() => workerSocket.getWorkerClient().uploadRunLog({
+        runId: constants.flowRunId,
+        projectId: constants.projectId,
+        status: FlowRunStatus.INTERNAL_ERROR,
+        finishTime: dayjs().toISOString(),
+    }))
+}
+
+export type CallFlowInlineResult = {
+    status: string
+    data: unknown
 }
