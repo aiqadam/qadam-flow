@@ -152,6 +152,14 @@ ENV NODE_TLS_REJECT_UNAUTHORIZED=
 # Copy frontend files
 COPY --from=build /usr/src/app/dist/packages/web ./dist/packages/web/
 
+# Build provenance, baked in by CI (see ci.yml's build-args). Empty on a plain local
+# `docker build` — .git is excluded via .dockerignore, so there is no fallback to
+# compute here; the frontend treats a missing value as "local build".
+ARG COMMIT_SHA=
+ARG BUILD_TIMESTAMP=
+ENV COMMIT_SHA=$COMMIT_SHA
+ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
+
 LABEL service=qadam-flow
 
 # PID 1 has to reap orphans, and Node does not reap processes it did not spawn.

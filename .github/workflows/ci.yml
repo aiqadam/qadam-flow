@@ -506,6 +506,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Baked into the image as AP_COMMIT_SHA / AP_BUILD_TIMESTAMP (see Dockerfile's `run`
+      # stage) and surfaced to the frontend via the flags API for #378's build-info UI.
+      #
+      # The commit's own commit-date, not `date -u` (wall clock): this job is a matrix over
+      # two runners building the same commit in parallel, and a wall-clock timestamp would
+      # differ between the amd64 and arm64 legs — which `image_publish` then merges into one
+      # multi-arch manifest — so which timestamp a user sees would depend on which arch they
+      # pulled. `%cI` is identical on both legs because it's a property of the commit, not the
+      # build.
+      - name: Compute build metadata
+        id: build_meta
+        run: echo "timestamp=$(git show -s --format=%cI ${{ github.sha }})" >> "$GITHUB_OUTPUT"
+
       - name: Compute image tags and labels
         id: meta
         uses: docker/metadata-action@v5
@@ -538,6 +551,8 @@ jobs:
             TURBO_API=${{ env.TURBO_API }}
             TURBO_TOKEN=${{ env.TURBO_TOKEN }}
             TURBO_TEAM=${{ env.TURBO_TEAM }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
 
       - name: Build and push by digest (main)
         id: build
@@ -555,6 +570,8 @@ jobs:
             TURBO_API=${{ env.TURBO_API }}
             TURBO_TOKEN=${{ env.TURBO_TOKEN }}
             TURBO_TEAM=${{ env.TURBO_TEAM }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
           outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest

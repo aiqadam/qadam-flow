@@ -1,4 +1,5 @@
 export { apVersionUtil } from './ap-version'
+export { buildInfoUtil } from './build-info'
 export { cryptoUtils } from './crypto'
 export { DatabaseType } from './database-type'
 export { environmentMigrations } from './env-migrations'
