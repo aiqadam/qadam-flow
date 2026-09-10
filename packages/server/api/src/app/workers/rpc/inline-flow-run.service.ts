@@ -1,6 +1,7 @@
 import {
     apId,
     FlowRun,
+    FlowRunDispatchMode,
     FlowRunStatus,
     FlowStatus,
     FlowTriggerType,
@@ -74,6 +75,7 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
             flowVersionId: flowVersion.id,
             environment: request.environment,
             parentRunId: request.parentRunId,
+            dispatchMode: FlowRunDispatchMode.enum.INLINE,
             failParentOnFailure: true,
             status: FlowRunStatus.RUNNING,
             created: now,

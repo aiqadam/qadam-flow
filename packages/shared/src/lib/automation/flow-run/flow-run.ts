@@ -35,6 +35,13 @@ export enum RunEnvironment {
     TESTING = 'TESTING',
 }
 
+// How this run was started — only meaningful for a subflow child (parentRunId
+// set): QUEUE went through BullMQ + a new sandbox, INLINE ran synchronously in
+// the parent's own engine process (see callFlow's `executionMode`). Absent for
+// a normal top-level run, which isn't dispatched by a parent at all.
+export const FlowRunDispatchMode = z.enum(['QUEUE', 'INLINE'])
+export type FlowRunDispatchMode = z.infer<typeof FlowRunDispatchMode>
+
 export enum FlowRetryStrategy {
     ON_LATEST_VERSION = 'ON_LATEST_VERSION',
     FROM_FAILED_STEP = 'FROM_FAILED_STEP',
@@ -56,6 +63,7 @@ export const FlowRun = z.object({
     projectId: z.string(),
     flowId: z.string(),
     parentRunId: z.string().optional(),
+    dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),
     triggeredBy: z.string().optional(),
     tags: z.array(z.string()).optional(),
