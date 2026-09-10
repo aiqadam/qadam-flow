@@ -30,7 +30,7 @@ export const waitpointController: FastifyPluginAsyncZod = async (app) => {
         // on internally).
         const resumeUrlPath = { path: `v1/flow-runs/${flowRunId}/waitpoints/${waitpoint.id}` }
         const resumeUrl = internal
-            ? await domainHelper.getInternalApiUrl(resumeUrlPath)
+            ? await domainHelper.getSelfApiUrl(resumeUrlPath)
             : await domainHelper.getPublicApiUrl(resumeUrlPath)
         return reply.status(StatusCodes.CREATED).send({
             id: waitpoint.id,

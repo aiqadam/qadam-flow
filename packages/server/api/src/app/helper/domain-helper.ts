@@ -34,6 +34,21 @@ export const domainHelper = {
         }
         return this.getInternalApiUrl({ path: path ?? '' })
     },
+    // For a call that both originates from and is only ever handled by this
+    // same running process (e.g. callFlow's queue-mode wait-for-response
+    // resume, POSTed by the child flow's own Return Response step back into
+    // this instance) — not AppSystemProp.INTERNAL_URL, which is an operator-
+    // configured address for cross-instance internal traffic and isn't
+    // guaranteed to route back to loopback (in CE integration tests it's set
+    // to a fixed dev port that doesn't match the test harness's actual
+    // per-run listen port, so using it here made a same-process call target
+    // the wrong port entirely). 127.0.0.1 plus this process's own configured
+    // listen port is correct in every topology this can run in — bundled
+    // docker-compose, native dev, or a test harness's dynamic port.
+    async getSelfApiUrl({ path }: PublicUrlParams): Promise<string> {
+        const port = system.get(AppSystemProp.PORT)
+        return networkUtils.combineUrl(`http://127.0.0.1:${port}/api`, path ?? '')
+    },
 }
 
 function cleanLeadingSlash(path: string) {
