@@ -60,7 +60,6 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             jobContext: {
                 projectId: data.projectId,
                 platformId: data.platformId,
-                parentRunId: data.runId,
                 environment: data.environment,
             },
         })

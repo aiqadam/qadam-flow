@@ -13,7 +13,6 @@ import { createSandboxForJob } from './create-sandbox-for-job'
 export type InlineJobContext = {
     projectId: string
     platformId: string
-    parentRunId: string
     environment: RunEnvironment
 }
 

@@ -196,3 +196,12 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   clear error, not supported.
 - No live step-by-step streaming for an inline child in "Test Flow" mode — only the parent's own
   steps stream live; the child's full step history is still persisted and visible once it finishes.
+- Narrow race: the child `FlowRun` row is created by the API (`inlineFlowRunService.start`) before
+  the RPC response carrying its id travels back to the worker/engine. If that specific response is
+  lost in transit (socket drop) after the DB write already committed, the engine never learns the
+  child's run id and can't finalize it — the row is left `RUNNING` permanently, and nothing in the
+  codebase currently reaps a stuck run. Closing this fully needs an idempotent/retryable RPC or a
+  periodic reconciliation sweep for runs stuck `RUNNING`; deferred as a follow-up rather than
+  blocking this feature, since it requires a transport failure in a specific narrow window, not any
+  ordinary flow-author error (both those paths — provisioning failure, an unexpected engine throw —
+  are covered).
