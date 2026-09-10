@@ -11,6 +11,7 @@ import {
     FlowRetryStrategy,
     FlowRun,
     FlowRunCountByStatus,
+    FlowRunDispatchMode,
     FlowRunId,
     FlowRunStatus,
     FlowRunWithRetryError,
@@ -674,6 +675,11 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         flowVersionId: params.flowVersionId,
         environment: params.environment,
         parentRunId: params.parentRunId,
+        // Only a subflow child (parentRunId set) has a meaningful dispatch mode —
+        // a top-level run isn't dispatched by a parent at all. This is the queue
+        // path specifically; the inline path writes its own run row directly in
+        // inlineFlowRunService.start, never through here.
+        dispatchMode: isNil(params.parentRunId) ? undefined : FlowRunDispatchMode.enum.QUEUE,
         failParentOnFailure: params.failParentOnFailure ?? true,
         status: FlowRunStatus.QUEUED,
         stepNameToTest: params.stepNameToTest,

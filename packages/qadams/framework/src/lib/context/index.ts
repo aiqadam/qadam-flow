@@ -196,6 +196,24 @@ export type CreateWaitpointResult = {
 export type CreateWaitpointHook = (params: CreateWaitpointParams) => Promise<CreateWaitpointResult>;
 export type WaitForWaitpointHook = (waitpointId: string) => void;
 
+export type CallFlowInlineParams = {
+  flowId: string;
+  payload: unknown;
+};
+
+export type CallFlowInlineResult = {
+  status: string;
+  data: unknown;
+};
+
+/**
+ * Runs another flow's "Callable Flow" trigger synchronously, in the same engine
+ * process — no queue job, no waitpoint. Reserved for `@aiqadam/qadam-subflows`'
+ * `callFlow` action's "Inline" execution mode; the target flow must not pause
+ * (Delay/Human Input/a nested Queue-mode Call Flow) or the call rejects.
+ */
+export type CallFlowInlineHook = (params: CallFlowInlineParams) => Promise<CallFlowInlineResult>;
+
 export type RunContext = {
   id: FlowRunId;
   stop: StopHook;
@@ -204,6 +222,7 @@ export type RunContext = {
   respond: RespondHook;
   createWaitpoint: CreateWaitpointHook;
   waitForWaitpoint: WaitForWaitpointHook;
+  callFlowInline: CallFlowInlineHook;
 }
 
 export type OnStartContext<

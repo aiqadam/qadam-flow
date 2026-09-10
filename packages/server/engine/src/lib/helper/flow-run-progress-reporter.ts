@@ -32,6 +32,16 @@ export const flowRunProgressReporter = {
     sendUpdate: async (params: UpdateStepProgressParams): Promise<void> => {
         return stateLock.runExclusive(async () => {
             const { engineConstants, flowExecutorContext, stepNameToUpdate } = params
+            // Inline `callFlow` children run their own trigger/step loop through this
+            // same reporter, in the same process, as the parent. The module-level
+            // `latestUpdateParams`/backup() below track exactly one "current" run — if a
+            // child's updates were allowed through, its progress would overwrite the
+            // parent's, and a periodic/`backup()` flush could persist the child's steps
+            // into the parent's own log file. Children get a full step-log snapshot of
+            // their own from `inline-flow-executor.ts` instead once they finish.
+            if (engineConstants.isInlineChild) {
+                return
+            }
             if (params.startTime) {
                 savedStartTime = params.startTime
             }

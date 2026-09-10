@@ -29,6 +29,8 @@ type EngineConstantsParams = {
     timeoutInSeconds: number
     platformId: PlatformId
     stepNames: string[]
+    isInlineChild?: boolean
+    inlineDepth?: number
 }
 
 const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
@@ -67,6 +69,8 @@ export class EngineConstants {
     public readonly stepNameToTest?: string
     public readonly logsFileId?: string
     public readonly stepNames: string[] = []
+    public readonly isInlineChild: boolean
+    public readonly inlineDepth: number
     private project: Project | null = null
 
     public get isRunningApTests(): boolean {
@@ -113,6 +117,8 @@ export class EngineConstants {
         this.platformId = params.platformId
         this.timeoutInSeconds = params.timeoutInSeconds
         this.stepNames = params.stepNames
+        this.isInlineChild = params.isInlineChild ?? false
+        this.inlineDepth = params.inlineDepth ?? 0
     }
   
     public static fromExecuteFlowInput(input: ResolvedExecuteFlowOperation): EngineConstants {
