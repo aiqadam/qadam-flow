@@ -1,7 +1,7 @@
 import { ConnectionMetadata } from '@aiqadam/qadams-framework'
 import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { ArrayContains, In } from 'typeorm'
+import { ArrayContains, In, MoreThan } from 'typeorm'
 import { appConnectionsRepo } from '../../app-connection/app-connection-service/app-connection-service'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionMigrationService } from '../../flows/flow-version/flow-version-migration.service'
@@ -16,6 +16,13 @@ const longPollingTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 // A function, not a shared constant: returning the same arrays to every caller is one `push` away
 // from one call contaminating the next.
 const emptyRegistry = (): LongPollingRegistry => ({ sources: [], starved: [], ambiguous: [] })
+
+/** How long an unused builder test may hold a credential before the published flow takes it back. */
+const SIMULATION_MAX_AGE_MINUTES = 15
+
+function freshSimulationCutoff(): string {
+    return new Date(Date.now() - SIMULATION_MAX_AGE_MINUTES * 60_000).toISOString()
+}
 
 /**
  * Resolves which trigger sources the host should be pulling for, right now.
@@ -33,13 +40,22 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
             return emptyRegistry()
         }
         const triggerSources = await longPollingTriggerSourceRepo().find({
-            where: {
-                simulate: false,
-                qadamName: In(qadamNames),
-                flow: {
-                    status: FlowStatus.ENABLED,
-                },
-            },
+            where: [
+                // Production: only an enabled flow should be consuming a credential.
+                { qadamName: In(qadamNames), simulate: false, flow: { status: FlowStatus.ENABLED } },
+                // A simulation, deliberately without the status condition. Pressing "Test trigger"
+                // enables one, and the flow being built is usually not published yet — requiring
+                // ENABLED here would mean the host served tests for exactly the flows that do not
+                // need testing. Without the host serving them a pull-mode trigger is untestable by
+                // any route: Telegram allows one `getUpdates` consumer, so the qadam cannot fetch
+                // its own sample while the host holds the credential.
+                //
+                // Age-bounded, because a simulation outranks the published flow for that credential.
+                // The platform disables one as soon as an update arrives, so a *used* test is short
+                // by construction — but a user who presses Test on a draft and walks away would
+                // otherwise starve the published flow indefinitely, and nothing else would end it.
+                { qadamName: In(qadamNames), simulate: true, created: MoreThan(freshSimulationCutoff()) },
+            ],
             relations: {
                 flow: true,
             },
@@ -125,6 +141,7 @@ function toCandidate({ triggerSource, flowVersion, log }: ToSourceParams): LongP
         flowVersionId: triggerSource.flowVersionId,
         connectionExternalId,
         config,
+        simulate: triggerSource.simulate,
         enabledAt: triggerSource.created,
     }
 }
@@ -201,6 +218,11 @@ async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOne
  * last-writer-wins: whichever flow was enabled most recently owns `setWebhook`. Pulling inherits
  * that constraint rather than inventing fan-out, so the most recently enabled flow wins here too.
  *
+ * A simulation outranks recency. Pressing "Test trigger" is an explicit, short-lived request to
+ * watch this credential, and the user is staring at a panel waiting for it; the production flow
+ * resumes the moment the simulation source goes away. The webhook transport already behaves this
+ * way — testing a published Telegram flow repoints `setWebhook` at the draft URL.
+ *
  * This only de-duplicates flows pointing at the *same connection*. Two connections holding the same
  * third-party credential are caught later, by the lock the host takes on the puller's credential
  * key — which is why that key exists.
@@ -211,7 +233,8 @@ function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): Omi
         byCredential.set(source.key, [...byCredential.get(source.key) ?? [], source])
     }
     const grouped = Array.from(byCredential.values()).map((candidates) => {
-        const [winner, ...losers] = [...candidates].sort((a, b) => b.enabledAt.localeCompare(a.enabledAt))
+        const [winner, ...losers] = [...candidates].sort((a, b) =>
+            Number(b.simulate) - Number(a.simulate) || b.enabledAt.localeCompare(a.enabledAt))
         if (losers.length > 0) {
             log.warn({
                 projectId: winner.projectId,
@@ -273,6 +296,8 @@ export type LongPollingRegistry = {
 
 export type LongPollingSource = {
     key: string
+    /** A builder "Test trigger" source: collects sample data instead of running the live flow. */
+    simulate: boolean
     triggerSourceId: string
     qadamName: string
     projectId: ProjectId

@@ -4,12 +4,14 @@ import { longPollingStatus } from '../../../../../src/app/trigger/long-polling/l
 
 const put = vi.fn()
 const get = vi.fn()
+const getMany = vi.fn()
 const del = vi.fn()
 
 vi.mock('../../../../../src/app/database/redis-connections', () => ({
     distributedStore: {
         put: (...args: unknown[]) => put(...args),
         get: (...args: unknown[]) => get(...args),
+        getMany: (...args: unknown[]) => getMany(...args),
         delete: (...args: unknown[]) => del(...args),
     },
 }))
@@ -75,5 +77,62 @@ describe('longPollingStatus', () => {
         await longPollingStatus.clear(flow)
 
         expect(del).toHaveBeenCalledWith('long-polling:status:project1:flow1')
+    })
+})
+
+/**
+ * The flows list is the page a user watches to notice a bot that has gone quiet, and it reads this
+ * for a whole page at once. Two things have to hold: one round trip rather than one per row, and a
+ * key built from each row's own project — a list can span projects, and a shared key would read
+ * another tenant's slot.
+ */
+describe('longPollingStatus.getMany', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
+
+    it('asks once for the whole page', async () => {
+        getMany.mockResolvedValue([null, null])
+
+        await longPollingStatus.getMany({ flows: [
+            { projectId: 'project1', flowId: 'flow1' },
+            { projectId: 'project2', flowId: 'flow2' },
+        ] })
+
+        expect(getMany).toHaveBeenCalledTimes(1)
+    })
+
+    it('keys each flow on its own project, not on the first one', async () => {
+        getMany.mockResolvedValue([null, null])
+
+        await longPollingStatus.getMany({ flows: [
+            { projectId: 'project1', flowId: 'flow1' },
+            { projectId: 'project2', flowId: 'flow2' },
+        ] })
+
+        const [keys] = getMany.mock.calls[0]
+        expect(keys).toEqual([
+            'long-polling:status:project1:flow1',
+            'long-polling:status:project2:flow2',
+        ])
+    })
+
+    it('pairs each state with the flow it was asked for, and drops the misses', async () => {
+        const state = { status: LongPollingStatus.POLLING, since: '2026-01-01T00:00:00.000Z' }
+        getMany.mockResolvedValue([null, state])
+
+        const result = await longPollingStatus.getMany({ flows: [
+            { projectId: 'project1', flowId: 'flow1' },
+            { projectId: 'project2', flowId: 'flow2' },
+        ] })
+
+        expect(result.get('flow1')).toBeUndefined()
+        expect(result.get('flow2')).toEqual(state)
+    })
+
+    // An empty page must not reach Redis with an empty MGET, which is an error rather than a no-op.
+    it('does not touch the store for an empty page', async () => {
+        expect(await longPollingStatus.getMany({ flows: [] })).toEqual(new Map())
+        expect(getMany).not.toHaveBeenCalled()
     })
 })

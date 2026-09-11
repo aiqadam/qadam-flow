@@ -1,4 +1,4 @@
-import { Flow, FlowId, FlowRunId, PlatformId, ProjectId, UserId } from '@aiqadam/shared'
+import { Flow, FlowId, FlowRunId, Metadata, PlatformId, ProjectId, UserId } from '@aiqadam/shared'
 import { Job, JobsOptions } from 'bullmq'
 import { Dayjs } from 'dayjs'
 
@@ -11,6 +11,7 @@ export enum SystemJobName {
     HARD_DELETE_PROJECT = 'hard-delete-project',
     HARD_DELETE_PLATFORM = 'hard-delete-platform',
     RESUME_DELAY_WAITPOINT = 'resume-delay-waitpoint',
+    APPLY_DELIVERY_MODE_CHANGE = 'apply-delivery-mode-change',
 }
 
 type DeleteFlowDurableSystemJobData =  {
@@ -36,6 +37,25 @@ type ResumeDelayWaitpointSystemJobData = {
     waitpointId: string
 }
 
+/**
+ * A connection's delivery mode changed, and the trigger hooks that act on it have to be re-run.
+ *
+ * Durable rather than a floating promise because losing it is silent and one-directional: webhook
+ * -> long polling self-heals, since the registry re-reads the connection every minute, but long
+ * polling -> webhook does not. There the metadata already says webhook, so the registry drops those
+ * flows while the qadam's `onEnable` — the only thing that re-registers the webhook it deleted —
+ * never runs, and the flow sits enabled and receiving nothing until someone republishes it.
+ */
+type ApplyDeliveryModeChangeSystemJobData = {
+    qadamName: string
+    projectIds: ProjectId[]
+    externalId: string
+    before: Metadata | null
+    after: Metadata | null
+    /** Re-run regardless of whether the puller's verdict changed; see the `upsert` call site. */
+    always: boolean
+}
+
 type SystemJobDataMap = {
     [SystemJobName.PIECES_ANALYTICS]: Record<string, never>
     [SystemJobName.FILE_CLEANUP_TRIGGER]: Record<string, never>
@@ -45,6 +65,7 @@ type SystemJobDataMap = {
     [SystemJobName.HARD_DELETE_PROJECT]: HardDeleteProjectSystemJobData
     [SystemJobName.HARD_DELETE_PLATFORM]: HardDeletePlatformSystemJobData
     [SystemJobName.RESUME_DELAY_WAITPOINT]: ResumeDelayWaitpointSystemJobData
+    [SystemJobName.APPLY_DELIVERY_MODE_CHANGE]: ApplyDeliveryModeChangeSystemJobData
 }
 
 export type SystemJobData<T extends SystemJobName = SystemJobName> = T extends SystemJobName ? SystemJobDataMap[T] : never

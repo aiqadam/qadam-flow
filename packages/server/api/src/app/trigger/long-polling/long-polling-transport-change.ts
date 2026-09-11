@@ -57,7 +57,7 @@ const fanOutsPending = new Set<string>()
  */
 export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
     async reEnableAffectedFlows(params: ReEnableParams): Promise<void> {
-        const { qadamName, before, after, projectIds, externalId } = params
+        const { qadamName, before, after, projectIds, externalId, always } = params
         if (!eventPullerRegistry.isRegistered(qadamName)) {
             return
         }
@@ -67,7 +67,7 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
         }
         const verdict = (metadata: Metadata | null | undefined): boolean =>
             tryCatchSync(() => puller.isEnabledFor({ connectionMetadata: metadata ?? undefined })).data ?? false
-        if (verdict(before) === verdict(after)) {
+        if (always !== true && verdict(before) === verdict(after)) {
             return
         }
 
@@ -199,4 +199,6 @@ type ReEnableNowParams = FindFlowsParams & {
 type ReEnableParams = FindFlowsParams & {
     before: Metadata | null | undefined
     after: Metadata | null | undefined
+    /** Re-run even when the verdict is unchanged, for an edit that replaced the credential itself. */
+    always?: boolean
 }

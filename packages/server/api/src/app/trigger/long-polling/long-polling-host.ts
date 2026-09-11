@@ -150,7 +150,12 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
         // it — so the third party is not calling their webhook and anything arriving there is not
         // from it. `ambiguous` is excluded on purpose: its mode was never determined, so its webhook
         // may well be live, and refusing it would break a flow that is working.
-        longPollingServed.replaceAll([...registry.sources, ...registry.starved].map((source) => source.flowId))
+        longPollingServed.replaceAll([...registry.sources, ...registry.starved]
+            // A simulation is transient and does not speak for the production webhook: the flow may
+            // well be a webhook-mode flow being tested, and refusing its deliveries would take a
+            // working flow off the air for as long as the builder panel is open.
+            .filter((source) => !source.simulate)
+            .map((source) => source.flowId))
         const desired = new Map(registry.sources.map((source) => [source.key, source]))
         // The clearest silent-bot case there is: enabled, published, and guaranteed to receive
         // nothing because another flow holds the credential. The registry finds them; reporting is
@@ -160,10 +165,14 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
         // going away, so the two collide by construction and the clear would win, since it is
         // deferred onto the dying task.
         const reportedThisSync = new Set([...registry.starved, ...registry.ambiguous].map((source) => source.flowId))
+        const beingTested = new Set(registry.sources.filter((source) => source.simulate).map((source) => source.key))
         registry.starved.forEach((starved) => reportStatus({
             source: starved,
             status: LongPollingStatus.STOPPED,
-            reason: 'Another flow enabled more recently is using this connection, and the third party allows only one consumer',
+            reason: beingTested.has(starved.key)
+                // Temporary and self-resolving, so it must not read like the permanent case.
+                ? 'Paused while this connection is being tested in the builder; it resumes when the test ends'
+                : 'Another flow enabled more recently is using this connection, and the third party allows only one consumer',
             log,
         }))
         // A different cause needs a different remedy: the fix here is to de-duplicate the connection,
@@ -188,7 +197,14 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 // clearing without waiting can be overtaken by a `FAILED` put from the very window
                 // this abort stood down, leaving a healthy flow wearing a stale failure for the
                 // whole TTL — the silent-wrong-status this module exists to prevent.
-                if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
+                //
+                // Never for a simulation: it shares `flowId` with the production delivery, so
+                // ending a builder test would wipe the live flow's status. Harmless when both sit
+                // on the same credential — the production source keeps the key alive and this does
+                // not fire — but a draft repointed to a different connection than the published
+                // version polls frees the key, and then a `FAILED` entry is gone for the whole
+                // backoff and a failing flow reads healthy.
+                if (isNil(next) && !task.source.simulate && !reportedThisSync.has(task.source.flowId)) {
                     rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
                         projectId: task.source.projectId,
                         flowId: task.source.flowId,
@@ -542,9 +558,15 @@ async function deliverEvents({ source, events, log }: DeliverEventsParams): Prom
             logger: log,
             flowId: source.flowId,
             async: true,
-            saveSampleData: false,
-            flowVersionToRun: WebhookFlowVersionToRun.LOCKED_FALL_BACK_TO_LATEST,
-            execute: true,
+            // Mirrors the `/test` route, which is where a simulation's webhook points in the pushed
+            // transport — collect the sample, do not run anything. `execute: true` here would make
+            // every real message run the *unpublished draft*, with all its actions, for as long as a
+            // builder panel is open, while the published version is starved of the credential.
+            saveSampleData: source.simulate,
+            flowVersionToRun: source.simulate
+                ? WebhookFlowVersionToRun.LATEST
+                : WebhookFlowVersionToRun.LOCKED_FALL_BACK_TO_LATEST,
+            execute: !source.simulate,
             failParentOnFailure: false,
             data: async () => ({
                 body: event,
@@ -600,6 +622,12 @@ function reportStatus(params: ReportStatusParams): void {
 }
 
 function publishStatus({ source, status, reason, log, expiresAfterMs, report }: PublishStatusParams): void {
+    // A simulation shares its flow's id, so anything it reported would overwrite the status of the
+    // production delivery the user is actually asking about — and would then expire, leaving that
+    // flow looking like it had stopped. The builder shows a test's progress in its own panel.
+    if (source.simulate) {
+        return
+    }
     rejectedPromiseHandler(report({
         projectId: source.projectId,
         flowId: source.flowId,

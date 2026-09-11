@@ -135,18 +135,52 @@ describe('longPollingSourceRegistry.list', () => {
     it('only asks the database for qadams that have a puller', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
-        expect(triggerSourceFind).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ simulate: false }),
-        }))
         const [{ where }] = triggerSourceFind.mock.calls[0]
-        expect(where.qadamName.value).toEqual(eventPullerRegistry.registeredQadamNames())
+        where.forEach((clause: { qadamName: { value: string[] } }) => {
+            expect(clause.qadamName.value).toEqual(eventPullerRegistry.registeredQadamNames())
+        })
+    })
+
+    // Pressing "Test trigger" enables a simulation source, and it has to be served: Telegram allows
+    // one `getUpdates` consumer, so the qadam cannot fetch its own sample while the host is polling.
+    // Filtering simulations out here is what made a pull-mode trigger untestable.
+    it('asks for simulation sources as well as production ones', async () => {
+        await longPollingSourceRegistry(mockLog).list()
+
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        expect(where.map((clause: { simulate: boolean }) => clause.simulate).sort()).toEqual([false, true])
+    })
+
+    // The flow being built is usually not published yet, so requiring ENABLED for a simulation would
+    // have served tests for exactly the flows that do not need testing.
+    it('does not require the flow to be enabled for a simulation', async () => {
+        await longPollingSourceRegistry(mockLog).list()
+
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        const simulation = where.find((clause: { simulate: boolean }) => clause.simulate)
+        expect(simulation.flow).toBeUndefined()
+    })
+
+    // A simulation outranks the published flow for that credential, and the platform only ends one
+    // when an update arrives. Someone who presses Test on a draft and walks away would otherwise
+    // starve the live flow with nothing to stop it.
+    it('stops serving a simulation nobody used, so the published flow gets its credential back', async () => {
+        await longPollingSourceRegistry(mockLog).list()
+
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        const simulation = where.find((clause: { simulate: boolean }) => clause.simulate)
+        expect(simulation.created).toBeDefined()
+        const production = where.find((clause: { simulate: boolean }) => !clause.simulate)
+        // And the published flow is never aged out — only the borrowed test is.
+        expect(production.created).toBeUndefined()
     })
 
     it('asks the database only for enabled flows, rather than filtering afterwards', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
         const [{ where }] = triggerSourceFind.mock.calls[0]
-        expect(where.flow).toEqual({ status: FlowStatus.ENABLED })
+        const production = where.find((clause: { simulate: boolean }) => !clause.simulate)
+        expect(production.flow).toEqual({ status: FlowStatus.ENABLED })
     })
 
     it('ignores a trigger whose connection does not ask for pulling', async () => {
@@ -272,6 +306,22 @@ describe('longPollingSourceRegistry.list', () => {
         expect(starved).toEqual([])
         expect(ambiguous.map((item) => item.flowId)).toEqual(['flow1'])
         expect(mockLog.error).toHaveBeenCalled()
+    })
+
+    // A test is an explicit, short-lived request to watch this credential, with a user staring at
+    // the panel — so it outranks recency rather than losing to whichever flow was published later.
+    // The webhook transport already behaves this way: testing repoints `setWebhook` at the draft URL.
+    it('lets a simulation take the credential from the production flow while it runs', async () => {
+        triggerSourceFind.mockResolvedValue([
+            triggerSource({ id: 'live', flowId: 'live', flowVersionId: 'fv1', created: '2026-03-01T00:00:00.000Z' }),
+            { ...triggerSource({ id: 'sim', flowId: 'sim', flowVersionId: 'fv2', created: '2026-01-01T00:00:00.000Z' }), simulate: true },
+        ])
+        flowVersionFind.mockResolvedValue([flowVersion(), flowVersion({ id: 'fv2' })])
+
+        const { sources, starved } = await longPollingSourceRegistry(mockLog).list()
+
+        expect(sources.map((item) => item.flowId)).toEqual(['sim'])
+        expect(starved.map((item) => item.flowId)).toEqual(['live'])
     })
 
     it('serves only the most recently enabled flow when two share a credential', async () => {

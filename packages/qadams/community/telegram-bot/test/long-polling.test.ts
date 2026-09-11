@@ -1,6 +1,6 @@
 import { QadamEventPullOutcome } from '@aiqadam/qadams-framework';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { telegramEventPuller, telegramTransport } from '../src/lib/long-polling';
+import { telegramEventPuller } from '../src/lib/long-polling';
 
 const respondWith = (params: { status?: number, body: unknown }) => {
   const { status = 200, body } = params;

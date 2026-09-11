@@ -37,6 +37,7 @@ import {
     UserWithMetaInformation,
     WorkerJobType,
 } from '@aiqadam/shared'
+import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import semver from 'semver'
 import { ArrayContains, Equal, FindOperator, FindOptionsWhere, ILike, In } from 'typeorm'
@@ -48,12 +49,13 @@ import { paginationHelper } from '../../helper/pagination/pagination-utils'
 import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { SystemJobName } from '../../helper/system-jobs/common'
+import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { projectRepo } from '../../project/project-service'
 import {
     getQadamPackageWithoutArchive,
     qadamMetadataService,
 } from '../../qadams/metadata/qadam-metadata-service'
-import { longPollingTransportChange } from '../../trigger/long-polling/long-polling-transport-change'
 import { userService } from '../../user/user-service'
 import { userInteractionWatcher } from '../../workers/user-interaction-watcher'
 import {
@@ -138,10 +140,24 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
 
         // The reconnect dialog carries the delivery-mode selector and submits here, not through
         // `update` — so this path can flip the mode just as well, and needs the same hook re-run.
+        //
+        // `always`, because this path also replaces the credential itself. A qadam may derive
+        // something from it that the third party holds a copy of — Telegram's webhook secret is an
+        // HMAC of the bot token — and rotating the credential without re-running the enable hook
+        // leaves the third party echoing a value that no longer verifies, which is a silent outage
+        // with no status and no run history. The verdict gate cannot see that: the delivery mode is
+        // unchanged.
         applyDeliveryModeChange({
             before: existingConnection?.metadata,
             connection: updatedConnection,
             projectIds,
+            // Unconditional, including for a row that did not exist a moment ago. "Delete the
+            // broken connection and create it again with the same name" is a normal recovery, and
+            // it arrives here with nothing to compare against while enabled flows still reference
+            // that `externalId` — exactly the rotation this flag is for. Forcing it on a genuinely
+            // new connection costs two queries that end up matching no flows — the qadam's enabled
+            // trigger sources in the project and their flow versions — and no engine work.
+            always: true,
             log,
         })
 
@@ -495,21 +511,40 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
  * switched back to webhook stops being polled and never gets its webhook back, and the flow keeps
  * saying "on" while receiving nothing.
  *
- * Not awaited: each affected flow costs an engine round trip plus the qadam's own call to the third
- * party, and holding the user's request open for all of them turns one cheap POST into unbounded
- * sequential work. The mode is saved either way, and a failure here is logged, not surfaced.
+ * Off the request and onto a durable job. Each affected flow costs an engine round trip plus the
+ * qadam's own call to the third party, so holding the user's POST open for all of them turns one
+ * cheap request into unbounded sequential work — but a floating promise would lose the work
+ * entirely if the process restarted in the seconds after the metadata was written, and that loss is
+ * silent and one-directional (see the job's own doc comment).
+ *
+ * The job id is unique per change, deliberately. A per-connection id looks like coalescing and is
+ * not: `upsertJob` finds the existing job and then does nothing at all — the newer data is
+ * discarded, and a *failed* job is retried with its month-old payload. A second edit arriving while
+ * the first fan-out is still running would have been thrown away, which is exactly the silent loss
+ * this job exists to prevent. Coalescing belongs where it already is and where it can be done
+ * safely: `reEnableAffectedFlows` collapses concurrent runs in process and re-reads live state, so
+ * two jobs for one connection converge rather than conflict.
  */
-function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyDeliveryModeChangeParams): void {
-    rejectedPromiseHandler(longPollingTransportChange(log).reEnableAffectedFlows({
-        qadamName: connection.qadamName,
-        before,
-        after: connection.metadata,
-        // The acting project, not every project the connection is shared with. Both controllers
-        // pass a single project today, so the fallback does not run; a caller that passed nothing
-        // would widen this to every project sharing the credential, which is why the acting project
-        // is threaded through rather than read off the connection.
-        projectIds: projectIds ?? connection.projectIds,
-        externalId: connection.externalId,
+function applyDeliveryModeChange({ before, connection, projectIds, always, log }: ApplyDeliveryModeChangeParams): void {
+    // The acting project, not every project the connection is shared with. Both controllers pass a
+    // single project today, so the fallback does not run; a caller that passed nothing would widen
+    // this to every project sharing the credential, which is why the acting project is threaded
+    // through rather than read off the connection.
+    const actingProjectIds = projectIds ?? connection.projectIds
+    rejectedPromiseHandler(systemJobsSchedule(log).upsertJob({
+        job: {
+            name: SystemJobName.APPLY_DELIVERY_MODE_CHANGE,
+            data: {
+                qadamName: connection.qadamName,
+                projectIds: actingProjectIds,
+                externalId: connection.externalId,
+                before: before ?? null,
+                after: connection.metadata ?? null,
+                always: always ?? false,
+            },
+            jobId: `delivery-mode-${connection.platformId}-${actingProjectIds.join(',')}-${connection.externalId}-${apId()}`,
+        },
+        schedule: { type: 'one-time', date: dayjs() },
     }), log)
 }
 
@@ -735,6 +770,8 @@ type ApplyDeliveryModeChangeParams = {
     before: Metadata | null | undefined
     connection: AppConnectionSchema
     projectIds: ProjectId[] | null | undefined
+    /** Re-run the hooks even when the delivery mode is unchanged — see the `upsert` call site. */
+    always?: boolean
     log: FastifyBaseLogger
 }
 

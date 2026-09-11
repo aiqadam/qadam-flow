@@ -1,5 +1,6 @@
+import { ERROR_MESSAGES_TO_REDACT } from '@aiqadam/shared';
 import axios from 'axios';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AxiosHttpClient } from '../src/lib/http/axios/axios-http-client';
 import { HttpMethod } from '../src/lib/http/core/http-method';
 
@@ -50,5 +51,34 @@ describe('AxiosHttpClient', () => {
     );
 
     expect(process.env['NODE_TLS_REJECT_UNAUTHORIZED']).toBe('1');
+  });
+
+  // The engine redirects `console.error` and blanks any line matching `ERROR_MESSAGES_TO_REDACT`,
+  // because the `HttpError` logged below carries the *whole request body* — every secret a qadam
+  // sends. The guard had not matched since the two drifted apart: the list held
+  // `'HttpClient#sendRequest'`, a string no line here emits, so the redaction never once ran and
+  // bodies went to engine stderr in full.
+  //
+  // Asserted against the string this client actually emits, not against the constant. A test
+  // written from the constant passes whatever the log line says, which is the exact blind spot.
+  it('emits a first argument the engine will recognise as redactable', async () => {
+    const failing = axios.create({
+      adapter: async () => {
+        throw new axios.AxiosError('boom', 'ERR', undefined, {}, undefined);
+      },
+    });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await new AxiosHttpClient()
+      .sendRequest(
+        { method: HttpMethod.POST, url: 'https://example.com/', body: { secret_token: 's3cret' } },
+        failing
+      )
+      .catch(() => undefined);
+
+    const first = logged.mock.calls[0]?.[0];
+    logged.mockRestore();
+    expect(typeof first).toBe('string');
+    expect(ERROR_MESSAGES_TO_REDACT.some((m) => String(first).includes(m))).toBe(true);
   });
 });

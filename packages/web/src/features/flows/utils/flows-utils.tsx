@@ -7,9 +7,16 @@ import {
 import cronstrue from 'cronstrue/i18n';
 import { t } from 'i18next';
 import JSZip from 'jszip';
-import { AlertCircle, TimerReset, TriangleAlert, Zap } from 'lucide-react';
+import {
+  AlertCircle,
+  RefreshCw,
+  TimerReset,
+  TriangleAlert,
+  Zap,
+} from 'lucide-react';
 
 import { downloadFile } from '@/lib/dom-utils';
+import { formatUtils } from '@/lib/format-utils';
 
 import { flowsApi } from '../api/flows-api';
 
@@ -47,6 +54,17 @@ const longPollingIssue = (flow: PopulatedFlow) => {
   return longPolling;
 };
 
+/**
+ * A healthy pulling flow, which looked exactly like every other real-time flow before this: no
+ * badge at all. That made the absence of one ambiguous — polled and fine, not polled, or polling
+ * switched off instance-wide all rendered identically, and the tooltip said "Real time flow" for
+ * each. It replaces the generic icon rather than sitting next to it, so the row gains no clutter.
+ */
+const longPollingHealthy = (flow: PopulatedFlow) => {
+  const longPolling = flow.triggerSource?.longPolling;
+  return longPolling?.status === LongPollingStatus.POLLING ? longPolling : null;
+};
+
 export const flowsUtils = {
   downloadFlow,
   zipFlows,
@@ -59,6 +77,15 @@ export const flowsUtils = {
           ? t('Not receiving updates. Turn the flow off and on again to retry.')
           : t('Retrying — updates may be delayed.');
       return issue.reason ? `${headline} ${issue.reason}` : headline;
+    }
+    const polling = longPollingHealthy(flow);
+    if (polling) {
+      // Not 'since': the host restamps this on every window, so it is the time of the last
+      // successful check rather than when polling began, and 'since Just now' would refresh
+      // every minute while promising a duration it does not carry.
+      return t('Receiving updates by polling, last checked {checked}', {
+        checked: formatUtils.formatDate(new Date(polling.since)),
+      });
     }
     switch (trigger?.type) {
       case FlowTriggerType.PIECE: {
@@ -87,6 +114,9 @@ export const flowsUtils = {
       ) : (
         <AlertCircle className="h-4 w-4 text-warning" />
       );
+    }
+    if (longPollingHealthy(flow)) {
+      return <RefreshCw className="h-4 w-4 text-foreground" />;
     }
     switch (trigger?.type) {
       case FlowTriggerType.PIECE: {

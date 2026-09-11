@@ -1,15 +1,8 @@
 import { createTrigger, Property, TriggerStrategy } from '@aiqadam/qadams-framework';
 import { telegramCommons } from '../common';
 import { telegramTransport } from '../long-polling';
+import { telegramWebhookAuth } from '../webhook-auth';
 import { telegramBotAuth } from '../auth';
-import { httpClient, HttpMethod, HttpRequest } from '@aiqadam/qadams-common';
-
-type TelegramUpdate = Record<string, unknown> & { update_id?: number };
-
-type GetUpdatesResponse = {
-  ok: boolean;
-  result: TelegramUpdate[];
-};
 
 const UPDATE_TYPE_OPTIONS = [
   { label: 'Message', value: 'message' },
@@ -32,6 +25,18 @@ Telegram allows only **one webhook per bot token**, so a single Telegram trigger
 After selecting multiple types, use a Branch step downstream to fork on the update kind (e.g. \`message\` vs \`callback_query\`).
 `;
 
+/**
+ * Deliberately no `test()`. `createTrigger` derives the test strategy from whether one exists, and
+ * a `test()` here could only be `getUpdates` — which Telegram refuses in both transports for the
+ * same reason: it allows one consumer per bot token. With a webhook registered it answers
+ * `409 … can't use getUpdates method while webhook is active`, and while the long-polling host is
+ * consuming it answers `409 … terminated by other getUpdates request` and takes the host's window
+ * down with it. So pressing Test on a published Telegram flow has never worked.
+ *
+ * Without one the strategy is simulation: the trigger is enabled against the draft URL and real
+ * updates arrive, which is both representative and correct in either transport — the host serves
+ * simulation sources too.
+ */
 export const telegramNewMessage = createTrigger({
   auth: telegramBotAuth,
   name: 'new_telegram_message',
@@ -81,30 +86,162 @@ export const telegramNewMessage = createTrigger({
       // setWebhook and getUpdates are mutually exclusive per token, so the webhook has to go
       // before the host can poll. Pending updates are kept and delivered by the first poll.
       await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
+      await context.store.put(
+        telegramWebhookAuth.TRANSPORT_KEY,
+        telegramWebhookAuth.LONG_POLLING
+      );
+      if (telegramWebhookAuth.isSimulation({ webhookUrl: context.webhookUrl })) {
+        // Record that there was nothing to borrow, *after* the delete. Leaving the previous test's
+        // record in place would make this simulation's disable restore a production URL onto a bot
+        // the polling host is consuming — Telegram then refuses `getUpdates` and core refuses the
+        // pushed deliveries, so the flow receives nothing from either transport. Writing it before
+        // the delete would be wrong for the mirror-image reason: a webhook may still be live then.
+        await context.store.put(telegramWebhookAuth.BORROWED_FROM_KEY, EMPTY_WEBHOOK);
+      }
       return;
     }
-    const allowedUpdates = (context.propsValue.update_types ?? []) as string[];
-    await telegramCommons.subscribeWebhook(context.auth.secret_text, context.webhookUrl, {
-      allowed_updates: allowedUpdates,
-    });
+    if (telegramWebhookAuth.isSimulation({ webhookUrl: context.webhookUrl })) {
+      // Before overwriting: a simulation borrows the bot's one webhook and has to put back exactly
+      // what was there, including nothing.
+      await context.store.put(
+        telegramWebhookAuth.BORROWED_FROM_KEY,
+        await telegramCommons.registeredWebhook(context.auth.secret_text)
+      );
+    }
+    await registerWebhook(context);
   },
   async onDisable(context) {
+    // A simulation borrows the bot's only webhook and must give it back. Telegram allows one per
+    // token, so "Test trigger" on a published webhook flow repoints it at the test URL — and the
+    // platform disables the simulation as soon as the first update lands. Deleting here would leave
+    // the bot with no webhook at all after a single test, with nothing to restore it: the published
+    // trigger source was never touched, so no hook runs again and the flow is permanently off the
+    // air with no status and no run history.
+    //
+    // What goes back is what the enable hook recorded, not what this hook can infer — including its
+    // `allowed_updates`, since a draft may listen for different update types than the published
+    // version and restoring the draft's would silently narrow the live webhook's filter.
+    if (telegramWebhookAuth.isSimulation({ webhookUrl: context.webhookUrl })) {
+      const borrowed = await context.store.get<{ url: string; allowedUpdates: string[] }>(
+        telegramWebhookAuth.BORROWED_FROM_KEY
+      );
+      try {
+        if (borrowed && borrowed.url !== '') {
+          // Lossy by necessity: `getWebhookInfo` does not return the secret, so a borrowed webhook
+          // comes back carrying ours. That is right for a webhook we registered and wrong only for
+          // one some other service owns — which cannot coexist with this flow anyway, since
+          // Telegram allows a single webhook per token.
+          await telegramCommons.subscribeWebhook(context.auth.secret_text, borrowed.url, {
+            allowed_updates: borrowed.allowedUpdates,
+            secret_token: telegramWebhookAuth.secretFor({
+              botToken: context.auth.secret_text,
+              webhookUrl: borrowed.url,
+            }),
+          });
+        }
+        else {
+          // Nothing was registered before the test — an unpublished flow, or a polled connection.
+          // Removing is the restore.
+          await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
+        }
+      }
+      finally {
+        // Cleared even when the restore above threw, so a later enable that fails before recording
+        // cannot restore this one's URL. Re-running the restore is the safe half of that trade:
+        // the record is either the production URL, which is what a retry should install anyway, or
+        // `EMPTY_WEBHOOK`, whose restore is a `deleteWebhook` that a polled bot does not mind.
+        await context.store.delete(telegramWebhookAuth.BORROWED_FROM_KEY);
+      }
+      return;
+    }
     await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
+    await context.store.delete(telegramWebhookAuth.TRANSPORT_KEY);
   },
   async run(context) {
+    const transport = await context.store.get<string>(
+      telegramWebhookAuth.TRANSPORT_KEY
+    );
+
+    // Delivered by this instance's own polling host, which talks to Telegram directly and has no
+    // header to echo. Telegram pushes nothing in this mode — the qadam called deleteWebhook — and
+    // core refuses pushed deliveries for a pulling flow, though only on an instance whose host is
+    // running and has synced: that guard is an in-memory set rebuilt once a minute, so it is a
+    // second line rather than the reason this branch is safe.
+    if (transport === telegramWebhookAuth.LONG_POLLING) {
+      return [context.payload.body];
+    }
+
+    // No mode recorded: this flow was enabled by a version that predates the secret, so Telegram is
+    // either pushing to a webhook registered without one, or not pushing at all because the flow is
+    // being polled. Those are indistinguishable from here — `run` deliberately does not read the
+    // connection's metadata, which is the hot path for every inbound event product-wide — so ask
+    // Telegram which URL it actually delivers to.
+    //
+    // The comparison is against *this* context's URL, not merely "a webhook exists". The draft and
+    // test routes are public and unauthenticated by design, so anyone holding a flow id can reach
+    // this code with `webhookUrl` pointing at the draft — and registering that would hand Telegram
+    // a URL that never executes the published flow, taking it off the air silently. An equal URL is
+    // the only case where re-registering is both safe and useful.
+    if (transport !== telegramWebhookAuth.WEBHOOK) {
+      const { url: registered } = await telegramCommons.registeredWebhook(context.auth.secret_text);
+      if (!telegramWebhookAuth.isSameEndpoint({ registered, webhookUrl: context.webhookUrl })) {
+        // Either nothing is registered (the flow is polled, and registering would stop the polling
+        // that delivered this update) or Telegram delivers somewhere else entirely. Record the
+        // former so the question is asked once; leave the latter alone.
+        if (registered === '') {
+          await context.store.put(
+            telegramWebhookAuth.TRANSPORT_KEY,
+            telegramWebhookAuth.LONG_POLLING
+          );
+        }
+        return [context.payload.body];
+      }
+      // Accepting this update is deliberate: refusing would silently drop real messages until
+      // someone happened to republish, which is the failure this area exists to prevent. Concurrent
+      // updates can each pass this branch before any of them writes the marker, so the window is
+      // bounded by concurrency rather than by exactly one update.
+      await registerWebhook(context);
+      return [context.payload.body];
+    }
+
+    const expected = telegramWebhookAuth.secretFor({
+      botToken: context.auth.secret_text,
+      webhookUrl: context.webhookUrl,
+    });
+    if (
+      !telegramWebhookAuth.isAuthentic({ headers: context.payload.headers, expected })
+    ) {
+      // Dropped rather than thrown: a forged update must not be able to fill the run history, and
+      // Telegram has nothing to learn from the response either way.
+      return [];
+    }
     return [context.payload.body];
-  },
-  async test(context) {
-    const messages = await getLastFiveMessages(context.auth.secret_text);
-    return messages.result;
   },
 });
 
-const getLastFiveMessages = async (botToken: string) => {
-  const request: HttpRequest = {
-    method: HttpMethod.GET,
-    url: `https://api.telegram.org/bot${botToken}/getUpdates?offset=-5`,
-  };
-  const response = await httpClient.sendRequest<GetUpdatesResponse>(request);
-  return response.body;
+/** What a bot with no webhook of its own was "borrowed from" — restoring it means removing one. */
+const EMPTY_WEBHOOK = { url: '', allowedUpdates: [] as string[] };
+
+/**
+ * Registers the webhook with a `secret_token` and records that this flow is on the pushed
+ * transport, so `run` knows to demand the header from then on.
+ */
+const registerWebhook = async (context: {
+  auth: { secret_text: string };
+  webhookUrl: string;
+  propsValue: { update_types?: unknown };
+  store: { put: (key: string, value: unknown) => Promise<unknown> };
+}) => {
+  await telegramCommons.subscribeWebhook(context.auth.secret_text, context.webhookUrl, {
+    allowed_updates: (context.propsValue.update_types ?? []) as string[],
+    secret_token: telegramWebhookAuth.secretFor({
+      botToken: context.auth.secret_text,
+      webhookUrl: context.webhookUrl,
+    }),
+  });
+  await context.store.put(
+    telegramWebhookAuth.TRANSPORT_KEY,
+    telegramWebhookAuth.WEBHOOK
+  );
 };
+

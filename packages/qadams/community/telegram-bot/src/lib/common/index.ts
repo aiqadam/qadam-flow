@@ -98,13 +98,19 @@ const resolveParseMode = (value: string | undefined): string | undefined => {
   return value;
 };
 
-export type SetWebhookRequest = {
-  ip_address: string;
-  max_connections: number;
-  allowed_updates: string[];
-  drop_pending_updates: boolean;
-  secret_token: string;
+type GetWebhookInfoResponse = {
+  ok: boolean;
+  result?: { url?: string; allowed_updates?: string[] };
 };
+
+function redactSecretToken({ error, secret }: { error: unknown; secret: string | undefined }): unknown {
+  if (secret === undefined || secret === '' || !(error instanceof Error)) {
+    return error;
+  }
+  const redacted = new Error(error.message.split(secret).join('[redacted]'));
+  redacted.stack = error.stack?.split(secret).join('[redacted]');
+  return redacted;
+}
 
 export const telegramCommons = {
   getApiUrl: (auth: AppConnectionValueForAuthProperty<typeof telegramBotAuth>, methodName: string) => {
@@ -125,7 +131,36 @@ export const telegramCommons = {
       },
     };
 
-    await httpClient.sendRequest(request);
+    try {
+      await httpClient.sendRequest(request);
+    }
+    catch (error) {
+      // `HttpError` puts the whole request body into its message, and that message reaches the
+      // user-facing "Status update failed" dialog. The body now carries `secret_token` — the value
+      // that proves an inbound update really came from Telegram — so without this, anyone who can
+      // enable the flow reads the secret out of an error, including someone who cannot see the bot
+      // token and so could not derive it. That would hand away exactly what the secret protects.
+      throw redactSecretToken({ error, secret: overrides?.secret_token });
+    }
+  },
+  /**
+   * What Telegram currently delivers to for this bot: the URL, `''` when it holds no webhook at
+   * all, and the update types that webhook was registered with.
+   *
+   * Callers need the URL rather than merely whether one exists. "A webhook exists" is true for a
+   * production flow while an unauthenticated request is being handled on the test route, and acting
+   * on that would re-point the bot at that route and take the published flow off the air.
+   */
+  registeredWebhook: async (botToken: string): Promise<RegisteredWebhook> => {
+    const request: HttpRequest = {
+      method: HttpMethod.GET,
+      url: `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
+    };
+    const response = await httpClient.sendRequest<GetWebhookInfoResponse>(request);
+    return {
+      url: response.body?.result?.url ?? '',
+      allowedUpdates: response.body?.result?.allowed_updates ?? [],
+    };
   },
   unsubscribeWebhook: async (botToken: string) => {
     const request: HttpRequest = {
@@ -144,4 +179,17 @@ export const telegramCommons = {
   protectContentProp: buildProtectContentProp,
   replyToMessageIdProp: buildReplyToMessageIdProp,
   resolveParseMode,
+};
+
+export type RegisteredWebhook = {
+  url: string;
+  allowedUpdates: string[];
+};
+
+export type SetWebhookRequest = {
+  ip_address: string;
+  max_connections: number;
+  allowed_updates: string[];
+  drop_pending_updates: boolean;
+  secret_token: string;
 };

@@ -36,7 +36,9 @@ vi.mock('../../../../../src/app/trigger/long-polling/event-puller-registry', () 
 }))
 
 vi.mock('../../../../../src/app/webhooks/webhook.service', () => ({
-    WebhookFlowVersionToRun: { LOCKED_FALL_BACK_TO_LATEST: 'locked_fall_back_to_latest' },
+    // Both members, or a missing one reads as `undefined` at the call site and an assertion on it
+    // passes against nothing.
+    WebhookFlowVersionToRun: { LOCKED_FALL_BACK_TO_LATEST: 'locked_fall_back_to_latest', LATEST: 'latest' },
     webhookService: { handleWebhook: (...args: unknown[]) => handleWebhook(...args) },
 }))
 
@@ -86,6 +88,7 @@ const source: LongPollingSource = {
     flowVersionId: 'fv1',
     connectionExternalId: 'my-bot-connection',
     config: { transport: 'long_polling' },
+    simulate: false,
     enabledAt: '2026-01-01T00:00:00.000Z',
 }
 
@@ -867,6 +870,78 @@ describe('longPollingHost', () => {
         // windows, so a shorter wait than that cannot see it still running.
         await new Promise((resolve) => setTimeout(resolve, 900))
         expect(waitForEvents.mock.calls.length).toBe(callsAtShutdown)
+    })
+
+    describe('simulation sources', () => {
+        const simulated = { ...source, simulate: true, flowId: 'flow-sim' }
+
+        beforeEach(() => {
+            getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+                outcome: QadamEventPullOutcome.EVENTS,
+                events: [{ update_id: 1 }],
+                nextCursor: '1',
+            })))
+            listSources.mockResolvedValue({ sources: [simulated], starved: [], ambiguous: [] })
+        })
+
+        // A test collects sample data for the draft the user is editing. Running anything would be
+        // wrong in both directions: the published version is not what is being tested, and the
+        // draft is unpublished — its actions would fire on real messages while the panel is open.
+        // The pushed transport's simulation goes to `/test`, which passes `execute: false`.
+        it('delivers to the draft, collecting sample data without running a flow', async () => {
+            const host = await loadHost()
+            await host.start()
+
+            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
+            expect(handleWebhook.mock.calls[0][0]).toMatchObject({
+                flowId: 'flow-sim',
+                saveSampleData: true,
+                flowVersionToRun: 'latest',
+                execute: false,
+            })
+            await host.stop()
+        })
+
+        // The served set makes the webhook endpoint answer 409. A simulation says nothing about the
+        // production transport — the flow being tested may be a webhook flow — so refusing its
+        // deliveries would take a working flow off the air while the builder panel is open.
+        it('does not put the flow being tested into the pull-served set', async () => {
+            const host = await loadHost()
+            const { longPollingServed } = await import('../../../../../src/app/trigger/long-polling/long-polling-served')
+            await host.start()
+
+            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
+            expect(longPollingServed.isServedByPulling('flow-sim')).toBe(false)
+            await host.stop()
+        })
+
+        // Status is keyed on the flow, which a simulation shares with the production delivery. Its
+        // reports would overwrite the one the user is asking about, then expire — leaving a healthy
+        // flow looking stopped.
+        // Including when it goes away. A simulation leaves `desired` on the *normal* end of a test —
+        // capturing a payload disables it — so a message there would be published on success, onto
+        // the production flow's key, since the two share a flow id.
+        it('reports no status of its own, while it runs or when it ends', async () => {
+            const host = await loadHost()
+            await host.start()
+
+            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
+            expect(reportStatus.mock.calls.filter(([params]) => params.flowId === 'flow-sim')).toEqual([])
+
+            // The end has to be driven, not assumed: an earlier version of this test asserted
+            // "or when it ends" in its title while never ending the simulation, so the half that
+            // matters — the removal sweep — was covered by the name only.
+            clearStatus.mockClear()
+            listSources.mockResolvedValue({ sources: [], starved: [], ambiguous: [] })
+            host.requestSync()
+
+            await vi.waitFor(() => expect(listSources).toHaveBeenCalledTimes(2))
+            await vi.waitFor(() => expect(reportStatus.mock.calls.filter(([params]) => params.flowId === 'flow-sim')).toEqual([]))
+            // And the sweep must not clear either: the key is the production flow's, so a test
+            // ending on a credential nothing else polls would wipe a live `FAILED` for its backoff.
+            expect(clearStatus).not.toHaveBeenCalledWith({ projectId: simulated.projectId, flowId: 'flow-sim' })
+            await host.stop()
+        })
     })
 
     describe('assertTransportIsAvailable', () => {
