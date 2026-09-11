@@ -1,6 +1,6 @@
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { QadamEventPuller, QadamEventPullOutcome } from '@aiqadam/qadams-framework'
-import { AppConnection, AppConnectionStatus, ErrorCode, isNil, LongPollingStatus, QadamFlowError, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { AppConnection, AppConnectionStatus, ErrorCode, FlowId, isNil, LongPollingStatus, ProjectId, QadamFlowError, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { metrics } from '@opentelemetry/api'
 import { Mutex } from 'async-mutex'
 import { FastifyBaseLogger } from 'fastify'
@@ -151,10 +151,24 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
         for (const [key, fatal] of fatalSources) {
             if (desired.get(key)?.triggerSourceId !== fatal.triggerSourceId) {
                 fatalSources.delete(key)
+                // `markFatal` already took this out of `tasks`, so the removal sweep above cannot
+                // reach it — without this a disabled flow keeps its failure until the TTL runs out.
+                rejectedPromiseHandler(longPollingStatus.clear({
+                    projectId: fatal.projectId,
+                    flowId: fatal.flowId,
+                }), log)
             }
         }
         for (const source of desired.values()) {
-            if (tasks.has(source.key) || fatalSources.has(source.key)) {
+            const fatal = fatalSources.get(source.key)
+            if (!isNil(fatal)) {
+                // Nothing else will ever report for this source again — the task is gone. Without
+                // this the stored status expires and a permanently dead bot reads as healthy,
+                // which is the exact failure the status exists to prevent.
+                reportStatus({ source, status: LongPollingStatus.STOPPED, reason: fatal.reason, log })
+                continue
+            }
+            if (tasks.has(source.key)) {
                 continue
             }
             const abortController = new AbortController()
@@ -197,7 +211,9 @@ async function runTask({ source, hostSignal, log }: RunTaskParams): Promise<void
                 reason: credential.reason,
                 backoffMs,
             }, '[longPollingHost#runTask] Could not read the connection, retrying')
-            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: credential.reason, log })
+            // Deliberately not reported: this runs on every instance, before the lock, so a local
+            // hiccup here would overwrite the status of a flow the lock holder is polling fine.
+            // Everything user-visible is published from inside the lock, in `pollLoop`.
             continue
         }
 
@@ -288,6 +304,9 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
             return
         }
 
+        // Every window, because the TTL on the stored status is the liveness signal: an instance
+        // that dies stops refreshing and the claim expires rather than outliving the task.
+        reportStatus({ source, status: LongPollingStatus.POLLING, log })
         const cursor = await readCursor({ qadamName: source.qadamName, credentialKey: resolved.credentialKey })
 
         // Qadam code runs here in-process, unsandboxed: it is handed nothing but its own auth, the
@@ -356,10 +375,13 @@ async function resolveCredential({ source, puller, log }: ResolveCredentialParam
         log,
     }))
     if (error !== null) {
-        return { status: CredentialStatus.UNAVAILABLE, reason: error.message }
+        // Deliberately not `error.message`: this reaches a flow tooltip, and the messages here come
+        // from redlock and the database driver — internal hostnames, IPs, ports. The log keeps them.
+        log.warn({ err: error, key: source.key }, '[longPollingHost#resolveCredential] Could not read the connection')
+        return { status: CredentialStatus.UNAVAILABLE, reason: CONNECTION_UNREADABLE_REASON }
     }
     if (isNil(connection)) {
-        return confirmTheConnectionIsReallyGone({ source })
+        return confirmTheConnectionIsReallyGone({ source, log })
     }
     if (connection.status === AppConnectionStatus.ERROR) {
         return { status: CredentialStatus.GONE, reason: 'The connection backing this trigger is in error' }
@@ -390,13 +412,14 @@ async function resolveCredential({ source, puller, log }: ResolveCredentialParam
  * fatal is how a three-second wobble would silence every bot on the instance until each flow was
  * republished, so absence is confirmed with a second read before the task is given up.
  */
-async function confirmTheConnectionIsReallyGone({ source }: ConfirmGoneParams): Promise<ResolvedCredential> {
+async function confirmTheConnectionIsReallyGone({ source, log }: ConfirmGoneParams): Promise<ResolvedCredential> {
     const { data: exists, error } = await tryCatch(() => appConnectionsRepo().existsBy({
         projectIds: ArrayContains([source.projectId]),
         externalId: source.connectionExternalId,
     }))
     if (error !== null) {
-        return { status: CredentialStatus.UNAVAILABLE, reason: `Could not confirm whether the connection still exists: ${error.message}` }
+        log.warn({ err: error, key: source.key }, '[longPollingHost#confirmTheConnectionIsReallyGone] Could not confirm the connection')
+        return { status: CredentialStatus.UNAVAILABLE, reason: CONNECTION_UNREADABLE_REASON }
     }
     if (exists) {
         return { status: CredentialStatus.UNAVAILABLE, reason: 'The connection exists but could not be read or decrypted' }
@@ -435,7 +458,12 @@ async function deliverEvents({ source, events, log }: DeliverEventsParams): Prom
 }
 
 function markFatal({ source, reason, log }: MarkFatalParams): void {
-    fatalSources.set(source.key, { triggerSourceId: source.triggerSourceId, reason })
+    fatalSources.set(source.key, {
+        triggerSourceId: source.triggerSourceId,
+        projectId: source.projectId,
+        flowId: source.flowId,
+        reason,
+    })
     // Guarded, so a fatal verdict from a task a resync has already replaced cannot evict its
     // successor and leave it running with nobody holding its abort controller.
     if (tasks.get(source.key)?.source.triggerSourceId === source.triggerSourceId) {
@@ -459,7 +487,9 @@ function reportStatus({ source, status, reason, log }: ReportStatusParams): void
         projectId: source.projectId,
         flowId: source.flowId,
         status,
-        reason,
+        // Capped: part of this text is written by the third party and part by a qadam author, and
+        // it is stored and rendered. Neither is a reason to let an unbounded string through.
+        reason: isNil(reason) ? undefined : reason.slice(0, MAX_REASON_LENGTH),
         since: new Date().toISOString(),
     }), log)
 }
@@ -596,6 +626,8 @@ type RunningTask = {
 
 type FatalSource = {
     triggerSourceId: string
+    projectId: ProjectId
+    flowId: FlowId
     reason: string
 }
 
@@ -621,6 +653,7 @@ type PollLoopParams = {
 
 type ConfirmGoneParams = {
     source: LongPollingSource
+    log: FastifyBaseLogger
 }
 
 type ResolveCredentialParams = {
@@ -671,6 +704,9 @@ type SleepUntilAbortedParams = {
     ms: number
     signal: AbortSignal
 }
+
+const CONNECTION_UNREADABLE_REASON = 'The connection could not be read right now; retrying'
+const MAX_REASON_LENGTH = 300
 
 const LONG_POLLING_DISABLED_MESSAGE = 'This trigger is set to long polling, which requires AP_TRIGGER_LONG_POLLING_ENABLED=true on the server. Until it is set, the trigger can be neither enabled nor tested — testing would remove the bot\'s webhook without anything replacing it. Set it on the server, or switch the trigger back to webhook delivery.'
 

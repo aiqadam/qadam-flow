@@ -408,6 +408,95 @@ describe('longPollingHost', () => {
         expect(waitForEvents).toHaveBeenCalledTimes(2)
     })
 
+    // The stored status carries a TTL, so reporting POLLING on every window is what distinguishes
+    // "a host is working on this" from "a host died holding it". An earlier version of this commit
+    // silently never reported POLLING at all, which inverted the whole feature: a STOPPED status
+    // expired after five minutes and a permanently dead bot rendered as healthy again.
+    it('reports that it is polling on every window, not only when something goes wrong', async () => {
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(waitForEvents).toHaveBeenCalledTimes(2), { timeout: 3000 })
+        await host.stop()
+
+        const polling = reportStatus.mock.calls
+            .map(([params]) => params)
+            .filter((params) => params.status === 'POLLING')
+        expect(polling.length).toBeGreaterThanOrEqual(2)
+        expect(polling[0]).toMatchObject({ projectId: source.projectId, flowId: source.flowId })
+    })
+
+    it('keeps republishing a stopped source, so its status cannot quietly expire', async () => {
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.FATAL,
+            reason: 'the token was revoked',
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'STOPPED' })))
+        const afterFirst = reportStatus.mock.calls.filter(([params]) => params.status === 'STOPPED').length
+        host.requestSync()
+        await vi.waitFor(() => expect(
+            reportStatus.mock.calls.filter(([params]) => params.status === 'STOPPED').length,
+        ).toBeGreaterThan(afterFirst))
+        await host.stop()
+
+        // And it is still only the one task: republishing must not restart a fatal source.
+        expect(waitForEvents).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not put raw infrastructure error text where a user will read it', async () => {
+        // The first resolve succeeds so the lock is taken; the re-resolve inside the window fails.
+        // Only the in-lock path reports, since a follower must not overwrite the leader's status.
+        lockAndRefreshConnection
+            .mockResolvedValueOnce({
+                status: AppConnectionStatus.ACTIVE,
+                qadamName: QADAM_NAME,
+                value: { type: 'SECRET_TEXT', secret_text: '777:token' },
+            })
+            .mockRejectedValue(new Error('connect ECONNREFUSED 10.42.1.7:6379'))
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'BACKING_OFF',
+        })))
+        await host.stop()
+
+        const reasons = reportStatus.mock.calls.map(([params]) => params.reason ?? '')
+        expect(reasons.some((reason) => reason.includes('10.42.1.7'))).toBe(false)
+        expect(reasons.some((reason) => reason.includes('ECONNREFUSED'))).toBe(false)
+    })
+
+    it('caps a reason the third party wrote, rather than storing whatever arrives', async () => {
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.FATAL,
+            reason: 'x'.repeat(5000),
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'STOPPED' })))
+        await host.stop()
+
+        const stopped = reportStatus.mock.calls.map(([params]) => params).find((params) => params.status === 'STOPPED')
+        expect(stopped.reason.length).toBeLessThanOrEqual(300)
+    })
+
     // A published, switched-on flow that receives nothing looks identical to a healthy one in the
     // UI, so the reason has to reach somewhere a user can read it.
     it('publishes why it stopped, not just that it stopped', async () => {

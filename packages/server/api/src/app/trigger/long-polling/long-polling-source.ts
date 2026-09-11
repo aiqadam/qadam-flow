@@ -1,11 +1,13 @@
-import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, LongPollingStatus, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionMigrationService } from '../../flows/flow-version/flow-version-migration.service'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
+import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { TriggerSourceEntity, TriggerSourceSchema } from '../trigger-source/trigger-source-entity'
 import { eventPullerRegistry } from './event-puller-registry'
+import { longPollingStatus } from './long-polling-status'
 
 // Deliberately not `triggerSourceRepo` from trigger-source-service: that module imports the host,
 // which imports this one, and a cycle through three modules is not worth a shared repo handle.
@@ -145,6 +147,15 @@ function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): Lon
                 servingFlowId: winner.flowId,
                 starvedFlowIds: losers.map((loser) => loser.flowId),
             }, '[longPollingSourceRegistry#list] Several flows share one connection; only the most recently enabled one receives updates')
+            // The clearest silent-bot case there is: these flows are enabled, published, and will
+            // never receive an update. Saying so on the flow is the whole point of the status.
+            losers.forEach((loser) => rejectedPromiseHandler(longPollingStatus.report({
+                projectId: loser.projectId,
+                flowId: loser.flowId,
+                status: LongPollingStatus.STOPPED,
+                reason: 'Another flow enabled more recently is using this connection, and the third party allows only one consumer',
+                since: new Date().toISOString(),
+            }), log))
         }
         return winner
     })

@@ -31,6 +31,11 @@ export type QadamEventsPulled = {
 
 export type QadamEventPullRetryable = {
   outcome: QadamEventPullOutcome.RETRYABLE;
+  /**
+   * Shown to the user on the flow, so it must read as an explanation and must never contain the
+   * credential, a URL carrying one, or anything internal. The host truncates it; it does not
+   * sanitise it.
+   */
   reason: string;
   /** Honoured as a lower bound on the host's own backoff, when the API asks to slow down. */
   retryAfterSeconds?: number;
@@ -38,6 +43,7 @@ export type QadamEventPullRetryable = {
 
 export type QadamEventPullFatal = {
   outcome: QadamEventPullOutcome.FATAL;
+  /** Shown to the user on the flow — see the note on `QadamEventPullRetryable.reason`. */
   reason: string;
 };
 

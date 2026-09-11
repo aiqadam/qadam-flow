@@ -30,6 +30,7 @@ import {
     TemplateStatus,
     TemplateType,
     TriggerSource,
+    tryCatch,
     UncategorizedFolderId,
     UserId,
     UserWithMetaInformation,
@@ -343,10 +344,13 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 schedule: triggerSource.schedule,
                 // Only meaningful for a flow the long-polling host serves; null for every other one,
                 // and `spreadIfDefined` keeps it off the response rather than sending an explicit null.
-                ...spreadIfDefined('longPolling', await longPollingStatus.get({
-                    projectId,
-                    flowId: id,
-                }) ?? undefined),
+                // Guarded on the flag: with the host off the key cannot exist, and this sits on
+                // every flow fetch. `tryCatch` because `update`, `updateMetadata` and `getTemplate`
+                // all return through here — without it an unreachable Redis would make a flow edit
+                // commit and then answer 500.
+                ...spreadIfDefined('longPolling', (system.getBoolean(AppSystemProp.TRIGGER_LONG_POLLING_ENABLED) ?? false)
+                    ? (await tryCatch(() => longPollingStatus.get({ projectId, flowId: id }))).data
+                    : undefined),
             } : undefined,
         }
     },
