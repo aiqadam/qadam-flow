@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { longPollingCapacity } from '../../../../../src/app/trigger/long-polling/long-polling-capacity'
 
-const { shareFor, MAX_CONCURRENT_TASKS, MIN_CONCURRENT_TASKS_PER_PROJECT } = longPollingCapacity
+const { shareFor, MAX_CONCURRENT_TASKS, MIN_CONCURRENT_TASKS_PER_PROJECT, RESERVED_FOR_LATE_ARRIVALS } = longPollingCapacity
 
 /**
  * Each pull task holds an HTTP request open to a third party for its whole window, so the ceiling
@@ -12,15 +12,17 @@ describe('long-polling capacity share', () => {
     // Qadam Flow is self-hosted by design. A fixed per-project constant would cap the single-project
     // install — the one the install script produces — at that constant instead of its whole instance.
     it('gives a lone project nearly the whole instance', () => {
-        expect(shareFor({ projectsWanting: 1 })).toBeGreaterThanOrEqual(MAX_CONCURRENT_TASKS - MIN_CONCURRENT_TASKS_PER_PROJECT)
+        expect(shareFor({ projectsWanting: 1 })).toBeGreaterThanOrEqual(MAX_CONCURRENT_TASKS - RESERVED_FOR_LATE_ARRIVALS)
     })
 
     // The guarantee: a project arriving at a full instance always finds room, because no single
     // project was ever allowed to hold the last slots. Division alone does not give this — by the
     // time the second project appears, the first one's tasks are already running.
+    // The guarantee is exactly this and no more: a *second* project always finds room. Fairness
+    // from the third project onward is not provided — see the note on `shareFor`.
     it('never lets one project hold the last slots, however few projects are competing', () => {
         for (const projectsWanting of [1, 2, 3, 8]) {
-            expect(shareFor({ projectsWanting })).toBeLessThanOrEqual(MAX_CONCURRENT_TASKS - MIN_CONCURRENT_TASKS_PER_PROJECT)
+            expect(shareFor({ projectsWanting })).toBeLessThanOrEqual(MAX_CONCURRENT_TASKS - RESERVED_FOR_LATE_ARRIVALS)
         }
     })
 

@@ -3,6 +3,7 @@ import { AppConnectionStatus } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { longPollingCapacity } from '../../../../../src/app/trigger/long-polling/long-polling-capacity'
 import { LongPollingSource } from '../../../../../src/app/trigger/long-polling/long-polling-source'
 
 const QADAM_NAME = '@aiqadam/qadam-telegram-bot'
@@ -648,6 +649,63 @@ describe('longPollingHost', () => {
         expect(clearStatus).not.toHaveBeenCalledWith({ projectId: source.projectId, flowId: source.flowId })
         await host.stop()
     })
+
+    // The status a sync has just written and the clear the same sync defers onto the dying task
+    // collide by construction: a flow that has just become starved or ambiguous is usually exactly
+    // one whose task is going away, and the clear lands later, so it wins. The user would see the
+    // explanation appear and vanish.
+    it('does not clear a status this same sync has just written', async () => {
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(runExclusive).toHaveBeenCalled())
+        clearStatus.mockClear()
+        reportStatus.mockClear()
+        // The task goes away and the flow becomes ambiguous in the same pass.
+        listSources.mockResolvedValue({ sources: [], starved: [], ambiguous: [source] })
+        host.requestSync()
+
+        await vi.waitFor(() => expect(reportStatus.mock.calls.some(([params]) =>
+            params.flowId === source.flowId && params.status === 'STOPPED')).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        expect(clearStatus).not.toHaveBeenCalledWith({ projectId: source.projectId, flowId: source.flowId })
+        await host.stop()
+    })
+
+    // Each task holds an HTTP request open for its whole window, so the ceiling is a resource bound.
+    // A refused flow must say so: it is enabled, published and receiving nothing.
+    it('refuses to start more tasks than its share, and reports the ones it refused', async () => {
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+        const share = longPollingCapacity.shareFor({ projectsWanting: 1 })
+        const tooMany = Array.from({ length: share + 3 }, (_, index) => ({
+            ...source,
+            key: `key${index}`,
+            triggerSourceId: `ts${index}`,
+            flowId: `flow${index}`,
+            connectionExternalId: `connection${index}`,
+        }))
+        listSources.mockResolvedValue({ sources: tooMany, starved: [], ambiguous: [] })
+
+        const host = await loadHost()
+        await host.start()
+
+        await vi.waitFor(() => expect(reportStatus.mock.calls.some(([params]) =>
+            params.status === 'STOPPED' && /polling connection/.test(params.reason ?? ''))).toBe(true))
+        const refused = reportStatus.mock.calls.filter(([params]) => /polling connection/.test(params.reason ?? ''))
+        expect(refused.length).toBe(3)
+        // And the ones within the share really are running.
+        expect(runExclusive.mock.calls.length).toBe(share)
+        await host.stop()
+    }, 30_000)
 
     it('clears the status of a source it stops serving, instead of leaving it to expire', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({

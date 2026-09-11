@@ -47,7 +47,6 @@ const PULLER_GRACE_SECONDS = 30
 const MIN_IDLE_WINDOW_INTERVAL_MS = 250
 const MIN_WINDOW_INTERVAL_MS = 25
 
-
 const tasks = new Map<string, RunningTask>()
 const fatalSources = new Map<string, FatalSource>()
 const syncMutex = new Mutex()

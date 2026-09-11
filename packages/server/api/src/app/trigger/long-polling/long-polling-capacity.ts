@@ -19,14 +19,20 @@ const RESERVED_FOR_LATE_ARRIVALS = MIN_CONCURRENT_TASKS_PER_PROJECT
  * without it, whichever project fills the instance first keeps every slot, and every other project
  * is refused on every sync from then on rather than transiently.
  *
- * Two properties, and it is worth being exact about which is guaranteed:
+ * Be exact about what this does and does not buy, because a reserve is easy to over-read:
  *
- * - **Guaranteed.** No single project may hold the last `RESERVED_FOR_LATE_ARRIVALS` slots, so a
- *   project arriving at a full instance always finds room. A share computed only by division does
- *   *not* give this — by the time a second project appears, the first one's tasks are already
- *   running and nothing takes them back.
+ * - **Guaranteed.** No *single* project can occupy the whole instance, so a **second** project
+ *   always finds at least `RESERVED_FOR_LATE_ARRIVALS` slots waiting for it. Division alone does not
+ *   give even this — by the time the second project appears, the first one's tasks are running and
+ *   nothing takes them back.
  * - **Best effort.** Dividing by the number of projects currently wanting to poll keeps the split
- *   roughly even as projects come and go. It cannot rebalance retroactively.
+ *   roughly even as projects come and go.
+ * - **Not provided.** Fairness for the *third* project onward. Once two projects between them fill
+ *   the instance, an arrival is refused on every sync until a task exits, because a running task is
+ *   never displaced. With the floor that is reachable at eight projects (8 x 25), which is a
+ *   plausible platform rather than a pathological one. Closing it means reclaiming live tasks from
+ *   an over-share project, which costs a delivery gap on a working flow — a trade worth making
+ *   deliberately, with a measurement, rather than inside a fix for something else.
  *
  * Division alone would also be wrong for the deployment this project is built for: Qadam Flow is
  * self-hosted by design, and a fixed constant would cap a single-project install at that constant
@@ -44,6 +50,7 @@ export const longPollingCapacity = {
     shareFor,
     MAX_CONCURRENT_TASKS,
     MIN_CONCURRENT_TASKS_PER_PROJECT,
+    RESERVED_FOR_LATE_ARRIVALS,
 }
 
 type ShareForParams = {

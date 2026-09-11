@@ -71,9 +71,12 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
             return
         }
 
-        // Sorted: the key identifies a set of projects, and two callers passing the same set in a
-        // different order must coalesce rather than both fan out.
-        const inFlightKey = `${[...projectIds].sort().join(',')}|${externalId}`
+        // Carries the qadam because `externalId` is not unique within a project — that is the whole
+        // premise of the ambiguity the registry classifies. Without it, two qadams' connections
+        // sharing an id collapse to one key, and the extra pass would run for the first qadam only
+        // while the log below promised the second one a pass too. Sorted, because the key identifies
+        // a *set* of projects: two callers passing the same set in a different order must coalesce.
+        const inFlightKey = `${qadamName}|${[...projectIds].sort().join(',')}|${externalId}`
         if (fanOutsInFlight.has(inFlightKey)) {
             fanOutsPending.add(inFlightKey)
             log.info({ externalId, qadamName }, '[longPollingTransportChange] A re-enable for this connection is already running; it will run once more after it')
@@ -90,7 +93,12 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
         }
         finally {
             fanOutsInFlight.delete(inFlightKey)
-            fanOutsPending.delete(inFlightKey)
+            if (fanOutsPending.delete(inFlightKey)) {
+                // Only reachable when the loop above threw — `findEnabledFlowsTriggeredBy` is not
+                // wrapped, unlike the per-flow enable. Said out loud because a discarded change here
+                // is the module's own worst case: flows left with neither a poller nor a webhook.
+                log.error({ externalId, qadamName }, '[longPollingTransportChange] A delivery-mode change was dropped because the re-enable failed; those flows keep their previous transport')
+            }
         }
     },
 })
