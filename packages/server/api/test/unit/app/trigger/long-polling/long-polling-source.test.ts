@@ -135,11 +135,18 @@ describe('longPollingSourceRegistry.list', () => {
     it('only asks the database for qadams that have a puller', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
-        expect(triggerSourceFind).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ simulate: false }),
-        }))
         const [{ where }] = triggerSourceFind.mock.calls[0]
         expect(where.qadamName.value).toEqual(eventPullerRegistry.registeredQadamNames())
+    })
+
+    // Pressing "Test trigger" enables a simulation source, and it has to be served: Telegram allows
+    // one `getUpdates` consumer, so the qadam cannot fetch its own sample while the host is polling.
+    // Filtering simulations out here is what made a pull-mode trigger untestable.
+    it('does not filter out simulation sources', async () => {
+        await longPollingSourceRegistry(mockLog).list()
+
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        expect(where.simulate).toBeUndefined()
     })
 
     it('asks the database only for enabled flows, rather than filtering afterwards', async () => {
@@ -272,6 +279,22 @@ describe('longPollingSourceRegistry.list', () => {
         expect(starved).toEqual([])
         expect(ambiguous.map((item) => item.flowId)).toEqual(['flow1'])
         expect(mockLog.error).toHaveBeenCalled()
+    })
+
+    // A test is an explicit, short-lived request to watch this credential, with a user staring at
+    // the panel — so it outranks recency rather than losing to whichever flow was published later.
+    // The webhook transport already behaves this way: testing repoints `setWebhook` at the draft URL.
+    it('lets a simulation take the credential from the production flow while it runs', async () => {
+        triggerSourceFind.mockResolvedValue([
+            triggerSource({ id: 'live', flowId: 'live', flowVersionId: 'fv1', created: '2026-03-01T00:00:00.000Z' }),
+            { ...triggerSource({ id: 'sim', flowId: 'sim', flowVersionId: 'fv2', created: '2026-01-01T00:00:00.000Z' }), simulate: true },
+        ])
+        flowVersionFind.mockResolvedValue([flowVersion(), flowVersion({ id: 'fv2' })])
+
+        const { sources, starved } = await longPollingSourceRegistry(mockLog).list()
+
+        expect(sources.map((item) => item.flowId)).toEqual(['sim'])
+        expect(starved.map((item) => item.flowId)).toEqual(['live'])
     })
 
     it('serves only the most recently enabled flow when two share a credential', async () => {

@@ -3,14 +3,6 @@ import { telegramCommons } from '../common';
 import { telegramTransport } from '../long-polling';
 import { telegramWebhookAuth } from '../webhook-auth';
 import { telegramBotAuth } from '../auth';
-import { httpClient, HttpMethod, HttpRequest } from '@aiqadam/qadams-common';
-
-type TelegramUpdate = Record<string, unknown> & { update_id?: number };
-
-type GetUpdatesResponse = {
-  ok: boolean;
-  result: TelegramUpdate[];
-};
 
 const UPDATE_TYPE_OPTIONS = [
   { label: 'Message', value: 'message' },
@@ -33,6 +25,18 @@ Telegram allows only **one webhook per bot token**, so a single Telegram trigger
 After selecting multiple types, use a Branch step downstream to fork on the update kind (e.g. \`message\` vs \`callback_query\`).
 `;
 
+/**
+ * Deliberately no `test()`. `createTrigger` derives the test strategy from whether one exists, and
+ * a `test()` here could only be `getUpdates` — which Telegram refuses in both transports for the
+ * same reason: it allows one consumer per bot token. With a webhook registered it answers
+ * `409 … can't use getUpdates method while webhook is active`, and while the long-polling host is
+ * consuming it answers `409 … terminated by other getUpdates request` and takes the host's window
+ * down with it. So pressing Test on a published Telegram flow has never worked.
+ *
+ * Without one the strategy is simulation: the trigger is enabled against the draft URL and real
+ * updates arrive, which is both representative and correct in either transport — the host serves
+ * simulation sources too.
+ */
 export const telegramNewMessage = createTrigger({
   auth: telegramBotAuth,
   name: 'new_telegram_message',
@@ -140,20 +144,7 @@ export const telegramNewMessage = createTrigger({
     }
     return [context.payload.body];
   },
-  async test(context) {
-    const messages = await getLastFiveMessages(context.auth.secret_text);
-    return messages.result;
-  },
 });
-
-const getLastFiveMessages = async (botToken: string) => {
-  const request: HttpRequest = {
-    method: HttpMethod.GET,
-    url: `https://api.telegram.org/bot${botToken}/getUpdates?offset=-5`,
-  };
-  const response = await httpClient.sendRequest<GetUpdatesResponse>(request);
-  return response.body;
-};
 
 /**
  * Registers the webhook with a `secret_token` and records that this flow is on the pushed

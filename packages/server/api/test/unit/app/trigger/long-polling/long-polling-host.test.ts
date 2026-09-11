@@ -36,7 +36,9 @@ vi.mock('../../../../../src/app/trigger/long-polling/event-puller-registry', () 
 }))
 
 vi.mock('../../../../../src/app/webhooks/webhook.service', () => ({
-    WebhookFlowVersionToRun: { LOCKED_FALL_BACK_TO_LATEST: 'locked_fall_back_to_latest' },
+    // Both members, or a missing one reads as `undefined` at the call site and an assertion on it
+    // passes against nothing.
+    WebhookFlowVersionToRun: { LOCKED_FALL_BACK_TO_LATEST: 'locked_fall_back_to_latest', LATEST: 'latest' },
     webhookService: { handleWebhook: (...args: unknown[]) => handleWebhook(...args) },
 }))
 
@@ -867,6 +869,59 @@ describe('longPollingHost', () => {
         // windows, so a shorter wait than that cannot see it still running.
         await new Promise((resolve) => setTimeout(resolve, 900))
         expect(waitForEvents.mock.calls.length).toBe(callsAtShutdown)
+    })
+
+    describe('simulation sources', () => {
+        const simulated = { ...source, simulate: true, flowId: 'flow-sim' }
+
+        beforeEach(() => {
+            getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+                outcome: QadamEventPullOutcome.EVENTS,
+                events: [{ update_id: 1 }],
+                nextCursor: '1',
+            })))
+            listSources.mockResolvedValue({ sources: [simulated], starved: [], ambiguous: [] })
+        })
+
+        // A test collects sample data for the draft the user is editing; running the published
+        // version instead would both miss the point and act on a real message.
+        it('delivers to the draft, saving sample data rather than running the published flow', async () => {
+            const host = await loadHost()
+            await host.start()
+
+            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
+            expect(handleWebhook.mock.calls[0][0]).toMatchObject({
+                flowId: 'flow-sim',
+                saveSampleData: true,
+                flowVersionToRun: 'latest',
+            })
+            await host.stop()
+        })
+
+        // The served set makes the webhook endpoint answer 409. A simulation says nothing about the
+        // production transport — the flow being tested may be a webhook flow — so refusing its
+        // deliveries would take a working flow off the air while the builder panel is open.
+        it('does not put the flow being tested into the pull-served set', async () => {
+            const host = await loadHost()
+            const { longPollingServed } = await import('../../../../../src/app/trigger/long-polling/long-polling-served')
+            await host.start()
+
+            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
+            expect(longPollingServed.isServedByPulling('flow-sim')).toBe(false)
+            await host.stop()
+        })
+
+        // Status is keyed on the flow, which a simulation shares with the production delivery. Its
+        // reports would overwrite the one the user is asking about, then expire — leaving a healthy
+        // flow looking stopped.
+        it('reports no status of its own', async () => {
+            const host = await loadHost()
+            await host.start()
+
+            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
+            expect(reportStatus.mock.calls.filter(([params]) => params.flowId === 'flow-sim')).toEqual([])
+            await host.stop()
+        })
     })
 
     describe('assertTransportIsAvailable', () => {
