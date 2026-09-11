@@ -29,6 +29,43 @@ const HEADER = 'x-telegram-bot-api-secret-token';
  */
 const TRANSPORT_KEY = 'qf:telegram:webhook-transport';
 
+/**
+ * The engine appends this to the webhook URL for a simulation — a builder "Test trigger" run. There
+ * is no flag on the context saying so, and the difference matters: a simulation borrows the bot's
+ * one webhook and has to give it back.
+ */
+const SIMULATION_SUFFIX = '/test';
+
+function isSimulation({ webhookUrl }: { webhookUrl: string }): boolean {
+  return webhookUrl.endsWith(SIMULATION_SUFFIX);
+}
+
+/** The production URL a simulation borrowed the webhook from. */
+function productionUrlOf({ webhookUrl }: { webhookUrl: string }): string {
+  return isSimulation({ webhookUrl })
+    ? webhookUrl.slice(0, -SIMULATION_SUFFIX.length)
+    : webhookUrl;
+}
+
+/**
+ * Whether Telegram's registered URL is this endpoint. Compared by **path**, not in full: an operator
+ * who changes the instance's public URL would otherwise leave every pre-existing flow unable to ever
+ * match, stuck unauthenticated and paying a `getWebhookInfo` on every single update. The path still
+ * separates production from `/test` and `/draft`, which is the distinction that must not blur.
+ */
+function isSameEndpoint({ registered, webhookUrl }: { registered: string; webhookUrl: string }): boolean {
+  const pathOf = (value: string): string | undefined => {
+    try {
+      return new URL(value).pathname.replace(/\/+$/, '');
+    }
+    catch {
+      return undefined;
+    }
+  };
+  const registeredPath = pathOf(registered);
+  return registeredPath !== undefined && registeredPath === pathOf(webhookUrl);
+}
+
 function secretFor({ botToken, webhookUrl }: SecretForParams): string {
   // base64url, so the alphabet is already the A-Za-z0-9_- that Telegram accepts for `secret_token`.
   return createHmac('sha256', botToken)
@@ -59,6 +96,9 @@ function isAuthentic({ headers, expected }: IsAuthenticParams): boolean {
 export const telegramWebhookAuth = {
   secretFor,
   isAuthentic,
+  isSimulation,
+  productionUrlOf,
+  isSameEndpoint,
   HEADER,
   TRANSPORT_KEY,
   WEBHOOK: 'webhook',

@@ -19,7 +19,7 @@ const secret = telegramWebhookAuth.secretFor({
   webhookUrl: WEBHOOK_URL,
 });
 
-function contextWith({ transport, headers, webhookUrl }: ContextWithParams) {
+function contextWith({ transport, headers, webhookUrl, authMetadata }: ContextWithParams) {
   const store = new Map<string, unknown>();
   if (transport !== undefined) {
     store.set(telegramWebhookAuth.TRANSPORT_KEY, transport);
@@ -29,6 +29,7 @@ function contextWith({ transport, headers, webhookUrl }: ContextWithParams) {
     webhookUrl: webhookUrl ?? WEBHOOK_URL,
     propsValue: { update_types: [] },
     payload: { body: UPDATE, headers: headers ?? {}, queryParams: {} },
+    authMetadata,
     store: {
       get: async (key: string) => store.get(key),
       put: async (key: string, value: unknown) => {
@@ -177,6 +178,43 @@ describe('telegram trigger run verification', () => {
     ).toEqual([]);
     // And it must not be recorded as polled either — Telegram is pushing, just not here.
     expect(await context.store.get(telegramWebhookAuth.TRANSPORT_KEY)).toBeUndefined();
+  });
+
+  // Telegram allows one webhook per token, so a simulation borrows the published flow's. The
+  // platform disables the simulation on the first update, and deleting the webhook there would
+  // leave the bot with none at all — the published trigger source is untouched, so nothing ever
+  // runs again to restore it. One press of Test would kill a live flow permanently.
+  it('gives the webhook back when a simulation ends, instead of deleting it', async () => {
+    await telegramNewMessage.onDisable(
+      contextWith({
+        transport: telegramWebhookAuth.WEBHOOK,
+        webhookUrl: `${WEBHOOK_URL}/test`,
+      })
+    );
+
+    const calls = sendRequest.mock.calls.map(([request]) => String(request.url));
+    expect(calls.some((url) => url.includes('/deleteWebhook'))).toBe(false);
+    const setWebhook = sendRequest.mock.calls.find(([request]) =>
+      String(request.url).includes('/setWebhook')
+    );
+    // Restored to production, with the production secret — not to the draft URL it was borrowed for.
+    expect(setWebhook?.[0].body.url).toBe(WEBHOOK_URL);
+    expect(setWebhook?.[0].body.secret_token).toBe(secret);
+  });
+
+  // A pull-mode flow has no webhook to give back; deleting stays correct there.
+  it('still removes the webhook when the connection is polled', async () => {
+    await telegramNewMessage.onDisable(
+      contextWith({
+        transport: telegramWebhookAuth.LONG_POLLING,
+        webhookUrl: `${WEBHOOK_URL}/test`,
+        authMetadata: { transport: 'long_polling' },
+      })
+    );
+
+    expect(
+      sendRequest.mock.calls.some(([request]) => String(request.url).includes('/deleteWebhook'))
+    ).toBe(true);
   });
 
   it('then demands the header from the very next update', async () => {

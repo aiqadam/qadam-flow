@@ -1,7 +1,7 @@
 import { ConnectionMetadata } from '@aiqadam/qadams-framework'
 import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { ArrayContains, In } from 'typeorm'
+import { ArrayContains, In, MoreThan } from 'typeorm'
 import { appConnectionsRepo } from '../../app-connection/app-connection-service/app-connection-service'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionMigrationService } from '../../flows/flow-version/flow-version-migration.service'
@@ -16,6 +16,13 @@ const longPollingTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 // A function, not a shared constant: returning the same arrays to every caller is one `push` away
 // from one call contaminating the next.
 const emptyRegistry = (): LongPollingRegistry => ({ sources: [], starved: [], ambiguous: [] })
+
+/** How long an unused builder test may hold a credential before the published flow takes it back. */
+const SIMULATION_MAX_AGE_MINUTES = 15
+
+function freshSimulationCutoff(): string {
+    return new Date(Date.now() - SIMULATION_MAX_AGE_MINUTES * 60_000).toISOString()
+}
 
 /**
  * Resolves which trigger sources the host should be pulling for, right now.
@@ -42,7 +49,12 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
                 // need testing. Without the host serving them a pull-mode trigger is untestable by
                 // any route: Telegram allows one `getUpdates` consumer, so the qadam cannot fetch
                 // its own sample while the host holds the credential.
-                { qadamName: In(qadamNames), simulate: true },
+                //
+                // Age-bounded, because a simulation outranks the published flow for that credential.
+                // The platform disables one as soon as an update arrives, so a *used* test is short
+                // by construction — but a user who presses Test on a draft and walks away would
+                // otherwise starve the published flow indefinitely, and nothing else would end it.
+                { qadamName: In(qadamNames), simulate: true, created: MoreThan(freshSimulationCutoff()) },
             ],
             relations: {
                 flow: true,

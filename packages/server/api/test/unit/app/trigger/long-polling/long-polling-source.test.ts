@@ -161,6 +161,20 @@ describe('longPollingSourceRegistry.list', () => {
         expect(simulation.flow).toBeUndefined()
     })
 
+    // A simulation outranks the published flow for that credential, and the platform only ends one
+    // when an update arrives. Someone who presses Test on a draft and walks away would otherwise
+    // starve the live flow with nothing to stop it.
+    it('stops serving a simulation nobody used, so the published flow gets its credential back', async () => {
+        await longPollingSourceRegistry(mockLog).list()
+
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        const simulation = where.find((clause: { simulate: boolean }) => clause.simulate)
+        expect(simulation.created).toBeDefined()
+        const production = where.find((clause: { simulate: boolean }) => !clause.simulate)
+        // And the published flow is never aged out — only the borrowed test is.
+        expect(production.created).toBeUndefined()
+    })
+
     it('asks the database only for enabled flows, rather than filtering afterwards', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
