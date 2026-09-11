@@ -1,7 +1,7 @@
 import { createAction, Property } from '@aiqadam/qadams-framework';
 import { HttpMethod, httpClient } from '@aiqadam/qadams-common';
 import { telegramCommons } from '../common';
-import { telegramBotAuth } from '../..';
+import { telegramBotAuth } from '../auth';
 
 export const telegramSendPollAction = createAction({
   auth: telegramBotAuth,

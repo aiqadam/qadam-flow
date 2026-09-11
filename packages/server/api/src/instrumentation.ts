@@ -10,6 +10,7 @@ import { BatchSpanProcessor, ReadableSpan, Span, SpanProcessor } from '@opentele
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions'
 import { system } from './app/helper/system/system'
 import { AppSystemProp } from './app/helper/system/system-props'
+import { otelRedaction } from './otel-redaction'
 
 const ATTRIBUTES_TO_DROP = ['db.statement']
 
@@ -23,6 +24,12 @@ class FilteringSpanProcessor implements SpanProcessor {
     onEnd(span: ReadableSpan): void {
         for (const attr of ATTRIBUTES_TO_DROP) {
             Reflect.deleteProperty(span.attributes, attr)
+        }
+        for (const attr of otelRedaction.urlAttributes) {
+            const value = span.attributes[attr]
+            if (typeof value === 'string') {
+                span.attributes[attr] = otelRedaction.redactCredentialsInUrl(value)
+            }
         }
         this.delegate.onEnd(span)
     }
@@ -43,7 +50,9 @@ function getServiceName(): string {
     return serviceName
 }
 
-if (system.get(AppSystemProp.OTEL_ENABLED)) {
+// getBoolean, not get: the raw string 'false' is truthy, so AP_OTEL_ENABLED=false used to *enable*
+// tracing — which is also how the credential-in-URL export above could be on without anyone asking.
+if (system.getBoolean(AppSystemProp.OTEL_ENABLED) ?? false) {
     const traceExporter = new OTLPTraceExporter()
 
     const resource = resourceFromAttributes({

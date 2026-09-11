@@ -1,6 +1,7 @@
 import { createTrigger, Property, TriggerStrategy } from '@aiqadam/qadams-framework';
 import { telegramCommons } from '../common';
-import { telegramBotAuth } from '../..';
+import { telegramTransport } from '../long-polling';
+import { telegramBotAuth } from '../auth';
 import { httpClient, HttpMethod, HttpRequest } from '@aiqadam/qadams-common';
 
 type TelegramUpdate = Record<string, unknown> & { update_id?: number };
@@ -74,6 +75,14 @@ export const telegramNewMessage = createTrigger({
     },
   },
   async onEnable(context) {
+    // The mode lives on the connection, not here: Telegram allows one consumer per bot token, so
+    // two flows sharing a connection must not be able to disagree about how it is consumed.
+    if (telegramTransport.isLongPolling(context.authMetadata)) {
+      // setWebhook and getUpdates are mutually exclusive per token, so the webhook has to go
+      // before the host can poll. Pending updates are kept and delivered by the first poll.
+      await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
+      return;
+    }
     const allowedUpdates = (context.propsValue.update_types ?? []) as string[];
     await telegramCommons.subscribeWebhook(context.auth.secret_text, context.webhookUrl, {
       allowed_updates: allowedUpdates,

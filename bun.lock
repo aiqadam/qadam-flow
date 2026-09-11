@@ -2542,13 +2542,16 @@
     },
     "packages/qadams/community/telegram-bot": {
       "name": "@aiqadam/qadam-telegram-bot",
-      "version": "0.6.2",
+      "version": "0.7.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
         "form-data": "4.0.4",
         "tslib": "2.6.2",
+      },
+      "devDependencies": {
+        "vitest": "3.0.8",
       },
     },
     "packages/qadams/community/telnyx": {
@@ -3263,7 +3266,7 @@
     },
     "packages/qadams/framework": {
       "name": "@aiqadam/qadams-framework",
-      "version": "0.30.0",
+      "version": "0.31.0",
       "dependencies": {
         "@aiqadam/shared": "workspace:*",
         "ai": "^6.0.0",
@@ -3398,6 +3401,7 @@
         "@aiqadam/qadam-facebook-leads": "workspace:*",
         "@aiqadam/qadam-intercom": "workspace:*",
         "@aiqadam/qadam-slack": "workspace:*",
+        "@aiqadam/qadam-telegram-bot": "workspace:*",
         "@faker-js/faker": "8.2.0",
         "@types/bcrypt": "5.0.0",
         "@types/content-disposition": "0.5.9",
@@ -3523,7 +3527,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.122.0",
+      "version": "0.123.0",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",

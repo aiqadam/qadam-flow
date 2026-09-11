@@ -45,6 +45,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { encryptUtils } from '../../helper/encryption'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
+import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { projectRepo } from '../../project/project-service'
@@ -52,6 +53,7 @@ import {
     getQadamPackageWithoutArchive,
     qadamMetadataService,
 } from '../../qadams/metadata/qadam-metadata-service'
+import { longPollingTransportChange } from '../../trigger/long-polling/long-polling-transport-change'
 import { userService } from '../../user/user-service'
 import { userInteractionWatcher } from '../../workers/user-interaction-watcher'
 import {
@@ -133,6 +135,16 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             scope,
         })
         log.info({ connectionId: newId, qadamName, platformId, isNew: isNil(existingConnection) }, 'App connection upserted')
+
+        // The reconnect dialog carries the delivery-mode selector and submits here, not through
+        // `update` — so this path can flip the mode just as well, and needs the same hook re-run.
+        applyDeliveryModeChange({
+            before: existingConnection?.metadata,
+            connection: updatedConnection,
+            projectIds,
+            log,
+        })
+
         return this.removeSensitiveData(updatedConnection)
     },
     async update(params: UpdateParams): Promise<AppConnectionWithoutSensitiveData> {
@@ -149,6 +161,8 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             ...(projectIds ? { projectIds: ArrayContains(projectIds) } : {}),
         }
 
+        const before = await appConnectionsRepo().findOneBy(filter)
+
         await appConnectionsRepo().update(filter, {
             displayName: request.displayName,
             ...spreadIfDefined('projectIds', request.projectIds),
@@ -157,6 +171,23 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
         })
 
         const updatedConnection = await appConnectionsRepo().findOneByOrFail(filter)
+
+        // The delivery mode lives on the connection, but what acts on it — registering or removing
+        // the webhook at the third party — happens in the trigger's enable hook. Without this, a
+        // connection switched back to webhook stops being polled and never gets its webhook back,
+        // and the flow silently receives nothing.
+        // `!== undefined` rather than `isNil`: the DTO is `.optional()`, so `null` cannot reach here
+        // today, and this stays correct if it ever can — clearing the metadata is exactly the edit
+        // that flips a connection out of pull mode.
+        if (request.metadata !== undefined) {
+            applyDeliveryModeChange({
+                before: before?.metadata,
+                connection: updatedConnection,
+                projectIds,
+                log,
+            })
+        }
+
         return this.removeSensitiveData(updatedConnection)
     },
     async getOne({
@@ -458,6 +489,30 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
     return new Map(projects.map((project) => [project.id, { id: project.id, displayName: project.displayName, type: project.type }]))
 }
 
+/**
+ * The delivery mode lives on the connection, but what acts on it — registering or removing the
+ * webhook at the third party — happens in the trigger's enable hook. Without this, a connection
+ * switched back to webhook stops being polled and never gets its webhook back, and the flow keeps
+ * saying "on" while receiving nothing.
+ *
+ * Not awaited: each affected flow costs an engine round trip plus the qadam's own call to the third
+ * party, and holding the user's request open for all of them turns one cheap POST into unbounded
+ * sequential work. The mode is saved either way, and a failure here is logged, not surfaced.
+ */
+function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyDeliveryModeChangeParams): void {
+    rejectedPromiseHandler(longPollingTransportChange(log).reEnableAffectedFlows({
+        qadamName: connection.qadamName,
+        before,
+        after: connection.metadata,
+        // The acting project, not every project the connection is shared with. Both controllers
+        // pass a single project today, so the fallback does not run; a caller that passed nothing
+        // would widen this to every project sharing the credential, which is why the acting project
+        // is threaded through rather than read off the connection.
+        projectIds: projectIds ?? connection.projectIds,
+        externalId: connection.externalId,
+    }), log)
+}
+
 async function assertProjectIds(projectIds: ProjectId[], platformId: string): Promise<void> {
     const filteredProjects = await projectRepo().countBy({
         id: In(projectIds),
@@ -676,6 +731,13 @@ function validatePieceVersion(qadamVersion: string): void {
         })
     }
 }
+type ApplyDeliveryModeChangeParams = {
+    before: Metadata | null | undefined
+    connection: AppConnectionSchema
+    projectIds: ProjectId[] | null | undefined
+    log: FastifyBaseLogger
+}
+
 type UpsertParams = {
     projectIds: ProjectId[]
     ownerId: string | null
