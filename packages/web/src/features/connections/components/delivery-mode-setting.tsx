@@ -34,16 +34,21 @@ const LONG_POLLING = 'long_polling';
 
 type DeliveryModeSettingProps = {
   qadamName: string;
+  /** Where the connection's metadata sits in the enclosing form. */
+  formPath?: string;
 };
 
-const DeliveryModeSetting = ({ qadamName }: DeliveryModeSettingProps) => {
+const DeliveryModeSetting = ({
+  qadamName,
+  formPath = 'request.metadata',
+}: DeliveryModeSettingProps) => {
   const form = useFormContext();
   if (!QADAMS_SUPPORTING_PULL_DELIVERY.includes(qadamName)) {
     return null;
   }
   return (
     <FormField
-      name={`request.metadata.${METADATA_KEY}`}
+      name={`${formPath}.${METADATA_KEY}`}
       control={form.control}
       render={({ field }) => (
         <FormItem className="flex flex-col gap-2">

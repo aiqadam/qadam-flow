@@ -52,12 +52,12 @@ import {
   QadamsOAuth2AppsMap,
   newConnectionUtils,
 } from '@/features/connections';
+import { DeliveryModeSetting } from '@/features/connections/components/delivery-mode-setting';
 import { formUtils } from '@/features/qadams';
 import { flagsHooks } from '@/hooks/flags-hooks';
 
 import { BasicAuthConnectionSettings } from './basic-secret-connection-settings';
 import { CustomAuthConnectionSettings } from './custom-auth-connection-settings';
-import { DeliveryModeSetting } from './delivery-mode-setting';
 import { MutliAuthList, AuthListItem } from './multi-auth-list';
 import { OAuth2ConnectionSettings } from './oauth2-connection-settings';
 import { SecretTextConnectionSettings } from './secret-text-connection-settings';
@@ -102,6 +102,11 @@ function CreateOrEditConnectionSection({
           redirectUrl: redirectUrl ?? '',
           projectId: projectIdOverride ?? undefined,
         }),
+        // Seeded from the connection being reconnected: without it the selector shows a default
+        // that is not what is stored, and saving silently overwrites the real setting.
+        ...(reconnectConnection?.metadata
+          ? { metadata: reconnectConnection.metadata }
+          : {}),
         ...(isGlobalConnection ? { scope: AppConnectionScope.PLATFORM } : {}),
         projectIds: reconnectConnection?.projectIds ?? [],
         preSelectForNewProjects: false,
