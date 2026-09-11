@@ -100,6 +100,38 @@ describe('longPollingSourceRegistry.list', () => {
         })
     })
 
+    // An install with no such trigger must not pay for a community qadam's module graph just to
+    // find that out — which is what makes the feature free to leave on.
+    it('does not load a qadam when the query finds nothing', async () => {
+        triggerSourceFind.mockResolvedValue([])
+        const load = vi.spyOn(eventPullerRegistry, 'load')
+
+        try {
+            const { sources } = await longPollingSourceRegistry(mockLog).list()
+
+            expect(sources).toEqual([])
+            expect(load).not.toHaveBeenCalled()
+        }
+        finally {
+            load.mockRestore()
+        }
+    })
+
+    it('loads the qadam once the query finds one', async () => {
+        triggerSourceFind.mockResolvedValue([triggerSource()])
+        flowVersionFind.mockResolvedValue([flowVersion()])
+        const load = vi.spyOn(eventPullerRegistry, 'load')
+
+        try {
+            await longPollingSourceRegistry(mockLog).list()
+
+            expect(load).toHaveBeenCalled()
+        }
+        finally {
+            load.mockRestore()
+        }
+    })
+
     it('only asks the database for qadams that have a puller', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
@@ -107,7 +139,7 @@ describe('longPollingSourceRegistry.list', () => {
             where: expect.objectContaining({ simulate: false }),
         }))
         const [{ where }] = triggerSourceFind.mock.calls[0]
-        expect(where.qadamName.value).toEqual(eventPullerRegistry.qadamNames())
+        expect(where.qadamName.value).toEqual(eventPullerRegistry.registeredQadamNames())
     })
 
     it('asks the database only for enabled flows, rather than filtering afterwards', async () => {

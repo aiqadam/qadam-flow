@@ -21,7 +21,9 @@ const longPollingTriggerSourceRepo = repoFactory(TriggerSourceEntity)
  */
 export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
     async list(): Promise<LongPollingRegistry> {
-        const qadamNames = eventPullerRegistry.qadamNames()
+        // Static names, so an install with no such trigger never evaluates a community qadam just
+        // to discover that it has none.
+        const qadamNames = eventPullerRegistry.registeredQadamNames()
         if (qadamNames.length === 0) {
             return { sources: [], starved: [] }
         }
@@ -37,6 +39,11 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
                 flow: true,
             },
         })
+        if (triggerSources.length === 0) {
+            return { sources: [], starved: [] }
+        }
+        // Only now, once a row exists, is a puller worth the cost of loading.
+        await eventPullerRegistry.load()
         const flowVersions = await getFlowVersions({ triggerSources, log })
         const candidates = triggerSources
             .map((triggerSource) => toCandidate({

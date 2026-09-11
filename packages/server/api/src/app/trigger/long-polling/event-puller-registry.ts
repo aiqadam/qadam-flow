@@ -34,6 +34,13 @@ export const eventPullerRegistry = {
     isRegistered(qadamName: string): boolean {
         return !isNil(loaders[qadamName])
     },
+    /**
+     * Also answerable without loading: the registry query needs the names to filter on, and an
+     * install with no such trigger must never pay for a qadam's module graph to find that out.
+     */
+    registeredQadamNames(): string[] {
+        return Object.keys(loaders)
+    },
     async getOrLoad(qadamName: string): Promise<QadamEventPuller | undefined> {
         if (!this.isRegistered(qadamName)) {
             return undefined

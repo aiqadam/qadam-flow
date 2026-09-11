@@ -18,7 +18,7 @@ const reportStatus = vi.fn()
 const reportStatusIfAbsent = vi.fn()
 const clearStatus = vi.fn()
 const store = new Map<string, unknown>()
-let longPollingEnabled = true
+let longPollingEnabled: boolean | undefined = true
 
 vi.mock('../../../../../src/app/trigger/long-polling/long-polling-source', () => ({
     longPollingSourceRegistry: () => ({ list: listSources }),
@@ -131,13 +131,25 @@ describe('longPollingHost', () => {
         handleWebhook.mockResolvedValue({ status: StatusCodes.OK, body: {}, headers: {} })
     })
 
-    it('does nothing at all while the feature flag is off', async () => {
+    it('does nothing at all when an operator switches it off', async () => {
         longPollingEnabled = false
 
         const host = await loadHost()
         await host.start()
 
         expect(listSources).not.toHaveBeenCalled()
+    })
+
+    // Nothing to opt into: the cost of an unused install is paid by the registry query stopping at
+    // zero rows, not by an operator remembering to set a variable.
+    it('runs by default, with nothing configured', async () => {
+        longPollingEnabled = undefined
+
+        const host = await loadHost()
+        await host.start()
+        await host.stop()
+
+        expect(listSources).toHaveBeenCalled()
     })
 
     it('delivers each pulled event and only then persists the cursor', async () => {

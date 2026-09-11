@@ -70,7 +70,7 @@ const DeliveryModeSetting = ({
           </Select>
           <FormDescription>
             {t(
-              'Long polling suits instances the app cannot reach — behind NAT or in a closed network. It needs AP_TRIGGER_LONG_POLLING_ENABLED=true on the server, and it applies to every flow using this connection.',
+              'Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential.',
             )}
           </FormDescription>
           <FormMessage />

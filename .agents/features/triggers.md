@@ -72,7 +72,13 @@ Manages the full lifecycle of flow triggers — registration, event capture, tes
 An alternative *delivery source* for WEBHOOK triggers, for instances the third party cannot reach.
 The trigger stays `TriggerStrategy.WEBHOOK`; only where the payload comes from changes.
 
-- Gated by `AP_TRIGGER_LONG_POLLING_ENABLED` (default `false`), and started from `appPostBoot`.
+- `AP_TRIGGER_LONG_POLLING_ENABLED` defaults to **on** and is a kill switch, not an opt-in: the cost
+  of an unused install is zero by construction, not by the flag. The registry query filters on a
+  *static* list of qadam names and stops at zero rows, so no community qadam is loaded until a
+  source exists; and `flow.service` guards its status read on `eventPullerRegistry.isRegistered`
+  (a static map lookup) rather than on the flag, so a flow no puller backs costs nothing per fetch.
+  The switch stays because qadam code runs in the API process without a sandbox.
+- Started from `appPostBoot`.
 - `event-puller-registry.ts` maps a qadam name to a `QadamEventPuller` (`@aiqadam/qadams-framework`).
   The qadam owns the protocol — endpoint, window length, cursor arithmetic, fatal/retryable
   classification — and whether a given trigger config wants pulling (`isEnabledFor`). Core never

@@ -50,7 +50,6 @@ export const longPollingHost = (log: FastifyBaseLogger) => ({
         if (started || !isEnabled()) {
             return
         }
-        await eventPullerRegistry.load()
         started = true
         registerMetrics()
         eventLoopDelay.enable()
@@ -593,8 +592,15 @@ async function sleepUntilAborted({ ms, signal }: SleepUntilAbortedParams): Promi
     })
 }
 
+/**
+ * On unless an operator turns it off. It costs nothing when unused — the registry query filters on
+ * a static list of qadam names and stops at zero rows, and no community qadam is loaded until one
+ * exists — so there is nothing to opt into. It stays a switch because qadam code runs here in the
+ * API process without a sandbox, holding long-lived outbound sockets: an operator whose API is
+ * being disturbed needs a way to stop it that is not "edit every connection".
+ */
 function isEnabled(): boolean {
-    return system.getBoolean(AppSystemProp.TRIGGER_LONG_POLLING_ENABLED) ?? false
+    return system.getBoolean(AppSystemProp.TRIGGER_LONG_POLLING_ENABLED) ?? true
 }
 
 /**
@@ -747,7 +753,7 @@ type SleepUntilAbortedParams = {
 
 const CONNECTION_UNREADABLE_REASON = 'The connection could not be read right now; retrying'
 
-const LONG_POLLING_DISABLED_MESSAGE = 'This trigger is set to long polling, which requires AP_TRIGGER_LONG_POLLING_ENABLED=true on the server. Until it is set, the trigger can be neither enabled nor tested — testing would remove the bot\'s webhook without anything replacing it. Set it on the server, or switch the trigger back to webhook delivery.'
+const LONG_POLLING_DISABLED_MESSAGE = 'This connection is set to long polling, which an operator has switched off on this server (AP_TRIGGER_LONG_POLLING_ENABLED=false). While it is off the flow can be neither enabled nor tested — testing would remove the bot\'s webhook without anything replacing it. Switch the connection back to webhook delivery, or ask an operator to turn long polling back on.'
 
 type AssertTransportParams = {
     qadamName: string

@@ -49,6 +49,7 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { eventPullerRegistry } from '../../trigger/long-polling/event-puller-registry'
 import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
 import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
 import { flowVersionMigrationService } from '../flow-version/flow-version-migration.service'
@@ -344,11 +345,13 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 schedule: triggerSource.schedule,
                 // Only meaningful for a flow the long-polling host serves; null for every other one,
                 // and `spreadIfDefined` keeps it off the response rather than sending an explicit null.
-                // Guarded on the flag: with the host off the key cannot exist, and this sits on
-                // every flow fetch. `tryCatch` because `update`, `updateMetadata` and `getTemplate`
-                // all return through here — without it an unreachable Redis would make a flow edit
-                // commit and then answer 500.
-                ...spreadIfDefined('longPolling', (system.getBoolean(AppSystemProp.TRIGGER_LONG_POLLING_ENABLED) ?? false)
+                // Guarded on the qadam, not on a feature flag: this sits on every flow fetch, and
+                // `isRegistered` is a lookup in a static map — no Redis, no qadam loaded. A flow
+                // whose trigger no puller backs, which is nearly all of them, pays nothing.
+                // `tryCatch` because `update`, `updateMetadata` and `getTemplate` all return through
+                // here: without it an unreachable Redis would make a flow edit commit and then
+                // answer 500.
+                ...spreadIfDefined('longPolling', eventPullerRegistry.isRegistered(triggerSource.qadamName)
                     ? (await tryCatch(() => longPollingStatus.get({ projectId, flowId: id }))).data
                     : undefined),
             } : undefined,
