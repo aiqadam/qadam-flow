@@ -103,11 +103,6 @@ type GetWebhookInfoResponse = {
   result?: { url?: string; allowed_updates?: string[] };
 };
 
-export type RegisteredWebhook = {
-  url: string;
-  allowedUpdates: string[];
-};
-
 export type SetWebhookRequest = {
   ip_address: string;
   max_connections: number;
@@ -192,4 +187,9 @@ export const telegramCommons = {
   protectContentProp: buildProtectContentProp,
   replyToMessageIdProp: buildReplyToMessageIdProp,
   resolveParseMode,
+};
+
+export type RegisteredWebhook = {
+  url: string;
+  allowedUpdates: string[];
 };

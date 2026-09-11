@@ -199,21 +199,7 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 // whole TTL — the silent-wrong-status this module exists to prevent.
                 // An aged-out simulation is the one removal a user is waiting on: the builder panel
                 // sits there with no explanation otherwise, because the trigger-source row survives.
-                if (isNil(next) && task.source.simulate) {
-                    // The one report a simulation is allowed to make, and it is deliberate rather
-                    // than a way around the guard: the guard exists so a running test does not
-                    // overwrite the production status with its own progress, but an expired test is
-                    // the single thing the user is waiting to be told. It lands on the production
-                    // flow's key and is corrected by that flow's next window, a minute at most.
-                    reportStatus({
-                        source: task.source,
-                        status: LongPollingStatus.STOPPED,
-                        reason: 'This test ran for too long without receiving anything; press Test again to restart it',
-                        evenForSimulation: true,
-                        log,
-                    })
-                }
-                else if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
+                if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
                     rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
                         projectId: task.source.projectId,
                         flowId: task.source.flowId,
@@ -630,11 +616,11 @@ function reportStatus(params: ReportStatusParams): void {
     publishStatus({ ...params, report: longPollingStatus.report })
 }
 
-function publishStatus({ source, status, reason, log, expiresAfterMs, evenForSimulation, report }: PublishStatusParams): void {
+function publishStatus({ source, status, reason, log, expiresAfterMs, report }: PublishStatusParams): void {
     // A simulation shares its flow's id, so anything it reported would overwrite the status of the
     // production delivery the user is actually asking about — and would then expire, leaving that
     // flow looking like it had stopped. The builder shows a test's progress in its own panel.
-    if (source.simulate && evenForSimulation !== true) {
+    if (source.simulate) {
         return
     }
     rejectedPromiseHandler(report({
@@ -848,8 +834,6 @@ type PublishStatusParams = ReportStatusParams & {
 }
 
 type ReportStatusParams = {
-    /** For the one report a simulation may make: that it expired. See the call site. */
-    evenForSimulation?: boolean
     source: LongPollingSource
     status: LongPollingStatus
     reason?: string

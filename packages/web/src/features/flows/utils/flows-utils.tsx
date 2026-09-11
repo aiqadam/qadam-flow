@@ -80,8 +80,11 @@ export const flowsUtils = {
     }
     const polling = longPollingHealthy(flow);
     if (polling) {
-      return t('Receiving updates by polling since {since}', {
-        since: formatUtils.formatDate(new Date(polling.since)),
+      // Not 'since': the host restamps this on every window, so it is the time of the last
+      // successful check rather than when polling began, and 'since Just now' would refresh
+      // every minute while promising a duration it does not carry.
+      return t('Receiving updates by polling, last checked {checked}', {
+        checked: formatUtils.formatDate(new Date(polling.since)),
       });
     }
     switch (trigger?.type) {

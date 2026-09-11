@@ -915,25 +915,13 @@ describe('longPollingHost', () => {
             await host.stop()
         })
 
-        // A test that ages out is the one removal a user is waiting on: the trigger-source row
-        // survives, so the builder panel would sit there with no explanation at all.
-        it('says so when a test ages out, instead of just disappearing', async () => {
-            const host = await loadHost()
-            await host.start()
-            await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
-            reportStatus.mockClear()
-            listSources.mockResolvedValue({ sources: [], starved: [], ambiguous: [] })
-            host.requestSync()
-
-            await vi.waitFor(() => expect(reportStatus.mock.calls.some(([params]) =>
-                params.flowId === 'flow-sim' && /press Test again/.test(params.reason ?? ''))).toBe(true))
-            await host.stop()
-        })
-
         // Status is keyed on the flow, which a simulation shares with the production delivery. Its
         // reports would overwrite the one the user is asking about, then expire — leaving a healthy
         // flow looking stopped.
-        it('reports no status of its own while it runs', async () => {
+        // Including when it goes away. A simulation leaves `desired` on the *normal* end of a test —
+        // capturing a payload disables it — so a message there would be published on success, onto
+        // the production flow's key, since the two share a flow id.
+        it('reports no status of its own, while it runs or when it ends', async () => {
             const host = await loadHost()
             await host.start()
 

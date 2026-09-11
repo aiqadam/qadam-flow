@@ -144,6 +144,53 @@ describe('the derived secret', () => {
  * the bot token and so could not otherwise derive it. The secret is what proves an update came from
  * Telegram, so leaking it hands away exactly what it protects.
  */
+/**
+ * The comparison that decides whether Telegram is delivering to *this* endpoint. Full-string
+ * equality wedged a flow forever if an operator ever changed the instance's public URL — it could
+ * never match, so the secret was never installed and every update paid a `getWebhookInfo`. Path
+ * equality survives that while still separating production from the public `/test` route, which is
+ * the distinction that must not blur: matching there would let an anonymous request re-point the
+ * bot at a URL that never runs the flow.
+ */
+describe('isSameEndpoint', () => {
+  it('matches the same flow through a different host', () => {
+    expect(
+      telegramWebhookAuth.isSameEndpoint({
+        registered: 'https://old-host.example.org/api/v1/webhooks/flow1',
+        webhookUrl: 'https://new-host.example.org/api/v1/webhooks/flow1',
+      })
+    ).toBe(true);
+  });
+
+  it('does not match the public test route', () => {
+    expect(
+      telegramWebhookAuth.isSameEndpoint({
+        registered: 'https://flow.example.org/api/v1/webhooks/flow1/test',
+        webhookUrl: 'https://flow.example.org/api/v1/webhooks/flow1',
+      })
+    ).toBe(false);
+  });
+
+  it('does not match another flow', () => {
+    expect(
+      telegramWebhookAuth.isSameEndpoint({
+        registered: 'https://flow.example.org/api/v1/webhooks/flow2',
+        webhookUrl: 'https://flow.example.org/api/v1/webhooks/flow1',
+      })
+    ).toBe(false);
+  });
+
+  // Telegram reports `''` when it holds no webhook, and a malformed value must not throw.
+  it.each(['', 'not a url'])('treats %o as no match rather than throwing', (registered) => {
+    expect(
+      telegramWebhookAuth.isSameEndpoint({
+        registered,
+        webhookUrl: 'https://flow.example.org/api/v1/webhooks/flow1',
+      })
+    ).toBe(false);
+  });
+});
+
 describe('setWebhook failures', () => {
   beforeEach(() => {
     vi.clearAllMocks();

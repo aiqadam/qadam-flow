@@ -57,13 +57,6 @@ function isSimulation({ webhookUrl }: { webhookUrl: string }): boolean {
   return webhookUrl.endsWith(SIMULATION_SUFFIX);
 }
 
-/** The production URL a simulation borrowed the webhook from. */
-function productionUrlOf({ webhookUrl }: { webhookUrl: string }): string {
-  return isSimulation({ webhookUrl })
-    ? webhookUrl.slice(0, -SIMULATION_SUFFIX.length)
-    : webhookUrl;
-}
-
 /**
  * Whether Telegram's registered URL is this endpoint. Compared by **path**, not in full: an operator
  * who changes the instance's public URL would otherwise leave every pre-existing flow unable to ever
@@ -114,7 +107,6 @@ export const telegramWebhookAuth = {
   secretFor,
   isAuthentic,
   isSimulation,
-  productionUrlOf,
   isSameEndpoint,
   BORROWED_FROM_KEY,
   HEADER,

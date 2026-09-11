@@ -43,7 +43,6 @@ function contextWith({ transport, headers, webhookUrl, authMetadata, borrowedFro
         store.delete(key);
       },
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
 

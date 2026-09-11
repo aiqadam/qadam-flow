@@ -1,6 +1,6 @@
 {
   "0": "0",
-  "Receiving updates by polling since {since}": "Receiving updates by polling since {since}",
+  "Receiving updates by polling, last checked {checked}": "Receiving updates by polling, last checked {checked}",
   "Support": "Support",
   "Runs": "Runs",
   "Edit flow": "Edit flow",

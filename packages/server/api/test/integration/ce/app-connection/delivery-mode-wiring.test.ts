@@ -115,8 +115,11 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
         })
         const created = await ctx.post('/v1/app-connections', body)
         expect(created?.statusCode).toBe(StatusCodes.CREATED)
-        // A creation is not a rotation and must not force anything.
-        expect(deliveryModeJobs(upsertJob)[0]?.data.always).toBe(false)
+        // Forced on creation too. "Delete the broken connection and make it again with the same
+        // name" is a normal recovery and arrives here with nothing to compare against, while
+        // enabled flows still reference that `externalId` — so a creation can be a rotation. On a
+        // genuinely new connection the forced pass matches no flows and does no engine work.
+        expect(deliveryModeJobs(upsertJob)[0]?.data.always).toBe(true)
         upsertJob.mockClear()
 
         await ctx.post('/v1/app-connections', body)
