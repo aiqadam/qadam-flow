@@ -36,6 +36,34 @@ git push -f origin v1.2.0
 
 The gate then passes and prints the tagger's name, email and reason into the job log and the run summary. The reason is stored in the tag object, so `git show v1.2.0` shows it forever. This is deliberately a little more work than writing the changelog entry, and deliberately impossible to do invisibly — a lightweight tag cannot carry an override. Do not delete the check instead; the whole reason it exists is that the previous control was somebody remembering.
 
+## Unreleased
+
+### What has changed?
+
+#### Qadams verify TLS certificates again, so a self-signed endpoint now fails instead of silently connecting
+
+`AxiosHttpClient.sendRequest` — the client behind `httpClient` in `@aiqadam/qadams-common`, used by most
+qadams for outbound HTTP — set `process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'` on **every** request.
+That variable is process-global and read by `tls.connect` at connect time, so the first qadam request
+made after a process started disabled certificate verification for everything else in that process,
+permanently: not just the rest of that qadam's calls, but the server's own outbound TLS to OAuth
+providers, S3, SMTP and webhook targets. Nothing turned it back on, and nothing surfaced that it had
+happened. The assignment has been removed.
+
+- **Upgrading needs no action in the normal case.** Endpoints with certificates from a public CA are
+  unaffected — they were being verified either way whenever the flag happened not to be set yet.
+- **A step that talks to an endpoint with a self-signed or otherwise untrusted certificate will now
+  fail** with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN` or
+  `DEPTH_ZERO_SELF_SIGNED_CERT`, where before it connected. This is the intended outcome: those
+  connections were unauthenticated and it was not visible anywhere.
+- **To keep such a step working**, in order of preference: install the endpoint's CA certificate into
+  the container's trust store (or point `NODE_EXTRA_CA_CERTS` at it); use the qadam's own
+  per-connection setting where one exists (SFTP's *Allow unauthorized certificates*, IMAP's
+  *Validate certificates*, Postgres's *Reject unauthorized*), which scopes the exception to that one
+  connection; or, as a last resort, set `NODE_TLS_REJECT_UNAUTHORIZED=0` in the deployment's own
+  environment — which restores exactly the old behaviour, but does so deliberately and visibly
+  instead of as a side effect of one qadam making one request.
+
 ## 2.0.0
 
 ### What has changed?
