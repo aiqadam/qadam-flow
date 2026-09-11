@@ -99,6 +99,31 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
         })
     })
 
+    // `upsertJob` does nothing when it finds an existing job — it discards the newer data, and
+    // retries a failed one with its old payload. A per-connection id would therefore throw away a
+    // second change arriving while the first fan-out is still running, which is the silent loss this
+    // job exists to prevent. Coalescing is done in process by the fan-out itself, which re-reads
+    // live state, so two jobs for one connection converge.
+    it('gives every change its own job, rather than one per connection', async () => {
+        const ctx = await createTestContext(app)
+        const qadam = await seedQadamMetadata(ctx)
+
+        const created = await ctx.post('/v1/app-connections', connectionBody({
+            ctx,
+            qadam,
+            externalId: 'delivery-mode-repeat',
+            metadata: { transport: 'long_polling' },
+        }))
+        await ctx.post(`/v1/app-connections/${created?.json().id}`, {
+            displayName: 'Delivery Mode Connection',
+            metadata: { transport: 'webhook' },
+        })
+
+        const ids = deliveryModeJobs(upsertJob).map((job) => job.jobId)
+        expect(ids).toHaveLength(2)
+        expect(new Set(ids).size).toBe(2)
+    })
+
     // An edit that does not touch the metadata cannot have changed the mode, and the fan-out costs
     // an engine round trip per flow — it must not run on every rename.
     it('but not on an edit that leaves the metadata alone', async () => {
@@ -127,7 +152,7 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
  * Only the delivery-mode job: the sign-up and project setup this test performs schedule others, and
  * asserting on the whole queue would pass for the wrong reason.
  */
-function deliveryModeJobs(upsertJob: ReturnType<typeof vi.fn>): { data: Record<string, unknown> }[] {
+function deliveryModeJobs(upsertJob: ReturnType<typeof vi.fn>): { data: Record<string, unknown>, jobId: string }[] {
     return upsertJob.mock.calls
         .map(([params]) => params.job)
         .filter((job: { name: string }) => job.name === SystemJobName.APPLY_DELIVERY_MODE_CHANGE)

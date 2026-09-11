@@ -52,6 +52,8 @@ type ApplyDeliveryModeChangeSystemJobData = {
     externalId: string
     before: Metadata | null
     after: Metadata | null
+    /** Re-run regardless of whether the puller's verdict changed; see the `upsert` call site. */
+    always: boolean
 }
 
 type SystemJobDataMap = {

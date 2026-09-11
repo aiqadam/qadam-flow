@@ -92,6 +92,21 @@ describe('longPollingTransportChange', () => {
         expect(triggerSourceFind).not.toHaveBeenCalled()
     })
 
+    // Reconnecting replaces the credential, and a qadam may derive from it something the third
+    // party holds a copy of — Telegram's webhook secret is an HMAC of the bot token. Without this,
+    // rotating the token leaves Telegram echoing a secret that no longer verifies: every update is
+    // dropped, with no status and no run history, until someone republishes by hand.
+    it('re-runs the hooks for a credential change even though the mode did not move', async () => {
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'long_polling' },
+            after: { transport: 'long_polling' },
+            always: true,
+        })
+
+        expect(enableTrigger).toHaveBeenCalledTimes(1)
+    })
+
     it('ignores a qadam no puller backs', async () => {
         await longPollingTransportChange(mockLog).reEnableAffectedFlows({
             ...connection,

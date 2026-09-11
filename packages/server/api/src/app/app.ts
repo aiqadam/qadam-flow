@@ -188,6 +188,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
         externalId: data.externalId,
         before: data.before,
         after: data.after,
+        always: data.always,
     }))
 
     app.get(

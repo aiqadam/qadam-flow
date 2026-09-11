@@ -39,8 +39,9 @@ function secretFor({ botToken, webhookUrl }: SecretForParams): string {
 
 /**
  * Constant-time, so a forger cannot learn the secret one character at a time from how long the
- * comparison takes. `timingSafeEqual` throws on a length mismatch, which would leak the length, so
- * the lengths are compared first and the result is folded into a comparison that always runs.
+ * comparison takes. The length is checked first and returns early — `timingSafeEqual` throws on a
+ * mismatch rather than answering — which reveals only that the expected secret is the constant 43
+ * characters every derivation produces, and nothing about its contents.
  */
 function isAuthentic({ headers, expected }: IsAuthenticParams): boolean {
   const provided = headers[HEADER];

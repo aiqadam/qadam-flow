@@ -140,10 +140,18 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
 
         // The reconnect dialog carries the delivery-mode selector and submits here, not through
         // `update` — so this path can flip the mode just as well, and needs the same hook re-run.
+        //
+        // `always`, because this path also replaces the credential itself. A qadam may derive
+        // something from it that the third party holds a copy of — Telegram's webhook secret is an
+        // HMAC of the bot token — and rotating the credential without re-running the enable hook
+        // leaves the third party echoing a value that no longer verifies, which is a silent outage
+        // with no status and no run history. The verdict gate cannot see that: the delivery mode is
+        // unchanged.
         applyDeliveryModeChange({
             before: existingConnection?.metadata,
             connection: updatedConnection,
             projectIds,
+            always: true,
             log,
         })
 
@@ -501,13 +509,17 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
  * qadam's own call to the third party, so holding the user's POST open for all of them turns one
  * cheap request into unbounded sequential work — but a floating promise would lose the work
  * entirely if the process restarted in the seconds after the metadata was written, and that loss is
- * silent and one-directional (see the job's own doc comment). The job id is per connection, so
- * repeated edits collapse onto one pending job rather than queueing a fan-out each — an edit
- * arriving while one is already waiting or running is dropped, not merged, so its snapshot is lost.
- * That is tolerable only because the handler re-reads live state per flow rather than acting on the
- * snapshot; the snapshots decide whether the puller's verdict changed at all, nothing more.
+ * silent and one-directional (see the job's own doc comment).
+ *
+ * The job id is unique per change, deliberately. A per-connection id looks like coalescing and is
+ * not: `upsertJob` finds the existing job and then does nothing at all — the newer data is
+ * discarded, and a *failed* job is retried with its month-old payload. A second edit arriving while
+ * the first fan-out is still running would have been thrown away, which is exactly the silent loss
+ * this job exists to prevent. Coalescing belongs where it already is and where it can be done
+ * safely: `reEnableAffectedFlows` collapses concurrent runs in process and re-reads live state, so
+ * two jobs for one connection converge rather than conflict.
  */
-function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyDeliveryModeChangeParams): void {
+function applyDeliveryModeChange({ before, connection, projectIds, always, log }: ApplyDeliveryModeChangeParams): void {
     // The acting project, not every project the connection is shared with. Both controllers pass a
     // single project today, so the fallback does not run; a caller that passed nothing would widen
     // this to every project sharing the credential, which is why the acting project is threaded
@@ -522,8 +534,9 @@ function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyD
                 externalId: connection.externalId,
                 before: before ?? null,
                 after: connection.metadata ?? null,
+                always: always ?? false,
             },
-            jobId: `delivery-mode-${connection.platformId}-${actingProjectIds.join(',')}-${connection.externalId}`,
+            jobId: `delivery-mode-${connection.platformId}-${actingProjectIds.join(',')}-${connection.externalId}-${apId()}`,
         },
         schedule: { type: 'one-time', date: dayjs() },
     }), log)
@@ -751,6 +764,8 @@ type ApplyDeliveryModeChangeParams = {
     before: Metadata | null | undefined
     connection: AppConnectionSchema
     projectIds: ProjectId[] | null | undefined
+    /** Re-run the hooks even when the delivery mode is unchanged — see the `upsert` call site. */
+    always?: boolean
     log: FastifyBaseLogger
 }
 

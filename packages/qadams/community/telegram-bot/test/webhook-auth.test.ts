@@ -108,6 +108,19 @@ describe('the derived secret', () => {
     expect(secret.length).toBeLessThanOrEqual(256);
   });
 
+  // A golden vector. Self-consistency within a run cannot catch a change to the derivation, and
+  // such a change silently invalidates every webhook already registered with Telegram: the flows
+  // keep running, receive nothing, and say nothing. If this test fails, the derivation moved and
+  // every Telegram connection has to be re-enabled.
+  it('matches the value already registered with Telegram for this input', () => {
+    expect(
+      telegramWebhookAuth.secretFor({
+        botToken: '7777777:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        webhookUrl: 'https://flow.example.org/api/v1/webhooks/flow1',
+      })
+    ).toBe('zPLL18k1NjT1_BCQxCVhle__yF6dk2rqjV-H730NOwQ');
+  });
+
   // It is keyed by the token, so it must not be derivable from public material alone.
   it('does not contain the bot token', () => {
     expect(secret).not.toContain(BOT_TOKEN);
