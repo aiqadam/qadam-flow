@@ -71,7 +71,9 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
             return
         }
 
-        const inFlightKey = `${projectIds.join(',')}|${externalId}`
+        // Sorted: the key identifies a set of projects, and two callers passing the same set in a
+        // different order must coalesce rather than both fan out.
+        const inFlightKey = `${[...projectIds].sort().join(',')}|${externalId}`
         if (fanOutsInFlight.has(inFlightKey)) {
             fanOutsPending.add(inFlightKey)
             log.info({ externalId, qadamName }, '[longPollingTransportChange] A re-enable for this connection is already running; it will run once more after it')

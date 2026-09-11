@@ -37,6 +37,9 @@ const connection = {
 }
 
 describe('longPollingTransportChange', () => {
+    // The in-flight guard lives at module scope and `clearAllMocks` does not touch it, so a test
+    // that leaves a fan-out unresolved makes every later test in this file silently no-op — the
+    // coalesce case below awaits its own release for exactly that reason.
     beforeEach(() => {
         vi.clearAllMocks()
         triggerSourceFind.mockResolvedValue([{

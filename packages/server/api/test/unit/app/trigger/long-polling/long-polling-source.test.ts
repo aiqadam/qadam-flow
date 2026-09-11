@@ -252,6 +252,28 @@ describe('longPollingSourceRegistry.list', () => {
         expect(starved.map((item) => item.flowId)).toEqual(['older'])
     })
 
+    // Two rows can share an externalId inside one project — the index on (platformId, externalId)
+    // is not unique, and a platform-scoped connection shared into a project sits alongside the
+    // project's own. Whose metadata sets the delivery mode is then genuinely unknowable, so the
+    // registry refuses to guess. It must refuse *loudly*: an ambiguous flow is reported, and it is
+    // deliberately kept out of `starved`, because the host hands `starved` to the served set and
+    // that makes the webhook endpoint refuse deliveries — for a flow whose mode was never decided.
+    it('refuses to classify a flow whose connection id matches two connections in its project', async () => {
+        triggerSourceFind.mockResolvedValue([triggerSource()])
+        flowVersionFind.mockResolvedValue([flowVersion()])
+        connectionFind.mockResolvedValue([
+            { externalId: 'telegram', projectIds: ['project1'], metadata: { transport: 'long_polling' } },
+            { externalId: 'telegram', projectIds: ['project1'], metadata: { transport: 'webhook' } },
+        ])
+
+        const { sources, starved, ambiguous } = await longPollingSourceRegistry(mockLog).list()
+
+        expect(sources).toEqual([])
+        expect(starved).toEqual([])
+        expect(ambiguous.map((item) => item.flowId)).toEqual(['flow1'])
+        expect(mockLog.error).toHaveBeenCalled()
+    })
+
     it('serves only the most recently enabled flow when two share a credential', async () => {
         triggerSourceFind.mockResolvedValue([
             triggerSource({ id: 'old', flowId: 'older', flowVersionId: 'fv1', created: '2026-01-01T00:00:00.000Z' }),

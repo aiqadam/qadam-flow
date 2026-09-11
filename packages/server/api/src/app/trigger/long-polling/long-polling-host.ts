@@ -156,6 +156,11 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
         // The clearest silent-bot case there is: enabled, published, and guaranteed to receive
         // nothing because another flow holds the credential. The registry finds them; reporting is
         // the host's job, which keeps that query free of side effects and of the store's imports.
+        // A flow this pass has just written a status for must not have it cleared out from under it
+        // by the removal sweep below: a starved or ambiguous flow usually *is* one whose task is
+        // going away, so the two collide by construction and the clear would win, since it is
+        // deferred onto the dying task.
+        const reportedThisSync = new Set([...registry.starved, ...registry.ambiguous].map((source) => source.flowId))
         registry.starved.forEach((starved) => reportStatus({
             source: starved,
             status: LongPollingStatus.STOPPED,
@@ -184,7 +189,7 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 // clearing without waiting can be overtaken by a `FAILED` put from the very window
                 // this abort stood down, leaving a healthy flow wearing a stale failure for the
                 // whole TTL — the silent-wrong-status this module exists to prevent.
-                if (isNil(next)) {
+                if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
                     rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
                         projectId: task.source.projectId,
                         flowId: task.source.flowId,
