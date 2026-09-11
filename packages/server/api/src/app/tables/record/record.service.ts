@@ -13,6 +13,7 @@ import {
     QadamFlowError,
     SeekPage,
     TableWebhookEventType,
+    unique,
     UpdateRecordRequest,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -92,6 +93,7 @@ export const recordService = {
             tableId,
             projectId,
         })
+        assertFiltersReferenceTableFields({ filters, fields, tableId })
         const records = await recordRepo().find({
             where: {
                 projectId,
@@ -498,6 +500,26 @@ function formatRecords(records: RecordSchema[], fields: Field[]): PopulatedRecor
             ...record,
             cells,
         }
+    })
+}
+
+// A filter naming a column this table does not have used to match no cell, which
+// every operator but NOT_EXISTS reads as "no rows" and NOT_EXISTS reads as "all
+// rows". Both are a filter silently not being applied, so reject it instead.
+function assertFiltersReferenceTableFields({ filters, fields, tableId }: { filters: Filter[] | null, fields: Field[], tableId: string }): void {
+    if (isNil(filters) || filters.length === 0) {
+        return
+    }
+    const fieldIds = new Set(fields.map((field) => field.id))
+    const unknownFieldIds = unique(filters.map((filter) => filter.fieldId).filter((fieldId) => !fieldIds.has(fieldId)))
+    if (unknownFieldIds.length === 0) {
+        return
+    }
+    throw new QadamFlowError({
+        code: ErrorCode.VALIDATION,
+        params: {
+            message: `Filter references field(s) not present in table ${tableId}: ${unknownFieldIds.join(', ')}`,
+        },
     })
 }
 

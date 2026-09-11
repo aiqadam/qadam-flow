@@ -23,7 +23,6 @@
   "The ID of the record to do the action on.": "Die ID des Datensatzes, auf dem die Aktion ausgeführt wird.",
   "The values to update. Leave empty to keep current value.": "Die zu aktualisierenden Werte. Leer lassen, um den aktuellen Wert zu behalten.",
   "Maximum number of records to return (default no limit).": "Maximale Anzahl der zurückzugebenden Datensätze (Standard kein Limit).",
-  "Filter conditions to apply": "Zu verwendende Bedingungen filtern",
   "New Record Created": "Neuer Datensatz erstellt",
   "Record Updated": "Datensatz aktualisiert",
   "Record Deleted": "Eintrag gelöscht",

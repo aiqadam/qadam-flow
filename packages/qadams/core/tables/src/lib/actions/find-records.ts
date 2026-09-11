@@ -1,25 +1,18 @@
 import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
-import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
-import { FieldType, Filter, FilterOperator, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
-import { z } from 'zod';
+import { filterUtils } from '../common/filters';
+import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
+import { FilterOperator, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
 import qs from 'qs';
-type FieldInfo = {
-  id: string;
-  type: FieldType;
-  name: string;
-};
 
-// "In" / "Not In" accept either a list variable or a comma-separated string.
-function toFilterList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map(String);
-  }
-  return String(value ?? '')
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
+// Spelled out because this step is routinely configured as raw JSON through the
+// API or MCP, where the builder's picker is not there to produce the shape.
+const FILTERS_DESCRIPTION = [
+  'Filter conditions to apply. All conditions are combined with AND.',
+  'Shape: {"filters":[{"field":"<column name or id>","operator":"eq","value":"..."}]}.',
+  'Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists.',
+  'A filters value that cannot be read raises an error — it is never ignored, because ignoring it would return every row in the table.',
+].join(' ');
 
 export const findRecords = createAction({
   name: 'tables-find-records',
@@ -36,7 +29,7 @@ export const findRecords = createAction({
     filters: Property.DynamicProperties({
       auth: QadamAuth.None(),
       displayName: 'Filters',
-      description: 'Filter conditions to apply',
+      description: FILTERS_DESCRIPTION,
       required: false,
       refreshers: ['table_id'],
       props: async (propsValue, context) => {
@@ -56,7 +49,7 @@ export const findRecords = createAction({
           tableId: convertedTableId,
           context,
         });
- 
+
         return {
           filters: Property.Array({
             displayName: 'Filters',
@@ -68,7 +61,7 @@ export const findRecords = createAction({
                 options: {
                   options: fields.map((field) => ({
                     label: field.name,
-                    value: { id: field.externalId, type: field.type, name: field.name } as FieldInfo,
+                    value: { id: field.externalId, type: field.type, name: field.name },
                   })),
                 },
               }),
@@ -105,82 +98,14 @@ export const findRecords = createAction({
   async run(context) {
     const { table_id: tableExternalId, limit, filters } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
-    const filtersArray: { field: FieldInfo; operator: FilterOperator; value: unknown }[] = filters?.['filters'] ?? [];
-
-    for (const filter of filtersArray) {
-      if (filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS) {
-        continue;
-      }
-      if (filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN) {
-        if (toFilterList(filter.value).length === 0) {
-          throw new Error(`The "${filter.operator}" operator on field "${filter.field.name}" requires at least one value.`);
-        }
-        continue;
-      }
-
-      const value = filter.value;
-      const fieldType = filter.field.type;
-
-      let schema: Record<string, z.ZodType>;
-      switch (fieldType) {
-        case FieldType.NUMBER:
-          schema = {
-            value: z.union([z.number(), z.string().transform(val => {
-              const num = Number(val);
-              if (isNaN(num)) throw new Error(`Invalid number for field "${filter.field.name}"`);
-              return num;
-            })]),
-          };
-          break;
-        case FieldType.DATE:
-          schema = {
-            value: z.union([z.date(), z.string().transform(val => {
-              const date = new Date(val);
-              if (isNaN(date.getTime())) throw new Error(`Invalid date for field "${filter.field.name}"`);
-              return date;
-            })]),
-          };
-          break;
-        default:
-          schema = {
-            value: z.string(),
-          };
-      }
-
-      await propsValidation.validateZod({ value }, schema);
-    }
-
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
-
-    const parsedFilters: Filter[] = filtersArray.map((filter) => {
-      const fieldId = tableFields.find((f) => f.externalId === filter.field.id)?.id ?? filter.field.id;
-      if (filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS) {
-        return {
-          fieldId,
-          operator: filter.operator,
-        };
-      }
-      if (filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN) {
-        return {
-          fieldId,
-          operator: filter.operator,
-          value: toFilterList(filter.value),
-        };
-      }
-      return {
-        fieldId,
-        operator: filter.operator,
-        value: filter.value as string,
-      };
-    });
 
     const request: ListRecordsRequest = {
       tableId,
       limit: limit ?? 999999999,
       cursor: undefined,
-      filters: parsedFilters,
+      filters: filterUtils.toWireFilters({ rawFilters: filters, fields: tableFields }),
     };
-
 
     const response = await httpClient.sendRequest<SeekPage<PopulatedRecord>>({
       method: HttpMethod.GET,

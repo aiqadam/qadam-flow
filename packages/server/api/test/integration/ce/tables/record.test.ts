@@ -485,6 +485,42 @@ describe('Record API', () => {
             expect(body.data.length).toBe(1)
             expect(body.data[0].id).toBe(withCell.id)
         })
+
+        it('rejects a filter naming a field that is not a column of the table', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            const otherTable = createMockTable({ projectId: ctx.project.id })
+            await db.save('table', otherTable)
+            const otherField = createMockField({ tableId: otherTable.id, projectId: ctx.project.id })
+            otherField.type = FieldType.TEXT
+            await db.save('field', otherField)
+            await db.save('record', createMockRecord({ tableId: table.id, projectId: ctx.project.id }))
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: otherField.id, operator: FilterOperator.EQ, value: 'demo' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('NOT_EXISTS on a field of another table does not return the whole table', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            const otherTable = createMockTable({ projectId: ctx.project.id })
+            await db.save('table', otherTable)
+            const otherField = createMockField({ tableId: otherTable.id, projectId: ctx.project.id })
+            otherField.type = FieldType.TEXT
+            await db.save('field', otherField)
+            await db.save('record', createMockRecord({ tableId: table.id, projectId: ctx.project.id }))
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: otherField.id, operator: FilterOperator.NOT_EXISTS }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
     })
 
     describeWithAuth('DELETE /v1/records (Delete)', () => app!, (setup) => {
