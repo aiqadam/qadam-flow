@@ -99,6 +99,31 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
         })
     })
 
+    // Reconnecting replaces the credential, and a qadam may derive from it something the third
+    // party holds a copy of — Telegram's webhook secret is an HMAC of the bot token. The delivery
+    // mode has not moved, so only this flag makes the hooks re-run; without it, rotating a token
+    // leaves Telegram echoing a secret that no longer verifies and the flow silently dead.
+    it('forces the hooks to re-run when a reconnect replaces the credential', async () => {
+        const ctx = await createTestContext(app)
+        const qadam = await seedQadamMetadata(ctx)
+
+        const body = connectionBody({
+            ctx,
+            qadam,
+            externalId: 'delivery-mode-rotate',
+            metadata: { transport: 'long_polling' },
+        })
+        const created = await ctx.post('/v1/app-connections', body)
+        expect(created?.statusCode).toBe(StatusCodes.CREATED)
+        // A creation is not a rotation and must not force anything.
+        expect(deliveryModeJobs(upsertJob)[0]?.data.always).toBe(false)
+        upsertJob.mockClear()
+
+        await ctx.post('/v1/app-connections', body)
+
+        expect(deliveryModeJobs(upsertJob)[0]?.data.always).toBe(true)
+    })
+
     // `upsertJob` does nothing when it finds an existing job — it discards the newer data, and
     // retries a failed one with its old payload. A per-connection id would therefore throw away a
     // second change arriving while the first fan-out is still running, which is the silent loss this

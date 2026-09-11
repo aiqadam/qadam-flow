@@ -151,7 +151,9 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             before: existingConnection?.metadata,
             connection: updatedConnection,
             projectIds,
-            always: true,
+            // Only when this replaced something. A brand-new connection has no flows to re-enable
+            // and cannot be a credential rotation, so forcing the fan-out there is pure cost.
+            always: !isNil(existingConnection),
             log,
         })
 
