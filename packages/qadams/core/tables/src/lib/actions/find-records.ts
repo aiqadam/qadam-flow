@@ -14,6 +14,11 @@ const FILTERS_DESCRIPTION = [
   'A filters value that cannot be read raises an error — it is never ignored, because ignoring it would return every row in the table.',
 ].join(' ');
 
+const VALUE_DESCRIPTION = [
+  'For "In" / "Not In", pass a comma-separated list or a list variable.',
+  'Greater/Less Than compare by the column type: Number numerically, Date by timestamp (ISO, or any date the engine can parse — not epoch milliseconds), Text and Single Select alphabetically, ignoring case.',
+].join(' ');
+
 export const findRecords = createAction({
   name: 'tables-find-records',
   displayName: 'Find Records',
@@ -86,7 +91,7 @@ export const findRecords = createAction({
               }),
               value: Property.ShortText({
                 displayName: 'Value',
-                description: 'For "In" / "Not In", pass a comma-separated list or a list variable.',
+                description: VALUE_DESCRIPTION,
                 required: false,
               }),
             },
