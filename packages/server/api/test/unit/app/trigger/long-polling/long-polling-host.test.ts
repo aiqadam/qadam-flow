@@ -927,6 +927,19 @@ describe('longPollingHost', () => {
 
             await vi.waitFor(() => expect(handleWebhook).toHaveBeenCalled())
             expect(reportStatus.mock.calls.filter(([params]) => params.flowId === 'flow-sim')).toEqual([])
+
+            // The end has to be driven, not assumed: an earlier version of this test asserted
+            // "or when it ends" in its title while never ending the simulation, so the half that
+            // matters — the removal sweep — was covered by the name only.
+            clearStatus.mockClear()
+            listSources.mockResolvedValue({ sources: [], starved: [], ambiguous: [] })
+            host.requestSync()
+
+            await vi.waitFor(() => expect(listSources).toHaveBeenCalledTimes(2))
+            await vi.waitFor(() => expect(reportStatus.mock.calls.filter(([params]) => params.flowId === 'flow-sim')).toEqual([]))
+            // And the sweep must not clear either: the key is the production flow's, so a test
+            // ending on a credential nothing else polls would wipe a live `FAILED` for its backoff.
+            expect(clearStatus).not.toHaveBeenCalledWith({ projectId: simulated.projectId, flowId: 'flow-sim' })
             await host.stop()
         })
     })

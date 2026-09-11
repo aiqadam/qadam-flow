@@ -43,7 +43,7 @@ function contextWith({ transport, headers, webhookUrl, authMetadata, borrowedFro
         store.delete(key);
       },
     },
-  } as any;
+  } as unknown as Parameters<typeof telegramNewMessage.onEnable>[0];
 }
 
 /**

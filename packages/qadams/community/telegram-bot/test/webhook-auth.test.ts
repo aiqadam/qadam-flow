@@ -180,6 +180,26 @@ describe('isSameEndpoint', () => {
     ).toBe(false);
   });
 
+  // Defensive, and only reachable if `context.webhookUrl` ever stops being server-derived: when
+  // *neither* side parses, comparing the two results directly is `undefined === undefined`, which
+  // answers "same endpoint" for two strings that name nothing. Unknown must never read as a match.
+  it('does not match two URLs that both fail to parse', () => {
+    expect(
+      telegramWebhookAuth.isSameEndpoint({ registered: 'not a url', webhookUrl: 'also not a url' })
+    ).toBe(false);
+  });
+
+  // The engine has emitted a trailing slash before; without the strip this reads as a different
+  // endpoint and the flow re-registers on every single update.
+  it('ignores a trailing slash', () => {
+    expect(
+      telegramWebhookAuth.isSameEndpoint({
+        registered: 'https://flow.example.org/api/v1/webhooks/flow1/',
+        webhookUrl: 'https://flow.example.org/api/v1/webhooks/flow1',
+      })
+    ).toBe(true);
+  });
+
   // Telegram reports `''` when it holds no webhook, and a malformed value must not throw.
   it.each(['', 'not a url'])('treats %o as no match rather than throwing', (registered) => {
     expect(

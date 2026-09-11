@@ -197,9 +197,14 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 // clearing without waiting can be overtaken by a `FAILED` put from the very window
                 // this abort stood down, leaving a healthy flow wearing a stale failure for the
                 // whole TTL — the silent-wrong-status this module exists to prevent.
-                // An aged-out simulation is the one removal a user is waiting on: the builder panel
-                // sits there with no explanation otherwise, because the trigger-source row survives.
-                if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
+                //
+                // Never for a simulation: it shares `flowId` with the production delivery, so
+                // ending a builder test would wipe the live flow's status. Harmless when both sit
+                // on the same credential — the production source keeps the key alive and this does
+                // not fire — but a draft repointed to a different connection than the published
+                // version polls frees the key, and then a `FAILED` entry is gone for the whole
+                // backoff and a failing flow reads healthy.
+                if (isNil(next) && !task.source.simulate && !reportedThisSync.has(task.source.flowId)) {
                     rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
                         projectId: task.source.projectId,
                         flowId: task.source.flowId,

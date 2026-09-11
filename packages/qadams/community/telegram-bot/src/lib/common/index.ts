@@ -103,15 +103,7 @@ type GetWebhookInfoResponse = {
   result?: { url?: string; allowed_updates?: string[] };
 };
 
-export type SetWebhookRequest = {
-  ip_address: string;
-  max_connections: number;
-  allowed_updates: string[];
-  drop_pending_updates: boolean;
-  secret_token: string;
-};
-
-function redactSecretToken(error: unknown, secret: string | undefined): unknown {
+function redactSecretToken({ error, secret }: { error: unknown; secret: string | undefined }): unknown {
   if (secret === undefined || secret === '' || !(error instanceof Error)) {
     return error;
   }
@@ -148,7 +140,7 @@ export const telegramCommons = {
       // that proves an inbound update really came from Telegram — so without this, anyone who can
       // enable the flow reads the secret out of an error, including someone who cannot see the bot
       // token and so could not derive it. That would hand away exactly what the secret protects.
-      throw redactSecretToken(error, overrides?.secret_token);
+      throw redactSecretToken({ error, secret: overrides?.secret_token });
     }
   },
   /**
@@ -192,4 +184,12 @@ export const telegramCommons = {
 export type RegisteredWebhook = {
   url: string;
   allowedUpdates: string[];
+};
+
+export type SetWebhookRequest = {
+  ip_address: string;
+  max_connections: number;
+  allowed_updates: string[];
+  drop_pending_updates: boolean;
+  secret_token: string;
 };
