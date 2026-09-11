@@ -40,6 +40,47 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### A failing HTTP step no longer echoes its request body, so `request.body` is gone from that output
+
+`HttpError` — thrown by `httpClient` in `@aiqadam/qadams-common`, which most qadams use for outbound
+HTTP — took the outbound request body and put it both in the error's `message` and on an own
+property. Every failing request from every qadam therefore serialised its payload into the error:
+OAuth code-for-token exchanges, API keys sent in bodies, customer PII in a CRM call.
+
+That reached four places, and only the first was ever guarded. Engine stderr, via the `console.error`
+in `AxiosHttpClient` — the case [#399](https://github.com/aiqadam/qadam-flow/pull/399) fixed. The run's
+step **output**, because an action configured to continue on failure returns `errorMessage()` verbatim.
+And then, for every failure that is *not* configured to continue — which is the default — two more:
+the step's `errorMessage` and the run's failed-step message, because the engine formats a thrown error
+with `util.inspect`, which prints the message *and* every own property — that string is what the run's
+**Technical Details** panel shows; and the stored error's own `requestBody` field, which is persisted
+alongside it and is what the *Copy AI prompt* button sends to a model.
+
+The last three are persisted and shown to anyone who can open the run. They are also the one value the
+engine takes care to censor one field away: a step's input is resolved twice and only the copy in
+which every `{{connections.*}}` has become `**REDACTED**` is stored. The body is that input after
+resolution, so the output handed back precisely the secrets the input had just been stripped of.
+
+`HttpError` now carries nothing from the request. A denylist of field names was considered and is not
+viable — the body is arbitrary user JSON, so there is no fixed set of names to match, and the same
+conclusion is already recorded for the same data in `safe-http.ts`.
+
+- **Upgrading needs no action for the overwhelming majority of flows.** The response — status and
+  body, which is what a failing request is diagnosed from — is unchanged, and so are
+  `{{step.response.status}}` and `{{step.response.body}}`.
+- **A flow that reads `{{step.request.body}}` off a failing step will now get nothing.** Affected are
+  the steps whose failure mode continues rather than throws, and there are more of them than the HTTP
+  qadam: its *Continue flow on all errors*, *Continue flow on 4xx errors* and *Retry on internal
+  errors (5xx)* modes; the GraphQL qadam's failsafe; *Send an OAuth2 Request*; and — the widest by
+  far — the **Custom API Call** action with *No Error on Failure* ticked, which **141 qadams** ship
+  from the same shared helper. Their output
+  was `{ response, request: { body } }` and is now `{ response }`. The removed value was the step's
+  own input, which the run detail panel already shows in its **Input** tab, with values that came
+  from a connection masked — which is the point. (A secret typed directly into a field rather than
+  drawn from a connection is not masked there, and never was.)
+- **A qadam that reads `.request` off a caught `HttpError`** no longer compiles. Nothing in this
+  repository did; a qadam maintained outside it should read the step's input instead.
+
 #### Qadams verify TLS certificates again, so a self-signed endpoint now fails instead of silently connecting
 
 `AxiosHttpClient.sendRequest` — the client behind `httpClient` in `@aiqadam/qadams-common`, used by most
