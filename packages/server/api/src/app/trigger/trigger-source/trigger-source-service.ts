@@ -3,14 +3,32 @@ import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
+import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { templateTelemetryService } from '../../template/template-telemetry/template-telemetry.service'
 import { jobQueue } from '../../workers/job-queue/job-queue'
-import { longPollingHost } from '../long-polling/long-polling-host'
 import { flowTriggerSideEffect } from './flow-trigger-side-effect'
 import { TriggerSourceEntity } from './trigger-source-entity'
 import { triggerUtils } from './trigger-utils'
 
 export const triggerSourceRepo = repoFactory(TriggerSourceEntity)
+
+/**
+ * Imported on demand rather than at module scope. A static import pulls the host's whole graph —
+ * the webhook service, the connection service, the puller registry — into every module that
+ * touches trigger sources, which is enough to create an evaluation-order cycle in unrelated code.
+ */
+const longPollingHostLazy = (log: FastifyBaseLogger) => ({
+    async assertTransportIsAvailable(params: { qadamName: string, config: unknown }): Promise<void> {
+        const { longPollingHost } = await import('../long-polling/long-polling-host')
+        await longPollingHost(log).assertTransportIsAvailable(params)
+    },
+    requestSync(): void {
+        rejectedPromiseHandler(
+            import('../long-polling/long-polling-host').then(({ longPollingHost }) => longPollingHost(log).requestSync()),
+            log,
+        )
+    },
+})
 
 export const triggerSourceService = (log: FastifyBaseLogger) => {
     return {
@@ -25,7 +43,7 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             const qadamTrigger = await triggerUtils(log).getQadamTriggerOrThrow({ flowVersion, projectId })
             // Before the engine's ON_ENABLE hook runs: for a pull-transport trigger that hook
             // removes the webhook, so refusing afterwards would leave the flow with no delivery.
-            await longPollingHost(log).assertTransportIsAvailable({
+            await longPollingHostLazy(log).assertTransportIsAvailable({
                 qadamName: flowVersion.trigger.settings.qadamName,
                 config: flowVersion.trigger.settings.input,
             })
@@ -80,7 +98,7 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
                 ...triggerSource,
                 schedule: scheduleOptions,
             })
-            longPollingHost(log).requestSync()
+            longPollingHostLazy(log).requestSync()
             return saved
         },
         async get(params: GetTriggerParams): Promise<TriggerSource | null> {
@@ -190,7 +208,7 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
                 projectId,
             })
             log.info('[triggerSourceService#disable] Soft deleted trigger source')
-            longPollingHost(log).requestSync()
+            longPollingHostLazy(log).requestSync()
             if (templateId) {
                 templateTelemetryService(log).sendEvent({
                     eventType: TemplateTelemetryEventType.DEACTIVATE,
