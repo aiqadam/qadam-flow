@@ -1,5 +1,11 @@
 import { formatQadamError, tryParseFriendlyQadamError } from '../../../src/lib/core/common/friendly-qadam-error'
 
+// Models a generic `{ response, request }` error shape, not any particular class. It is named for
+// `HttpError` because that is the shape `extractHttpDetails` was written against, but as of #400
+// `@aiqadam/qadams-common`'s real `HttpError` carries no request at all — it put the outbound body
+// into persisted, viewer-readable run output. Nothing here is evidence about that class; the
+// negative coverage for it lives in `packages/qadams/common/test/axios-http-client.test.ts`. What
+// these cases do pin down is that the extractor still reads whatever shape a qadam throws at it.
 class TestHttpError extends Error {
     constructor(public readonly response: { status: number, body: unknown, headers?: Record<string, unknown> }, public readonly request: { body?: unknown, url?: string, method?: string }) {
         super(JSON.stringify({ response, request }))
