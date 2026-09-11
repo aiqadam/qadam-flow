@@ -85,8 +85,14 @@ const botId = (auth: unknown): string | undefined => {
   if (!isBotTokenAuth(auth)) {
     return undefined;
   }
-  const [id] = auth.secret_text.split(':');
-  return id.length > 0 ? id : undefined;
+  const [id, ...rest] = auth.secret_text.split(':');
+  // Strict: without the separator `split` hands back the whole value, and returning that would
+  // put the secret straight into a Redis key. A value that is not `<digits>:<secret>` is not a
+  // bot token, and the host is expected to stop the source rather than guess at one.
+  if (rest.length === 0 || !/^\d+$/.test(id)) {
+    return undefined;
+  }
+  return id;
 };
 
 const buildUrl = (params: {

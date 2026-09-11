@@ -180,3 +180,14 @@ describe('telegramEventPuller.credentialKey', () => {
     expect(telegramEventPuller.credentialKey({ auth: { secret_text: ':no-id' } })).toBeUndefined();
   });
 });
+
+describe('telegramEventPuller.credentialKey rejects anything that is not a bot token', () => {
+  // The value becomes a Redis key, so a token missing its separator must not be returned whole.
+  it('refuses a value with no separator instead of returning the secret', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: 'AAHhk-just-the-secret' } })).toBeUndefined();
+  });
+
+  it('refuses a non-numeric bot id', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: 'notanid:AAHhk' } })).toBeUndefined();
+  });
+});

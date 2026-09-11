@@ -59,7 +59,8 @@ export type QadamEventPuller = {
    * actually counts as one consumer. The host keys its cluster-wide lock and its cursor on this,
    * so two connections holding the same credential cannot poll each other's events away. Must not
    * return the secret itself: it ends up in Redis keys and in logs. Return `undefined` when the
-   * value cannot be parsed, and the host falls back to keying on the connection.
+   * value is not a credential this puller recognises — the host then stops that source rather than
+   * polling with something it cannot identify.
    */
   credentialKey: (params: { auth: unknown }) => string | undefined;
   waitForEvents: (params: WaitForEventsParams) => Promise<QadamEventPullResult>;

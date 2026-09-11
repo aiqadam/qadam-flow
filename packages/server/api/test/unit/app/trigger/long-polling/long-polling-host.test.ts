@@ -92,7 +92,8 @@ async function loadHost() {
     return module.longPollingHost(mockLog)
 }
 
-const cursorKey = `long-polling:cursor:${CREDENTIAL_KEY}`
+// Namespaced by qadam as well, so two pullers with colliding credential keys cannot share it.
+const cursorKey = `long-polling:cursor:${QADAM_NAME}|${CREDENTIAL_KEY}`
 const stopsImmediately = { outcome: QadamEventPullOutcome.FATAL, reason: 'stop' }
 
 describe('longPollingHost', () => {

@@ -6,10 +6,13 @@ import { isNil } from '@aiqadam/shared'
  * else — the endpoint, the window length, the cursor arithmetic and the error semantics all live
  * in the qadam package behind `QadamEventPuller`.
  *
- * Loaded on demand rather than at module scope, so an instance with the feature flag off never
- * evaluates a community qadam's module graph inside the process that serves user requests. Keeping
- * this list hardcoded is also the only real containment against a puller that wedges the event
- * loop, since the host runs qadam code unsandboxed — do not make it dynamic.
+ * Loaded on demand rather than at module scope, so an instance that never uses one of these qadams
+ * does not evaluate its module graph inside the process that serves user requests. With the flag
+ * off the host itself never loads anything; `assertTransportIsAvailable` still does, on the enable
+ * path, because refusing that trigger means asking the puller whether it claims it.
+ *
+ * Keeping this list hardcoded is also the only real containment against a puller that wedges the
+ * event loop, since the host runs qadam code unsandboxed — do not make it dynamic.
  */
 const loaders: Record<string, () => Promise<QadamEventPuller>> = {
     '@aiqadam/qadam-telegram-bot': async () => (await import('@aiqadam/qadam-telegram-bot')).telegramEventPuller,

@@ -20,6 +20,8 @@ const LOCK_RETRY_DELAY_MS = 15_000
 const RESYNC_INTERVAL_MS = 60_000
 const MIN_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 5 * 60_000
+/** Ceiling for a backoff the third party asked for, which is otherwise allowed past MAX_BACKOFF_MS. */
+const MAX_REQUESTED_BACKOFF_MS = 60 * 60_000
 const CURSOR_TTL_SECONDS = 60 * 60 * 24 * 30
 const SHUTDOWN_GRACE_MS = 5_000
 /** Headroom over the qadam's own window, after which a call that never returns is a fatal bug. */
@@ -275,7 +277,7 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
             return
         }
 
-        const cursor = await readCursor(resolved.credentialKey)
+        const cursor = await readCursor({ qadamName: source.qadamName, credentialKey: resolved.credentialKey })
 
         // Qadam code runs here in-process, unsandboxed: it is handed nothing but its own auth, the
         // trigger's own settings and a signal, it is time-boxed, and a throw kills this one task.
@@ -301,7 +303,11 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
                     return
                 }
                 // Only now, so an event survives the process dying between fetch and delivery.
-                await writeCursor({ credentialKey: resolved.credentialKey, cursor: result.nextCursor })
+                await writeCursor({
+                    qadamName: source.qadamName,
+                    credentialKey: resolved.credentialKey,
+                    cursor: result.nextCursor,
+                })
                 backoffMs = 0
                 break
             }
@@ -413,27 +419,31 @@ function markFatal({ source, reason, log }: MarkFatalParams): void {
 
 /**
  * `retryAfterSeconds` is a floor the third party asked for, so it is applied after the ceiling —
- * capping it would only earn another rate-limit response.
+ * capping it at `MAX_BACKOFF_MS` would only earn another rate-limit response. It still gets its own
+ * far looser bound: above 2^31-1 ms `setTimeout` fires after 1 ms instead, which would turn the
+ * longest requested wait into the shortest.
  */
 function nextBackoff({ backoffMs, retryAfterSeconds }: NextBackoffParams): number {
     const capped = Math.min(Math.max(MIN_BACKOFF_MS, backoffMs * 2), MAX_BACKOFF_MS)
-    const requested = isNil(retryAfterSeconds) ? 0 : retryAfterSeconds * 1000
+    const requested = isNil(retryAfterSeconds) ? 0 : Math.min(retryAfterSeconds * 1000, MAX_REQUESTED_BACKOFF_MS)
     return Math.max(capped, requested)
 }
 
-async function readCursor(credentialKey: string): Promise<string | undefined> {
-    return await distributedStore.get<string>(cursorKey(credentialKey)) ?? undefined
+async function readCursor(params: CursorKeyParams): Promise<string | undefined> {
+    return await distributedStore.get<string>(cursorKey(params)) ?? undefined
 }
 
-async function writeCursor({ credentialKey, cursor }: WriteCursorParams): Promise<void> {
+async function writeCursor({ qadamName, credentialKey, cursor }: WriteCursorParams): Promise<void> {
     if (isNil(cursor)) {
         return
     }
-    await distributedStore.put(cursorKey(credentialKey), cursor, CURSOR_TTL_SECONDS)
+    await distributedStore.put(cursorKey({ qadamName, credentialKey }), cursor, CURSOR_TTL_SECONDS)
 }
 
-function cursorKey(credentialKey: string): string {
-    return `long-polling:cursor:${credentialKey}`
+/** Namespaced by qadam like the lock is, so two pullers whose credential keys collide — both
+ * numeric account ids, say — cannot share a cursor while holding different locks. */
+function cursorKey({ qadamName, credentialKey }: CursorKeyParams): string {
+    return `long-polling:cursor:${qadamName}|${credentialKey}`
 }
 
 async function withTimeout<T>({ promise, timeoutMs }: WithTimeoutParams<T>): Promise<T> {
@@ -571,8 +581,12 @@ type NextBackoffParams = {
     retryAfterSeconds?: number
 }
 
-type WriteCursorParams = {
+type CursorKeyParams = {
+    qadamName: string
     credentialKey: string
+}
+
+type WriteCursorParams = CursorKeyParams & {
     cursor: string | undefined
 }
 
