@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { telegramWebhookAuth } from '../src/lib/webhook-auth';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const sendRequest = vi.fn();
+
+vi.mock('@aiqadam/qadams-common', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, httpClient: { sendRequest } };
+});
+
+const { telegramWebhookAuth } = await import('../src/lib/webhook-auth');
+const { telegramCommons } = await import('../src/lib/common');
 
 const BOT_TOKEN = '7777777:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const WEBHOOK_URL = 'https://flow.example.org/api/v1/webhooks/flow1';
@@ -125,5 +134,36 @@ describe('the derived secret', () => {
   it('does not contain the bot token', () => {
     expect(secret).not.toContain(BOT_TOKEN);
     expect(secret).not.toContain(BOT_TOKEN.split(':')[1]);
+  });
+});
+
+/**
+ * Reported from a running stand: enabling a webhook flow against a non-HTTPS URL fails, and the
+ * platform shows the failure with its request body — which now carries `secret_token`. Anyone who
+ * can enable the flow would read the secret out of that dialog, including someone who cannot see
+ * the bot token and so could not otherwise derive it. The secret is what proves an update came from
+ * Telegram, so leaking it hands away exactly what it protects.
+ */
+describe('setWebhook failures', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does not put the secret into the error a user will read', async () => {
+    const secret = telegramWebhookAuth.secretFor({
+      botToken: BOT_TOKEN,
+      webhookUrl: WEBHOOK_URL,
+    });
+    sendRequest.mockRejectedValue(
+      new Error(JSON.stringify({ request: { body: { url: WEBHOOK_URL, secret_token: secret } } }))
+    );
+
+    const failure = await telegramCommons
+      .subscribeWebhook(BOT_TOKEN, WEBHOOK_URL, { secret_token: secret })
+      .catch((error: Error) => error);
+
+    expect(failure.message).not.toContain(secret);
+    // Still diagnosable — the reason the user needs is kept.
+    expect(failure.message).toContain(WEBHOOK_URL);
   });
 });

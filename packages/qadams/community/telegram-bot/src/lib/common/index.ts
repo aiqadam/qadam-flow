@@ -116,6 +116,15 @@ export type SetWebhookRequest = {
   secret_token: string;
 };
 
+function redactSecretToken(error: unknown, secret: string | undefined): unknown {
+  if (secret === undefined || secret === '' || !(error instanceof Error)) {
+    return error;
+  }
+  const redacted = new Error(error.message.split(secret).join('[redacted]'));
+  redacted.stack = error.stack?.split(secret).join('[redacted]');
+  return redacted;
+}
+
 export const telegramCommons = {
   getApiUrl: (auth: AppConnectionValueForAuthProperty<typeof telegramBotAuth>, methodName: string) => {
     return `https://api.telegram.org/bot${auth.secret_text}/${methodName}`;
@@ -135,7 +144,17 @@ export const telegramCommons = {
       },
     };
 
-    await httpClient.sendRequest(request);
+    try {
+      await httpClient.sendRequest(request);
+    }
+    catch (error) {
+      // `HttpError` puts the whole request body into its message, and that message reaches the
+      // user-facing "Status update failed" dialog. The body now carries `secret_token` — the value
+      // that proves an inbound update really came from Telegram — so without this, anyone who can
+      // enable the flow reads the secret out of an error, including someone who cannot see the bot
+      // token and so could not derive it. That would hand away exactly what the secret protects.
+      throw redactSecretToken(error, overrides?.secret_token);
+    }
   },
   /**
    * What Telegram currently delivers to for this bot: the URL, `''` when it holds no webhook at
