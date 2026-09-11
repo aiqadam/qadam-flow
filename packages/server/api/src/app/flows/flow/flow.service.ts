@@ -239,6 +239,17 @@ export const flowService = (log: FastifyBaseLogger) => ({
 
         const paginationResult = await paginator.paginate<Flow & { version: FlowVersion | null, triggerSource?: TriggerSource }>(queryBuilder)
 
+        // Read once for the whole page rather than per row. The list is where a user notices a bot
+        // that has gone quiet, so the status has to reach it — but only rows whose qadam has a
+        // puller are asked about, which on a default install is none of them and costs nothing.
+        // `tryCatch` because an unreachable Redis must degrade to "no status", not fail the page.
+        const pulledFlows = includeTriggerSource
+            ? paginationResult.data
+                .filter((flow) => !isNil(flow.triggerSource) && eventPullerRegistry.isRegistered(flow.triggerSource.qadamName))
+                .map((flow) => ({ projectId: flow.projectId, flowId: flow.id }))
+            : []
+        const longPollingByFlowId = (await tryCatch(() => longPollingStatus.getMany({ flows: pulledFlows }))).data ?? new Map()
+
         const populatedFlows = await Promise.all(paginationResult.data.map(async (flow) => {
             if (isNil(flow.version)) {
                 throw new QadamFlowError({
@@ -256,6 +267,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 triggerSource: includeTriggerSource && flow.triggerSource
                     ? {
                         schedule: flow.triggerSource.schedule,
+                        ...spreadIfDefined('longPolling', longPollingByFlowId.get(flow.id)),
                     }
                     : undefined,
             }

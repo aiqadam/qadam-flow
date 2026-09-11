@@ -21,6 +21,18 @@ export const distributedStoreFactory = (getRedisClient: () => Promise<Redis>) =>
         return JSON.parse(value) as T
     },
 
+    /**
+     * One round trip for many keys. A list endpoint reading a per-row key would otherwise cost one
+     * round trip per row, which is the N+1 shape the DB rules forbid and Redis does not excuse.
+     */
+    async getMany<T>(keys: string[]): Promise<(T | null)[]> {
+        if (keys.length === 0) {
+            return []
+        }
+        const redis = await getRedisClient()
+        const values = await redis.mget(keys)
+        return values.map((value) => (isNil(value) ? null : JSON.parse(value) as T))
+    },
     async putIfAbsent(key: string, value: unknown, ttlInSeconds: number): Promise<boolean> {
         const serializedValue = JSON.stringify(value)
         const redisClient = await getRedisClient()
