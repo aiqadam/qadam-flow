@@ -15,6 +15,7 @@ import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { WebhookFlowVersionToRun, webhookService } from '../../webhooks/webhook.service'
 import { eventPullerRegistry } from './event-puller-registry'
+import { longPollingServed } from './long-polling-served'
 import { LongPollingSource, longPollingSourceRegistry } from './long-polling-source'
 import { longPollingStatus } from './long-polling-status'
 
@@ -111,6 +112,7 @@ export const longPollingHost = (log: FastifyBaseLogger) => ({
                 resyncTimer = undefined
             }
             eventLoopDelay.disable()
+            longPollingServed.clear()
             const running = Array.from(tasks.values())
             tasks.clear()
             fatalSources.clear()
@@ -137,6 +139,9 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             log.error({ err: error }, '[longPollingHost#sync] Could not read the long-polling registry')
             return
         }
+        // Both lists: a starved flow is pull-mode too — its connection asked for it — and the
+        // third party is equally not calling its webhook.
+        longPollingServed.replaceAll([...registry.sources, ...registry.starved].map((source) => source.flowId))
         const desired = new Map(registry.sources.map((source) => [source.key, source]))
         // The clearest silent-bot case there is: enabled, published, and guaranteed to receive
         // nothing because another flow holds the credential. The registry finds them; reporting is

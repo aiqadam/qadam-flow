@@ -560,6 +560,27 @@ describe('longPollingHost', () => {
         await host.stop()
     })
 
+    // The webhook endpoint refuses pushed deliveries for these, so a flow missing from the set
+    // stays open to forgeries and one wrongly in it stops receiving anything at all.
+    it('tells the webhook endpoint which flows it serves, including the starved ones', async () => {
+        const starved = { ...source, key: 'other', triggerSourceId: 'ts9', flowId: 'starved-flow' }
+        listSources.mockResolvedValue({ sources: [source], starved: [starved] })
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue(stopsImmediately)))
+
+        const host = await loadHost()
+        const { longPollingServed } = await import('../../../../../src/app/trigger/long-polling/long-polling-served')
+        await host.start()
+        await vi.waitFor(() => expect(listSources).toHaveBeenCalled())
+
+        expect(longPollingServed.isServedByPulling(source.flowId)).toBe(true)
+        expect(longPollingServed.isServedByPulling('starved-flow')).toBe(true)
+        expect(longPollingServed.isServedByPulling('some-other-flow')).toBe(false)
+
+        await host.stop()
+        // Nothing is polling after shutdown, so pushed delivery must work again.
+        expect(longPollingServed.isServedByPulling(source.flowId)).toBe(false)
+    })
+
     it('clears the status of a source it stops serving, instead of leaving it to expire', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,

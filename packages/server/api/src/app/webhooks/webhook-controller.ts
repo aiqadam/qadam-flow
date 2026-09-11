@@ -5,14 +5,37 @@ import {
     WebsocketClientEvent,
 } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
-import { FastifyRequest } from 'fastify'
+import { FastifyReply, FastifyRequest } from 'fastify'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
+import { StatusCodes } from 'http-status-codes'
+
 import { securityAccess } from '../core/security/authorization/fastify-security'
+import { longPollingServed } from '../trigger/long-polling/long-polling-served'
 import { triggerSourceService } from '../trigger/trigger-source/trigger-source-service'
 import { convertRequest, extractHeaderFromRequest } from './webhook-request-converter'
 import { WebhookFlowVersionToRun, webhookService } from './webhook.service'
 
 const tracer = trace.getTracer('webhook-controller')
+
+
+/**
+ * A flow served by pulling has had its webhook removed at the third party, so the third party sends
+ * nothing here — by construction. Anything that arrives is a forgery by whoever learned the flow id
+ * or a stray test, and this endpoint is `securityAccess.public()` with the flow id as its only
+ * secret. Refusing costs a `Set` lookup.
+ *
+ * The draft routes below are deliberately not guarded: those are the builder deliberately pushing a
+ * payload to capture sample data, which is a legitimate thing to do in either mode.
+ */
+function refuseIfServedByPulling(flowId: string, reply: FastifyReply): boolean {
+    if (!longPollingServed.isServedByPulling(flowId)) {
+        return false
+    }
+    void reply.status(StatusCodes.CONFLICT).send({
+        message: 'This flow receives events by polling, so it does not accept pushed deliveries.',
+    })
+    return true
+}
 
 export const webhookController: FastifyPluginAsyncZod = async (app) => {
 
@@ -28,6 +51,9 @@ export const webhookController: FastifyPluginAsyncZod = async (app) => {
                 },
             }, async (span) => {
                 try {
+                    if (refuseIfServedByPulling(request.params.flowId, reply)) {
+                        return await reply
+                    }
                     const response = await webhookService.handleWebhook({
                         data: (projectId: string) => convertRequest(request, projectId, request.params.flowId),
                         logger: request.log,
@@ -68,6 +94,9 @@ export const webhookController: FastifyPluginAsyncZod = async (app) => {
                 },
             }, async (span) => {
                 try {
+                    if (refuseIfServedByPulling(request.params.flowId, reply)) {
+                        return await reply
+                    }
                     const response = await webhookService.handleWebhook({
                         data: (projectId: string) => convertRequest(request, projectId, request.params.flowId),
                         logger: request.log,
