@@ -10,7 +10,7 @@ import {
 } from '@aiqadam/qadams-common';
 import FormData from 'form-data';
 import { telegramCommons } from '../common';
-import { telegramBotAuth } from '../..';
+import { telegramBotAuth } from '../auth';
 
 export const telegramSendAudioAction = createAction({
   auth: telegramBotAuth,

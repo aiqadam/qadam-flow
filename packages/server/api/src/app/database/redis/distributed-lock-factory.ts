@@ -41,7 +41,9 @@ export const distributedLockFactory = (
                     automaticExtensionThreshold: 2000,
                     driftFactor: 0.01,
                 },
-                async () => fn(),
+                // Redlock aborts this signal when it can no longer extend the lock, which is the
+                // only warning a holder gets that another instance may be about to take over.
+                async (signal) => fn(signal),
             )
         },
         destroy: async (): Promise<void> => {
@@ -56,5 +58,5 @@ export const distributedLockFactory = (
 type RunExclusiveParams<T> = {
     key: string
     timeoutInSeconds: number
-    fn: () => Promise<T>
+    fn: (lockLostSignal: AbortSignal) => Promise<T>
 }

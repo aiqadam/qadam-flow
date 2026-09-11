@@ -5,6 +5,7 @@ import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
 import { templateTelemetryService } from '../../template/template-telemetry/template-telemetry.service'
 import { jobQueue } from '../../workers/job-queue/job-queue'
+import { longPollingHost } from '../long-polling/long-polling-host'
 import { flowTriggerSideEffect } from './flow-trigger-side-effect'
 import { TriggerSourceEntity } from './trigger-source-entity'
 import { triggerUtils } from './trigger-utils'
@@ -69,10 +70,12 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             }
 
             log.info('[triggerSourceService#enable] Enabled flow trigger side effect')
-            return triggerSourceRepo().save({
+            const saved = await triggerSourceRepo().save({
                 ...triggerSource,
                 schedule: scheduleOptions,
             })
+            longPollingHost(log).requestSync()
+            return saved
         },
         async get(params: GetTriggerParams): Promise<TriggerSource | null> {
             const { projectId, id } = params
@@ -181,6 +184,7 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
                 projectId,
             })
             log.info('[triggerSourceService#disable] Soft deleted trigger source')
+            longPollingHost(log).requestSync()
             if (templateId) {
                 templateTelemetryService(log).sendEvent({
                     eventType: TemplateTelemetryEventType.DEACTIVATE,

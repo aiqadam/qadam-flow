@@ -67,6 +67,30 @@ Manages the full lifecycle of flow triggers — registration, event capture, tes
 - Submits ON_DISABLE hook to worker (unregisters webhook)
 - Deletes AppEventRouting records
 
+## Long-polling host (`trigger/long-polling/`, off by default)
+
+An alternative *delivery source* for WEBHOOK triggers, for instances the third party cannot reach.
+The trigger stays `TriggerStrategy.WEBHOOK`; only where the payload comes from changes.
+
+- Gated by `AP_TRIGGER_LONG_POLLING_ENABLED` (default `false`), and started from `appPostBoot`.
+- `event-puller-registry.ts` maps a qadam name to a `QadamEventPuller` (`@aiqadam/qadams-framework`).
+  The qadam owns the protocol — endpoint, window length, cursor arithmetic, fatal/retryable
+  classification — and whether a given trigger config wants pulling (`isEnabledFor`). Core never
+  reads a third-party prop name.
+- `long-polling-source.ts` lists live, non-simulate trigger sources for registered qadams whose flow
+  is ENABLED, resolves each to one credential, and keeps one task **per credential** (last flow
+  enabled wins, mirroring `setWebhook`'s last-writer-wins).
+- `long-polling-host.ts` runs the loop: `distributedLock` per credential for the cluster singleton,
+  cursor in `distributedStore` advanced **only after** a successful `webhookService.handleWebhook`,
+  exponential backoff on retryable failures, and a stop-until-republished mark on fatal ones.
+  Qadam code runs in-process unsandboxed, so every call is `tryCatch`-wrapped, time-boxed above the
+  qadam's own window, and handed nothing but `auth`, the trigger's `settings.input` and an
+  `AbortSignal`.
+- Reconciled by `triggerSourceService.enable`/`disable` (immediate) plus a 60s per-instance
+  interval (backstop). Not a system job: those run on one instance cluster-wide, while every
+  instance needs its own view of which tasks it is running.
+- Metrics: `qadam_flow.long_polling.tasks` and `qadam_flow.long_polling.event_loop_delay_ms`.
+
 ## Deduplication (`dedupeService`)
 
 For polling triggers — prevents duplicate payloads:

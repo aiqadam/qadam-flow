@@ -3,7 +3,7 @@ import {
   HttpRequest,
   httpClient,
 } from '@aiqadam/qadams-common';
-import { telegramBotAuth } from '../..';
+import { telegramBotAuth } from '../auth';
 import {
   AppConnectionValueForAuthProperty,
   Property,
