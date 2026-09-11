@@ -354,6 +354,49 @@ describe('longPollingHost', () => {
         await host.stop()
     })
 
+    // If this branch is ever dropped, the loop polls the new bot while holding the old bot's lock,
+    // so another instance can take the new bot's lock — two consumers on one token, which is the
+    // exact failure the credential-keyed lock exists to prevent.
+    it('re-acquires under the new key when the connection is retargeted at another bot', async () => {
+        lockAndRefreshConnection.mockResolvedValue({
+            status: AppConnectionStatus.ACTIVE,
+            qadamName: QADAM_NAME,
+            value: { type: 'SECRET_TEXT', secret_text: '777:token' },
+        })
+        // The first window runs under the key the lock was taken with; the connection is retargeted
+        // while it is open, so the re-resolve at the end of that window sees a different bot.
+        const credentialKey = vi.fn().mockReturnValueOnce('bot-777').mockReturnValue('bot-888')
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })
+        getPuller.mockReturnValue({ ...puller(waitForEvents), credentialKey })
+
+        const { longPollingTiming } = await import('../../../../../src/app/trigger/long-polling/long-polling-host')
+        const host = await loadHost()
+        // Fake timers from the start, so both the pacing floor and the lock-retry delay are
+        // advanceable — a timer created before they are installed cannot be.
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        try {
+            await host.start()
+            await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(1))
+            await vi.advanceTimersByTimeAsync(longPollingTiming.MIN_WINDOW_INTERVAL_MS + longPollingTiming.LOCK_RETRY_DELAY_MS + 200)
+            await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(2))
+        }
+        finally {
+            vi.useRealTimers()
+        }
+        await host.stop()
+
+        const keys = runExclusive.mock.calls.map(([params]) => params.key)
+        expect(keys[0]).toContain('bot-777')
+        expect(keys[1]).toContain('bot-888')
+        // One window per grant: the loop stopped as soon as the key moved instead of carrying on
+        // against the new bot while still holding the old bot's lock.
+        expect(waitForEvents).toHaveBeenCalledTimes(2)
+    })
+
     it('never lets a throwing puller take anything else down', async () => {
         const waitForEvents = vi.fn().mockRejectedValue(new Error('qadam blew up'))
         getPuller.mockReturnValue(puller(waitForEvents))
