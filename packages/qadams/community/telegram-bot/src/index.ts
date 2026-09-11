@@ -61,4 +61,4 @@ export const telegramBot = createQadam({
 });
 
 export { telegramBotAuth } from './lib/auth';
-export { TelegramTransport, telegramEventPuller } from './lib/long-polling';
+export { telegramEventPuller, telegramTransport } from './lib/long-polling';

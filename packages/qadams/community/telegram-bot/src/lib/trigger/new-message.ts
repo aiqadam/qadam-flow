@@ -1,6 +1,6 @@
 import { createTrigger, Property, TriggerStrategy } from '@aiqadam/qadams-framework';
 import { telegramCommons } from '../common';
-import { TelegramTransport } from '../long-polling';
+import { telegramTransport } from '../long-polling';
 import { telegramBotAuth } from '../auth';
 import { httpClient, HttpMethod, HttpRequest } from '@aiqadam/qadams-common';
 
@@ -32,12 +32,6 @@ Telegram allows only **one webhook per bot token**, so a single Telegram trigger
 After selecting multiple types, use a Branch step downstream to fork on the update kind (e.g. \`message\` vs \`callback_query\`).
 `;
 
-const transportDescription = `
-**Webhook** is the default and needs Telegram to be able to reach this instance over the public internet.
-
-**Long polling** suits instances Telegram cannot reach — behind NAT or in a closed network. This instance keeps a request open to Telegram instead. It needs \`AP_TRIGGER_LONG_POLLING_ENABLED=true\` on the server; until that is set, enabling or testing this flow is refused. Telegram allows one consumer per bot token, so enabling the flow removes the bot's webhook.
-`;
-
 export const telegramNewMessage = createTrigger({
   auth: telegramBotAuth,
   name: 'new_telegram_message',
@@ -46,18 +40,6 @@ export const telegramNewMessage = createTrigger({
     'Triggers when the bot receives a Telegram update (message, callback query, poll answer, etc.). One trigger per bot token — Telegram does not support multiple webhooks on the same bot.',
   aiMetadata: { description: 'Fires when the bot receives any selected Telegram update, including new or edited messages, channel posts, inline-button callback queries, poll answers, and chat-member changes. Represents a single inbound update event; since Telegram allows only one webhook per bot token, this one trigger covers all chosen update types for that bot.' },
   props: {
-    transport: Property.StaticDropdown({
-      displayName: 'Delivery',
-      description: transportDescription,
-      required: false,
-      defaultValue: TelegramTransport.WEBHOOK,
-      options: {
-        options: [
-          { label: 'Webhook (Telegram calls this instance)', value: TelegramTransport.WEBHOOK },
-          { label: 'Long polling (this instance calls Telegram)', value: TelegramTransport.LONG_POLLING },
-        ],
-      },
-    }),
     update_types: Property.StaticMultiSelectDropdown({
       displayName: 'Update Types',
       description: updateTypesDescription,
@@ -93,7 +75,9 @@ export const telegramNewMessage = createTrigger({
     },
   },
   async onEnable(context) {
-    if (context.propsValue.transport === TelegramTransport.LONG_POLLING) {
+    // The mode lives on the connection, not here: Telegram allows one consumer per bot token, so
+    // two flows sharing a connection must not be able to disagree about how it is consumed.
+    if (telegramTransport.isLongPolling(context.authMetadata)) {
       // setWebhook and getUpdates are mutually exclusive per token, so the webhook has to go
       // before the host can poll. Pending updates are kept and delivered by the first poll.
       await telegramCommons.unsubscribeWebhook(context.auth.secret_text);

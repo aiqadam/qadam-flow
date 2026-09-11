@@ -90,11 +90,20 @@ type WebhookTriggerHookContext<
   payload: TriggerPayload;
   server: ServerContext;
 };
+/**
+ * The connection's own `metadata`, for settings that belong to the credential rather than to the
+ * step — a delivery mode the third party allows only one of per credential, say. Two flows sharing
+ * a connection cannot disagree about it, which a trigger property could not guarantee.
+ *
+ * Unencrypted and operator-authored, so it must not be used to carry anything secret.
+ */
+export type ConnectionMetadata = Record<string, unknown> | undefined;
+
 export type TriggerHookContext<
   QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined,
   TriggerProps extends InputPropertyMap,
   S extends TriggerStrategy,
-> = S extends TriggerStrategy.APP_WEBHOOK
+> = { authMetadata: ConnectionMetadata } & (S extends TriggerStrategy.APP_WEBHOOK
   ? AppWebhookTriggerHookContext<QadamAuth, TriggerProps>
   : S extends TriggerStrategy.POLLING
   ? PollingTriggerHookContext<QadamAuth, TriggerProps>
@@ -102,7 +111,7 @@ export type TriggerHookContext<
   ? WebhookTriggerHookContext<QadamAuth, TriggerProps> & {
     server: ServerContext;
   }
-  : never;
+  : never);
 
 export type TestOrRunHookContext<
   QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined,

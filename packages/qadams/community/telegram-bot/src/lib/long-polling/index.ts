@@ -24,17 +24,21 @@ const FATAL_STATUS_CODES = [400, 401, 404];
 
 const WEBHOOK_CONFLICT_STATUS = 409;
 
+/** The key the delivery mode lives under, on the connection's own metadata. */
+const TELEGRAM_TRANSPORT_KEY = 'transport';
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
 const isBotTokenAuth = (auth: unknown): auth is { secret_text: string } =>
   isRecord(auth) && typeof auth.secret_text === 'string';
 
-const readTransport = (config: unknown): string | undefined => {
-  if (!isRecord(config) || typeof config.transport !== 'string') {
+const readTransport = (metadata: unknown): string | undefined => {
+  if (!isRecord(metadata)) {
     return undefined;
   }
-  return config.transport;
+  const transport = metadata[TELEGRAM_TRANSPORT_KEY];
+  return typeof transport === 'string' ? transport : undefined;
 };
 
 const readAllowedUpdates = (config: unknown): string[] => {
@@ -174,14 +178,17 @@ async function waitForEvents({
   }
 }
 
-export const TelegramTransport = {
+export const telegramTransport = {
+  /** The key the delivery mode lives under, on the connection's own metadata. */
+  METADATA_KEY: TELEGRAM_TRANSPORT_KEY,
   WEBHOOK: 'webhook',
   LONG_POLLING: 'long_polling',
+  isLongPolling: (metadata: unknown): boolean => readTransport(metadata) === 'long_polling',
 } as const;
 
 export const telegramEventPuller: QadamEventPuller = {
   windowSeconds: WINDOW_SECONDS,
-  isEnabledFor: ({ config }) => readTransport(config) === TelegramTransport.LONG_POLLING,
+  isEnabledFor: ({ connectionMetadata }) => telegramTransport.isLongPolling(connectionMetadata),
   credentialKey: ({ auth }) => botId(auth),
   waitForEvents,
 };

@@ -1,6 +1,7 @@
 import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { In } from 'typeorm'
+import { ArrayContains, In } from 'typeorm'
+import { appConnectionsRepo } from '../../app-connection/app-connection-service/app-connection-service'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionMigrationService } from '../../flows/flow-version/flow-version-migration.service'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
@@ -37,13 +38,14 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
             },
         })
         const flowVersions = await getFlowVersions({ triggerSources, log })
-        const sources = triggerSources
-            .map((triggerSource) => toSource({
+        const candidates = triggerSources
+            .map((triggerSource) => toCandidate({
                 triggerSource,
                 flowVersion: flowVersions.get(triggerSource.flowVersionId),
                 log,
             }))
-            .filter((source) => !isNil(source))
+            .filter((candidate) => !isNil(candidate))
+        const sources = await keepTheOnesTheirConnectionAsksFor({ candidates, log })
         return pickOnePerCredential({ sources, log })
     },
 })
@@ -82,24 +84,12 @@ async function getFlowVersions({ triggerSources, log }: GetFlowVersionsParams): 
     return new Map(migrated.filter((entry) => !isNil(entry)))
 }
 
-function toSource({ triggerSource, flowVersion, log }: ToSourceParams): LongPollingSource | null {
+function toCandidate({ triggerSource, flowVersion, log }: ToSourceParams): LongPollingSource | null {
     const puller = eventPullerRegistry.get(triggerSource.qadamName)
     if (isNil(puller) || isNil(flowVersion) || flowVersion.trigger.type !== FlowTriggerType.PIECE) {
         return null
     }
     const config = flowVersion.trigger.settings.input
-    // Qadam code, so it is contained like every other call into a puller.
-    const { data: enabled, error } = tryCatchSync(() => puller.isEnabledFor({ config }))
-    if (error !== null) {
-        log.error({
-            err: error,
-            qadamName: triggerSource.qadamName,
-        }, '[longPollingSourceRegistry#list] Puller threw while classifying a trigger')
-        return null
-    }
-    if (!enabled) {
-        return null
-    }
     const auth: unknown = config.auth
     const externalIds = typeof auth === 'string' ? flowStructureUtil.extractConnectionIdsFromAuth(auth) : []
     const connectionExternalId = externalIds[0]
@@ -121,6 +111,47 @@ function toSource({ triggerSource, flowVersion, log }: ToSourceParams): LongPoll
         config,
         enabledAt: triggerSource.created,
     }
+}
+
+/**
+ * The delivery mode is a property of the credential, not of the step — the third party allows one
+ * consumer per credential, so two flows sharing a connection must not be able to disagree about it.
+ * That means the connection has to be read before the puller can say whether it wants this source.
+ *
+ * Only `metadata` is read, which is unencrypted, so this costs one batched query and no decryption.
+ * Every row is still matched on its own `projectId`.
+ */
+async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOnesParams): Promise<LongPollingSource[]> {
+    if (candidates.length === 0) {
+        return []
+    }
+    const connections = await appConnectionsRepo().find({
+        where: candidates.map((candidate) => ({
+            projectIds: ArrayContains([candidate.projectId]),
+            externalId: candidate.connectionExternalId,
+        })),
+        select: ['externalId', 'projectIds', 'metadata'],
+    })
+    const metadataByKey = new Map(connections.flatMap((connection) =>
+        connection.projectIds.map((projectId) => [`${projectId}|${connection.externalId}`, connection.metadata ?? undefined] as const),
+    ))
+    return candidates.filter((candidate) => {
+        const puller = eventPullerRegistry.get(candidate.qadamName)
+        if (isNil(puller)) {
+            return false
+        }
+        const connectionMetadata = metadataByKey.get(`${candidate.projectId}|${candidate.connectionExternalId}`)
+        // Qadam code, so it is contained like every other call into a puller.
+        const { data: enabled, error } = tryCatchSync(() => puller.isEnabledFor({ connectionMetadata }))
+        if (error !== null) {
+            log.error({
+                err: error,
+                qadamName: candidate.qadamName,
+            }, '[longPollingSourceRegistry#list] Puller threw while classifying a connection')
+            return false
+        }
+        return enabled
+    })
 }
 
 /**
@@ -165,6 +196,11 @@ type GetFlowVersionsParams = {
 type ToSourceParams = {
     triggerSource: TriggerSourceSchema
     flowVersion: FlowVersion | undefined
+    log: FastifyBaseLogger
+}
+
+type KeepTheOnesParams = {
+    candidates: LongPollingSource[]
     log: FastifyBaseLogger
 }
 

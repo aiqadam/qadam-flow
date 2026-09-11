@@ -9,9 +9,14 @@ const QADAM_NAME = '@aiqadam/qadam-telegram-bot'
 const triggerSourceFind = vi.fn()
 const flowVersionFind = vi.fn()
 const migrate = vi.fn()
+const connectionFind = vi.fn()
 
 vi.mock('../../../../../src/app/core/db/repo-factory', () => ({
     repoFactory: () => () => ({ find: triggerSourceFind }),
+}))
+
+vi.mock('../../../../../src/app/app-connection/app-connection-service/app-connection-service', () => ({
+    appConnectionsRepo: () => ({ find: connectionFind }),
 }))
 
 vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => ({
@@ -72,6 +77,12 @@ describe('longPollingSourceRegistry.list', () => {
         triggerSourceFind.mockResolvedValue([])
         flowVersionFind.mockResolvedValue([])
         migrate.mockImplementation(async (flowVersion: unknown) => flowVersion)
+        // The delivery mode lives on the connection now, so the registry reads it from there.
+        connectionFind.mockResolvedValue([{
+            externalId: 'telegram',
+            projectIds: ['project1'],
+            metadata: { transport: 'long_polling' },
+        }])
     })
 
     it('resolves a source down to its credential', async () => {
@@ -106,17 +117,35 @@ describe('longPollingSourceRegistry.list', () => {
         expect(where.flow).toEqual({ status: FlowStatus.ENABLED })
     })
 
-    it('ignores a trigger the puller does not claim', async () => {
+    it('ignores a trigger whose connection does not ask for pulling', async () => {
         triggerSourceFind.mockResolvedValue([triggerSource()])
-        flowVersionFind.mockResolvedValue([flowVersion({
-            trigger: {
-                type: FlowTriggerType.PIECE,
-                settings: {
-                    qadamName: QADAM_NAME,
-                    input: { auth: '{{connections[\'telegram\']}}', transport: 'webhook' },
-                },
-            },
-        })])
+        flowVersionFind.mockResolvedValue([flowVersion()])
+        connectionFind.mockResolvedValue([{
+            externalId: 'telegram',
+            projectIds: ['project1'],
+            metadata: { transport: 'webhook' },
+        }])
+
+        expect((await longPollingSourceRegistry(mockLog).list()).sources).toEqual([])
+    })
+
+    it('ignores a trigger whose connection says nothing about delivery', async () => {
+        triggerSourceFind.mockResolvedValue([triggerSource()])
+        flowVersionFind.mockResolvedValue([flowVersion()])
+        connectionFind.mockResolvedValue([{ externalId: 'telegram', projectIds: ['project1'], metadata: null }])
+
+        expect((await longPollingSourceRegistry(mockLog).list()).sources).toEqual([])
+    })
+
+    // The registry must match a connection on its own project, not on the externalId alone.
+    it('does not take the delivery mode from another project\'s connection', async () => {
+        triggerSourceFind.mockResolvedValue([triggerSource()])
+        flowVersionFind.mockResolvedValue([flowVersion()])
+        connectionFind.mockResolvedValue([{
+            externalId: 'telegram',
+            projectIds: ['someone-else'],
+            metadata: { transport: 'long_polling' },
+        }])
 
         expect((await longPollingSourceRegistry(mockLog).list()).sources).toEqual([])
     })

@@ -1,6 +1,6 @@
 import { QadamEventPullOutcome } from '@aiqadam/qadams-framework';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TelegramTransport, telegramEventPuller } from '../src/lib/long-polling';
+import { telegramEventPuller, telegramTransport } from '../src/lib/long-polling';
 
 const respondWith = (params: { status?: number, body: unknown }) => {
   const { status = 200, body } = params;
@@ -13,7 +13,7 @@ const respondWith = (params: { status?: number, body: unknown }) => {
   return fetchMock;
 };
 
-const pull = (cursor?: string, config: unknown = { transport: TelegramTransport.LONG_POLLING }) =>
+const pull = (cursor?: string, config: unknown = {}) =>
   telegramEventPuller.waitForEvents({
     auth: { secret_text: 'token' },
     config,
@@ -22,11 +22,17 @@ const pull = (cursor?: string, config: unknown = { transport: TelegramTransport.
   });
 
 describe('telegramEventPuller.isEnabledFor', () => {
-  it('only claims triggers whose transport prop asks for long polling', () => {
-    expect(telegramEventPuller.isEnabledFor({ config: { transport: 'long_polling' } })).toBe(true);
-    expect(telegramEventPuller.isEnabledFor({ config: { transport: 'webhook' } })).toBe(false);
-    expect(telegramEventPuller.isEnabledFor({ config: {} })).toBe(false);
-    expect(telegramEventPuller.isEnabledFor({ config: undefined })).toBe(false);
+  // The mode is asked of the connection, not the step: Telegram allows one consumer per bot token,
+  // so two flows sharing a connection must not be able to disagree about how it is consumed.
+  it('only claims connections whose metadata asks for long polling', () => {
+    expect(telegramEventPuller.isEnabledFor({ connectionMetadata: { transport: 'long_polling' } })).toBe(true);
+    expect(telegramEventPuller.isEnabledFor({ connectionMetadata: { transport: 'webhook' } })).toBe(false);
+    expect(telegramEventPuller.isEnabledFor({ connectionMetadata: {} })).toBe(false);
+    expect(telegramEventPuller.isEnabledFor({ connectionMetadata: undefined })).toBe(false);
+  });
+
+  it('does not look at the trigger settings for it', () => {
+    expect(telegramEventPuller.isEnabledFor({ connectionMetadata: { update_types: ['message'] } })).toBe(false);
   });
 });
 
@@ -62,10 +68,7 @@ describe('telegramEventPuller.waitForEvents', () => {
   it('omits offset on the very first call and forwards the selected update types', async () => {
     const fetchMock = respondWith({ body: { ok: true, result: [] } });
 
-    await pull(undefined, {
-      transport: TelegramTransport.LONG_POLLING,
-      update_types: ['message', 'callback_query', 42],
-    });
+    await pull(undefined, { update_types: ['message', 'callback_query', 42] });
 
     const url = new URL(fetchMock.mock.calls[0][0]);
     expect(url.searchParams.get('offset')).toBeNull();

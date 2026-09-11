@@ -2003,5 +2003,9 @@
   "No, cancel": "No, cancel",
   "The action could not be answered. Please try again.": "The action could not be answered. Please try again.",
   "Not receiving updates. Turn the flow off and on again to retry.": "Not receiving updates. Turn the flow off and on again to retry.",
-  "Retrying — updates may be delayed.": "Retrying — updates may be delayed."
+  "Retrying — updates may be delayed.": "Retrying — updates may be delayed.",
+  "Delivery": "Delivery",
+  "Webhook (the app calls this instance)": "Webhook (the app calls this instance)",
+  "Long polling (this instance calls the app)": "Long polling (this instance calls the app)",
+  "Long polling suits instances the app cannot reach — behind NAT or in a closed network. It needs AP_TRIGGER_LONG_POLLING_ENABLED=true on the server, and it applies to every flow using this connection.": "Long polling suits instances the app cannot reach — behind NAT or in a closed network. It needs AP_TRIGGER_LONG_POLLING_ENABLED=true on the server, and it applies to every flow using this connection."
 }

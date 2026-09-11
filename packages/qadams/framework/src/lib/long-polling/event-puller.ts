@@ -1,3 +1,5 @@
+import { ConnectionMetadata } from '../context';
+
 /**
  * Contract between a qadam that knows how to pull events from a third-party API and the
  * long-polling host that runs the loop. The qadam owns the protocol (endpoint, window length,
@@ -16,7 +18,11 @@ export enum QadamEventPullOutcome {
 
 export type WaitForEventsParams = {
   auth: unknown;
-  /** The trigger's own `settings.input`, forwarded verbatim; the host does not read it. */
+  /**
+   * The trigger's own `settings.input`, forwarded verbatim; the host does not read it. Carries
+   * what genuinely belongs to the step — which kinds of event this flow wants — while anything
+   * that belongs to the credential is on the connection instead.
+   */
   config: unknown;
   cursor: string | undefined;
   signal: AbortSignal;
@@ -56,10 +62,15 @@ export type QadamEventPuller = {
   /** Upper bound on how long a single call keeps its window open, in seconds. */
   windowSeconds: number;
   /**
-   * Whether a trigger configured like this asks for the pull transport. Keeping the decision
-   * here is what lets the host stay ignorant of the third party: it never reads a prop name.
+   * Whether the credential behind this connection asks for the pull transport.
+   *
+   * Asked of the connection's `metadata` rather than of the trigger's settings, because the mode
+   * is a property of the credential: the third party allows one consumer per credential, so two
+   * flows sharing a connection must not be able to disagree about how it is consumed. Keeping the
+   * decision here is also what lets the host stay ignorant of the third party — it never reads a
+   * key name of its own.
    */
-  isEnabledFor: (params: { config: unknown }) => boolean;
+  isEnabledFor: (params: { connectionMetadata: ConnectionMetadata }) => boolean;
   /**
    * A stable, **non-secret** identity for the credential behind `auth` — the thing the third party
    * actually counts as one consumer. The host keys its cluster-wide lock and its cursor on this,

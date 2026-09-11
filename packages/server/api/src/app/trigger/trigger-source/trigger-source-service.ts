@@ -1,6 +1,7 @@
-import { apId, ErrorCode, FlowId, FlowVersion, isNil, PopulatedTriggerSource, QadamFlowError, TemplateTelemetryEventType, TriggerSource } from '@aiqadam/shared'
+import { apId, ErrorCode, FlowId, flowStructureUtil, FlowVersion, isNil, PopulatedTriggerSource, QadamFlowError, TemplateTelemetryEventType, TriggerSource } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { In } from 'typeorm'
+import { ArrayContains, In } from 'typeorm'
+import { appConnectionsRepo } from '../../app-connection/app-connection-service/app-connection-service'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
 import { rejectedPromiseHandler } from '../../helper/promise-handler'
@@ -13,12 +14,32 @@ import { triggerUtils } from './trigger-utils'
 export const triggerSourceRepo = repoFactory(TriggerSourceEntity)
 
 /**
+ * The delivery mode lives on the connection, so answering "is this transport available" needs the
+ * connection, not the step. Only `metadata` is read — unencrypted, and scoped to this project.
+ */
+async function readTriggerConnectionMetadata({ flowVersion, projectId }: ReadTriggerConnectionMetadataParams): Promise<Record<string, unknown> | undefined> {
+    const auth: unknown = flowVersion.trigger.settings?.input?.auth
+    if (typeof auth !== 'string') {
+        return undefined
+    }
+    const externalId = flowStructureUtil.extractConnectionIdsFromAuth(auth)[0]
+    if (isNil(externalId)) {
+        return undefined
+    }
+    const connection = await appConnectionsRepo().findOne({
+        where: { projectIds: ArrayContains([projectId]), externalId },
+        select: ['metadata'],
+    })
+    return connection?.metadata ?? undefined
+}
+
+/**
  * Imported on demand rather than at module scope. A static import pulls the host's whole graph —
  * the webhook service, the connection service, the puller registry — into every module that
  * touches trigger sources, which is enough to create an evaluation-order cycle in unrelated code.
  */
 const longPollingHostLazy = (log: FastifyBaseLogger) => ({
-    async assertTransportIsAvailable(params: { qadamName: string, config: unknown }): Promise<void> {
+    async assertTransportIsAvailable(params: { qadamName: string, connectionMetadata: Record<string, unknown> | undefined }): Promise<void> {
         const { longPollingHost } = await import('../long-polling/long-polling-host')
         await longPollingHost(log).assertTransportIsAvailable(params)
     },
@@ -45,7 +66,7 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             // removes the webhook, so refusing afterwards would leave the flow with no delivery.
             await longPollingHostLazy(log).assertTransportIsAvailable({
                 qadamName: flowVersion.trigger.settings.qadamName,
-                config: flowVersion.trigger.settings.input,
+                connectionMetadata: await readTriggerConnectionMetadata({ flowVersion, projectId }),
             })
             const existingTriggerSource = await triggerSourceRepo().findOne({
                 where: {
@@ -218,6 +239,11 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             }
         },
     }
+}
+
+type ReadTriggerConnectionMetadataParams = {
+    flowVersion: FlowVersion
+    projectId: string
 }
 
 type ExistsByFlowIdParams = {

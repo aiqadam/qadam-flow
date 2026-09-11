@@ -1,8 +1,9 @@
-import { QadamPropertyMap, StaticPropsValue, TriggerStrategy } from '@aiqadam/qadams-framework'
-import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, FlowTrigger, InvalidCronExpressionError, isNil, PropertySettings, QadamTrigger, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@aiqadam/shared'
+import { ContextVersion, QadamPropertyMap, StaticPropsValue, TriggerStrategy } from '@aiqadam/qadams-framework'
+import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, flowStructureUtil, FlowTrigger, InvalidCronExpressionError, isNil, PropertySettings, QadamTrigger, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@aiqadam/shared'
 import { isValidCron } from 'cron-validator'
 import { EngineConstants, ResolvedExecuteTriggerOperation } from '../handler/context/engine-constants'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
+import { createConnectionResolver } from '../qadam-context/connection-resolver'
 import { createFileUploader } from '../qadam-context/file-uploader'
 import { createFlowsContext } from '../qadam-context/flows'
 import { createContextStore } from '../qadam-context/store'
@@ -79,7 +80,8 @@ export const triggerHelper = {
             throw new EngineGenericError('TriggerNameNotSetError', 'Trigger name is not set')
         }
 
-        const { qadam, qadamTrigger, processedInput } = await prepareTriggerExecution({
+        const { qadam, qadamTrigger, processedInput, authMetadata } = await prepareTriggerExecution({
+            withAuthMetadata: true,
             qadamName,
             qadamVersion,
             triggerName,
@@ -128,6 +130,7 @@ export const triggerHelper = {
             }),
             webhookUrl: params.webhookUrl,
             auth: processedInput[AUTHENTICATION_PROPERTY_NAME],
+            authMetadata,
             propsValue: processedInput,
             payload: params.triggerPayload ?? {},
             project: {
@@ -243,7 +246,7 @@ type ExecuteTriggerParams = {
     constants: EngineConstants
 }
 
-async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, input, propertySettings, projectId, apiUrl, engineToken, devQadams, stepNames }: PrepareTriggerExecutionParams) {
+async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, input, propertySettings, projectId, apiUrl, engineToken, devQadams, stepNames, withAuthMetadata }: PrepareTriggerExecutionParams) {
     const { qadam, qadamTrigger } = await qadamLoader.getQadamAndTriggerOrThrow({
         qadamName,
         qadamVersion,
@@ -268,7 +271,36 @@ async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, i
         throw new Error(JSON.stringify(errors, null, 2))
     }
 
-    return { qadam, qadamTrigger, processedInput }
+    // Only for the hook paths that can act on it. `run` is on the hot path for every inbound
+    // event and has no use for a setting that belongs to the credential.
+    const authMetadata = withAuthMetadata === true
+        ? await readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion: qadam.getContextInfo?.().version })
+        : undefined
+
+    return { qadam, qadamTrigger, processedInput, authMetadata }
+}
+
+async function readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion }: ReadAuthMetadataParams): Promise<Record<string, unknown> | undefined> {
+    if (typeof input !== 'object' || input === null || !(AUTHENTICATION_PROPERTY_NAME in input)) {
+        return undefined
+    }
+    const auth: unknown = input[AUTHENTICATION_PROPERTY_NAME]
+    if (typeof auth !== 'string') {
+        return undefined
+    }
+    const externalId = flowStructureUtil.extractConnectionIdsFromAuth(auth)[0]
+    if (isNil(externalId)) {
+        return undefined
+    }
+    return createConnectionResolver({ apiUrl, projectId, engineToken, contextVersion }).obtainMetadata(externalId)
+}
+
+type ReadAuthMetadataParams = {
+    input: unknown
+    projectId: string
+    apiUrl: string
+    engineToken: string
+    contextVersion: ContextVersion | undefined
 }
 
 type PrepareTriggerExecutionParams = {
@@ -277,6 +309,7 @@ type PrepareTriggerExecutionParams = {
     triggerName: string
     input: unknown
     propertySettings: Record<string, PropertySettings>
+    withAuthMetadata?: boolean
     projectId: string
     apiUrl: string
     engineToken: string

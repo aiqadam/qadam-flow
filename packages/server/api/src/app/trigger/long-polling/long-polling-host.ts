@@ -64,12 +64,12 @@ export const longPollingHost = (log: FastifyBaseLogger) => ({
      * Without this the qadam's `onEnable` removes the webhook and nothing replaces it, so the flow
      * ends up with no delivery at all — worse than before the user touched it, and silent.
      */
-    async assertTransportIsAvailable({ qadamName, config }: AssertTransportParams): Promise<void> {
+    async assertTransportIsAvailable({ qadamName, connectionMetadata }: AssertTransportParams): Promise<void> {
         if (isEnabled() || !eventPullerRegistry.isRegistered(qadamName)) {
             return
         }
         const puller = await eventPullerRegistry.getOrLoad(qadamName)
-        if (isNil(puller) || !(tryCatchSync(() => puller.isEnabledFor({ config })).data ?? false)) {
+        if (isNil(puller) || !(tryCatchSync(() => puller.isEnabledFor({ connectionMetadata })).data ?? false)) {
             return
         }
         throw new QadamFlowError({
@@ -751,5 +751,5 @@ const LONG_POLLING_DISABLED_MESSAGE = 'This trigger is set to long polling, whic
 
 type AssertTransportParams = {
     qadamName: string
-    config: unknown
+    connectionMetadata: Record<string, unknown> | undefined
 }

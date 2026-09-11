@@ -655,7 +655,7 @@ describe('longPollingHost', () => {
 
             await expect(host.assertTransportIsAvailable({
                 qadamName: QADAM_NAME,
-                config: { transport: 'long_polling' },
+                connectionMetadata: { transport: 'long_polling' },
             })).rejects.toThrow(/AP_TRIGGER_LONG_POLLING_ENABLED/)
         })
 
@@ -667,7 +667,7 @@ describe('longPollingHost', () => {
 
             await expect(host.assertTransportIsAvailable({
                 qadamName: QADAM_NAME,
-                config: { transport: 'webhook' },
+                connectionMetadata: { transport: 'webhook' },
             })).resolves.toBeUndefined()
         })
 
@@ -675,7 +675,7 @@ describe('longPollingHost', () => {
             longPollingEnabled = false
 
             const host = await loadHost()
-            await host.assertTransportIsAvailable({ qadamName: '@aiqadam/qadam-slack', config: {} })
+            await host.assertTransportIsAvailable({ qadamName: '@aiqadam/qadam-slack', connectionMetadata: {} })
 
             expect(getPuller).not.toHaveBeenCalled()
         })

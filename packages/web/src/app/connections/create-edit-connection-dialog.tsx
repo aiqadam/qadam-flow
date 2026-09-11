@@ -57,6 +57,7 @@ import { flagsHooks } from '@/hooks/flags-hooks';
 
 import { BasicAuthConnectionSettings } from './basic-secret-connection-settings';
 import { CustomAuthConnectionSettings } from './custom-auth-connection-settings';
+import { DeliveryModeSetting } from './delivery-mode-setting';
 import { MutliAuthList, AuthListItem } from './multi-auth-list';
 import { OAuth2ConnectionSettings } from './oauth2-connection-settings';
 import { SecretTextConnectionSettings } from './secret-text-connection-settings';
@@ -226,6 +227,7 @@ function CreateOrEditConnectionSection({
             )}
             <div className="mt-3.5">
               <ConnectionSettings selectedAuth={selectedAuth} piece={piece} />
+              <DeliveryModeSetting qadamName={piece.name} />
             </div>
           </ScrollArea>
           {errorMessage && (
