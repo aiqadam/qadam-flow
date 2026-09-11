@@ -716,9 +716,29 @@ describe('longPollingHost window pacing', () => {
         handleWebhook.mockResolvedValue({ status: StatusCodes.OK, body: {}, headers: {} })
     })
 
-    // A puller that returns instantly — a misconfigured endpoint answering with an empty batch —
-    // must not be able to spin the loop at full speed inside the process serving user requests.
-    it('paces a puller that returns immediately instead of spinning on it', async () => {
+    // Measured on a live bot: `getUpdates` returns on the first event, so a burst of 13 messages
+    // arrives as 13 separate windows. Pacing those would cap throughput at ~4 messages a second,
+    // which is what the first version of this floor did.
+    it('does not throttle a window that actually delivered something', async () => {
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [{ update_id: 1 }],
+            nextCursor: '2',
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        await host.stop()
+
+        // Well past the ~2 windows the 250ms floor would have allowed in 600ms.
+        expect(waitForEvents.mock.calls.length).toBeGreaterThan(10)
+    })
+
+    // A puller that returns instantly *and empty* — a misconfigured endpoint, say — must not be
+    // able to spin the loop at full speed inside the process serving user requests.
+    it('paces a puller that returns immediately and empty, instead of spinning on it', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,
             events: [],

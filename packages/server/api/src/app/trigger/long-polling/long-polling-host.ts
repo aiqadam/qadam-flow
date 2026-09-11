@@ -30,12 +30,20 @@ const SHUTDOWN_GRACE_MS = 5_000
 /** Headroom over the qadam's own window, after which a call that never returns is a fatal bug. */
 const PULLER_GRACE_SECONDS = 30
 /**
- * Floor between the starts of two windows. A well-behaved puller holds its socket open for
- * `windowSeconds` and never comes near this; one that returns instantly — a misconfigured endpoint
- * answering immediately, say — would otherwise spin this loop at full speed inside the process that
- * serves user requests. The host runs qadam code unsandboxed, so it owns this guard.
+ * Floors between the starts of two windows. The host runs qadam code unsandboxed, so it owns the
+ * guard against a puller that returns instantly and spins this loop inside the process serving
+ * user requests.
+ *
+ * Two of them, because the two cases are not alike. Measured on a live bot: `getUpdates` returns on
+ * the *first* event, so a burst arrives as one window per message. A single floor applied to all of
+ * them capped sustained throughput at four messages a second — not the dominant cost of a window
+ * (that is the round trip to the third party, ~100-170ms against ~25ms of ours), but a ceiling that
+ * only appears under load and has no reason to exist. A window that delivered something is doing
+ * real work and needs only a floor low enough to stop a pure spin; an empty one that returned
+ * instantly is burning CPU and nothing else, and can wait.
  */
-const MIN_WINDOW_INTERVAL_MS = 250
+const MIN_IDLE_WINDOW_INTERVAL_MS = 250
+const MIN_WINDOW_INTERVAL_MS = 25
 
 const tasks = new Map<string, RunningTask>()
 const fatalSources = new Map<string, FatalSource>()
@@ -383,8 +391,10 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
                 return
             }
         }
+        const deliveredSomething = result?.outcome === QadamEventPullOutcome.EVENTS && result.events.length > 0
+        const floorMs = deliveredSomething ? MIN_WINDOW_INTERVAL_MS : MIN_IDLE_WINDOW_INTERVAL_MS
         const elapsedMs = Date.now() - windowStartedAt
-        if (elapsedMs < MIN_WINDOW_INTERVAL_MS && !await sleepUntilAborted({ ms: MIN_WINDOW_INTERVAL_MS - elapsedMs, signal })) {
+        if (elapsedMs < floorMs && !await sleepUntilAborted({ ms: floorMs - elapsedMs, signal })) {
             return
         }
         credential = await resolveCredential({ source, puller, log })
@@ -637,6 +647,7 @@ export const longPollingTiming = {
     MAX_REQUESTED_BACKOFF_MS,
     LOCK_RETRY_DELAY_MS,
     MIN_WINDOW_INTERVAL_MS,
+    MIN_IDLE_WINDOW_INTERVAL_MS,
 }
 
 enum CredentialStatus {
