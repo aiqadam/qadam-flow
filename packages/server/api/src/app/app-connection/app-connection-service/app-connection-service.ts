@@ -154,8 +154,9 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             // Unconditional, including for a row that did not exist a moment ago. "Delete the
             // broken connection and create it again with the same name" is a normal recovery, and
             // it arrives here with nothing to compare against while enabled flows still reference
-            // that `externalId` — exactly the rotation this flag is for. The cost of forcing it on
-            // a genuinely new connection is one query that matches no flows, not a fan-out.
+            // that `externalId` — exactly the rotation this flag is for. Forcing it on a genuinely
+            // new connection costs two queries that end up matching no flows — the qadam's enabled
+            // trigger sources in the project and their flow versions — and no engine work.
             always: true,
             log,
         })

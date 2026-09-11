@@ -208,24 +208,65 @@ describe('telegram trigger run verification', () => {
     expect(setWebhook?.[0].body.allowed_updates).toEqual(['message', 'callback_query']);
   });
 
-  // Nothing was registered before the test — a polled connection, or a flow never published. The
-  // restore is to remove it. Registering here would put a webhook on a bot the polling host is
-  // consuming, or leave an orphan URL answering 404 that nothing ever cleans up.
-  it.each<[string, string | undefined]>([
-    ['a polled connection', telegramWebhookAuth.LONG_POLLING],
-    ['a flow that was never published', undefined],
-  ])('removes the webhook after a test on %s', async (_case, transport) => {
-    await telegramNewMessage.onDisable(
-      contextWith({
-        transport,
-        webhookUrl: `${WEBHOOK_URL}/test`,
-        borrowedFrom: { url: '', allowedUpdates: [] },
-      })
-    );
+  // Driven through the real enable hook rather than a hand-seeded store, because the state that
+  // matters here is one only that hook produces — and seeding it directly is how the first version
+  // of this test passed while the code was broken.
+  it('removes the webhook after a test on a flow that was never published', async () => {
+    sendRequest.mockResolvedValue({ body: { ok: true, result: { url: '', allowed_updates: [] } } });
+    const context = contextWith({ transport: undefined, webhookUrl: `${WEBHOOK_URL}/test` });
+
+    await telegramNewMessage.onEnable(context);
+    sendRequest.mockClear();
+    await telegramNewMessage.onDisable(context);
 
     const calls = sendRequest.mock.calls.map(([request]) => String(request.url));
     expect(calls.some((url) => url.includes('/deleteWebhook'))).toBe(true);
     expect(calls.some((url) => url.includes('/setWebhook'))).toBe(false);
+  });
+
+  // The case app-sec reproduced against the real hooks: a connection switched to long polling. The
+  // polling branch of `onEnable` returns before the record block, so a record left by an earlier
+  // test on the same flow survives — and restoring it puts a webhook on a bot the host is polling.
+  // Telegram then refuses `getUpdates` and core refuses the pushed deliveries: both transports dead.
+  it('does not restore an earlier test\'s webhook after the connection moved to polling', async () => {
+    sendRequest.mockResolvedValue({ body: { ok: true, result: { url: WEBHOOK_URL, allowed_updates: ['message'] } } });
+    const context = contextWith({ transport: undefined, webhookUrl: `${WEBHOOK_URL}/test` });
+
+    // A test started while the connection was on webhooks, which records the production URL. No
+    // disable follows: switching the connection's delivery mode re-runs *enable*, not disable, so
+    // this is how a record outlives the transport it described.
+    await telegramNewMessage.onEnable(context);
+
+    // The connection moves to long polling and the flow is tested again.
+    const polled = { ...context, authMetadata: { transport: 'long_polling' } };
+    await telegramNewMessage.onEnable(polled);
+    sendRequest.mockClear();
+    await telegramNewMessage.onDisable(polled);
+
+    const calls = sendRequest.mock.calls.map(([request]) => String(request.url));
+    expect(calls.some((url) => url.includes('/setWebhook'))).toBe(false);
+    expect(calls.some((url) => url.includes('/deleteWebhook'))).toBe(true);
+  });
+
+  // Clearing matters on its own: an enable that fails before it can record leaves the previous
+  // test's record in place, and the disable that follows a failed enable would restore a URL that
+  // has nothing to do with this run — the orphan-webhook case, from the other direction.
+  it('does not restore a stale record after an enable that failed before recording', async () => {
+    sendRequest.mockResolvedValue({ body: { ok: true, result: { url: WEBHOOK_URL, allowed_updates: ['message'] } } });
+    const context = contextWith({ transport: undefined, webhookUrl: `${WEBHOOK_URL}/test` });
+    await telegramNewMessage.onEnable(context);
+    await telegramNewMessage.onDisable(context);
+
+    sendRequest.mockRejectedValueOnce(new Error('telegram is unreachable'));
+    await expect(telegramNewMessage.onEnable(context)).rejects.toThrow('unreachable');
+
+    sendRequest.mockClear();
+    sendRequest.mockResolvedValue({ body: { ok: true } });
+    await telegramNewMessage.onDisable(context);
+
+    const calls = sendRequest.mock.calls.map(([request]) => String(request.url));
+    expect(calls.some((url) => url.includes('/setWebhook'))).toBe(false);
+    expect(calls.some((url) => url.includes('/deleteWebhook'))).toBe(true);
   });
 
   // The record is what makes the restore exact; without it there is nothing to put back, and
