@@ -345,6 +345,13 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
             promise: puller.waitForEvents({ auth: resolved.auth, config: source.config, cursor, signal }),
             timeoutMs,
         }))
+        // An abort is this task being stood down — the source was removed, the lock went, or the
+        // host is stopping. Whatever the window reports now describes the abort, not the source:
+        // reporting it overwrites the clean-up `sync` just did and leaves a warning standing on a
+        // flow that is now perfectly healthy on another transport.
+        if (signal.aborted) {
+            return
+        }
         if (error !== null) {
             // Not fatal: a throw or an overrun is local to this instance — a broken egress route,
             // a slow socket — and `fatalSources` is republished unlocked, so a permanent verdict

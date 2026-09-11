@@ -52,6 +52,7 @@ import {
     getQadamPackageWithoutArchive,
     qadamMetadataService,
 } from '../../qadams/metadata/qadam-metadata-service'
+import { longPollingTransportChange } from '../../trigger/long-polling/long-polling-transport-change'
 import { userService } from '../../user/user-service'
 import { userInteractionWatcher } from '../../workers/user-interaction-watcher'
 import {
@@ -149,6 +150,8 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             ...(projectIds ? { projectIds: ArrayContains(projectIds) } : {}),
         }
 
+        const before = await appConnectionsRepo().findOneBy(filter)
+
         await appConnectionsRepo().update(filter, {
             displayName: request.displayName,
             ...spreadIfDefined('projectIds', request.projectIds),
@@ -157,6 +160,21 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
         })
 
         const updatedConnection = await appConnectionsRepo().findOneByOrFail(filter)
+
+        // The delivery mode lives on the connection, but what acts on it — registering or removing
+        // the webhook at the third party — happens in the trigger's enable hook. Without this, a
+        // connection switched back to webhook stops being polled and never gets its webhook back,
+        // and the flow silently receives nothing.
+        if (!isNil(request.metadata)) {
+            await longPollingTransportChange(log).reEnableAffectedFlows({
+                qadamName: updatedConnection.qadamName,
+                before: before?.metadata,
+                after: updatedConnection.metadata,
+                projectIds: updatedConnection.projectIds,
+                externalId: updatedConnection.externalId,
+            })
+        }
+
         return this.removeSensitiveData(updatedConnection)
     },
     async getOne({

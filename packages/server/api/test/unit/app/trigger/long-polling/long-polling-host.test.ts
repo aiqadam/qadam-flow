@@ -581,6 +581,26 @@ describe('longPollingHost', () => {
         expect(longPollingServed.isServedByPulling(source.flowId)).toBe(false)
     })
 
+    // Observed live when switching a connection from pulling to webhook: `sync` cleared the status,
+    // and the task it had just aborted then reported its own abort as a retryable failure — leaving
+    // a warning standing on a flow that was by then healthy on the other transport.
+    it('does not report the abort that stood it down', async () => {
+        const waitForEvents = vi.fn().mockImplementation(async ({ signal }) => {
+            await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
+            return { outcome: QadamEventPullOutcome.RETRYABLE, reason: 'This operation was aborted' }
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(waitForEvents).toHaveBeenCalled())
+        reportStatus.mockClear()
+        await host.stop()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
+        expect(reportStatus.mock.calls.some(([params]) => params.status === 'BACKING_OFF')).toBe(false)
+    })
+
     it('clears the status of a source it stops serving, instead of leaving it to expire', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,
