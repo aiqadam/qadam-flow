@@ -76,6 +76,19 @@ const nextOffset = (params: { updates: unknown[], cursor: string | undefined }):
   return String(Math.max(...updateIds) + 1);
 };
 
+/**
+ * A bot token is `<bot_id>:<secret>`, and Telegram accepts one `getUpdates` consumer per bot — so
+ * the bot id is both the right unit of consumption and safe to put in a Redis key or a log line.
+ * It also survives a token being regenerated, which keeps the cursor valid across a rotation.
+ */
+const botId = (auth: unknown): string | undefined => {
+  if (!isBotTokenAuth(auth)) {
+    return undefined;
+  }
+  const [id] = auth.secret_text.split(':');
+  return id.length > 0 ? id : undefined;
+};
+
 const buildUrl = (params: {
   botToken: string,
   cursor: string | undefined,
@@ -163,5 +176,6 @@ export const TelegramTransport = {
 export const telegramEventPuller: QadamEventPuller = {
   windowSeconds: WINDOW_SECONDS,
   isEnabledFor: ({ config }) => readTransport(config) === TelegramTransport.LONG_POLLING,
+  credentialKey: ({ auth }) => botId(auth),
   waitForEvents,
 };

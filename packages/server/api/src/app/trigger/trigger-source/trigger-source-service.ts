@@ -23,6 +23,12 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
                 simulate,
             }, '[triggerSourceService#enable] Enabling trigger source')
             const qadamTrigger = await triggerUtils(log).getQadamTriggerOrThrow({ flowVersion, projectId })
+            // Before the engine's ON_ENABLE hook runs: for a pull-transport trigger that hook
+            // removes the webhook, so refusing afterwards would leave the flow with no delivery.
+            await longPollingHost(log).assertTransportIsAvailable({
+                qadamName: flowVersion.trigger.settings.qadamName,
+                config: flowVersion.trigger.settings.input,
+            })
             const existingTriggerSource = await triggerSourceRepo().findOne({
                 where: {
                     flowId: flowVersion.flowId,

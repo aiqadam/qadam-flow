@@ -54,5 +54,13 @@ export type QadamEventPuller = {
    * here is what lets the host stay ignorant of the third party: it never reads a prop name.
    */
   isEnabledFor: (params: { config: unknown }) => boolean;
+  /**
+   * A stable, **non-secret** identity for the credential behind `auth` — the thing the third party
+   * actually counts as one consumer. The host keys its cluster-wide lock and its cursor on this,
+   * so two connections holding the same credential cannot poll each other's events away. Must not
+   * return the secret itself: it ends up in Redis keys and in logs. Return `undefined` when the
+   * value cannot be parsed, and the host falls back to keying on the connection.
+   */
+  credentialKey: (params: { auth: unknown }) => string | undefined;
   waitForEvents: (params: WaitForEventsParams) => Promise<QadamEventPullResult>;
 };

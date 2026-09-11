@@ -148,3 +148,35 @@ describe('telegramEventPuller.waitForEvents', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('telegramEventPuller.credentialKey', () => {
+  it('identifies the bot by its id, not by the whole token', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: '123456789:AAHhk-secret' } })).toBe(
+      '123456789'
+    );
+  });
+
+  it('gives two connections holding one token the same identity', () => {
+    const first = telegramEventPuller.credentialKey({ auth: { secret_text: '777:AAA' } });
+    const second = telegramEventPuller.credentialKey({ auth: { secret_text: '777:AAA' } });
+
+    expect(first).toBe(second);
+  });
+
+  it('survives the token being regenerated for the same bot', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: '777:old' } })).toBe(
+      telegramEventPuller.credentialKey({ auth: { secret_text: '777:new' } })
+    );
+  });
+
+  it('does not leak the secret half of the token', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: '777:AAHhk-secret' } })).not.toContain(
+      'AAHhk-secret'
+    );
+  });
+
+  it('returns undefined for a value that is not a bot token', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { access_token: 'nope' } })).toBeUndefined();
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: ':no-id' } })).toBeUndefined();
+  });
+});

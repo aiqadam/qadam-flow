@@ -1,6 +1,6 @@
 import { FlowStatus, FlowTriggerType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eventPullerRegistry } from '../../../../../src/app/trigger/long-polling/event-puller-registry'
 import { longPollingSourceRegistry } from '../../../../../src/app/trigger/long-polling/long-polling-source'
 
@@ -9,8 +9,8 @@ const QADAM_NAME = '@aiqadam/qadam-telegram-bot'
 const triggerSourceFind = vi.fn()
 const flowVersionFind = vi.fn()
 
-vi.mock('../../../../../src/app/trigger/trigger-source/trigger-source-service', () => ({
-    triggerSourceRepo: () => ({ find: triggerSourceFind }),
+vi.mock('../../../../../src/app/core/db/repo-factory', () => ({
+    repoFactory: () => () => ({ find: triggerSourceFind }),
 }))
 
 vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => ({
@@ -60,6 +60,12 @@ function flowVersion(overrides: Record<string, unknown> = {}) {
 }
 
 describe('longPollingSourceRegistry.list', () => {
+    // The real registry and the real Telegram puller, so `isEnabledFor` is exercised end to end
+    // rather than stubbed into agreeing with the fixture.
+    beforeAll(async () => {
+        await eventPullerRegistry.load()
+    })
+
     beforeEach(() => {
         vi.clearAllMocks()
         triggerSourceFind.mockResolvedValue([])
@@ -91,11 +97,11 @@ describe('longPollingSourceRegistry.list', () => {
         expect(where.qadamName.value).toEqual(eventPullerRegistry.qadamNames())
     })
 
-    it('ignores a trigger whose flow is disabled', async () => {
-        triggerSourceFind.mockResolvedValue([triggerSource({ flow: { status: FlowStatus.DISABLED } })])
-        flowVersionFind.mockResolvedValue([flowVersion()])
+    it('asks the database only for enabled flows, rather than filtering afterwards', async () => {
+        await longPollingSourceRegistry(mockLog).list()
 
-        expect(await longPollingSourceRegistry(mockLog).list()).toEqual([])
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        expect(where.flow).toEqual({ status: FlowStatus.ENABLED })
     })
 
     it('ignores a trigger the puller does not claim', async () => {

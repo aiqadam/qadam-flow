@@ -12,6 +12,20 @@ import { system } from './app/helper/system/system'
 import { AppSystemProp } from './app/helper/system/system-props'
 
 const ATTRIBUTES_TO_DROP = ['db.statement']
+const URL_ATTRIBUTES = ['url.full', 'http.url']
+/**
+ * Some APIs — Telegram's is the one we call — put the credential in the URL path, and the HTTP
+ * instrumentations record the full URL. Without this, enabling tracing exports a working bot token
+ * on every request span, continuously, to whoever can read the tracing backend.
+ */
+const CREDENTIAL_IN_PATH_PATTERNS = [/\/bot\d+:[\w-]+/g]
+
+function redactCredentialsInUrl(url: string): string {
+    return CREDENTIAL_IN_PATH_PATTERNS.reduce(
+        (redacted, pattern) => redacted.replace(pattern, '/bot[REDACTED]'),
+        url,
+    )
+}
 
 class FilteringSpanProcessor implements SpanProcessor {
     constructor(private readonly delegate: BatchSpanProcessor) {}
@@ -23,6 +37,12 @@ class FilteringSpanProcessor implements SpanProcessor {
     onEnd(span: ReadableSpan): void {
         for (const attr of ATTRIBUTES_TO_DROP) {
             Reflect.deleteProperty(span.attributes, attr)
+        }
+        for (const attr of URL_ATTRIBUTES) {
+            const value = span.attributes[attr]
+            if (typeof value === 'string') {
+                span.attributes[attr] = redactCredentialsInUrl(value)
+            }
         }
         this.delegate.onEnd(span)
     }
@@ -43,7 +63,9 @@ function getServiceName(): string {
     return serviceName
 }
 
-if (system.get(AppSystemProp.OTEL_ENABLED)) {
+// getBoolean, not get: the raw string 'false' is truthy, so AP_OTEL_ENABLED=false used to *enable*
+// tracing — which is also how the credential-in-URL export above could be on without anyone asking.
+if (system.getBoolean(AppSystemProp.OTEL_ENABLED) ?? false) {
     const traceExporter = new OTLPTraceExporter()
 
     const resource = resourceFromAttributes({
