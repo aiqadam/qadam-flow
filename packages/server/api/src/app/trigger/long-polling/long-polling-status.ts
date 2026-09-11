@@ -18,16 +18,39 @@ const TTL_SECONDS = 5 * 60
  * stored and rendered. Capped here rather than at each call site so the bound holds for any writer.
  */
 const MAX_REASON_LENGTH = 300
+/** Headroom for the window that runs after a sleep, before anything reports again. */
+const WINDOW_GRACE_SECONDS = 120
 
 export const longPollingStatus = {
     async report(params: ReportParams): Promise<void> {
-        const { projectId, flowId, status, reason, since } = params
+        const { projectId, flowId, status, reason, since, ttlSeconds } = params
         const state: LongPollingState = {
             status,
             ...(isNil(reason) ? {} : { reason: reason.slice(0, MAX_REASON_LENGTH) }),
             since,
         }
-        await distributedStore.put(statusKey({ projectId, flowId }), state, TTL_SECONDS)
+        // The floor is the default; a caller announcing a longer wait than that has to outlive it,
+        // and the extra window covers the pull that follows the sleep before the next report.
+        const ttl = Math.max(TTL_SECONDS, (ttlSeconds ?? 0) + WINDOW_GRACE_SECONDS)
+        await distributedStore.put(statusKey({ projectId, flowId }), state, ttl)
+    },
+    /**
+     * For a reporter that does not hold the credential lock. Yields to any entry already there, so
+     * it can surface a failure every instance is hitting without contradicting the one instance
+     * that is actually polling.
+     */
+    async reportIfAbsent(params: ReportParams): Promise<void> {
+        const { projectId, flowId, status, reason, since, ttlSeconds } = params
+        const state: LongPollingState = {
+            status,
+            ...(isNil(reason) ? {} : { reason: reason.slice(0, MAX_REASON_LENGTH) }),
+            since,
+        }
+        await distributedStore.putIfAbsent(
+            statusKey({ projectId, flowId }),
+            state,
+            Math.max(TTL_SECONDS, (ttlSeconds ?? 0) + WINDOW_GRACE_SECONDS),
+        )
     },
     async get(params: StatusKeyParams): Promise<LongPollingState | null> {
         return distributedStore.get<LongPollingState>(statusKey(params))
@@ -50,4 +73,6 @@ type ReportParams = StatusKeyParams & {
     status: LongPollingStatus
     reason?: string
     since: string
+    /** How long the condition being reported is expected to last, when the caller knows. */
+    ttlSeconds?: number
 }

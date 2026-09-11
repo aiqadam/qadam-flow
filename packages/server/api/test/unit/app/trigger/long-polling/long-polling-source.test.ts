@@ -78,7 +78,7 @@ describe('longPollingSourceRegistry.list', () => {
         triggerSourceFind.mockResolvedValue([triggerSource()])
         flowVersionFind.mockResolvedValue([flowVersion()])
 
-        const sources = await longPollingSourceRegistry(mockLog).list()
+        const { sources } = await longPollingSourceRegistry(mockLog).list()
 
         expect(sources).toHaveLength(1)
         expect(sources[0]).toMatchObject({
@@ -118,7 +118,7 @@ describe('longPollingSourceRegistry.list', () => {
             },
         })])
 
-        expect(await longPollingSourceRegistry(mockLog).list()).toEqual([])
+        expect((await longPollingSourceRegistry(mockLog).list()).sources).toEqual([])
     })
 
     it('ignores a trigger with no connection', async () => {
@@ -133,7 +133,7 @@ describe('longPollingSourceRegistry.list', () => {
             },
         })])
 
-        expect(await longPollingSourceRegistry(mockLog).list()).toEqual([])
+        expect((await longPollingSourceRegistry(mockLog).list()).sources).toEqual([])
         expect(mockLog.warn).toHaveBeenCalled()
     })
 
@@ -152,7 +152,7 @@ describe('longPollingSourceRegistry.list', () => {
             return version
         })
 
-        const sources = await longPollingSourceRegistry(mockLog).list()
+        const { sources } = await longPollingSourceRegistry(mockLog).list()
 
         expect(sources.map((item) => item.flowId)).toEqual(['fine-flow'])
         expect(mockLog.error).toHaveBeenCalled()
@@ -168,12 +168,27 @@ describe('longPollingSourceRegistry.list', () => {
         flowVersionFind.mockResolvedValue([flowVersion()])
 
         try {
-            await expect(longPollingSourceRegistry(mockLog).list()).resolves.toEqual([])
+            expect((await longPollingSourceRegistry(mockLog).list()).sources).toEqual([])
             expect(mockLog.error).toHaveBeenCalled()
         }
         finally {
             isEnabledFor.mockRestore()
         }
+    })
+
+    // Returned rather than reported from here: the registry is a query, and writing the status
+    // from inside it dragged the Redis client into these tests' import graph.
+    it('reports the starved flow as a value the host can act on', async () => {
+        triggerSourceFind.mockResolvedValue([
+            triggerSource({ id: 'old', flowId: 'older', flowVersionId: 'fv1', created: '2026-01-01T00:00:00.000Z' }),
+            triggerSource({ id: 'new', flowId: 'newer', flowVersionId: 'fv2', created: '2026-02-01T00:00:00.000Z' }),
+        ])
+        flowVersionFind.mockResolvedValue([flowVersion(), flowVersion({ id: 'fv2' })])
+
+        const { sources, starved } = await longPollingSourceRegistry(mockLog).list()
+
+        expect(sources.map((item) => item.flowId)).toEqual(['newer'])
+        expect(starved.map((item) => item.flowId)).toEqual(['older'])
     })
 
     it('serves only the most recently enabled flow when two share a credential', async () => {
@@ -183,7 +198,7 @@ describe('longPollingSourceRegistry.list', () => {
         ])
         flowVersionFind.mockResolvedValue([flowVersion(), flowVersion({ id: 'fv2' })])
 
-        const sources = await longPollingSourceRegistry(mockLog).list()
+        const { sources } = await longPollingSourceRegistry(mockLog).list()
 
         expect(sources).toHaveLength(1)
         expect(sources[0].flowId).toBe('newer')

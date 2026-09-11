@@ -1,13 +1,11 @@
-import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, LongPollingStatus, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionMigrationService } from '../../flows/flow-version/flow-version-migration.service'
 import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
-import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { TriggerSourceEntity, TriggerSourceSchema } from '../trigger-source/trigger-source-entity'
 import { eventPullerRegistry } from './event-puller-registry'
-import { longPollingStatus } from './long-polling-status'
 
 // Deliberately not `triggerSourceRepo` from trigger-source-service: that module imports the host,
 // which imports this one, and a cycle through three modules is not worth a shared repo handle.
@@ -21,10 +19,10 @@ const longPollingTriggerSourceRepo = repoFactory(TriggerSourceEntity)
  * that row's own `projectId`, so a source can only ever reach its own project's connection.
  */
 export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
-    async list(): Promise<LongPollingSource[]> {
+    async list(): Promise<LongPollingRegistry> {
         const qadamNames = eventPullerRegistry.qadamNames()
         if (qadamNames.length === 0) {
-            return []
+            return { sources: [], starved: [] }
         }
         const triggerSources = await longPollingTriggerSourceRepo().find({
             where: {
@@ -134,12 +132,12 @@ function toSource({ triggerSource, flowVersion, log }: ToSourceParams): LongPoll
  * third-party credential are caught later, by the lock the host takes on the puller's credential
  * key — which is why that key exists.
  */
-function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): LongPollingSource[] {
+function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): LongPollingRegistry {
     const byCredential = new Map<string, LongPollingSource[]>()
     for (const source of sources) {
         byCredential.set(source.key, [...byCredential.get(source.key) ?? [], source])
     }
-    return Array.from(byCredential.values()).map((candidates) => {
+    const grouped = Array.from(byCredential.values()).map((candidates) => {
         const [winner, ...losers] = [...candidates].sort((a, b) => b.enabledAt.localeCompare(a.enabledAt))
         if (losers.length > 0) {
             log.warn({
@@ -147,18 +145,16 @@ function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): Lon
                 servingFlowId: winner.flowId,
                 starvedFlowIds: losers.map((loser) => loser.flowId),
             }, '[longPollingSourceRegistry#list] Several flows share one connection; only the most recently enabled one receives updates')
-            // The clearest silent-bot case there is: these flows are enabled, published, and will
-            // never receive an update. Saying so on the flow is the whole point of the status.
-            losers.forEach((loser) => rejectedPromiseHandler(longPollingStatus.report({
-                projectId: loser.projectId,
-                flowId: loser.flowId,
-                status: LongPollingStatus.STOPPED,
-                reason: 'Another flow enabled more recently is using this connection, and the third party allows only one consumer',
-                since: new Date().toISOString(),
-            }), log))
         }
-        return winner
+        return { winner, losers }
     })
+    // Returned rather than reported: this is a query, and the host owns every side effect. Writing
+    // from here also dragged the store into this module's imports, which made its unit tests open
+    // a real Redis socket and leak an unhandled error after the suite had reported green.
+    return {
+        sources: grouped.map(({ winner }) => winner),
+        starved: grouped.flatMap(({ losers }) => losers),
+    }
 }
 
 type GetFlowVersionsParams = {
@@ -175,6 +171,12 @@ type ToSourceParams = {
 type PickOnePerCredentialParams = {
     sources: LongPollingSource[]
     log: FastifyBaseLogger
+}
+
+export type LongPollingRegistry = {
+    sources: LongPollingSource[]
+    /** Enabled, published, and guaranteed to receive nothing: another flow holds their credential. */
+    starved: LongPollingSource[]
 }
 
 export type LongPollingSource = {

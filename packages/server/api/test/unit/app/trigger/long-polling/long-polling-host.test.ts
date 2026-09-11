@@ -15,6 +15,7 @@ const getPuller = vi.fn()
 const runExclusive = vi.fn()
 const connectionExistsBy = vi.fn()
 const reportStatus = vi.fn()
+const reportStatusIfAbsent = vi.fn()
 const clearStatus = vi.fn()
 const store = new Map<string, unknown>()
 let longPollingEnabled = true
@@ -59,6 +60,7 @@ vi.mock('../../../../../src/app/database/redis-connections', () => ({
 vi.mock('../../../../../src/app/trigger/long-polling/long-polling-status', () => ({
     longPollingStatus: {
         report: (...args: unknown[]) => reportStatus(...args),
+        reportIfAbsent: (...args: unknown[]) => reportStatusIfAbsent(...args),
         clear: (...args: unknown[]) => clearStatus(...args),
     },
 }))
@@ -116,7 +118,7 @@ describe('longPollingHost', () => {
         store.clear()
         longPollingEnabled = true
         grantsTheLock()
-        listSources.mockResolvedValue([source])
+        listSources.mockResolvedValue({ sources: [source], starved: [] })
         lockAndRefreshConnection.mockResolvedValue({
             status: AppConnectionStatus.ACTIVE,
             qadamName: QADAM_NAME,
@@ -124,6 +126,7 @@ describe('longPollingHost', () => {
         })
         connectionExistsBy.mockResolvedValue(false)
         reportStatus.mockResolvedValue(undefined)
+        reportStatusIfAbsent.mockResolvedValue(undefined)
         clearStatus.mockResolvedValue(undefined)
         handleWebhook.mockResolvedValue({ status: StatusCodes.OK, body: {}, headers: {} })
     })
@@ -240,7 +243,7 @@ describe('longPollingHost', () => {
         await vi.waitFor(() => expect(waitForEvents).toHaveBeenCalledTimes(1))
 
         // `triggerSourceService.enable` always writes a new row, even without a republish.
-        listSources.mockResolvedValue([{ ...source, triggerSourceId: 'ts2' }])
+        listSources.mockResolvedValue({ sources: [{ ...source, triggerSourceId: 'ts2' }], starved: [] })
         host.requestSync()
         await vi.waitFor(() => expect(waitForEvents).toHaveBeenCalledTimes(2))
         await host.stop()
@@ -432,6 +435,31 @@ describe('longPollingHost', () => {
         expect(polling[0]).toMatchObject({ projectId: source.projectId, flowId: source.flowId })
     })
 
+    // Telegram can ask for a 30-minute delay. If the entry expires inside that sleep the warning
+    // vanishes mid-outage and the flow reads as healthy again.
+    it('gives a backing-off status a life at least as long as the wait it announces', async () => {
+        const waitForEvents = vi.fn()
+            .mockResolvedValueOnce({
+                outcome: QadamEventPullOutcome.RETRYABLE,
+                reason: 'flood control',
+                retryAfterSeconds: 1800,
+            })
+            .mockResolvedValue(stopsImmediately)
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'BACKING_OFF',
+        })))
+        await host.stop()
+
+        const backingOff = reportStatus.mock.calls
+            .map(([params]) => params)
+            .find((params) => params.status === 'BACKING_OFF')
+        expect(backingOff.ttlSeconds).toBeGreaterThanOrEqual(1800)
+    })
+
     it('keeps republishing a stopped source, so its status cannot quietly expire', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.FATAL,
@@ -531,7 +559,7 @@ describe('longPollingHost', () => {
         const host = await loadHost()
         await host.start()
         await vi.waitFor(() => expect(runExclusive).toHaveBeenCalled())
-        listSources.mockResolvedValue([])
+        listSources.mockResolvedValue({ sources: [], starved: [] })
         host.requestSync()
         await vi.waitFor(() => expect(clearStatus).toHaveBeenCalledWith({
             projectId: source.projectId,
@@ -543,6 +571,24 @@ describe('longPollingHost', () => {
     // Contained by the host's own wrapper, and backed off rather than stopped: a throw is local to
     // this instance, and `fatalSources` is republished without the lock, so a permanent verdict here
     // would let one unhealthy instance contradict the leader that is polling the same bot fine.
+    // Removing the pre-lock report fixed a follower overwriting the leader — but a credential that
+    // is unreadable on *every* instance never reaches the lock, so without a yielding write it
+    // would publish nothing at all and the flow would read as healthy while receiving nothing.
+    it('still says something when no instance can read the credential at all', async () => {
+        lockAndRefreshConnection.mockRejectedValue(new Error('the database is failing over'))
+        getPuller.mockReturnValue(puller(vi.fn()))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatusIfAbsent).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'BACKING_OFF',
+        })))
+        await host.stop()
+
+        // Yielding, not overwriting: the leader's POLLING must win if there is a leader.
+        expect(reportStatus).not.toHaveBeenCalled()
+    })
+
     it('backs a throwing puller off instead of taking anything else down', async () => {
         const waitForEvents = vi.fn().mockRejectedValue(new Error('qadam blew up'))
         getPuller.mockReturnValue(puller(waitForEvents))
@@ -573,7 +619,7 @@ describe('longPollingHost', () => {
     it('leaves no task polling after shutdown, even one spawned by a reconciliation in flight', async () => {
         let releaseList = (): void => undefined
         listSources.mockImplementation(() => new Promise((resolve) => {
-            releaseList = () => resolve([source])
+            releaseList = () => resolve({ sources: [source], starved: [] })
         }))
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,
@@ -648,7 +694,7 @@ describe('longPollingHost window pacing', () => {
         store.clear()
         longPollingEnabled = true
         grantsTheLock()
-        listSources.mockResolvedValue([source])
+        listSources.mockResolvedValue({ sources: [source], starved: [] })
         lockAndRefreshConnection.mockResolvedValue({
             status: AppConnectionStatus.ACTIVE,
             qadamName: QADAM_NAME,

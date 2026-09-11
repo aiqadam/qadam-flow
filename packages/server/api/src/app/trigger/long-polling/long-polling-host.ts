@@ -125,12 +125,21 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
         if (!started) {
             return
         }
-        const { data: sources, error } = await tryCatch(() => longPollingSourceRegistry(log).list())
+        const { data: registry, error } = await tryCatch(() => longPollingSourceRegistry(log).list())
         if (error !== null) {
             log.error({ err: error }, '[longPollingHost#sync] Could not read the long-polling registry')
             return
         }
-        const desired = new Map(sources.map((source) => [source.key, source]))
+        const desired = new Map(registry.sources.map((source) => [source.key, source]))
+        // The clearest silent-bot case there is: enabled, published, and guaranteed to receive
+        // nothing because another flow holds the credential. The registry finds them; reporting is
+        // the host's job, which keeps that query free of side effects and of the store's imports.
+        registry.starved.forEach((starved) => reportStatus({
+            source: starved,
+            status: LongPollingStatus.STOPPED,
+            reason: 'Another flow enabled more recently is using this connection, and the third party allows only one consumer',
+            log,
+        }))
 
         for (const [key, task] of tasks) {
             const next = desired.get(key)
@@ -211,9 +220,17 @@ async function runTask({ source, hostSignal, log }: RunTaskParams): Promise<void
                 reason: credential.reason,
                 backoffMs,
             }, '[longPollingHost#runTask] Could not read the connection, retrying')
-            // Deliberately not reported: this runs on every instance, before the lock, so a local
-            // hiccup here would overwrite the status of a flow the lock holder is polling fine.
-            // Everything user-visible is published from inside the lock, in `pollLoop`.
+            // Yields to whatever is already stored: this runs on every instance, before the lock,
+            // so a local hiccup must not overwrite the status of a flow the leader is polling fine.
+            // But when every instance fails here nobody ever reaches `pollLoop`, and without this
+            // the flow would publish nothing at all and read as healthy while receiving nothing.
+            reportStatusIfAbsent({
+                source,
+                status: LongPollingStatus.BACKING_OFF,
+                reason: credential.reason,
+                log,
+                expiresAfterMs: backoffMs,
+            })
             continue
         }
 
@@ -291,7 +308,7 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
                 reason: credential.reason,
                 backoffMs,
             }, '[longPollingHost#pollLoop] Could not read the connection, retrying')
-            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: credential.reason, log })
+            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: credential.reason, log, expiresAfterMs: backoffMs })
             // Re-read on the next pass rather than cached, so a rotated token takes effect at once.
             credential = await resolveCredential({ source, puller, log })
             continue
@@ -324,7 +341,7 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
             backoffMs = nextBackoff({ backoffMs })
             const reason = `The puller failed or overran its window: ${error.message}`
             log.warn({ key: source.key, reason, backoffMs }, '[longPollingHost#pollLoop] Puller failed')
-            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason, log })
+            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason, log, expiresAfterMs: backoffMs })
             continue
         }
 
@@ -355,7 +372,7 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
                     reason: result.reason,
                     backoffMs,
                 }, '[longPollingHost#pollLoop] Retryable pull failure')
-                reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: result.reason, log })
+                reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: result.reason, log, expiresAfterMs: backoffMs })
                 break
             }
             case QadamEventPullOutcome.FATAL: {
@@ -489,13 +506,25 @@ function markFatal({ source, reason, log }: MarkFatalParams): void {
  * Fire-and-forget, and deliberately not awaited anywhere on the polling path: a status nobody can
  * write is a worse outcome than a stale one, but it is not worth holding a window open for.
  */
-function reportStatus({ source, status, reason, log }: ReportStatusParams): void {
-    rejectedPromiseHandler(longPollingStatus.report({
+function reportStatusIfAbsent(params: ReportStatusParams): void {
+    publishStatus({ ...params, report: longPollingStatus.reportIfAbsent })
+}
+
+function reportStatus(params: ReportStatusParams): void {
+    publishStatus({ ...params, report: longPollingStatus.report })
+}
+
+function publishStatus({ source, status, reason, log, expiresAfterMs, report }: PublishStatusParams): void {
+    rejectedPromiseHandler(report({
         projectId: source.projectId,
         flowId: source.flowId,
         status,
         reason,
         since: new Date().toISOString(),
+        // A backing-off entry has to survive the sleep it is announcing plus the window that
+        // follows it, or the warning expires in the middle of the outage it exists to report and
+        // the flow reads as healthy again. Telegram can ask for a 30-minute delay.
+        ttlSeconds: isNil(expiresAfterMs) ? undefined : Math.ceil(expiresAfterMs / 1000),
     }), log)
 }
 
@@ -673,11 +702,17 @@ type DeliverEventsParams = {
     log: FastifyBaseLogger
 }
 
+type PublishStatusParams = ReportStatusParams & {
+    report: (params: Parameters<typeof longPollingStatus.report>[0]) => Promise<void>
+}
+
 type ReportStatusParams = {
     source: LongPollingSource
     status: LongPollingStatus
     reason?: string
     log: FastifyBaseLogger
+    /** Overrides the store's default, for a status whose own condition outlives it. */
+    expiresAfterMs?: number
 }
 
 type MarkFatalParams = {
