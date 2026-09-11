@@ -2,7 +2,6 @@ import { FlowStatus, flowStructureUtil, isNil, Metadata, ProjectId, tryCatch, tr
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
-import { distributedLock } from '../../database/redis-connections'
 import { FlowVersionEntity, FlowVersionSchema } from '../../flows/flow-version/flow-version-entity'
 import { TriggerSourceEntity } from '../trigger-source/trigger-source-entity'
 import { eventPullerRegistry } from './event-puller-registry'
@@ -14,20 +13,25 @@ const transportTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 const transportFlowVersionRepo = repoFactory(FlowVersionEntity)
 
 /**
- * One fan-out per connection at a time, cluster-wide.
+ * One fan-out per connection at a time, and a change arriving mid-flight is **dropped** — not
+ * queued. Dropping is safe precisely because the fan-out re-reads live state on entry: whatever the
+ * newer change wanted, the run already in flight will see when it queries.
  *
- * This used to be a cap on the number of flows, which was wrong in the direction that matters: in
- * pull -> webhook there is no "next enable" to recover with, because the metadata already says
- * webhook, so the registry drops those flows and the qadam's `onEnable` — the thing that re-registers
- * the webhook it deleted — never runs. Everything past the cap would receive nothing, permanently
- * and silently, which is the failure this whole module exists to prevent.
+ * This replaced a cap on the *number of flows*, which was wrong in the direction that matters. In
+ * pull -> webhook there is no "next enable" to recover with: the metadata already says webhook, so
+ * the registry drops those flows and the qadam's `onEnable` — the only thing that re-registers the
+ * webhook it deleted — never runs. Everything past the cap would have received nothing, permanently
+ * and silently, which is the failure this module exists to prevent.
  *
- * A lock bounds the work without discarding any of it. Alternating the mode in a loop no longer
- * multiplies into parallel fan-outs — the back-pressure the user's request used to provide before
- * this moved to the background — and a change that arrives while one is in flight is dropped rather
- * than queued, because the fan-out re-reads live metadata and so already covers it.
+ * Deliberately in-process rather than a `distributedLock`. Redlock here bought nothing and cost
+ * three things: it *queues* (`retryCount` is derived from the timeout, so ~600 retries at 200ms)
+ * rather than dropping, so alternating the mode accumulated waiters instead of shedding them; its
+ * key would have to carry a tenant to avoid two tenants' identically-named connections serialising
+ * against each other; and a lock that cannot be acquired rejects, which loses the fan-out through a
+ * new door. Per-instance exclusion is enough because re-enabling is idempotent — N instances doing
+ * it concurrently converge on the same state.
  */
-const FAN_OUT_LOCK_TIMEOUT_SECONDS = 120
+const fanOutsInFlight = new Set<string>()
 
 /**
  * Re-runs the trigger's enable hook for flows on a connection whose delivery mode just changed.
@@ -59,11 +63,18 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
             return
         }
 
-        await distributedLock(log).runExclusive({
-            key: `long-polling-transport:${externalId}`,
-            timeoutInSeconds: FAN_OUT_LOCK_TIMEOUT_SECONDS,
-            fn: () => reEnableNow({ projectIds, externalId, qadamName, log }),
-        })
+        const inFlightKey = `${projectIds.join(',')}|${externalId}`
+        if (fanOutsInFlight.has(inFlightKey)) {
+            log.info({ externalId, qadamName }, '[longPollingTransportChange] A re-enable for this connection is already running; it will see this change too')
+            return
+        }
+        fanOutsInFlight.add(inFlightKey)
+        try {
+            await reEnableNow({ projectIds, externalId, qadamName, log })
+        }
+        finally {
+            fanOutsInFlight.delete(inFlightKey)
+        }
     },
 })
 

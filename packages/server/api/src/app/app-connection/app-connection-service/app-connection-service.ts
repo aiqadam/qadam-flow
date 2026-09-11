@@ -505,8 +505,9 @@ function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyD
         before,
         after: connection.metadata,
         // The acting project, not every project the connection is shared with. Both controllers
-        // pass a single project today, so the fallback is unreachable; it is here so that a route
-        // that does not would fail to compile rather than silently widen the blast radius.
+        // pass a single project today, so the fallback does not run; a caller that passed nothing
+        // would widen this to every project sharing the credential, which is why the acting project
+        // is threaded through rather than read off the connection.
         projectIds: projectIds ?? connection.projectIds,
         externalId: connection.externalId,
     }), log)

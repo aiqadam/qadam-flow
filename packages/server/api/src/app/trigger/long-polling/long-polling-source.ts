@@ -13,6 +13,8 @@ import { eventPullerRegistry } from './event-puller-registry'
 // which imports this one, and a cycle through three modules is not worth a shared repo handle.
 const longPollingTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 
+const EMPTY_REGISTRY: LongPollingRegistry = { sources: [], starved: [], ambiguous: [] }
+
 /**
  * Resolves which trigger sources the host should be pulling for, right now.
  *
@@ -26,7 +28,7 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
         // to discover that it has none.
         const qadamNames = eventPullerRegistry.registeredQadamNames()
         if (qadamNames.length === 0) {
-            return { sources: [], starved: [] }
+            return EMPTY_REGISTRY
         }
         const triggerSources = await longPollingTriggerSourceRepo().find({
             where: {
@@ -41,7 +43,7 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
             },
         })
         if (triggerSources.length === 0) {
-            return { sources: [], starved: [] }
+            return EMPTY_REGISTRY
         }
         // Only now, once a row exists, is a puller worth the cost of loading.
         await eventPullerRegistry.load()
@@ -54,10 +56,11 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
             }))
             .filter((candidate) => !isNil(candidate))
         const { wanted, ambiguous } = await keepTheOnesTheirConnectionAsksFor({ candidates, log })
-        const registry = pickOnePerCredential({ sources: wanted, log })
-        // Reported, not dropped: a candidate nobody can classify receives nothing, and a flow that
-        // receives nothing without saying so is the failure this whole feature exists to kill.
-        return { ...registry, starved: [...registry.starved, ...ambiguous] }
+        // Its own field, deliberately not merged into `starved`. The host hands `starved` to
+        // `longPollingServed`, which makes the webhook endpoint refuse with 409 — correct for a
+        // starved flow, which really is in pull mode, and wrong for an ambiguous one, whose mode was
+        // never determined. Merging them refused live webhook deliveries for flows that were working.
+        return { ...pickOnePerCredential({ sources: wanted, log }), ambiguous }
     },
 })
 
@@ -200,7 +203,7 @@ async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOne
  * third-party credential are caught later, by the lock the host takes on the puller's credential
  * key — which is why that key exists.
  */
-function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): LongPollingRegistry {
+function pickOnePerCredential({ sources, log }: PickOnePerCredentialParams): Omit<LongPollingRegistry, 'ambiguous'> {
     const byCredential = new Map<string, LongPollingSource[]>()
     for (const source of sources) {
         byCredential.set(source.key, [...byCredential.get(source.key) ?? [], source])
@@ -255,10 +258,15 @@ type PickOnePerCredentialParams = {
 export type LongPollingRegistry = {
     sources: LongPollingSource[]
     /**
-     * Enabled, published, and guaranteed to receive nothing — either another flow holds their
-     * credential, or their connection cannot be identified unambiguously.
+     * In pull mode, enabled, published, and guaranteed to receive nothing: another flow holds their
+     * credential. Being in pull mode is what lets the host refuse their webhook too.
      */
     starved: LongPollingSource[]
+    /**
+     * Their connection cannot be identified unambiguously, so their mode is unknown — they are not
+     * polled, and their webhook must keep working, because for all anyone here knows it is live.
+     */
+    ambiguous: LongPollingSource[]
 }
 
 export type LongPollingSource = {

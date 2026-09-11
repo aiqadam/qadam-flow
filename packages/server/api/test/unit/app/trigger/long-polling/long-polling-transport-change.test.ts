@@ -139,6 +139,42 @@ describe('longPollingTransportChange', () => {
         expect(triggerSourceFind.mock.calls[0][0].where).toMatchObject({ qadamName: QADAM_NAME })
     })
 
+    // Dropping a concurrent change is only safe because the run already in flight re-reads live
+    // state on entry — so it sees whatever the dropped change wanted. If it ever stops re-reading,
+    // this stops being a coalesce and starts being a lost update.
+    it('drops a change that arrives while one is already running, rather than queueing it', async () => {
+        let releaseFirst = (): void => {}
+        triggerSourceFind.mockImplementationOnce(async () => {
+            await new Promise<void>((resolve) => {
+                releaseFirst = resolve
+            })
+            return []
+        })
+
+        const first = longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
+        })
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'long_polling' },
+            after: { transport: 'webhook' },
+        })
+
+        expect(triggerSourceFind).toHaveBeenCalledTimes(1)
+        releaseFirst()
+        await first
+
+        // And the guard is released, so the next change is not swallowed too.
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
+        })
+        expect(triggerSourceFind).toHaveBeenCalledTimes(2)
+    })
+
     // The mode is already saved by the time this runs; one flow failing must not undo the user's
     // edit or stop the other flows from being re-enabled.
     it('keeps going when one flow fails, and does not throw', async () => {

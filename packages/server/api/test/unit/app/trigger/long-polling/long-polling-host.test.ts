@@ -118,7 +118,7 @@ describe('longPollingHost', () => {
         store.clear()
         longPollingEnabled = true
         grantsTheLock()
-        listSources.mockResolvedValue({ sources: [source], starved: [] })
+        listSources.mockResolvedValue({ sources: [source], starved: [], ambiguous: [] })
         lockAndRefreshConnection.mockResolvedValue({
             status: AppConnectionStatus.ACTIVE,
             qadamName: QADAM_NAME,
@@ -255,7 +255,7 @@ describe('longPollingHost', () => {
         await vi.waitFor(() => expect(waitForEvents).toHaveBeenCalledTimes(1))
 
         // `triggerSourceService.enable` always writes a new row, even without a republish.
-        listSources.mockResolvedValue({ sources: [{ ...source, triggerSourceId: 'ts2' }], starved: [] })
+        listSources.mockResolvedValue({ sources: [{ ...source, triggerSourceId: 'ts2' }], starved: [], ambiguous: [] })
         host.requestSync()
         await vi.waitFor(() => expect(waitForEvents).toHaveBeenCalledTimes(2))
         await host.stop()
@@ -564,7 +564,7 @@ describe('longPollingHost', () => {
     // stays open to forgeries and one wrongly in it stops receiving anything at all.
     it('tells the webhook endpoint which flows it serves, including the starved ones', async () => {
         const starved = { ...source, key: 'other', triggerSourceId: 'ts9', flowId: 'starved-flow' }
-        listSources.mockResolvedValue({ sources: [source], starved: [starved] })
+        listSources.mockResolvedValue({ sources: [source], starved: [starved], ambiguous: [] })
         getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue(stopsImmediately)))
 
         const host = await loadHost()
@@ -601,6 +601,54 @@ describe('longPollingHost', () => {
         expect(reportStatus.mock.calls.some(([params]) => params.status === 'BACKING_OFF')).toBe(false)
     })
 
+    // An ambiguous source's delivery mode was never determined, so its webhook may well be live.
+    // Refusing it would take a working flow off the air — which is what merging these two lists into
+    // one did, and the reason they are separate.
+    it('reports an ambiguous source but leaves its webhook working', async () => {
+        const ambiguous = { ...source, key: 'ambiguous', triggerSourceId: 'ts-ambiguous', flowId: 'flow-ambiguous' }
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+        listSources.mockResolvedValue({ sources: [source], starved: [], ambiguous: [ambiguous] })
+
+        const host = await loadHost()
+        const { longPollingServed } = await import('../../../../../src/app/trigger/long-polling/long-polling-served')
+        await host.start()
+        await vi.waitFor(() => expect(longPollingServed.isServedByPulling(source.flowId)).toBe(true))
+
+        expect(longPollingServed.isServedByPulling('flow-ambiguous')).toBe(false)
+        await vi.waitFor(() => expect(reportStatus.mock.calls.some(([params]) =>
+            params.flowId === 'flow-ambiguous' && params.status === 'STOPPED')).toBe(true))
+        // And not with the starved flow's reason, which names a cause that is not this one.
+        const reported = reportStatus.mock.calls.find(([params]) => params.flowId === 'flow-ambiguous')?.[0]
+        expect(reported.reason).toMatch(/share an id/)
+        await host.stop()
+    })
+
+    // On a republish the key is re-created in the same pass and the successor owns the status, so a
+    // deferred clear would wipe the live entry the successor just wrote.
+    it('does not clear the status when the source is replaced rather than removed', async () => {
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(runExclusive).toHaveBeenCalled())
+        clearStatus.mockClear()
+        listSources.mockResolvedValue({ sources: [{ ...source, triggerSourceId: 'ts-republished' }], starved: [], ambiguous: [] })
+        host.requestSync()
+
+        await vi.waitFor(() => expect(listSources).toHaveBeenCalledTimes(2))
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        expect(clearStatus).not.toHaveBeenCalledWith({ projectId: source.projectId, flowId: source.flowId })
+        await host.stop()
+    })
+
     it('clears the status of a source it stops serving, instead of leaving it to expire', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,
@@ -612,7 +660,7 @@ describe('longPollingHost', () => {
         const host = await loadHost()
         await host.start()
         await vi.waitFor(() => expect(runExclusive).toHaveBeenCalled())
-        listSources.mockResolvedValue({ sources: [], starved: [] })
+        listSources.mockResolvedValue({ sources: [], starved: [], ambiguous: [] })
         host.requestSync()
         await vi.waitFor(() => expect(clearStatus).toHaveBeenCalledWith({
             projectId: source.projectId,
@@ -672,7 +720,7 @@ describe('longPollingHost', () => {
     it('leaves no task polling after shutdown, even one spawned by a reconciliation in flight', async () => {
         let releaseList = (): void => undefined
         listSources.mockImplementation(() => new Promise((resolve) => {
-            releaseList = () => resolve({ sources: [source], starved: [] })
+            releaseList = () => resolve({ sources: [source], starved: [], ambiguous: [] })
         }))
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,
@@ -750,7 +798,7 @@ describe('longPollingHost window pacing', () => {
         store.clear()
         longPollingEnabled = true
         grantsTheLock()
-        listSources.mockResolvedValue({ sources: [source], starved: [] })
+        listSources.mockResolvedValue({ sources: [source], starved: [], ambiguous: [] })
         lockAndRefreshConnection.mockResolvedValue({
             status: AppConnectionStatus.ACTIVE,
             qadamName: QADAM_NAME,

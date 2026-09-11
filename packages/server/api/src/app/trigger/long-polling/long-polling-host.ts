@@ -55,12 +55,18 @@ const MIN_WINDOW_INTERVAL_MS = 25
  * A constant rather than a setting: nobody can pick a number for this without measuring, and an
  * install that hits it has a capacity problem an env var would only hide.
  *
- * The per-project sub-cap exists because the global one is first-come and tasks are never
+ * The per-project share exists because the global ceiling is first-come and tasks are never
  * displaced: without it, one tenant enabling enough pull flows takes every slot on the instance and
  * keeps them, and every other tenant's flows are refused permanently rather than transiently.
+ *
+ * It is a share of the instance divided among the projects that actually want to poll, not a fixed
+ * number — a fixed one would be a regression for the deployment this project is built for. Qadam
+ * Flow is self-hosted by design, and on a single-project install a constant like 25 would cap that
+ * install at 25 instead of 200, with no way to raise it. Divided, one project alone gets all 200.
  */
 const MAX_CONCURRENT_TASKS = 200
-const MAX_CONCURRENT_TASKS_PER_PROJECT = 25
+/** Nobody's share drops below this, however many projects are competing. */
+const MIN_CONCURRENT_TASKS_PER_PROJECT = 25
 
 const tasks = new Map<string, RunningTask>()
 const fatalSources = new Map<string, FatalSource>()
@@ -161,8 +167,10 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             log.error({ err: error }, '[longPollingHost#sync] Could not read the long-polling registry')
             return
         }
-        // Both lists: a starved flow is pull-mode too — its connection asked for it — and the
-        // third party is equally not calling its webhook.
+        // Sources and starved only. Both are known to be in pull mode — their connection asked for
+        // it — so the third party is not calling their webhook and anything arriving there is not
+        // from it. `ambiguous` is excluded on purpose: its mode was never determined, so its webhook
+        // may well be live, and refusing it would break a flow that is working.
         longPollingServed.replaceAll([...registry.sources, ...registry.starved].map((source) => source.flowId))
         const desired = new Map(registry.sources.map((source) => [source.key, source]))
         // The clearest silent-bot case there is: enabled, published, and guaranteed to receive
@@ -172,6 +180,14 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             source: starved,
             status: LongPollingStatus.STOPPED,
             reason: 'Another flow enabled more recently is using this connection, and the third party allows only one consumer',
+            log,
+        }))
+        // A different cause needs a different remedy: the fix here is to de-duplicate the connection,
+        // not to look for a flow that took the credential.
+        registry.ambiguous.forEach((ambiguous) => reportStatus({
+            source: ambiguous,
+            status: LongPollingStatus.STOPPED,
+            reason: 'Two connections in this project share an id, so it is not clear which one sets the delivery mode',
             log,
         }))
 
@@ -211,6 +227,8 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             }
         }
         const overCapacity: OverCapacity[] = []
+        const projectsWanting = new Set(Array.from(desired.values()).map((source) => source.projectId)).size
+        const projectShare = Math.max(MIN_CONCURRENT_TASKS_PER_PROJECT, Math.floor(MAX_CONCURRENT_TASKS / projectsWanting))
         for (const source of desired.values()) {
             const fatal = fatalSources.get(source.key)
             if (!isNil(fatal)) {
@@ -223,7 +241,7 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             if (tasks.has(source.key)) {
                 continue
             }
-            const overCap = atCapacity({ source, tasks })
+            const overCap = atCapacity({ source, tasks, projectShare })
             if (!isNil(overCap)) {
                 overCapacity.push({ flowId: source.flowId, scope: overCap })
                 reportStatus({
@@ -254,12 +272,12 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
 }
 
 /** Which ceiling this source runs into, if any. */
-function atCapacity({ source, tasks }: AtCapacityParams): 'instance' | 'project' | undefined {
+function atCapacity({ source, tasks, projectShare }: AtCapacityParams): OverCapacity['scope'] | undefined {
     if (tasks.size >= MAX_CONCURRENT_TASKS) {
         return 'instance'
     }
     const forProject = Array.from(tasks.values()).filter((task) => task.source.projectId === source.projectId).length
-    return forProject >= MAX_CONCURRENT_TASKS_PER_PROJECT ? 'project' : undefined
+    return forProject >= projectShare ? 'project' : undefined
 }
 
 /**
@@ -746,6 +764,7 @@ type ResolvedCredential =
 type AtCapacityParams = {
     source: LongPollingSource
     tasks: Map<string, RunningTask>
+    projectShare: number
 }
 
 type OverCapacity = {
