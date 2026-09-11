@@ -5,8 +5,9 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { SystemJobName } from '../../../../src/app/helper/system-jobs/common'
+import * as systemJobModule from '../../../../src/app/helper/system-jobs/system-job'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
-import * as transportChangeModule from '../../../../src/app/trigger/long-polling/long-polling-transport-change'
 import { db } from '../../../helpers/db'
 import { createMockQadamMetadata } from '../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
@@ -32,11 +33,18 @@ afterAll(async () => {
  * only `update` re-ran the hook. These cover the wiring; the fan-out itself is covered by unit tests.
  */
 describe('Delivery-mode changes re-run the trigger hooks', () => {
-    let reEnableAffectedFlows: ReturnType<typeof vi.fn>
+    let upsertJob: ReturnType<typeof vi.fn>
 
     beforeEach(() => {
-        reEnableAffectedFlows = vi.fn().mockResolvedValue(undefined)
-        vi.spyOn(transportChangeModule, 'longPollingTransportChange').mockReturnValue({ reEnableAffectedFlows })
+        upsertJob = vi.fn().mockResolvedValue(undefined)
+        vi.spyOn(systemJobModule, 'systemJobsSchedule').mockReturnValue({
+            upsertJob,
+            init: vi.fn(),
+            startWorker: vi.fn(),
+            removeJob: vi.fn(),
+            getJob: vi.fn(),
+            close: vi.fn(),
+        } as unknown as ReturnType<typeof systemJobModule.systemJobsSchedule>)
     })
 
     afterEach(() => {
@@ -55,8 +63,8 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
         }))
 
         expect(response?.statusCode).toBe(StatusCodes.CREATED)
-        expect(reEnableAffectedFlows).toHaveBeenCalledTimes(1)
-        expect(reEnableAffectedFlows.mock.calls[0][0]).toMatchObject({
+        expect(deliveryModeJobs(upsertJob)).toHaveLength(1)
+        expect(deliveryModeJobs(upsertJob)[0].data).toMatchObject({
             qadamName: qadam.name,
             externalId: 'delivery-mode-upsert',
             after: { transport: 'long_polling' },
@@ -76,7 +84,7 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
             metadata: { transport: 'long_polling' },
         }))
         expect(created?.statusCode).toBe(StatusCodes.CREATED)
-        reEnableAffectedFlows.mockClear()
+        upsertJob.mockClear()
 
         const response = await ctx.post(`/v1/app-connections/${created?.json().id}`, {
             displayName: 'Delivery Mode Connection',
@@ -84,8 +92,8 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
         })
 
         expect(response?.statusCode).toBe(StatusCodes.OK)
-        expect(reEnableAffectedFlows).toHaveBeenCalledTimes(1)
-        expect(reEnableAffectedFlows.mock.calls[0][0]).toMatchObject({
+        expect(deliveryModeJobs(upsertJob)).toHaveLength(1)
+        expect(deliveryModeJobs(upsertJob)[0].data).toMatchObject({
             before: { transport: 'long_polling' },
             after: { transport: 'webhook' },
         })
@@ -104,16 +112,26 @@ describe('Delivery-mode changes re-run the trigger hooks', () => {
             metadata: { transport: 'long_polling' },
         }))
         expect(created?.statusCode).toBe(StatusCodes.CREATED)
-        reEnableAffectedFlows.mockClear()
+        upsertJob.mockClear()
 
         const response = await ctx.post(`/v1/app-connections/${created?.json().id}`, {
             displayName: 'Renamed, nothing else',
         })
 
         expect(response?.statusCode).toBe(StatusCodes.OK)
-        expect(reEnableAffectedFlows).not.toHaveBeenCalled()
+        expect(deliveryModeJobs(upsertJob)).toEqual([])
     })
 })
+
+/**
+ * Only the delivery-mode job: the sign-up and project setup this test performs schedule others, and
+ * asserting on the whole queue would pass for the wrong reason.
+ */
+function deliveryModeJobs(upsertJob: ReturnType<typeof vi.fn>): { data: Record<string, unknown> }[] {
+    return upsertJob.mock.calls
+        .map(([params]) => params.job)
+        .filter((job: { name: string }) => job.name === SystemJobName.APPLY_DELIVERY_MODE_CHANGE)
+}
 
 function connectionBody({ ctx, qadam, externalId, metadata }: ConnectionBodyParams): Record<string, unknown> {
     return {

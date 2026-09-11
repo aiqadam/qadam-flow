@@ -37,6 +37,7 @@ import {
     UserWithMetaInformation,
     WorkerJobType,
 } from '@aiqadam/shared'
+import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import semver from 'semver'
 import { ArrayContains, Equal, FindOperator, FindOptionsWhere, ILike, In } from 'typeorm'
@@ -48,12 +49,13 @@ import { paginationHelper } from '../../helper/pagination/pagination-utils'
 import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { SystemJobName } from '../../helper/system-jobs/common'
+import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { projectRepo } from '../../project/project-service'
 import {
     getQadamPackageWithoutArchive,
     qadamMetadataService,
 } from '../../qadams/metadata/qadam-metadata-service'
-import { longPollingTransportChange } from '../../trigger/long-polling/long-polling-transport-change'
 import { userService } from '../../user/user-service'
 import { userInteractionWatcher } from '../../workers/user-interaction-watcher'
 import {
@@ -495,21 +497,32 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
  * switched back to webhook stops being polled and never gets its webhook back, and the flow keeps
  * saying "on" while receiving nothing.
  *
- * Not awaited: each affected flow costs an engine round trip plus the qadam's own call to the third
- * party, and holding the user's request open for all of them turns one cheap POST into unbounded
- * sequential work. The mode is saved either way, and a failure here is logged, not surfaced.
+ * Off the request and onto a durable job. Each affected flow costs an engine round trip plus the
+ * qadam's own call to the third party, so holding the user's POST open for all of them turns one
+ * cheap request into unbounded sequential work — but a floating promise would lose the work
+ * entirely if the process restarted in the seconds after the metadata was written, and that loss is
+ * silent and one-directional (see the job's own doc comment). The job id is per connection, so
+ * repeated edits coalesce onto one pending job rather than queueing a fan-out each.
  */
 function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyDeliveryModeChangeParams): void {
-    rejectedPromiseHandler(longPollingTransportChange(log).reEnableAffectedFlows({
-        qadamName: connection.qadamName,
-        before,
-        after: connection.metadata,
-        // The acting project, not every project the connection is shared with. Both controllers
-        // pass a single project today, so the fallback does not run; a caller that passed nothing
-        // would widen this to every project sharing the credential, which is why the acting project
-        // is threaded through rather than read off the connection.
-        projectIds: projectIds ?? connection.projectIds,
-        externalId: connection.externalId,
+    // The acting project, not every project the connection is shared with. Both controllers pass a
+    // single project today, so the fallback does not run; a caller that passed nothing would widen
+    // this to every project sharing the credential, which is why the acting project is threaded
+    // through rather than read off the connection.
+    const actingProjectIds = projectIds ?? connection.projectIds
+    rejectedPromiseHandler(systemJobsSchedule(log).upsertJob({
+        job: {
+            name: SystemJobName.APPLY_DELIVERY_MODE_CHANGE,
+            data: {
+                qadamName: connection.qadamName,
+                projectIds: actingProjectIds,
+                externalId: connection.externalId,
+                before: before ?? null,
+                after: connection.metadata ?? null,
+            },
+            jobId: `delivery-mode-${connection.platformId}-${actingProjectIds.join(',')}-${connection.externalId}`,
+        },
+        schedule: { type: 'one-time', date: dayjs() },
     }), log)
 }
 
