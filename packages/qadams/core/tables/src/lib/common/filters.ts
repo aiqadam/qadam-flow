@@ -7,13 +7,23 @@ export const filterUtils = {
   // whose shape is not understood must never degrade into "no filter", because
   // that returns the whole table and reads exactly like "everything matched".
   toWireFilters({ rawFilters, fields }: { rawFilters: unknown; fields: Field[] }): Filter[] {
-    return toEntries(rawFilters).map((entry, index) => toWireFilter({ entry, index, fields }));
+    return toEntries({ value: rawFilters, nested: false }).map((entry, index) => toWireFilter({ entry, index, fields }));
   },
 
   // "In" / "Not In" accept either a list variable or a comma-separated string.
-  toFilterList(value: unknown): string[] {
+  toFilterList({ value, position, fieldName }: { value: unknown; position: string; fieldName: string }): string[] {
     if (Array.isArray(value)) {
-      return value.map(String).map((part) => part.trim()).filter((part) => part.length > 0);
+      return value
+        .map((element) => {
+          if (element === null || element === undefined || typeof element === 'object') {
+            // String()-coercing these would build a filter that means something
+            // other than what was written: [{a:1}] becomes "[object Object]" and
+            // [['a','b']] becomes the single value "a,b".
+            throw new Error(`${position}: the list for field "${fieldName}" holds a value that is not a single text, number or boolean.`);
+          }
+          return String(element).trim();
+        })
+        .filter((part) => part.length > 0);
     }
     return String(value ?? '')
       .split(',')
@@ -26,36 +36,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function toEntries(rawFilters: unknown): unknown[] {
-  if (rawFilters === null || rawFilters === undefined) {
-    return [];
+// `nested` is load-bearing. Only the TOP-LEVEL value may mean "no filter" — that
+// is what an optional, unconfigured prop looks like. Once an author has written
+// a `filters` key, an empty or absent value under it is a filter that could not
+// be read, and reading it as "no filter" would return the whole table.
+function toEntries({ value, nested }: { value: unknown; nested: boolean }): unknown[] {
+  if (value === null || value === undefined) {
+    return nested ? emptyNestedValue(value) : [];
   }
-  if (typeof rawFilters === 'string') {
-    const trimmed = rawFilters.trim();
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
     if (trimmed.length === 0) {
-      return [];
+      return nested ? emptyNestedValue(value) : [];
     }
-    return toEntries(parseJsonOrThrow(trimmed));
+    return toEntries({ value: parseJsonOrThrow(trimmed), nested });
   }
-  if (Array.isArray(rawFilters)) {
-    return rawFilters;
+  if (Array.isArray(value)) {
+    return value;
   }
-  if (!isRecord(rawFilters)) {
-    throw new Error(unrecognisedShapeMessage(rawFilters));
+  if (!isRecord(value)) {
+    throw new Error(unrecognisedShapeMessage(value));
   }
-  const keys = Object.keys(rawFilters);
+  const keys = Object.keys(value);
   if (keys.length === 0) {
-    return [];
+    return nested ? emptyNestedValue(value) : [];
   }
-  if (NESTED_KEY in rawFilters) {
+  if (NESTED_KEY in value) {
     // Recursive rather than three explicit branches, because the builder's
     // inline-item mode can resolve the nested array to a JSON string.
-    return toEntries(rawFilters[NESTED_KEY]);
+    return toEntries({ value: value[NESTED_KEY], nested: true });
   }
   if (keys.some((key) => ENTRY_KEYS.includes(key))) {
-    return [rawFilters];
+    return [value];
   }
-  throw new Error(unrecognisedShapeMessage(rawFilters));
+  throw new Error(unrecognisedShapeMessage(value));
+}
+
+function emptyNestedValue(value: unknown): never {
+  throw new Error(`The "filters" key is present but holds nothing readable (${describeShape(value)}). ${SHAPE_HINT} Write no "filters" key at all to read the whole table on purpose.`);
 }
 
 function parseJsonOrThrow(raw: string): unknown {
@@ -87,7 +105,7 @@ function toWireFilter({ entry, index, fields }: { entry: unknown; index: number;
       return { fieldId: field.id, operator };
     case FilterOperator.IN:
     case FilterOperator.NOT_IN: {
-      const values = filterUtils.toFilterList(entry['value']);
+      const values = filterUtils.toFilterList({ value: entry['value'], position, fieldName: field.name });
       if (values.length === 0) {
         throw new Error(`${position}: the "${operator}" operator on field "${field.name}" requires at least one value.`);
       }
@@ -175,7 +193,7 @@ function toScalarValue({ raw, field, operator, position }: { raw: unknown; field
 function assertValueMatchesFieldType({ field, value, position }: { field: Field; value: string; position: string }): void {
   switch (field.type) {
     case FieldType.NUMBER: {
-      if (value.trim().length === 0 || !Number.isFinite(Number(value))) {
+      if (!isDecimalNumber(value)) {
         throw new Error(`${position}: "${truncate(value)}" is not a number, but field "${field.name}" is a Number column.`);
       }
       return;
@@ -189,7 +207,24 @@ function assertValueMatchesFieldType({ field, value, position }: { field: Field;
     case FieldType.TEXT:
     case FieldType.STATIC_DROPDOWN:
       return;
+    default: {
+      // A new FieldType must not silently skip validation here.
+      const unhandled: never = field;
+      throw new Error(`${position}: field "${JSON.stringify(unhandled)}" has a column type this action does not know how to validate.`);
+    }
   }
+}
+
+// Both `Number` and `parseFloat` have to agree, because the server compares with
+// one and this validates with the other: `Number('0x10')` is 16 where
+// `parseFloat('0x10')` is 0, so accepting hex here would pass a value the server
+// then evaluates as something else entirely.
+function isDecimalNumber(value: string): boolean {
+  if (value.trim().length === 0) {
+    return false;
+  }
+  const asNumber = Number(value);
+  return Number.isFinite(asNumber) && asNumber === parseFloat(value);
 }
 
 function availableColumns(fields: Field[]): string {
@@ -203,10 +238,21 @@ function availableColumns(fields: Field[]): string {
 // into the run output, and the filters value can carry whatever the flow put in
 // it. The keys are enough to see what went wrong.
 function unrecognisedShapeMessage(value: unknown): string {
-  const shape = isRecord(value)
-    ? `an object with key(s) ${quoteAll(Object.keys(value).slice(0, MAX_REPORTED_KEYS))}`
-    : `a value of type ${Array.isArray(value) ? 'array' : typeof value}`;
-  return `Could not read the "filters" value — got ${shape}. ${SHAPE_HINT} A filter that cannot be read is rejected rather than ignored, because ignoring it would return every row in the table.`;
+  return `Could not read the "filters" value — got ${describeShape(value)}. ${SHAPE_HINT} A filter that cannot be read is rejected rather than ignored, because ignoring it would return every row in the table.`;
+}
+
+function describeShape(value: unknown): string {
+  if (isRecord(value)) {
+    const keys = Object.keys(value);
+    return keys.length === 0 ? 'an empty object' : `an object with key(s) ${quoteAll(keys.slice(0, MAX_REPORTED_KEYS))}`;
+  }
+  if (Array.isArray(value)) {
+    return 'a list';
+  }
+  if (typeof value === 'string') {
+    return value.trim().length === 0 ? 'an empty text' : 'a text';
+  }
+  return `a value of type ${typeof value}`;
 }
 
 function truncate(value: string): string {

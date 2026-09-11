@@ -162,6 +162,20 @@ describe('filterUtils.toWireFilters', () => {
     ])('treats %s as no filters', (_label, rawFilters) => {
       expect(filterUtils.toWireFilters({ rawFilters, fields })).toEqual([]);
     });
+
+    // Only the top-level value may mean "no filter". Once a "filters" key has
+    // been written, an unreadable value under it is a dropped filter, and
+    // reading it as "no filter" would return the whole table.
+    it.each([
+      ['an empty object', { filters: {} }],
+      ['the string "{}"', { filters: '{}' }],
+      ['the string "null"', { filters: 'null' }],
+      ['null', { filters: null }],
+      ['a blank string', { filters: '   ' }],
+      ['a doubly nested empty object', { filters: { filters: {} } }],
+    ])('rejects a "filters" key holding %s rather than reading the whole table', (_label, rawFilters) => {
+      expect(() => filterUtils.toWireFilters({ rawFilters, fields })).toThrow(/holds nothing readable/);
+    });
   });
 
   describe('value typing', () => {
@@ -203,6 +217,31 @@ describe('filterUtils.toWireFilters', () => {
       expect(() =>
         filterUtils.toWireFilters({ rawFilters: [{ field: 'event_id', operator: 'not_in', value: '  ' }], fields }),
       ).toThrow(/requires at least one value/);
+    });
+
+    it('rejects a list element that is not a single scalar', () => {
+      // String()-coercing these silently changes what the filter means:
+      // [{a:1}] would become "[object Object]" and [['a','b']] a single "a,b".
+      expect(() =>
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'event_id', operator: 'in', value: [{ a: 1 }] }], fields }),
+      ).toThrow(/not a single text, number or boolean/);
+      expect(() =>
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'event_id', operator: 'in', value: [['a', 'b']] }], fields }),
+      ).toThrow(/not a single text, number or boolean/);
+    });
+  });
+
+  describe('number values the server would read differently', () => {
+    it('rejects a hex literal, which the server compares as 0', () => {
+      expect(() =>
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'overbook_pct', operator: 'gt', value: '0x10' }], fields }),
+      ).toThrow(/is not a number/);
+    });
+
+    it('still accepts exponent notation, which both sides read the same way', () => {
+      expect(
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'overbook_pct', operator: 'gt', value: '1e2' }], fields }),
+      ).toEqual([{ fieldId: 'id_overbook_pct', operator: FilterOperator.GT, value: '1e2' }]);
     });
   });
 });

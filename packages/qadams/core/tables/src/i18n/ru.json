@@ -22,7 +22,6 @@
   "The ID of the record to do the action on.": "ID записи, на которую нужно выполнить действие.",
   "The values to update. Leave empty to keep current value.": "Значения для обновления. Оставьте пустым, чтобы сохранить текущее значение.",
   "Maximum number of records to return (default no limit).": "Максимальное количество возвращаемых записей (без ограничения по умолчанию).",
-  "Filter conditions to apply": "Фильтр условий для применения",
   "New Record Created": "Создана новая запись",
   "Record Updated": "Запись обновлена",
   "Record Deleted": "Запись удалена",
