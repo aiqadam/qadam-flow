@@ -739,12 +739,16 @@ describe('longPollingHost', () => {
             .filter(([params]) => /polling connection/.test(params.reason ?? ''))
             .map(([params]) => params.flowId)
         expect(refusedFlows.length).toBe(projectsWanting * share - longPollingCapacity.MAX_CONCURRENT_TASKS)
+        // The ones refused are the last project's, and they are inside its own share — so this is
+        // the instance ceiling talking, not the per-project one.
+        expect(refusedFlows.every((flowId: string) => flowId.startsWith(`p${projectsWanting - 1}-`))).toBe(true)
         await host.stop()
     }, 30_000)
 
-    // The comment on the guard argues this case explicitly — a flow that just lost its connection to
-    // another flow is by construction one whose task is going away — so it is the half most likely
-    // to regress, and it was the untested one.
+    // The guard's comment argues this case explicitly: a flow that just lost its connection to
+    // another flow is usually one whose task is going away — usually, not always, since a flow that
+    // loses on its very first sync never had a task. It is the half most likely to regress, and it
+    // was the untested one.
     it('does not clear a starved flow\'s status either', async () => {
         getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,

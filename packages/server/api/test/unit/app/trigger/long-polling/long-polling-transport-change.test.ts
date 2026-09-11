@@ -175,9 +175,13 @@ describe('longPollingTransportChange', () => {
             after: { transport: 'long_polling' },
         })
 
-        expect(triggerSourceFind).toHaveBeenCalledTimes(1)
-        releaseFirst()
-        await first
+        try {
+            expect(triggerSourceFind).toHaveBeenCalledTimes(1)
+        }
+        finally {
+            releaseFirst()
+            await first
+        }
 
         expect(triggerSourceFind).toHaveBeenCalledTimes(2)
 
@@ -198,7 +202,7 @@ describe('longPollingTransportChange', () => {
         const isRegistered = vi.spyOn(eventPullerRegistry, 'isRegistered').mockReturnValue(true)
         const getOrLoad = vi.spyOn(eventPullerRegistry, 'getOrLoad').mockResolvedValue({
             windowSeconds: 50,
-            isEnabledFor: ({ connectionMetadata }) => (connectionMetadata as { transport?: string } | undefined)?.transport === 'long_polling',
+            isEnabledFor: ({ connectionMetadata }) => connectionMetadata?.transport === 'long_polling',
             credentialKey: () => 'key',
             waitForEvents: vi.fn(),
         })
@@ -215,19 +219,52 @@ describe('longPollingTransportChange', () => {
             before: { transport: 'webhook' },
             after: { transport: 'long_polling' },
         })
-        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+        try {
+            await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+                ...connection,
+                qadamName: OTHER_QADAM_NAME,
+                before: { transport: 'webhook' },
+                after: { transport: 'long_polling' },
+            })
+
+            // The second qadam runs on its own rather than being folded into the first one's pass.
+            expect(triggerSourceFind).toHaveBeenCalledTimes(2)
+        }
+        finally {
+            releaseFirst()
+            await first
+            isRegistered.mockRestore()
+            getOrLoad.mockRestore()
+        }
+    })
+
+    // The module calls a discarded change its own worst case, so the one line that makes it
+    // diagnosable should not rest on having been read rather than run.
+    it('says so when a coalesced change is discarded because the run failed', async () => {
+        let releaseFirst = (): void => {}
+        triggerSourceFind
+            .mockImplementationOnce(async () => {
+                await new Promise<void>((resolve) => {
+                    releaseFirst = resolve
+                })
+                throw new Error('the database went away mid-fan-out')
+            })
+
+        const first = longPollingTransportChange(mockLog).reEnableAffectedFlows({
             ...connection,
-            qadamName: OTHER_QADAM_NAME,
             before: { transport: 'webhook' },
             after: { transport: 'long_polling' },
         })
-
-        // The second qadam runs on its own rather than being folded into the first one's pass.
-        expect(triggerSourceFind).toHaveBeenCalledTimes(2)
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'long_polling' },
+            after: { transport: 'webhook' },
+        })
         releaseFirst()
-        await first
-        isRegistered.mockRestore()
-        getOrLoad.mockRestore()
+        await expect(first).rejects.toThrow('the database went away')
+
+        expect((mockLog.error as ReturnType<typeof vi.fn>).mock.calls.some(([, message]) =>
+            /was dropped/.test(String(message)))).toBe(true)
     })
 
     // The mode is already saved by the time this runs; one flow failing must not undo the user's
