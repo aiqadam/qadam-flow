@@ -207,6 +207,23 @@ describe('telegram trigger run verification', () => {
     expect(setWebhook?.[0].body.allowed_updates).toEqual(['message', 'callback_query']);
   });
 
+  // A restore that throws used to leave the record behind, and the comment above the delete claimed
+  // it could not. The stale record then outlives the flow: a later enable that fails before
+  // recording restores *this* test's URL. Re-running a restore is the safe half of the trade, so
+  // the record goes even when the call did not.
+  it('clears the borrowed record even when the restore itself fails', async () => {
+    sendRequest.mockRejectedValue(new Error('Telegram said no'));
+    const context = contextWith({
+      transport: telegramWebhookAuth.WEBHOOK,
+      webhookUrl: `${WEBHOOK_URL}/test`,
+      borrowedFrom: { url: WEBHOOK_URL, allowedUpdates: ['message'] },
+    });
+
+    // The failure still surfaces — swallowing it would hide a bot left without its webhook.
+    await expect(telegramNewMessage.onDisable(context)).rejects.toThrow('Telegram said no');
+    expect(await context.store.get(telegramWebhookAuth.BORROWED_FROM_KEY)).toBeUndefined();
+  });
+
   // Driven through the real enable hook rather than a hand-seeded store, because the state that
   // matters here is one only that hook produces — and seeding it directly is how the first version
   // of this test passed while the code was broken.

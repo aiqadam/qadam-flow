@@ -125,26 +125,33 @@ export const telegramNewMessage = createTrigger({
       const borrowed = await context.store.get<{ url: string; allowedUpdates: string[] }>(
         telegramWebhookAuth.BORROWED_FROM_KEY
       );
-      if (borrowed && borrowed.url !== '') {
-        // Lossy by necessity: `getWebhookInfo` does not return the secret, so a borrowed webhook
-        // comes back carrying ours. That is right for a webhook we registered and wrong only for
-        // one some other service owns — which cannot coexist with this flow anyway, since Telegram
-        // allows a single webhook per token.
-        await telegramCommons.subscribeWebhook(context.auth.secret_text, borrowed.url, {
-          allowed_updates: borrowed.allowedUpdates,
-          secret_token: telegramWebhookAuth.secretFor({
-            botToken: context.auth.secret_text,
-            webhookUrl: borrowed.url,
-          }),
-        });
+      try {
+        if (borrowed && borrowed.url !== '') {
+          // Lossy by necessity: `getWebhookInfo` does not return the secret, so a borrowed webhook
+          // comes back carrying ours. That is right for a webhook we registered and wrong only for
+          // one some other service owns — which cannot coexist with this flow anyway, since
+          // Telegram allows a single webhook per token.
+          await telegramCommons.subscribeWebhook(context.auth.secret_text, borrowed.url, {
+            allowed_updates: borrowed.allowedUpdates,
+            secret_token: telegramWebhookAuth.secretFor({
+              botToken: context.auth.secret_text,
+              webhookUrl: borrowed.url,
+            }),
+          });
+        }
+        else {
+          // Nothing was registered before the test — an unpublished flow, or a polled connection.
+          // Removing is the restore.
+          await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
+        }
       }
-      else {
-        // Nothing was registered before the test — an unpublished flow, or a polled connection.
-        // Removing is the restore.
-        await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
+      finally {
+        // Cleared even when the restore above threw, so a later enable that fails before recording
+        // cannot restore this one's URL. Re-running the restore is the safe half of that trade:
+        // the record is either the production URL, which is what a retry should install anyway, or
+        // `EMPTY_WEBHOOK`, whose restore is a `deleteWebhook` that a polled bot does not mind.
+        await context.store.delete(telegramWebhookAuth.BORROWED_FROM_KEY);
       }
-      // Cleared, so a later enable that fails before recording cannot restore this one's URL.
-      await context.store.delete(telegramWebhookAuth.BORROWED_FROM_KEY);
       return;
     }
     await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
@@ -212,12 +219,13 @@ export const telegramNewMessage = createTrigger({
   },
 });
 
+/** What a bot with no webhook of its own was "borrowed from" — restoring it means removing one. */
+const EMPTY_WEBHOOK = { url: '', allowedUpdates: [] as string[] };
+
 /**
  * Registers the webhook with a `secret_token` and records that this flow is on the pushed
  * transport, so `run` knows to demand the header from then on.
  */
-const EMPTY_WEBHOOK = { url: '', allowedUpdates: [] as string[] };
-
 const registerWebhook = async (context: {
   auth: { secret_text: string };
   webhookUrl: string;
