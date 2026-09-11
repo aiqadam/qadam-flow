@@ -11,11 +11,12 @@ const enableTrigger = vi.fn()
 const getFlowVersion = vi.fn()
 
 vi.mock('../../../../../src/app/core/db/repo-factory', () => ({
-    repoFactory: () => () => ({ find: triggerSourceFind }),
+    repoFactory: (entity: { options: { name: string } }) => () => (
+        entity.options.name === 'flow_version' ? { find: flowVersionFind } : { find: triggerSourceFind }
+    ),
 }))
 
 vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => ({
-    flowVersionRepo: () => ({ find: flowVersionFind }),
     flowVersionService: () => ({ getOneOrThrow: getFlowVersion }),
 }))
 
@@ -24,6 +25,10 @@ vi.mock('../../../../../src/app/trigger/trigger-source/trigger-source-service', 
 }))
 
 const mockLog = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
+
+function triggeredBy({ id, externalId }: { id: string, externalId: string }) {
+    return { id, trigger: { settings: { input: { auth: `{{connections['${externalId}']}}` } } } }
+}
 
 const connection = {
     qadamName: QADAM_NAME,
@@ -40,7 +45,7 @@ describe('longPollingTransportChange', () => {
             projectId: 'project1',
             flow: { status: FlowStatus.ENABLED },
         }])
-        flowVersionFind.mockResolvedValue([{ id: 'fv1', connectionIds: ['telegram'] }])
+        flowVersionFind.mockResolvedValue([triggeredBy({ id: 'fv1', externalId: 'telegram' })])
         getFlowVersion.mockResolvedValue({ id: 'fv1', flowId: 'flow1' })
         enableTrigger.mockResolvedValue(undefined)
     })
@@ -93,7 +98,7 @@ describe('longPollingTransportChange', () => {
     })
 
     it('leaves alone a flow that does not use this connection', async () => {
-        flowVersionFind.mockResolvedValue([{ id: 'fv1', connectionIds: ['some-other-connection'] }])
+        flowVersionFind.mockResolvedValue([triggeredBy({ id: 'fv1', externalId: 'some-other-connection' })])
 
         await longPollingTransportChange(mockLog).reEnableAffectedFlows({
             ...connection,
@@ -104,6 +109,36 @@ describe('longPollingTransportChange', () => {
         expect(enableTrigger).not.toHaveBeenCalled()
     })
 
+    // `flowVersion.connectionIds` unions the trigger's auth with every action step's, so matching
+    // on it re-enabled flows that merely *send* to Telegram — re-seeding the cursor of a Gmail
+    // trigger and dropping every message since its last poll. Only the trigger's own auth counts.
+    it('leaves alone a flow that uses this connection only in an action', async () => {
+        flowVersionFind.mockResolvedValue([{
+            ...triggeredBy({ id: 'fv1', externalId: 'gmail-connection' }),
+            connectionIds: ['gmail-connection', 'telegram'],
+        }])
+
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
+        })
+
+        expect(enableTrigger).not.toHaveBeenCalled()
+    })
+
+    // The registry only ever pulls for one qadam's triggers, so the query must not drag in every
+    // enabled flow in every project the connection is shared with just to filter them in memory.
+    it('asks the database only for trigger sources of this qadam', async () => {
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
+        })
+
+        expect(triggerSourceFind.mock.calls[0][0].where).toMatchObject({ qadamName: QADAM_NAME })
+    })
+
     // The mode is already saved by the time this runs; one flow failing must not undo the user's
     // edit or stop the other flows from being re-enabled.
     it('keeps going when one flow fails, and does not throw', async () => {
@@ -112,8 +147,8 @@ describe('longPollingTransportChange', () => {
             { flowId: 'flow2', flowVersionId: 'fv2', projectId: 'project1', flow: { status: FlowStatus.ENABLED } },
         ])
         flowVersionFind.mockResolvedValue([
-            { id: 'fv1', connectionIds: ['telegram'] },
-            { id: 'fv2', connectionIds: ['telegram'] },
+            triggeredBy({ id: 'fv1', externalId: 'telegram' }),
+            triggeredBy({ id: 'fv2', externalId: 'telegram' }),
         ])
         enableTrigger.mockRejectedValueOnce(new Error('the third party refused'))
 

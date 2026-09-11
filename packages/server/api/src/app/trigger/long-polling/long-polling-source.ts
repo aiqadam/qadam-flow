@@ -1,3 +1,4 @@
+import { ConnectionMetadata } from '@aiqadam/qadams-framework'
 import { FlowStatus, flowStructureUtil, FlowTriggerType, FlowVersion, isNil, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { ArrayContains, In } from 'typeorm'
@@ -139,15 +140,39 @@ async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOne
         })),
         select: ['externalId', 'projectIds', 'metadata'],
     })
-    const metadataByKey = new Map(connections.flatMap((connection) =>
-        connection.projectIds.map((projectId) => [`${projectId}|${connection.externalId}`, connection.metadata ?? undefined] as const),
-    ))
+    // Keyed only on the projects a candidate actually asked about. Fanning out over every
+    // `projectIds` entry would let a connection shared into project P overwrite P's own
+    // same-`externalId` connection, and the loser would be classified from the wrong row.
+    const wanted = new Set(candidates.map((candidate) => `${candidate.projectId}|${candidate.connectionExternalId}`))
+    const metadataByKey = new Map<string, ConnectionMetadata>()
+    const ambiguous = new Set<string>()
+    for (const connection of connections) {
+        for (const projectId of connection.projectIds) {
+            const key = `${projectId}|${connection.externalId}`
+            if (!wanted.has(key)) {
+                continue
+            }
+            if (metadataByKey.has(key)) {
+                ambiguous.add(key)
+                continue
+            }
+            metadataByKey.set(key, connection.metadata ?? undefined)
+        }
+    }
     return candidates.filter((candidate) => {
         const puller = eventPullerRegistry.get(candidate.qadamName)
         if (isNil(puller)) {
             return false
         }
-        const connectionMetadata = metadataByKey.get(`${candidate.projectId}|${candidate.connectionExternalId}`)
+        const key = `${candidate.projectId}|${candidate.connectionExternalId}`
+        if (ambiguous.has(key)) {
+            log.error({
+                projectId: candidate.projectId,
+                flowId: candidate.flowId,
+            }, '[longPollingSourceRegistry#list] Two connections in one project share this externalId; refusing to guess which one sets the delivery mode')
+            return false
+        }
+        const connectionMetadata = metadataByKey.get(key)
         // Qadam code, so it is contained like every other call into a puller.
         const { data: enabled, error } = tryCatchSync(() => puller.isEnabledFor({ connectionMetadata }))
         if (error !== null) {

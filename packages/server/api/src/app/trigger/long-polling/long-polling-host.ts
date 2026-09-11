@@ -46,6 +46,17 @@ const PULLER_GRACE_SECONDS = 30
 const MIN_IDLE_WINDOW_INTERVAL_MS = 250
 const MIN_WINDOW_INTERVAL_MS = 25
 
+/**
+ * Ceiling on concurrently running pull loops. Each holds an open HTTP request to a third party for
+ * its whole window, so the count is a real resource bound and not a throughput knob. The flag is on
+ * by default, so without this a platform could be talked into unbounded sockets simply by enabling
+ * flows. Overflow is logged and reported on the flow, never dropped silently.
+ *
+ * A constant rather than a setting: nobody can pick a number for this without measuring, and an
+ * install that hits it has a capacity problem an env var would only hide.
+ */
+const MAX_CONCURRENT_TASKS = 200
+
 const tasks = new Map<string, RunningTask>()
 const fatalSources = new Map<string, FatalSource>()
 const syncMutex = new Mutex()
@@ -72,12 +83,18 @@ export const longPollingHost = (log: FastifyBaseLogger) => ({
      * Without this the qadam's `onEnable` removes the webhook and nothing replaces it, so the flow
      * ends up with no delivery at all — worse than before the user touched it, and silent.
      */
-    async assertTransportIsAvailable({ qadamName, connectionMetadata }: AssertTransportParams): Promise<void> {
+    async assertTransportIsAvailable({ qadamName, readConnectionMetadata }: AssertTransportParams): Promise<void> {
         if (isEnabled() || !eventPullerRegistry.isRegistered(qadamName)) {
             return
         }
         const puller = await eventPullerRegistry.getOrLoad(qadamName)
-        if (isNil(puller) || !(tryCatchSync(() => puller.isEnabledFor({ connectionMetadata })).data ?? false)) {
+        if (isNil(puller)) {
+            return
+        }
+        // Only now, past both cheap guards: reading it costs a query on a path every publish and
+        // every flow enable in the product goes through.
+        const connectionMetadata = await readConnectionMetadata()
+        if (!(tryCatchSync(() => puller.isEnabledFor({ connectionMetadata })).data ?? false)) {
             return
         }
         throw new QadamFlowError({
@@ -160,10 +177,15 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 tasks.delete(key)
                 // The flow is gone, disabled, or republished: whatever the old task last reported
                 // is no longer true of anything, so it should not linger until its TTL.
-                rejectedPromiseHandler(longPollingStatus.clear({
+                //
+                // Awaited on the task first: its own last report is fire-and-forget, so clearing
+                // without waiting can be overtaken by a `FAILED` put from the very window this
+                // abort stood down — leaving a healthy webhook flow wearing a stale failure for the
+                // whole TTL, which is the silent-wrong-status this module exists to prevent.
+                rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
                     projectId: task.source.projectId,
                     flowId: task.source.flowId,
-                }), log)
+                })), log)
             }
         }
         // Keyed on the trigger-source row rather than the flow version, so disabling and re-enabling
@@ -190,6 +212,19 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 continue
             }
             if (tasks.has(source.key)) {
+                continue
+            }
+            if (tasks.size >= MAX_CONCURRENT_TASKS) {
+                log.error({
+                    flowId: source.flowId,
+                    running: tasks.size,
+                }, '[longPollingHost#sync] At the concurrent pull-task ceiling; this flow is not being polled')
+                reportStatus({
+                    source,
+                    status: LongPollingStatus.STOPPED,
+                    reason: 'This server is already running the maximum number of polling connections',
+                    log,
+                })
                 continue
             }
             const abortController = new AbortController()
@@ -780,5 +815,6 @@ const LONG_POLLING_DISABLED_MESSAGE = 'This connection is set to long polling, w
 
 type AssertTransportParams = {
     qadamName: string
-    connectionMetadata: Record<string, unknown> | undefined
+    /** Lazy: see the call in `assertTransportIsAvailable` for why it is not the value itself. */
+    readConnectionMetadata: () => Promise<Record<string, unknown> | undefined>
 }

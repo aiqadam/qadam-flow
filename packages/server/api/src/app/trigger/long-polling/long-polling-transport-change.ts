@@ -1,12 +1,24 @@
-import { FlowStatus, isNil, Metadata, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { FlowStatus, flowStructureUtil, isNil, Metadata, ProjectId, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
-import { flowVersionRepo } from '../../flows/flow-version/flow-version.service'
+import { FlowVersionEntity } from '../../flows/flow-version/flow-version-entity'
 import { TriggerSourceEntity } from '../trigger-source/trigger-source-entity'
 import { eventPullerRegistry } from './event-puller-registry'
 
+// Local handles rather than the services' exported repos, the same way `long-polling-source` does:
+// importing `flow-version.service` reaches `trigger-source-service` through its side effects in one
+// hop, which re-opens through the front door the cycle the dynamic import below shuts.
 const transportTriggerSourceRepo = repoFactory(TriggerSourceEntity)
+const transportFlowVersionRepo = repoFactory(FlowVersionEntity)
+
+/**
+ * Ceiling on how much work one connection edit may cause. Each flow costs an engine round trip and
+ * an outbound call to the third party; without a bound, alternating a connection's mode is a cheap
+ * way to make the server do a lot. Overflow is logged rather than dropped silently — the next
+ * enable of those flows still does the right thing.
+ */
+const MAX_FLOWS_PER_CHANGE = 50
 
 /**
  * Re-runs the trigger's enable hook for flows on a connection whose delivery mode just changed.
@@ -38,7 +50,15 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
             return
         }
 
-        const flows = await findEnabledFlowsUsing({ projectIds, externalId })
+        const found = await findEnabledFlowsTriggeredBy({ projectIds, externalId, qadamName })
+        const flows = found.slice(0, MAX_FLOWS_PER_CHANGE)
+        if (found.length > flows.length) {
+            log.warn({
+                externalId,
+                found: found.length,
+                reEnabled: flows.length,
+            }, '[longPollingTransportChange] Too many flows on this connection to re-enable at once; the rest keep their current transport until they are next enabled')
+        }
         log.info({
             externalId,
             qadamName,
@@ -67,10 +87,17 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
     },
 })
 
-async function findEnabledFlowsUsing({ projectIds, externalId }: FindFlowsParams): Promise<AffectedFlow[]> {
+/**
+ * Only flows whose **trigger** is this connection. Deliberately not `flowVersion.connectionIds`,
+ * which unions the trigger's auth with every action step's: a flow triggered by Gmail that merely
+ * *sends* a Telegram message shares the connection, and re-running its enable hook would re-seed
+ * its polling cursor and silently drop every event since its last poll.
+ */
+async function findEnabledFlowsTriggeredBy({ projectIds, externalId, qadamName }: FindFlowsParams): Promise<AffectedFlow[]> {
     const triggerSources = await transportTriggerSourceRepo().find({
         where: {
             simulate: false,
+            qadamName,
             projectId: In(projectIds),
             flow: { status: FlowStatus.ENABLED },
         },
@@ -79,22 +106,28 @@ async function findEnabledFlowsUsing({ projectIds, externalId }: FindFlowsParams
     if (triggerSources.length === 0) {
         return []
     }
-    // `connectionIds` is maintained on every flow-version write, so the match is an index read
-    // rather than a scan through trigger settings.
-    const flowVersions = await flowVersionRepo().find({
+    const flowVersions = await transportFlowVersionRepo().find({
         where: { id: In(triggerSources.map((triggerSource) => triggerSource.flowVersionId)) },
-        select: ['id', 'connectionIds'],
     })
-    const usingConnection = new Set(flowVersions
-        .filter((flowVersion) => (flowVersion.connectionIds ?? []).includes(externalId))
+    const triggeredByConnection = new Set(flowVersions
+        .filter((flowVersion) => triggerConnectionOf(flowVersion) === externalId)
         .map((flowVersion) => flowVersion.id))
     return triggerSources
-        .filter((triggerSource) => usingConnection.has(triggerSource.flowVersionId))
+        .filter((triggerSource) => triggeredByConnection.has(triggerSource.flowVersionId))
         .map((triggerSource) => ({
             flowId: triggerSource.flowId,
             flowVersionId: triggerSource.flowVersionId,
             projectId: triggerSource.projectId,
         }))
+}
+
+/** The same predicate the registry uses to decide which connection a trigger is bound to. */
+function triggerConnectionOf(flowVersion: { trigger?: { settings?: { input?: Record<string, unknown> } } }): string | undefined {
+    const auth: unknown = flowVersion.trigger?.settings?.input?.auth
+    if (typeof auth !== 'string') {
+        return undefined
+    }
+    return flowStructureUtil.extractConnectionIdsFromAuth(auth)[0]
 }
 
 type AffectedFlow = {
@@ -106,10 +139,10 @@ type AffectedFlow = {
 type FindFlowsParams = {
     projectIds: ProjectId[]
     externalId: string
+    qadamName: string
 }
 
 type ReEnableParams = FindFlowsParams & {
-    qadamName: string
     before: Metadata | null | undefined
     after: Metadata | null | undefined
 }

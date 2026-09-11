@@ -39,7 +39,8 @@ const AP_VERSION = apVersionUtil.getCurrentRelease()
 // worker is kept in the registry only by the heartbeat on this interval (#222).
 export const VERSION_MISMATCH_POLL_PAUSE_MS = 10_000
 
-export const MANUAL_RECONNECT_DELAY_MS = 2_000
+/** The server hangs up before it finishes restarting, so the first retry has to arrive after it. */
+const MANUAL_RECONNECT_DELAY_MS = 2_000
 
 /**
  * socket.io reconnects by itself after a transport-level drop, but **not** when the server closed
@@ -62,6 +63,8 @@ let polling = false
 let connectionGeneration = 0
 let stopped = false
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+/** Whether the last disconnect was one socket.io will not retry on its own. */
+let reconnectIsOurs = false
 
 const workerId = `worker-${nanoid()}`
 
@@ -112,17 +115,23 @@ export const worker = {
         socket.on('disconnect', (reason) => {
             connectionGeneration++
             polling = false
+            reconnectIsOurs = needsManualReconnect(reason)
             logger.warn({ reason }, 'Disconnected from API server')
-            if (needsManualReconnect(reason)) {
+            if (reconnectIsOurs) {
                 scheduleReconnect()
             }
         })
 
         socket.on('connect_error', (error) => {
             logger.error({ error: error.message }, 'Socket.IO connection error')
-            // A manual reconnect that lands while the API is still restarting fails here. Keep
-            // trying, or the first attempt after a slow restart is also the last.
-            scheduleReconnect()
+            // Only when the reconnect is ours to drive. socket.io raises this during its own
+            // automatic retry and on a failed first boot as well, and rescheduling there would lay
+            // a fixed 2s cadence over the backoff it is already running.
+            if (reconnectIsOurs) {
+                // A manual reconnect that lands while the API is still restarting fails here. Keep
+                // trying, or the first attempt after a slow restart is also the last.
+                scheduleReconnect()
+            }
         })
 
         if (withHealthServer) {
@@ -133,6 +142,7 @@ export const worker = {
 
     async stop(): Promise<void> {
         stopped = true
+        reconnectIsOurs = false
         if (reconnectTimer !== null) {
             clearTimeout(reconnectTimer)
             reconnectTimer = null

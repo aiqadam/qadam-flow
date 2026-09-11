@@ -39,7 +39,7 @@ async function readTriggerConnectionMetadata({ flowVersion, projectId }: ReadTri
  * touches trigger sources, which is enough to create an evaluation-order cycle in unrelated code.
  */
 const longPollingHostLazy = (log: FastifyBaseLogger) => ({
-    async assertTransportIsAvailable(params: { qadamName: string, connectionMetadata: Record<string, unknown> | undefined }): Promise<void> {
+    async assertTransportIsAvailable(params: { qadamName: string, readConnectionMetadata: () => Promise<Record<string, unknown> | undefined> }): Promise<void> {
         const { longPollingHost } = await import('../long-polling/long-polling-host')
         await longPollingHost(log).assertTransportIsAvailable(params)
     },
@@ -64,9 +64,12 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             const qadamTrigger = await triggerUtils(log).getQadamTriggerOrThrow({ flowVersion, projectId })
             // Before the engine's ON_ENABLE hook runs: for a pull-transport trigger that hook
             // removes the webhook, so refusing afterwards would leave the flow with no delivery.
+            // Read lazily and only for a qadam that has a puller: an eagerly-evaluated argument here
+            // would put one `findOne` on every publish and every flow enable, product-wide, for a
+            // value `assertTransportIsAvailable` discards immediately in all but one qadam.
             await longPollingHostLazy(log).assertTransportIsAvailable({
                 qadamName: flowVersion.trigger.settings.qadamName,
-                connectionMetadata: await readTriggerConnectionMetadata({ flowVersion, projectId }),
+                readConnectionMetadata: () => readTriggerConnectionMetadata({ flowVersion, projectId }),
             })
             const existingTriggerSource = await triggerSourceRepo().findOne({
                 where: {

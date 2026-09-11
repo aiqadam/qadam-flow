@@ -164,7 +164,7 @@ const RenameConnectionDialog = forwardRef<
                     <Button variant={'outline'}>{t('Cancel')}</Button>
                   </DialogClose>
 
-                  <Button loading={isPending}>{t('Rename')}</Button>
+                  <Button loading={isPending}>{t('Save')}</Button>
                 </DialogFooter>
               </form>
             </Form>

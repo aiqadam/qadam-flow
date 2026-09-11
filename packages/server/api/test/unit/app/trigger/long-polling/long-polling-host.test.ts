@@ -708,7 +708,7 @@ describe('longPollingHost', () => {
 
             await expect(host.assertTransportIsAvailable({
                 qadamName: QADAM_NAME,
-                connectionMetadata: { transport: 'long_polling' },
+                readConnectionMetadata: async () => ({ transport: 'long_polling' }),
             })).rejects.toThrow(/AP_TRIGGER_LONG_POLLING_ENABLED/)
         })
 
@@ -720,7 +720,7 @@ describe('longPollingHost', () => {
 
             await expect(host.assertTransportIsAvailable({
                 qadamName: QADAM_NAME,
-                connectionMetadata: { transport: 'webhook' },
+                readConnectionMetadata: async () => ({ transport: 'webhook' }),
             })).resolves.toBeUndefined()
         })
 
@@ -728,9 +728,12 @@ describe('longPollingHost', () => {
             longPollingEnabled = false
 
             const host = await loadHost()
-            await host.assertTransportIsAvailable({ qadamName: '@aiqadam/qadam-slack', connectionMetadata: {} })
+            const readConnectionMetadata = vi.fn(async () => ({}))
+            await host.assertTransportIsAvailable({ qadamName: '@aiqadam/qadam-slack', readConnectionMetadata })
 
             expect(getPuller).not.toHaveBeenCalled()
+            // The read costs a query, on a path every publish and every flow enable goes through.
+            expect(readConnectionMetadata).not.toHaveBeenCalled()
         })
     })
 })

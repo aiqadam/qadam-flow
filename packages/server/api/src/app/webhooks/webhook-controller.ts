@@ -27,7 +27,7 @@ const tracer = trace.getTracer('webhook-controller')
  * The draft routes below are deliberately not guarded: those are the builder deliberately pushing a
  * payload to capture sample data, which is a legitimate thing to do in either mode.
  */
-function refuseIfServedByPulling(flowId: string, reply: FastifyReply): boolean {
+function refuseIfServedByPulling({ flowId, reply }: RefuseIfServedByPullingParams): boolean {
     if (!longPollingServed.isServedByPulling(flowId)) {
         return false
     }
@@ -51,7 +51,7 @@ export const webhookController: FastifyPluginAsyncZod = async (app) => {
                 },
             }, async (span) => {
                 try {
-                    if (refuseIfServedByPulling(request.params.flowId, reply)) {
+                    if (refuseIfServedByPulling({ flowId: request.params.flowId, reply })) {
                         return await reply
                     }
                     const response = await webhookService.handleWebhook({
@@ -94,7 +94,7 @@ export const webhookController: FastifyPluginAsyncZod = async (app) => {
                 },
             }, async (span) => {
                 try {
-                    if (refuseIfServedByPulling(request.params.flowId, reply)) {
+                    if (refuseIfServedByPulling({ flowId: request.params.flowId, reply })) {
                         return await reply
                     }
                     const response = await webhookService.handleWebhook({
@@ -203,4 +203,9 @@ function extractRawPayload(request: FastifyRequest): { payload?: Record<string, 
         return { payload: request.body as Record<string, unknown> }
     }
     return {}
+}
+
+type RefuseIfServedByPullingParams = {
+    flowId: string
+    reply: FastifyReply
 }

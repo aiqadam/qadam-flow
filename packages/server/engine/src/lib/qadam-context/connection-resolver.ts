@@ -41,9 +41,13 @@ export const createConnectionResolver = ({ projectId, engineToken, apiUrl, conte
         },
         async obtainMetadata(externalId: string): Promise<Record<string, unknown> | undefined> {
             const url = `${apiUrl}v1/worker/app-connections/${encodeURIComponent(externalId)}?projectId=${projectId}`
+            // Throws rather than returning `undefined`, because the caller uses this to choose a
+            // delivery transport: swallowing a transient failure would silently pick the default
+            // one and register a webhook on a connection that asked to be polled. The caller
+            // decides where that is tolerable.
             const response = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${engineToken}` } })
             if (!response.ok) {
-                return undefined
+                throw new Error(`Could not read connection metadata: ${response.status}`)
             }
             const connection = await response.json() as AppConnection
             return connection.metadata ?? undefined

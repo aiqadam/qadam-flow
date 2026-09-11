@@ -1,5 +1,5 @@
 import { ContextVersion, QadamPropertyMap, StaticPropsValue, TriggerStrategy } from '@aiqadam/qadams-framework'
-import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, flowStructureUtil, FlowTrigger, InvalidCronExpressionError, isNil, PropertySettings, QadamTrigger, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@aiqadam/shared'
+import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, flowStructureUtil, FlowTrigger, InvalidCronExpressionError, isNil, PropertySettings, QadamTrigger, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType, tryCatch } from '@aiqadam/shared'
 import { isValidCron } from 'cron-validator'
 import { EngineConstants, ResolvedExecuteTriggerOperation } from '../handler/context/engine-constants'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
@@ -81,7 +81,10 @@ export const triggerHelper = {
         }
 
         const { qadam, qadamTrigger, processedInput, authMetadata } = await prepareTriggerExecution({
-            withAuthMetadata: true,
+            // Only the hooks that act on it. `RUN` is the hot path for every inbound event and
+            // every polling tick, product-wide, and reading this costs an uncached fetch of the
+            // *decrypted* connection — for a setting it never looks at.
+            authMetadata: authMetadataModeFor(params.hookType),
             qadamName,
             qadamVersion,
             triggerName,
@@ -246,7 +249,7 @@ type ExecuteTriggerParams = {
     constants: EngineConstants
 }
 
-async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, input, propertySettings, projectId, apiUrl, engineToken, devQadams, stepNames, withAuthMetadata }: PrepareTriggerExecutionParams) {
+async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, input, propertySettings, projectId, apiUrl, engineToken, devQadams, stepNames, authMetadata: authMetadataMode }: PrepareTriggerExecutionParams) {
     const { qadam, qadamTrigger } = await qadamLoader.getQadamAndTriggerOrThrow({
         qadamName,
         qadamVersion,
@@ -273,14 +276,26 @@ async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, i
 
     // Only for the hook paths that can act on it. `run` is on the hot path for every inbound
     // event and has no use for a setting that belongs to the credential.
-    const authMetadata = withAuthMetadata === true
-        ? await readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion: qadam.getContextInfo?.().version })
+    const authMetadata = !isNil(authMetadataMode)
+        ? await readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion: qadam.getContextInfo?.().version, required: authMetadataMode === 'required' })
         : undefined
 
     return { qadam, qadamTrigger, processedInput, authMetadata }
 }
 
-async function readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion }: ReadAuthMetadataParams): Promise<Record<string, unknown> | undefined> {
+/** Only the hooks that act on it — and only `ON_ENABLE` may not proceed on a stale guess. */
+const authMetadataModeFor = (hookType: TriggerHookType): AuthMetadataMode | undefined => {
+    switch (hookType) {
+        case TriggerHookType.ON_ENABLE:
+            return 'required'
+        case TriggerHookType.ON_DISABLE:
+            return 'best-effort'
+        default:
+            return undefined
+    }
+}
+
+async function readAuthMetadata({ input, projectId, apiUrl, engineToken, contextVersion, required }: ReadAuthMetadataParams): Promise<Record<string, unknown> | undefined> {
     if (typeof input !== 'object' || input === null || !(AUTHENTICATION_PROPERTY_NAME in input)) {
         return undefined
     }
@@ -292,11 +307,25 @@ async function readAuthMetadata({ input, projectId, apiUrl, engineToken, context
     if (isNil(externalId)) {
         return undefined
     }
-    return createConnectionResolver({ apiUrl, projectId, engineToken, contextVersion }).obtainMetadata(externalId)
+    const read = (): Promise<Record<string, unknown> | undefined> =>
+        createConnectionResolver({ apiUrl, projectId, engineToken, contextVersion }).obtainMetadata(externalId)
+    if (required) {
+        return read()
+    }
+    // Tolerated only when disabling: getting the transport wrong there leaves at worst an orphaned
+    // subscription, whereas refusing would leave a flow that cannot be switched off.
+    const { data } = await tryCatch(read)
+    return data ?? undefined
 }
+
+export const triggerHelperInternals = { authMetadataModeFor }
+
+type AuthMetadataMode = 'required' | 'best-effort'
 
 type ReadAuthMetadataParams = {
     input: unknown
+    /** When false, a failure to read yields `undefined` instead of propagating. */
+    required: boolean
     projectId: string
     apiUrl: string
     engineToken: string
@@ -309,7 +338,11 @@ type PrepareTriggerExecutionParams = {
     triggerName: string
     input: unknown
     propertySettings: Record<string, PropertySettings>
-    withAuthMetadata?: boolean
+    /**
+     * Whether to read the connection's `metadata`. Omitted on `RUN`, the hot path for every inbound
+     * event product-wide, which has no use for it and would pay an uncached connection fetch.
+     */
+    authMetadata?: AuthMetadataMode
     projectId: string
     apiUrl: string
     engineToken: string

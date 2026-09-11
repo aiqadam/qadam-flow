@@ -45,6 +45,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { encryptUtils } from '../../helper/encryption'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
+import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { projectRepo } from '../../project/project-service'
@@ -134,6 +135,16 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             scope,
         })
         log.info({ connectionId: newId, qadamName, platformId, isNew: isNil(existingConnection) }, 'App connection upserted')
+
+        // The reconnect dialog carries the delivery-mode selector and submits here, not through
+        // `update` — so this path can flip the mode just as well, and needs the same hook re-run.
+        applyDeliveryModeChange({
+            before: existingConnection?.metadata,
+            connection: updatedConnection,
+            projectIds,
+            log,
+        })
+
         return this.removeSensitiveData(updatedConnection)
     },
     async update(params: UpdateParams): Promise<AppConnectionWithoutSensitiveData> {
@@ -165,13 +176,14 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
         // the webhook at the third party — happens in the trigger's enable hook. Without this, a
         // connection switched back to webhook stops being polled and never gets its webhook back,
         // and the flow silently receives nothing.
-        if (!isNil(request.metadata)) {
-            await longPollingTransportChange(log).reEnableAffectedFlows({
-                qadamName: updatedConnection.qadamName,
+        // `!== undefined` and not `isNil`: `metadata` is nullable, and clearing it to `null` is
+        // precisely the edit that flips a connection out of pull mode.
+        if (request.metadata !== undefined) {
+            applyDeliveryModeChange({
                 before: before?.metadata,
-                after: updatedConnection.metadata,
-                projectIds: updatedConnection.projectIds,
-                externalId: updatedConnection.externalId,
+                connection: updatedConnection,
+                projectIds,
+                log,
             })
         }
 
@@ -476,6 +488,28 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
     return new Map(projects.map((project) => [project.id, { id: project.id, displayName: project.displayName, type: project.type }]))
 }
 
+/**
+ * The delivery mode lives on the connection, but what acts on it — registering or removing the
+ * webhook at the third party — happens in the trigger's enable hook. Without this, a connection
+ * switched back to webhook stops being polled and never gets its webhook back, and the flow keeps
+ * saying "on" while receiving nothing.
+ *
+ * Not awaited: each affected flow costs an engine round trip plus the qadam's own call to the third
+ * party, and holding the user's request open for all of them turns one cheap POST into unbounded
+ * sequential work. The mode is saved either way, and a failure here is logged, not surfaced.
+ */
+function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyDeliveryModeChangeParams): void {
+    rejectedPromiseHandler(longPollingTransportChange(log).reEnableAffectedFlows({
+        qadamName: connection.qadamName,
+        before,
+        after: connection.metadata,
+        // The acting project, not every project the connection is shared with: a platform-scoped
+        // edit must not silently widen the blast radius to every tenant sharing the credential.
+        projectIds: projectIds ?? connection.projectIds,
+        externalId: connection.externalId,
+    }), log)
+}
+
 async function assertProjectIds(projectIds: ProjectId[], platformId: string): Promise<void> {
     const filteredProjects = await projectRepo().countBy({
         id: In(projectIds),
@@ -694,6 +728,13 @@ function validatePieceVersion(qadamVersion: string): void {
         })
     }
 }
+type ApplyDeliveryModeChangeParams = {
+    before: Metadata | null | undefined
+    connection: AppConnectionSchema
+    projectIds: ProjectId[] | null | undefined
+    log: FastifyBaseLogger
+}
+
 type UpsertParams = {
     projectIds: ProjectId[]
     ownerId: string | null
