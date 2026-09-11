@@ -600,7 +600,7 @@ type SleepUntilAbortedParams = {
     signal: AbortSignal
 }
 
-const LONG_POLLING_DISABLED_MESSAGE = 'This trigger is set to long polling, which requires AP_TRIGGER_LONG_POLLING_ENABLED=true on the server. Enable it, or switch the trigger back to webhook delivery.'
+const LONG_POLLING_DISABLED_MESSAGE = 'This trigger is set to long polling, which requires AP_TRIGGER_LONG_POLLING_ENABLED=true on the server. Until it is set, the trigger can be neither enabled nor tested — testing would remove the bot\'s webhook without anything replacing it. Set it on the server, or switch the trigger back to webhook delivery.'
 
 type AssertTransportParams = {
     qadamName: string

@@ -99,6 +99,8 @@ The trigger stays `TriggerStrategy.WEBHOOK`; only where the payload comes from c
   instance needs its own view of which tasks it is running.
 - `triggerSourceService.enable` refuses a pull-transport trigger while the flag is off, before the
   engine's ON_ENABLE hook removes the webhook — otherwise the flow would end up with no delivery.
+  This covers the test panel too, since `testTriggerService` goes through the same `enable`: with
+  the flag off such a trigger can be neither enabled nor tested, and the error says so.
 - Metrics: `qadam_flow.long_polling.tasks` and `qadam_flow.long_polling.event_loop_delay_ms`.
 - `instrumentation.ts` redacts credential-shaped URL paths (`/bot<id>:<secret>`) from `url.full` /
   `http.url` span attributes, since Telegram carries the token in the path and the HTTP
