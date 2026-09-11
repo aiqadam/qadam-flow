@@ -35,8 +35,9 @@ const RESERVED_FOR_LATE_ARRIVALS = MIN_CONCURRENT_TASKS_PER_PROJECT
  *   deliberately, with a measurement, rather than inside a fix for something else.
  *
  * Division alone would also be wrong for the deployment this project is built for: Qadam Flow is
- * self-hosted by design, and a fixed constant would cap a single-project install at that constant
- * instead of its whole instance.
+ * self-hosted by design, and a fixed constant would cap a single-project install at that constant.
+ * Such an install does not get the whole instance either — it gets `MAX - RESERVED`, which is what
+ * the guarantee above costs it.
  */
 function shareFor({ projectsWanting }: ShareForParams): number {
     const evenSplit = Math.floor(MAX_CONCURRENT_TASKS / Math.max(1, projectsWanting))

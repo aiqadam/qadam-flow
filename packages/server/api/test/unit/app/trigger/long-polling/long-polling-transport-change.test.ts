@@ -1,9 +1,12 @@
 import { FlowStatus } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { eventPullerRegistry } from '../../../../../src/app/trigger/long-polling/event-puller-registry'
 import { longPollingTransportChange } from '../../../../../src/app/trigger/long-polling/long-polling-transport-change'
 
 const QADAM_NAME = '@aiqadam/qadam-telegram-bot'
+/** Only one qadam ships a puller today, so the second one has to be stood up for the key test. */
+const OTHER_QADAM_NAME = '@aiqadam/qadam-slack'
 
 const triggerSourceFind = vi.fn()
 const flowVersionFind = vi.fn()
@@ -185,6 +188,46 @@ describe('longPollingTransportChange', () => {
             after: { transport: 'long_polling' },
         })
         expect(triggerSourceFind).toHaveBeenCalledTimes(3)
+    })
+
+    // `externalId` is not unique within a project — that non-uniqueness is the whole premise of the
+    // ambiguity the registry classifies. Without the qadam in the key, two qadams' connections
+    // sharing an id collapse into one fan-out, and the second qadam's flows are never re-enabled
+    // while the log line promises that they will be.
+    it('does not coalesce two qadams that happen to share a connection id', async () => {
+        const isRegistered = vi.spyOn(eventPullerRegistry, 'isRegistered').mockReturnValue(true)
+        const getOrLoad = vi.spyOn(eventPullerRegistry, 'getOrLoad').mockResolvedValue({
+            windowSeconds: 50,
+            isEnabledFor: ({ connectionMetadata }) => (connectionMetadata as { transport?: string } | undefined)?.transport === 'long_polling',
+            credentialKey: () => 'key',
+            waitForEvents: vi.fn(),
+        })
+        let releaseFirst = (): void => {}
+        triggerSourceFind.mockImplementationOnce(async () => {
+            await new Promise<void>((resolve) => {
+                releaseFirst = resolve
+            })
+            return []
+        })
+
+        const first = longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
+        })
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            qadamName: OTHER_QADAM_NAME,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
+        })
+
+        // The second qadam runs on its own rather than being folded into the first one's pass.
+        expect(triggerSourceFind).toHaveBeenCalledTimes(2)
+        releaseFirst()
+        await first
+        isRegistered.mockRestore()
+        getOrLoad.mockRestore()
     })
 
     // The mode is already saved by the time this runs; one flow failing must not undo the user's

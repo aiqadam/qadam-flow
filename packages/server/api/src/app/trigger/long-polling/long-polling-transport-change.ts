@@ -94,7 +94,7 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
         finally {
             fanOutsInFlight.delete(inFlightKey)
             if (fanOutsPending.delete(inFlightKey)) {
-                // Only reachable when the loop above threw — `findEnabledFlowsTriggeredBy` is not
+                // Only reachable when the run threw: the query and the two dynamic imports are not
                 // wrapped, unlike the per-flow enable. Said out loud because a discarded change here
                 // is the module's own worst case: flows left with neither a poller nor a webhook.
                 log.error({ externalId, qadamName }, '[longPollingTransportChange] A delivery-mode change was dropped because the re-enable failed; those flows keep their previous transport')

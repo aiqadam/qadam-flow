@@ -707,6 +707,66 @@ describe('longPollingHost', () => {
         await host.stop()
     }, 30_000)
 
+    // The per-project share is the fairness knob; this is the resource bound underneath it, and the
+    // one the module exists to enforce — each task holds a socket open for its whole window. Nine
+    // projects put the share on its floor, so eight of them fill the instance and the ninth meets
+    // the global ceiling rather than its own share.
+    it('refuses past the instance ceiling, not only past a project share', async () => {
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+        const projectsWanting = 9
+        const share = longPollingCapacity.shareFor({ projectsWanting })
+        const perProject = Array.from({ length: projectsWanting }, (_, project) =>
+            Array.from({ length: share }, (_, index) => ({
+                ...source,
+                key: `p${project}-k${index}`,
+                triggerSourceId: `p${project}-ts${index}`,
+                flowId: `p${project}-flow${index}`,
+                projectId: `project${project}`,
+                connectionExternalId: `p${project}-connection${index}`,
+            })))
+        listSources.mockResolvedValue({ sources: perProject.flat(), starved: [], ambiguous: [] })
+
+        const host = await loadHost()
+        await host.start()
+
+        await vi.waitFor(() => expect(runExclusive.mock.calls.length).toBe(longPollingCapacity.MAX_CONCURRENT_TASKS))
+        // The last project is inside its own share and still refused: the instance is full.
+        const refusedFlows = reportStatus.mock.calls
+            .filter(([params]) => /polling connection/.test(params.reason ?? ''))
+            .map(([params]) => params.flowId)
+        expect(refusedFlows.length).toBe(projectsWanting * share - longPollingCapacity.MAX_CONCURRENT_TASKS)
+        await host.stop()
+    }, 30_000)
+
+    // The comment on the guard argues this case explicitly — a flow that just lost its connection to
+    // another flow is by construction one whose task is going away — so it is the half most likely
+    // to regress, and it was the untested one.
+    it('does not clear a starved flow\'s status either', async () => {
+        getPuller.mockReturnValue(puller(vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(runExclusive).toHaveBeenCalled())
+        clearStatus.mockClear()
+        reportStatus.mockClear()
+        listSources.mockResolvedValue({ sources: [], starved: [source], ambiguous: [] })
+        host.requestSync()
+
+        await vi.waitFor(() => expect(reportStatus.mock.calls.some(([params]) =>
+            params.flowId === source.flowId && params.status === 'STOPPED')).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        expect(clearStatus).not.toHaveBeenCalledWith({ projectId: source.projectId, flowId: source.flowId })
+        await host.stop()
+    })
+
     it('clears the status of a source it stops serving, instead of leaving it to expire', async () => {
         const waitForEvents = vi.fn().mockResolvedValue({
             outcome: QadamEventPullOutcome.EVENTS,
