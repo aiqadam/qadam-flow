@@ -33,15 +33,17 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
             return emptyRegistry()
         }
         const triggerSources = await longPollingTriggerSourceRepo().find({
-            where: {
-                // Simulation sources included: pressing "Test trigger" enables one, and without the
-                // host serving it a pull-mode trigger could never be tested at all — Telegram
-                // refuses a second `getUpdates` consumer, so the qadam cannot fetch its own sample.
-                qadamName: In(qadamNames),
-                flow: {
-                    status: FlowStatus.ENABLED,
-                },
-            },
+            where: [
+                // Production: only an enabled flow should be consuming a credential.
+                { qadamName: In(qadamNames), simulate: false, flow: { status: FlowStatus.ENABLED } },
+                // A simulation, deliberately without the status condition. Pressing "Test trigger"
+                // enables one, and the flow being built is usually not published yet — requiring
+                // ENABLED here would mean the host served tests for exactly the flows that do not
+                // need testing. Without the host serving them a pull-mode trigger is untestable by
+                // any route: Telegram allows one `getUpdates` consumer, so the qadam cannot fetch
+                // its own sample while the host holds the credential.
+                { qadamName: In(qadamNames), simulate: true },
+            ],
             relations: {
                 flow: true,
             },

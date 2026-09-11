@@ -883,9 +883,11 @@ describe('longPollingHost', () => {
             listSources.mockResolvedValue({ sources: [simulated], starved: [], ambiguous: [] })
         })
 
-        // A test collects sample data for the draft the user is editing; running the published
-        // version instead would both miss the point and act on a real message.
-        it('delivers to the draft, saving sample data rather than running the published flow', async () => {
+        // A test collects sample data for the draft the user is editing. Running anything would be
+        // wrong in both directions: the published version is not what is being tested, and the
+        // draft is unpublished — its actions would fire on real messages while the panel is open.
+        // The pushed transport's simulation goes to `/test`, which passes `execute: false`.
+        it('delivers to the draft, collecting sample data without running a flow', async () => {
             const host = await loadHost()
             await host.start()
 
@@ -894,6 +896,7 @@ describe('longPollingHost', () => {
                 flowId: 'flow-sim',
                 saveSampleData: true,
                 flowVersionToRun: 'latest',
+                execute: false,
             })
             await host.stop()
         })

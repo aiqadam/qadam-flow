@@ -19,14 +19,14 @@ const secret = telegramWebhookAuth.secretFor({
   webhookUrl: WEBHOOK_URL,
 });
 
-function contextWith({ transport, headers }: ContextWithParams) {
+function contextWith({ transport, headers, webhookUrl }: ContextWithParams) {
   const store = new Map<string, unknown>();
   if (transport !== undefined) {
     store.set(telegramWebhookAuth.TRANSPORT_KEY, transport);
   }
   return {
     auth: { secret_text: BOT_TOKEN },
-    webhookUrl: WEBHOOK_URL,
+    webhookUrl: webhookUrl ?? WEBHOOK_URL,
     propsValue: { update_types: [] },
     payload: { body: UPDATE, headers: headers ?? {}, queryParams: {} },
     store: {
@@ -154,6 +154,29 @@ describe('telegram trigger run verification', () => {
     expect(await context.store.get(telegramWebhookAuth.TRANSPORT_KEY)).toBe(
       telegramWebhookAuth.LONG_POLLING
     );
+  });
+
+  // The draft and test routes are public and unauthenticated by design, so anyone holding a flow id
+  // can reach `run` with `webhookUrl` pointing at the draft. Re-registering that would hand
+  // Telegram a URL that never executes the published flow — taking a working flow off the air with
+  // one anonymous POST, which is worse than the forgery this whole commit is about.
+  it('does not re-point the bot at the draft URL when reached through the draft route', async () => {
+    const context = contextWith({
+      transport: undefined,
+      headers: {},
+      webhookUrl: `${WEBHOOK_URL}/test`,
+    });
+
+    const result = await telegramNewMessage.run(context);
+
+    expect(result).toEqual([UPDATE]);
+    expect(
+      sendRequest.mock.calls.filter(([request]) =>
+        String(request.url).includes('/setWebhook')
+      )
+    ).toEqual([]);
+    // And it must not be recorded as polled either — Telegram is pushing, just not here.
+    expect(await context.store.get(telegramWebhookAuth.TRANSPORT_KEY)).toBeUndefined();
   });
 
   it('then demands the header from the very next update', async () => {

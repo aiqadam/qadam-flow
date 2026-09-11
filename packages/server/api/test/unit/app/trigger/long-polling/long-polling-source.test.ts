@@ -136,24 +136,37 @@ describe('longPollingSourceRegistry.list', () => {
         await longPollingSourceRegistry(mockLog).list()
 
         const [{ where }] = triggerSourceFind.mock.calls[0]
-        expect(where.qadamName.value).toEqual(eventPullerRegistry.registeredQadamNames())
+        where.forEach((clause: { qadamName: { value: string[] } }) => {
+            expect(clause.qadamName.value).toEqual(eventPullerRegistry.registeredQadamNames())
+        })
     })
 
     // Pressing "Test trigger" enables a simulation source, and it has to be served: Telegram allows
     // one `getUpdates` consumer, so the qadam cannot fetch its own sample while the host is polling.
     // Filtering simulations out here is what made a pull-mode trigger untestable.
-    it('does not filter out simulation sources', async () => {
+    it('asks for simulation sources as well as production ones', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
         const [{ where }] = triggerSourceFind.mock.calls[0]
-        expect(where.simulate).toBeUndefined()
+        expect(where.map((clause: { simulate: boolean }) => clause.simulate).sort()).toEqual([false, true])
+    })
+
+    // The flow being built is usually not published yet, so requiring ENABLED for a simulation would
+    // have served tests for exactly the flows that do not need testing.
+    it('does not require the flow to be enabled for a simulation', async () => {
+        await longPollingSourceRegistry(mockLog).list()
+
+        const [{ where }] = triggerSourceFind.mock.calls[0]
+        const simulation = where.find((clause: { simulate: boolean }) => clause.simulate)
+        expect(simulation.flow).toBeUndefined()
     })
 
     it('asks the database only for enabled flows, rather than filtering afterwards', async () => {
         await longPollingSourceRegistry(mockLog).list()
 
         const [{ where }] = triggerSourceFind.mock.calls[0]
-        expect(where.flow).toEqual({ status: FlowStatus.ENABLED })
+        const production = where.find((clause: { simulate: boolean }) => !clause.simulate)
+        expect(production.flow).toEqual({ status: FlowStatus.ENABLED })
     })
 
     it('ignores a trigger whose connection does not ask for pulling', async () => {

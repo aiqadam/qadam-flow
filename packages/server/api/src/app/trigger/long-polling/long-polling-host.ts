@@ -551,13 +551,15 @@ async function deliverEvents({ source, events, log }: DeliverEventsParams): Prom
             logger: log,
             flowId: source.flowId,
             async: true,
-            // Mirrors what the `/draft` route does for a pushed update, so a polled test behaves
-            // exactly like a pushed one from the builder's point of view.
+            // Mirrors the `/test` route, which is where a simulation's webhook points in the pushed
+            // transport — collect the sample, do not run anything. `execute: true` here would make
+            // every real message run the *unpublished draft*, with all its actions, for as long as a
+            // builder panel is open, while the published version is starved of the credential.
             saveSampleData: source.simulate,
             flowVersionToRun: source.simulate
                 ? WebhookFlowVersionToRun.LATEST
                 : WebhookFlowVersionToRun.LOCKED_FALL_BACK_TO_LATEST,
-            execute: true,
+            execute: !source.simulate,
             failParentOnFailure: false,
             data: async () => ({
                 body: event,

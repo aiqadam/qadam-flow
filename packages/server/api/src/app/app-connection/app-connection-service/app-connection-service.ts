@@ -502,7 +502,10 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
  * cheap request into unbounded sequential work — but a floating promise would lose the work
  * entirely if the process restarted in the seconds after the metadata was written, and that loss is
  * silent and one-directional (see the job's own doc comment). The job id is per connection, so
- * repeated edits coalesce onto one pending job rather than queueing a fan-out each.
+ * repeated edits collapse onto one pending job rather than queueing a fan-out each — an edit
+ * arriving while one is already waiting or running is dropped, not merged, so its snapshot is lost.
+ * That is tolerable only because the handler re-reads live state per flow rather than acting on the
+ * snapshot; the snapshots decide whether the puller's verdict changed at all, nothing more.
  */
 function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyDeliveryModeChangeParams): void {
     // The acting project, not every project the connection is shared with. Both controllers pass a

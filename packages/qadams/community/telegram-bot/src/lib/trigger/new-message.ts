@@ -104,8 +104,10 @@ export const telegramNewMessage = createTrigger({
     );
 
     // Delivered by this instance's own polling host, which talks to Telegram directly and has no
-    // header to echo. Nothing arrives here from Telegram in this mode — the qadam called
-    // deleteWebhook — and core already refuses pushed deliveries for a pulling flow.
+    // header to echo. Telegram pushes nothing in this mode — the qadam called deleteWebhook — and
+    // core refuses pushed deliveries for a pulling flow, though only on an instance whose host is
+    // running and has synced: that guard is an in-memory set rebuilt once a minute, so it is a
+    // second line rather than the reason this branch is safe.
     if (transport === telegramWebhookAuth.LONG_POLLING) {
       return [context.payload.body];
     }
@@ -114,19 +116,31 @@ export const telegramNewMessage = createTrigger({
     // either pushing to a webhook registered without one, or not pushing at all because the flow is
     // being polled. Those are indistinguishable from here — `run` deliberately does not read the
     // connection's metadata, which is the hot path for every inbound event product-wide — so ask
-    // Telegram. Registering a webhook for a polled flow would stop the polling that delivered this.
+    // Telegram which URL it actually delivers to.
+    //
+    // The comparison is against *this* context's URL, not merely "a webhook exists". The draft and
+    // test routes are public and unauthenticated by design, so anyone holding a flow id can reach
+    // this code with `webhookUrl` pointing at the draft — and registering that would hand Telegram
+    // a URL that never executes the published flow, taking it off the air silently. An equal URL is
+    // the only case where re-registering is both safe and useful.
     if (transport !== telegramWebhookAuth.WEBHOOK) {
-      const pushed = await telegramCommons.hasRegisteredWebhook(context.auth.secret_text);
-      if (!pushed) {
-        await context.store.put(
-          telegramWebhookAuth.TRANSPORT_KEY,
-          telegramWebhookAuth.LONG_POLLING
-        );
+      const registered = await telegramCommons.registeredWebhookUrl(context.auth.secret_text);
+      if (registered !== context.webhookUrl) {
+        // Either nothing is registered (the flow is polled, and registering would stop the polling
+        // that delivered this update) or Telegram delivers somewhere else entirely. Record the
+        // former so the question is asked once; leave the latter alone.
+        if (registered === '') {
+          await context.store.put(
+            telegramWebhookAuth.TRANSPORT_KEY,
+            telegramWebhookAuth.LONG_POLLING
+          );
+        }
         return [context.payload.body];
       }
-      // Accepting this one update is deliberate: refusing would silently drop real messages until
-      // someone happened to republish, which is the failure this area exists to prevent. The secret
-      // is registered during it, so the window is one update rather than a deploy.
+      // Accepting this update is deliberate: refusing would silently drop real messages until
+      // someone happened to republish, which is the failure this area exists to prevent. Concurrent
+      // updates can each pass this branch before any of them writes the marker, so the window is
+      // bounded by concurrency rather than by exactly one update.
       await registerWebhook(context);
       return [context.payload.body];
     }
