@@ -1,4 +1,4 @@
-import { Field, FieldType, Filter, FilterOperator } from '@aiqadam/shared';
+import { Field, FieldType, Filter, FilterOperator, tryCatchSync } from '@aiqadam/shared';
 
 export const filterUtils = {
   // Builds the wire filters for GET /v1/records. Every shape below was produced
@@ -77,12 +77,11 @@ function emptyNestedValue(value: unknown): never {
 }
 
 function parseJsonOrThrow(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  }
-  catch {
+  const { data, error } = tryCatchSync<unknown>(() => JSON.parse(raw));
+  if (error !== null) {
     throw new Error(unrecognisedShapeMessage(raw));
   }
+  return data;
 }
 
 function toWireFilter({ entry, index, fields }: { entry: unknown; index: number; fields: Field[] }): Filter {
@@ -109,9 +108,10 @@ function toWireFilter({ entry, index, fields }: { entry: unknown; index: number;
       if (values.length === 0) {
         throw new Error(`${position}: the "${operator}" operator on field "${field.name}" requires at least one value.`);
       }
-      // Deliberately not type-checked per element: these operators are a string
-      // set membership test, an element that does not parse simply fails to
-      // match, and rejecting one would break flows that work today.
+      // Each element is required to be a scalar (toFilterList enforces that), but
+      // deliberately not checked against the column's type: these operators are a
+      // string set membership test, an element that does not parse simply fails
+      // to match, and rejecting one would break flows that work today.
       return { fieldId: field.id, operator, value: values };
     }
     case FilterOperator.EQ:
@@ -164,6 +164,9 @@ function resolveField({ entry, position, fields }: { entry: Record<string, unkno
   }
 
   const identifier = unique[0];
+  // Ids win over display names, deterministically: an externalId is caller-supplied
+  // at field creation, so it can collide with another column's display name, and a
+  // stable precedence is better than resolving differently as columns are renamed.
   const byId = fields.find((field) => field.externalId === identifier || field.id === identifier);
   if (byId !== undefined) {
     return byId;
@@ -191,16 +194,17 @@ function toScalarValue({ raw, field, operator, position }: { raw: unknown; field
 }
 
 function assertValueMatchesFieldType({ field, value, position }: { field: Field; value: string; position: string }): void {
-  switch (field.type) {
+  const { name, type } = field;
+  switch (type) {
     case FieldType.NUMBER: {
       if (!isDecimalNumber(value)) {
-        throw new Error(`${position}: "${truncate(value)}" is not a number, but field "${field.name}" is a Number column.`);
+        throw new Error(`${position}: "${truncate(value)}" is not a number, but field "${name}" is a Number column.`);
       }
       return;
     }
     case FieldType.DATE: {
       if (Number.isNaN(new Date(value).getTime())) {
-        throw new Error(`${position}: "${truncate(value)}" is not a date, but field "${field.name}" is a Date column.`);
+        throw new Error(`${position}: "${truncate(value)}" is not a date, but field "${name}" is a Date column.`);
       }
       return;
     }
@@ -208,9 +212,11 @@ function assertValueMatchesFieldType({ field, value, position }: { field: Field;
     case FieldType.STATIC_DROPDOWN:
       return;
     default: {
-      // A new FieldType must not silently skip validation here.
-      const unhandled: never = field;
-      throw new Error(`${position}: field "${JSON.stringify(unhandled)}" has a column type this action does not know how to validate.`);
+      // A new FieldType must not silently skip validation here. Reports the type
+      // only — the field itself carries per-type data that has no business in a
+      // run log.
+      const unhandled: never = type;
+      throw new Error(`${position}: column "${name}" is of type ${String(unhandled)}, which this action cannot validate.`);
     }
   }
 }
@@ -220,6 +226,9 @@ function assertValueMatchesFieldType({ field, value, position }: { field: Field;
 // `parseFloat('0x10')` is 0, so accepting hex here would pass a value the server
 // then evaluates as something else entirely.
 function isDecimalNumber(value: string): boolean {
+  // Explicit rather than leaning on the disagreement below (`Number('') === 0`
+  // but `parseFloat('')` is NaN, so blanks would be rejected either way): a
+  // blank value must not depend on that coincidence to be caught.
   if (value.trim().length === 0) {
     return false;
   }

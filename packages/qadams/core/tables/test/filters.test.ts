@@ -15,9 +15,12 @@ function field({ name, externalId, type }: { name: string; externalId: string; t
   };
 }
 
+// `starts_at` deliberately has a display name that is NOT its externalId, so the
+// display-name resolution branch is actually reached — with name === externalId
+// everywhere, that branch can be deleted with every test still green.
 const fields: Field[] = [
   field({ name: 'event_id', externalId: 'event_id', type: FieldType.TEXT }),
-  field({ name: 'starts_at', externalId: 'starts_at', type: FieldType.DATE }),
+  field({ name: 'Starts At', externalId: 'starts_at', type: FieldType.DATE }),
   field({ name: 'overbook_pct', externalId: 'overbook_pct', type: FieldType.NUMBER }),
 ];
 
@@ -44,6 +47,12 @@ describe('filterUtils.toWireFilters', () => {
     it('rejects a filters value that is neither a list nor a filter object', () => {
       expect(() => filterUtils.toWireFilters({ rawFilters: 42, fields })).toThrow(/Could not read/);
       expect(() => filterUtils.toWireFilters({ rawFilters: { scope: 'tenant' }, fields })).toThrow(/Could not read/);
+    });
+
+    it('rejects a JSON string it cannot parse', () => {
+      expect(() =>
+        filterUtils.toWireFilters({ rawFilters: '{"filters":[{"field":"event_id"', fields }),
+      ).toThrow(/Could not read/);
     });
 
     it('rejects an unrecognised operator', () => {
@@ -98,32 +107,47 @@ describe('filterUtils.toWireFilters', () => {
       expect(result).toEqual([{ fieldId: 'id_event_id', operator: FilterOperator.EQ, value: 'demo' }]);
     });
 
-    it('accepts fieldName / field_id aliases and resolves by display name', () => {
+    it('resolves a column by its display name, not only by its id', () => {
       expect(
-        filterUtils.toWireFilters({ rawFilters: [{ fieldName: 'starts_at', operator: 'exists' }], fields }),
+        filterUtils.toWireFilters({ rawFilters: [{ fieldName: 'Starts At', operator: 'exists' }], fields }),
       ).toEqual([{ fieldId: 'id_starts_at', operator: FilterOperator.EXISTS }]);
+    });
 
+    it('matches a display name case-insensitively', () => {
+      expect(
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'starts at', operator: 'exists' }], fields }),
+      ).toEqual([{ fieldId: 'id_starts_at', operator: FilterOperator.EXISTS }]);
+    });
+
+    it('rejects a display name shared by two columns rather than picking one', () => {
+      const ambiguous = [...fields, field({ name: 'Starts At', externalId: 'starts_at_2', type: FieldType.DATE })];
+      expect(() =>
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'Starts At', operator: 'exists' }], fields: ambiguous }),
+      ).toThrow(/ambiguous/);
+    });
+
+    it('accepts the field_id alias', () => {
       expect(
         filterUtils.toWireFilters({ rawFilters: [{ field_id: 'overbook_pct', operator: 'gt', value: 10 }], fields }),
       ).toEqual([{ fieldId: 'id_overbook_pct', operator: FilterOperator.GT, value: '10' }]);
     });
 
-    // The two shapes reported in #382 verbatim. Both used to be silently
-    // discarded, which returned every row; both must now resolve.
-    it('accepts the two shapes from the report that used to be dropped', () => {
+    it('accepts the same column named twice through two different keys', () => {
       expect(
-        filterUtils.toWireFilters({
-          rawFilters: { filters: [{ fieldName: 'event_id', operator: 'eq', value: 'demo' }] },
-          fields,
-        }),
-      ).toEqual([{ fieldId: 'id_event_id', operator: FilterOperator.EQ, value: 'demo' }]);
+        filterUtils.toWireFilters({ rawFilters: [{ field: 'event_id', fieldId: 'event_id', operator: 'exists' }], fields }),
+      ).toEqual([{ fieldId: 'id_event_id', operator: FilterOperator.EXISTS }]);
+    });
 
-      expect(
-        filterUtils.toWireFilters({
-          rawFilters: { filters: [{ field_id: 'event_id', operator: 'eq', value: 'demo' }] },
-          fields,
-        }),
-      ).toEqual([{ fieldId: 'id_event_id', operator: FilterOperator.EQ, value: 'demo' }]);
+    // The two shapes from the report. The issue quotes them as the step's whole
+    // `input`, so at the prop level the value is the bare array — which is what
+    // the old `filters?.['filters'] ?? []` silently turned into "no filters".
+    it.each([
+      ['fieldName', [{ fieldName: 'event_id', operator: 'eq', value: 'demo' }]],
+      ['field_id', [{ field_id: 'event_id', operator: 'eq', value: 'demo' }]],
+    ])('resolves the reported %s shape that used to be dropped', (_label, rawFilters) => {
+      expect(filterUtils.toWireFilters({ rawFilters, fields })).toEqual([
+        { fieldId: 'id_event_id', operator: FilterOperator.EQ, value: 'demo' },
+      ]);
     });
 
     it('accepts a nested list that resolved to a JSON string', () => {
@@ -189,6 +213,14 @@ describe('filterUtils.toWireFilters', () => {
       expect(() =>
         filterUtils.toWireFilters({ rawFilters: [{ field: 'starts_at', operator: 'lt', value: 'yesterday' }], fields }),
       ).toThrow(/is not a date/);
+    });
+
+    it('rejects a blank value on a Number column, which Number() would read as 0', () => {
+      for (const value of ['', '   ']) {
+        expect(() =>
+          filterUtils.toWireFilters({ rawFilters: [{ field: 'overbook_pct', operator: 'gt', value }], fields }),
+        ).toThrow(/is not a number/);
+      }
     });
 
     it('rejects an object where a single value is expected', () => {
