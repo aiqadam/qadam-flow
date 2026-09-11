@@ -58,6 +58,19 @@ describe('longPollingStatus', () => {
         })
     })
 
+    // Part of a reason is written by the third party and part by a qadam author. Capping at the
+    // store rather than at each call site is what makes the bound hold for every writer.
+    it('caps a reason rather than storing whatever arrives', async () => {
+        await longPollingStatus.report({
+            ...flow,
+            status: LongPollingStatus.STOPPED,
+            reason: 'x'.repeat(5000),
+            since: 'now',
+        })
+
+        expect(put.mock.calls[0][1].reason.length).toBeLessThanOrEqual(300)
+    })
+
     it('clears under the same key it writes', async () => {
         await longPollingStatus.clear(flow)
 

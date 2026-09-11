@@ -317,8 +317,15 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
             timeoutMs,
         }))
         if (error !== null) {
-            markFatal({ source, reason: `The puller failed or overran its window: ${error.message}`, log })
-            return
+            // Not fatal: a throw or an overrun is local to this instance — a broken egress route,
+            // a slow socket — and `fatalSources` is republished unlocked, so a permanent verdict
+            // here would let one unhealthy instance contradict the leader that is polling fine.
+            // Every other fatal verdict is derived from shared state, which all instances agree on.
+            backoffMs = nextBackoff({ backoffMs })
+            const reason = `The puller failed or overran its window: ${error.message}`
+            log.warn({ key: source.key, reason, backoffMs }, '[longPollingHost#pollLoop] Puller failed')
+            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason, log })
+            continue
         }
 
         switch (result?.outcome) {
@@ -487,9 +494,7 @@ function reportStatus({ source, status, reason, log }: ReportStatusParams): void
         projectId: source.projectId,
         flowId: source.flowId,
         status,
-        // Capped: part of this text is written by the third party and part by a qadam author, and
-        // it is stored and rendered. Neither is a reason to let an unbounded string through.
-        reason: isNil(reason) ? undefined : reason.slice(0, MAX_REASON_LENGTH),
+        reason,
         since: new Date().toISOString(),
     }), log)
 }
@@ -706,7 +711,6 @@ type SleepUntilAbortedParams = {
 }
 
 const CONNECTION_UNREADABLE_REASON = 'The connection could not be read right now; retrying'
-const MAX_REASON_LENGTH = 300
 
 const LONG_POLLING_DISABLED_MESSAGE = 'This trigger is set to long polling, which requires AP_TRIGGER_LONG_POLLING_ENABLED=true on the server. Until it is set, the trigger can be neither enabled nor tested — testing would remove the bot\'s webhook without anything replacing it. Set it on the server, or switch the trigger back to webhook delivery.'
 

@@ -67,7 +67,15 @@ export type QadamEventPuller = {
    * return the secret itself: it ends up in Redis keys and in logs. Return `undefined` when the
    * value is not a credential this puller recognises — the host then stops that source rather than
    * polling with something it cannot identify.
+   *
+   * If this throws, the host shows the exception's message to the user. This is the one function
+   * handed the decrypted credential, so the message must not quote what it was given.
    */
   credentialKey: (params: { auth: unknown }) => string | undefined;
+  /**
+   * If this throws, the host shows the exception's message to the user, exactly as it does for a
+   * returned `reason` — so the same rule applies: no credential, no URL carrying one, nothing
+   * internal.
+   */
   waitForEvents: (params: WaitForEventsParams) => Promise<QadamEventPullResult>;
 };

@@ -481,22 +481,6 @@ describe('longPollingHost', () => {
         expect(reasons.some((reason) => reason.includes('ECONNREFUSED'))).toBe(false)
     })
 
-    it('caps a reason the third party wrote, rather than storing whatever arrives', async () => {
-        const waitForEvents = vi.fn().mockResolvedValue({
-            outcome: QadamEventPullOutcome.FATAL,
-            reason: 'x'.repeat(5000),
-        })
-        getPuller.mockReturnValue(puller(waitForEvents))
-
-        const host = await loadHost()
-        await host.start()
-        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'STOPPED' })))
-        await host.stop()
-
-        const stopped = reportStatus.mock.calls.map(([params]) => params).find((params) => params.status === 'STOPPED')
-        expect(stopped.reason.length).toBeLessThanOrEqual(300)
-    })
-
     // A published, switched-on flow that receives nothing looks identical to a healthy one in the
     // UI, so the reason has to reach somewhere a user can read it.
     it('publishes why it stopped, not just that it stopped', async () => {
@@ -556,19 +540,22 @@ describe('longPollingHost', () => {
         await host.stop()
     })
 
-    it('never lets a throwing puller take anything else down', async () => {
+    // Contained by the host's own wrapper, and backed off rather than stopped: a throw is local to
+    // this instance, and `fatalSources` is republished without the lock, so a permanent verdict here
+    // would let one unhealthy instance contradict the leader that is polling the same bot fine.
+    it('backs a throwing puller off instead of taking anything else down', async () => {
         const waitForEvents = vi.fn().mockRejectedValue(new Error('qadam blew up'))
         getPuller.mockReturnValue(puller(waitForEvents))
 
         const host = await loadHost()
-        await host.start()
-        await vi.waitFor(() => expect(mockLog.error).toHaveBeenCalled())
+        await expect(host.start()).resolves.toBeUndefined()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'BACKING_OFF',
+        })))
         await host.stop()
 
-        // Marked fatal by the host's own wrapper — not merely swallowed further up the stack.
-        expect(vi.mocked(mockLog.error).mock.calls.some(([, message]) =>
-            String(message).includes('markFatal'))).toBe(true)
-        expect(waitForEvents).toHaveBeenCalledTimes(1)
+        expect(reportStatus.mock.calls.some(([params]) => params.status === 'STOPPED')).toBe(false)
+        expect(vi.mocked(mockLog.error)).not.toHaveBeenCalled()
     })
 
     it('stops a puller that returns a result it does not understand', async () => {

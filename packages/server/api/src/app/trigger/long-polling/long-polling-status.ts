@@ -13,13 +13,18 @@ import { distributedStore } from '../../database/redis-connections'
  * rather than leaving a stale "polling" claim to be read as proof that anything is running.
  */
 const TTL_SECONDS = 5 * 60
+/**
+ * Part of a reason is written by the third party and part by a qadam author, and all of it is
+ * stored and rendered. Capped here rather than at each call site so the bound holds for any writer.
+ */
+const MAX_REASON_LENGTH = 300
 
 export const longPollingStatus = {
     async report(params: ReportParams): Promise<void> {
         const { projectId, flowId, status, reason, since } = params
         const state: LongPollingState = {
             status,
-            ...(isNil(reason) ? {} : { reason }),
+            ...(isNil(reason) ? {} : { reason: reason.slice(0, MAX_REASON_LENGTH) }),
             since,
         }
         await distributedStore.put(statusKey({ projectId, flowId }), state, TTL_SECONDS)
