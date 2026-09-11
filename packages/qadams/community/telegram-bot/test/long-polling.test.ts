@@ -156,11 +156,15 @@ describe('telegramEventPuller.credentialKey', () => {
     );
   });
 
-  it('gives two connections holding one token the same identity', () => {
-    const first = telegramEventPuller.credentialKey({ auth: { secret_text: '777:AAA' } });
-    const second = telegramEventPuller.credentialKey({ auth: { secret_text: '777:AAA' } });
-
-    expect(first).toBe(second);
+  // The point of the key: the host locks on it, so two *different* connections holding one bot —
+  // which is what Telegram counts as one consumer — must not end up with two locks.
+  it('gives two connections on the same bot one identity, and different bots different ones', () => {
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: '777:first-copy' } })).toBe(
+      telegramEventPuller.credentialKey({ auth: { secret_text: '777:second-copy' } })
+    );
+    expect(telegramEventPuller.credentialKey({ auth: { secret_text: '777:AAA' } })).not.toBe(
+      telegramEventPuller.credentialKey({ auth: { secret_text: '778:AAA' } })
+    );
   });
 
   it('survives the token being regenerated for the same bot', () => {

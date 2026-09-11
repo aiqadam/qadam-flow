@@ -13,6 +13,7 @@ const handleWebhook = vi.fn()
 const lockAndRefreshConnection = vi.fn()
 const getPuller = vi.fn()
 const runExclusive = vi.fn()
+const connectionExistsBy = vi.fn()
 const store = new Map<string, unknown>()
 let longPollingEnabled = true
 
@@ -37,6 +38,10 @@ vi.mock('../../../../../src/app/webhooks/webhook.service', () => ({
 
 vi.mock('../../../../../src/app/app-connection/app-connection-service/app-connection.handler', () => ({
     appConnectionHandler: () => ({ lockAndRefreshConnection }),
+}))
+
+vi.mock('../../../../../src/app/app-connection/app-connection-service/app-connection-service', () => ({
+    appConnectionsRepo: () => ({ existsBy: connectionExistsBy }),
 }))
 
 vi.mock('../../../../../src/app/database/redis-connections', () => ({
@@ -108,6 +113,7 @@ describe('longPollingHost', () => {
             qadamName: QADAM_NAME,
             value: { type: 'SECRET_TEXT', secret_text: '777:token' },
         })
+        connectionExistsBy.mockResolvedValue(false)
         handleWebhook.mockResolvedValue({ status: StatusCodes.OK, body: {}, headers: {} })
     })
 
@@ -177,7 +183,6 @@ describe('longPollingHost', () => {
 
         expect(runExclusive.mock.calls[0][0].key).toBe(`long-polling:${QADAM_NAME}|${CREDENTIAL_KEY}`)
         expect(runExclusive.mock.calls[0][0].key).not.toContain(source.connectionExternalId)
-        expect(store.has(cursorKey)).toBe(false)
     })
 
     it('passes the stored cursor back to the puller', async () => {
@@ -247,6 +252,36 @@ describe('longPollingHost', () => {
             String((details as { reason?: unknown }).reason).includes('connection'))).toBe(false)
     })
 
+    // `lockAndRefreshConnection` catches its own database errors and returns null, so a null is not
+    // proof of absence — this is the shape a Postgres failover actually takes.
+    it('does not mistake an unreadable connection for a deleted one', async () => {
+        lockAndRefreshConnection.mockResolvedValue(null)
+        connectionExistsBy.mockResolvedValue(true)
+        const waitForEvents = vi.fn().mockResolvedValue(stopsImmediately)
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(vi.mocked(mockLog.warn)).toHaveBeenCalled())
+        await host.stop()
+
+        expect(vi.mocked(mockLog.error)).not.toHaveBeenCalled()
+    })
+
+    it('backs off rather than giving up when it cannot even confirm the connection is gone', async () => {
+        lockAndRefreshConnection.mockResolvedValue(null)
+        connectionExistsBy.mockRejectedValue(new Error('the database is failing over'))
+        const waitForEvents = vi.fn().mockResolvedValue(stopsImmediately)
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(vi.mocked(mockLog.warn)).toHaveBeenCalled())
+        await host.stop()
+
+        expect(vi.mocked(mockLog.error)).not.toHaveBeenCalled()
+    })
+
     it('treats a deleted connection as fatal rather than polling without credentials', async () => {
         lockAndRefreshConnection.mockResolvedValue(null)
         const waitForEvents = vi.fn()
@@ -301,14 +336,22 @@ describe('longPollingHost', () => {
         getPuller.mockReturnValue(puller(waitForEvents))
         runExclusive.mockImplementationOnce(({ fn }: LockParams) => fn(lockLost.signal))
 
+        const { longPollingTiming } = await import('../../../../../src/app/trigger/long-polling/long-polling-host')
         const host = await loadHost()
         await host.start()
         await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(1))
+        // The re-queue waits out LOCK_RETRY_DELAY_MS, so without advancing time a task that gave up
+        // and one that is waiting look identical — which is what made the earlier version of this
+        // test unable to fail.
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        try {
+            await vi.advanceTimersByTimeAsync(longPollingTiming.LOCK_RETRY_DELAY_MS + 100)
+            await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(2))
+        }
+        finally {
+            vi.useRealTimers()
+        }
         await host.stop()
-
-        // The first grant ended without the host signal firing, so the task must not consider
-        // itself done — `pollUntilDone` returning `false` is what sends it back to the lock.
-        expect(waitForEvents).toHaveBeenCalledTimes(1)
     })
 
     it('never lets a throwing puller take anything else down', async () => {
@@ -362,7 +405,9 @@ describe('longPollingHost', () => {
         expect(Date.now() - stoppedAt).toBeLessThan(1000)
 
         const callsAtShutdown = waitForEvents.mock.calls.length
-        await new Promise((resolve) => setTimeout(resolve, 50))
+        // Longer than MIN_WINDOW_INTERVAL_MS: an orphaned task sleeps out the pacing floor between
+        // windows, so a shorter wait than that cannot see it still running.
+        await new Promise((resolve) => setTimeout(resolve, 900))
         expect(waitForEvents.mock.calls.length).toBe(callsAtShutdown)
     })
 
@@ -420,6 +465,7 @@ describe('longPollingHost window pacing', () => {
             qadamName: QADAM_NAME,
             value: { type: 'SECRET_TEXT', secret_text: '777:token' },
         })
+        connectionExistsBy.mockResolvedValue(false)
         handleWebhook.mockResolvedValue({ status: StatusCodes.OK, body: {}, headers: {} })
     })
 

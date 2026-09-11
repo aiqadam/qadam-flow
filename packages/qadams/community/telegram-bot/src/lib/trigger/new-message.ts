@@ -35,7 +35,7 @@ After selecting multiple types, use a Branch step downstream to fork on the upda
 const transportDescription = `
 **Webhook** is the default and needs Telegram to be able to reach this instance over the public internet.
 
-**Long polling** suits instances Telegram cannot reach — behind NAT or in a closed network. This instance keeps a request open to Telegram instead, so updates still arrive in near-realtime. It requires \`AP_TRIGGER_LONG_POLLING_ENABLED=true\` on the server; without it the flow receives nothing. Telegram allows one consumer per bot token, so enabling the flow removes the bot's webhook.
+**Long polling** suits instances Telegram cannot reach — behind NAT or in a closed network. This instance keeps a request open to Telegram instead. It needs \`AP_TRIGGER_LONG_POLLING_ENABLED=true\` on the server; until that is set, enabling or testing this flow is refused. Telegram allows one consumer per bot token, so enabling the flow removes the bot's webhook.
 `;
 
 export const telegramNewMessage = createTrigger({

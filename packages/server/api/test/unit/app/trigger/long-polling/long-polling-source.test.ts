@@ -8,6 +8,7 @@ const QADAM_NAME = '@aiqadam/qadam-telegram-bot'
 
 const triggerSourceFind = vi.fn()
 const flowVersionFind = vi.fn()
+const migrate = vi.fn()
 
 vi.mock('../../../../../src/app/core/db/repo-factory', () => ({
     repoFactory: () => () => ({ find: triggerSourceFind }),
@@ -18,7 +19,7 @@ vi.mock('../../../../../src/app/flows/flow-version/flow-version.service', () => 
 }))
 
 vi.mock('../../../../../src/app/flows/flow-version/flow-version-migration.service', () => ({
-    flowVersionMigrationService: () => ({ migrate: async (flowVersion: unknown) => flowVersion }),
+    flowVersionMigrationService: () => ({ migrate }),
 }))
 
 const mockLog = {
@@ -70,6 +71,7 @@ describe('longPollingSourceRegistry.list', () => {
         vi.clearAllMocks()
         triggerSourceFind.mockResolvedValue([])
         flowVersionFind.mockResolvedValue([])
+        migrate.mockImplementation(async (flowVersion: unknown) => flowVersion)
     })
 
     it('resolves a source down to its credential', async () => {
@@ -133,6 +135,45 @@ describe('longPollingSourceRegistry.list', () => {
 
         expect(await longPollingSourceRegistry(mockLog).list()).toEqual([])
         expect(mockLog.warn).toHaveBeenCalled()
+    })
+
+    // `migrate` throws and pages on-call when a flow version cannot be brought up to date. One bad
+    // row must not take reconciliation down for every other tenant on the instance.
+    it('drops only the source whose flow version cannot be migrated', async () => {
+        triggerSourceFind.mockResolvedValue([
+            triggerSource({ id: 'broken', flowId: 'broken-flow', flowVersionId: 'fv-broken' }),
+            triggerSource({ id: 'fine', flowId: 'fine-flow', flowVersionId: 'fv-fine' }),
+        ])
+        flowVersionFind.mockResolvedValue([flowVersion({ id: 'fv-broken' }), flowVersion({ id: 'fv-fine' })])
+        migrate.mockImplementation(async (version: { id: string }) => {
+            if (version.id === 'fv-broken') {
+                throw new Error('no migration path')
+            }
+            return version
+        })
+
+        const sources = await longPollingSourceRegistry(mockLog).list()
+
+        expect(sources.map((item) => item.flowId)).toEqual(['fine-flow'])
+        expect(mockLog.error).toHaveBeenCalled()
+    })
+
+    it('drops a source whose puller throws while classifying it, rather than failing the sweep', async () => {
+        const puller = eventPullerRegistry.get(QADAM_NAME)
+        expect(puller).toBeDefined()
+        const isEnabledFor = vi.spyOn(puller!, 'isEnabledFor').mockImplementation(() => {
+            throw new Error('the qadam blew up')
+        })
+        triggerSourceFind.mockResolvedValue([triggerSource()])
+        flowVersionFind.mockResolvedValue([flowVersion()])
+
+        try {
+            await expect(longPollingSourceRegistry(mockLog).list()).resolves.toEqual([])
+            expect(mockLog.error).toHaveBeenCalled()
+        }
+        finally {
+            isEnabledFor.mockRestore()
+        }
     })
 
     it('serves only the most recently enabled flow when two share a credential', async () => {

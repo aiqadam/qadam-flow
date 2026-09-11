@@ -5,6 +5,8 @@ import { metrics } from '@opentelemetry/api'
 import { Mutex } from 'async-mutex'
 import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { ArrayContains } from 'typeorm'
+import { appConnectionsRepo } from '../../app-connection/app-connection-service/app-connection-service'
 import { appConnectionHandler } from '../../app-connection/app-connection-service/app-connection.handler'
 import { distributedLock, distributedStore } from '../../database/redis-connections'
 import { rejectedPromiseHandler } from '../../helper/promise-handler'
@@ -347,7 +349,7 @@ async function resolveCredential({ source, puller, log }: ResolveCredentialParam
         return { status: CredentialStatus.UNAVAILABLE, reason: error.message }
     }
     if (isNil(connection)) {
-        return { status: CredentialStatus.GONE, reason: 'The connection backing this trigger no longer exists' }
+        return confirmTheConnectionIsReallyGone({ source })
     }
     if (connection.status === AppConnectionStatus.ERROR) {
         return { status: CredentialStatus.GONE, reason: 'The connection backing this trigger is in error' }
@@ -370,6 +372,26 @@ async function resolveCredential({ source, puller, log }: ResolveCredentialParam
         auth: connection.value,
         credentialKey,
     }
+}
+
+/**
+ * `lockAndRefreshConnection` catches its own errors and returns null, so a null is not proof of
+ * absence — a Postgres failover mid-`findOneBy` looks exactly like a deleted row. Marking that
+ * fatal is how a three-second wobble would silence every bot on the instance until each flow was
+ * republished, so absence is confirmed with a second read before the task is given up.
+ */
+async function confirmTheConnectionIsReallyGone({ source }: ConfirmGoneParams): Promise<ResolvedCredential> {
+    const { data: exists, error } = await tryCatch(() => appConnectionsRepo().existsBy({
+        projectIds: ArrayContains([source.projectId]),
+        externalId: source.connectionExternalId,
+    }))
+    if (error !== null) {
+        return { status: CredentialStatus.UNAVAILABLE, reason: `Could not confirm whether the connection still exists: ${error.message}` }
+    }
+    if (exists) {
+        return { status: CredentialStatus.UNAVAILABLE, reason: 'The connection exists but could not be read or decrypted' }
+    }
+    return { status: CredentialStatus.GONE, reason: 'The connection backing this trigger no longer exists' }
 }
 
 async function deliverEvents({ source, events, log }: DeliverEventsParams): Promise<boolean> {
@@ -508,6 +530,20 @@ function registerMetrics(): void {
     })
 }
 
+/**
+ * Exported for tests: `nextBackoff` is pure and its semantics have been rewritten twice under
+ * review, and the delays are what a test asserting "the task is waiting, not finished" has to
+ * out-wait — a test that guesses them cannot fail when they change.
+ */
+export const longPollingTiming = {
+    nextBackoff,
+    MIN_BACKOFF_MS,
+    MAX_BACKOFF_MS,
+    MAX_REQUESTED_BACKOFF_MS,
+    LOCK_RETRY_DELAY_MS,
+    MIN_WINDOW_INTERVAL_MS,
+}
+
 enum CredentialStatus {
     RESOLVED = 'RESOLVED',
     /** The connection is missing, broken, or not this qadam's — retrying cannot help. */
@@ -556,6 +592,10 @@ type PollLoopParams = {
     credential: ResolvedCredentialValue
     signal: AbortSignal
     log: FastifyBaseLogger
+}
+
+type ConfirmGoneParams = {
+    source: LongPollingSource
 }
 
 type ResolveCredentialParams = {
