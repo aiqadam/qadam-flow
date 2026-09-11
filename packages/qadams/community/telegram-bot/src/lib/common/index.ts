@@ -98,6 +98,11 @@ const resolveParseMode = (value: string | undefined): string | undefined => {
   return value;
 };
 
+type GetWebhookInfoResponse = {
+  ok: boolean;
+  result?: { url?: string };
+};
+
 export type SetWebhookRequest = {
   ip_address: string;
   max_connections: number;
@@ -126,6 +131,19 @@ export const telegramCommons = {
     };
 
     await httpClient.sendRequest(request);
+  },
+  /**
+   * Whether Telegram currently holds a webhook for this bot. `url` is an empty string when it does
+   * not — which is how a flow on the pull transport can be told from one whose webhook was
+   * registered by a version that sent no `secret_token`. Both look identical from here otherwise.
+   */
+  hasRegisteredWebhook: async (botToken: string): Promise<boolean> => {
+    const request: HttpRequest = {
+      method: HttpMethod.GET,
+      url: `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
+    };
+    const response = await httpClient.sendRequest<GetWebhookInfoResponse>(request);
+    return (response.body?.result?.url ?? '') !== '';
   },
   unsubscribeWebhook: async (botToken: string) => {
     const request: HttpRequest = {
