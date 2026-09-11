@@ -13,7 +13,9 @@ import { eventPullerRegistry } from './event-puller-registry'
 // which imports this one, and a cycle through three modules is not worth a shared repo handle.
 const longPollingTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 
-const EMPTY_REGISTRY: LongPollingRegistry = { sources: [], starved: [], ambiguous: [] }
+// A function, not a shared constant: returning the same arrays to every caller is one `push` away
+// from one call contaminating the next.
+const emptyRegistry = (): LongPollingRegistry => ({ sources: [], starved: [], ambiguous: [] })
 
 /**
  * Resolves which trigger sources the host should be pulling for, right now.
@@ -28,7 +30,7 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
         // to discover that it has none.
         const qadamNames = eventPullerRegistry.registeredQadamNames()
         if (qadamNames.length === 0) {
-            return EMPTY_REGISTRY
+            return emptyRegistry()
         }
         const triggerSources = await longPollingTriggerSourceRepo().find({
             where: {
@@ -43,7 +45,7 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
             },
         })
         if (triggerSources.length === 0) {
-            return EMPTY_REGISTRY
+            return emptyRegistry()
         }
         // Only now, once a row exists, is a puller worth the cost of loading.
         await eventPullerRegistry.load()

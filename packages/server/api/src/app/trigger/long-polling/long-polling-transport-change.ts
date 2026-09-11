@@ -13,9 +13,15 @@ const transportTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 const transportFlowVersionRepo = repoFactory(FlowVersionEntity)
 
 /**
- * One fan-out per connection at a time, and a change arriving mid-flight is **dropped** — not
- * queued. Dropping is safe precisely because the fan-out re-reads live state on entry: whatever the
- * newer change wanted, the run already in flight will see when it queries.
+ * One fan-out per connection at a time. A change arriving mid-flight is **coalesced** into a single
+ * extra pass — one bit, not a queue, so N rapid changes cost at most two runs rather than N.
+ *
+ * It has to be a re-run and not a drop. The tempting reasoning — "the run in flight re-reads live
+ * state, so it already covers the newer change" — is false: the read happens per flow, inside the
+ * loop (`triggerSourceService.enable` -> `assertTransportIsAvailable` -> its own connection query),
+ * so it only covers flows the loop has not reached yet. Dropping would leave every flow the run had
+ * already processed enabled under the *previous* mode: in pull -> webhook that means no poller and
+ * no webhook, permanently and silently, recoverable only by a manual republish.
  *
  * This replaced a cap on the *number of flows*, which was wrong in the direction that matters. In
  * pull -> webhook there is no "next enable" to recover with: the metadata already says webhook, so
@@ -32,6 +38,8 @@ const transportFlowVersionRepo = repoFactory(FlowVersionEntity)
  * it concurrently converge on the same state.
  */
 const fanOutsInFlight = new Set<string>()
+/** Keys whose fan-out must run once more, because a change landed while one was already running. */
+const fanOutsPending = new Set<string>()
 
 /**
  * Re-runs the trigger's enable hook for flows on a connection whose delivery mode just changed.
@@ -65,15 +73,22 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
 
         const inFlightKey = `${projectIds.join(',')}|${externalId}`
         if (fanOutsInFlight.has(inFlightKey)) {
-            log.info({ externalId, qadamName }, '[longPollingTransportChange] A re-enable for this connection is already running; it will see this change too')
+            fanOutsPending.add(inFlightKey)
+            log.info({ externalId, qadamName }, '[longPollingTransportChange] A re-enable for this connection is already running; it will run once more after it')
             return
         }
         fanOutsInFlight.add(inFlightKey)
         try {
-            await reEnableNow({ projectIds, externalId, qadamName, log })
+            do {
+                // Cleared *before* the run, not after: a change arriving mid-run must set it again
+                // and so earn another pass. Clearing afterwards would swallow exactly that change.
+                fanOutsPending.delete(inFlightKey)
+                await reEnableNow({ projectIds, externalId, qadamName, log })
+            } while (fanOutsPending.has(inFlightKey))
         }
         finally {
             fanOutsInFlight.delete(inFlightKey)
+            fanOutsPending.delete(inFlightKey)
         }
     },
 })

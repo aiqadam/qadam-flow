@@ -139,10 +139,11 @@ describe('longPollingTransportChange', () => {
         expect(triggerSourceFind.mock.calls[0][0].where).toMatchObject({ qadamName: QADAM_NAME })
     })
 
-    // Dropping a concurrent change is only safe because the run already in flight re-reads live
-    // state on entry — so it sees whatever the dropped change wanted. If it ever stops re-reading,
-    // this stops being a coalesce and starts being a lost update.
-    it('drops a change that arrives while one is already running, rather than queueing it', async () => {
+    // The run in flight reads the connection per flow, inside its loop, so it only covers flows it
+    // has not reached yet. Dropping the newer change would therefore strand every flow the run had
+    // already processed under the old mode — no poller and no webhook. One extra pass fixes those;
+    // a queue would let N changes cost N fan-outs, which is what the lock did wrong.
+    it('coalesces a change that arrives mid-run into exactly one extra pass', async () => {
         let releaseFirst = (): void => {}
         triggerSourceFind.mockImplementationOnce(async () => {
             await new Promise<void>((resolve) => {
@@ -156,23 +157,31 @@ describe('longPollingTransportChange', () => {
             before: { transport: 'webhook' },
             after: { transport: 'long_polling' },
         })
+        // Two more while the first is still blocked: both coalesce into one extra pass, not two.
         await longPollingTransportChange(mockLog).reEnableAffectedFlows({
             ...connection,
             before: { transport: 'long_polling' },
             after: { transport: 'webhook' },
+        })
+        await longPollingTransportChange(mockLog).reEnableAffectedFlows({
+            ...connection,
+            before: { transport: 'webhook' },
+            after: { transport: 'long_polling' },
         })
 
         expect(triggerSourceFind).toHaveBeenCalledTimes(1)
         releaseFirst()
         await first
 
-        // And the guard is released, so the next change is not swallowed too.
+        expect(triggerSourceFind).toHaveBeenCalledTimes(2)
+
+        // And the guard is released afterwards, so a later change is not swallowed.
         await longPollingTransportChange(mockLog).reEnableAffectedFlows({
             ...connection,
             before: { transport: 'webhook' },
             after: { transport: 'long_polling' },
         })
-        expect(triggerSourceFind).toHaveBeenCalledTimes(2)
+        expect(triggerSourceFind).toHaveBeenCalledTimes(3)
     })
 
     // The mode is already saved by the time this runs; one flow failing must not undo the user's

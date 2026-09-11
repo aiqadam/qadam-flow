@@ -15,6 +15,7 @@ import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { WebhookFlowVersionToRun, webhookService } from '../../webhooks/webhook.service'
 import { eventPullerRegistry } from './event-puller-registry'
+import { longPollingCapacity } from './long-polling-capacity'
 import { longPollingServed } from './long-polling-served'
 import { LongPollingSource, longPollingSourceRegistry } from './long-polling-source'
 import { longPollingStatus } from './long-polling-status'
@@ -46,27 +47,6 @@ const PULLER_GRACE_SECONDS = 30
 const MIN_IDLE_WINDOW_INTERVAL_MS = 250
 const MIN_WINDOW_INTERVAL_MS = 25
 
-/**
- * Ceiling on concurrently running pull loops. Each holds an open HTTP request to a third party for
- * its whole window, so the count is a real resource bound and not a throughput knob. The flag is on
- * by default, so without this a platform could be talked into unbounded sockets simply by enabling
- * flows. Overflow is logged and reported on the flow, never dropped silently.
- *
- * A constant rather than a setting: nobody can pick a number for this without measuring, and an
- * install that hits it has a capacity problem an env var would only hide.
- *
- * The per-project share exists because the global ceiling is first-come and tasks are never
- * displaced: without it, one tenant enabling enough pull flows takes every slot on the instance and
- * keeps them, and every other tenant's flows are refused permanently rather than transiently.
- *
- * It is a share of the instance divided among the projects that actually want to poll, not a fixed
- * number — a fixed one would be a regression for the deployment this project is built for. Qadam
- * Flow is self-hosted by design, and on a single-project install a constant like 25 would cap that
- * install at 25 instead of 200, with no way to raise it. Divided, one project alone gets all 200.
- */
-const MAX_CONCURRENT_TASKS = 200
-/** Nobody's share drops below this, however many projects are competing. */
-const MIN_CONCURRENT_TASKS_PER_PROJECT = 25
 
 const tasks = new Map<string, RunningTask>()
 const fatalSources = new Map<string, FatalSource>()
@@ -228,7 +208,7 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
         }
         const overCapacity: OverCapacity[] = []
         const projectsWanting = new Set(Array.from(desired.values()).map((source) => source.projectId)).size
-        const projectShare = Math.max(MIN_CONCURRENT_TASKS_PER_PROJECT, Math.floor(MAX_CONCURRENT_TASKS / projectsWanting))
+        const projectShare = longPollingCapacity.shareFor({ projectsWanting })
         for (const source of desired.values()) {
             const fatal = fatalSources.get(source.key)
             if (!isNil(fatal)) {
@@ -273,7 +253,7 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
 
 /** Which ceiling this source runs into, if any. */
 function atCapacity({ source, tasks, projectShare }: AtCapacityParams): OverCapacity['scope'] | undefined {
-    if (tasks.size >= MAX_CONCURRENT_TASKS) {
+    if (tasks.size >= longPollingCapacity.MAX_CONCURRENT_TASKS) {
         return 'instance'
     }
     const forProject = Array.from(tasks.values()).filter((task) => task.source.projectId === source.projectId).length
