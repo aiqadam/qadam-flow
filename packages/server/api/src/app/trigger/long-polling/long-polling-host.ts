@@ -197,7 +197,17 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 // clearing without waiting can be overtaken by a `FAILED` put from the very window
                 // this abort stood down, leaving a healthy flow wearing a stale failure for the
                 // whole TTL — the silent-wrong-status this module exists to prevent.
-                if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
+                // An aged-out simulation is the one removal a user is waiting on: the builder panel
+                // sits there with no explanation otherwise, because the trigger-source row survives.
+                if (isNil(next) && task.source.simulate) {
+                    reportStatus({
+                        source: { ...task.source, simulate: false },
+                        status: LongPollingStatus.STOPPED,
+                        reason: 'This test ran for too long without receiving anything; press Test again to restart it',
+                        log,
+                    })
+                }
+                else if (isNil(next) && !reportedThisSync.has(task.source.flowId)) {
                     rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
                         projectId: task.source.projectId,
                         flowId: task.source.flowId,

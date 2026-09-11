@@ -36,6 +36,23 @@ const TRANSPORT_KEY = 'qf:telegram:webhook-transport';
  */
 const SIMULATION_SUFFIX = '/test';
 
+/**
+ * What Telegram was delivering to before a simulation borrowed the bot's one webhook, recorded by
+ * the simulation's own enable hook so its disable hook can put it back exactly.
+ *
+ * Recorded rather than inferred. The obvious alternative — "restore unless the connection is on the
+ * pull transport" — reads the connection's metadata, which is a best-effort fetch on this hook and
+ * yields `undefined` on a transient failure. That reads as "not polling", so a hiccup would put a
+ * webhook on a bot the polling host is actively consuming: Telegram then refuses `getUpdates`, core
+ * refuses the pushed deliveries too, and the flow receives nothing from either transport. An
+ * inference that fails open is the wrong shape for undoing something.
+ *
+ * It also covers the case inference cannot reach at all: a flow that was never published had no
+ * webhook before the test, so the right restore is to remove it rather than to register a URL that
+ * answers 404 forever and that nothing will ever clean up.
+ */
+const BORROWED_FROM_KEY = 'qf:telegram:webhook-borrowed-from';
+
 function isSimulation({ webhookUrl }: { webhookUrl: string }): boolean {
   return webhookUrl.endsWith(SIMULATION_SUFFIX);
 }
@@ -99,6 +116,7 @@ export const telegramWebhookAuth = {
   isSimulation,
   productionUrlOf,
   isSameEndpoint,
+  BORROWED_FROM_KEY,
   HEADER,
   TRANSPORT_KEY,
   WEBHOOK: 'webhook',

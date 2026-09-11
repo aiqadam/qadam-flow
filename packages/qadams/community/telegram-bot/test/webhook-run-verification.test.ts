@@ -19,10 +19,13 @@ const secret = telegramWebhookAuth.secretFor({
   webhookUrl: WEBHOOK_URL,
 });
 
-function contextWith({ transport, headers, webhookUrl, authMetadata }: ContextWithParams) {
+function contextWith({ transport, headers, webhookUrl, authMetadata, borrowedFrom }: ContextWithParams) {
   const store = new Map<string, unknown>();
   if (transport !== undefined) {
     store.set(telegramWebhookAuth.TRANSPORT_KEY, transport);
+  }
+  if (borrowedFrom !== undefined) {
+    store.set(telegramWebhookAuth.BORROWED_FROM_KEY, borrowedFrom);
   }
   return {
     auth: { secret_text: BOT_TOKEN },
@@ -189,6 +192,7 @@ describe('telegram trigger run verification', () => {
       contextWith({
         transport: telegramWebhookAuth.WEBHOOK,
         webhookUrl: `${WEBHOOK_URL}/test`,
+        borrowedFrom: { url: WEBHOOK_URL, allowedUpdates: ['message', 'callback_query'] },
       })
     );
 
@@ -197,24 +201,45 @@ describe('telegram trigger run verification', () => {
     const setWebhook = sendRequest.mock.calls.find(([request]) =>
       String(request.url).includes('/setWebhook')
     );
-    // Restored to production, with the production secret — not to the draft URL it was borrowed for.
+    // Exactly what was borrowed: the production URL, its secret, and *its* update types — not the
+    // draft's, which would silently narrow what the live webhook receives.
     expect(setWebhook?.[0].body.url).toBe(WEBHOOK_URL);
     expect(setWebhook?.[0].body.secret_token).toBe(secret);
+    expect(setWebhook?.[0].body.allowed_updates).toEqual(['message', 'callback_query']);
   });
 
-  // A pull-mode flow has no webhook to give back; deleting stays correct there.
-  it('still removes the webhook when the connection is polled', async () => {
+  // Nothing was registered before the test — a polled connection, or a flow never published. The
+  // restore is to remove it. Registering here would put a webhook on a bot the polling host is
+  // consuming, or leave an orphan URL answering 404 that nothing ever cleans up.
+  it.each<[string, string | undefined]>([
+    ['a polled connection', telegramWebhookAuth.LONG_POLLING],
+    ['a flow that was never published', undefined],
+  ])('removes the webhook after a test on %s', async (_case, transport) => {
     await telegramNewMessage.onDisable(
       contextWith({
-        transport: telegramWebhookAuth.LONG_POLLING,
+        transport,
         webhookUrl: `${WEBHOOK_URL}/test`,
-        authMetadata: { transport: 'long_polling' },
+        borrowedFrom: { url: '', allowedUpdates: [] },
       })
     );
 
-    expect(
-      sendRequest.mock.calls.some(([request]) => String(request.url).includes('/deleteWebhook'))
-    ).toBe(true);
+    const calls = sendRequest.mock.calls.map(([request]) => String(request.url));
+    expect(calls.some((url) => url.includes('/deleteWebhook'))).toBe(true);
+    expect(calls.some((url) => url.includes('/setWebhook'))).toBe(false);
+  });
+
+  // The record is what makes the restore exact; without it there is nothing to put back, and
+  // guessing is what made the previous attempt able to break a polled flow.
+  it('records what it is about to overwrite when a simulation starts', async () => {
+    sendRequest.mockResolvedValue({ body: { ok: true, result: { url: WEBHOOK_URL, allowed_updates: ['message'] } } });
+    const context = contextWith({ transport: undefined, webhookUrl: `${WEBHOOK_URL}/test` });
+
+    await telegramNewMessage.onEnable(context);
+
+    expect(await context.store.get(telegramWebhookAuth.BORROWED_FROM_KEY)).toEqual({
+      url: WEBHOOK_URL,
+      allowedUpdates: ['message'],
+    });
   });
 
   it('then demands the header from the very next update', async () => {

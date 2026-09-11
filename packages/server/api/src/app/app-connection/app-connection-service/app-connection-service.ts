@@ -151,9 +151,12 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             before: existingConnection?.metadata,
             connection: updatedConnection,
             projectIds,
-            // Only when this replaced something. A brand-new connection has no flows to re-enable
-            // and cannot be a credential rotation, so forcing the fan-out there is pure cost.
-            always: !isNil(existingConnection),
+            // Unconditional, including for a row that did not exist a moment ago. "Delete the
+            // broken connection and create it again with the same name" is a normal recovery, and
+            // it arrives here with nothing to compare against while enabled flows still reference
+            // that `externalId` — exactly the rotation this flag is for. The cost of forcing it on
+            // a genuinely new connection is one query that matches no flows, not a fan-out.
+            always: true,
             log,
         })
 

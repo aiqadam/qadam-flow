@@ -92,27 +92,44 @@ export const telegramNewMessage = createTrigger({
       );
       return;
     }
+    if (telegramWebhookAuth.isSimulation({ webhookUrl: context.webhookUrl })) {
+      // Before overwriting: a simulation borrows the bot's one webhook and has to put back exactly
+      // what was there, including nothing.
+      await context.store.put(
+        telegramWebhookAuth.BORROWED_FROM_KEY,
+        await telegramCommons.registeredWebhook(context.auth.secret_text)
+      );
+    }
     await registerWebhook(context);
   },
   async onDisable(context) {
     // A simulation borrows the bot's only webhook and must give it back. Telegram allows one per
-    // token, so "Test trigger" on a published webhook flow repoints it at the draft URL — and the
-    // platform disables the simulation as soon as the first update lands. Deleting here would
-    // therefore leave the bot with no webhook at all after a single test, with nothing to restore
-    // it: the published trigger source was never touched, so no hook runs again and the flow is
-    // permanently off the air with no status and no run history.
-    if (
-      telegramWebhookAuth.isSimulation({ webhookUrl: context.webhookUrl }) &&
-      !telegramTransport.isLongPolling(context.authMetadata)
-    ) {
-      const productionUrl = telegramWebhookAuth.productionUrlOf({ webhookUrl: context.webhookUrl });
-      await telegramCommons.subscribeWebhook(context.auth.secret_text, productionUrl, {
-        allowed_updates: (context.propsValue.update_types ?? []) as string[],
-        secret_token: telegramWebhookAuth.secretFor({
-          botToken: context.auth.secret_text,
-          webhookUrl: productionUrl,
-        }),
-      });
+    // token, so "Test trigger" on a published webhook flow repoints it at the test URL — and the
+    // platform disables the simulation as soon as the first update lands. Deleting here would leave
+    // the bot with no webhook at all after a single test, with nothing to restore it: the published
+    // trigger source was never touched, so no hook runs again and the flow is permanently off the
+    // air with no status and no run history.
+    //
+    // What goes back is what the enable hook recorded, not what this hook can infer — including its
+    // `allowed_updates`, since a draft may listen for different update types than the published
+    // version and restoring the draft's would silently narrow the live webhook's filter.
+    if (telegramWebhookAuth.isSimulation({ webhookUrl: context.webhookUrl })) {
+      const borrowed = await context.store.get<{ url: string; allowedUpdates: string[] }>(
+        telegramWebhookAuth.BORROWED_FROM_KEY
+      );
+      if (borrowed && borrowed.url !== '') {
+        await telegramCommons.subscribeWebhook(context.auth.secret_text, borrowed.url, {
+          allowed_updates: borrowed.allowedUpdates,
+          secret_token: telegramWebhookAuth.secretFor({
+            botToken: context.auth.secret_text,
+            webhookUrl: borrowed.url,
+          }),
+        });
+        return;
+      }
+      // Nothing was registered before the test — an unpublished flow, or a polled connection.
+      // Removing is the restore.
+      await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
       return;
     }
     await telegramCommons.unsubscribeWebhook(context.auth.secret_text);
@@ -144,7 +161,7 @@ export const telegramNewMessage = createTrigger({
     // a URL that never executes the published flow, taking it off the air silently. An equal URL is
     // the only case where re-registering is both safe and useful.
     if (transport !== telegramWebhookAuth.WEBHOOK) {
-      const registered = await telegramCommons.registeredWebhookUrl(context.auth.secret_text);
+      const { url: registered } = await telegramCommons.registeredWebhook(context.auth.secret_text);
       if (!telegramWebhookAuth.isSameEndpoint({ registered, webhookUrl: context.webhookUrl })) {
         // Either nothing is registered (the flow is polled, and registering would stop the polling
         // that delivered this update) or Telegram delivers somewhere else entirely. Record the

@@ -100,7 +100,12 @@ const resolveParseMode = (value: string | undefined): string | undefined => {
 
 type GetWebhookInfoResponse = {
   ok: boolean;
-  result?: { url?: string };
+  result?: { url?: string; allowed_updates?: string[] };
+};
+
+export type RegisteredWebhook = {
+  url: string;
+  allowedUpdates: string[];
 };
 
 export type SetWebhookRequest = {
@@ -133,19 +138,23 @@ export const telegramCommons = {
     await httpClient.sendRequest(request);
   },
   /**
-   * The URL Telegram currently delivers to for this bot, or `''` when it holds no webhook at all.
+   * What Telegram currently delivers to for this bot: the URL, `''` when it holds no webhook at
+   * all, and the update types that webhook was registered with.
    *
-   * The caller needs the URL, not merely whether one exists. "A webhook exists" is true for a
-   * production flow while an unauthenticated request is being handled on the *draft* route, and
-   * acting on that would re-point the bot at the draft URL and take the published flow off the air.
+   * Callers need the URL rather than merely whether one exists. "A webhook exists" is true for a
+   * production flow while an unauthenticated request is being handled on the test route, and acting
+   * on that would re-point the bot at that route and take the published flow off the air.
    */
-  registeredWebhookUrl: async (botToken: string): Promise<string> => {
+  registeredWebhook: async (botToken: string): Promise<RegisteredWebhook> => {
     const request: HttpRequest = {
       method: HttpMethod.GET,
       url: `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
     };
     const response = await httpClient.sendRequest<GetWebhookInfoResponse>(request);
-    return response.body?.result?.url ?? '';
+    return {
+      url: response.body?.result?.url ?? '',
+      allowedUpdates: response.body?.result?.allowed_updates ?? [],
+    };
   },
   unsubscribeWebhook: async (botToken: string) => {
     const request: HttpRequest = {
