@@ -54,8 +54,13 @@ const MIN_WINDOW_INTERVAL_MS = 25
  *
  * A constant rather than a setting: nobody can pick a number for this without measuring, and an
  * install that hits it has a capacity problem an env var would only hide.
+ *
+ * The per-project sub-cap exists because the global one is first-come and tasks are never
+ * displaced: without it, one tenant enabling enough pull flows takes every slot on the instance and
+ * keeps them, and every other tenant's flows are refused permanently rather than transiently.
  */
 const MAX_CONCURRENT_TASKS = 200
+const MAX_CONCURRENT_TASKS_PER_PROJECT = 25
 
 const tasks = new Map<string, RunningTask>()
 const fatalSources = new Map<string, FatalSource>()
@@ -175,17 +180,20 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             if (isNil(next) || next.triggerSourceId !== task.source.triggerSourceId) {
                 task.abortController.abort()
                 tasks.delete(key)
-                // The flow is gone, disabled, or republished: whatever the old task last reported
-                // is no longer true of anything, so it should not linger until its TTL.
+                // Only when nothing replaces it. On a republish the key is re-created in this same
+                // pass with the same `flowId`, and the successor owns the status from then on — a
+                // deferred clear would wipe the live entry it just wrote.
                 //
-                // Awaited on the task first: its own last report is fire-and-forget, so clearing
-                // without waiting can be overtaken by a `FAILED` put from the very window this
-                // abort stood down — leaving a healthy webhook flow wearing a stale failure for the
-                // whole TTL, which is the silent-wrong-status this module exists to prevent.
-                rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
-                    projectId: task.source.projectId,
-                    flowId: task.source.flowId,
-                })), log)
+                // Deferred onto the task, because the task's own last report is fire-and-forget:
+                // clearing without waiting can be overtaken by a `FAILED` put from the very window
+                // this abort stood down, leaving a healthy flow wearing a stale failure for the
+                // whole TTL — the silent-wrong-status this module exists to prevent.
+                if (isNil(next)) {
+                    rejectedPromiseHandler(task.promise.finally(() => longPollingStatus.clear({
+                        projectId: task.source.projectId,
+                        flowId: task.source.flowId,
+                    })), log)
+                }
             }
         }
         // Keyed on the trigger-source row rather than the flow version, so disabling and re-enabling
@@ -202,6 +210,7 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
                 }), log)
             }
         }
+        const overCapacity: OverCapacity[] = []
         for (const source of desired.values()) {
             const fatal = fatalSources.get(source.key)
             if (!isNil(fatal)) {
@@ -214,15 +223,15 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             if (tasks.has(source.key)) {
                 continue
             }
-            if (tasks.size >= MAX_CONCURRENT_TASKS) {
-                log.error({
-                    flowId: source.flowId,
-                    running: tasks.size,
-                }, '[longPollingHost#sync] At the concurrent pull-task ceiling; this flow is not being polled')
+            const overCap = atCapacity({ source, tasks })
+            if (!isNil(overCap)) {
+                overCapacity.push({ flowId: source.flowId, scope: overCap })
                 reportStatus({
                     source,
                     status: LongPollingStatus.STOPPED,
-                    reason: 'This server is already running the maximum number of polling connections',
+                    // Deliberately not "this server is full": a project's flow status is the wrong
+                    // place to tell one tenant about another tenant's load on a shared instance.
+                    reason: 'This flow could not be given a polling connection; contact your administrator',
                     log,
                 })
                 continue
@@ -232,7 +241,25 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             tasks.set(source.key, { source, abortController, promise })
             log.info({ key: source.key, flowId: source.flowId }, '[longPollingHost#sync] Started long-polling task')
         }
+        if (overCapacity.length > 0) {
+            // Once per sync, not once per refused flow: at capacity this runs every minute forever,
+            // and a per-flow line would bury everything else in the log.
+            log.error({
+                refused: overCapacity.length,
+                running: tasks.size,
+                flows: overCapacity,
+            }, '[longPollingHost#sync] At the concurrent pull-task ceiling; these flows are not being polled')
+        }
     })
+}
+
+/** Which ceiling this source runs into, if any. */
+function atCapacity({ source, tasks }: AtCapacityParams): 'instance' | 'project' | undefined {
+    if (tasks.size >= MAX_CONCURRENT_TASKS) {
+        return 'instance'
+    }
+    const forProject = Array.from(tasks.values()).filter((task) => task.source.projectId === source.projectId).length
+    return forProject >= MAX_CONCURRENT_TASKS_PER_PROJECT ? 'project' : undefined
 }
 
 /**
@@ -715,6 +742,16 @@ type ResolvedCredential =
     | ResolvedCredentialValue
     | { status: CredentialStatus.GONE, reason: string }
     | { status: CredentialStatus.UNAVAILABLE, reason: string }
+
+type AtCapacityParams = {
+    source: LongPollingSource
+    tasks: Map<string, RunningTask>
+}
+
+type OverCapacity = {
+    flowId: string
+    scope: 'instance' | 'project'
+}
 
 type RunningTask = {
     source: LongPollingSource

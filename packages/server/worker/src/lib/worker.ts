@@ -93,6 +93,9 @@ export const worker = {
         const apiClient = createRpcClient<WorkerToApiContract>(socket, 60_000)
 
         socket.on('connect', async () => {
+            // The reconnect this flag described is done; a later `connect_error` belongs to
+            // whatever disconnect comes after it, not to this one.
+            reconnectIsOurs = false
             logger.info('Connected to API server via Socket.IO')
             await fetchAndStoreSettings(socket!)
             if (!egressStack) {

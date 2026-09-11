@@ -53,8 +53,11 @@ export const longPollingSourceRegistry = (log: FastifyBaseLogger) => ({
                 log,
             }))
             .filter((candidate) => !isNil(candidate))
-        const sources = await keepTheOnesTheirConnectionAsksFor({ candidates, log })
-        return pickOnePerCredential({ sources, log })
+        const { wanted, ambiguous } = await keepTheOnesTheirConnectionAsksFor({ candidates, log })
+        const registry = pickOnePerCredential({ sources: wanted, log })
+        // Reported, not dropped: a candidate nobody can classify receives nothing, and a flow that
+        // receives nothing without saying so is the failure this whole feature exists to kill.
+        return { ...registry, starved: [...registry.starved, ...ambiguous] }
     },
 })
 
@@ -129,9 +132,9 @@ function toCandidate({ triggerSource, flowVersion, log }: ToSourceParams): LongP
  * Only `metadata` is read, which is unencrypted, so this costs one batched query and no decryption.
  * Every row is still matched on its own `projectId`.
  */
-async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOnesParams): Promise<LongPollingSource[]> {
+async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOnesParams): Promise<ClassifiedCandidates> {
     if (candidates.length === 0) {
-        return []
+        return { wanted: [], ambiguous: [] }
     }
     const connections = await appConnectionsRepo().find({
         where: candidates.map((candidate) => ({
@@ -143,13 +146,13 @@ async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOne
     // Keyed only on the projects a candidate actually asked about. Fanning out over every
     // `projectIds` entry would let a connection shared into project P overwrite P's own
     // same-`externalId` connection, and the loser would be classified from the wrong row.
-    const wanted = new Set(candidates.map((candidate) => `${candidate.projectId}|${candidate.connectionExternalId}`))
+    const askedAbout = new Set(candidates.map((candidate) => `${candidate.projectId}|${candidate.connectionExternalId}`))
     const metadataByKey = new Map<string, ConnectionMetadata>()
     const ambiguous = new Set<string>()
     for (const connection of connections) {
         for (const projectId of connection.projectIds) {
             const key = `${projectId}|${connection.externalId}`
-            if (!wanted.has(key)) {
+            if (!askedAbout.has(key)) {
                 continue
             }
             if (metadataByKey.has(key)) {
@@ -159,17 +162,18 @@ async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOne
             metadataByKey.set(key, connection.metadata ?? undefined)
         }
     }
-    return candidates.filter((candidate) => {
+    const undecidable = candidates.filter((candidate) => ambiguous.has(`${candidate.projectId}|${candidate.connectionExternalId}`))
+    undecidable.forEach((candidate) => log.error({
+        projectId: candidate.projectId,
+        flowId: candidate.flowId,
+    }, '[longPollingSourceRegistry#list] Two connections in one project share this externalId; refusing to guess which one sets the delivery mode'))
+    const wanted = candidates.filter((candidate) => {
         const puller = eventPullerRegistry.get(candidate.qadamName)
         if (isNil(puller)) {
             return false
         }
         const key = `${candidate.projectId}|${candidate.connectionExternalId}`
         if (ambiguous.has(key)) {
-            log.error({
-                projectId: candidate.projectId,
-                flowId: candidate.flowId,
-            }, '[longPollingSourceRegistry#list] Two connections in one project share this externalId; refusing to guess which one sets the delivery mode')
             return false
         }
         const connectionMetadata = metadataByKey.get(key)
@@ -184,6 +188,7 @@ async function keepTheOnesTheirConnectionAsksFor({ candidates, log }: KeepTheOne
         }
         return enabled
     })
+    return { wanted, ambiguous: undecidable }
 }
 
 /**
@@ -236,6 +241,12 @@ type KeepTheOnesParams = {
     log: FastifyBaseLogger
 }
 
+type ClassifiedCandidates = {
+    wanted: LongPollingSource[]
+    /** Cannot be classified, so cannot be polled — the host reports them rather than losing them. */
+    ambiguous: LongPollingSource[]
+}
+
 type PickOnePerCredentialParams = {
     sources: LongPollingSource[]
     log: FastifyBaseLogger
@@ -243,7 +254,10 @@ type PickOnePerCredentialParams = {
 
 export type LongPollingRegistry = {
     sources: LongPollingSource[]
-    /** Enabled, published, and guaranteed to receive nothing: another flow holds their credential. */
+    /**
+     * Enabled, published, and guaranteed to receive nothing — either another flow holds their
+     * credential, or their connection cannot be identified unambiguously.
+     */
     starved: LongPollingSource[]
 }
 

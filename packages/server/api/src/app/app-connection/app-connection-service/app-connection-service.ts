@@ -176,8 +176,9 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
         // the webhook at the third party — happens in the trigger's enable hook. Without this, a
         // connection switched back to webhook stops being polled and never gets its webhook back,
         // and the flow silently receives nothing.
-        // `!== undefined` and not `isNil`: `metadata` is nullable, and clearing it to `null` is
-        // precisely the edit that flips a connection out of pull mode.
+        // `!== undefined` rather than `isNil`: the DTO is `.optional()`, so `null` cannot reach here
+        // today, and this stays correct if it ever can — clearing the metadata is exactly the edit
+        // that flips a connection out of pull mode.
         if (request.metadata !== undefined) {
             applyDeliveryModeChange({
                 before: before?.metadata,
@@ -503,8 +504,9 @@ function applyDeliveryModeChange({ before, connection, projectIds, log }: ApplyD
         qadamName: connection.qadamName,
         before,
         after: connection.metadata,
-        // The acting project, not every project the connection is shared with: a platform-scoped
-        // edit must not silently widen the blast radius to every tenant sharing the credential.
+        // The acting project, not every project the connection is shared with. Both controllers
+        // pass a single project today, so the fallback is unreachable; it is here so that a route
+        // that does not would fail to compile rather than silently widen the blast radius.
         projectIds: projectIds ?? connection.projectIds,
         externalId: connection.externalId,
     }), log)

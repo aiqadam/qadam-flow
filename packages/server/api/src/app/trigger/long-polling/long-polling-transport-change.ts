@@ -2,23 +2,32 @@ import { FlowStatus, flowStructureUtil, isNil, Metadata, ProjectId, tryCatch, tr
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
-import { FlowVersionEntity } from '../../flows/flow-version/flow-version-entity'
+import { distributedLock } from '../../database/redis-connections'
+import { FlowVersionEntity, FlowVersionSchema } from '../../flows/flow-version/flow-version-entity'
 import { TriggerSourceEntity } from '../trigger-source/trigger-source-entity'
 import { eventPullerRegistry } from './event-puller-registry'
 
-// Local handles rather than the services' exported repos, the same way `long-polling-source` does:
-// importing `flow-version.service` reaches `trigger-source-service` through its side effects in one
-// hop, which re-opens through the front door the cycle the dynamic import below shuts.
+// Local handles rather than the services' exported repos: importing `flow-version.service` reaches
+// `trigger-source-service` through its side effects in one hop, which would re-open through the
+// front door the cycle the dynamic imports below shut.
 const transportTriggerSourceRepo = repoFactory(TriggerSourceEntity)
 const transportFlowVersionRepo = repoFactory(FlowVersionEntity)
 
 /**
- * Ceiling on how much work one connection edit may cause. Each flow costs an engine round trip and
- * an outbound call to the third party; without a bound, alternating a connection's mode is a cheap
- * way to make the server do a lot. Overflow is logged rather than dropped silently — the next
- * enable of those flows still does the right thing.
+ * One fan-out per connection at a time, cluster-wide.
+ *
+ * This used to be a cap on the number of flows, which was wrong in the direction that matters: in
+ * pull -> webhook there is no "next enable" to recover with, because the metadata already says
+ * webhook, so the registry drops those flows and the qadam's `onEnable` — the thing that re-registers
+ * the webhook it deleted — never runs. Everything past the cap would receive nothing, permanently
+ * and silently, which is the failure this whole module exists to prevent.
+ *
+ * A lock bounds the work without discarding any of it. Alternating the mode in a loop no longer
+ * multiplies into parallel fan-outs — the back-pressure the user's request used to provide before
+ * this moved to the background — and a change that arrives while one is in flight is dropped rather
+ * than queued, because the fan-out re-reads live metadata and so already covers it.
  */
-const MAX_FLOWS_PER_CHANGE = 50
+const FAN_OUT_LOCK_TIMEOUT_SECONDS = 120
 
 /**
  * Re-runs the trigger's enable hook for flows on a connection whose delivery mode just changed.
@@ -50,42 +59,42 @@ export const longPollingTransportChange = (log: FastifyBaseLogger) => ({
             return
         }
 
-        const found = await findEnabledFlowsTriggeredBy({ projectIds, externalId, qadamName })
-        const flows = found.slice(0, MAX_FLOWS_PER_CHANGE)
-        if (found.length > flows.length) {
-            log.warn({
-                externalId,
-                found: found.length,
-                reEnabled: flows.length,
-            }, '[longPollingTransportChange] Too many flows on this connection to re-enable at once; the rest keep their current transport until they are next enabled')
-        }
-        log.info({
-            externalId,
-            qadamName,
-            flowIds: flows.map((flow) => flow.flowId),
-        }, '[longPollingTransportChange] Delivery mode changed, re-running the trigger hooks')
-
-        // Imported here rather than at module scope: the trigger source service reaches the whole
-        // host graph, and a static edge from the connection service to it is how an unrelated unit
-        // suite was broken once already on this branch.
-        const { triggerSourceService } = await import('../trigger-source/trigger-source-service')
-        const { flowVersionService } = await import('../../flows/flow-version/flow-version.service')
-        for (const flow of flows) {
-            const { error } = await tryCatch(async () => {
-                const flowVersion = await flowVersionService(log).getOneOrThrow(flow.flowVersionId)
-                await triggerSourceService(log).enable({ flowVersion, projectId: flow.projectId, simulate: false })
-            })
-            if (error !== null) {
-                // One flow failing must not stop the others, and must not fail the connection edit
-                // the user just made: the mode is already saved, and the next enable will retry.
-                log.error({
-                    err: error,
-                    flowId: flow.flowId,
-                }, '[longPollingTransportChange] Could not re-run the trigger hook after a delivery-mode change')
-            }
-        }
+        await distributedLock(log).runExclusive({
+            key: `long-polling-transport:${externalId}`,
+            timeoutInSeconds: FAN_OUT_LOCK_TIMEOUT_SECONDS,
+            fn: () => reEnableNow({ projectIds, externalId, qadamName, log }),
+        })
     },
 })
+
+async function reEnableNow({ projectIds, externalId, qadamName, log }: ReEnableNowParams): Promise<void> {
+    const flows = await findEnabledFlowsTriggeredBy({ projectIds, externalId, qadamName })
+    log.info({
+        externalId,
+        qadamName,
+        flowIds: flows.map((flow) => flow.flowId),
+    }, '[longPollingTransportChange] Delivery mode changed, re-running the trigger hooks')
+
+    // Imported here rather than at module scope: the trigger source service reaches the whole host
+    // graph, and a static edge from the connection service to it is how an unrelated unit suite was
+    // broken once already on this branch.
+    const { triggerSourceService } = await import('../trigger-source/trigger-source-service')
+    const { flowVersionService } = await import('../../flows/flow-version/flow-version.service')
+    for (const flow of flows) {
+        const { error } = await tryCatch(async () => {
+            const flowVersion = await flowVersionService(log).getOneOrThrow(flow.flowVersionId)
+            await triggerSourceService(log).enable({ flowVersion, projectId: flow.projectId, simulate: false })
+        })
+        if (error !== null) {
+            // One flow failing must not stop the others, and must not fail the connection edit the
+            // user just made: the mode is already saved, and the next enable will retry.
+            log.error({
+                err: error,
+                flowId: flow.flowId,
+            }, '[longPollingTransportChange] Could not re-run the trigger hook after a delivery-mode change')
+        }
+    }
+}
 
 /**
  * Only flows whose **trigger** is this connection. Deliberately not `flowVersion.connectionIds`,
@@ -121,8 +130,13 @@ async function findEnabledFlowsTriggeredBy({ projectIds, externalId, qadamName }
         }))
 }
 
-/** The same predicate the registry uses to decide which connection a trigger is bound to. */
-function triggerConnectionOf(flowVersion: { trigger?: { settings?: { input?: Record<string, unknown> } } }): string | undefined {
+/**
+ * Which connection a trigger is bound to. The registry decides what to poll the same way
+ * (`long-polling-source.ts:toCandidate`), with two differences that do not matter here: it also
+ * requires `FlowTriggerType.PIECE`, and it reads a migrated flow version rather than the raw row —
+ * no migration rewrites `auth`, and a trigger of another type has no puller to change modes for.
+ */
+function triggerConnectionOf(flowVersion: FlowVersionSchema): string | undefined {
     const auth: unknown = flowVersion.trigger?.settings?.input?.auth
     if (typeof auth !== 'string') {
         return undefined
@@ -140,6 +154,10 @@ type FindFlowsParams = {
     projectIds: ProjectId[]
     externalId: string
     qadamName: string
+}
+
+type ReEnableNowParams = FindFlowsParams & {
+    log: FastifyBaseLogger
 }
 
 type ReEnableParams = FindFlowsParams & {
