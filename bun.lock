@@ -373,7 +373,7 @@
     },
     "packages/qadams/common": {
       "name": "@aiqadam/qadams-common",
-      "version": "0.12.3",
+      "version": "0.13.0",
       "dependencies": {
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
@@ -388,6 +388,7 @@
       },
       "devDependencies": {
         "@types/mime-types": "2.1.1",
+        "vitest": "3.0.8",
       },
     },
     "packages/qadams/community/activepieces": {
