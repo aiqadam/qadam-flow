@@ -1,8 +1,13 @@
-import { PopulatedFlow, FlowTriggerType } from '@aiqadam/shared';
+import {
+  PopulatedFlow,
+  FlowTriggerType,
+  LongPollingStatus,
+  isNil,
+} from '@aiqadam/shared';
 import cronstrue from 'cronstrue/i18n';
 import { t } from 'i18next';
 import JSZip from 'jszip';
-import { TimerReset, TriangleAlert, Zap } from 'lucide-react';
+import { AlertCircle, TimerReset, TriangleAlert, Zap } from 'lucide-react';
 
 import { downloadFile } from '@/lib/dom-utils';
 
@@ -29,11 +34,32 @@ const zipFlows = async (flows: PopulatedFlow[]) => {
   return zip;
 };
 
+/**
+ * A flow served by the long-polling host can be on, published and still receiving nothing — a
+ * revoked bot token, or a webhook the third party has not let go of. The enable switch says "on"
+ * in every one of those cases, so this is the only place the user is told otherwise.
+ */
+const longPollingIssue = (flow: PopulatedFlow) => {
+  const longPolling = flow.triggerSource?.longPolling;
+  if (isNil(longPolling) || longPolling.status === LongPollingStatus.POLLING) {
+    return null;
+  }
+  return longPolling;
+};
+
 export const flowsUtils = {
   downloadFlow,
   zipFlows,
   flowStatusToolTipRenderer: (flow: PopulatedFlow) => {
     const trigger = flow.version.trigger;
+    const issue = longPollingIssue(flow);
+    if (issue) {
+      const headline =
+        issue.status === LongPollingStatus.STOPPED
+          ? t('Not receiving updates. Turn the flow off and on again to retry.')
+          : t('Retrying — updates may be delayed.');
+      return issue.reason ? `${headline} ${issue.reason}` : headline;
+    }
     switch (trigger?.type) {
       case FlowTriggerType.PIECE: {
         const cronExpression = flow.triggerSource?.schedule?.cronExpression;
@@ -54,6 +80,14 @@ export const flowsUtils = {
   },
   flowStatusIconRenderer: (flow: PopulatedFlow) => {
     const trigger = flow.version.trigger;
+    const issue = longPollingIssue(flow);
+    if (issue) {
+      return issue.status === LongPollingStatus.STOPPED ? (
+        <TriangleAlert className="h-4 w-4 text-destructive" />
+      ) : (
+        <AlertCircle className="h-4 w-4 text-warning" />
+      );
+    }
     switch (trigger?.type) {
       case FlowTriggerType.PIECE: {
         const cronExpression = flow.triggerSource?.schedule?.cronExpression;

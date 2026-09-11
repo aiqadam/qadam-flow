@@ -14,6 +14,8 @@ const lockAndRefreshConnection = vi.fn()
 const getPuller = vi.fn()
 const runExclusive = vi.fn()
 const connectionExistsBy = vi.fn()
+const reportStatus = vi.fn()
+const clearStatus = vi.fn()
 const store = new Map<string, unknown>()
 let longPollingEnabled = true
 
@@ -51,6 +53,13 @@ vi.mock('../../../../../src/app/database/redis-connections', () => ({
         put: async (key: string, value: unknown) => {
             store.set(key, value)
         },
+    },
+}))
+
+vi.mock('../../../../../src/app/trigger/long-polling/long-polling-status', () => ({
+    longPollingStatus: {
+        report: (...args: unknown[]) => reportStatus(...args),
+        clear: (...args: unknown[]) => clearStatus(...args),
     },
 }))
 
@@ -114,6 +123,8 @@ describe('longPollingHost', () => {
             value: { type: 'SECRET_TEXT', secret_text: '777:token' },
         })
         connectionExistsBy.mockResolvedValue(false)
+        reportStatus.mockResolvedValue(undefined)
+        clearStatus.mockResolvedValue(undefined)
         handleWebhook.mockResolvedValue({ status: StatusCodes.OK, body: {}, headers: {} })
     })
 
@@ -395,6 +406,65 @@ describe('longPollingHost', () => {
         // One window per grant: the loop stopped as soon as the key moved instead of carrying on
         // against the new bot while still holding the old bot's lock.
         expect(waitForEvents).toHaveBeenCalledTimes(2)
+    })
+
+    // A published, switched-on flow that receives nothing looks identical to a healthy one in the
+    // UI, so the reason has to reach somewhere a user can read it.
+    it('publishes why it stopped, not just that it stopped', async () => {
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.FATAL,
+            reason: 'the webhook is still registered for this bot',
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'STOPPED',
+        })))
+        await host.stop()
+
+        const stopped = reportStatus.mock.calls.map(([params]) => params).find((params) => params.status === 'STOPPED')
+        expect(stopped).toMatchObject({
+            projectId: source.projectId,
+            flowId: source.flowId,
+            reason: 'the webhook is still registered for this bot',
+        })
+    })
+
+    it('reports a retryable failure as backing off rather than as stopped', async () => {
+        const waitForEvents = vi.fn()
+            .mockResolvedValueOnce({ outcome: QadamEventPullOutcome.RETRYABLE, reason: 'telegram is down' })
+            .mockResolvedValue(stopsImmediately)
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(reportStatus).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'BACKING_OFF',
+            reason: 'telegram is down',
+        })))
+        await host.stop()
+    })
+
+    it('clears the status of a source it stops serving, instead of leaving it to expire', async () => {
+        const waitForEvents = vi.fn().mockResolvedValue({
+            outcome: QadamEventPullOutcome.EVENTS,
+            events: [],
+            nextCursor: '1',
+        })
+        getPuller.mockReturnValue(puller(waitForEvents))
+
+        const host = await loadHost()
+        await host.start()
+        await vi.waitFor(() => expect(runExclusive).toHaveBeenCalled())
+        listSources.mockResolvedValue([])
+        host.requestSync()
+        await vi.waitFor(() => expect(clearStatus).toHaveBeenCalledWith({
+            projectId: source.projectId,
+            flowId: source.flowId,
+        }))
+        await host.stop()
     })
 
     it('never lets a throwing puller take anything else down', async () => {

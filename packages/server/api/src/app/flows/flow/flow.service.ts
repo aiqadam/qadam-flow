@@ -25,6 +25,7 @@ import {
     QadamFlowError,
     SeekPage,
     SharedTemplate,
+    spreadIfDefined,
     TelemetryEventName,
     TemplateStatus,
     TemplateType,
@@ -47,6 +48,7 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
 import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
 import { flowVersionMigrationService } from '../flow-version/flow-version-migration.service'
 import { flowVersionRepo, flowVersionService } from '../flow-version/flow-version.service'
@@ -339,6 +341,12 @@ export const flowService = (log: FastifyBaseLogger) => ({
             version: flowVersion,
             triggerSource: triggerSource ? {
                 schedule: triggerSource.schedule,
+                // Only meaningful for a flow the long-polling host serves; null for every other one,
+                // and `spreadIfDefined` keeps it off the response rather than sending an explicit null.
+                ...spreadIfDefined('longPolling', await longPollingStatus.get({
+                    projectId,
+                    flowId: id,
+                }) ?? undefined),
             } : undefined,
         }
     },

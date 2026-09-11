@@ -1,6 +1,6 @@
 import { monitorEventLoopDelay } from 'perf_hooks'
 import { QadamEventPuller, QadamEventPullOutcome } from '@aiqadam/qadams-framework'
-import { AppConnection, AppConnectionStatus, ErrorCode, isNil, QadamFlowError, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { AppConnection, AppConnectionStatus, ErrorCode, isNil, LongPollingStatus, QadamFlowError, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { metrics } from '@opentelemetry/api'
 import { Mutex } from 'async-mutex'
 import { FastifyBaseLogger } from 'fastify'
@@ -16,6 +16,7 @@ import { AppSystemProp } from '../../helper/system/system-props'
 import { WebhookFlowVersionToRun, webhookService } from '../../webhooks/webhook.service'
 import { eventPullerRegistry } from './event-puller-registry'
 import { LongPollingSource, longPollingSourceRegistry } from './long-polling-source'
+import { longPollingStatus } from './long-polling-status'
 
 const LOCK_TTL_SECONDS = 60
 const LOCK_RETRY_DELAY_MS = 15_000
@@ -136,6 +137,12 @@ async function sync(log: FastifyBaseLogger): Promise<void> {
             if (isNil(next) || next.triggerSourceId !== task.source.triggerSourceId) {
                 task.abortController.abort()
                 tasks.delete(key)
+                // The flow is gone, disabled, or republished: whatever the old task last reported
+                // is no longer true of anything, so it should not linger until its TTL.
+                rejectedPromiseHandler(longPollingStatus.clear({
+                    projectId: task.source.projectId,
+                    flowId: task.source.flowId,
+                }), log)
             }
         }
         // Keyed on the trigger-source row rather than the flow version, so disabling and re-enabling
@@ -190,6 +197,7 @@ async function runTask({ source, hostSignal, log }: RunTaskParams): Promise<void
                 reason: credential.reason,
                 backoffMs,
             }, '[longPollingHost#runTask] Could not read the connection, retrying')
+            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: credential.reason, log })
             continue
         }
 
@@ -267,6 +275,7 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
                 reason: credential.reason,
                 backoffMs,
             }, '[longPollingHost#pollLoop] Could not read the connection, retrying')
+            reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: credential.reason, log })
             // Re-read on the next pass rather than cached, so a rotated token takes effect at once.
             credential = await resolveCredential({ source, puller, log })
             continue
@@ -320,6 +329,7 @@ async function pollLoop({ source, puller, credential: acquiredWith, signal, log 
                     reason: result.reason,
                     backoffMs,
                 }, '[longPollingHost#pollLoop] Retryable pull failure')
+                reportStatus({ source, status: LongPollingStatus.BACKING_OFF, reason: result.reason, log })
                 break
             }
             case QadamEventPullOutcome.FATAL: {
@@ -437,6 +447,21 @@ function markFatal({ source, reason, log }: MarkFatalParams): void {
         projectId: source.projectId,
         reason,
     }, '[longPollingHost#markFatal] Long-polling task stopped; disable and re-enable the flow to retry')
+    reportStatus({ source, status: LongPollingStatus.STOPPED, reason, log })
+}
+
+/**
+ * Fire-and-forget, and deliberately not awaited anywhere on the polling path: a status nobody can
+ * write is a worse outcome than a stale one, but it is not worth holding a window open for.
+ */
+function reportStatus({ source, status, reason, log }: ReportStatusParams): void {
+    rejectedPromiseHandler(longPollingStatus.report({
+        projectId: source.projectId,
+        flowId: source.flowId,
+        status,
+        reason,
+        since: new Date().toISOString(),
+    }), log)
 }
 
 /**
@@ -607,6 +632,13 @@ type ResolveCredentialParams = {
 type DeliverEventsParams = {
     source: LongPollingSource
     events: unknown[]
+    log: FastifyBaseLogger
+}
+
+type ReportStatusParams = {
+    source: LongPollingSource
+    status: LongPollingStatus
+    reason?: string
     log: FastifyBaseLogger
 }
 
