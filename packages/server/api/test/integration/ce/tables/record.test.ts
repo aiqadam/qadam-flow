@@ -1043,6 +1043,35 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
 
+        it('rejects the same column set twice inside one record', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'k' }, { fieldId: key.id, value: 'other' }]],
+            })
+
+            // Two rows with one conflict target in a single statement; Postgres answers
+            // that with a 500 on a body UpsertRecordsRequest accepts.
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('rejects the same column twice when the key already exists', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: key.id, value: 'k' })
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'k' }, { fieldId: key.id, value: 'other' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
         it('rejects a key repeated inside one batch', async () => {
             const ctx = await setup()
             const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })

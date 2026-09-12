@@ -212,6 +212,7 @@ export const recordService = {
 
             const validRecords = records.map((cells) => cells.filter((cellData) => fieldIds.has(cellData.fieldId)))
             assertEveryRecordCarriesTheKey({ records: validRecords, keyFieldIds })
+            assertNoRepeatedColumn({ records: validRecords })
             assertNoRepeatedKey({ records: validRecords, keyOf })
 
             const outcomes: { action: UpsertAction, recordId: string }[] = []
@@ -234,7 +235,7 @@ export const recordService = {
             // Counted inside the lock, with only the rows actually being inserted —
             // unlike create(), which charges the whole request against the cap.
             if (toInsert.length > 0) {
-                await this.validateCount({ projectId, tableId }, toInsert.length)
+                await this.validateCount({ projectId, tableId, entityManager }, toInsert.length)
                 const insertions = prepareRecordInsertions(toInsert.map((row) => row.cells), tableId, projectId, new Date())
                 const cellInsertions = prepareCellInsertions(toInsert.map((row) => row.cells), insertions, projectId)
                 // Chunked, as create() is. One statement carrying every row of a
@@ -541,10 +542,13 @@ export const recordService = {
         }))
     },
 
-    async count({ projectId, tableId }: CountParams): Promise<number> {
-        return recordRepo().count({
-            where: { projectId, tableId },
-        })
+    async count({ projectId, tableId, entityManager }: CountParams): Promise<number> {
+        // The caller's transaction manager when there is one: counting on the default
+        // manager from inside a transaction takes a SECOND pool connection while the
+        // first is still held, so AP_POSTGRES_POOL_SIZE concurrent upserts deadlock
+        // waiting for connections that cannot be issued.
+        const repository = isNil(entityManager) ? recordRepo() : entityManager.getRepository(RecordEntity)
+        return repository.count({ where: { projectId, tableId } })
     },
     async validateCount(params: CountParams, insertCount: number): Promise<void> {
         const countRes = await this.count(params)
@@ -628,6 +632,7 @@ type TriggerWebhooksParams = {
 type CountParams = {
     projectId: string
     tableId: string
+    entityManager?: EntityManager
 }
 
 type RecordInsertion = {
@@ -723,6 +728,19 @@ function assertEveryRecordCarriesTheKey({ records, keyFieldIds }: { records: { f
     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
 }
 
+// The same column twice inside one record is two rows with one conflict target, which
+// Postgres answers with a 500 on a body the request schema accepts. updateMany rejects
+// it for the same reason; so must this.
+function assertNoRepeatedColumn({ records }: { records: { fieldId: string }[][] }): void {
+    for (const [index, cells] of records.entries()) {
+        const repeated = firstRepeated(cells.map((cellData) => cellData.fieldId))
+        if (!isNil(repeated)) {
+            const message = `Record #${index + 1} sets column ${repeated} more than once.`
+            throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+        }
+    }
+}
+
 // Two input rows sharing a key would race each other inside one request: the second
 // would match what the first just inserted, or not, depending on statement order.
 function assertNoRepeatedKey({ records, keyOf }: { records: { fieldId: string, value: unknown }[][], keyOf: KeyReader }): void {
@@ -754,7 +772,7 @@ async function indexExistingRecordsByKey({ entityManager, projectId, tableId, ke
         return new Map()
     }
     const cells = await entityManager.getRepository(CellEntity).find({
-        where: { projectId, fieldId: In(keyFieldIds), recordId: In(rows.map((row) => row.id)) },
+        where: { projectId, fieldId: In(keyFieldIds) },
     })
     const cellsByRecordId = new Map<string, { fieldId: string, value: unknown }[]>()
     for (const cell of cells) {

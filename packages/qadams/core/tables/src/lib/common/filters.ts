@@ -12,8 +12,10 @@ export const filterUtils = {
     return toEntries({ value: rawFilters, nested: false }).map((entry, index) => toWireFilter({ entry, index, fields }));
   },
 
-  // The same editor shape the Find Records filter uses, so a condition written in
-  // one place reads the same in the other.
+  // A narrower editor than the Find Records one, deliberately: a precondition is an
+  // equality/existence check on the row you are about to write, so the range and
+  // contains operators are omitted. Find Records keeps its own list for that reason
+  // rather than sharing this one.
   buildConditionProps({ fields }: { fields: Field[] }) {
     return Property.Array({
       displayName: 'Conditions',
@@ -45,7 +47,7 @@ export const filterUtils = {
         }),
         value: Property.ShortText({
           displayName: 'Value',
-          description: 'For "In" / "Not In", pass a comma-separated list or a list variable.',
+          description: CONDITION_VALUE_DESCRIPTION,
           required: false,
         }),
       },
@@ -301,5 +303,7 @@ const ALL_OPERATORS: readonly FilterOperator[] = Object.values(FilterOperator);
 const MAX_REPORTED_KEYS = 10;
 
 const MAX_REPORTED_VALUE_LENGTH = 100;
+
+const CONDITION_VALUE_DESCRIPTION = 'For "In" / "Not In", pass a comma-separated list or a list variable.';
 
 const SHAPE_HINT = 'Expected {"filters":[{"field":"<column name or id>","operator":"eq","value":"..."}]}.';

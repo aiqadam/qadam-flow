@@ -1,5 +1,5 @@
 import { ExecutionType } from '@aiqadam/shared';
-import { ActionContext } from '../context';
+import { ActionContext, Store } from '../context';
 import { InputPropertyMap, StaticPropsValue } from '../property';
 
 export function createMockActionContext<
@@ -11,14 +11,14 @@ export function createMockActionContext<
     executionType: ExecutionType.BEGIN,
     auth: undefined,
     propsValue: params.propsValue,
-    store: {
+    store: ({
       put: async <T>(key: string, value: T) => value,
       get: async () => null,
       delete: async () => {
         return;
       },
       putIfAbsent: async <T>(_key: string, value: T) => ({ stored: true, value }),
-    },
+    } satisfies Store),
     connections: {
       get: async () => null,
     },

@@ -23,7 +23,7 @@ import { securityAccess } from '../../core/security/authorization/fastify-securi
 import { TableEntity } from '../table/table.entity'
 import { recordSideEffects } from './record-side-effects'
 import { RecordEntity } from './record.entity'
-import { recordService } from './record.service'
+import { recordService, UpsertResult } from './record.service'
 
 const DEFAULT_PAGE_SIZE = 10
 
@@ -82,14 +82,11 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
         })
         await reply.status(StatusCodes.OK).send(results)
 
-        // Split by outcome so RECORD_CREATED and RECORD_UPDATED webhooks each fire
-        // for the rows they actually describe.
-        const [created, updated] = partition(results, (result) => result.action === UpsertAction.CREATED)
-        for (const [records, event] of [[created, 'created'], [updated, 'updated']] as const) {
+        for (const [records, event] of splitByUpsertOutcome(results)) {
             await recordSideEffects(fastify.log).handleRecordsEvent({
                 tableId: request.body.tableId,
                 projectId: request.projectId,
-                records: records.map((result) => result.record),
+                records,
                 logger: request.log,
                 authorization: request.headers.authorization as string,
             }, event)
@@ -178,6 +175,17 @@ const GetRecordByIdRequest = {
             [StatusCodes.NOT_FOUND]: z.string(),
         },
     },
+}
+
+// Extracted so the predicate is testable: inverting it fires RECORD_CREATED for rows
+// that were updated, which re-runs every "New Record" flow on a repeat delivery — the
+// exact failure upsert exists to prevent — and no HTTP-level test can see it.
+export function splitByUpsertOutcome(results: UpsertResult[]): [UpsertResult['record'][], 'created' | 'updated'][] {
+    const [created, updated] = partition(results, (result) => result.action === UpsertAction.CREATED)
+    return [
+        [created.map((result) => result.record), 'created'],
+        [updated.map((result) => result.record), 'updated'],
+    ]
 }
 
 const UpsertRequest = {
