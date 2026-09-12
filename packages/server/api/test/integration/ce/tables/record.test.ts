@@ -521,6 +521,99 @@ describe('Record API', () => {
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
+
+        it('LT on a DATE field matches a cell earlier the same day', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.DATE })
+            const inWindow = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: '2026-09-10T09:00:00Z' })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: '2026-09-12T09:00:00Z' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.LT, value: '2026-09-11T00:00:00Z' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(inWindow.id)
+        })
+
+        it('GTE on a DATE field does not match every row of the same year', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.DATE })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: '2026-01-01T00:00:00Z' })
+            const onOrAfter = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: '2026-12-31T23:59:59Z' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.GTE, value: '2026-12-31T23:59:59Z' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(onOrAfter.id)
+        })
+
+        it('GT on a TEXT field compares lexicographically', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const later = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Beta' })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Alpha' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.GT, value: 'B' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(later.id)
+        })
+
+        it('rejects a range value the column type cannot interpret', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.DATE })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: '2026-09-10T09:00:00Z' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.GT, value: 'yesterday' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        // A binding that resolves to an empty string is the ordinary way to get
+        // here, and an empty cell is excluded from ordering — so accepting it
+        // would make gte match every row with a non-empty cell.
+        it('rejects a blank range value on a TEXT column instead of matching every row', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Alpha' })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Beta' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.GTE, value: '' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('rejects an uninterpretable range value even when the table is empty', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.NUMBER })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.GT, value: 'ten' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
     })
 
     describeWithAuth('DELETE /v1/records (Delete)', () => app!, (setup) => {
@@ -564,10 +657,23 @@ describe('Record API', () => {
 })
 
 async function createTableWithField(ctx: TestContext) {
+    return createTableWithTypedField({ ctx, type: FieldType.TEXT })
+}
+
+async function createTableWithTypedField({ ctx, type }: { ctx: TestContext, type: FieldType }) {
     const table = createMockTable({ projectId: ctx.project.id })
     await db.save('table', table)
     const field = createMockField({ tableId: table.id, projectId: ctx.project.id })
-    field.type = FieldType.TEXT
+    field.type = type
     await db.save('field', field)
     return { table, field }
+}
+
+async function createRecordWithCell({ ctx, tableId, fieldId, value }: { ctx: TestContext, tableId: string, fieldId: string, value: string }) {
+    const record = createMockRecord({ tableId, projectId: ctx.project.id })
+    await db.save('record', record)
+    const cell = createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id })
+    cell.value = value
+    await db.save('cell', cell)
+    return record
 }

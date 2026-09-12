@@ -1,19 +1,16 @@
 import {
     apId,
-    Cell,
     chunk,
     CreateRecordsRequest,
     Cursor,
     ErrorCode,
     Field,
     Filter,
-    FilterOperator,
     isNil,
     PopulatedRecord,
     QadamFlowError,
     SeekPage,
     TableWebhookEventType,
-    unique,
     UpdateRecordRequest,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -27,6 +24,7 @@ import { FieldEntity } from '../field/field.entity'
 import { fieldService } from '../field/field.service'
 import { tableService } from '../table/table.service'
 import { CellEntity } from './cell.entity'
+import { recordFilter } from './record-filter'
 import { RecordEntity, RecordSchema } from './record.entity'
 
 const MAX_BATCH_SIZE = 50
@@ -93,7 +91,7 @@ export const recordService = {
             tableId,
             projectId,
         })
-        assertFiltersReferenceTableFields({ filters, fields, tableId })
+        const compiledFilters = recordFilter.compile({ filters, fields, tableId })
         const records = await recordRepo().find({
             where: {
                 projectId,
@@ -124,18 +122,7 @@ export const recordService = {
         for (const record of records) {
             record.cells = cellsByRecordId.get(record.id) ?? []
         }
-        const filteredOutRecords = records.filter((record) => {
-            if (!filters || filters.length === 0) {
-                return true
-            }
-            return filters.every((filter) => {
-                const cell = record.cells.find(c => c.fieldId === filter.fieldId)
-                if (!cell) {
-                    return filter.operator === FilterOperator.NOT_EXISTS
-                }
-                return doesCellValueMatchFilters(cell, [filter])
-            })
-        })
+        const filteredOutRecords = records.filter((record) => recordFilter.matchesAll({ cells: record.cells, compiledFilters }))
 
         const populatedRecords = await formatRecordsAndFetchField({ records: filteredOutRecords, tableId, projectId, fields })
 
@@ -502,91 +489,3 @@ function formatRecords(records: RecordSchema[], fields: Field[]): PopulatedRecor
         }
     })
 }
-
-// A filter naming a column this table does not have used to match no cell, which
-// every operator but NOT_EXISTS reads as "no rows" and NOT_EXISTS reads as "all
-// rows". Both are a filter silently not being applied, so reject it instead.
-function assertFiltersReferenceTableFields({ filters, fields, tableId }: { filters: Filter[] | null, fields: Field[], tableId: string }): void {
-    if (isNil(filters) || filters.length === 0) {
-        return
-    }
-    const fieldIds = new Set(fields.map((field) => field.id))
-    const unknownFieldIds = unique(filters.map((filter) => filter.fieldId).filter((fieldId) => !fieldIds.has(fieldId)))
-    if (unknownFieldIds.length === 0) {
-        return
-    }
-    throw new QadamFlowError({
-        code: ErrorCode.VALIDATION,
-        params: {
-            message: `Filter references field(s) not present in table ${tableId}: ${unknownFieldIds.join(', ')}`,
-        },
-    })
-}
-
-function doesCellValueMatchFilters(cell: Cell, filters: Filter[]): boolean {
-    if (filters.length === 0) {
-        return true
-    }
-    return filters.every((filter) => {
-        if (filter.fieldId !== cell.fieldId) {
-            return true
-        }
-        switch (filter.operator) {
-            case FilterOperator.EXISTS: {
-                return cell.value !== null && cell.value !== ''
-            }
-            case FilterOperator.NOT_EXISTS: {
-                return cell.value === null || cell.value === ''
-            }
-            case FilterOperator.EQ: {
-                return cell.value === filter.value
-            }
-            case FilterOperator.NEQ: {
-                return cell.value !== filter.value
-            }
-            case FilterOperator.GT: {
-                return numberFilterValidator({ cellValue: cell.value, filterValue: filter.value, cb: ({ cellValue, filterValue }) => cellValue > filterValue })
-            }
-            case FilterOperator.GTE: {
-                return numberFilterValidator({ cellValue: cell.value, filterValue: filter.value, cb: ({ cellValue, filterValue }) => cellValue >= filterValue })
-            }
-            case FilterOperator.LT: {
-                return numberFilterValidator({ cellValue: cell.value, filterValue: filter.value, cb: ({ cellValue, filterValue }) => cellValue < filterValue })
-            }
-            case FilterOperator.LTE: {
-                return numberFilterValidator({ cellValue: cell.value, filterValue: filter.value, cb: ({ cellValue, filterValue }) => cellValue <= filterValue })
-            }
-            case FilterOperator.CO: {
-                if (typeof cell.value === 'string') {
-                    return cell.value.toLowerCase().includes(filter.value.toLowerCase())
-                }
-                return false
-            }
-            case FilterOperator.IN: {
-                return typeof cell.value === 'string' && filter.value.includes(cell.value)
-            }
-            case FilterOperator.NOT_IN: {
-                // A null/empty cell counts as "not in the list" (included), matching
-                // NEQ. Note the caller's outer guard still excludes records that have
-                // no cell row at all for this field, as it does for every non-NOT_EXISTS
-                // operator.
-                return typeof cell.value !== 'string' || !filter.value.includes(cell.value)
-            }
-        }
-    })
-
-}
-
-const numberFilterValidator = ({ cellValue, filterValue, cb }: { cellValue: unknown, filterValue: string, cb: ({ cellValue, filterValue }: { cellValue: number, filterValue: number }) => boolean }) => {
-    if (typeof cellValue === 'string' || typeof cellValue === 'number') {
-        const cv = parseFloat(cellValue as string)
-        const fv = parseFloat(filterValue)
-        if (isNaN(cv) || isNaN(fv)) {
-            return false
-        }
-        return cb({ cellValue: cv, filterValue: fv })
-    }
-    return false
-}
-
-

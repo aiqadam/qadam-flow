@@ -31,7 +31,7 @@ const findRecordsInput = z.object({
     filters: z.array(z.object({
         fieldName: z.string().describe('The field name to filter on'),
         operator: operatorSchema.describe('Filter operator'),
-        value: z.string().optional().describe('Filter value (required for all operators except exists/not_exists). For in/not_in, pass a comma-separated list.'),
+        value: z.string().optional().describe('Filter value (required for all operators except exists/not_exists). For in/not_in, pass a comma-separated list. gt/gte/lt/lte compare by column type: NUMBER numerically, DATE by parsed timestamp (ISO, not epoch milliseconds), TEXT and STATIC_DROPDOWN alphabetically ignoring case. A DATE value with no time names the whole UTC day, so `lte 2026-09-11` includes rows dated the 11th.'),
     })).optional().describe('Optional filters. All filters are combined with AND logic.'),
     limit: z.number().min(1).max(500).optional().describe('Max records to return (default 50, max 500)'),
 })
@@ -40,7 +40,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
     return {
         title: 'ap_find_records',
         permission: Permission.READ_TABLE,
-        description: 'Query records from a table with optional filtering. Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists.',
+        description: 'Query records from a table with optional filtering. Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists. Range operators respect the column type; a value the column type cannot interpret is rejected rather than returning an empty result.',
         inputSchema: findRecordsInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
