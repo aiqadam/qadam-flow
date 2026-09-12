@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { flagsHooks } from '@/hooks/flags-hooks';
 
 import { GenericPropertiesForm } from '../../qadam-properties/generic-properties-form';
+import { QadamVersionUnavailable } from '../qadam-version-unavailable';
 import { useStepSettingsContext } from '../step-settings-context';
 
 import { ConnectionSelect } from './connection-select';
@@ -32,6 +33,7 @@ const removeAuthFromProps = (
 const PieceSettings = React.memo((props: PieceSettingsProps) => {
   const {
     qadamModel,
+    qadamModelError,
     selectedStep,
     updateFormSchema,
     updatePropertySettingsSchema,
@@ -80,7 +82,11 @@ const PieceSettings = React.memo((props: PieceSettingsProps) => {
     !isNil(selectedTrigger) && (selectedTrigger.requireAuth ?? true);
   return (
     <div className="flex flex-col gap-4 w-full">
-      {!qadamModel && (
+      {qadamModelError && !qadamModel && (
+        <QadamVersionUnavailable step={props.step} readonly={props.readonly} />
+      )}
+
+      {!qadamModel && !qadamModelError && (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <div className="space-y-2" key={index}>

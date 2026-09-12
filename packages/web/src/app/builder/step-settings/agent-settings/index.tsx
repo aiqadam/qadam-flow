@@ -18,6 +18,7 @@ import {
   selectGenericFormComponentForProperty,
   SelectGenericFormComponentForPropertyParams,
 } from '../../qadam-properties/properties-utils';
+import { QadamVersionUnavailable } from '../qadam-version-unavailable';
 import { useStepSettingsContext } from '../step-settings-context';
 
 type AgentSettingsProps = {
@@ -27,9 +28,19 @@ type AgentSettingsProps = {
 };
 
 export const AgentSettings = (props: AgentSettingsProps) => {
-  const { qadamModel, updateFormSchema, updatePropertySettingsSchema } =
-    useStepSettingsContext();
+  const {
+    qadamModel,
+    qadamModelError,
+    updateFormSchema,
+    updatePropertySettingsSchema,
+  } = useStepSettingsContext();
   const form = useFormContext();
+
+  if (qadamModelError && isNil(qadamModel)) {
+    return (
+      <QadamVersionUnavailable step={props.step} readonly={props.readonly} />
+    );
+  }
 
   if (isNil(qadamModel)) {
     return (

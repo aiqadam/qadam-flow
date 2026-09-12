@@ -61,6 +61,7 @@ type UsePieceProps = {
   name: string;
   version?: string;
   enabled?: boolean;
+  retry?: boolean;
 };
 
 type UseMultiplePiecesProps = {
@@ -81,7 +82,7 @@ type UsePiecesSearchProps = {
 };
 
 export const qadamsHooks = {
-  useQadam: ({ name, version, enabled = true }: UsePieceProps) => {
+  useQadam: ({ name, version, enabled = true, retry }: UsePieceProps) => {
     const { i18n } = useTranslation();
     const query = useQuery<QadamMetadataModel, Error>({
       queryKey: ['qadam', name, version],
@@ -89,10 +90,14 @@ export const qadamsHooks = {
         qadamsApi.get({ name, version, locale: i18n.language as LocalesEnum }),
       staleTime: Infinity,
       enabled,
+      // Omit the key entirely rather than default to `true` — react-query treats a
+      // literal `true` as "retry forever", not "use the client's default retry count".
+      ...(retry !== undefined ? { retry } : {}),
     });
     return {
       qadamModel: query.data,
       isLoading: query.isLoading,
+      isError: query.isError,
       isSuccess: query.isSuccess,
       refetch: query.refetch,
     };
@@ -109,10 +114,12 @@ export const qadamsHooks = {
       name,
       version: exactVersion,
       enabled,
+      retry: false,
     });
     return {
       qadamModel: qadamQuery.qadamModel,
       isLoading: qadamQuery.isLoading,
+      isError: qadamQuery.isError,
       isSuccess: qadamQuery.isSuccess,
       refetch: qadamQuery.refetch,
     };

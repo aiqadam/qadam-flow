@@ -275,6 +275,19 @@ const sortByVersionDescending = <T extends { version: string }>(a: T, b: T): num
     return semVer.rcompare(a.version, b.version)
 }
 
+// Deliberately looser than the registry-path range above for an exact or `~` pin: the whole
+// point of this fallback is that the pinned version no longer exists anywhere (bundled or
+// persisted), so reusing that same range here would always match nothing and defeat the
+// fallback. (For a `^` pin the two ranges already agree, since findNextExcludedVersion treats
+// `^` the same way.) A caret range is the bound instead — same-minor drift for 0.x, same-major
+// for 1.x+ — so a step still can't cross what semver itself calls a breaking boundary.
+const satisfiesRequestedRange = ({ candidate, requestedBaseVersion }: { candidate: string, requestedBaseVersion: string }): boolean => {
+    if (!semVer.valid(candidate) || !semVer.valid(requestedBaseVersion)) {
+        return false
+    }
+    return semVer.satisfies(candidate, `^${requestedBaseVersion}`)
+}
+
 const findExactVersion = async (
     log: FastifyBaseLogger,
     params: { name: string, version: string | undefined, platformId: string | undefined },
@@ -295,7 +308,7 @@ const findExactVersion = async (
     })
 
     if (matchingRegistryEntries.length === 0) {
-        return undefined
+        return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion, currentRelease, platformId })
     }
 
     const sortedEntries = matchingRegistryEntries.sort(sortByVersionDescending)
@@ -303,6 +316,34 @@ const findExactVersion = async (
         name: sortedEntries[0].name,
         version: sortedEntries[0].version,
         platformId: sortedEntries[0].platformId,
+    }
+}
+
+const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRelease, platformId }: {
+    log: FastifyBaseLogger
+    name: string
+    requestedBaseVersion: string | undefined
+    currentRelease: string
+    platformId: string | undefined
+}): Promise<{ name: string, version: string, platformId: string | undefined } | undefined> => {
+    const bundledQadams = await loadBundledQadams(log)
+    const bundled = bundledQadams.find((qadam) => qadam.name === name)
+    if (isNil(bundled)) {
+        return undefined
+    }
+    if (!isNil(requestedBaseVersion) && !satisfiesRequestedRange({ candidate: bundled.version, requestedBaseVersion })) {
+        return undefined
+    }
+    if (!filterQadamBasedOnType(platformId, bundled) || !isSupportedRelease(currentRelease, bundled)) {
+        return undefined
+    }
+    if (!isNil(requestedBaseVersion) && requestedBaseVersion !== bundled.version) {
+        log.warn({ name, requestedVersion: requestedBaseVersion, resolvedVersion: bundled.version }, '[qadamMetadataService] pinned qadam version unavailable, resolved to the bundled build instead')
+    }
+    return {
+        name: bundled.name,
+        version: bundled.version,
+        platformId: bundled.platformId,
     }
 }
 
