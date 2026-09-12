@@ -275,11 +275,12 @@ const sortByVersionDescending = <T extends { version: string }>(a: T, b: T): num
     return semVer.rcompare(a.version, b.version)
 }
 
-// Deliberately looser than the registry-path range above: the whole point of this fallback is
-// that the exact pinned version no longer exists anywhere (bundled or persisted), so reusing
-// that same range here would always match nothing for an exact/`~` pin and defeat the fallback.
-// A caret range is the bound instead — same-minor drift for 0.x, same-major for 1.x+ — so a
-// step still can't cross what semver itself calls a breaking boundary.
+// Deliberately looser than the registry-path range above for an exact or `~` pin: the whole
+// point of this fallback is that the pinned version no longer exists anywhere (bundled or
+// persisted), so reusing that same range here would always match nothing and defeat the
+// fallback. (For a `^` pin the two ranges already agree, since findNextExcludedVersion treats
+// `^` the same way.) A caret range is the bound instead — same-minor drift for 0.x, same-major
+// for 1.x+ — so a step still can't cross what semver itself calls a breaking boundary.
 const satisfiesRequestedRange = ({ candidate, requestedBaseVersion }: { candidate: string, requestedBaseVersion: string }): boolean => {
     if (!semVer.valid(candidate) || !semVer.valid(requestedBaseVersion)) {
         return false
