@@ -222,6 +222,7 @@ const MultiSelectTrigger = React.forwardRef<
     return (
       <PopoverPrimitive.Trigger ref={forwardedRef as any} asChild>
         <Button
+          id={props.id}
           variant="outline"
           aria-disabled={disabled}
           disabled={disabled}
