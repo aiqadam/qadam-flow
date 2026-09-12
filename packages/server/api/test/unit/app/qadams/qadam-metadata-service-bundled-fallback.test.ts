@@ -76,6 +76,19 @@ describe('qadamMetadataService.get() — bundled fallback (unit)', () => {
         expect(result).toBeUndefined()
     })
 
+    it('does not cross a minor version boundary for a 0.x pin, where semver treats minor as breaking', async () => {
+        loadBundledQadams.mockResolvedValue([
+            bundledQadam({ name: '@aiqadam/qadam-fixture', version: '0.30.0' }),
+        ])
+
+        const result = await qadamMetadataService(logger).get({
+            name: '@aiqadam/qadam-fixture',
+            version: '0.4.2',
+        })
+
+        expect(result).toBeUndefined()
+    })
+
     it('ignores a persisted OFFICIAL registry row that is not actually bundled on disk', async () => {
         loadRegistry.mockResolvedValue([
             {

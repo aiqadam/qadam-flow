@@ -275,11 +275,16 @@ const sortByVersionDescending = <T extends { version: string }>(a: T, b: T): num
     return semVer.rcompare(a.version, b.version)
 }
 
-const isSameMajorVersion = ({ candidate, requested }: { candidate: string, requested: string }): boolean => {
-    if (!semVer.valid(candidate) || !semVer.valid(requested)) {
+// Deliberately looser than the registry-path range above: the whole point of this fallback is
+// that the exact pinned version no longer exists anywhere (bundled or persisted), so reusing
+// that same range here would always match nothing for an exact/`~` pin and defeat the fallback.
+// A caret range is the bound instead — same-minor drift for 0.x, same-major for 1.x+ — so a
+// step still can't cross what semver itself calls a breaking boundary.
+const satisfiesRequestedRange = ({ candidate, requestedBaseVersion }: { candidate: string, requestedBaseVersion: string }): boolean => {
+    if (!semVer.valid(candidate) || !semVer.valid(requestedBaseVersion)) {
         return false
     }
-    return semVer.major(candidate) === semVer.major(requested)
+    return semVer.satisfies(candidate, `^${requestedBaseVersion}`)
 }
 
 const findExactVersion = async (
@@ -302,7 +307,7 @@ const findExactVersion = async (
     })
 
     if (matchingRegistryEntries.length === 0) {
-        return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion })
+        return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion, currentRelease, platformId })
     }
 
     const sortedEntries = matchingRegistryEntries.sort(sortByVersionDescending)
@@ -313,17 +318,22 @@ const findExactVersion = async (
     }
 }
 
-const findBundledFallback = async ({ log, name, requestedBaseVersion }: {
+const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRelease, platformId }: {
     log: FastifyBaseLogger
     name: string
     requestedBaseVersion: string | undefined
+    currentRelease: string
+    platformId: string | undefined
 }): Promise<{ name: string, version: string, platformId: string | undefined } | undefined> => {
     const bundledQadams = await loadBundledQadams(log)
     const bundled = bundledQadams.find((qadam) => qadam.name === name)
     if (isNil(bundled)) {
         return undefined
     }
-    if (!isNil(requestedBaseVersion) && !isSameMajorVersion({ candidate: bundled.version, requested: requestedBaseVersion })) {
+    if (!isNil(requestedBaseVersion) && !satisfiesRequestedRange({ candidate: bundled.version, requestedBaseVersion })) {
+        return undefined
+    }
+    if (!filterQadamBasedOnType(platformId, bundled) || !isSupportedRelease(currentRelease, bundled)) {
         return undefined
     }
     return {
