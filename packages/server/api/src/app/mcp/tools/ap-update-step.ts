@@ -1,3 +1,4 @@
+import { QadamPropertyMap } from '@aiqadam/qadams-framework'
 import {
     FlowActionType,
     FlowOperationRequest,
@@ -17,6 +18,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { mcpUtils } from './mcp-utils'
+import { stepInputMerge } from './step-input-merge'
 
 const updateStepInput = z.object({
     flowId: z.string(),
@@ -91,17 +93,24 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
 
             const currentSettings = step.settings as Record<string, unknown>
             const updatedSettings: Record<string, unknown> = { ...currentSettings }
+            const currentInput = currentSettings.input as Record<string, unknown> | undefined
+            // A step being repointed at a different action is getting a new input set by design,
+            // so neither the deep merge nor the emptied-required-prop guard applies to it.
+            const keepsSameAction = isNil(actionName) || actionName === currentSettings.actionName
+            const actionProps = step.type === FlowActionType.PIECE && input !== undefined && keepsSameAction
+                ? await loadActionProps({ settings: currentSettings, platformId: project.platformId, log })
+                : undefined
 
             if (rewritten.input !== undefined || auth !== undefined) {
                 const mergedInput = {
-                    ...(currentSettings.input as Record<string, unknown> ?? {}),
-                    ...(rewritten.input ?? {}),
+                    ...(currentInput ?? {}),
+                    ...stepInputMerge.mergeDynamicProps({ currentInput, incomingInput: rewritten.input, props: actionProps }),
                     ...(auth !== undefined && { auth: `{{connections['${auth}']}}` }),
                 }
                 updatedSettings.input = dropStaleAiProviderId({
                     mergedInput,
                     incomingInput: rewritten.input,
-                    currentInput: currentSettings.input as Record<string, unknown> | undefined,
+                    currentInput,
                 })
             }
             if (actionName !== undefined) {
@@ -152,6 +161,20 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                     platformId: project.platformId,
                     log,
                 })
+            }
+
+            const emptied = stepInputMerge.findEmptiedRequiredProps({
+                currentInput,
+                updatedInput: updatedSettings.input as Record<string, unknown> | undefined,
+                props: actionProps,
+            })
+            if (emptied.length > 0) {
+                return {
+                    content: [{
+                        type: 'text',
+                        text: `❌ This update would clear required input that "${stepName}" already has: ${emptied.join(', ')}. Nothing was written. Send the full value for ${emptied.length > 1 ? 'those props' : 'that prop'} if you meant to change ${emptied.length > 1 ? 'them' : 'it'}.`,
+                    }],
+                }
             }
 
             const payload = {
@@ -234,6 +257,25 @@ function dropStaleAiProviderId({ mergedInput, incomingInput, currentInput }: {
         return omit(mergedInput, ['providerId'])
     }
     return mergedInput
+}
+
+async function loadActionProps({ settings, platformId, log }: {
+    settings: Record<string, unknown>
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<QadamPropertyMap | undefined> {
+    const { qadamName, qadamVersion, actionName } = settings
+    if (typeof qadamName !== 'string' || typeof qadamVersion !== 'string' || typeof actionName !== 'string') {
+        return undefined
+    }
+    try {
+        const qadam = await qadamMetadataService(log).getOrThrow({ platformId, name: qadamName, version: qadamVersion })
+        return qadam.actions[actionName]?.props
+    }
+    catch (err) {
+        log.warn({ err, qadamName, actionName }, 'loadActionProps: failed to fetch qadam metadata')
+        return undefined
+    }
 }
 
 async function diagnoseMissingInputs({ settings, platformId, log }: {

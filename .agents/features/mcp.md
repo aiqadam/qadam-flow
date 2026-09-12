@@ -41,7 +41,10 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 - `ap_list_flows` — list all flows in project
 - `ap_flow_structure` — get flow definition and structure
 - `ap_read_step_code` — read full source code of a CODE step
-- `ap_validate_flow`, `ap_validate_step_config` — validation helpers
+- `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
+  five issue categories: `step_validity`, `template_reference`, `empty_branch`, and — since #391 —
+  `subflow_payload` (a `callFlow` step calling a child with no arguments) and `inline_pause` (an
+  `executionMode: "inline"` step whose callee can pause, found by walking the call graph).
 - `ap_research_pieces`, `ap_get_piece_props` — piece discovery and schema
 - `ap_resolve_property_options`, `ap_resolve_property_chain` — dropdown/property resolution
 - `ap_list_connections` — list app connections

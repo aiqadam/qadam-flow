@@ -1872,6 +1872,7 @@
   "invalidAzureResourceName": "Azure resource name must be 2-64 letters, digits or hyphens — not a URL or hostname",
   "The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.": "The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.",
   "invalidAwsRegion": "AWS region must be lowercase letters, digits or hyphens — for example us-east-1",
+  "valueNotInOptions": "Value must be one of this field's available options",
   "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.",
   "This platform has reached its limit of custom AI providers": "This platform has reached its limit of custom AI providers",
   "Please connect your account first": "Please connect your account first",

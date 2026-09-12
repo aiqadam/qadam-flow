@@ -37,6 +37,7 @@ const codeSettingsValidator = CodeActionSettings.and(z.object({
 type ValidationResult = {
     valid: boolean
     cleanInput?: Record<string, unknown>
+    undeclaredKeys: string[]
 }
 
 export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
@@ -60,6 +61,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         if (!isNil(result.cleanInput)) {
                             clonedRequest.request.action.settings.input = result.cleanInput
                         }
+                        warnOnUndeclaredKeys({ log, settings: clonedRequest.request.action.settings, result })
                         break
                     }
                     case FlowActionType.ROUTER:
@@ -90,6 +92,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         if (!isNil(result.cleanInput)) {
                             clonedRequest.request.settings.input = result.cleanInput
                         }
+                        warnOnUndeclaredKeys({ log, settings: clonedRequest.request.settings, result })
                         break
                     }
                     case FlowActionType.ROUTER:
@@ -139,6 +142,22 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
     },
 })
 
+function warnOnUndeclaredKeys({ log, settings, result }: {
+    log: FastifyBaseLogger
+    settings: QadamActionSettings
+    result: ValidationResult
+}): void {
+    if (result.undeclaredKeys.length === 0) {
+        return
+    }
+    log.warn({
+        qadamName: settings.qadamName,
+        qadamVersion: settings.qadamVersion,
+        actionName: settings.actionName,
+        undeclaredKeys: result.undeclaredKeys,
+    }, 'Step input carries keys the resolved qadam metadata does not declare; keeping them rather than erasing the caller\'s write')
+}
+
 async function validateAction({ settings, platformId, log }: ValidateActionParams): Promise<ValidationResult> {
     if (
         isNil(settings.qadamName) ||
@@ -146,7 +165,7 @@ async function validateAction({ settings, platformId, log }: ValidateActionParam
         isNil(settings.actionName) ||
         isNil(settings.input)
     ) {
-        return { valid: false }
+        return { valid: false, undeclaredKeys: [] }
     }
 
     const piece = await qadamMetadataService(log).getOrThrow({
@@ -156,12 +175,12 @@ async function validateAction({ settings, platformId, log }: ValidateActionParam
     })
 
     if (isNil(piece)) {
-        return { valid: false }
+        return { valid: false, undeclaredKeys: [] }
     }
 
     const action = piece.actions[settings.actionName]
     if (isNil(action)) {
-        return { valid: false }
+        return { valid: false, undeclaredKeys: [] }
     }
 
     const props = { ...action.props }
@@ -176,7 +195,7 @@ async function validateTrigger({ settings, platformId, log }: ValidateTriggerPar
         isNil(settings.triggerName) ||
         isNil(settings.input)
     ) {
-        return { valid: false }
+        return { valid: false, undeclaredKeys: [] }
     }
 
     const piece = await qadamMetadataService(log).getOrThrow({
@@ -185,17 +204,24 @@ async function validateTrigger({ settings, platformId, log }: ValidateTriggerPar
         version: settings.qadamVersion,
     })
     if (isNil(piece)) {
-        return { valid: false }
+        return { valid: false, undeclaredKeys: [] }
     }
     const trigger = piece.triggers[settings.triggerName]
     if (isNil(trigger)) {
-        return { valid: false }
+        return { valid: false, undeclaredKeys: [] }
     }
     const props = { ...trigger.props }
 
     return validateProps(props, settings.input, piece.auth, trigger.requireAuth)
 }
 
+// The declared-prop projection is what decides `valid`, but it is NOT what gets stored: an input
+// key the resolved metadata does not declare is kept verbatim. Dropping it silently erased a
+// caller's own write whenever the step's pinned qadam version resolved to metadata older than the
+// value being written — the write returned success, the step was marked `valid: true`, and the
+// value was simply gone (#381). Preserving it costs only that a prop removed by a later qadam
+// version lingers unused in `input`; the engine ignores undeclared keys
+// (`props-processor.ts` skips any key with no matching property).
 function validateProps(
     props: QadamPropertyMap,
     input: Record<string, unknown> | undefined,
@@ -205,12 +231,18 @@ function validateProps(
 ): ValidationResult {
     const propsSchema = piecePropertiesUtils.buildSchema(props, auth, requireAuth)
     const schemaKeys = Object.keys((propsSchema as z.ZodObject<z.ZodRawShape>).shape)
-    const cleanInput = !isNil(input) ? Object.fromEntries(
-        schemaKeys.map(key => [key, input?.[key]]),
-    ) : undefined
+    if (isNil(input)) {
+        return { valid: propsSchema.safeParse(undefined).success, undeclaredKeys: [] }
+    }
+    const declaredInput = Object.fromEntries(schemaKeys.map(key => [key, input[key]]))
+    const undeclaredKeys = Object.keys(input).filter(key => !schemaKeys.includes(key))
     return {
-        valid: propsSchema.safeParse(cleanInput).success,
-        cleanInput,
+        valid: propsSchema.safeParse(declaredInput).success,
+        cleanInput: {
+            ...declaredInput,
+            ...Object.fromEntries(undeclaredKeys.map(key => [key, input[key]])),
+        },
+        undeclaredKeys,
     }
 }
 

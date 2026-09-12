@@ -193,7 +193,13 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
 ## Known Limitations (v1)
 
 - A child that pauses (Delay / Human Input / its own Queue-mode `callFlow`) is rejected with a
-  clear error, not supported.
+  clear error, not supported. Since #391, `ap_validate_flow` also walks the inline call graph
+  (transitively, cycle-safe, project-scoped) at validate time and reports this *before* publish
+  rather than only at run time — see `validateCallFlowSteps` in
+  `packages/server/api/src/app/mcp/tools/ap-validate-flow.ts`. The static check reads the callee's
+  **draft** version, because it exists to judge what the author is about to publish; the runtime
+  check in `inline-flow-executor.ts` remains the authority for what actually executes, and neither
+  replaces the other.
 - No live step-by-step streaming for an inline child in "Test Flow" mode — only the parent's own
   steps stream live; the child's full step history is still persisted and visible once it finishes.
 - Narrow race: the child `FlowRun` row is created by the API (`inlineFlowRunService.start`) before
