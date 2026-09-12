@@ -12,6 +12,12 @@ export type CodeSandbox = {
      * Executes a script.
      */
     runScript(params: RunScriptParams): Promise<unknown>
+
+    /**
+     * Releases whatever the sandbox holds for the current engine operation. Called once
+     * per operation, on the success and the failure path alike.
+     */
+    shutdown(): Promise<void>
 }
 
 type RunCodeModuleParams = {

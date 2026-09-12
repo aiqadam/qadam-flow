@@ -41,3 +41,12 @@ export const initCodeSandbox = async (): Promise<CodeSandbox> => {
 
     return instance
 }
+
+// Deliberately does NOT construct the sandbox: an operation with no CODE step must not
+// pay for loading one just to tear it down.
+export const shutdownCodeSandbox = async (): Promise<void> => {
+    if (instance === null) {
+        return
+    }
+    await instance.shutdown()
+}
