@@ -193,7 +193,17 @@ export const recordService = {
     // read -> branch -> write with a window in between, and two deliveries inside
     // that window both see "not seen yet".
     async upsert({ request, projectId }: UpsertParams): Promise<UpsertResult[]> {
-        const { tableId, keyFieldIds, records } = request
+        const { tableId, records } = request
+        // Deduped before anything iterates it. The schema bounds this array's length
+        // but not how many DISTINCT ids it holds, and the membership check below tests
+        // membership only — so one valid id repeated N times passes every validation
+        // and then costs N per record: buildKeyReader walks the whole array once for
+        // each existing row in the table. Repeating a key column is semantically a
+        // no-op (the same value joins the key twice), so collapsing it changes no
+        // result, and after the membership check it bounds the work at the number of
+        // columns the table actually has. Without it a single request blocks the API's
+        // one event-loop thread for seconds.
+        const keyFieldIds = unique(request.keyFieldIds)
 
         return transaction(async (entityManager: EntityManager) => {
             // A Postgres transaction-scoped lock, not the Redis distributedLock.
@@ -355,10 +365,12 @@ export const recordService = {
                     })),
             )
 
-            // Sorted so every batch takes cell row locks in the same order. Two
-            // concurrent batches touching {A,B} and {B,A} would otherwise deadlock,
-            // and the single-record path's one-record-wide window becomes N wide
-            // the moment updates are batched.
+            // Sorted so every batch takes cell row locks in the same order. This is no
+            // longer what keeps two overlapping batches from deadlocking — the record
+            // lock taken above does that, and two batches sharing no record share no
+            // cell either, since a cell is keyed by its record. Kept because a stable
+            // write order is worth having on its own, not because anything depends on
+            // it: do NOT read this as the ordering that makes the batch path safe.
             const ordered = [...cellsToUpsert].sort((left, right) => `${left.recordId}:${left.fieldId}`.localeCompare(`${right.recordId}:${right.fieldId}`))
             for (const batch of chunk(ordered, MAX_BATCH_SIZE)) {
                 await entityManager.getRepository(CellEntity).upsert(batch, ['projectId', 'fieldId', 'recordId'])
@@ -431,6 +443,10 @@ export const recordService = {
                 .getRepository(FieldEntity)
                 .find({
                     where: { projectId, tableId },
+                    // Matches fieldService.getAll, which this read replaced. Without it
+                    // the response's cells come back in heap order here and in column
+                    // order from create, for the same table.
+                    order: { created: 'ASC' },
                 })
 
             if (request.cells && request.cells.length > 0) {
@@ -756,7 +772,7 @@ function assertKeyFieldsBelongToTable({ keyFieldIds, fieldIds, tableId }: { keyF
     if (unknown.length === 0) {
         return
     }
-    const message = `Key column(s) not present in table ${tableId}: ${unknown.slice(0, MAX_REPORTED_FIELD_IDS).join(', ')}`
+    const message = `Key column(s) not present in table ${tableId}: ${truncateKeyForMessage(unknown.slice(0, MAX_REPORTED_FIELD_IDS).join(', '))}`
     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
 }
 

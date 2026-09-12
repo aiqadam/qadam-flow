@@ -1,4 +1,4 @@
-import { apId, FieldType, FilterOperator } from '@aiqadam/shared'
+import { apId, FieldType, FilterOperator, MAX_KEY_FIELDS_PER_UPSERT } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import qs from 'qs'
@@ -1043,6 +1043,49 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
 
+        // Guards the dedupe's SEMANTICS, not the denial of service that motivated it.
+        // Removing `unique()` leaves this green — both the stored index and the
+        // incoming row are read through the same reader, so a repeated column changes
+        // no match. What it would change is cost: the reader walks the whole array once
+        // per existing record, so an unbounded repeat blocks the one event-loop thread.
+        // That is a performance property and nothing here asserts it; the cap below is
+        // what this suite can actually hold.
+        it('matches the same record whether or not a key column is repeated', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [field.id],
+                records: [[{ fieldId: field.id, value: 'e1' }]],
+            })
+
+            const repeated = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [field.id, field.id, field.id],
+                records: [[{ fieldId: field.id, value: 'e1' }]],
+            })
+
+            expect(repeated?.statusCode).toBe(StatusCodes.OK)
+            // Updated, not created: a second row would mean the repeat built a
+            // different key than the single-column write did.
+            expect(repeated?.json()[0].action).toBe('updated')
+            const listed = await ctx.get('/v1/records', { tableId: table.id })
+            expect(listed?.json().data.length).toBe(1)
+        })
+
+        it('rejects a key column list too long to be a real key', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: Array.from({ length: MAX_KEY_FIELDS_PER_UPSERT + 1 }, () => field.id),
+                records: [[{ fieldId: field.id, value: 'k' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
         it('rejects the same column set twice inside one record', async () => {
             const ctx = await setup()
             const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
@@ -1198,7 +1241,12 @@ describe('Record API', () => {
         // AP_POSTGRES_POOL_SIZE requests are each holding one and waiting for a second,
         // none can be issued and none can be released. Postgres sees no lock cycle, so
         // nothing breaks it — the process serves this table until it is restarted.
-        // 16 overlapping writers against the default pool of 10.
+        //
+        // 16 overlapping writers against a pool of 10. That 10 is pg's own default,
+        // load-bearing here and set nowhere: .env.tests declares no
+        // AP_POSTGRES_POOL_SIZE and postgres-connection.ts spreads poolSize only when
+        // one is defined. Setting it to 16 or more does not fail this test, it stops
+        // the test from covering anything — raise the writer count with it.
         it('does not starve the connection pool when many cell writes overlap', async () => {
             const ctx = await setup()
             const { table, field } = await createTableWithField(ctx)

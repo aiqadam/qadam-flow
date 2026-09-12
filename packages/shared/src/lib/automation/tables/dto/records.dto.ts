@@ -24,6 +24,9 @@ export type CreateRecordsRequest = z.infer<typeof CreateRecordsRequest>
 // is being evaluated — moving it down is a TS2448 "used before its declaration".
 export const MAX_RECORDS_PER_BATCH = 1000
 
+// Same reason, and the same "declared here, not at the end" exception as above.
+export const MAX_KEY_FIELDS_PER_UPSERT = 1000
+
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
     records: z.array(z.object({
@@ -114,8 +117,11 @@ export type UpdateRecordRequest = z.infer<typeof UpdateRecordRequest>
 export const UpsertRecordsRequest = z.object({
     tableId: z.string(),
     // The business key to match on. Without it an upsert is just a create, so it is
-    // required rather than defaulted to something.
-    keyFieldIds: z.array(z.string()).min(1, formErrors.required),
+    // required rather than defaulted to something. Capped well above any real key so
+    // no legitimate table is refused, purely so the request cannot be megabytes of
+    // ids that have to be parsed before the service can dedupe them; the binding
+    // bound is the service's own dedupe against the table's actual columns.
+    keyFieldIds: z.array(z.string()).min(1, formErrors.required).max(MAX_KEY_FIELDS_PER_UPSERT),
     records: z.array(z.array(z.object({
         fieldId: z.string(),
         value: coerceToString,
