@@ -27,6 +27,11 @@ function context(runId?: string, projectId = 'project_1') {
   };
 }
 
+// Every test re-imports the module to start from a cold cache, and the first of those imports pays
+// the transform cost of the qadam and its dependencies — over the 5 s default on a CI runner, where
+// it timed out and then leaked its in-flight request into the next test's spy count.
+vi.setConfig({ testTimeout: 30_000 });
+
 async function loadCommon() {
   vi.resetModules();
   return import('../src/lib/common');
