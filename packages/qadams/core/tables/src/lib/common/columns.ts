@@ -31,24 +31,32 @@ export const columnUtils = {
     return fields.map((field) => `"${field.name}"`).join(', ');
   },
 
-  // Turns the Columns prop into the `fieldIds` the records API takes. Selecting
-  // nothing means every column, for back-compat; but a selection that names a
-  // column the table does not have raises rather than quietly widening the read
-  // back to every column, which is what the projection exists to prevent.
+  // Turns the Columns prop into the `fieldIds` the records API takes.
+  //
+  // Not configured means every column, for back-compat — and "not configured" is
+  // only nothing at all or an empty list, which is what the builder stores for an
+  // untouched multi-select. A value that IS there and yields no column is a
+  // projection that could not be read, and widening that back to every column is
+  // the exact failure this prop exists to prevent: a `{{...}}` binding resolving
+  // to an empty string would put the whole row back in the run log.
   toWireFieldIds({ rawColumns, fields }: { rawColumns: unknown; fields: Field[] }): string[] | undefined {
+    if (isUnconfigured(rawColumns)) {
+      return undefined;
+    }
     const identifiers = toIdentifiers(rawColumns);
     if (identifiers.length === 0) {
-      return undefined;
+      throw new Error(`Columns is set but names no column. Remove it to return every column, or name the columns to return. Available columns: ${columnUtils.describeAvailable(fields)}.`);
     }
     const resolved = identifiers.map((identifier) => columnUtils.resolveColumn({ identifier, fields, position: 'Columns' }).id);
     return [...new Set(resolved)];
   },
 };
 
+function isUnconfigured(rawColumns: unknown): boolean {
+  return rawColumns === null || rawColumns === undefined || (Array.isArray(rawColumns) && rawColumns.length === 0);
+}
+
 function toIdentifiers(rawColumns: unknown): string[] {
-  if (rawColumns === null || rawColumns === undefined) {
-    return [];
-  }
   const candidates = Array.isArray(rawColumns) ? rawColumns : String(rawColumns).split(',');
   return candidates.map((candidate) => {
     if (candidate === null || candidate === undefined || typeof candidate === 'object') {

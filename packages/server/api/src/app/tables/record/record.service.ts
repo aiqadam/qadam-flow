@@ -30,6 +30,8 @@ import { RecordEntity, RecordSchema } from './record.entity'
 
 const MAX_BATCH_SIZE = 50
 
+const MAX_REPORTED_FIELD_IDS = 10
+
 const recordRepo = repoFactory(RecordEntity)
 const cellsRepo = repoFactory(CellEntity)
 
@@ -482,7 +484,12 @@ function resolveProjectedFields({ fieldIds, fields, tableId }: { fieldIds: strin
     const requested = new Set(fieldIds)
     const unknownFieldIds = unique(fieldIds.filter((fieldId) => !fields.some((field) => field.id === fieldId)))
     if (unknownFieldIds.length > 0) {
-        const message = `Projection references field(s) not present in table ${tableId}: ${unknownFieldIds.join(', ')}`
+        // Bounded for the same reason its sibling in record-filter.ts is: the
+        // whole list is caller-supplied and this message rides on Error.message
+        // into server logs and persisted run output.
+        const shown = unknownFieldIds.slice(0, MAX_REPORTED_FIELD_IDS)
+        const suffix = unknownFieldIds.length > shown.length ? ` (and ${unknownFieldIds.length - shown.length} more)` : ''
+        const message = `Projection references field(s) not present in table ${tableId}: ${shown.join(', ')}${suffix}`
         throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
     }
     return fields.filter((field) => requested.has(field.id))

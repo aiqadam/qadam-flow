@@ -36,15 +36,27 @@ describe('columnUtils.toWireFieldIds', () => {
     expect(columnUtils.toWireFieldIds({ rawColumns: ['phone', 'Phone'], fields })).toEqual(['id_phone']);
   });
 
-  // Selecting nothing must stay "every column" for back-compat, but a selection
-  // that cannot be resolved must not quietly widen back to every column.
+  // Not configured is only nothing at all or an empty list — the latter is what
+  // the builder stores for an untouched multi-select.
   it.each([
     ['undefined', undefined],
     ['null', null],
     ['an empty list', []],
-    ['an empty string', '   '],
   ])('treats %s as no projection', (_label, rawColumns) => {
     expect(columnUtils.toWireFieldIds({ rawColumns, fields })).toBeUndefined();
+  });
+
+  // A value that IS there and names no column is a projection that could not be
+  // read. Widening it back to every column is the failure this prop exists to
+  // prevent — a {{binding}} that resolved to an empty string would put the whole
+  // row back in the run log.
+  it.each([
+    ['a blank string', '   '],
+    ['an empty string', ''],
+    ['a lone comma', ','],
+    ['a list of blanks', ['', '  ']],
+  ])('rejects %s rather than reading it as every column', (_label, rawColumns) => {
+    expect(() => columnUtils.toWireFieldIds({ rawColumns, fields })).toThrow(/names no column/);
   });
 
   it('rejects a column the table does not have rather than returning every column', () => {
