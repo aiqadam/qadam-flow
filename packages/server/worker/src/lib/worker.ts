@@ -416,7 +416,11 @@ async function warmupPiecesOnStartup(apiClient: WorkerToApiContract): Promise<vo
     }
     logger.info({ count: pieces.length }, 'Starting piece cache warmup')
     const { error: installError } = await tryCatch(() =>
-        qadamInstaller(logger, apiClient).install({ pieces, includeFilters: false }),
+        // Filtered, like the provisioner's install: without `--filter`, bun installs every
+        // workspace in the shared cache, and it does so while holding the cross-replica
+        // fileLock that job provisioning also waits on. That was inert while the workspaces
+        // glob matched nothing; it is not any more.
+        qadamInstaller(logger, apiClient).install({ pieces, includeFilters: true }),
     )
     if (installError) {
         logger.error({ error: installError }, 'Failed to install pieces during startup warmup')
