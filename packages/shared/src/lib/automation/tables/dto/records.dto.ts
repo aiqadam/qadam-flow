@@ -24,8 +24,16 @@ export type CreateRecordsRequest = z.infer<typeof CreateRecordsRequest>
 // is being evaluated — moving it down is a TS2448 "used before its declaration".
 export const MAX_RECORDS_PER_BATCH = 1000
 
-// Same reason, and the same "declared here, not at the end" exception as above.
-export const MAX_KEY_FIELDS_PER_UPSERT = 1000
+// Same "declared here, not at the end" exception as above, but a much lower number,
+// and not for the reason the batch cap has. `unique()` is O(n²) with a JSON.stringify
+// per comparison, and the service dedupes this array before any validation runs — so
+// this constant sizes a quadratic loop on the request path, not just a parse. Note the
+// inversion that makes the tempting "generous cap" wrong: one id repeated is the CHEAP
+// case (findIndex returns immediately); all-distinct is the expensive one, so the cost
+// is paid by a request that is about to be rejected anyway. 200 keeps 2x headroom over
+// MAX_FIELDS_PER_TABLE's default of 100 — no real business key is wider than a table —
+// at roughly 1.5 ms against 100 ms for 1000.
+export const MAX_KEY_FIELDS_PER_UPSERT = 200
 
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
@@ -117,10 +125,10 @@ export type UpdateRecordRequest = z.infer<typeof UpdateRecordRequest>
 export const UpsertRecordsRequest = z.object({
     tableId: z.string(),
     // The business key to match on. Without it an upsert is just a create, so it is
-    // required rather than defaulted to something. Capped well above any real key so
-    // no legitimate table is refused, purely so the request cannot be megabytes of
-    // ids that have to be parsed before the service can dedupe them; the binding
-    // bound is the service's own dedupe against the table's actual columns.
+    // required rather than defaulted to something. Capped because the service dedupes
+    // this array before any validation runs and that dedupe is quadratic — see
+    // MAX_KEY_FIELDS_PER_UPSERT. The bound that keeps the matching loop cheap is the
+    // dedupe itself, which leaves at most as many ids as the table has columns.
     keyFieldIds: z.array(z.string()).min(1, formErrors.required).max(MAX_KEY_FIELDS_PER_UPSERT),
     records: z.array(z.array(z.object({
         fieldId: z.string(),
