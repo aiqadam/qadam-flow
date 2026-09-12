@@ -153,6 +153,11 @@ function compareText({ left, right }: { left: string, right: string }): number {
     return left > right ? 1 : 0
 }
 
+// Decimal only. `Number('0x10')` is 16 where the qadam's own operand validation
+// and the previous implementation both read it as something else, and a cell
+// written as hex by a CSV import must not start matching `gt 0` because the
+// comparison changed underneath it. Widening on a NUMBER column is not part of
+// this fix.
 function toFiniteNumber(value: unknown): number | null {
     if (typeof value === 'number') {
         return Number.isFinite(value) ? value : null
@@ -161,7 +166,10 @@ function toFiniteNumber(value: unknown): number | null {
         return null
     }
     const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : null
+    if (!Number.isFinite(parsed) || parsed !== parseFloat(value)) {
+        return null
+    }
+    return parsed
 }
 
 // A date-only operand is read literally: `lte 2026-09-11` is 00:00 on the 11th,
