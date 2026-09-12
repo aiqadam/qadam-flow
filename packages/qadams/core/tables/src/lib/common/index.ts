@@ -4,6 +4,10 @@ import { assertNotNullOrUndefined, CreateTableWebhookRequest, Field, FieldType, 
 import { z } from 'zod';
 import qs from 'qs';
 
+type ServerContext = { server: { apiUrl: string, token: string } }
+
+type ProjectServerContext = ServerContext & { project: { id: string } }
+
 type FormattedRecord = {
   id: string;
   created: string;
@@ -64,20 +68,31 @@ export const tablesCommon = {
     required: true,
   }),
 
-  async getTableFields({ tableId, context }: { tableId: string, context: { server: { apiUrl: string, token: string } } }) {
-    const fieldsResponse = await httpClient.sendRequest({
-      method: HttpMethod.GET,
-      url: `${context.server.apiUrl}v1/fields`,
-      queryParams: {
-        tableId,
-      },
-      authentication: {
-        type: AuthenticationType.BEARER_TOKEN,
-        token: context.server.token,
-      },
-    });
+  columns: Property.MultiSelectDropdown({
+    auth: QadamAuth.None(),
+    displayName: 'Columns',
+    description: 'Columns to return. Leave empty to return every column. Step outputs are recorded verbatim in the run log, so reading only the columns you need is also what keeps the rest out of it.',
+    required: false,
+    refreshers: ['table_id'],
+    options: async (propsValue, context) => {
+      const tableExternalId = propsValue['table_id'];
+      if (typeof tableExternalId !== 'string' || tableExternalId.length === 0) {
+        return { options: [], disabled: true, placeholder: 'Select a table first.' };
+      }
+      try {
+        const tableId = await resolveTableId({ tableExternalId, context });
+        const fields = await fetchTableFields({ tableId, context });
+        return { options: fields.map((field) => ({ label: field.name, value: field.externalId })) };
+      }
+      catch (e) {
+        console.error('Error fetching fields:', e);
+        return { options: [], disabled: true, placeholder: 'Error loading columns. Please try again.' };
+      }
+    },
+  }),
 
-    return fieldsResponse.body as Field[];
+  async getTableFields({ tableId, context }: { tableId: string, context: ServerContext }): Promise<Field[]> {
+    return fetchTableFields({ tableId, context });
   },
 
   createFieldValidations(tableFields: Field[]) {
@@ -267,23 +282,8 @@ export const tablesCommon = {
     }
   },
 
-  async convertTableExternalIdToId(tableId: string, context: { server: { apiUrl: string, token: string }, project: { id: string } }) {
-    const list: ListTablesRequest = {
-      externalIds: [tableId],
-      projectId: context.project.id,
-    }
-
-    const res = await httpClient.sendRequest({
-      method: HttpMethod.GET,
-      url: `${context.server.apiUrl}v1/tables?${qs.stringify(list)}`,
-      authentication: {
-        type: AuthenticationType.BEARER_TOKEN,
-        token: context.server.token,
-      },
-    });
-    const table = (res.body as SeekPage<Table>).data[0];
-    assertNotNullOrUndefined(table, `Table with externalId ${tableId} not found`);
-    return table.id;
+  async convertTableExternalIdToId(tableId: string, context: ProjectServerContext): Promise<string> {
+    return resolveTableId({ tableExternalId: tableId, context });
   }
 }
 
@@ -309,6 +309,41 @@ export const csvUtils = {
     }
     return value;
   },
+}
+
+const fetchTableFields = async ({ tableId, context }: { tableId: string, context: ServerContext }): Promise<Field[]> => {
+  const fieldsResponse = await httpClient.sendRequest({
+    method: HttpMethod.GET,
+    url: `${context.server.apiUrl}v1/fields`,
+    queryParams: {
+      tableId,
+    },
+    authentication: {
+      type: AuthenticationType.BEARER_TOKEN,
+      token: context.server.token,
+    },
+  });
+
+  return fieldsResponse.body as Field[];
+}
+
+const resolveTableId = async ({ tableExternalId, context }: { tableExternalId: string, context: ProjectServerContext }): Promise<string> => {
+  const list: ListTablesRequest = {
+    externalIds: [tableExternalId],
+    projectId: context.project.id,
+  }
+
+  const res = await httpClient.sendRequest({
+    method: HttpMethod.GET,
+    url: `${context.server.apiUrl}v1/tables?${qs.stringify(list)}`,
+    authentication: {
+      type: AuthenticationType.BEARER_TOKEN,
+      token: context.server.token,
+    },
+  });
+  const table = (res.body as SeekPage<Table>).data[0];
+  assertNotNullOrUndefined(table, `Table with externalId ${tableExternalId} not found`);
+  return table.id;
 }
 
 const fetchAllTables = async (context: { server: { apiUrl: string, token: string }, project: { id: string } }): Promise<Table[]> => {

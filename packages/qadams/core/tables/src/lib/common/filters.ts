@@ -1,4 +1,5 @@
 import { Field, FieldType, Filter, FilterOperator, tryCatchSync } from '@aiqadam/shared';
+import { columnUtils } from './columns';
 
 export const filterUtils = {
   // Builds the wire filters for GET /v1/records. Every shape below was produced
@@ -163,24 +164,7 @@ function resolveField({ entry, position, fields }: { entry: Record<string, unkno
     throw new Error(`${position} names more than one column (${quoteAll(unique)}). Use exactly one of ${quoteAll(FIELD_KEYS)}.`);
   }
 
-  const identifier = unique[0];
-  // Ids win over display names, deterministically: an externalId is caller-supplied
-  // at field creation, so it can collide with another column's display name, and a
-  // stable precedence is better than resolving differently as columns are renamed.
-  const byId = fields.find((field) => field.externalId === identifier || field.id === identifier);
-  if (byId !== undefined) {
-    return byId;
-  }
-
-  const byName = fields.filter((field) => field.name.toLowerCase() === identifier.toLowerCase());
-  if (byName.length > 1) {
-    throw new Error(`${position} names column "${identifier}", which is ambiguous — the table has more than one column with that name. Use the column id instead.`);
-  }
-  if (byName.length === 1) {
-    return byName[0];
-  }
-
-  throw new Error(`${position} names column "${identifier}", which this table does not have. Available columns: ${availableColumns(fields)}.`);
+  return columnUtils.resolveColumn({ identifier: unique[0], fields, position });
 }
 
 function toScalarValue({ raw, field, operator, position }: { raw: unknown; field: Field; operator: FilterOperator; position: string }): string {
@@ -234,13 +218,6 @@ function isDecimalNumber(value: string): boolean {
   }
   const asNumber = Number(value);
   return Number.isFinite(asNumber) && asNumber === parseFloat(value);
-}
-
-function availableColumns(fields: Field[]): string {
-  if (fields.length === 0) {
-    return '(this table has no columns)';
-  }
-  return fields.map((field) => `"${field.name}"`).join(', ');
 }
 
 // Describes the shape rather than dumping the value: this message is persisted

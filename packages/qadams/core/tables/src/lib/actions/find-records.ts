@@ -1,5 +1,6 @@
 import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
+import { columnUtils } from '../common/columns';
 import { filterUtils } from '../common/filters';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { FilterOperator, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
@@ -27,6 +28,7 @@ export const findRecords = createAction({
   auth: QadamAuth.None(),
   props: {
     table_id: tablesCommon.table_id,
+    columns: tablesCommon.columns,
     limit: Property.Number({
       displayName: 'Limit',
       description: 'Maximum number of records to return (default no limit).',
@@ -102,7 +104,7 @@ export const findRecords = createAction({
     }),
   },
   async run(context) {
-    const { table_id: tableExternalId, limit, filters } = context.propsValue;
+    const { table_id: tableExternalId, limit, filters, columns } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
 
@@ -111,6 +113,7 @@ export const findRecords = createAction({
       limit: limit ?? 999999999,
       cursor: undefined,
       filters: filterUtils.toWireFilters({ rawFilters: filters, fields: tableFields }),
+      fieldIds: columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields }),
     };
 
     const response = await httpClient.sendRequest<SeekPage<PopulatedRecord>>({

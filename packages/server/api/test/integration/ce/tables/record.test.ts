@@ -152,6 +152,80 @@ describe('Record API', () => {
             expect(body.data.length).toBe(2)
         })
 
+        it('returns only the projected columns, and not the names of the rest', async () => {
+            const ctx = await setup()
+            const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            phone.type = FieldType.TEXT
+            await db.save('field', phone)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+            for (const [fieldId, value] of [[name.id, 'Ada'], [phone.id, '+998900000000']] as const) {
+                const cell = createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id })
+                cell.value = value
+                await db.save('cell', cell)
+            }
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, fieldIds: [name.id] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(Object.keys(body.data[0].cells)).toEqual([name.id])
+            expect(JSON.stringify(body)).not.toContain('+998900000000')
+            expect(JSON.stringify(body)).not.toContain(phone.name)
+        })
+
+        it('back-fills a null only for a projected column that has no cell', async () => {
+            const ctx = await setup()
+            const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            phone.type = FieldType.TEXT
+            await db.save('field', phone)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, fieldIds: [name.id] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(Object.keys(body.data[0].cells)).toEqual([name.id])
+            expect(body.data[0].cells[name.id].value).toBeNull()
+        })
+
+        it('rejects a projection naming a column the table does not have', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            await db.save('record', createMockRecord({ tableId: table.id, projectId: ctx.project.id }))
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, fieldIds: [apId()] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        // `qs` drops an empty array entirely, so `fieldIds: []` is indistinguishable
+        // from "no projection" on the wire. The reachable shape is a blank entry,
+        // and that must not widen the read back to every column either.
+        it('rejects a blank column id rather than reading it as every column', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, fieldIds: [''] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
         it('should return empty data for table with no records', async () => {
             const ctx = await setup()
             const { table } = await createTableWithField(ctx)
@@ -192,6 +266,45 @@ describe('Record API', () => {
             const response = await ctx.get(`/v1/records/${apId()}`)
 
             expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+        })
+
+        it('returns only the projected columns', async () => {
+            const ctx = await setup()
+            const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            phone.type = FieldType.TEXT
+            await db.save('field', phone)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+            for (const [fieldId, value] of [[name.id, 'Ada'], [phone.id, '+998900000000']] as const) {
+                const cell = createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id })
+                cell.value = value
+                await db.save('cell', cell)
+            }
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records/${record.id}?${qs.stringify({ fieldIds: [name.id] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(Object.keys(body.cells)).toEqual([name.id])
+            expect(JSON.stringify(body)).not.toContain('+998900000000')
+        })
+
+        it('rejects a projection naming a column of another table', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records/${record.id}?${qs.stringify({ fieldIds: [apId()] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
     })
 
@@ -601,6 +714,44 @@ describe('Record API', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('a projection does not weaken a filter on a column it does not include', async () => {
+            const ctx = await setup()
+            const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            phone.type = FieldType.TEXT
+            await db.save('field', phone)
+
+            const listed = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            const unlisted = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', [listed, unlisted])
+            const listedPhone = createMockCell({ recordId: listed.id, fieldId: phone.id, projectId: ctx.project.id })
+            listedPhone.value = '+998900000000'
+            await db.save('cell', listedPhone)
+            for (const [record, value] of [[listed, 'Listed'], [unlisted, 'Unlisted']] as const) {
+                const cell = createMockCell({ recordId: record.id, fieldId: name.id, projectId: ctx.project.id })
+                cell.value = value
+                await db.save('cell', cell)
+            }
+
+            // Narrowing the cell query to the projection alone would leave this
+            // filter with no cell to test, which the missing-cell guard reads as
+            // a match for NOT_EXISTS — the whole table.
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({
+                    tableId: table.id,
+                    fieldIds: [name.id],
+                    filters: [{ fieldId: phone.id, operator: FilterOperator.NOT_EXISTS }],
+                })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(unlisted.id)
+            expect(Object.keys(body.data[0].cells)).toEqual([name.id])
         })
 
         it('rejects an uninterpretable range value even when the table is empty', async () => {
