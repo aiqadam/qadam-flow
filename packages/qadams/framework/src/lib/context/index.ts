@@ -90,11 +90,20 @@ type WebhookTriggerHookContext<
   payload: TriggerPayload;
   server: ServerContext;
 };
+/**
+ * The connection's own `metadata`, for settings that belong to the credential rather than to the
+ * step — a delivery mode the third party allows only one of per credential, say. Two flows sharing
+ * a connection cannot disagree about it, which a trigger property could not guarantee.
+ *
+ * Unencrypted and operator-authored, so it must not be used to carry anything secret.
+ */
+export type ConnectionMetadata = Record<string, unknown> | undefined;
+
 export type TriggerHookContext<
   QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined,
   TriggerProps extends InputPropertyMap,
   S extends TriggerStrategy,
-> = S extends TriggerStrategy.APP_WEBHOOK
+> = { authMetadata: ConnectionMetadata } & (S extends TriggerStrategy.APP_WEBHOOK
   ? AppWebhookTriggerHookContext<QadamAuth, TriggerProps>
   : S extends TriggerStrategy.POLLING
   ? PollingTriggerHookContext<QadamAuth, TriggerProps>
@@ -102,7 +111,7 @@ export type TriggerHookContext<
   ? WebhookTriggerHookContext<QadamAuth, TriggerProps> & {
     server: ServerContext;
   }
-  : never;
+  : never);
 
 export type TestOrRunHookContext<
   QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined,
@@ -181,6 +190,10 @@ export type CreateWaitpointParams = {
   version?: 'V0' | 'V1';
   resumeDateTime?: string;
   responseToSend?: RespondResponse;
+  // True only when this waitpoint will exclusively be resumed by a POST
+  // from this same server instance, never by a human or external service —
+  // see CreateWaitpointRequest in @aiqadam/shared for the full rationale.
+  internal?: boolean;
 };
 
 export type CreateWaitpointResult = {
@@ -192,6 +205,24 @@ export type CreateWaitpointResult = {
 export type CreateWaitpointHook = (params: CreateWaitpointParams) => Promise<CreateWaitpointResult>;
 export type WaitForWaitpointHook = (waitpointId: string) => void;
 
+export type CallFlowInlineParams = {
+  flowId: string;
+  payload: unknown;
+};
+
+export type CallFlowInlineResult = {
+  status: string;
+  data: unknown;
+};
+
+/**
+ * Runs another flow's "Callable Flow" trigger synchronously, in the same engine
+ * process — no queue job, no waitpoint. Reserved for `@aiqadam/qadam-subflows`'
+ * `callFlow` action's "Inline" execution mode; the target flow must not pause
+ * (Delay/Human Input/a nested Queue-mode Call Flow) or the call rejects.
+ */
+export type CallFlowInlineHook = (params: CallFlowInlineParams) => Promise<CallFlowInlineResult>;
+
 export type RunContext = {
   id: FlowRunId;
   stop: StopHook;
@@ -200,6 +231,7 @@ export type RunContext = {
   respond: RespondHook;
   createWaitpoint: CreateWaitpointHook;
   waitForWaitpoint: WaitForWaitpointHook;
+  callFlowInline: CallFlowInlineHook;
 }
 
 export type OnStartContext<
@@ -290,10 +322,27 @@ export interface TagsManager {
 }
 
 export interface Store {
-  put<T>(key: string, value: T, scope?: StoreScope): Promise<T>;
+  put<T>(key: string, value: T, scope?: StoreScope, options?: StorePutOptions): Promise<T>;
   get<T>(key: string, scope?: StoreScope): Promise<T | null>;
   delete(key: string, scope?: StoreScope): Promise<void>;
+  /**
+   * Stores the value only if the key is not already held, atomically. Returns
+   * whether this call is the one that stored it, plus whatever value now holds the
+   * key — so a dedup or lock check is one round-trip with no race in the middle,
+   * unlike get-then-put.
+   */
+  putIfAbsent<T>(key: string, value: T, scope?: StoreScope, options?: StorePutOptions): Promise<StorePutIfAbsentResult<T>>;
 }
+
+export type StorePutOptions = {
+  /** Seconds after which the entry expires. Omit to keep it forever. */
+  ttlSeconds?: number;
+};
+
+export type StorePutIfAbsentResult<T> = {
+  stored: boolean;
+  value: T | null;
+};
 
 export enum StoreScope {
   // Collection were deprecated in favor of project

@@ -37,6 +37,7 @@ import {
     UserWithMetaInformation,
     WorkerJobType,
 } from '@aiqadam/shared'
+import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import semver from 'semver'
 import { ArrayContains, Equal, FindOperator, FindOptionsWhere, ILike, In } from 'typeorm'
@@ -45,8 +46,11 @@ import { flowService } from '../../flows/flow/flow.service'
 import { encryptUtils } from '../../helper/encryption'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
+import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { SystemJobName } from '../../helper/system-jobs/common'
+import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { projectRepo } from '../../project/project-service'
 import {
     getQadamPackageWithoutArchive,
@@ -133,6 +137,30 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             scope,
         })
         log.info({ connectionId: newId, qadamName, platformId, isNew: isNil(existingConnection) }, 'App connection upserted')
+
+        // The reconnect dialog carries the delivery-mode selector and submits here, not through
+        // `update` — so this path can flip the mode just as well, and needs the same hook re-run.
+        //
+        // `always`, because this path also replaces the credential itself. A qadam may derive
+        // something from it that the third party holds a copy of — Telegram's webhook secret is an
+        // HMAC of the bot token — and rotating the credential without re-running the enable hook
+        // leaves the third party echoing a value that no longer verifies, which is a silent outage
+        // with no status and no run history. The verdict gate cannot see that: the delivery mode is
+        // unchanged.
+        applyDeliveryModeChange({
+            before: existingConnection?.metadata,
+            connection: updatedConnection,
+            projectIds,
+            // Unconditional, including for a row that did not exist a moment ago. "Delete the
+            // broken connection and create it again with the same name" is a normal recovery, and
+            // it arrives here with nothing to compare against while enabled flows still reference
+            // that `externalId` — exactly the rotation this flag is for. Forcing it on a genuinely
+            // new connection costs two queries that end up matching no flows — the qadam's enabled
+            // trigger sources in the project and their flow versions — and no engine work.
+            always: true,
+            log,
+        })
+
         return this.removeSensitiveData(updatedConnection)
     },
     async update(params: UpdateParams): Promise<AppConnectionWithoutSensitiveData> {
@@ -149,6 +177,8 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
             ...(projectIds ? { projectIds: ArrayContains(projectIds) } : {}),
         }
 
+        const before = await appConnectionsRepo().findOneBy(filter)
+
         await appConnectionsRepo().update(filter, {
             displayName: request.displayName,
             ...spreadIfDefined('projectIds', request.projectIds),
@@ -157,6 +187,23 @@ export const appConnectionService = (log: FastifyBaseLogger) => ({
         })
 
         const updatedConnection = await appConnectionsRepo().findOneByOrFail(filter)
+
+        // The delivery mode lives on the connection, but what acts on it — registering or removing
+        // the webhook at the third party — happens in the trigger's enable hook. Without this, a
+        // connection switched back to webhook stops being polled and never gets its webhook back,
+        // and the flow silently receives nothing.
+        // `!== undefined` rather than `isNil`: the DTO is `.optional()`, so `null` cannot reach here
+        // today, and this stays correct if it ever can — clearing the metadata is exactly the edit
+        // that flips a connection out of pull mode.
+        if (request.metadata !== undefined) {
+            applyDeliveryModeChange({
+                before: before?.metadata,
+                connection: updatedConnection,
+                projectIds,
+                log,
+            })
+        }
+
         return this.removeSensitiveData(updatedConnection)
     },
     async getOne({
@@ -458,6 +505,49 @@ const fetchProjectsForPlatform = async (projectIds: string[], platformId: string
     return new Map(projects.map((project) => [project.id, { id: project.id, displayName: project.displayName, type: project.type }]))
 }
 
+/**
+ * The delivery mode lives on the connection, but what acts on it — registering or removing the
+ * webhook at the third party — happens in the trigger's enable hook. Without this, a connection
+ * switched back to webhook stops being polled and never gets its webhook back, and the flow keeps
+ * saying "on" while receiving nothing.
+ *
+ * Off the request and onto a durable job. Each affected flow costs an engine round trip plus the
+ * qadam's own call to the third party, so holding the user's POST open for all of them turns one
+ * cheap request into unbounded sequential work — but a floating promise would lose the work
+ * entirely if the process restarted in the seconds after the metadata was written, and that loss is
+ * silent and one-directional (see the job's own doc comment).
+ *
+ * The job id is unique per change, deliberately. A per-connection id looks like coalescing and is
+ * not: `upsertJob` finds the existing job and then does nothing at all — the newer data is
+ * discarded, and a *failed* job is retried with its month-old payload. A second edit arriving while
+ * the first fan-out is still running would have been thrown away, which is exactly the silent loss
+ * this job exists to prevent. Coalescing belongs where it already is and where it can be done
+ * safely: `reEnableAffectedFlows` collapses concurrent runs in process and re-reads live state, so
+ * two jobs for one connection converge rather than conflict.
+ */
+function applyDeliveryModeChange({ before, connection, projectIds, always, log }: ApplyDeliveryModeChangeParams): void {
+    // The acting project, not every project the connection is shared with. Both controllers pass a
+    // single project today, so the fallback does not run; a caller that passed nothing would widen
+    // this to every project sharing the credential, which is why the acting project is threaded
+    // through rather than read off the connection.
+    const actingProjectIds = projectIds ?? connection.projectIds
+    rejectedPromiseHandler(systemJobsSchedule(log).upsertJob({
+        job: {
+            name: SystemJobName.APPLY_DELIVERY_MODE_CHANGE,
+            data: {
+                qadamName: connection.qadamName,
+                projectIds: actingProjectIds,
+                externalId: connection.externalId,
+                before: before ?? null,
+                after: connection.metadata ?? null,
+                always: always ?? false,
+            },
+            jobId: `delivery-mode-${connection.platformId}-${actingProjectIds.join(',')}-${connection.externalId}-${apId()}`,
+        },
+        schedule: { type: 'one-time', date: dayjs() },
+    }), log)
+}
+
 async function assertProjectIds(projectIds: ProjectId[], platformId: string): Promise<void> {
     const filteredProjects = await projectRepo().countBy({
         id: In(projectIds),
@@ -676,6 +766,15 @@ function validatePieceVersion(qadamVersion: string): void {
         })
     }
 }
+type ApplyDeliveryModeChangeParams = {
+    before: Metadata | null | undefined
+    connection: AppConnectionSchema
+    projectIds: ProjectId[] | null | undefined
+    /** Re-run the hooks even when the delivery mode is unchanged — see the `upsert` call site. */
+    always?: boolean
+    log: FastifyBaseLogger
+}
+
 type UpsertParams = {
     projectIds: ProjectId[]
     ownerId: string | null

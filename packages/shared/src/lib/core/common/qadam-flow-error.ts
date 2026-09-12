@@ -29,6 +29,7 @@ export type ApErrorParams =
     | EngineOperationFailureParams
     | EntityNotFoundErrorParams
     | ExistingUserErrorParams
+    | RecordPreconditionFailedErrorParams
     | FlowOperationErrorParams
     | FlowOperationInProgressErrorParams
     | FlowRunRetryOutsideRetentionErrorParams
@@ -403,6 +404,15 @@ ErrorCode.INVALID_SAML_RESPONSE,
     message: string
 }>
 
+// Distinct from VALIDATION so a flow can branch on "someone else got there first"
+// without also swallowing "your request was malformed". Both map to 409; only the
+// code tells them apart, and that distinction is the point of compare-and-set.
+export type RecordPreconditionFailedErrorParams = BaseErrorParams<
+ErrorCode.RECORD_PRECONDITION_FAILED,
+{
+    recordId: string
+}>
+
 export type ExistingAlertChannelErrorParams = BaseErrorParams<
 ErrorCode.EXISTING_ALERT_CHANNEL,
 {
@@ -537,6 +547,7 @@ export enum ErrorCode {
     EMAIL_AUTH_DISABLED = 'EMAIL_AUTH_DISABLED',
     EXISTING_USER = 'EXISTING_USER',
     EXISTING_ALERT_CHANNEL = 'EXISTING_ALERT_CHANNEL',
+    RECORD_PRECONDITION_FAILED = 'RECORD_PRECONDITION_FAILED',
     EXISTING_AI_PROVIDER = 'EXISTING_AI_PROVIDER',
     PROJECT_EXTERNAL_ID_ALREADY_EXISTS = 'PROJECT_EXTERNAL_ID_ALREADY_EXISTS',
     FLOW_OPERATION_INVALID = 'FLOW_OPERATION_INVALID',

@@ -23,7 +23,6 @@
   "The ID of the record to do the action on.": "L'ID de l'enregistrement sur lequel effectuer l'action.",
   "The values to update. Leave empty to keep current value.": "Les valeurs à mettre à jour. Laisser vide pour conserver la valeur actuelle.",
   "Maximum number of records to return (default no limit).": "Nombre maximum d'enregistrements à retourner (sans limite par défaut).",
-  "Filter conditions to apply": "Filtrer les conditions à appliquer",
   "New Record Created": "Nouvel enregistrement créé",
   "Record Updated": "Enregistrement mis à jour",
   "Record Deleted": "Enregistrement supprimé",

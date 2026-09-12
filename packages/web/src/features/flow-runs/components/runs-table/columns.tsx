@@ -10,6 +10,7 @@ import {
   Clock,
   Timer,
   AlertTriangle,
+  Zap,
 } from 'lucide-react';
 import { Dispatch, SetStateAction } from 'react';
 
@@ -205,13 +206,25 @@ export const runsTableColumns = ({
       />
     ),
     cell: ({ row }) => {
-      const { archivedAt, flowVersion } = row.original;
+      const { archivedAt, flowVersion, dispatchMode } = row.original;
       const displayName = flowVersion?.displayName ?? '—';
 
       return (
         <div className="flex items-center gap-2 text-left">
           {!isNil(archivedAt) && (
             <Archive className="size-4 text-muted-foreground" />
+          )}
+          {dispatchMode === 'INLINE' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Zap className="size-4 text-muted-foreground shrink-0" />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {t(
+                  'Called inline by its parent flow — ran in the same process, no queue',
+                )}
+              </TooltipContent>
+            </Tooltip>
           )}
           <TruncatedColumnTextValue value={displayName} />
         </div>

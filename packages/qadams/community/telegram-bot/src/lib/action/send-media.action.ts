@@ -11,7 +11,7 @@ import {
   httpClient,
 } from '@aiqadam/qadams-common';
 import { telegramCommons } from '../common';
-import { telegramBotAuth } from '../..';
+import { telegramBotAuth } from '../auth';
 import FormData from 'form-data';
 
 export const telegramSendMediaAction = createAction({

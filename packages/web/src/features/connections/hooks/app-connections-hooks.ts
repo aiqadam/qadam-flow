@@ -47,6 +47,7 @@ type UseRenameAppConnectionProps = {
   setIsRenameDialogOpen: (isOpen: boolean) => void;
   renameConnectionForm: UseFormReturn<{
     displayName: string;
+    metadata?: Record<string, unknown>;
   }>;
   refetch: () => void;
 };
@@ -209,9 +210,11 @@ export const appConnectionsMutations = {
       mutationFn: async ({
         connectionId,
         displayName,
+        metadata,
       }: {
         connectionId: string;
         displayName: string;
+        metadata?: Record<string, unknown>;
       }) => {
         const existingConnection = await isConnectionNameUnique({
           isGlobalConnection: false,
@@ -220,7 +223,10 @@ export const appConnectionsMutations = {
         if (!existingConnection && displayName !== currentName) {
           throw new ConnectionNameAlreadyExists();
         }
-        return appConnectionsApi.update(connectionId, { displayName });
+        return appConnectionsApi.update(connectionId, {
+          displayName,
+          metadata,
+        });
       },
       onSuccess: () => {
         refetch();

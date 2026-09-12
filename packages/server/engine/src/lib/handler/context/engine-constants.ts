@@ -1,5 +1,5 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { BeginExecuteFlowOperation, DEFAULT_MCP_DATA, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType } from '@aiqadam/shared'
+import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType } from '@aiqadam/shared'
 import { createPropsResolver, PropsResolver } from '../../variables/props-resolver'
 
 type RetryConstants = {
@@ -29,6 +29,8 @@ type EngineConstantsParams = {
     timeoutInSeconds: number
     platformId: PlatformId
     stepNames: string[]
+    isInlineChild?: boolean
+    inlineDepth?: number
 }
 
 const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
@@ -36,9 +38,6 @@ const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
     retryExponential: 2,
     retryInterval: 2000,
 }
-
-const DEFAULT_TRIGGER_EXECUTION = 'execute-trigger'
-const DEFAULT_EXECUTE_PROPERTY = 'execute-property'
 
 export class EngineConstants {
     public static readonly BASE_CODE_DIRECTORY = process.env.AP_BASE_CODE_DIRECTORY ?? './codes'
@@ -67,6 +66,8 @@ export class EngineConstants {
     public readonly stepNameToTest?: string
     public readonly logsFileId?: string
     public readonly stepNames: string[] = []
+    public readonly isInlineChild: boolean
+    public readonly inlineDepth: number
     private project: Project | null = null
 
     public get isRunningApTests(): boolean {
@@ -113,6 +114,8 @@ export class EngineConstants {
         this.platformId = params.platformId
         this.timeoutInSeconds = params.timeoutInSeconds
         this.stepNames = params.stepNames
+        this.isInlineChild = params.isInlineChild ?? false
+        this.inlineDepth = params.inlineDepth ?? 0
     }
   
     public static fromExecuteFlowInput(input: ResolvedExecuteFlowOperation): EngineConstants {
@@ -170,7 +173,7 @@ export class EngineConstants {
             flowVersionId: input.flowVersion?.id ?? DEFAULT_MCP_DATA.flowVersionId,
             flowVersionState: input.flowVersion?.state ?? DEFAULT_MCP_DATA.flowVersionState,
             triggerQadamName: input.flowVersion?.trigger?.settings.qadamName ?? DEFAULT_MCP_DATA.triggerQadamName,
-            flowRunId: DEFAULT_EXECUTE_PROPERTY,
+            flowRunId: DEFAULT_EXECUTE_PROPERTY_RUN_ID,
             publicApiUrl: input.publicApiUrl,
             internalApiUrl: addTrailingSlashIfMissing(input.internalApiUrl),
             retryConstants: DEFAULT_RETRY_CONSTANTS,
@@ -194,7 +197,7 @@ export class EngineConstants {
             flowVersionId: input.flowVersion.id,
             flowVersionState: input.flowVersion.state,
             triggerQadamName: input.flowVersion.trigger.settings.qadamName,
-            flowRunId: DEFAULT_TRIGGER_EXECUTION,
+            flowRunId: DEFAULT_TRIGGER_EXECUTION_RUN_ID,
             publicApiUrl: input.publicApiUrl,
             internalApiUrl: addTrailingSlashIfMissing(input.internalApiUrl),
             retryConstants: DEFAULT_RETRY_CONSTANTS,

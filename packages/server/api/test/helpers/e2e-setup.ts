@@ -21,6 +21,12 @@ export async function setupE2eEnvironment(): Promise<E2eContext> {
     process.env.AP_FRONTEND_URL = apiUrl
     process.env.AP_API_URL = apiUrl
     process.env.AP_PORT = String(port)
+    // .env.tests pins AP_INTERNAL_URL to a fixed dev-stack port that this
+    // harness's dynamically-bound listener never matches — override it here
+    // the same way AP_FRONTEND_URL/AP_PORT are overridden above, so a
+    // same-process call built from AppSystemProp.INTERNAL_URL (e.g. a
+    // queue-mode callFlow wait-for-response resume) targets the real port.
+    process.env.AP_INTERNAL_URL = apiUrl
 
     await migrateQueuesAndRunConsumers(app)
 

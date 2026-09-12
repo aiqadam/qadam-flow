@@ -15,5 +15,9 @@
   "Callable Flow": "Callable Flow",
   "Waiting to be triggered from another flow": "Waiting to be triggered from another flow",
   "Sample Data": "Sample Data",
-  "The schema to be passed to the flow": "The schema to be passed to the flow"
+  "The schema to be passed to the flow": "The schema to be passed to the flow",
+  "Execution Mode": "Execution Mode",
+  "Queue dispatches the subflow as a separate worker job (default, works for every subflow). Inline runs it synchronously in the same engine process for much lower latency — use it for chains of lightweight subflows. The subflow must not pause (Delay, Human Input/Approval, or its own Queue-mode Call Flow) when run inline.": "Queue dispatches the subflow as a separate worker job (default, works for every subflow). Inline runs it synchronously in the same engine process for much lower latency — use it for chains of lightweight subflows. The subflow must not pause (Delay, Human Input/Approval, or its own Queue-mode Call Flow) when run inline.",
+  "Queue": "Queue",
+  "Inline": "Inline"
 }

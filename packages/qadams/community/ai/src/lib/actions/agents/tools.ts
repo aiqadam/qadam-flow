@@ -248,15 +248,22 @@ async function constructKnowledgeBaseTools(
                     return { error: `Table '${tableTool.sourceName}' not found` }
                 }
 
-                // Use cached fields to resolve field names to IDs
+                // Use cached fields to resolve field names to IDs. A filter that
+                // cannot be resolved is an error, never a dropped filter: dropping
+                // every filter turns a scoped lookup into a read of the whole
+                // table, and the result looks exactly like "everything matched".
                 let resolvedFilters: { fieldId: string, operator: string, value?: string }[] | undefined
                 if (filters && filters.length > 0) {
+                    if (cachedFields.length === 0) {
+                        return { error: `Columns of table '${tableTool.sourceName}' could not be read, so the filters cannot be applied. Try again.` }
+                    }
                     const fieldMap = new Map(cachedFields.map(f => [f.name.toLowerCase(), f.id]))
-                    resolvedFilters = filters.flatMap(f => {
-                        const fieldId = fieldMap.get(f.fieldName.toLowerCase())
-                        if (!fieldId) return []
-                        return [{ fieldId, operator: f.operator, value: f.value }]
-                    })
+                    const resolved = filters.map(f => ({ filter: f, fieldId: fieldMap.get(f.fieldName.toLowerCase()) }))
+                    const unknownFieldNames = resolved.filter(r => r.fieldId === undefined).map(r => r.filter.fieldName)
+                    if (unknownFieldNames.length > 0) {
+                        return { error: `Table '${tableTool.sourceName}' has no column(s) named ${unknownFieldNames.join(', ')}. Available columns: ${cachedFields.map(f => f.name).join(', ')}.` }
+                    }
+                    resolvedFilters = resolved.flatMap(r => r.fieldId === undefined ? [] : [{ fieldId: r.fieldId, operator: r.filter.operator, value: r.filter.value }])
                 }
 
                 const queryParams: Record<string, string> = {

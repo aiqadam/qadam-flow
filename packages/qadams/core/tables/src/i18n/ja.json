@@ -23,7 +23,6 @@
   "The ID of the record to do the action on.": "アクションを実行するレコードの ID。",
   "The values to update. Leave empty to keep current value.": "更新する値。空のままにすると現在の値が維持されます。",
   "Maximum number of records to return (default no limit).": "Maximum number of records to return (default no limit).",
-  "Filter conditions to apply": "適用するフィルタ条件",
   "New Record Created": "新しいレコードが作成されました",
   "Record Updated": "レコードが更新されました",
   "Record Deleted": "レコードが削除されました",
