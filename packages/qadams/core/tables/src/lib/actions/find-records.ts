@@ -17,6 +17,7 @@ const FILTERS_DESCRIPTION = [
 const VALUE_DESCRIPTION = [
   'For "In" / "Not In", pass a comma-separated list or a list variable.',
   'Greater/Less Than compare by the column type: Number numerically, Date by timestamp (ISO, or any date the engine can parse — not epoch milliseconds), Text and Single Select alphabetically, ignoring case.',
+  'A date without a time names the whole day in UTC, so "Less Than or Equal 2026-09-11" includes rows dated the 11th.',
 ].join(' ');
 
 export const findRecords = createAction({

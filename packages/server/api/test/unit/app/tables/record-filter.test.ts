@@ -72,20 +72,44 @@ describe('recordFilter', () => {
             expect(matches({ filter: { fieldId: 'starts_at', operator: FilterOperator.GT, value: cellValue }, cellValue })).toBe(false)
         })
 
-        it('reads a date-only operand literally, as 00:00 of that day', () => {
+        // The Tables editor stores a picked date at local noon, so a row the user
+        // sees as "11 Sep" is always after 00:00 UTC. Anchoring lte/gt to 00:00
+        // would exclude the very day the filter names.
+        it.each([
+            [FilterOperator.LTE, '2026-09-11', '2026-09-11T09:00:00Z', true],
+            [FilterOperator.LTE, '2026-09-11', '2026-09-11T23:59:59.999Z', true],
+            [FilterOperator.LTE, '2026-09-11', '2026-09-12T00:00:00Z', false],
+            [FilterOperator.GT, '2026-09-11', '2026-09-11T09:00:00Z', false],
+            [FilterOperator.GT, '2026-09-11', '2026-09-12T00:00:00Z', true],
+            [FilterOperator.GTE, '2026-09-11', '2026-09-11T00:00:00Z', true],
+            [FilterOperator.LT, '2026-09-11', '2026-09-10T23:59:59Z', true],
+            [FilterOperator.LT, '2026-09-11', '2026-09-11T00:00:00Z', false],
+        ] as [OrderingOperator, string, string, boolean][])('a date-only operand names the whole day: %s %s against %s', (operator, value, cellValue, expected) => {
+            expect(matches({ filter: { fieldId: 'starts_at', operator, value }, cellValue })).toBe(expected)
+        })
+
+        it('leaves an operand that carries a time alone', () => {
             expect(matches({
-                filter: { fieldId: 'starts_at', operator: FilterOperator.LTE, value: '2026-09-11' },
+                filter: { fieldId: 'starts_at', operator: FilterOperator.LTE, value: '2026-09-11T00:00:00Z' },
                 cellValue: '2026-09-11T09:00:00Z',
             })).toBe(false)
         })
 
-        it('excludes an empty or uninterpretable cell rather than failing the query', () => {
-            for (const cellValue of ['', null, undefined, 'not a date', 42]) {
-                expect(matches({
-                    filter: { fieldId: 'starts_at', operator: FilterOperator.LT, value: '2026-09-11T00:00:00Z' },
-                    cellValue,
-                })).toBe(false)
-            }
+        it.each([
+            ['an empty cell', ''],
+            ['a blank cell', '   '],
+            ['a null cell', null],
+            ['an undefined cell', undefined],
+            ['an unparseable cell', 'not a date'],
+            // A DATE column holding a raw number is not a timestamp; reading it as
+            // one would silently order rows by something nobody wrote.
+            ['a numeric cell', 42],
+            ['a numeric-string cell', '1757494800000'],
+        ])('excludes %s rather than failing the query', (_label, cellValue) => {
+            expect(matches({
+                filter: { fieldId: 'starts_at', operator: FilterOperator.LT, value: '2026-09-11T00:00:00Z' },
+                cellValue,
+            })).toBe(false)
         })
     })
 
@@ -98,6 +122,19 @@ describe('recordFilter', () => {
         it('is case-insensitive, so "Zoe" does not sort before "alice"', () => {
             expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.GT, value: 'alice' }, cellValue: 'Zoe' })).toBe(true)
             expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.GTE, value: 'APPLE' }, cellValue: 'apple' })).toBe(true)
+        })
+
+        it('orders alphabetically, not by code unit, which Cyrillic makes visible', () => {
+            // 'ёлка' > 'яблоко' in UTF-16 code units and false alphabetically.
+            expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.GT, value: 'яблоко' }, cellValue: 'ёлка' })).toBe(false)
+            expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.LT, value: 'яблоко' }, cellValue: 'ёлка' })).toBe(true)
+            expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.GT, value: 'zebra' }, cellValue: 'éclair' })).toBe(false)
+        })
+
+        // Justifies the "!" on this change: a TEXT column holding numbers used to
+        // compare numerically through parseFloat and now compares as text.
+        it('orders a numeric text column as text, not as numbers', () => {
+            expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.GT, value: '20' }, cellValue: '100' })).toBe(false)
         })
 
         it('orders a single-select column too', () => {
@@ -202,6 +239,8 @@ describe('recordFilter', () => {
             expect(matches({ filter: { fieldId: 'starts_at', operator: FilterOperator.EQ, value: '2026-09-10T09:00:00Z' }, cellValue: '2026-09-10T09:00:00Z' })).toBe(true)
             expect(matches({ filter: { fieldId: 'starts_at', operator: FilterOperator.EQ, value: '2026-09-10' }, cellValue: '2026-09-10T00:00:00.000Z' })).toBe(false)
             expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.NEQ, value: 'a' }, cellValue: 'b' })).toBe(true)
+            expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.EQ, value: 'ALPHA' }, cellValue: 'alpha' })).toBe(false)
+            expect(matches({ filter: { fieldId: 'title', operator: FilterOperator.NEQ, value: 'ALPHA' }, cellValue: 'alpha' })).toBe(true)
         })
 
         it('CO is case-insensitive', () => {

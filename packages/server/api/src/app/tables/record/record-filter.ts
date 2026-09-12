@@ -111,7 +111,7 @@ function buildOrderingMatcher({ field, operator, value }: { field: Field, operat
             }
         }
         case FieldType.DATE: {
-            const operand = toTimestamp(value)
+            const operand = toDateOperand({ value, operator })
             if (isNil(operand)) {
                 throw uninterpretableOperand({ field, operator, value, expected: 'a date' })
             }
@@ -155,11 +155,13 @@ function matchesOrdering({ operator, comparison }: { operator: OrderingOperator,
     }
 }
 
+// Collated, not compared by code unit. `'ёлка' > 'яблоко'` is true in code-unit
+// order and false alphabetically, and this product's primary locales are Cyrillic —
+// so the plain `<` the props now advertise as "alphabetically" would be wrong for
+// most of its users. The locale is pinned rather than left to the host's LANG, so
+// the same filter cannot order differently on two deployments.
 function compareText({ left, right }: { left: string, right: string }): number {
-    if (left < right) {
-        return -1
-    }
-    return left > right ? 1 : 0
+    return Math.sign(COLLATOR.compare(left, right))
 }
 
 // Decimal only. `Number('0x10')` is 16 where the qadam's own operand validation
@@ -181,9 +183,28 @@ function toFiniteNumber(value: unknown): number | null {
     return parsed
 }
 
-// A date-only operand is read literally: `lte 2026-09-11` is 00:00 on the 11th,
-// not the end of that day. Expanding it would be a second surprise rather than
-// the removal of one.
+// A date-only operand names a DAY, so it is anchored to whichever end of that day
+// the operator means: "on or before the 11th" has to include the 11th.
+//
+// Reading it literally as 00:00 was the first design here, and it is wrong for the
+// normal case rather than an edge one: the Tables editor stores a picked date at
+// LOCAL NOON (packages/web/src/features/tables/components/date-editor.tsx), so a
+// row the user sees as "11 Sep" is stored after 00:00 UTC in every timezone and
+// `lte 2026-09-11` would exclude the very day it names — a silent empty result,
+// which is the failure this whole module is about.
+//
+// An operand carrying a time is untouched; only a bare YYYY-MM-DD expands. The one
+// case this still gets wrong is a user at UTC+13/+14, where local noon falls on the
+// previous UTC day.
+function toDateOperand({ value, operator }: { value: string, operator: OrderingOperator }): number | null {
+    const timestamp = toTimestamp(value)
+    if (isNil(timestamp) || !DATE_ONLY_PATTERN.test(value.trim())) {
+        return timestamp
+    }
+    const endOfDay = operator === FilterOperator.GT || operator === FilterOperator.LTE
+    return endOfDay ? timestamp + MILLISECONDS_PER_DAY - 1 : timestamp
+}
+
 function toTimestamp(value: unknown): number | null {
     if (typeof value !== 'string' || value.trim().length === 0) {
         return null
@@ -222,6 +243,12 @@ function truncate(value: string): string {
 }
 
 const MAX_REPORTED_VALUE_LENGTH = 100
+
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+const COLLATOR = new Intl.Collator('en')
 
 type OrderingOperator = FilterOperator.GT | FilterOperator.GTE | FilterOperator.LT | FilterOperator.LTE
 

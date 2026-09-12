@@ -8,8 +8,6 @@ import { recordFilter } from '../../../../src/app/tables/record/record-filter'
 // module exists to prevent. Asserted by running both implementations over a
 // matrix rather than by reading them side by side.
 
-const MISSING = Symbol('no cell row')
-
 // Verbatim from record.service.ts at 6b4d5a08, before this module replaced it.
 function numberFilterValidator({ cellValue, filterValue, cb }: { cellValue: unknown, filterValue: string, cb: (a: number, b: number) => boolean }): boolean {
     if (typeof cellValue === 'string' || typeof cellValue === 'number') {
@@ -70,6 +68,8 @@ function compare({ type, filter, cellValue }: { type: FieldType, filter: Filter,
     return {
         type,
         operator: filter.operator,
+        // String() is load-bearing: JSON.stringify(undefined) returns undefined,
+        // and the sanctioned-difference filter below matches on the literal 'undefined'.
         cell: cellValue === MISSING ? '<no cell>' : String(JSON.stringify(cellValue)),
         operand: 'value' in filter ? JSON.stringify(filter.value) : '-',
         widened: now,
@@ -106,19 +106,23 @@ describe('recordFilter, against the implementation it replaced', () => {
     const disagreements = everyDisagreement()
     const widened = disagreements.filter((row) => row.widened)
 
-    // The one sanctioned difference: the old code tested `=== null`, this one
-    // treats `undefined` as absent too. Unreachable in production — cell.value is
-    // NOT NULL and both write paths coalesce with `?? ''` — but kept in the matrix
-    // and named here rather than omitted, so it cannot hide anything beside it.
-    const unsanctioned = widened.filter((row) => !(row.operator === FilterOperator.NOT_EXISTS && row.cell === 'undefined'))
+    // The one sanctioned difference, in both its directions: the old code tested
+    // `=== null`, this one treats `undefined` as absent too — so NOT_EXISTS now
+    // matches an undefined cell and EXISTS no longer does. Unreachable in
+    // production (cell.value is NOT NULL and both write paths coalesce with
+    // `?? ''`), but kept in the matrix and named here rather than left out of the
+    // inputs, so it cannot hide anything beside it.
+    const unsanctioned = disagreements.filter((row) => !(ABSENCE_OPERATORS.includes(row.operator) && row.cell === 'undefined'))
 
-    it('matches no additional row on any operator that was only moved, not rewritten', () => {
+    it('behaves identically on every operator that was only moved, not rewritten', () => {
+        // Both directions, not just widenings: the claim is that these seven are
+        // unchanged, and a narrowing would falsify that just as squarely.
         const untouched = unsanctioned.filter((row) => !ORDERING_OPERATORS.includes(row.operator))
         expect(describeAll(untouched)).toEqual([])
     })
 
     it('matches no additional row on a NUMBER column, where the old comparison was already correct', () => {
-        const onNumbers = unsanctioned.filter((row) => row.type === FieldType.NUMBER)
+        const onNumbers = unsanctioned.filter((row) => row.widened && row.type === FieldType.NUMBER)
         expect(describeAll(onNumbers)).toEqual([])
     })
 
@@ -149,6 +153,8 @@ describe('recordFilter, against the implementation it replaced', () => {
     })
 })
 
+const MISSING = Symbol('no cell row')
+
 const FIELD_TYPES = [FieldType.TEXT, FieldType.NUMBER, FieldType.DATE, FieldType.STATIC_DROPDOWN]
 
 const VALUE_OPERATORS = [FilterOperator.EQ, FilterOperator.NEQ, FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE, FilterOperator.CO] as const
@@ -158,6 +164,8 @@ const LIST_OPERATORS = [FilterOperator.IN, FilterOperator.NOT_IN] as const
 const EXISTENCE_OPERATORS = [FilterOperator.EXISTS, FilterOperator.NOT_EXISTS] as const
 
 const ORDERING_OPERATORS: FilterOperator[] = [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE]
+
+const ABSENCE_OPERATORS: FilterOperator[] = [FilterOperator.EXISTS, FilterOperator.NOT_EXISTS]
 
 const CELL_VALUES: unknown[] = [
     MISSING, null, undefined, '', '   ', 'Alpha', 'alpha', 'beta', '0', '10', '-1.5', '1e2', '0x10', 'Infinity', 'NaN',

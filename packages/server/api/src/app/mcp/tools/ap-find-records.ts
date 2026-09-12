@@ -31,7 +31,7 @@ const findRecordsInput = z.object({
     filters: z.array(z.object({
         fieldName: z.string().describe('The field name to filter on'),
         operator: operatorSchema.describe('Filter operator'),
-        value: z.string().optional().describe('Filter value (required for all operators except exists/not_exists). For in/not_in, pass a comma-separated list. gt/gte/lt/lte compare by column type: NUMBER numerically, DATE by parsed timestamp (ISO, not epoch milliseconds), TEXT and STATIC_DROPDOWN alphabetically ignoring case.'),
+        value: z.string().optional().describe('Filter value (required for all operators except exists/not_exists). For in/not_in, pass a comma-separated list. gt/gte/lt/lte compare by column type: NUMBER numerically, DATE by parsed timestamp (ISO, not epoch milliseconds), TEXT and STATIC_DROPDOWN alphabetically ignoring case. A DATE value with no time names the whole UTC day, so `lte 2026-09-11` includes rows dated the 11th.'),
     })).optional().describe('Optional filters. All filters are combined with AND logic.'),
     limit: z.number().min(1).max(500).optional().describe('Max records to return (default 50, max 500)'),
 })
