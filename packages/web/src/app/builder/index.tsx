@@ -132,14 +132,17 @@ const BuilderPage = () => {
     setStepDataPanelView,
     setStepDataPanelOpen,
   ]);
-  const { qadamModel, refetch: refetchPiece } =
-    qadamsHooks.useQadamModelForStepSettings({
-      name: selectedStep?.settings.qadamName,
-      version: selectedStep?.settings.qadamVersion,
-      enabled:
-        selectedStep?.type === FlowActionType.PIECE ||
-        selectedStep?.type === FlowTriggerType.PIECE,
-    });
+  const {
+    qadamModel,
+    isError: qadamModelError,
+    refetch: refetchPiece,
+  } = qadamsHooks.useQadamModelForStepSettings({
+    name: selectedStep?.settings.qadamName,
+    version: selectedStep?.settings.qadamVersion,
+    enabled:
+      selectedStep?.type === FlowActionType.PIECE ||
+      selectedStep?.type === FlowTriggerType.PIECE,
+  });
   flowCanvasHooks.useSetSocketListener(refetchPiece);
   flowCanvasHooks.useListenToExistingRun();
 
@@ -222,6 +225,7 @@ const BuilderPage = () => {
               selectedStep && (
                 <StepSettingsProvider
                   qadamModel={qadamModel}
+                  qadamModelError={qadamModelError}
                   selectedStep={selectedStep}
                   key={constructContainerKey({
                     flowVersionId: flowVersion.id,

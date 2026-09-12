@@ -27,7 +27,7 @@ import { repoFactory } from '../../core/db/repo-factory'
 import { qadamTagService } from '../tags/qadams/qadam-tag.service'
 import { qadamCache, QadamRegistryEntry } from './qadam-cache'
 import { QadamMetadataEntity, QadamMetadataSchema } from './qadam-metadata-entity'
-import { filterQadamBasedOnType, isNewerVersion, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
+import { filterQadamBasedOnType, isNewerVersion, isOfficialQadam, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
 
 export const qadamRepos = repoFactory(QadamMetadataEntity)
 
@@ -295,7 +295,7 @@ const findExactVersion = async (
     })
 
     if (matchingRegistryEntries.length === 0) {
-        return undefined
+        return findBundledFallback(registry, name)
     }
 
     const sortedEntries = matchingRegistryEntries.sort(sortByVersionDescending)
@@ -303,6 +303,23 @@ const findExactVersion = async (
         name: sortedEntries[0].name,
         version: sortedEntries[0].version,
         platformId: sortedEntries[0].platformId,
+    }
+}
+
+const findBundledFallback = (
+    registry: QadamRegistryEntry[],
+    name: string,
+): { name: string, version: string, platformId: string | undefined } | undefined => {
+    const bundledEntries = registry
+        .filter((entry) => entry.name === name && isOfficialQadam(entry))
+        .sort(sortByVersionDescending)
+    if (bundledEntries.length === 0) {
+        return undefined
+    }
+    return {
+        name: bundledEntries[0].name,
+        version: bundledEntries[0].version,
+        platformId: bundledEntries[0].platformId,
     }
 }
 

@@ -316,4 +316,36 @@ describe('Piece Metadata CE API', () => {
             expect(result?.name).toBe('@custom/my-piece')
         })
     })
+
+    describe('qadamMetadataService.get() — bundled version fallback', () => {
+        it('falls back to the currently bundled version when a flow step is pinned to an official version no longer on disk', async () => {
+            const mockPiece = createMockQadamMetadata({
+                name: '@aiqadam/qadam-bundled-fallback-test',
+                qadamType: QadamType.OFFICIAL,
+                packageType: PackageType.REGISTRY,
+                version: '0.4.5',
+            })
+            await db.save('qadam_metadata', mockPiece)
+            await qadamCache(mockLog).setup()
+
+            const result = await qadamMetadataService(mockLog).get({
+                name: '@aiqadam/qadam-bundled-fallback-test',
+                version: '0.4.2',
+            })
+
+            expect(result).toBeDefined()
+            expect(result?.version).toBe('0.4.5')
+        })
+
+        it('still returns undefined when no official version of the piece exists at all', async () => {
+            await qadamCache(mockLog).setup()
+
+            const result = await qadamMetadataService(mockLog).get({
+                name: '@aiqadam/qadam-never-existed',
+                version: '0.4.2',
+            })
+
+            expect(result).toBeUndefined()
+        })
+    })
 })

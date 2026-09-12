@@ -1,18 +1,22 @@
 import {
   ApFlagId,
+  flowQadamUtil,
   isNil,
   QadamAction,
   QadamActionSettings,
   QadamTrigger,
   QadamTriggerSettings,
 } from '@aiqadam/shared';
+import { TriangleAlert } from 'lucide-react';
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { flagsHooks } from '@/hooks/flags-hooks';
 
 import { GenericPropertiesForm } from '../../qadam-properties/generic-properties-form';
 import { useStepSettingsContext } from '../step-settings-context';
+import { UpdatePieceVersionDialog } from '../update-qadam-version-dialog/update-qadam-version-dialog';
 
 import { ConnectionSelect } from './connection-select';
 
@@ -30,8 +34,10 @@ const removeAuthFromProps = (
 };
 
 const PieceSettings = React.memo((props: PieceSettingsProps) => {
+  const { t } = useTranslation();
   const {
     qadamModel,
+    qadamModelError,
     selectedStep,
     updateFormSchema,
     updatePropertySettingsSchema,
@@ -80,7 +86,29 @@ const PieceSettings = React.memo((props: PieceSettingsProps) => {
     !isNil(selectedTrigger) && (selectedTrigger.requireAuth ?? true);
   return (
     <div className="flex flex-col gap-4 w-full">
-      {!qadamModel && (
+      {qadamModelError && !qadamModel && (
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed p-6 text-center">
+          <TriangleAlert className="size-6 text-destructive" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium">
+              {t('Piece version unavailable')}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'This step is pinned to a version of this piece that is no longer available. Update it to the latest version to continue editing this step.',
+              )}
+            </p>
+          </div>
+          <UpdatePieceVersionDialog
+            step={props.step}
+            currentVersion={flowQadamUtil.getExactVersion(
+              props.step.settings.qadamVersion,
+            )}
+          />
+        </div>
+      )}
+
+      {!qadamModel && !qadamModelError && (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <div className="space-y-2" key={index}>

@@ -93,6 +93,7 @@ export const qadamsHooks = {
     return {
       qadamModel: query.data,
       isLoading: query.isLoading,
+      isError: query.isError,
       isSuccess: query.isSuccess,
       refetch: query.refetch,
     };
@@ -113,6 +114,7 @@ export const qadamsHooks = {
     return {
       qadamModel: qadamQuery.qadamModel,
       isLoading: qadamQuery.isLoading,
+      isError: qadamQuery.isError,
       isSuccess: qadamQuery.isSuccess,
       refetch: qadamQuery.refetch,
     };

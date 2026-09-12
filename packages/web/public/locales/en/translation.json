@@ -2014,5 +2014,7 @@
   "Long polling (this instance calls the app)": "Long polling (this instance calls the app)",
   "Edit Connection": "Edit Connection",
   "Change the display name, and any settings that belong to this connection.": "Change the display name, and any settings that belong to this connection.",
-  "Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential.": "Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential."
+  "Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential.": "Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential.",
+  "Piece version unavailable": "Piece version unavailable",
+  "This step is pinned to a version of this piece that is no longer available. Update it to the latest version to continue editing this step.": "This step is pinned to a version of this piece that is no longer available. Update it to the latest version to continue editing this step."
 }

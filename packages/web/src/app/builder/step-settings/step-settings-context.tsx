@@ -41,6 +41,7 @@ const createUpdatedSchemaKey = (propertyKey: string) => {
 export type StepSettingsContextState = {
   selectedStep: FlowAction | FlowTrigger;
   qadamModel: QadamMetadataModel | undefined;
+  qadamModelError: boolean;
   formSchema: ZodObject<any>;
   updateFormSchema: (key: string, newFieldSchema: QadamPropertyMap) => void;
   updatePropertySettingsSchema: (
@@ -53,6 +54,7 @@ export type StepSettingsContextState = {
 export type StepSettingsProviderProps = {
   selectedStep: FlowAction | FlowTrigger;
   qadamModel: QadamMetadataModel | undefined;
+  qadamModelError?: boolean;
   children: ReactNode;
 };
 
@@ -63,6 +65,7 @@ const StepSettingsContext = createContext<StepSettingsContextState | undefined>(
 export const StepSettingsProvider = ({
   selectedStep,
   qadamModel,
+  qadamModelError = false,
   children,
 }: StepSettingsProviderProps) => {
   const [formSchema, setFormSchema] = useState<ZodObject<any>>(
@@ -119,6 +122,7 @@ export const StepSettingsProvider = ({
       value={{
         selectedStep,
         qadamModel,
+        qadamModelError,
         formSchema,
         updateFormSchema,
         updatePropertySettingsSchema,
