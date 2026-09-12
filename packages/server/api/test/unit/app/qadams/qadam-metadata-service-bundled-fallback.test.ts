@@ -1,5 +1,7 @@
-import { PackageType, QadamMetadataModel, QadamType } from '@aiqadam/shared'
+import { QadamMetadataModel } from '@aiqadam/qadams-framework'
+import { PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
+import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
 
 type BundledQadamOverrides = { name: string, version: string }
 
@@ -21,8 +23,6 @@ vi.mock('../../../../src/app/qadams/metadata/qadam-cache', () => ({
         invalidate: async () => undefined,
     }),
 }))
-
-const { qadamMetadataService } = await import('../../../../src/app/qadams/metadata/qadam-metadata-service')
 
 const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger
 

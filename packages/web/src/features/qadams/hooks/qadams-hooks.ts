@@ -89,6 +89,7 @@ export const qadamsHooks = {
         qadamsApi.get({ name, version, locale: i18n.language as LocalesEnum }),
       staleTime: Infinity,
       enabled,
+      retry: false,
     });
     return {
       qadamModel: query.data,

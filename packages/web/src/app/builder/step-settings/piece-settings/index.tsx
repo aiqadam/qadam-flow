@@ -1,22 +1,19 @@
 import {
   ApFlagId,
-  flowQadamUtil,
   isNil,
   QadamAction,
   QadamActionSettings,
   QadamTrigger,
   QadamTriggerSettings,
 } from '@aiqadam/shared';
-import { TriangleAlert } from 'lucide-react';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { flagsHooks } from '@/hooks/flags-hooks';
 
 import { GenericPropertiesForm } from '../../qadam-properties/generic-properties-form';
+import { QadamVersionUnavailable } from '../qadam-version-unavailable';
 import { useStepSettingsContext } from '../step-settings-context';
-import { UpdatePieceVersionDialog } from '../update-qadam-version-dialog/update-qadam-version-dialog';
 
 import { ConnectionSelect } from './connection-select';
 
@@ -34,7 +31,6 @@ const removeAuthFromProps = (
 };
 
 const PieceSettings = React.memo((props: PieceSettingsProps) => {
-  const { t } = useTranslation();
   const {
     qadamModel,
     qadamModelError,
@@ -87,30 +83,7 @@ const PieceSettings = React.memo((props: PieceSettingsProps) => {
   return (
     <div className="flex flex-col gap-4 w-full">
       {qadamModelError && !qadamModel && (
-        <div className="flex flex-col gap-3 rounded-md border border-dashed p-4">
-          <div className="flex items-center gap-2">
-            <TriangleAlert className="size-4 text-destructive shrink-0" />
-            <p className="text-sm font-medium">
-              {t('Piece version unavailable')}
-            </p>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {t(
-              'This step is pinned to a version of this piece that is no longer available. Update it to the latest version to continue editing this step.',
-            )}
-          </p>
-          {!props.readonly && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm">{t('Switch version')}</span>
-              <UpdatePieceVersionDialog
-                step={props.step}
-                currentVersion={flowQadamUtil.getExactVersion(
-                  props.step.settings.qadamVersion,
-                )}
-              />
-            </div>
-          )}
-        </div>
+        <QadamVersionUnavailable step={props.step} readonly={props.readonly} />
       )}
 
       {!qadamModel && !qadamModelError && (

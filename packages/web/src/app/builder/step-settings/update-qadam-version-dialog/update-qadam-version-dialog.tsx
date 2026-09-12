@@ -40,6 +40,7 @@ type DialogView = 'upgrade' | 'advanced';
 const UpdatePieceVersionDialog: React.FC<UpdatePieceVersionDialogProps> = ({
   step,
   currentVersion,
+  variant = 'icon',
 }) => {
   const [view, setView] = useState<DialogView | null>(null);
   const qadamName = step.settings.qadamName;
@@ -60,29 +61,45 @@ const UpdatePieceVersionDialog: React.FC<UpdatePieceVersionDialogProps> = ({
     setView(hasNewerVersion ? 'upgrade' : 'advanced');
   };
 
+  const versionIcon = hasNewerVersion ? (
+    <ArrowUp className="size-3.5 text-green-500" />
+  ) : (
+    <ArrowUpDown className="size-3.5" />
+  );
+  const versionLabel = hasNewerVersion
+    ? t('New version available')
+    : t('Switch version');
+
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={handleOpen}
-            loading={isLoading}
-          >
-            {hasNewerVersion ? (
-              <ArrowUp className="size-3.5 text-green-500" />
-            ) : (
-              <ArrowUpDown className="size-3.5" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {hasNewerVersion ? t('New version available') : t('Switch version')}
-        </TooltipContent>
-      </Tooltip>
+      {variant === 'labelled' ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleOpen}
+          loading={isLoading}
+        >
+          {versionIcon}
+          {versionLabel}
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={handleOpen}
+              loading={isLoading}
+            >
+              {versionIcon}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{versionLabel}</TooltipContent>
+        </Tooltip>
+      )}
 
       <Dialog
         open={view !== null}
@@ -127,6 +144,7 @@ export { UpdatePieceVersionDialog };
 type UpdatePieceVersionDialogProps = {
   step: QadamAction | QadamTrigger;
   currentVersion: string;
+  variant?: 'icon' | 'labelled';
 };
 
 const AdvancedForm: React.FC<AdvancedFormProps> = ({

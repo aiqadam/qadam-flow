@@ -336,6 +336,9 @@ const findBundledFallback = async ({ log, name, requestedBaseVersion, currentRel
     if (!filterQadamBasedOnType(platformId, bundled) || !isSupportedRelease(currentRelease, bundled)) {
         return undefined
     }
+    if (!isNil(requestedBaseVersion) && requestedBaseVersion !== bundled.version) {
+        log.warn({ name, requestedVersion: requestedBaseVersion, resolvedVersion: bundled.version }, '[qadamMetadataService] pinned qadam version unavailable, resolved to the bundled build instead')
+    }
     return {
         name: bundled.name,
         version: bundled.version,
