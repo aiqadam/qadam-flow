@@ -1,5 +1,5 @@
 import { createCustomApiCallAction } from '@aiqadam/qadams-common';
-import { QadamAuth, createQadam } from '@aiqadam/qadams-framework';
+import { createQadam } from '@aiqadam/qadams-framework';
 import { QadamCategory } from '@aiqadam/shared';
 import { telegramAnswerCallbackQueryAction } from './lib/action/answer-callback-query.action';
 import { telegramCreateInviteLinkAction } from './lib/action/create-invite-link';
@@ -20,25 +20,9 @@ import { telegramSendMediaGroupAction } from './lib/action/send-media-group.acti
 import { telegramSendMessageAction } from './lib/action/send-text-message.action';
 import { telegramSendPollAction } from './lib/action/send-poll.action';
 import { telegramUnpinMessageAction } from './lib/action/unpin-message.action';
+import { telegramBotAuth } from './lib/auth';
 import { telegramCommons } from './lib/common';
 import { telegramNewMessage } from './lib/trigger/new-message';
-
-const markdownDescription = `
-**Authentication**:
-
-1. Begin a conversation with the [Botfather](https://telegram.me/BotFather).
-2. Type in "/newbot"
-3. Choose a name for your bot
-4. Choose a username for your bot.
-5. Copy the token value from the Botfather and use it activepieces connection.
-6. Congratulations! You can now use your new Telegram connection in your flows.
-`;
-
-export const telegramBotAuth = QadamAuth.SecretText({
-  displayName: 'Bot Token',
-  description: markdownDescription,
-  required: true,
-});
 
 export const telegramBot = createQadam({
   displayName: 'Telegram Bot',
@@ -75,3 +59,6 @@ export const telegramBot = createQadam({
   authors: ["abdullahranginwala","tanoggy","alerdenisov","Abdallah-Alwarawreh","kishanprmr","MoShizzle","khaledmashaly","abuaboud",'sanket-a11y'],
   triggers: [telegramNewMessage],
 });
+
+export { telegramBotAuth } from './lib/auth';
+export { telegramEventPuller, telegramTransport } from './lib/long-polling';

@@ -20,7 +20,17 @@ export const StoreEntryEntity = new EntitySchema<StoreEntrySchema>({
             type: 'jsonb',
             nullable: true,
         },
-    },    
+        expiresAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
+    },
+    indices: [
+        {
+            name: 'idx_store_entry_expires_at',
+            columns: ['expiresAt'],
+        },
+    ],
     uniques: [
         {
             name: 'uq_store_entry_project_id_key',

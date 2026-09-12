@@ -1,24 +1,39 @@
 import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
-import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
-import { FieldType, Filter, FilterOperator, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
-import { z } from 'zod';
+import { columnUtils } from '../common/columns';
+import { filterUtils } from '../common/filters';
+import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
+import { FilterOperator, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
 import qs from 'qs';
-type FieldInfo = {
-  id: string;
-  type: FieldType;
-  name: string;
-};
 
-// "In" / "Not In" accept either a list variable or a comma-separated string.
-function toFilterList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map(String);
+// Spelled out because this step is routinely configured as raw JSON through the
+// API or MCP, where the builder's picker is not there to produce the shape.
+const FILTERS_DESCRIPTION = [
+  'Filter conditions to apply. All conditions are combined with AND.',
+  'Shape: {"filters":[{"field":"<column name or id>","operator":"eq","value":"..."}]}.',
+  'Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists.',
+  'A filters value that cannot be read raises an error — it is never ignored, because ignoring it would return every row in the table.',
+].join(' ');
+
+const VALUE_DESCRIPTION = [
+  'For "In" / "Not In", pass a comma-separated list or a list variable.',
+  'Greater/Less Than compare by the column type: Number numerically, Date by timestamp (ISO, or any date the engine can parse — not epoch milliseconds), Text and Single Select alphabetically, ignoring case.',
+  'A date without a time names the whole day in UTC, so "Less Than or Equal 2026-09-11" includes rows dated the 11th.',
+].join(' ');
+
+// An id list that was written but resolved to nothing must not read as "no
+// restriction" — same rule as the Columns prop and as the filters themselves.
+function toRecordIds(rawRecordIds: unknown): string[] | undefined {
+  if (rawRecordIds === null || rawRecordIds === undefined || (Array.isArray(rawRecordIds) && rawRecordIds.length === 0)) {
+    return undefined;
   }
-  return String(value ?? '')
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const ids = (Array.isArray(rawRecordIds) ? rawRecordIds : String(rawRecordIds).split(','))
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id.length > 0);
+  if (ids.length === 0) {
+    throw new Error('Record IDs is set but names no record. Remove it to search the whole table, or list the record ids to fetch.');
+  }
+  return [...new Set(ids)];
 }
 
 export const findRecords = createAction({
@@ -28,6 +43,12 @@ export const findRecords = createAction({
   auth: QadamAuth.None(),
   props: {
     table_id: tablesCommon.table_id,
+    columns: tablesCommon.columns,
+    record_ids: Property.Array({
+      displayName: 'Record IDs',
+      description: 'Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.',
+      required: false,
+    }),
     limit: Property.Number({
       displayName: 'Limit',
       description: 'Maximum number of records to return (default no limit).',
@@ -36,7 +57,7 @@ export const findRecords = createAction({
     filters: Property.DynamicProperties({
       auth: QadamAuth.None(),
       displayName: 'Filters',
-      description: 'Filter conditions to apply',
+      description: FILTERS_DESCRIPTION,
       required: false,
       refreshers: ['table_id'],
       props: async (propsValue, context) => {
@@ -56,7 +77,7 @@ export const findRecords = createAction({
           tableId: convertedTableId,
           context,
         });
- 
+
         return {
           filters: Property.Array({
             displayName: 'Filters',
@@ -68,7 +89,7 @@ export const findRecords = createAction({
                 options: {
                   options: fields.map((field) => ({
                     label: field.name,
-                    value: { id: field.externalId, type: field.type, name: field.name } as FieldInfo,
+                    value: { id: field.externalId, type: field.type, name: field.name },
                   })),
                 },
               }),
@@ -93,7 +114,7 @@ export const findRecords = createAction({
               }),
               value: Property.ShortText({
                 displayName: 'Value',
-                description: 'For "In" / "Not In", pass a comma-separated list or a list variable.',
+                description: VALUE_DESCRIPTION,
                 required: false,
               }),
             },
@@ -103,84 +124,18 @@ export const findRecords = createAction({
     }),
   },
   async run(context) {
-    const { table_id: tableExternalId, limit, filters } = context.propsValue;
+    const { table_id: tableExternalId, limit, filters, columns, record_ids } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
-    const filtersArray: { field: FieldInfo; operator: FilterOperator; value: unknown }[] = filters?.['filters'] ?? [];
-
-    for (const filter of filtersArray) {
-      if (filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS) {
-        continue;
-      }
-      if (filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN) {
-        if (toFilterList(filter.value).length === 0) {
-          throw new Error(`The "${filter.operator}" operator on field "${filter.field.name}" requires at least one value.`);
-        }
-        continue;
-      }
-
-      const value = filter.value;
-      const fieldType = filter.field.type;
-
-      let schema: Record<string, z.ZodType>;
-      switch (fieldType) {
-        case FieldType.NUMBER:
-          schema = {
-            value: z.union([z.number(), z.string().transform(val => {
-              const num = Number(val);
-              if (isNaN(num)) throw new Error(`Invalid number for field "${filter.field.name}"`);
-              return num;
-            })]),
-          };
-          break;
-        case FieldType.DATE:
-          schema = {
-            value: z.union([z.date(), z.string().transform(val => {
-              const date = new Date(val);
-              if (isNaN(date.getTime())) throw new Error(`Invalid date for field "${filter.field.name}"`);
-              return date;
-            })]),
-          };
-          break;
-        default:
-          schema = {
-            value: z.string(),
-          };
-      }
-
-      await propsValidation.validateZod({ value }, schema);
-    }
-
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
-
-    const parsedFilters: Filter[] = filtersArray.map((filter) => {
-      const fieldId = tableFields.find((f) => f.externalId === filter.field.id)?.id ?? filter.field.id;
-      if (filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS) {
-        return {
-          fieldId,
-          operator: filter.operator,
-        };
-      }
-      if (filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN) {
-        return {
-          fieldId,
-          operator: filter.operator,
-          value: toFilterList(filter.value),
-        };
-      }
-      return {
-        fieldId,
-        operator: filter.operator,
-        value: filter.value as string,
-      };
-    });
 
     const request: ListRecordsRequest = {
       tableId,
       limit: limit ?? 999999999,
       cursor: undefined,
-      filters: parsedFilters,
+      filters: filterUtils.toWireFilters({ rawFilters: filters, fields: tableFields }),
+      fieldIds: columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields }),
+      recordIds: toRecordIds(record_ids),
     };
-
 
     const response = await httpClient.sendRequest<SeekPage<PopulatedRecord>>({
       method: HttpMethod.GET,

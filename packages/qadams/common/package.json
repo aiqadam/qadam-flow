@@ -1,12 +1,13 @@
 {
   "name": "@aiqadam/qadams-common",
-  "version": "0.12.3",
+  "version": "0.14.0",
   "type": "commonjs",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.lib.json && cp package.json dist/",
-    "lint": "eslint 'src/**/*.ts'"
+    "lint": "eslint 'src/**/*.ts' 'test/**/*.ts'",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aiqadam/qadams-framework": "workspace:*",
@@ -21,6 +22,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@types/mime-types": "2.1.1"
+    "@types/mime-types": "2.1.1",
+    "vitest": "3.0.8"
   }
 }

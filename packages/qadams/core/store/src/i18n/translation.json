@@ -22,5 +22,9 @@
   "Separator between added values, use \\n for newlines": "Separator between added values, use \\n for newlines",
   "Project": "Project",
   "Flow": "Flow",
-  "Run": "Run"
+  "Run": "Run",
+  "Put If Absent": "Put If Absent",
+  "Store a value only if the key is not already taken, and report whether this run is the one that took it.": "Store a value only if the key is not already taken, and report whether this run is the one that took it.",
+  "Expires After (seconds)": "Expires After (seconds)",
+  "Leave empty to keep the value forever. An expired key is free to be taken again.": "Leave empty to keep the value forever. An expired key is free to be taken again."
 }

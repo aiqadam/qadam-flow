@@ -1,5 +1,6 @@
 {
   "0": "0",
+  "Receiving updates by polling, last checked {checked}": "Receiving updates by polling, last checked {checked}",
   "Support": "Support",
   "Runs": "Runs",
   "Edit flow": "Edit flow",
@@ -510,6 +511,9 @@
   "Search projects...": "Search projects...",
   "No projects found.": "No projects found.",
   "Platform Admin": "Platform Admin",
+  "Local build": "Local build",
+  "View commit {sha} on GitHub": "View commit {sha} on GitHub",
+  "The commit this build was made from": "The commit this build was made from",
   "AI Providers": "AI Providers",
   "Branding": "Branding",
   "Global Connections": "Global Connections",
@@ -1101,7 +1105,7 @@
   "When a user enters this domain on the sign-in page, they will be redirected to your SAML identity provider.": "When a user enters this domain on the sign-in page, they will be redirected to your SAML identity provider.",
   "Update SSO domain?": "Update SSO domain?",
   "Users won't be able to sign in via SSO until you verify the new domain.": "Users won't be able to sign in via SSO until you verify the new domain.",
-  "\n**Setup Instructions**:\nPlease check the following documentation: [SAML SSO](https://flow.aiqadam.org/docs/security/sso)\n\n**Single sign-on URL**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n": "\n**Setup Instructions**:\nPlease check the following documentation: [SAML SSO](https://flow.aiqadam.org/docs/security/sso)\n\n**Single sign-on URL**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n",
+  "\n**Single sign-on URL**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n": "\n**Single sign-on URL**:\n```text\n{samlAcs}\n```\n**Audience URI (SP Entity ID)**:\n```text\nQadam Flow\n```\n",
   "IDP Metadata": "IDP Metadata",
   "Paste the metadata XML contents or the metadata URL provided by your identity provider.": "Paste the metadata XML contents or the metadata URL provided by your identity provider.",
   "IDP Certificate": "IDP Certificate",
@@ -1714,6 +1718,7 @@
   "Duration": "Duration",
   "View error": "View error",
   "Failed on ({stepName})": "Failed on ({stepName})",
+  "Called inline by its parent flow — ran in the same process, no queue": "Called inline by its parent flow — ran in the same process, no queue",
   "Failed Retries": "Failed Retries",
   "Previous status": "Previous status",
   "Retry is only available for {failedJobRetentionDays} after a run fails.": "Retry is only available for {failedJobRetentionDays, plural, =0 {0 days} =1 {1 day} other {# days}} after a run fails.",
@@ -2001,5 +2006,13 @@
   "(hidden)": "(hidden)",
   "Yes, proceed": "Yes, proceed",
   "No, cancel": "No, cancel",
-  "The action could not be answered. Please try again.": "The action could not be answered. Please try again."
+  "The action could not be answered. Please try again.": "The action could not be answered. Please try again.",
+  "Not receiving updates. Turn the flow off and on again to retry.": "Not receiving updates. Turn the flow off and on again to retry.",
+  "Retrying — updates may be delayed.": "Retrying — updates may be delayed.",
+  "Delivery": "Delivery",
+  "Webhook (the app calls this instance)": "Webhook (the app calls this instance)",
+  "Long polling (this instance calls the app)": "Long polling (this instance calls the app)",
+  "Edit Connection": "Edit Connection",
+  "Change the display name, and any settings that belong to this connection.": "Change the display name, and any settings that belong to this connection.",
+  "Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential.": "Long polling suits instances the app cannot reach — behind NAT or in a closed network. This instance keeps a request open to the app instead. It applies to every flow using this connection, because the app allows only one consumer per credential."
 }

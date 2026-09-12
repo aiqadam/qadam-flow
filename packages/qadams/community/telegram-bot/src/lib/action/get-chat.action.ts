@@ -1,7 +1,7 @@
 import { HttpError, HttpMethod, httpClient } from '@aiqadam/qadams-common';
 import { createAction } from '@aiqadam/qadams-framework';
 import { telegramCommons } from '../common';
-import { telegramBotAuth } from '../..';
+import { telegramBotAuth } from '../auth';
 
 export const telegramGetChatAction = createAction({
   auth: telegramBotAuth,

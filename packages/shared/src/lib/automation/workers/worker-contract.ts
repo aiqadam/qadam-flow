@@ -5,6 +5,22 @@ import { FlowVersion } from '../flows/flow-version'
 import { QadamPackage } from '../qadams/qadam'
 import { ConsumeJobRequest, ConsumeJobResponse, WorkerMachineHealthcheckRequest } from './index'
 
+export type StartInlineFlowRunRequest = {
+    // The CALLER's own trusted project/platform — always the worker's own current-job
+    // context, never anything supplied by the engine/sandbox. The API handler compares
+    // this against the resolved flow's actual projectId and rejects a mismatch.
+    callerProjectId: string
+    callerPlatformId: string
+    parentRunId: string
+    environment: RunEnvironment
+    flowId: string
+    payload: unknown
+}
+
+export type StartInlineFlowRunResult =
+    | { ok: true, flowVersion: FlowVersion, childRunId: string, childLogsFileId: string, inlineDepth: number }
+    | { ok: false, error: string }
+
 export type SubmitPayloadsRequest = {
     flowVersionId: string
     projectId: string
@@ -52,6 +68,7 @@ export type WorkerToApiContract = {
     updateChatProgress(input: UpdateChatProgressRequest): Promise<void>
     updateProjectContext(input: UpdateProjectContextRequest): Promise<void>
     executeChatTool(input: ExecuteChatToolRequest): Promise<ExecuteChatToolResponse>
+    startInlineFlowRun(input: StartInlineFlowRunRequest): Promise<StartInlineFlowRunResult>
 }
 
 export type SendChatEventRequest = {

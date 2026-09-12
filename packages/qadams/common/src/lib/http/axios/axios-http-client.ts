@@ -28,7 +28,6 @@ export class AxiosHttpClient extends BaseHttpClient {
   ): Promise<HttpResponse<ResponseBody>> {
     try {
       const axiosInstance = axiosClient || axios.create();
-      process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
       const { urlWithoutQueryParams, queryParams: urlQueryParams } =
         this.getUrl(request);
       const headers = this.getHeaders(request);
@@ -97,7 +96,7 @@ export class AxiosHttpClient extends BaseHttpClient {
       };
     } catch (e) {
       if (axios.isAxiosError(e)) {
-        const httpError = new HttpError(request.body, e);
+        const httpError = new HttpError(e);
         console.error(
           '[HttpClient#(sanitized error message)] Request failed:',
           httpError

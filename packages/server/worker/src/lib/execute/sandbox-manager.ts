@@ -1,15 +1,28 @@
-import { ApEnvironment, ExecutionMode, isNil, WorkerToApiContract } from '@aiqadam/shared'
+import { ApEnvironment, ExecutionMode, isNil, RunEnvironment, WorkerToApiContract } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { system, WorkerSystemProp } from '../config/configs'
 import { workerSettings } from '../config/worker-settings'
 import { Sandbox } from '../sandbox/types'
 import { createSandboxForJob } from './create-sandbox-for-job'
 
+// The trusted identity of the job currently occupying this manager's sandbox — the
+// ONLY source `resolveInlineFlow` may use to scope an inline `callFlow` target.
+// Sandboxes can be reused across many jobs (dev/trusted execution modes), so this is
+// a mutable ref updated on every `acquire()`, read fresh by the WorkerContract
+// handlers at call time rather than captured once at sandbox-creation time.
+export type InlineJobContext = {
+    projectId: string
+    platformId: string
+    environment: RunEnvironment
+}
+
 export function createSandboxManager({ boxId, proxyPort }: { boxId: number, proxyPort: number | null }): SandboxManager {
     let currentSandbox: Sandbox | null = null
+    let currentJobContext: InlineJobContext | null = null
 
     return {
-        acquire(params: { log: Logger, apiClient: WorkerToApiContract }): Sandbox {
+        acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: InlineJobContext }): Sandbox {
+            currentJobContext = params.jobContext ?? null
             if (canReuseSandbox() && currentSandbox && currentSandbox.isReady()) {
                 return currentSandbox
             }
@@ -19,7 +32,14 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
                     params.log.error({ err }, 'Error shutting down previous sandbox'),
                 )
             }
-            currentSandbox = createSandboxForJob({ ...params, boxId, reusable: canReuseSandbox(), proxyPort })
+            currentSandbox = createSandboxForJob({
+                log: params.log,
+                apiClient: params.apiClient,
+                boxId,
+                reusable: canReuseSandbox(),
+                proxyPort,
+                getCurrentJobContext: () => currentJobContext,
+            })
             return currentSandbox
         },
         async invalidate(log: Logger): Promise<void> {
@@ -80,7 +100,7 @@ export type ActiveSandboxInfo = {
 }
 
 export type SandboxManager = {
-    acquire(params: { log: Logger, apiClient: WorkerToApiContract }): Sandbox
+    acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: InlineJobContext }): Sandbox
     invalidate(log: Logger): Promise<void>
     release(log: Logger): Promise<void>
     shutdown(log: Logger): Promise<void>

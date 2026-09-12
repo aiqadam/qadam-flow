@@ -152,6 +152,16 @@ jobs:
             org.opencontainers.image.description=Open-source AI-first workflow automation platform
             org.opencontainers.image.source=https://github.com/aiqadam/qadam-flow
 
+      # Baked into the image as AP_COMMIT_SHA / AP_BUILD_TIMESTAMP (see Dockerfile's `run`
+      # stage) and surfaced to the frontend via the flags API for #378's build-info UI. Must
+      # stay in lockstep with ci.yml's identically named step — that one only ever publishes
+      # `:main` / `:sha-xxxxxxx`, this one is what every `:latest` / `:vX.Y.Z` end users
+      # actually pull ships with. The commit's own commit-date, not `date -u`: see ci.yml's
+      # comment on the same step for why (this is a two-runner matrix too).
+      - name: Compute build metadata
+        id: build_meta
+        run: echo "timestamp=$(git show -s --format=%cI ${{ github.sha }})" >> "$GITHUB_OUTPUT"
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
@@ -167,6 +177,8 @@ jobs:
             TURBO_API=${{ env.TURBO_API }}
             TURBO_TOKEN=${{ env.TURBO_TOKEN }}
             TURBO_TEAM=${{ env.TURBO_TEAM }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
           outputs: type=image,name=ghcr.io/aiqadam/qadam-flow,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest

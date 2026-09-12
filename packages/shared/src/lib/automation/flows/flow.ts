@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { BaseModelSchema, Nullable } from '../../core/common/base-model'
 import { ApId } from '../../core/common/id-generator'
 import { Metadata } from '../../core/common/metadata'
-import { TriggerSource, WebhookHandshakeConfiguration } from '../trigger'
+import { LongPollingState, TriggerSource, WebhookHandshakeConfiguration } from '../trigger'
 import { FlowVersion } from './flow-version'
 
 export type FlowId = ApId
@@ -61,7 +61,9 @@ export const Flow = z.object({
 export type Flow = z.infer<typeof Flow>
 export const PopulatedFlow = Flow.extend({
     version: FlowVersion,
-    triggerSource: TriggerSource.pick({ schedule: true }).optional(),
+    triggerSource: TriggerSource.pick({ schedule: true }).extend({
+        longPolling: LongPollingState.optional(),
+    }).optional(),
 })
 
 export type PopulatedFlow = z.infer<typeof PopulatedFlow>

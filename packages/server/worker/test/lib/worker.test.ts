@@ -189,6 +189,7 @@ describe('worker integration', () => {
                     updateChatProgress: vi.fn(),
                     updateProjectContext: vi.fn(),
                     executeChatTool: vi.fn(),
+                    startInlineFlowRun: vi.fn(),
                 }
                 createRpcServer<WorkerToApiContract>(serverSocket, handlers)
             })

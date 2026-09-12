@@ -90,6 +90,7 @@ function buildMinimalHandlers(): WorkerToApiContract {
         updateChatProgress: vi.fn(),
         updateProjectContext: vi.fn(),
         executeChatTool: vi.fn(),
+        startInlineFlowRun: vi.fn(),
     }
 }
 
