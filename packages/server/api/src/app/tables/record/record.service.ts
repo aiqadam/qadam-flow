@@ -11,6 +11,7 @@ import {
     QadamFlowError,
     SeekPage,
     TableWebhookEventType,
+    unique,
     UpdateRecordRequest,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -28,6 +29,8 @@ import { recordFilter } from './record-filter'
 import { RecordEntity, RecordSchema } from './record.entity'
 
 const MAX_BATCH_SIZE = 50
+
+const MAX_REPORTED_FIELD_IDS = 10
 
 const recordRepo = repoFactory(RecordEntity)
 const cellsRepo = repoFactory(CellEntity)
@@ -85,6 +88,7 @@ export const recordService = {
         projectId,
         filters,
         limit,
+        fieldIds,
         fields: prefetchedFields,
     }: ListParams): Promise<SeekPage<PopulatedRecord>> {
         const fields = prefetchedFields ?? await fieldService.getAll({
@@ -92,6 +96,7 @@ export const recordService = {
             projectId,
         })
         const compiledFilters = recordFilter.compile({ filters, fields, tableId })
+        const projectedFields = resolveProjectedFields({ fieldIds, fields, tableId })
         const records = await recordRepo().find({
             where: {
                 projectId,
@@ -102,10 +107,16 @@ export const recordService = {
             },
         })
 
+        // The union of projected and filtered columns, never just the projection.
+        // Filters are evaluated in JS against the cells fetched here, and a filter
+        // whose column was not fetched finds no cell — which the missing-cell guard
+        // reads as "matches" for NOT_EXISTS, i.e. the whole table. That is the #382
+        // fail-open reached through a different door.
+        const cellFieldIds = unique([...projectedFields, ...fields.filter((field) => compiledFilters.some((compiled) => compiled.fieldId === field.id))].map((field) => field.id))
         const cells = await cellsRepo().find({
             where: {
                 projectId,
-                fieldId: In(fields.map((field) => field.id)),
+                fieldId: In(cellFieldIds),
                 recordId: In(records.map((record) => record.id)),
             },
         })
@@ -124,7 +135,7 @@ export const recordService = {
         }
         const filteredOutRecords = records.filter((record) => recordFilter.matchesAll({ cells: record.cells, compiledFilters }))
 
-        const populatedRecords = await formatRecordsAndFetchField({ records: filteredOutRecords, tableId, projectId, fields })
+        const populatedRecords = await formatRecordsAndFetchField({ records: filteredOutRecords, tableId, projectId, fields, outputFields: projectedFields })
 
         return {
             data: populatedRecords.slice(0, limit),
@@ -136,6 +147,7 @@ export const recordService = {
     async getById({
         id,
         projectId,
+        fieldIds,
     }: GetByIdParams): Promise<PopulatedRecord> {
         const record = await recordRepo().findOne({
             where: { id, projectId },
@@ -152,7 +164,17 @@ export const recordService = {
             })
         }
 
-        const result = await formatRecordsAndFetchField({ records: [record], tableId: record.tableId, projectId: record.projectId })
+        if (isNil(fieldIds)) {
+            const result = await formatRecordsAndFetchField({ records: [record], tableId: record.tableId, projectId: record.projectId })
+            return result[0]
+        }
+
+        // Validated against the record's own table, not one the caller named:
+        // getById is addressed by record id alone, so a caller-supplied table id
+        // would be an unchecked assertion about where the record lives.
+        const fields = await fieldService.getAll({ tableId: record.tableId, projectId: record.projectId })
+        const projectedFields = resolveProjectedFields({ fieldIds, fields, tableId: record.tableId })
+        const result = await formatRecordsAndFetchField({ records: [record], tableId: record.tableId, projectId: record.projectId, fields, outputFields: projectedFields })
         return result[0]
     },
 
@@ -363,12 +385,14 @@ type ListParams = {
     cursorRequest: Cursor | null
     limit: number
     filters: Filter[] | null
+    fieldIds?: string[]
     fields?: Field[]
 }
 
 type GetByIdParams = {
     id: string
     projectId: string
+    fieldIds?: string[]
 }
 
 type UpdateParams = {
@@ -450,21 +474,48 @@ function prepareCellInsertions(
     )
 }
 
-async function formatRecordsAndFetchField({ records, tableId, projectId, fields: prefetchedFields }: { records: RecordSchema[], tableId: string, projectId: string, fields?: Field[] }): Promise<PopulatedRecord[]> {
+// An unknown column in a projection is an error, never a silent drop: dropping it
+// would quietly widen the read back towards "every column", which is the whole
+// thing the projection exists to prevent.
+function resolveProjectedFields({ fieldIds, fields, tableId }: { fieldIds: string[] | undefined, fields: Field[], tableId: string }): Field[] {
+    if (isNil(fieldIds)) {
+        return fields
+    }
+    const requested = new Set(fieldIds)
+    const unknownFieldIds = unique(fieldIds.filter((fieldId) => !fields.some((field) => field.id === fieldId)))
+    if (unknownFieldIds.length > 0) {
+        // Bounded for the same reason its sibling in record-filter.ts is: the
+        // whole list is caller-supplied and this message rides on Error.message
+        // into server logs and persisted run output.
+        const shown = unknownFieldIds.slice(0, MAX_REPORTED_FIELD_IDS)
+        const suffix = unknownFieldIds.length > shown.length ? ` (and ${unknownFieldIds.length - shown.length} more)` : ''
+        const message = `Projection references field(s) not present in table ${tableId}: ${shown.join(', ')}${suffix}`
+        throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+    }
+    return fields.filter((field) => requested.has(field.id))
+}
+
+async function formatRecordsAndFetchField({ records, tableId, projectId, fields: prefetchedFields, outputFields }: { records: RecordSchema[], tableId: string, projectId: string, fields?: Field[], outputFields?: Field[] }): Promise<PopulatedRecord[]> {
     const fields = prefetchedFields ?? await fieldService.getAll({
         tableId,
         projectId,
     })
-    return formatRecords(records, fields)
+    return formatRecords({ records, fields: outputFields ?? fields })
 }
 
-function formatRecords(records: RecordSchema[], fields: Field[]): PopulatedRecord[] {
+// `fields` here is the set to EMIT, not the table's schema. A record may carry
+// cells for columns that were fetched only to evaluate a filter, and those must
+// not reach the output — the filter is often where the sensitive column is.
+function formatRecords({ records, fields }: { records: RecordSchema[], fields: Field[] }): PopulatedRecord[] {
     const fieldsNamesMap: Record<string, string> = fields.reduce((acc, field) => {
         acc[field.id] = field.name
         return acc
     }, {} as Record<string, string>)
     return records.map((record) => {
         const cells = record.cells.reduce<PopulatedRecord['cells']>((acc, cell) => {
+            if (!(cell.fieldId in fieldsNamesMap)) {
+                return acc
+            }
             acc[cell.fieldId] = {
                 fieldName: fieldsNamesMap[cell.fieldId],
                 value: cell.value,
@@ -473,6 +524,8 @@ function formatRecords(records: RecordSchema[], fields: Field[]): PopulatedRecor
             }
             return acc
         }, {})
+        // Back-filled from the emitted set too: iterating the whole schema here
+        // would publish the names of the very columns the projection withheld.
         for (const field of fields) {
             if (!(field.id in cells)) {
                 cells[field.id] = {

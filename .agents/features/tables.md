@@ -74,6 +74,7 @@ A built-in relational database feature that lets users store structured data dir
 - `table.createWebhook()` / `table.deleteWebhook()` — link table events to flows
 - `record.create()` — bulk insert (max 50 per batch, transactional), validates field count
 - `record.list()` — with filters (EQ, NEQ, GT, GTE, LT, LTE, CO, IN, NOT_IN, EXISTS, NOT_EXISTS). A filter naming a field that is not a column of the table is **rejected** (`ErrorCode.VALIDATION`), not dropped — dropping it read as "no filter" and returned the whole table (#382).
+- `record.list()` / `record.getById()` — optional `fieldIds` projection. The cell query covers projected **∪ filtered** columns, never just the projection: a filter whose column was not fetched finds no cell, which the missing-cell guard reads as a match for NOT_EXISTS — the whole table. A `fieldIds` entry that is not a column of the table is rejected (`ErrorCode.VALIDATION`), never dropped.
 - `record.update()` — update cells (empty fields unchanged)
 - `record.delete()` / `record.deleteAll()` — bulk delete
 

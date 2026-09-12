@@ -86,14 +86,28 @@ export const Filter = z.discriminatedUnion('operator', [
 
 export type Filter = z.infer<typeof Filter>
 
+const fieldIdsFromQuery = z.preprocess(
+    (v) => (Array.isArray(v) ? v.map(String) : v === null || v === undefined ? undefined : [String(v)]),
+    // An empty projection would otherwise read as "every column", which is the
+    // opposite of what the caller asked for.
+    z.array(z.string()).min(1, formErrors.required).optional(),
+)
+
 export const ListRecordsRequest = z.object({
     tableId: z.string(),
     limit: z.coerce.number().optional(),
     cursor: z.string().optional(),
     filters: OptionalArrayFromQuery(Filter),
+    fieldIds: fieldIdsFromQuery,
 })
 
 export type ListRecordsRequest = Omit<z.infer<typeof ListRecordsRequest>, 'cursor'> & { cursor: Cursor | undefined }
+
+export const GetRecordRequest = z.object({
+    fieldIds: fieldIdsFromQuery,
+})
+
+export type GetRecordRequest = z.infer<typeof GetRecordRequest>
 
 export const DeleteRecordsRequest = z.object({
     tableId: z.string(),

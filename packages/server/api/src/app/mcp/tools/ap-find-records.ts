@@ -33,6 +33,7 @@ const findRecordsInput = z.object({
         operator: operatorSchema.describe('Filter operator'),
         value: z.string().optional().describe('Filter value (required for all operators except exists/not_exists). For in/not_in, pass a comma-separated list. gt/gte/lt/lte compare by column type: NUMBER numerically, DATE by parsed timestamp (ISO, not epoch milliseconds), TEXT and STATIC_DROPDOWN alphabetically ignoring case. A DATE value with no time names the whole UTC day, so `lte 2026-09-11` includes rows dated the 11th.'),
     })).optional().describe('Optional filters. All filters are combined with AND logic.'),
+    columns: z.array(z.string()).min(1).optional().describe('Optional column names to return. Omit to return every column. Naming a column the table does not have is an error, not a silent widening back to every column.'),
     limit: z.number().min(1).max(500).optional().describe('Max records to return (default 50, max 500)'),
 })
 
@@ -40,22 +41,23 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
     return {
         title: 'ap_find_records',
         permission: Permission.READ_TABLE,
-        description: 'Query records from a table with optional filtering. Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists. Range operators respect the column type; a value the column type cannot interpret is rejected rather than returning an empty result.',
+        description: 'Query records from a table with optional filtering. Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists. Range operators respect the column type; a value the column type cannot interpret is rejected rather than returning an empty result. Pass `columns` to return only the columns you need — every column returned is written verbatim into the run log.',
         inputSchema: findRecordsInput.shape,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
             try {
-                const { tableId, filters, limit } = findRecordsInput.parse(args)
+                const { tableId, filters, columns, limit } = findRecordsInput.parse(args)
                 const effectiveLimit = limit ?? 50
 
                 let resolvedFilters = null
+                let fieldIds: string[] | undefined = undefined
                 let fields = undefined
-                if (filters && filters.length > 0) {
-                    const fieldNames = filters.map(f => f.fieldName)
+                if ((filters && filters.length > 0) || (columns && columns.length > 0)) {
+                    const fieldNames = [...(filters ?? []).map(f => f.fieldName), ...(columns ?? [])]
                     const resolved = await resolveFieldNamesForTable(mcp.projectId, tableId, fieldNames)
                     fields = resolved.fields
 
-                    for (const filter of filters) {
+                    for (const filter of filters ?? []) {
                         const isListOp = filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN
                         const isExistenceOp = filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS
                         if (!isExistenceOp && filter.value === undefined) {
@@ -67,10 +69,15 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                     }
 
                     if (resolved.errors.length > 0) {
-                        return { content: [{ type: 'text', text: `❌ Filter error:\n${resolved.errors.join('\n')}` }] }
+                        return { content: [{ type: 'text', text: `❌ Error:\n${resolved.errors.join('\n')}` }] }
                     }
 
-                    resolvedFilters = filters.map(f => {
+                    // Every name resolved, or the error gate above already returned.
+                    fieldIds = columns?.flatMap(column => {
+                        const fieldId = resolved.fieldMap.get(column)
+                        return fieldId === undefined ? [] : [fieldId]
+                    })
+                    resolvedFilters = filters === undefined || filters.length === 0 ? null : filters.map(f => {
                         const fieldId = resolved.fieldMap.get(f.fieldName)!
                         if (f.operator === FilterOperator.EXISTS || f.operator === FilterOperator.NOT_EXISTS) {
                             return { fieldId, operator: f.operator }
@@ -88,6 +95,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                     filters: resolvedFilters,
                     limit: effectiveLimit,
                     cursorRequest: null,
+                    fieldIds,
                     fields,
                 })
 

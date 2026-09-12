@@ -1,6 +1,7 @@
 import {
     CreateRecordsRequest,
     DeleteRecordsRequest,
+    GetRecordRequest,
     ListRecordsRequest,
     Permission,
     PopulatedRecord,
@@ -45,6 +46,7 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
         return recordService.getById({
             id: request.params.id,
             projectId: request.projectId,
+            fieldIds: request.query.fieldIds,
         })
     })
 
@@ -87,6 +89,7 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             cursorRequest: request.query.cursor ?? null,
             limit: request.query.limit ?? DEFAULT_PAGE_SIZE,
             filters: request.query.filters ?? null,
+            fieldIds: request.query.fieldIds,
         })
     })
 }
@@ -122,6 +125,7 @@ const GetRecordByIdRequest = {
         params: z.object({
             id: z.string(),
         }),
+        querystring: GetRecordRequest,
         response: {
             [StatusCodes.OK]: PopulatedRecord,
             [StatusCodes.NOT_FOUND]: z.string(),
