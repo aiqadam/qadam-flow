@@ -30,9 +30,13 @@ export const MAX_RECORDS_PER_BATCH = 1000
 // this constant sizes a quadratic loop on the request path, not just a parse. Note the
 // inversion that makes the tempting "generous cap" wrong: one id repeated is the CHEAP
 // case (findIndex returns immediately); all-distinct is the expensive one, so the cost
-// is paid by a request that is about to be rejected anyway. 200 keeps 2x headroom over
-// MAX_FIELDS_PER_TABLE's default of 100 — no real business key is wider than a table —
-// at roughly 1.5 ms against 100 ms for 1000.
+// is paid by a request that is about to be rejected anyway. 200 costs roughly 1.5 ms
+// against 100 ms for 1000.
+//
+// The basis is that no composite business key is 200 columns wide — NOT any relation to
+// MAX_FIELDS_PER_TABLE. That is an AppSystemProp read in the api package, which shared
+// structurally cannot see, so this constant can never track it: do not raise this
+// because an operator raised that.
 export const MAX_KEY_FIELDS_PER_UPSERT = 200
 
 export const UpdateRecordsRequest = z.object({
