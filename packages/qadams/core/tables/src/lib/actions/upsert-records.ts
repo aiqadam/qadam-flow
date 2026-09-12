@@ -7,7 +7,7 @@ import { UpsertAction, UpsertRecordsRequest } from '@aiqadam/shared';
 export const upsertRecords = createAction({
   name: 'tables-upsert-records',
   displayName: 'Upsert Record(s)',
-  description: 'Match records on a key and insert or update them, so a repeat does not create a duplicate.',
+  description: 'Match records on a key and insert or update them, so repeating this step does not create a duplicate. The key is matched here, not enforced by the table — another write path can still insert one.',
   auth: QadamAuth.None(),
   props: {
     table_id: tablesCommon.table_id,

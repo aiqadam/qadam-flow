@@ -1152,6 +1152,77 @@ describe('Record API', () => {
             expect([a?.statusCode, b?.statusCode].sort()).toEqual([StatusCodes.OK, StatusCodes.CONFLICT].sort())
         })
 
+        // The row lock that makes the test above pass is also reachable from an
+        // ordinary Tables grid cell edit, which posts to this same endpoint. Inserting
+        // a cell makes Postgres validate fk_cell_record_id with a FOR KEY SHARE on that
+        // cell's record row — taken only AFTER the cell row itself is written. So a
+        // batch and a single-record update acquire {record row, cell tuple} in opposite
+        // orders, and against a FOR UPDATE (which conflicts with FOR KEY SHARE) they
+        // cycle: Postgres kills one with a 40P01 and the client gets a 500. The lock
+        // has to be FOR NO KEY UPDATE, which excludes other writers without blocking
+        // the FK check.
+        // Deliberately ONE pair at a time, repeated, rather than many pairs at once:
+        // above AP_POSTGRES_POOL_SIZE overlapping writers the pool starves first and
+        // hides this, which is what the separate test below covers. Two racing requests
+        // stay well inside the pool, so the only thing left to fail is the lock cycle.
+        it('does not deadlock when a grid cell edit races a batch on the same record', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const failures: unknown[] = []
+
+            for (let attempt = 0; attempt < 20; attempt++) {
+                const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+                await db.save('record', record)
+
+                const responses = await Promise.all([
+                    ctx.post(`/v1/records/${record.id}`, {
+                        tableId: table.id,
+                        cells: [{ fieldId: field.id, value: 'from-the-grid' }],
+                    }),
+                    ctx.post('/v1/records/batch', {
+                        tableId: table.id,
+                        records: [{ id: record.id, cells: [{ fieldId: field.id, value: 'from-a-flow' }] }],
+                    }),
+                ])
+                // Collected with the body, so a regression names the Postgres error
+                // rather than only a status code.
+                failures.push(...responses.filter((response) => (response?.statusCode ?? 0) >= StatusCodes.INTERNAL_SERVER_ERROR).map((response) => response?.json()))
+            }
+
+            expect(failures).toEqual([])
+        })
+
+        // A different failure from the one above, with no Postgres error to report:
+        // this path used to format its response through fieldService.getAll on the
+        // DEFAULT manager while its own transaction still held a connection. Once
+        // AP_POSTGRES_POOL_SIZE requests are each holding one and waiting for a second,
+        // none can be issued and none can be released. Postgres sees no lock cycle, so
+        // nothing breaks it — the process serves this table until it is restarted.
+        // 16 overlapping writers against the default pool of 10.
+        it('does not starve the connection pool when many cell writes overlap', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const records = []
+            for (let index = 0; index < 8; index++) {
+                const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+                await db.save('record', record)
+                records.push(record)
+            }
+
+            const responses = await Promise.all(records.flatMap((record) => [
+                ctx.post(`/v1/records/${record.id}`, {
+                    tableId: table.id,
+                    cells: [{ fieldId: field.id, value: 'from-the-grid' }],
+                }),
+                ctx.post('/v1/records/batch', {
+                    tableId: table.id,
+                    records: [{ id: record.id, cells: [{ fieldId: field.id, value: 'from-a-flow' }] }],
+                }),
+            ]))
+
+            expect(responses.every((response) => response?.statusCode === StatusCodes.OK)).toBe(true)
+        })
+
         it('applies when an expected value still matches', async () => {
             const ctx = await setup()
             const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })

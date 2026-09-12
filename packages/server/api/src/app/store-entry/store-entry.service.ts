@@ -78,6 +78,11 @@ export const storeEntryService = {
             .getOne()
     },
 
+    // The one query here that is deliberately not scoped by projectId. It is a janitor
+    // run from a scheduled job, not from a request, and it selects rows purely by their
+    // own expiry — so there is no principal whose tenant it could be narrowed to, and
+    // narrowing it would leave every other project's expired rows behind forever.
+    // It is reachable from no controller; keep it that way.
     async deleteExpired({ limit }: { limit: number }): Promise<number> {
         const deleted = await storeEntryRepo().createQueryBuilder()
             .delete()
