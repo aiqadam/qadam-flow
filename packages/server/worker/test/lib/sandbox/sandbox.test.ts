@@ -34,6 +34,7 @@ function createMockWorkerHandlers(): WorkerContract {
         uploadRunLog: vi.fn().mockResolvedValue(undefined),
         sendFlowResponse: vi.fn().mockResolvedValue(undefined),
         updateStepProgress: vi.fn().mockResolvedValue(undefined),
+        resolveInlineFlow: vi.fn().mockResolvedValue({ ok: false, error: 'not implemented in test mock' }),
     }
 }
 

@@ -1,6 +1,6 @@
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { createAction, Property } from '@aiqadam/qadams-framework';
-import { telegramBotAuth } from '../..';
+import { telegramBotAuth } from '../auth';
 import { telegramCommons } from '../common';
 
 export const telegramCreateInviteLinkAction = createAction({

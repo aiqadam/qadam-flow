@@ -287,6 +287,7 @@ export const flowStructureUtil = {
     getAllNextActionsWithoutChildren,
     getAllChildSteps,
     extractConnectionIds,
+    extractConnectionIdsFromAuth,
     isAgentPiece,
     extractAgentIds,
 }

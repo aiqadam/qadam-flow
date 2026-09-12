@@ -23,7 +23,6 @@
   "The ID of the record to do the action on.": "The ID of the record to do the action on.",
   "The values to update. Leave empty to keep current value.": "The values to update. Leave empty to keep current value.",
   "Maximum number of records to return (default no limit).": "Maximum number of records to return (default no limit).",
-  "Filter conditions to apply": "Filter conditions to apply",
   "New Record Created": "New Record Created",
   "Record Updated": "Record Updated",
   "Record Deleted": "Record Deleted",

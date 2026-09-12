@@ -1,5 +1,5 @@
 import { apDayjsDuration } from '@aiqadam/server-utils'
-import { apId, ApId, FailedStep, FlowRunStatus, RunEnvironment } from '@aiqadam/shared'
+import { apId, ApId, FailedStep, FlowRunDispatchMode, FlowRunStatus, RunEnvironment } from '@aiqadam/shared'
 import { Queue } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import Redis from 'ioredis'
@@ -71,7 +71,7 @@ const RUNS_METADATA_UPSERT_KEYS: (keyof RunsMetadataUpsertData)[] = [
     'id', 'projectId', 'created', 'flowId', 'flowVersionId', 'environment',
     'triggeredBy', 'startTime', 'finishTime', 'status', 'tags',
     'failedStep', 'stepNameToTest', 'parentRunId', 'failParentOnFailure',
-    'logsFileId', 'updated', 'stepsCount', 'requestId',
+    'logsFileId', 'updated', 'stepsCount', 'requestId', 'dispatchMode',
 ]
 
 function stripToRunsMetadataUpsertData(params: RunsMetadataUpsertData): RunsMetadataUpsertData {
@@ -120,4 +120,5 @@ export type RunsMetadataUpsertData = {
     updated?: string
     stepsCount?: number
     requestId?: string
+    dispatchMode?: FlowRunDispatchMode
 }

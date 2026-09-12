@@ -25,10 +25,12 @@ import {
     QadamFlowError,
     SeekPage,
     SharedTemplate,
+    spreadIfDefined,
     TelemetryEventName,
     TemplateStatus,
     TemplateType,
     TriggerSource,
+    tryCatch,
     UncategorizedFolderId,
     UserId,
     UserWithMetaInformation,
@@ -47,6 +49,8 @@ import { SystemJobName } from '../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { projectService } from '../../project/project-service'
+import { eventPullerRegistry } from '../../trigger/long-polling/event-puller-registry'
+import { longPollingStatus } from '../../trigger/long-polling/long-polling-status'
 import { triggerSourceService } from '../../trigger/trigger-source/trigger-source-service'
 import { flowVersionMigrationService } from '../flow-version/flow-version-migration.service'
 import { flowVersionRepo, flowVersionService } from '../flow-version/flow-version.service'
@@ -235,6 +239,17 @@ export const flowService = (log: FastifyBaseLogger) => ({
 
         const paginationResult = await paginator.paginate<Flow & { version: FlowVersion | null, triggerSource?: TriggerSource }>(queryBuilder)
 
+        // Read once for the whole page rather than per row. The list is where a user notices a bot
+        // that has gone quiet, so the status has to reach it — but only rows whose qadam has a
+        // puller are asked about, which on a default install is none of them and costs nothing.
+        // `tryCatch` because an unreachable Redis must degrade to "no status", not fail the page.
+        const pulledFlows = includeTriggerSource
+            ? paginationResult.data
+                .filter((flow) => !isNil(flow.triggerSource) && eventPullerRegistry.isRegistered(flow.triggerSource.qadamName))
+                .map((flow) => ({ projectId: flow.projectId, flowId: flow.id }))
+            : []
+        const longPollingByFlowId = (await tryCatch(() => longPollingStatus.getMany({ flows: pulledFlows }))).data ?? new Map()
+
         const populatedFlows = await Promise.all(paginationResult.data.map(async (flow) => {
             if (isNil(flow.version)) {
                 throw new QadamFlowError({
@@ -252,6 +267,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
                 triggerSource: includeTriggerSource && flow.triggerSource
                     ? {
                         schedule: flow.triggerSource.schedule,
+                        ...spreadIfDefined('longPolling', longPollingByFlowId.get(flow.id)),
                     }
                     : undefined,
             }
@@ -339,6 +355,17 @@ export const flowService = (log: FastifyBaseLogger) => ({
             version: flowVersion,
             triggerSource: triggerSource ? {
                 schedule: triggerSource.schedule,
+                // Only meaningful for a flow the long-polling host serves; null for every other one,
+                // and `spreadIfDefined` keeps it off the response rather than sending an explicit null.
+                // Guarded on the qadam, not on a feature flag: this sits on every flow fetch, and
+                // `isRegistered` is a lookup in a static map — no Redis, no qadam loaded. A flow
+                // whose trigger no puller backs, which is nearly all of them, pays nothing.
+                // `tryCatch` because `update`, `updateMetadata` and `getTemplate` all return through
+                // here: without it an unreachable Redis would make a flow edit commit and then
+                // answer 500.
+                ...spreadIfDefined('longPolling', eventPullerRegistry.isRegistered(triggerSource.qadamName)
+                    ? (await tryCatch(() => longPollingStatus.get({ projectId, flowId: id }))).data
+                    : undefined),
             } : undefined,
         }
     },

@@ -67,6 +67,51 @@ Manages the full lifecycle of flow triggers — registration, event capture, tes
 - Submits ON_DISABLE hook to worker (unregisters webhook)
 - Deletes AppEventRouting records
 
+## Long-polling host (`trigger/long-polling/`, off by default)
+
+An alternative *delivery source* for WEBHOOK triggers, for instances the third party cannot reach.
+The trigger stays `TriggerStrategy.WEBHOOK`; only where the payload comes from changes.
+
+- `AP_TRIGGER_LONG_POLLING_ENABLED` defaults to **on** and is a kill switch, not an opt-in: the cost
+  of an unused install is zero by construction, not by the flag. The registry query filters on a
+  *static* list of qadam names and stops at zero rows, so no community qadam is loaded until a
+  source exists; and `flow.service` guards its status read on `eventPullerRegistry.isRegistered`
+  (a static map lookup) rather than on the flag, so a flow no puller backs costs nothing per fetch.
+  The switch stays because qadam code runs in the API process without a sandbox.
+- Started from `appPostBoot`.
+- `event-puller-registry.ts` maps a qadam name to a `QadamEventPuller` (`@aiqadam/qadams-framework`).
+  The qadam owns the protocol — endpoint, window length, cursor arithmetic, fatal/retryable
+  classification — and whether a given trigger config wants pulling (`isEnabledFor`). Core never
+  reads a third-party prop name.
+- `long-polling-source.ts` lists live, non-simulate trigger sources for registered qadams whose flow
+  is ENABLED, resolves each to one credential, and keeps one task **per credential** (last flow
+  enabled wins, mirroring `setWebhook`'s last-writer-wins).
+- `long-polling-host.ts` runs the loop. The lock and the cursor are keyed on the puller's
+  `credentialKey({ auth })` — for Telegram the bot id, which is the unit the third party counts as
+  one consumer — so two *connections* holding one bot token cannot poll each other's updates away.
+  The cursor in `distributedStore` advances **only after** a successful `webhookService.handleWebhook`.
+  Retryable failures back off exponentially, with `retryAfterSeconds` applied as a floor above the
+  ceiling; a fatal verdict stops the task until the flow is disabled and re-enabled (the mark is
+  keyed on the trigger-source row, which `enable` always rewrites).
+  A connection that cannot be *read* right now is explicitly not fatal — only one that is deleted,
+  in ERROR, or belongs to another qadam.
+  Qadam code runs in-process unsandboxed, so every call into a puller is `tryCatch`-wrapped,
+  time-boxed above the qadam's own window, paced by `MIN_WINDOW_INTERVAL_MS` so a puller that
+  returns instantly cannot spin the event loop, and handed nothing but `auth`, the trigger's
+  `settings.input` and an `AbortSignal`. The registry is loaded lazily, so an instance with the flag
+  off never evaluates a community qadam at all.
+- Reconciled by `triggerSourceService.enable`/`disable` (immediate) plus a 60s per-instance
+  interval (backstop). Not a system job: those run on one instance cluster-wide, while every
+  instance needs its own view of which tasks it is running.
+- `triggerSourceService.enable` refuses a pull-transport trigger while the flag is off, before the
+  engine's ON_ENABLE hook removes the webhook — otherwise the flow would end up with no delivery.
+  This covers the test panel too, since `testTriggerService` goes through the same `enable`: with
+  the flag off such a trigger can be neither enabled nor tested, and the error says so.
+- Metrics: `qadam_flow.long_polling.tasks` and `qadam_flow.long_polling.event_loop_delay_ms`.
+- `instrumentation.ts` redacts credential-shaped URL paths (`/bot<id>:<secret>`) from `url.full` /
+  `http.url` span attributes, since Telegram carries the token in the path and the HTTP
+  auto-instrumentation records whole URLs.
+
 ## Deduplication (`dedupeService`)
 
 For polling triggers — prevents duplicate payloads:

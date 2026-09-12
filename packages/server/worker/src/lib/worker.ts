@@ -39,9 +39,32 @@ const AP_VERSION = apVersionUtil.getCurrentRelease()
 // worker is kept in the registry only by the heartbeat on this interval (#222).
 export const VERSION_MISMATCH_POLL_PAUSE_MS = 10_000
 
+/** The server hangs up before it finishes restarting, so the first retry has to arrive after it. */
+const MANUAL_RECONNECT_DELAY_MS = 2_000
+
+/**
+ * socket.io reconnects by itself after a transport-level drop, but **not** when the server closed
+ * the connection: `io server disconnect` is documented as requiring a manual `connect()`. A
+ * graceful API shutdown is exactly that reason.
+ *
+ * Without a manual reconnect, every API restart leaves every worker permanently idle — the pollers
+ * exit on the generation change, `connect` never fires again to start new ones, and the only trace
+ * is one "Disconnected" line and a handful of "Poll failed" before silence. Jobs then queue up
+ * behind a worker that is running, connected to nothing, and reporting nothing.
+ *
+ * `io client disconnect` is our own `stop()` and must never be reconnected.
+ */
+export function needsManualReconnect(reason: string): boolean {
+    return reason === 'io server disconnect'
+}
+
 let socket: Socket | null = null
 let polling = false
 let connectionGeneration = 0
+let stopped = false
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+/** Whether the last disconnect was one socket.io will not retry on its own. */
+let reconnectIsOurs = false
 
 const workerId = `worker-${nanoid()}`
 
@@ -55,6 +78,8 @@ let sandboxManagers: SandboxManager[] = []
 
 export const worker = {
     async start({ apiUrl, socketUrl, workerToken, withHealthServer = false }: WorkerStartParams): Promise<void> {
+        // Reset, so a worker started again after `stop()` can still reconnect.
+        stopped = false
         // The worker group is not sent in the handshake any more: the API reads it from the
         // verified token principal, so a value asserted here would be ignored. AP_WORKER_GROUP_ID
         // still gates the local sandbox-mode checks below, but it no longer selects a group (#207).
@@ -68,6 +93,9 @@ export const worker = {
         const apiClient = createRpcClient<WorkerToApiContract>(socket, 60_000)
 
         socket.on('connect', async () => {
+            // The reconnect this flag described is done; a later `connect_error` belongs to
+            // whatever disconnect comes after it, not to this one.
+            reconnectIsOurs = false
             logger.info('Connected to API server via Socket.IO')
             await fetchAndStoreSettings(socket!)
             if (!egressStack) {
@@ -90,11 +118,23 @@ export const worker = {
         socket.on('disconnect', (reason) => {
             connectionGeneration++
             polling = false
+            reconnectIsOurs = needsManualReconnect(reason)
             logger.warn({ reason }, 'Disconnected from API server')
+            if (reconnectIsOurs) {
+                scheduleReconnect()
+            }
         })
 
         socket.on('connect_error', (error) => {
             logger.error({ error: error.message }, 'Socket.IO connection error')
+            // Only when the reconnect is ours to drive. socket.io raises this during its own
+            // automatic retry and on a failed first boot as well, and rescheduling there would lay
+            // a fixed 2s cadence over the backoff it is already running.
+            if (reconnectIsOurs) {
+                // A manual reconnect that lands while the API is still restarting fails here. Keep
+                // trying, or the first attempt after a slow restart is also the last.
+                scheduleReconnect()
+            }
         })
 
         if (withHealthServer) {
@@ -104,6 +144,12 @@ export const worker = {
     },
 
     async stop(): Promise<void> {
+        stopped = true
+        reconnectIsOurs = false
+        if (reconnectTimer !== null) {
+            clearTimeout(reconnectTimer)
+            reconnectTimer = null
+        }
         polling = false
         await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
         sandboxManagers = []
@@ -117,6 +163,20 @@ export const worker = {
         }
         logger.info('Worker stopped')
     },
+}
+
+function scheduleReconnect(): void {
+    if (stopped || reconnectTimer !== null || socket?.connected === true) {
+        return
+    }
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        if (stopped || socket?.connected === true) {
+            return
+        }
+        logger.info('Reconnecting to the API server after a server-side disconnect')
+        socket?.connect()
+    }, MANUAL_RECONNECT_DELAY_MS)
 }
 
 async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void> {
@@ -356,7 +416,11 @@ async function warmupPiecesOnStartup(apiClient: WorkerToApiContract): Promise<vo
     }
     logger.info({ count: pieces.length }, 'Starting piece cache warmup')
     const { error: installError } = await tryCatch(() =>
-        qadamInstaller(logger, apiClient).install({ pieces, includeFilters: false }),
+        // Filtered, like the provisioner's install: without `--filter`, bun installs every
+        // workspace in the shared cache, and it does so while holding the cross-replica
+        // fileLock that job provisioning also waits on. That was inert while the workspaces
+        // glob matched nothing; it is not any more.
+        qadamInstaller(logger, apiClient).install({ pieces, includeFilters: true }),
     )
     if (installError) {
         logger.error({ error: installError }, 'Failed to install pieces during startup warmup')

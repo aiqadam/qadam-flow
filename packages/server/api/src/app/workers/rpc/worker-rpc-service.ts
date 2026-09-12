@@ -37,6 +37,7 @@ import { triggerSourceService } from '../../trigger/trigger-source/trigger-sourc
 import { getWorkerGroupQueueName, QueueName, RunsMetadataUpsertData } from '../job'
 import { jobBroker } from '../job-queue/job-broker'
 import { machineService } from '../machine/machine-service'
+import { inlineFlowRunService } from './inline-flow-run.service'
 
 const getPollQueueName = (workerGroupId?: string): string => {
     return workerGroupId ? getWorkerGroupQueueName(workerGroupId) : QueueName.WORKER_JOBS
@@ -307,6 +308,10 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
 
         async executeChatTool(_input) {
             throw new Error('Chat is not available')
+        },
+
+        async startInlineFlowRun(input) {
+            return inlineFlowRunService(log).start(input)
         },
     }
 }

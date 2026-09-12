@@ -55,6 +55,8 @@ import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
 import { templateModule } from './template/template.module'
 import { appEventRoutingModule } from './trigger/app-event-routing/app-event-routing.module'
+import { longPollingHost } from './trigger/long-polling/long-polling-host'
+import { longPollingTransportChange } from './trigger/long-polling/long-polling-transport-change'
 import { triggerModule } from './trigger/trigger.module'
 import { userBadgeModule } from './user/badges/badge-module'
 import { platformUserModule } from './user/platform/platform-user-module'
@@ -180,6 +182,14 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(userBadgeModule)
     await app.register(platformAnalyticsModule)
     systemJobHandlers.registerJobHandler(SystemJobName.DELETE_FLOW, (data) => flowBackgroundJobs(app.log).deleteFlowHandler(data))
+    systemJobHandlers.registerJobHandler(SystemJobName.APPLY_DELIVERY_MODE_CHANGE, (data) => longPollingTransportChange(app.log).reEnableAffectedFlows({
+        qadamName: data.qadamName,
+        projectIds: data.projectIds,
+        externalId: data.externalId,
+        before: data.before,
+        after: data.after,
+        always: data.always,
+    }))
 
     app.get(
         '/redirect',
@@ -214,6 +224,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     app.addHook('onClose', async () => {
         app.log.info('Shutting down')
         await systemJobsSchedule(app.log).close()
+        await longPollingHost(app.log).stop()
         await redisConnections.destroy()
         await distributedLock(app.log).destroy()
         await engineResponseWatcher(app.log).shutdown()
@@ -251,6 +262,7 @@ The application started on ${await domainHelper.getPublicApiUrl({ path: '' })}, 
 
     await migrateQueuesAndRunConsumers(app)
     app.log.info('Queues migrated and consumers run')
+    await longPollingHost(app.log).start()
     if (environment === ApEnvironment.DEVELOPMENT) {
         app.log.warn(
             `[WARNING]: The application is running in ${environment} mode.`,
