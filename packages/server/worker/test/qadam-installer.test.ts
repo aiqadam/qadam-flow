@@ -1,10 +1,10 @@
-import { access, mkdir, writeFile } from 'node:fs/promises'
+import { access, glob, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PackageType, QadamType } from '@aiqadam/shared'
-import type { OfficialQadamPackage } from '@aiqadam/shared'
+import type { OfficialQadamPackage, QadamPackage } from '@aiqadam/shared'
 import type { Logger } from 'pino'
 import { qadamInstaller } from '../src/lib/cache/qadams/qadam-installer'
 
@@ -33,7 +33,19 @@ vi.mock('../src/lib/cache/cache-paths', () => ({
     getGlobalCachePathLatestVersion: () => testWorkspace,
 }))
 
-function makeQadam(name: string, version = '1.0.0'): OfficialQadamPackage {
+// Custom by default: an official qadam ships in the image and is never installed, so it would
+// exercise none of the install mechanics below.
+function makeQadam(name: string, version = '1.0.0'): QadamPackage {
+    return {
+        packageType: PackageType.REGISTRY,
+        qadamType: QadamType.CUSTOM,
+        qadamName: name,
+        qadamVersion: version,
+        platformId: 'platform_1',
+    }
+}
+
+function makeOfficialQadam(name: string, version = '1.0.0'): OfficialQadamPackage {
     return {
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
@@ -42,16 +54,52 @@ function makeQadam(name: string, version = '1.0.0'): OfficialQadamPackage {
     }
 }
 
-function qadamDirPath(qadam: OfficialQadamPackage): string {
+function qadamDirPath(qadam: QadamPackage): string {
     return join(testWorkspace, 'qadams', `${qadam.qadamName}-${qadam.qadamVersion}`)
 }
 
-function readyFilePath(qadam: OfficialQadamPackage): string {
+function readyFilePath(qadam: QadamPackage): string {
     return join(qadamDirPath(qadam), 'ready')
 }
 
 async function pathExists(p: string): Promise<boolean> {
     return access(p).then(() => true, () => false)
+}
+
+function readWorkspaceGlobs(packageJson: unknown): string[] {
+    if (typeof packageJson !== 'object' || packageJson === null || !('workspaces' in packageJson)) {
+        return []
+    }
+    const { workspaces } = packageJson
+    if (!Array.isArray(workspaces)) {
+        return []
+    }
+    return workspaces.filter((pattern): pattern is string => typeof pattern === 'string')
+}
+
+// Stands in for the real `bun install`: it only links a package that the root package.json's
+// `workspaces` globs actually match, which is the behaviour the glob regression turns on. A
+// filtered run links only the requested workspaces, exactly like `bun install --filter`.
+async function simulateBunInstall({ path: rootWorkspace, filtersPath }: { path: string, filtersPath: string[] }): Promise<{ output: string }> {
+    const rootPackageJson: unknown = JSON.parse(await readFile(join(rootWorkspace, 'package.json'), 'utf8'))
+    const requested = filtersPath.map((filterPath) => filterPath.replace(/^\.\//, ''))
+
+    const matched: string[] = []
+    for (const pattern of readWorkspaceGlobs(rootPackageJson)) {
+        for await (const entry of glob(pattern, { cwd: rootWorkspace })) {
+            matched.push(entry)
+        }
+    }
+
+    for (const entry of matched) {
+        const isRequested = requested.length === 0 || requested.includes(entry)
+        if (!isRequested || !await pathExists(join(rootWorkspace, entry, 'package.json'))) {
+            continue
+        }
+        await mkdir(join(rootWorkspace, entry, 'node_modules'), { recursive: true })
+    }
+
+    return { output: '' }
 }
 
 const fakeLog = {
@@ -69,6 +117,7 @@ beforeEach(async () => {
     testWorkspace = join(tmpdir(), `qadam-installer-test-${randomUUID()}`)
     await mkdir(testWorkspace, { recursive: true })
     vi.clearAllMocks()
+    mockInstall.mockReset()
 })
 
 afterEach(async () => {
@@ -87,6 +136,15 @@ describe('qadamInstaller', () => {
         await installer.install({ pieces: [qadam1, qadam2], includeFilters: true })
 
         expect(mockInstall).toHaveBeenCalledOnce()
+        // Named one by one, so bun installs these qadams rather than every workspace sharing
+        // the cache directory — an unfiltered install holds the cross-replica lock for the
+        // whole cache.
+        expect(mockInstall.mock.calls[0]?.[0]).toMatchObject({
+            filtersPath: [
+                expect.stringContaining(`${qadam1.qadamName}-${qadam1.qadamVersion}`),
+                expect.stringContaining(`${qadam2.qadamName}-${qadam2.qadamVersion}`),
+            ],
+        })
         expect(await pathExists(readyFilePath(qadam1))).toBe(true)
         expect(await pathExists(readyFilePath(qadam2))).toBe(true)
     })
@@ -162,6 +220,68 @@ describe('qadamInstaller', () => {
         await installer.install({ pieces: [qadam], includeFilters: true })
 
         expect(mockInstall).not.toHaveBeenCalled()
+    })
+
+    // The registry these names would be resolved against does not carry them: official qadams are
+    // compiled into the image and loaded from dist. Asking bun for one fails the job.
+    it('never installs an official qadam', async () => {
+        const official = makeOfficialQadam('@aiqadam/qadam-subflows', '0.4.14')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [official], includeFilters: true })
+
+        expect(mockInstall).not.toHaveBeenCalled()
+        expect(await pathExists(qadamDirPath(official))).toBe(false)
+    })
+
+    it('installs the custom qadams in a mixed set, and only those', async () => {
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [official, custom], includeFilters: true })
+
+        expect(mockInstall).toHaveBeenCalledOnce()
+        expect(mockInstall.mock.calls[0]?.[0]).toMatchObject({
+            filtersPath: [expect.stringContaining(custom.qadamName)],
+        })
+        expect(await pathExists(readyFilePath(custom))).toBe(true)
+        expect(await pathExists(qadamDirPath(official))).toBe(false)
+    })
+
+    it('the workspaces glob matches the directory qadams are written to', async () => {
+        const qadam = makeQadam('@aiqadam/qadam-workspace')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [qadam], includeFilters: true })
+
+        expect(await pathExists(join(qadamDirPath(qadam), 'node_modules'))).toBe(true)
+    })
+
+    it('a second install of the same set is a no-op', async () => {
+        const qadam1 = makeQadam('@aiqadam/qadam-idempotent-a')
+        const qadam2 = makeQadam('@aiqadam/qadam-idempotent-b')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [qadam1, qadam2], includeFilters: true })
+        expect(mockInstall).toHaveBeenCalledOnce()
+
+        // Nothing memoises these qadams yet — the in-process memo is only written by a disk check
+        // that already found them installed — so the second run has to reach that conclusion from
+        // the cache directory alone, which is what a second replica does too.
+        await installer.install({ pieces: [qadam1, qadam2], includeFilters: true })
+
+        expect(mockInstall).toHaveBeenCalledOnce()
+        expect(await pathExists(readyFilePath(qadam1))).toBe(true)
+        expect(await pathExists(readyFilePath(qadam2))).toBe(true)
     })
 
     it('individual fallback always passes --filter path regardless of includeFilters', async () => {
