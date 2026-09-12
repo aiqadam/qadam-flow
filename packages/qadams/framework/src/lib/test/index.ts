@@ -17,6 +17,7 @@ export function createMockActionContext<
       delete: async () => {
         return;
       },
+      putIfAbsent: async <T>(_key: string, value: T) => ({ stored: true, value }),
     },
     connections: {
       get: async () => null,

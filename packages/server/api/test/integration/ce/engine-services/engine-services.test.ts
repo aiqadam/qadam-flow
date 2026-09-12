@@ -17,6 +17,7 @@ import { createFileUploader } from '../../../../../engine/src/lib/qadam-context/
 import { createFlowsContext } from '../../../../../engine/src/lib/qadam-context/flows'
 import { createContextStore } from '../../../../../engine/src/lib/qadam-context/store'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
+import { storeEntryService } from '../../../../src/app/store-entry/store-entry.service'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import {
@@ -380,6 +381,29 @@ describe('Engine Services Integration', () => {
             const afterExpiry = await flowStore.putIfAbsent(key, { third: true }, StoreScope.FLOW, { ttlSeconds: 60 })
             expect(afterExpiry.stored).toBe(true)
             expect(await flowStore.get(key)).toEqual({ third: true })
+        })
+
+        // The sweep is reachable by no test: its WHERE can be deleted — which makes
+        // it drop every store entry in the deployment, hourly — with a green suite.
+        it('the sweep deletes only what has expired', async () => {
+            const flowStore = store(apId())
+            const expired = [`sweep-a-${apId()}`, `sweep-b-${apId()}`]
+            const future = `sweep-future-${apId()}`
+            const forever = `sweep-forever-${apId()}`
+
+            for (const key of expired) {
+                await flowStore.put(key, { gone: true }, StoreScope.FLOW, { ttlSeconds: 1 })
+            }
+            await flowStore.put(future, { kept: true }, StoreScope.FLOW, { ttlSeconds: 600 })
+            await flowStore.put(forever, { kept: true })
+
+            await new Promise((resolve) => setTimeout(resolve, 1100))
+
+            const deleted = await storeEntryService.deleteExpired({ limit: 100 })
+
+            expect(deleted).toBeGreaterThanOrEqual(expired.length)
+            expect(await flowStore.get(future)).toEqual({ kept: true })
+            expect(await flowStore.get(forever)).toEqual({ kept: true })
         })
 
         it('keeps a value with no ttl forever, as every entry written before ttl existed does', async () => {

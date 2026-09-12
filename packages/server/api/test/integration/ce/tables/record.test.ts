@@ -1003,6 +1003,33 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
 
+        it('inserts a batch larger than one statement can carry', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const extra: { id: string }[] = []
+            for (let index = 0; index < 59; index++) {
+                const column = createMockField({ tableId: table.id, projectId: ctx.project.id })
+                column.type = FieldType.TEXT
+                await db.save('field', column)
+                extra.push(column)
+            }
+
+            // 250 rows x 60 columns = 15,000 cells, and a cell row binds 5 parameters:
+            // 75,000 against Postgres' 65,535 per statement. Unchunked, the single
+            // INSERT dies with an 08P01 and takes the transaction with it — on a batch
+            // size UpsertRecordsRequest explicitly permits.
+            const records = Array.from({ length: 250 }, (_, index) => [
+                { fieldId: key.id, value: `key-${index}` },
+                ...extra.map((column) => ({ fieldId: column.id, value: `v-${index}` })),
+            ])
+
+            const response = await ctx.post('/v1/records/upsert', { tableId: table.id, keyFieldIds: [key.id], records })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().length).toBe(250)
+            expect(response?.json().every((result: { action: string }) => result.action === 'created')).toBe(true)
+        })
+
         it('rejects a key column that is not a column of the table', async () => {
             const ctx = await setup()
             const { table, field } = await createTableWithField(ctx)
@@ -1074,6 +1101,26 @@ describe('Record API', () => {
             // Refused, not silently skipped: the first writer's value survives.
             const stored = await ctx.get(`/v1/records/${record.id}`)
             expect(stored?.json().cells[field.id].value).toBe('first-writer')
+        })
+
+        it('lets exactly one of two concurrent conditional updates win', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+
+            const body = (value: string) => ({
+                tableId: table.id,
+                cells: [{ fieldId: field.id, value }],
+                precondition: [{ fieldId: field.id, operator: FilterOperator.NOT_EXISTS }],
+            })
+            const [a, b] = await Promise.all([
+                ctx.post(`/v1/records/${record.id}`, body('a')),
+                ctx.post(`/v1/records/${record.id}`, body('b')),
+            ])
+
+            // Without the row lock both return 200 and one write is silently lost.
+            expect([a?.statusCode, b?.statusCode].sort()).toEqual([StatusCodes.OK, StatusCodes.CONFLICT].sort())
         })
 
         it('applies when an expected value still matches', async () => {

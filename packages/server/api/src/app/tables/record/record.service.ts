@@ -194,10 +194,11 @@ export const recordService = {
         const { tableId, keyFieldIds, records } = request
 
         return transaction(async (entityManager: EntityManager) => {
-            // A Postgres transaction-scoped lock, not the Redis distributedLock:
-            // it cannot expire before the insert it guards commits, and under
-            // REDIS_TYPE=MEMORY the Redis one is per-process and so not distributed
-            // at all. Same reasoning as ai-provider-service.ts's custom-provider cap.
+            // A Postgres transaction-scoped lock, not the Redis distributedLock.
+            // ai-provider-service.ts's custom-provider cap records the first reason:
+            // it cannot expire before the insert it guards commits. The second is
+            // this file's own: under REDIS_TYPE=MEMORY every API process gets its own
+            // in-process Redis, so that lock is per-process and not distributed at all.
             // Keyed per table rather than per key tuple: one acquisition instead of
             // N, and no lock-ordering deadlock between two batches that overlap.
             await entityManager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`tables-upsert:${projectId}:${tableId}`])
@@ -235,8 +236,17 @@ export const recordService = {
             if (toInsert.length > 0) {
                 await this.validateCount({ projectId, tableId }, toInsert.length)
                 const insertions = prepareRecordInsertions(toInsert.map((row) => row.cells), tableId, projectId, new Date())
-                await entityManager.getRepository(RecordEntity).insert(insertions)
-                await entityManager.getRepository(CellEntity).insert(prepareCellInsertions(toInsert.map((row) => row.cells), insertions, projectId))
+                const cellInsertions = prepareCellInsertions(toInsert.map((row) => row.cells), insertions, projectId)
+                // Chunked, as create() is. One statement carrying every row of a
+                // 1000-record batch exceeds the wire protocol's parameter limit and
+                // the whole transaction dies with a Postgres 08P01 — on a batch size
+                // the request schema explicitly permits.
+                for (const batch of chunk(insertions, MAX_BATCH_SIZE)) {
+                    await entityManager.getRepository(RecordEntity).insert(batch)
+                }
+                for (const batch of chunk(cellInsertions, MAX_BATCH_SIZE)) {
+                    await entityManager.getRepository(CellEntity).insert(batch)
+                }
                 toInsert.forEach((row, position) => {
                     outcomes[row.index].recordId = insertions[position].id
                 })
@@ -724,9 +734,11 @@ function assertNoRepeatedKey({ records, keyOf }: { records: { fieldId: string, v
     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
 }
 
-// An absent cell and an empty cell are the same "empty": create strips empty values
-// before posting, so a record with no value has no cell row at all, while update
-// writes ''. Matching has to treat the two as equal or an upsert inserts a duplicate.
+// An absent cell and an empty cell are the same "empty", and both shapes really
+// exist: the qadam actions strip empty values before posting, so a record with no
+// value has no cell row at all, while the web grid (ap-tables-server-state.ts sends
+// String(value)) and any raw API or MCP caller store a literal ''. Matching has to
+// treat the two as equal, or an upsert inserts the duplicate it exists to prevent.
 function buildKeyReader({ keyFieldIds }: { keyFieldIds: string[] }): KeyReader {
     return (cells) => JSON.stringify(keyFieldIds.map((fieldId) => {
         const value = cells.find((cellData) => cellData.fieldId === fieldId)?.value
