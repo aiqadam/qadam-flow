@@ -12,6 +12,7 @@ import {
     WorkerNotifyContract,
 } from '@aiqadam/shared'
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client'
+import { shutdownCodeSandbox } from './core/code/code-sandbox'
 import { flowRunProgressReporter } from './helper/flow-run-progress-reporter'
 import { execute } from './operations'
 
@@ -96,7 +97,16 @@ export const workerSocket = {
                     return JSON.parse(JSON.stringify(response)) as EngineResponse<unknown>
                 }
                 finally {
-                    await flowRunProgressReporter.shutdown()
+                    // The CODE runner is scoped to one operation. Engine processes are
+                    // reused across jobs — and so across projects — under UNSANDBOXED,
+                    // so it must not survive this block. Ordered after the reporter, and
+                    // in its own try, so neither teardown can skip the other.
+                    try {
+                        await flowRunProgressReporter.shutdown()
+                    }
+                    finally {
+                        await shutdownCodeSandbox()
+                    }
                 }
             },
         })

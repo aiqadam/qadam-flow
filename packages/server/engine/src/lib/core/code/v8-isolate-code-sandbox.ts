@@ -67,6 +67,12 @@ export const v8IsolateCodeSandbox: CodeSandbox = {
             isolate.dispose()
         }
     },
+
+    // Nothing is held between executions: each call creates and disposes its own
+    // isolate in the `finally` above, so there is nothing left for the job to release.
+    async shutdown() {
+        return undefined
+    },
 }
 
 const initIsolateContext = async ({ isolate, codeContext }: InitContextParams): Promise<any> => {
