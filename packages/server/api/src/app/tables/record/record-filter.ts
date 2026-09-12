@@ -54,14 +54,18 @@ function assertEveryFilterNamesAColumn({ filters, fieldsById, tableId }: { filte
 function compileFilter({ filter, field }: { filter: Filter, field: Field }): CompiledFilter {
     switch (filter.operator) {
         case FilterOperator.EXISTS:
-            return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => !isEmptyCell(value) }
+            return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => !isEmptyCell(value), sql: { kind: 'exists' } }
         case FilterOperator.NOT_EXISTS:
-            return { fieldId: filter.fieldId, matchesMissingCell: true, matchesCell: isEmptyCell }
+            return { fieldId: filter.fieldId, matchesMissingCell: true, matchesCell: isEmptyCell, sql: { kind: 'notExists' } }
         case FilterOperator.EQ:
-            return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => value === filter.value }
+            return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => value === filter.value, sql: { kind: 'eq', value: filter.value } }
         case FilterOperator.NEQ:
-            return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => value !== filter.value }
+            return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => value !== filter.value, sql: { kind: 'neq', value: filter.value } }
         case FilterOperator.CO:
+            // No `sql`: `toLowerCase` folds by Unicode's own rules, `lower()` by the
+            // database's collation, and the two disagree (ß, Turkish dotted I, …). A
+            // pre-filter that drops a row this matcher would keep is a wrong result,
+            // not a slower one, so CO stays in JS.
             return {
                 fieldId: filter.fieldId,
                 matchesMissingCell: false,
@@ -72,6 +76,7 @@ function compileFilter({ filter, field }: { filter: Filter, field: Field }): Com
                 fieldId: filter.fieldId,
                 matchesMissingCell: false,
                 matchesCell: (value) => typeof value === 'string' && filter.value.includes(value),
+                sql: { kind: 'in', values: filter.value },
             }
         case FilterOperator.NOT_IN:
             // A null/empty cell counts as "not in the list" (included), matching
@@ -82,6 +87,7 @@ function compileFilter({ filter, field }: { filter: Filter, field: Field }): Com
                 fieldId: filter.fieldId,
                 matchesMissingCell: false,
                 matchesCell: (value) => typeof value !== 'string' || !filter.value.includes(value),
+                sql: { kind: 'notIn', values: filter.value },
             }
         case FilterOperator.GT:
         case FilterOperator.GTE:
@@ -263,8 +269,20 @@ type MatchesAllParams = {
     compiledFilters: CompiledFilter[]
 }
 
+// `cell.value` is a varchar, so every value Postgres hands back is a string and these
+// predicates mean exactly what the matcher beside them means. Operators whose JS semantics
+// the database cannot reproduce carry no `sql` and are filtered in JS alone.
+export type CellPredicate =
+    | { kind: 'eq', value: string }
+    | { kind: 'neq', value: string }
+    | { kind: 'in', values: string[] }
+    | { kind: 'notIn', values: string[] }
+    | { kind: 'exists' }
+    | { kind: 'notExists' }
+
 export type CompiledFilter = {
     fieldId: string
     matchesMissingCell: boolean
     matchesCell: (cellValue: unknown) => boolean
+    sql?: CellPredicate
 }

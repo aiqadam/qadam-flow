@@ -30,6 +30,7 @@ import { fieldService } from '../field/field.service'
 import { tableService } from '../table/table.service'
 import { CellEntity } from './cell.entity'
 import { recordFilter } from './record-filter'
+import { recordQuery } from './record-query'
 import { RecordEntity, RecordSchema } from './record.entity'
 
 const MAX_BATCH_SIZE = 50
@@ -104,18 +105,10 @@ export const recordService = {
         })
         const compiledFilters = recordFilter.compile({ filters, fields, tableId })
         const projectedFields = resolveProjectedFields({ fieldIds, fields, tableId })
-        // Pushed into SQL, where it is served by idx_record_table_id_project_id_record_id,
-        // rather than materialising the whole table and discarding it in JS.
-        const records = await recordRepo().find({
-            where: {
-                projectId,
-                tableId,
-                ...(isNil(recordIds) ? {} : { id: In(recordIds) }),
-            },
-            order: {
-                created: 'ASC',
-            },
-        })
+        // Record ids, the filters the database can reproduce, and the limit once nothing is left
+        // for the JS pass below to remove — see record-query.ts — rather than materialising the
+        // whole table and discarding it in JS.
+        const records = await recordQuery.build({ projectId, tableId, recordIds, compiledFilters, limit }).getMany()
 
         // The union of projected and filtered columns, never just the projection.
         // Filters are evaluated in JS against the cells fetched here, and a filter
