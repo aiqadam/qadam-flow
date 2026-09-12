@@ -25,14 +25,14 @@ const fields: Field[] = [field({ externalId: 'event_id' }), field({ externalId: 
 
 // The unit tests for `filterUtils` stay green if `find-records` stops calling it,
 // which is exactly how the reported bug shipped. This exercises the action.
-async function run(filters: unknown, columns?: unknown) {
+async function run(filters: unknown, columns?: unknown, recordIds?: unknown) {
   const { findRecords } = await import('../src/lib/actions/find-records');
   const { tablesCommon } = await import('../src/lib/common');
   vi.spyOn(tablesCommon, 'convertTableExternalIdToId').mockResolvedValue('table_1');
   vi.spyOn(tablesCommon, 'getTableFields').mockResolvedValue(fields);
 
   return findRecords.run({
-    propsValue: { table_id: 'events', limit: undefined, filters, columns },
+    propsValue: { table_id: 'events', limit: undefined, filters, columns, record_ids: recordIds },
     server: { apiUrl: 'https://example.invalid/api/', token: 'token', publicUrl: 'https://example.invalid/' },
     project: { id: 'project_1' },
   } as unknown as Parameters<typeof findRecords.run>[0]);
@@ -73,6 +73,27 @@ describe('tables-find-records', () => {
 
   it('fails the step for a column the table does not have', async () => {
     await expect(run(undefined, ['no_such_column'])).rejects.toThrow(/no_such_column/);
+    expect(sendRequest).not.toHaveBeenCalled();
+  });
+
+  it('sends the record ids when Record IDs is set', async () => {
+    await run(undefined, undefined, ['rec_1', 'rec_2', 'rec_1']);
+
+    const url: string = sendRequest.mock.calls[0][0].url;
+    expect(url).toContain('recordIds%5B0%5D=rec_1');
+    expect(url).toContain('recordIds%5B1%5D=rec_2');
+    // De-duplicated, so a repeated id is not a repeated bind parameter.
+    expect(url).not.toContain('recordIds%5B2%5D');
+  });
+
+  it('sends no record ids when the prop is empty, so the whole table is searched', async () => {
+    await run(undefined, undefined, []);
+
+    expect(sendRequest.mock.calls[0][0].url).not.toContain('recordIds');
+  });
+
+  it('fails the step for a Record IDs value that names no record', async () => {
+    await expect(run(undefined, undefined, ['  ', ''])).rejects.toThrow(/names no record/);
     expect(sendRequest).not.toHaveBeenCalled();
   });
 

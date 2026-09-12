@@ -252,7 +252,12 @@ describe('Record API', () => {
             const ctx = await setup()
             const { table, field } = await createTableWithField(ctx)
             const wanted = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'wanted' })
-            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'other' })
+            // More rows than ids asked for, deliberately: with one row per id the
+            // limit slice alone produces the right count, and the test passes with
+            // the id restriction deleted.
+            for (const value of ['other-1', 'other-2', 'other-3', 'other-4']) {
+                await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value })
+            }
 
             const response = await ctx.inject({
                 method: 'GET',
@@ -261,8 +266,23 @@ describe('Record API', () => {
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
             const body = response?.json()
-            expect(body.data.length).toBe(1)
-            expect(body.data[0].id).toBe(wanted.id)
+            expect(body.data.map((record: { id: string }) => record.id)).toEqual([wanted.id])
+        })
+
+        // qs drops an empty array, so the reachable "empty" shape is a blank entry.
+        // It must restrict to nothing, never degrade to "no restriction".
+        it('returns nothing for a blank recordId rather than every record', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'present' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, recordIds: [''] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data).toEqual([])
         })
 
         // limit defaults to 10, so without this a lookup of more ids than that
@@ -274,6 +294,11 @@ describe('Record API', () => {
             for (let index = 0; index < 12; index++) {
                 records.push(await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: `row-${index}` }))
             }
+            // Rows the lookup must NOT return, so a missing id restriction cannot
+            // satisfy the count by accident.
+            for (const value of ['extra-1', 'extra-2', 'extra-3']) {
+                await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value })
+            }
 
             const response = await ctx.inject({
                 method: 'GET',
@@ -281,7 +306,8 @@ describe('Record API', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.OK)
-            expect(response?.json().data.length).toBe(12)
+            const returned = response?.json().data.map((record: { id: string }) => record.id).sort()
+            expect(returned).toEqual(records.map((record) => record.id).sort())
         })
 
         it('ignores a recordId belonging to another table rather than returning it', async () => {
@@ -901,7 +927,11 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.OK)
             const body = response?.json()
             expect(body.length).toBe(2)
-            expect(body.map((record: { cells: Record<string, { value: string }> }) => record.cells[field.id].value).sort()).toEqual(['after-1', 'after-2'])
+            // In request order, not created order: create-records returns in input
+            // order, so a flow indexing step.output[i] must not be right there and
+            // silently wrong here.
+            expect(body.map((record: { id: string }) => record.id)).toEqual([first.id, second.id])
+            expect(body.map((record: { cells: Record<string, { value: string }> }) => record.cells[field.id].value)).toEqual(['after-1', 'after-2'])
         })
 
         it('creates no record and writes no cell when one id is unknown', async () => {

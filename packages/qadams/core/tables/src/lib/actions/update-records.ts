@@ -3,7 +3,10 @@ import { tablesCommon } from '../common';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
 import { PopulatedRecord, UpdateRecordsRequest } from '@aiqadam/shared';
 
-const RECORD_ID_KEY = 'record_id';
+// Namespaced because the sibling keys in this map are column externalIds, and an
+// externalId is caller-settable — a column called `record_id` would otherwise shadow
+// this input and the row would be addressed by that column's value instead.
+const RECORD_ID_KEY = '__record_id';
 
 export const updateRecords = createAction({
   name: 'tables-update-records',

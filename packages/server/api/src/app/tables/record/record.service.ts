@@ -10,7 +10,6 @@ import {
     PopulatedRecord,
     QadamFlowError,
     SeekPage,
-    spreadIfDefined,
     TableWebhook,
     TableWebhookEventType,
     unique,
@@ -107,7 +106,7 @@ export const recordService = {
             where: {
                 projectId,
                 tableId,
-                ...spreadIfDefined('id', isNil(recordIds) ? undefined : In(recordIds)),
+                ...(isNil(recordIds) ? {} : { id: In(recordIds) }),
             },
             order: {
                 created: 'ASC',
@@ -197,10 +196,12 @@ export const recordService = {
         const { tableId, records } = request
         assertNoRepeatedTarget({ records })
 
+        let batchFields: Field[] = []
         const updatedRecordIds = await transaction(async (entityManager: EntityManager) => {
             const existingFields = await entityManager.getRepository(FieldEntity).find({
                 where: { projectId, tableId },
             })
+            batchFields = existingFields
             const fieldIds = new Set(existingFields.map((field) => field.id))
 
             const existingIds = new Set((await entityManager.getRepository(RecordEntity).find({
@@ -230,7 +231,12 @@ export const recordService = {
                     })),
             )
 
-            for (const batch of chunk(cellsToUpsert, MAX_BATCH_SIZE)) {
+            // Sorted so every batch takes cell row locks in the same order. Two
+            // concurrent batches touching {A,B} and {B,A} would otherwise deadlock,
+            // and the single-record path's one-record-wide window becomes N wide
+            // the moment updates are batched.
+            const ordered = [...cellsToUpsert].sort((left, right) => `${left.recordId}:${left.fieldId}`.localeCompare(`${right.recordId}:${right.fieldId}`))
+            for (const batch of chunk(ordered, MAX_BATCH_SIZE)) {
                 await entityManager.getRepository(CellEntity).upsert(batch, ['projectId', 'fieldId', 'recordId'])
             }
 
@@ -240,9 +246,17 @@ export const recordService = {
         const updatedRecords = await recordRepo().find({
             where: { id: In(updatedRecordIds), projectId, tableId },
             relations: ['cells'],
-            order: { created: 'ASC' },
         })
-        return formatRecordsAndFetchField({ records: updatedRecords, tableId, projectId })
+        // Re-ordered into request order rather than left in whatever order the
+        // re-read returned: create-records comes back in input order, so a flow
+        // author indexing step.output[i] against their own array would be right
+        // there and silently wrong here.
+        const byId = new Map(updatedRecords.map((record) => [record.id, record]))
+        const inRequestOrder = updatedRecordIds.flatMap((recordId) => {
+            const record = byId.get(recordId)
+            return isNil(record) ? [] : [record]
+        })
+        return formatRecordsAndFetchField({ records: inRequestOrder, tableId, projectId, fields: batchFields })
     },
 
     async update({

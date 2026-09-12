@@ -1,4 +1,4 @@
-import { PopulatedRecord, TableAutomationTrigger, TableWebhookEventType } from '@aiqadam/shared'
+import { PopulatedRecord, TableAutomationTrigger, TableWebhookEventType, unique } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import pLimit from 'p-limit'
 import { tableService } from '../table/table.service'
@@ -40,16 +40,29 @@ export const recordSideEffects = (_log: FastifyBaseLogger) => ({
             }),
         )))
 
-        // allSettled, not all: this runs after the response has already been sent, so a
-        // single rejection used to abandon every dispatch still queued behind it.
+        // allSettled, not all. Promise.all did not abandon anything — .map invokes every
+        // async function eagerly, so all N were already in flight — but a single
+        // rejection propagated out of the controller AFTER reply.send(), leaving a
+        // rejected route promise and no record of how many of the N actually failed.
         const failures = dispatches.filter((dispatch) => dispatch.status === 'rejected')
         if (failures.length > 0) {
-            logger.error({ projectId, tableId, eventType, failed: failures.length, total: records.length }, '[recordSideEffects] some webhook dispatches failed')
+            logger.error({
+                projectId,
+                tableId,
+                eventType,
+                failed: failures.length,
+                total: records.length,
+                // Causes, not just a count: a systematic failure (queue outage, an
+                // offload error) otherwise leaves a number and nothing to act on.
+                reasons: unique(failures.map((failure) => String(failure.reason))).slice(0, MAX_REPORTED_REASONS),
+            }, '[recordSideEffects] some webhook dispatches failed')
         }
     },
 })
 
 const WEBHOOK_DISPATCH_CONCURRENCY = 10
+
+const MAX_REPORTED_REASONS = 5
 
 const EVENT_TYPE_MAP: Record<
 'created' | 'updated' | 'deleted',

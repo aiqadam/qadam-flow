@@ -36,5 +36,7 @@
   "Update Record(s)": "Update Record(s)",
   "Update many records in one request, instead of one step execution per record.": "Update many records in one request, instead of one step execution per record.",
   "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.": "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.",
-  "Add one or more records to update": "Add one or more records to update"
+  "Add one or more records to update": "Add one or more records to update",
+  "Record IDs": "Record IDs",
+  "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.": "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both."
 }

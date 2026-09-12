@@ -19,7 +19,9 @@ export const CreateRecordsRequest = z.object({
 export type CreateRecordsRequest = z.infer<typeof CreateRecordsRequest>
 
 // Bounded so an over-large batch fails with a readable 400 from the schema rather
-// than a 413 from the body parser.
+// than a 413 from the body parser. Declared here rather than at the end of the file,
+// against the usual convention, because the schema below consumes it while the module
+// is being evaluated — moving it down is a TS2448 "used before its declaration".
 export const MAX_RECORDS_PER_BATCH = 1000
 
 export const UpdateRecordsRequest = z.object({
@@ -104,9 +106,12 @@ export const Filter = z.discriminatedUnion('operator', [
 
 export type Filter = z.infer<typeof Filter>
 
-// Shared by `fieldIds` and `recordIds`. `undefined` survives as "not asked for";
-// an explicit empty list is a 400, because a scoping list that silently means "no
-// restriction" is the #382 fail-open shape.
+// Shared by `fieldIds` and `recordIds`. `undefined` survives as "not asked for".
+// `.min(1)` is unreachable over a query string — qs drops an empty array entirely and
+// a blank value preprocesses to `['']` — so what actually matters is that the
+// reachable blank shape fails CLOSED: `fieldIds: ['']` is rejected by
+// resolveProjectedFields, and `recordIds: ['']` restricts to an id that matches
+// nothing. Neither degrades to "no restriction", which is the #382 fail-open shape.
 const idListFromQuery = z.preprocess(
     (v) => (Array.isArray(v) ? v.map(String) : v === null || v === undefined ? undefined : [String(v)]),
     z.array(z.string()).min(1, formErrors.required).optional(),
