@@ -9,6 +9,7 @@ import {
     SeekPage,
     SERVICE_KEY_SECURITY_OPENAPI,
     UpdateRecordRequest,
+    UpdateRecordsRequest,
 } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
@@ -50,6 +51,27 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
         })
     })
 
+    // A new route rather than an extension of an existing one: `POST /v1/records` is
+    // pinned to 201 + a created-records array by the web client, the qadam and the MCP
+    // tool, and `POST /v1/records/:id` has no id to address a batch with. Static
+    // segments outrank parametric ones in find-my-way, and an apId() is 21 chars, so
+    // no record id can ever be the literal "batch".
+    fastify.post('/batch', BatchUpdateRequest, async (request, reply) => {
+        const records = await recordService.updateMany({
+            request: request.body,
+            projectId: request.projectId,
+        })
+        await reply.status(StatusCodes.OK).send(records)
+        await recordSideEffects(fastify.log).handleRecordsEvent({
+            tableId: request.body.tableId,
+            projectId: request.projectId,
+            records,
+            logger: request.log,
+            authorization: request.headers.authorization as string,
+            agentUpdate: request.body.agentUpdate ?? false,
+        }, 'updated')
+    })
+
     fastify.post('/:id', UpdateRequest, async (request, reply) => {
         const record = await recordService.update({
             id: request.params.id,
@@ -87,9 +109,10 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             tableId: request.query.tableId,
             projectId: request.projectId,
             cursorRequest: request.query.cursor ?? null,
-            limit: request.query.limit ?? DEFAULT_PAGE_SIZE,
+            limit: request.query.limit ?? request.query.recordIds?.length ?? DEFAULT_PAGE_SIZE,
             filters: request.query.filters ?? null,
             fieldIds: request.query.fieldIds,
+            recordIds: request.query.recordIds,
         })
     })
 }
@@ -129,6 +152,29 @@ const GetRecordByIdRequest = {
         response: {
             [StatusCodes.OK]: PopulatedRecord,
             [StatusCodes.NOT_FOUND]: z.string(),
+        },
+    },
+}
+
+const BatchUpdateRequest = {
+    config: {
+        security: securityAccess.project([PrincipalType.USER, PrincipalType.ENGINE, PrincipalType.SERVICE], Permission.WRITE_TABLE, {
+            type: ProjectResourceType.TABLE,
+            tableName: TableEntity,
+            entitySourceType: EntitySourceType.BODY,
+            lookup: {
+                paramKey: 'tableId',
+                entityField: 'id',
+            },
+        }),
+    },
+    schema: {
+        tags: ['records'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        description: 'Update many records in one request',
+        body: UpdateRecordsRequest,
+        response: {
+            [StatusCodes.OK]: z.array(PopulatedRecord),
         },
     },
 }

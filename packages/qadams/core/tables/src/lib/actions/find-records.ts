@@ -21,6 +21,21 @@ const VALUE_DESCRIPTION = [
   'A date without a time names the whole day in UTC, so "Less Than or Equal 2026-09-11" includes rows dated the 11th.',
 ].join(' ');
 
+// An id list that was written but resolved to nothing must not read as "no
+// restriction" — same rule as the Columns prop and as the filters themselves.
+function toRecordIds(rawRecordIds: unknown): string[] | undefined {
+  if (rawRecordIds === null || rawRecordIds === undefined || (Array.isArray(rawRecordIds) && rawRecordIds.length === 0)) {
+    return undefined;
+  }
+  const ids = (Array.isArray(rawRecordIds) ? rawRecordIds : String(rawRecordIds).split(','))
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id.length > 0);
+  if (ids.length === 0) {
+    throw new Error('Record IDs is set but names no record. Remove it to search the whole table, or list the record ids to fetch.');
+  }
+  return [...new Set(ids)];
+}
+
 export const findRecords = createAction({
   name: 'tables-find-records',
   displayName: 'Find Records',
@@ -29,6 +44,11 @@ export const findRecords = createAction({
   props: {
     table_id: tablesCommon.table_id,
     columns: tablesCommon.columns,
+    record_ids: Property.Array({
+      displayName: 'Record IDs',
+      description: 'Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.',
+      required: false,
+    }),
     limit: Property.Number({
       displayName: 'Limit',
       description: 'Maximum number of records to return (default no limit).',
@@ -104,7 +124,7 @@ export const findRecords = createAction({
     }),
   },
   async run(context) {
-    const { table_id: tableExternalId, limit, filters, columns } = context.propsValue;
+    const { table_id: tableExternalId, limit, filters, columns, record_ids } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
 
@@ -114,6 +134,7 @@ export const findRecords = createAction({
       cursor: undefined,
       filters: filterUtils.toWireFilters({ rawFilters: filters, fields: tableFields }),
       fieldIds: columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields }),
+      recordIds: toRecordIds(record_ids),
     };
 
     const response = await httpClient.sendRequest<SeekPage<PopulatedRecord>>({

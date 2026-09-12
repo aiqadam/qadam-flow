@@ -75,7 +75,9 @@ A built-in relational database feature that lets users store structured data dir
 - `record.create()` — bulk insert (max 50 per batch, transactional), validates field count
 - `record.list()` — with filters (EQ, NEQ, GT, GTE, LT, LTE, CO, IN, NOT_IN, EXISTS, NOT_EXISTS). A filter naming a field that is not a column of the table is **rejected** (`ErrorCode.VALIDATION`), not dropped — dropping it read as "no filter" and returned the whole table (#382).
 - `record.list()` / `record.getById()` — optional `fieldIds` projection. The cell query covers projected **∪ filtered** columns, never just the projection: a filter whose column was not fetched finds no cell, which the missing-cell guard reads as a match for NOT_EXISTS — the whole table. A `fieldIds` entry that is not a column of the table is rejected (`ErrorCode.VALIDATION`), never dropped.
+- `record.list()` — optional `recordIds` pushes an id restriction into SQL (served by `idx_record_table_id_project_id_record_id`) instead of materialising the table; the controller defaults `limit` to the id count so a lookup is not truncated to `DEFAULT_PAGE_SIZE`
 - `record.update()` — update cells (empty fields unchanged)
+- `record.updateMany()` — `POST /v1/records/batch`. One transaction, one field lookup and one cell upsert per chunk for the whole batch. Every id is checked against the requested `tableId`; a miss rolls the batch back. A repeated record id, or the same column twice in one record, is rejected before the upsert — Postgres would otherwise raise "cannot affect row a second time" as a 500. Does **not** call `validateCount`: an update creates no rows.
 - `record.delete()` / `record.deleteAll()` — bulk delete
 
 ## Access Control
@@ -83,7 +85,7 @@ A built-in relational database feature that lets users store structured data dir
 All table / field / record routes use `securityAccess.project([...], <permission>, <resource>)`. The required permission per resource:
 
 - **Read** (`GET /v1/tables`, `GET /v1/tables/:id`, `GET /v1/fields`, `GET /v1/fields/:id`, `GET /v1/records`, `GET /v1/records/:id`): `READ_TABLE`
-- **Write** (`POST /v1/tables`, `POST /v1/tables/:id`, `DELETE /v1/tables/:id`, `POST /v1/fields`, `POST /v1/fields/:id`, `DELETE /v1/fields/:id`, `POST /v1/records`, `POST /v1/records/:id`, `DELETE /v1/records`): `WRITE_TABLE`
+- **Write** (`POST /v1/records/batch`, `POST /v1/tables`, `POST /v1/tables/:id`, `DELETE /v1/tables/:id`, `POST /v1/fields`, `POST /v1/fields/:id`, `DELETE /v1/fields/:id`, `POST /v1/records`, `POST /v1/records/:id`, `DELETE /v1/records`): `WRITE_TABLE`
 
 Default project roles: `ADMIN` and `EDITOR` have both; `VIEWER` has only `READ_TABLE`. Custom roles inherit whatever permissions are configured.
 
