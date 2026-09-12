@@ -152,6 +152,28 @@ describe('Record API', () => {
             expect(body.data.length).toBe(2)
         })
 
+        it('returns every column when no projection is asked for', async () => {
+            const ctx = await setup()
+            const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            phone.type = FieldType.TEXT
+            await db.save('field', phone)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+            for (const [fieldId, value] of [[name.id, 'Ada'], [phone.id, '+998900000000']] as const) {
+                const cell = createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id })
+                cell.value = value
+                await db.save('cell', cell)
+            }
+
+            const response = await ctx.get('/v1/records', { tableId: table.id })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(Object.keys(body.data[0].cells).sort()).toEqual([name.id, phone.id].sort())
+            expect(body.data[0].cells[phone.id].value).toBe('+998900000000')
+        })
+
         it('returns only the projected columns, and not the names of the rest', async () => {
             const ctx = await setup()
             const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
@@ -298,10 +320,15 @@ describe('Record API', () => {
             const { table } = await createTableWithField(ctx)
             const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
             await db.save('record', record)
+            const otherTable = createMockTable({ projectId: ctx.project.id })
+            await db.save('table', otherTable)
+            const otherField = createMockField({ tableId: otherTable.id, projectId: ctx.project.id })
+            otherField.type = FieldType.TEXT
+            await db.save('field', otherField)
 
             const response = await ctx.inject({
                 method: 'GET',
-                url: `/api/v1/records/${record.id}?${qs.stringify({ fieldIds: [apId()] })}`,
+                url: `/api/v1/records/${record.id}?${qs.stringify({ fieldIds: [otherField.id] })}`,
             })
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
@@ -752,6 +779,40 @@ describe('Record API', () => {
             expect(body.data.length).toBe(1)
             expect(body.data[0].id).toBe(unlisted.id)
             expect(Object.keys(body.data[0].cells)).toEqual([name.id])
+        })
+
+        // The union fetches the filtered column's cell, so it is genuinely present
+        // on the record at format time — which is the only case that exercises the
+        // reducer's projection guard. The filter is usually where the sensitive
+        // column is, so a cell that arrives this way must not reach the output.
+        it('drops a filtered-on column from the output when it is not projected', async () => {
+            const ctx = await setup()
+            const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            phone.type = FieldType.TEXT
+            await db.save('field', phone)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+            for (const [fieldId, value] of [[name.id, 'Ada'], [phone.id, '+998900000000']] as const) {
+                const cell = createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id })
+                cell.value = value
+                await db.save('cell', cell)
+            }
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({
+                    tableId: table.id,
+                    fieldIds: [name.id],
+                    filters: [{ fieldId: phone.id, operator: FilterOperator.EQ, value: '+998900000000' }],
+                })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(Object.keys(body.data[0].cells)).toEqual([name.id])
+            expect(JSON.stringify(body)).not.toContain('+998900000000')
         })
 
         it('rejects an uninterpretable range value even when the table is empty', async () => {

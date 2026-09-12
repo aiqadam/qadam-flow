@@ -50,7 +50,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 const effectiveLimit = limit ?? 50
 
                 let resolvedFilters = null
-                let fieldIds = undefined
+                let fieldIds: string[] | undefined = undefined
                 let fields = undefined
                 if ((filters && filters.length > 0) || (columns && columns.length > 0)) {
                     const fieldNames = [...(filters ?? []).map(f => f.fieldName), ...(columns ?? [])]
@@ -69,7 +69,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                     }
 
                     if (resolved.errors.length > 0) {
-                        return { content: [{ type: 'text', text: `❌ Column error:\n${resolved.errors.join('\n')}` }] }
+                        return { content: [{ type: 'text', text: `❌ Error:\n${resolved.errors.join('\n')}` }] }
                     }
 
                     // Every name resolved, or the error gate above already returned.

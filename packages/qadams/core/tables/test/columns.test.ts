@@ -86,6 +86,20 @@ describe('columnUtils.toWireFieldIds', () => {
     expect(columnUtils.toWireFieldIds({ rawColumns: ['phone'], fields: colliding })).toEqual(['id_phone']);
   });
 
+  // The builder stringifies a non-string prop when it is toggled into dynamic
+  // mode, so these are the shapes that arrive from its own UI, not exotic input.
+  it('reads a JSON array, which is what a dynamic binding resolves to', () => {
+    expect(columnUtils.toWireFieldIds({ rawColumns: '["display_name","phone"]', fields })).toEqual(['id_display_name', 'id_phone']);
+  });
+
+  it('treats the stringified empty list the builder writes on dynamic toggle as not configured', () => {
+    expect(columnUtils.toWireFieldIds({ rawColumns: '[]', fields })).toBeUndefined();
+  });
+
+  it('still comma-splits a plain string', () => {
+    expect(columnUtils.toWireFieldIds({ rawColumns: 'display_name,phone', fields })).toEqual(['id_display_name', 'id_phone']);
+  });
+
   it('rejects a non-scalar entry', () => {
     expect(() => columnUtils.toWireFieldIds({ rawColumns: [{ id: 'phone' }], fields })).toThrow(/not a column name or id/);
   });

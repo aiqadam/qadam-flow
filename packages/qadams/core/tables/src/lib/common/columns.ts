@@ -1,4 +1,4 @@
-import { Field } from '@aiqadam/shared';
+import { Field, tryCatchSync } from '@aiqadam/shared';
 
 export const columnUtils = {
   // Resolves one identifier — a column's display name, externalId or internal id —
@@ -24,6 +24,13 @@ export const columnUtils = {
     throw new Error(`${position} names column "${identifier}", which this table does not have. Available columns: ${columnUtils.describeAvailable(fields)}.`);
   },
 
+  // The security-relevant "what counts as not asked for" rule. Exported because
+  // get-record short-circuits on it before resolving the table, and two copies
+  // of this rule is exactly how the looser one survives a tightening of the other.
+  isUnconfigured(rawColumns: unknown): boolean {
+    return rawColumns === null || rawColumns === undefined || (Array.isArray(rawColumns) && rawColumns.length === 0);
+  },
+
   describeAvailable(fields: Field[]): string {
     if (fields.length === 0) {
       return '(this table has no columns)';
@@ -40,10 +47,11 @@ export const columnUtils = {
   // the exact failure this prop exists to prevent: a `{{...}}` binding resolving
   // to an empty string would put the whole row back in the run log.
   toWireFieldIds({ rawColumns, fields }: { rawColumns: unknown; fields: Field[] }): string[] | undefined {
-    if (isUnconfigured(rawColumns)) {
+    const value = unwrapJsonList(rawColumns);
+    if (columnUtils.isUnconfigured(value)) {
       return undefined;
     }
-    const identifiers = toIdentifiers(rawColumns);
+    const identifiers = toIdentifiers(value);
     if (identifiers.length === 0) {
       throw new Error(`Columns is set but names no column. Remove it to return every column, or name the columns to return. Available columns: ${columnUtils.describeAvailable(fields)}.`);
     }
@@ -52,15 +60,27 @@ export const columnUtils = {
   },
 };
 
-function isUnconfigured(rawColumns: unknown): boolean {
-  return rawColumns === null || rawColumns === undefined || (Array.isArray(rawColumns) && rawColumns.length === 0);
+// The builder writes JSON.stringify(value) when a non-string prop is toggled into
+// dynamic mode, so an untouched multi-select arrives here as the literal "[]", and
+// binding this prop to an upstream list arrives as `["a","b"]`. Comma-splitting
+// those produces columns named `["a"` and `"b"]`. The sibling `filters` prop already
+// JSON-parses a string for the same reason.
+function unwrapJsonList(rawColumns: unknown): unknown {
+  if (typeof rawColumns !== 'string' || !rawColumns.trim().startsWith('[')) {
+    return rawColumns;
+  }
+  const { data, error } = tryCatchSync<unknown>(() => JSON.parse(rawColumns.trim()));
+  return error === null && Array.isArray(data) ? data : rawColumns;
 }
 
 function toIdentifiers(rawColumns: unknown): string[] {
+  if (!Array.isArray(rawColumns) && typeof rawColumns === 'object') {
+    throw new Error('Columns is not a list of column names. Pass a list of column names, or leave it empty to return every column.');
+  }
   const candidates = Array.isArray(rawColumns) ? rawColumns : String(rawColumns).split(',');
   return candidates.map((candidate) => {
     if (candidate === null || candidate === undefined || typeof candidate === 'object') {
-      throw new Error(`Columns holds a value that is not a column name or id. Pass a list of column names, or leave it empty to return every column.`);
+      throw new Error('Columns holds a value that is not a column name or id. Pass a list of column names, or leave it empty to return every column.');
     }
     return String(candidate).trim();
   }).filter((identifier) => identifier.length > 0);

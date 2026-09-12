@@ -8,27 +8,31 @@ vi.mock('@aiqadam/qadams-common', async (importOriginal) => {
   return { ...actual, httpClient: { sendRequest } };
 });
 
-const fields: Field[] = [{
-  id: 'id_event_id',
-  created: '2026-09-01T00:00:00.000Z',
-  updated: '2026-09-01T00:00:00.000Z',
-  name: 'event_id',
-  externalId: 'event_id',
-  type: FieldType.TEXT,
-  tableId: 'table_1',
-  projectId: 'project_1',
-}];
+function field({ externalId }: { externalId: string }): Field {
+  return {
+    id: `id_${externalId}`,
+    created: '2026-09-01T00:00:00.000Z',
+    updated: '2026-09-01T00:00:00.000Z',
+    name: externalId,
+    externalId,
+    type: FieldType.TEXT,
+    tableId: 'table_1',
+    projectId: 'project_1',
+  };
+}
+
+const fields: Field[] = [field({ externalId: 'event_id' }), field({ externalId: 'phone' })];
 
 // The unit tests for `filterUtils` stay green if `find-records` stops calling it,
 // which is exactly how the reported bug shipped. This exercises the action.
-async function run(filters: unknown) {
+async function run(filters: unknown, columns?: unknown) {
   const { findRecords } = await import('../src/lib/actions/find-records');
   const { tablesCommon } = await import('../src/lib/common');
   vi.spyOn(tablesCommon, 'convertTableExternalIdToId').mockResolvedValue('table_1');
   vi.spyOn(tablesCommon, 'getTableFields').mockResolvedValue(fields);
 
   return findRecords.run({
-    propsValue: { table_id: 'events', limit: undefined, filters },
+    propsValue: { table_id: 'events', limit: undefined, filters, columns },
     server: { apiUrl: 'https://example.invalid/api/', token: 'token', publicUrl: 'https://example.invalid/' },
     project: { id: 'project_1' },
   } as unknown as Parameters<typeof findRecords.run>[0]);
@@ -47,6 +51,28 @@ describe('tables-find-records', () => {
     ['a filters key holding nothing readable', { filters: {} }],
   ])('fails the step for %s instead of querying without a filter', async (_label, filters) => {
     await expect(run(filters)).rejects.toThrow();
+    expect(sendRequest).not.toHaveBeenCalled();
+  });
+
+  // Unit tests for columnUtils stay green if the action stops threading the prop
+  // into the request, which would silently return every column to the run log —
+  // the very thing #385 is about. This exercises the action.
+  it('sends the resolved projection when Columns is set', async () => {
+    await run(undefined, ['phone']);
+
+    const url: string = sendRequest.mock.calls[0][0].url;
+    expect(url).toContain('fieldIds%5B0%5D=id_phone');
+  });
+
+  it('sends no projection when Columns is empty, so every column comes back', async () => {
+    await run(undefined, []);
+
+    const url: string = sendRequest.mock.calls[0][0].url;
+    expect(url).not.toContain('fieldIds');
+  });
+
+  it('fails the step for a column the table does not have', async () => {
+    await expect(run(undefined, ['no_such_column'])).rejects.toThrow(/no_such_column/);
     expect(sendRequest).not.toHaveBeenCalled();
   });
 

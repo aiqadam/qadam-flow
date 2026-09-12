@@ -40,7 +40,7 @@ export const getRecord = createAction({
 });
 
 async function resolveFieldIds({ tableExternalId, columns, context }: { tableExternalId: string; columns: unknown; context: Parameters<typeof tablesCommon.convertTableExternalIdToId>[1] }): Promise<string[] | undefined> {
-  if (columns === null || columns === undefined || (Array.isArray(columns) && columns.length === 0)) {
+  if (columnUtils.isUnconfigured(columns)) {
     return undefined;
   }
   const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
