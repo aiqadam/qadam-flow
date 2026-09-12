@@ -318,7 +318,12 @@ describe('Piece Metadata CE API', () => {
     })
 
     describe('qadamMetadataService.get() — bundled version fallback', () => {
-        it('falls back to the currently bundled version when a flow step is pinned to an official version no longer on disk', async () => {
+        // The fallback (#422) only ever considers loadBundledQadams() — the piece actually
+        // shipped in this build's dist folders — never a persisted OFFICIAL row. A row left
+        // over in the DB from a piece that predates the current bundle must not resurrect it.
+        // See test/unit/app/qadams/qadam-metadata-service-bundled-fallback.test.ts for the
+        // fallback's positive path and its same-major clamp, exercised with a mocked bundle.
+        it('does not resolve a pinned version from a persisted OFFICIAL row that is not bundled in this build', async () => {
             const mockPiece = createMockQadamMetadata({
                 name: '@aiqadam/qadam-bundled-fallback-test',
                 qadamType: QadamType.OFFICIAL,
@@ -333,8 +338,7 @@ describe('Piece Metadata CE API', () => {
                 version: '0.4.2',
             })
 
-            expect(result).toBeDefined()
-            expect(result?.version).toBe('0.4.5')
+            expect(result).toBeUndefined()
         })
 
         it('still returns undefined when no official version of the piece exists at all', async () => {

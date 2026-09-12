@@ -87,24 +87,29 @@ const PieceSettings = React.memo((props: PieceSettingsProps) => {
   return (
     <div className="flex flex-col gap-4 w-full">
       {qadamModelError && !qadamModel && (
-        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed p-6 text-center">
-          <TriangleAlert className="size-6 text-destructive" />
-          <div className="space-y-1">
+        <div className="flex flex-col gap-3 rounded-md border border-dashed p-4">
+          <div className="flex items-center gap-2">
+            <TriangleAlert className="size-4 text-destructive shrink-0" />
             <p className="text-sm font-medium">
               {t('Piece version unavailable')}
             </p>
-            <p className="text-sm text-muted-foreground">
-              {t(
-                'This step is pinned to a version of this piece that is no longer available. Update it to the latest version to continue editing this step.',
-              )}
-            </p>
           </div>
-          <UpdatePieceVersionDialog
-            step={props.step}
-            currentVersion={flowQadamUtil.getExactVersion(
-              props.step.settings.qadamVersion,
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'This step is pinned to a version of this piece that is no longer available. Update it to the latest version to continue editing this step.',
             )}
-          />
+          </p>
+          {!props.readonly && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm">{t('Switch version')}</span>
+              <UpdatePieceVersionDialog
+                step={props.step}
+                currentVersion={flowQadamUtil.getExactVersion(
+                  props.step.settings.qadamVersion,
+                )}
+              />
+            </div>
+          )}
         </div>
       )}
 

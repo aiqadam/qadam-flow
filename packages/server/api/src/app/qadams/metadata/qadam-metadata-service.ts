@@ -27,7 +27,7 @@ import { repoFactory } from '../../core/db/repo-factory'
 import { qadamTagService } from '../tags/qadams/qadam-tag.service'
 import { qadamCache, QadamRegistryEntry } from './qadam-cache'
 import { QadamMetadataEntity, QadamMetadataSchema } from './qadam-metadata-entity'
-import { filterQadamBasedOnType, isNewerVersion, isOfficialQadam, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
+import { filterQadamBasedOnType, isNewerVersion, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
 
 export const qadamRepos = repoFactory(QadamMetadataEntity)
 
@@ -275,6 +275,13 @@ const sortByVersionDescending = <T extends { version: string }>(a: T, b: T): num
     return semVer.rcompare(a.version, b.version)
 }
 
+const isSameMajorVersion = ({ candidate, requested }: { candidate: string, requested: string }): boolean => {
+    if (!semVer.valid(candidate) || !semVer.valid(requested)) {
+        return false
+    }
+    return semVer.major(candidate) === semVer.major(requested)
+}
+
 const findExactVersion = async (
     log: FastifyBaseLogger,
     params: { name: string, version: string | undefined, platformId: string | undefined },
@@ -295,7 +302,7 @@ const findExactVersion = async (
     })
 
     if (matchingRegistryEntries.length === 0) {
-        return findBundledFallback(registry, name)
+        return findBundledFallback({ log, name, requestedBaseVersion: versionToSearch?.baseVersion })
     }
 
     const sortedEntries = matchingRegistryEntries.sort(sortByVersionDescending)
@@ -306,20 +313,23 @@ const findExactVersion = async (
     }
 }
 
-const findBundledFallback = (
-    registry: QadamRegistryEntry[],
-    name: string,
-): { name: string, version: string, platformId: string | undefined } | undefined => {
-    const bundledEntries = registry
-        .filter((entry) => entry.name === name && isOfficialQadam(entry))
-        .sort(sortByVersionDescending)
-    if (bundledEntries.length === 0) {
+const findBundledFallback = async ({ log, name, requestedBaseVersion }: {
+    log: FastifyBaseLogger
+    name: string
+    requestedBaseVersion: string | undefined
+}): Promise<{ name: string, version: string, platformId: string | undefined } | undefined> => {
+    const bundledQadams = await loadBundledQadams(log)
+    const bundled = bundledQadams.find((qadam) => qadam.name === name)
+    if (isNil(bundled)) {
+        return undefined
+    }
+    if (!isNil(requestedBaseVersion) && !isSameMajorVersion({ candidate: bundled.version, requested: requestedBaseVersion })) {
         return undefined
     }
     return {
-        name: bundledEntries[0].name,
-        version: bundledEntries[0].version,
-        platformId: bundledEntries[0].platformId,
+        name: bundled.name,
+        version: bundled.version,
+        platformId: bundled.platformId,
     }
 }
 
