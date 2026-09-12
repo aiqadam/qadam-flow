@@ -4,6 +4,11 @@ import { Action, Qadam, QadamPropertyMap, Trigger } from '@aiqadam/qadams-framew
 import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias } from '@aiqadam/shared'
 import { utils } from '../utils'
 
+// Bundled qadams are baked into the image, so a resolved path cannot change while the
+// process lives. Both caches hold the in-flight promise so concurrent steps share one walk.
+const qadamPathCache = new Map<string, Promise<string>>()
+let distIndexCache: Promise<Map<string, string>> | null = null
+
 export const qadamLoader = {
     loadQadamOrThrow: async (
         { qadamName, qadamVersion, devQadams }: LoadPieceParams,
@@ -119,45 +124,104 @@ export const qadamLoader = {
     },
 
     getQadamPath: async ({ packageName, devQadams }: GetQadamPathParams): Promise<string> => {
-        if (devQadams.includes(getQadamNameFromAlias(packageName))) {
-            const devPath = await findInDistFolder(packageName)
-            if (!isNil(devPath)) {
-                return devPath
+        const isDevQadam = devQadams.includes(getQadamNameFromAlias(packageName))
+        if (isDevQadam) {
+            return resolveQadamPath({ packageName, isDevQadam })
+        }
+
+        const cached = qadamPathCache.get(packageName)
+        if (!isNil(cached)) {
+            return cached
+        }
+
+        const resolving = resolveQadamPath({ packageName, isDevQadam })
+        qadamPathCache.set(packageName, resolving)
+        // A miss is not permanent: an ARCHIVE/CUSTOM qadam can be installed later in this process.
+        void resolving.catch(() => {
+            if (qadamPathCache.get(packageName) === resolving) {
+                qadamPathCache.delete(packageName)
             }
-        }
-        const installedPath = await traverseAllParentFoldersToFindQadam(packageName)
-        if (!isNil(installedPath)) {
-            return installedPath
-        }
-        const bundledPath = await findInDistFolder(packageName)
-        if (!isNil(bundledPath)) {
-            return bundledPath
-        }
-        throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
+        })
+        return resolving
     },
 }
 
-async function findInDistFolder(packageName: string): Promise<string | null> {
-    const sourcePiecesPath = path.resolve('packages/qadams')
-    if (!await utils.folderExists(sourcePiecesPath)) {
-        return null
-    }
-    const target = trimVersionFromAlias(packageName)
-    const distPackageJsonPaths = await findDistPackageJsonFiles(sourcePiecesPath)
-    for (const packageJsonPath of distPackageJsonPaths) {
-        const { data: result } = await utils.tryCatchAndThrowOnEngineError(async () => {
-            const content = await fs.readFile(packageJsonPath, 'utf-8')
-            const packageJson = JSON.parse(content)
-            if (packageJson.name === packageName || packageJson.name === target) {
-                return path.join(path.dirname(packageJsonPath), 'src', 'index.js')
-            }
-            return null
-        })
-        if (result) {
-            return result
+async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathParams): Promise<string> {
+    if (isDevQadam) {
+        const devPath = await findInDistFolder({ packageName, refreshIndex: true })
+        if (!isNil(devPath)) {
+            return devPath
         }
     }
-    return null
+    const installedPath = await traverseAllParentFoldersToFindQadam(packageName)
+    if (!isNil(installedPath)) {
+        return installedPath
+    }
+    const bundledPath = await findInDistFolder({ packageName, refreshIndex: false })
+    if (!isNil(bundledPath)) {
+        return bundledPath
+    }
+    throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
+}
+
+async function findInDistFolder({ packageName, refreshIndex }: FindInDistFolderParams): Promise<string | null> {
+    const distIndex = await getDistIndex({ refresh: refreshIndex })
+    const target = trimVersionFromAlias(packageName)
+    return distIndex.get(packageName) ?? distIndex.get(target) ?? null
+}
+
+async function getDistIndex({ refresh }: { refresh: boolean }): Promise<Map<string, string>> {
+    if (!refresh && !isNil(distIndexCache)) {
+        return distIndexCache
+    }
+    const building = buildDistIndex()
+    distIndexCache = building
+    void building.catch(() => {
+        if (distIndexCache === building) {
+            distIndexCache = null
+        }
+    })
+    return building
+}
+
+async function buildDistIndex(): Promise<Map<string, string>> {
+    const sourceQadamsPath = path.resolve('packages/qadams')
+    if (!await utils.folderExists(sourceQadamsPath)) {
+        return new Map()
+    }
+    const distPackageJsonPaths = await findDistPackageJsonFiles(sourceQadamsPath)
+    const entries = await Promise.all(distPackageJsonPaths.map(readDistPackageEntry))
+
+    const distIndex = new Map<string, string>()
+    for (const entry of entries) {
+        // First match wins, matching the order the sequential scan used to return in.
+        if (!isNil(entry) && !distIndex.has(entry.name)) {
+            distIndex.set(entry.name, entry.indexPath)
+        }
+    }
+    return distIndex
+}
+
+async function readDistPackageEntry(packageJsonPath: string): Promise<DistPackageEntry | null> {
+    const { data } = await utils.tryCatchAndThrowOnEngineError(async () => {
+        const content = await fs.readFile(packageJsonPath, 'utf-8')
+        const name = extractPackageName(JSON.parse(content))
+        if (isNil(name)) {
+            return null
+        }
+        return {
+            name,
+            indexPath: path.join(path.dirname(packageJsonPath), 'src', 'index.js'),
+        }
+    })
+    return data ?? null
+}
+
+function extractPackageName(packageJson: unknown): string | null {
+    if (typeof packageJson !== 'object' || isNil(packageJson) || !('name' in packageJson)) {
+        return null
+    }
+    return typeof packageJson.name === 'string' ? packageJson.name : null
 }
 
 async function findDistPackageJsonFiles(dirPath: string): Promise<string[]> {
@@ -214,6 +278,21 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
         currentDir = parentDir
     }
     return null
+}
+
+type DistPackageEntry = {
+    name: string
+    indexPath: string
+}
+
+type ResolveQadamPathParams = {
+    packageName: string
+    isDevQadam: boolean
+}
+
+type FindInDistFolderParams = {
+    packageName: string
+    refreshIndex: boolean
 }
 
 type GetQadamPathParams = {
