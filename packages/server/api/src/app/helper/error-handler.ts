@@ -25,6 +25,7 @@ export const errorHandler = async (
             [ErrorCode.ENTITY_NOT_FOUND]: StatusCodes.NOT_FOUND,
             [ErrorCode.EXISTING_USER]: StatusCodes.CONFLICT,
             [ErrorCode.EXISTING_ALERT_CHANNEL]: StatusCodes.CONFLICT,
+            [ErrorCode.RECORD_PRECONDITION_FAILED]: StatusCodes.CONFLICT,
             [ErrorCode.EXISTING_AI_PROVIDER]: StatusCodes.CONFLICT,
             [ErrorCode.FLOW_OPERATION_IN_PROGRESS]: StatusCodes.CONFLICT,
             [ErrorCode.AUTHORIZATION]: StatusCodes.FORBIDDEN,

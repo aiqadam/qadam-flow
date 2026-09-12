@@ -4,6 +4,7 @@ import { QadamCategory } from "@aiqadam/shared";
 import { deleteRecord } from "./lib/actions/delete-record";
 import { updateRecord } from "./lib/actions/update-record";
 import { updateRecords } from "./lib/actions/update-records";
+import { upsertRecords } from "./lib/actions/upsert-records";
 import { getRecord } from "./lib/actions/get-record";
 import { findRecords } from "./lib/actions/find-records";
 import { clearTable } from "./lib/actions/clear-table";
@@ -19,6 +20,6 @@ export const tables = createQadam({
   minimumSupportedRelease: '0.0.0',
   authors: ['amrdb'],
   auth: QadamAuth.None(),
-  actions: [createRecords, deleteRecord, updateRecord, updateRecords, getRecord, findRecords, clearTable, downloadTable],
+  actions: [createRecords, deleteRecord, updateRecord, updateRecords, upsertRecords, getRecord, findRecords, clearTable, downloadTable],
   triggers: [newRecordTrigger, updatedRecordTrigger, deletedRecordTrigger],
 });

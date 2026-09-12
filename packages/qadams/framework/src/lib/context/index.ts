@@ -322,10 +322,27 @@ export interface TagsManager {
 }
 
 export interface Store {
-  put<T>(key: string, value: T, scope?: StoreScope): Promise<T>;
+  put<T>(key: string, value: T, scope?: StoreScope, options?: StorePutOptions): Promise<T>;
   get<T>(key: string, scope?: StoreScope): Promise<T | null>;
   delete(key: string, scope?: StoreScope): Promise<void>;
+  /**
+   * Stores the value only if the key is not already held, atomically. Returns
+   * whether this call is the one that stored it, plus whatever value now holds the
+   * key — so a dedup or lock check is one round-trip with no race in the middle,
+   * unlike get-then-put.
+   */
+  putIfAbsent<T>(key: string, value: T, scope?: StoreScope, options?: StorePutOptions): Promise<StorePutIfAbsentResult<T>>;
 }
+
+export type StorePutOptions = {
+  /** Seconds after which the entry expires. Omit to keep it forever. */
+  ttlSeconds?: number;
+};
+
+export type StorePutIfAbsentResult<T> = {
+  stored: boolean;
+  value: T | null;
+};
 
 export enum StoreScope {
   // Collection were deprecated in favor of project

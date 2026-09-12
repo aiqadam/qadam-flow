@@ -4,6 +4,7 @@ import { storageAddtoList } from './lib/actions/store-add-to-list';
 import { storageAppendAction } from './lib/actions/store-append-action';
 import { storageGetAction } from './lib/actions/store-get-action';
 import { storagePutAction } from './lib/actions/store-put-action';
+import { storagePutIfAbsentAction } from './lib/actions/store-put-if-absent';
 import { storageRemoveFromList } from './lib/actions/store-remove-from-list';
 import { storageRemoveValue } from './lib/actions/store-remove-value';
 
@@ -18,6 +19,7 @@ export const storage = createQadam({
   actions: [
     storageGetAction,
     storagePutAction,
+    storagePutIfAbsentAction,
     storageAppendAction,
     storageRemoveValue,
     storageAddtoList,

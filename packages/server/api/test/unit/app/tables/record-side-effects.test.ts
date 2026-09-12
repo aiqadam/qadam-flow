@@ -1,9 +1,10 @@
-import { PopulatedRecord, TableWebhookEventType } from '@aiqadam/shared'
+import { PopulatedRecord, TableWebhookEventType, UpsertAction } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 // Every table in the CE integration suite has zero webhooks, so nothing there ever
 // reached past the early return — the pacing, the single lookup and the allSettled
 // handling were all unexecuted by any test.
 import { recordSideEffects } from '../../../../src/app/tables/record/record-side-effects'
+import { splitByUpsertOutcome } from '../../../../src/app/tables/record/record.controller'
 
 const getWebhooks = vi.fn()
 const triggerWebhooks = vi.fn()
@@ -86,6 +87,22 @@ describe('recordSideEffects.handleRecordsEvent', () => {
         expect(payload).toMatchObject({ failed: 1, total: 3 })
     })
 
+    it.each([
+        ['created', TableWebhookEventType.RECORD_CREATED],
+        ['updated', TableWebhookEventType.RECORD_UPDATED],
+    ] as const)('fires the %s event for the rows that outcome describes', async (eventKey, expected) => {
+        await recordSideEffects(logger).handleRecordsEvent({
+            projectId: 'project_1',
+            tableId: 'table_1',
+            records: [record('a')],
+            logger,
+            authorization: 'Bearer token',
+        }, eventKey)
+
+        expect(getWebhooks).toHaveBeenCalledWith(expect.objectContaining({ events: [expected] }))
+        expect(triggerWebhooks.mock.calls[0][0].eventType).toBe(expected)
+    })
+
     it('paces the dispatches instead of releasing the whole batch at once', async () => {
         let inFlight = 0
         let peak = 0
@@ -100,5 +117,26 @@ describe('recordSideEffects.handleRecordsEvent', () => {
 
         expect(triggerWebhooks).toHaveBeenCalledTimes(40)
         expect(peak).toBeLessThanOrEqual(10)
+    })
+})
+
+describe('splitByUpsertOutcome', () => {
+    const created = { action: UpsertAction.CREATED, record: record('new') }
+    const updated = { action: UpsertAction.UPDATED, record: record('existing') }
+
+    // Inverting the predicate would fire RECORD_CREATED for rows that already existed,
+    // re-running every "New Record" flow on a repeat delivery.
+    it('routes each row to the event its outcome describes', () => {
+        expect(splitByUpsertOutcome([updated, created])).toEqual([
+            [[record('new')], 'created'],
+            [[record('existing')], 'updated'],
+        ])
+    })
+
+    it('still emits both buckets when one is empty, so neither event is skipped', () => {
+        expect(splitByUpsertOutcome([created])).toEqual([
+            [[record('new')], 'created'],
+            [[], 'updated'],
+        ])
     })
 })

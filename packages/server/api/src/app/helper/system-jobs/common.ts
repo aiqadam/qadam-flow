@@ -5,6 +5,7 @@ import { Dayjs } from 'dayjs'
 export enum SystemJobName {
     PIECES_ANALYTICS = 'qadams-analytics',
     FILE_CLEANUP_TRIGGER = 'file-cleanup-trigger',
+    STORE_ENTRY_CLEANUP = 'store-entry-cleanup',
     TRIAL_TRACKER = 'trial-tracker',
     RUN_TELEMETRY = 'run-telemetry',
     DELETE_FLOW = 'delete-flow',
@@ -59,6 +60,7 @@ type ApplyDeliveryModeChangeSystemJobData = {
 type SystemJobDataMap = {
     [SystemJobName.PIECES_ANALYTICS]: Record<string, never>
     [SystemJobName.FILE_CLEANUP_TRIGGER]: Record<string, never>
+    [SystemJobName.STORE_ENTRY_CLEANUP]: Record<string, never>
     [SystemJobName.RUN_TELEMETRY]: Record<string, never>
     [SystemJobName.TRIAL_TRACKER]: Record<string, never>
     [SystemJobName.DELETE_FLOW]: DeleteFlowDurableSystemJobData

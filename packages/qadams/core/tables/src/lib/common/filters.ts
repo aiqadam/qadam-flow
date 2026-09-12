@@ -1,3 +1,4 @@
+import { Property } from '@aiqadam/qadams-framework';
 import { Field, FieldType, Filter, FilterOperator, tryCatchSync } from '@aiqadam/shared';
 import { columnUtils } from './columns';
 
@@ -9,6 +10,48 @@ export const filterUtils = {
   // that returns the whole table and reads exactly like "everything matched".
   toWireFilters({ rawFilters, fields }: { rawFilters: unknown; fields: Field[] }): Filter[] {
     return toEntries({ value: rawFilters, nested: false }).map((entry, index) => toWireFilter({ entry, index, fields }));
+  },
+
+  // A narrower editor than the Find Records one, deliberately: a precondition is an
+  // equality/existence check on the row you are about to write, so the range and
+  // contains operators are omitted. Find Records keeps its own list for that reason
+  // rather than sharing this one.
+  buildConditionProps({ fields }: { fields: Field[] }) {
+    return Property.Array({
+      displayName: 'Conditions',
+      required: false,
+      properties: {
+        field: Property.StaticDropdown({
+          displayName: 'Field',
+          required: true,
+          options: {
+            options: fields.map((field) => ({
+              label: field.name,
+              value: { id: field.externalId, type: field.type, name: field.name },
+            })),
+          },
+        }),
+        operator: Property.StaticDropdown({
+          displayName: 'Operator',
+          required: true,
+          options: {
+            options: [
+              { label: 'Equals', value: FilterOperator.EQ },
+              { label: 'Not Equals', value: FilterOperator.NEQ },
+              { label: 'In', value: FilterOperator.IN },
+              { label: 'Not In', value: FilterOperator.NOT_IN },
+              { label: 'Exists', value: FilterOperator.EXISTS },
+              { label: 'Does not exist', value: FilterOperator.NOT_EXISTS },
+            ],
+          },
+        }),
+        value: Property.ShortText({
+          displayName: 'Value',
+          description: CONDITION_VALUE_DESCRIPTION,
+          required: false,
+        }),
+      },
+    });
   },
 
   // "In" / "Not In" accept either a list variable or a comma-separated string.
@@ -260,5 +303,7 @@ const ALL_OPERATORS: readonly FilterOperator[] = Object.values(FilterOperator);
 const MAX_REPORTED_KEYS = 10;
 
 const MAX_REPORTED_VALUE_LENGTH = 100;
+
+const CONDITION_VALUE_DESCRIPTION = 'For "In" / "Not In", pass a comma-separated list or a list variable.';
 
 const SHAPE_HINT = 'Expected {"filters":[{"field":"<column name or id>","operator":"eq","value":"..."}]}.';
