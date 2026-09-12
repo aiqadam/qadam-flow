@@ -248,6 +248,61 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
 
+        it('returns only the records named by recordIds', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const wanted = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'wanted' })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'other' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, recordIds: [wanted.id] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.length).toBe(1)
+            expect(body.data[0].id).toBe(wanted.id)
+        })
+
+        // limit defaults to 10, so without this a lookup of more ids than that
+        // would silently come back short.
+        it('does not truncate a recordIds lookup to the default page size', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const records = []
+            for (let index = 0; index < 12; index++) {
+                records.push(await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: `row-${index}` }))
+            }
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, recordIds: records.map((record) => record.id) })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data.length).toBe(12)
+        })
+
+        it('ignores a recordId belonging to another table rather than returning it', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const wanted = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'wanted' })
+            const otherTable = createMockTable({ projectId: ctx.project.id })
+            await db.save('table', otherTable)
+            const foreign = createMockRecord({ tableId: otherTable.id, projectId: ctx.project.id })
+            await db.save('record', foreign)
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, recordIds: [wanted.id, foreign.id] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.data.map((record: { id: string }) => record.id)).toEqual([wanted.id])
+        })
+
         it('should return empty data for table with no records', async () => {
             const ctx = await setup()
             const { table } = await createTableWithField(ctx)
@@ -825,6 +880,118 @@ describe('Record API', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+    })
+
+    describeWithAuth('POST /v1/records/batch (Update many)', () => app!, (setup) => {
+        it('updates every record in one request', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const first = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'before' })
+            const second = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'before' })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [
+                    { id: first.id, cells: [{ fieldId: field.id, value: 'after-1' }] },
+                    { id: second.id, cells: [{ fieldId: field.id, value: 'after-2' }] },
+                ],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.length).toBe(2)
+            expect(body.map((record: { cells: Record<string, { value: string }> }) => record.cells[field.id].value).sort()).toEqual(['after-1', 'after-2'])
+        })
+
+        it('creates no record and writes no cell when one id is unknown', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const existing = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'before' })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [
+                    { id: existing.id, cells: [{ fieldId: field.id, value: 'after' }] },
+                    { id: apId(), cells: [{ fieldId: field.id, value: 'after' }] },
+                ],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+
+            // The whole batch rolls back rather than half-applying.
+            const unchanged = await ctx.get(`/v1/records/${existing.id}`)
+            expect(unchanged?.json().cells[field.id].value).toBe('before')
+        })
+
+        it('refuses to update a record that belongs to another table', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const otherTable = createMockTable({ projectId: ctx.project.id })
+            await db.save('table', otherTable)
+            const foreign = createMockRecord({ tableId: otherTable.id, projectId: ctx.project.id })
+            await db.save('record', foreign)
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [{ id: foreign.id, cells: [{ fieldId: field.id, value: 'after' }] }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+        })
+
+        // Postgres raises "cannot affect row a second time" for these, which would
+        // surface as a 500 rather than a readable rejection.
+        it('rejects a record id repeated in the batch', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const record = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'before' })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [
+                    { id: record.id, cells: [{ fieldId: field.id, value: 'a' }] },
+                    { id: record.id, cells: [{ fieldId: field.id, value: 'b' }] },
+                ],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('rejects the same column set twice inside one record', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const record = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'before' })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [{ id: record.id, cells: [{ fieldId: field.id, value: 'a' }, { fieldId: field.id, value: 'b' }] }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('rejects an empty batch', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+
+            const response = await ctx.post('/v1/records/batch', { tableId: table.id, records: [] })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('drops a cell whose column is not in the table, as the single-record path does', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            const record = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'before' })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [{ id: record.id, cells: [{ fieldId: field.id, value: 'after' }, { fieldId: apId(), value: 'ignored' }] }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json()[0].cells[field.id].value).toBe('after')
         })
     })
 

@@ -10,9 +10,12 @@ import {
     PopulatedRecord,
     QadamFlowError,
     SeekPage,
+    spreadIfDefined,
+    TableWebhook,
     TableWebhookEventType,
     unique,
     UpdateRecordRequest,
+    UpdateRecordsRequest,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { EntityManager, In } from 'typeorm'
@@ -89,6 +92,7 @@ export const recordService = {
         filters,
         limit,
         fieldIds,
+        recordIds,
         fields: prefetchedFields,
     }: ListParams): Promise<SeekPage<PopulatedRecord>> {
         const fields = prefetchedFields ?? await fieldService.getAll({
@@ -97,10 +101,13 @@ export const recordService = {
         })
         const compiledFilters = recordFilter.compile({ filters, fields, tableId })
         const projectedFields = resolveProjectedFields({ fieldIds, fields, tableId })
+        // Pushed into SQL, where it is served by idx_record_table_id_project_id_record_id,
+        // rather than materialising the whole table and discarding it in JS.
         const records = await recordRepo().find({
             where: {
                 projectId,
                 tableId,
+                ...spreadIfDefined('id', isNil(recordIds) ? undefined : In(recordIds)),
             },
             order: {
                 created: 'ASC',
@@ -176,6 +183,66 @@ export const recordService = {
         const projectedFields = resolveProjectedFields({ fieldIds, fields, tableId: record.tableId })
         const result = await formatRecordsAndFetchField({ records: [record], tableId: record.tableId, projectId: record.projectId, fields, outputFields: projectedFields })
         return result[0]
+    },
+
+    // One transaction, one field lookup and one cell upsert per chunk for the whole
+    // batch, against one transaction + two field queries PER RECORD through the
+    // single-record path. Deliberately does NOT call validateCount: an update
+    // creates no rows, and counting would reject legitimate updates on any table
+    // already at MAX_RECORDS_PER_TABLE.
+    async updateMany({
+        request,
+        projectId,
+    }: UpdateManyParams): Promise<PopulatedRecord[]> {
+        const { tableId, records } = request
+        assertNoRepeatedTarget({ records })
+
+        const updatedRecordIds = await transaction(async (entityManager: EntityManager) => {
+            const existingFields = await entityManager.getRepository(FieldEntity).find({
+                where: { projectId, tableId },
+            })
+            const fieldIds = new Set(existingFields.map((field) => field.id))
+
+            const existingIds = new Set((await entityManager.getRepository(RecordEntity).find({
+                where: { id: In(records.map((record) => record.id)), projectId, tableId },
+                select: ['id'],
+            })).map((record) => record.id))
+
+            // Every id is checked, not just the first, and a miss rolls the whole
+            // batch back rather than half-applying it.
+            const missingId = records.find((record) => !existingIds.has(record.id))?.id
+            if (!isNil(missingId)) {
+                throw new QadamFlowError({
+                    code: ErrorCode.ENTITY_NOT_FOUND,
+                    params: { entityType: 'Record', entityId: missingId },
+                })
+            }
+
+            const cellsToUpsert = records.flatMap((record) =>
+                record.cells
+                    .filter((cellData) => fieldIds.has(cellData.fieldId))
+                    .map((cellData) => ({
+                        recordId: record.id,
+                        fieldId: cellData.fieldId,
+                        projectId,
+                        value: cellData.value ?? '',
+                        id: apId(),
+                    })),
+            )
+
+            for (const batch of chunk(cellsToUpsert, MAX_BATCH_SIZE)) {
+                await entityManager.getRepository(CellEntity).upsert(batch, ['projectId', 'fieldId', 'recordId'])
+            }
+
+            return records.map((record) => record.id)
+        })
+
+        const updatedRecords = await recordRepo().find({
+            where: { id: In(updatedRecordIds), projectId, tableId },
+            relations: ['cells'],
+            order: { created: 'ASC' },
+        })
+        return formatRecordsAndFetchField({ records: updatedRecords, tableId, projectId })
     },
 
     async update({
@@ -323,8 +390,11 @@ export const recordService = {
         data,
         logger,
         authorization,
+        webhooks: prefetchedWebhooks,
     }: TriggerWebhooksParams): Promise<void> {
-        const webhooks = await tableService.getWebhooks({
+        // Accepted from the caller so a batch can look them up once; still fetched
+        // here when a single-record caller does not supply them.
+        const webhooks = prefetchedWebhooks ?? await tableService.getWebhooks({
             projectId,
             id: tableId,
             events: [eventType],
@@ -386,6 +456,7 @@ type ListParams = {
     limit: number
     filters: Filter[] | null
     fieldIds?: string[]
+    recordIds?: string[]
     fields?: Field[]
 }
 
@@ -399,6 +470,11 @@ type UpdateParams = {
     id: string
     projectId: string
     request: UpdateRecordRequest
+}
+
+type UpdateManyParams = {
+    request: UpdateRecordsRequest
+    projectId: string
 }
 
 type DeleteParams = {
@@ -418,6 +494,7 @@ type TriggerWebhooksParams = {
     data: Record<string, unknown>
     logger: FastifyBaseLogger
     authorization: string
+    webhooks?: TableWebhook[]
 }
 type CountParams = {
     projectId: string
@@ -472,6 +549,36 @@ function prepareCellInsertions(
             }
         }),
     )
+}
+
+// Postgres raises "ON CONFLICT DO UPDATE command cannot affect row a second time"
+// — a 500, not a 400 — when one statement carries two rows with the same conflict
+// target. A repeated record id, or the same column twice inside one record, is
+// exactly that, so both are rejected before the upsert rather than after.
+function assertNoRepeatedTarget({ records }: { records: UpdateRecordsRequest['records'] }): void {
+    const repeatedRecordId = firstRepeated(records.map((record) => record.id))
+    if (!isNil(repeatedRecordId)) {
+        const message = `Record ${repeatedRecordId} appears more than once in the batch. Merge its cells into a single entry.`
+        throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+    }
+    for (const record of records) {
+        const repeatedFieldId = firstRepeated(record.cells.map((cellData) => cellData.fieldId))
+        if (!isNil(repeatedFieldId)) {
+            const message = `Record ${record.id} sets column ${repeatedFieldId} more than once.`
+            throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+        }
+    }
+}
+
+function firstRepeated(values: string[]): string | undefined {
+    const seen = new Set<string>()
+    return values.find((value) => {
+        if (seen.has(value)) {
+            return true
+        }
+        seen.add(value)
+        return false
+    })
 }
 
 // An unknown column in a projection is an error, never a silent drop: dropping it

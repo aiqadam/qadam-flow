@@ -18,6 +18,24 @@ export const CreateRecordsRequest = z.object({
 
 export type CreateRecordsRequest = z.infer<typeof CreateRecordsRequest>
 
+// Bounded so an over-large batch fails with a readable 400 from the schema rather
+// than a 413 from the body parser.
+export const MAX_RECORDS_PER_BATCH = 1000
+
+export const UpdateRecordsRequest = z.object({
+    tableId: z.string(),
+    records: z.array(z.object({
+        id: z.string(),
+        cells: z.array(z.object({
+            fieldId: z.string(),
+            value: coerceToString,
+        })),
+    })).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
+    agentUpdate: z.boolean().optional(),
+})
+
+export type UpdateRecordsRequest = z.infer<typeof UpdateRecordsRequest>
+
 export const UpdateRecordRequest = z.object({
     cells: z.array(z.object({
         fieldId: z.string(),
@@ -86,10 +104,11 @@ export const Filter = z.discriminatedUnion('operator', [
 
 export type Filter = z.infer<typeof Filter>
 
-const fieldIdsFromQuery = z.preprocess(
+// Shared by `fieldIds` and `recordIds`. `undefined` survives as "not asked for";
+// an explicit empty list is a 400, because a scoping list that silently means "no
+// restriction" is the #382 fail-open shape.
+const idListFromQuery = z.preprocess(
     (v) => (Array.isArray(v) ? v.map(String) : v === null || v === undefined ? undefined : [String(v)]),
-    // An empty projection would otherwise read as "every column", which is the
-    // opposite of what the caller asked for.
     z.array(z.string()).min(1, formErrors.required).optional(),
 )
 
@@ -98,13 +117,14 @@ export const ListRecordsRequest = z.object({
     limit: z.coerce.number().optional(),
     cursor: z.string().optional(),
     filters: OptionalArrayFromQuery(Filter),
-    fieldIds: fieldIdsFromQuery,
+    fieldIds: idListFromQuery,
+    recordIds: idListFromQuery,
 })
 
 export type ListRecordsRequest = Omit<z.infer<typeof ListRecordsRequest>, 'cursor'> & { cursor: Cursor | undefined }
 
 export const GetRecordRequest = z.object({
-    fieldIds: fieldIdsFromQuery,
+    fieldIds: idListFromQuery,
 })
 
 export type GetRecordRequest = z.infer<typeof GetRecordRequest>
