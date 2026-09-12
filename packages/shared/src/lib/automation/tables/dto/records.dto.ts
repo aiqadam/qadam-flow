@@ -38,17 +38,6 @@ export const UpdateRecordsRequest = z.object({
 
 export type UpdateRecordsRequest = z.infer<typeof UpdateRecordsRequest>
 
-export const UpdateRecordRequest = z.object({
-    cells: z.array(z.object({
-        fieldId: z.string(),
-        value: coerceToString,
-    })).optional(),
-    tableId: z.string(),
-    agentUpdate: z.boolean().optional(),
-})
-
-export type UpdateRecordRequest = z.infer<typeof UpdateRecordRequest>
-
 
 export enum FilterOperator {
     EQ = 'eq',
@@ -105,6 +94,42 @@ export const Filter = z.discriminatedUnion('operator', [
 ])
 
 export type Filter = z.infer<typeof Filter>
+
+export const UpdateRecordRequest = z.object({
+    cells: z.array(z.object({
+        fieldId: z.string(),
+        value: coerceToString,
+    })).optional(),
+    tableId: z.string(),
+    agentUpdate: z.boolean().optional(),
+    // Compare-and-set: the update applies only if the record still matches every
+    // condition, evaluated inside the same transaction as the write. Reusing Filter
+    // gives eq/neq/in/not_in and — the case the ticket names as "is empty" —
+    // not_exists.
+    precondition: z.array(Filter).min(1, formErrors.required).optional(),
+})
+
+export type UpdateRecordRequest = z.infer<typeof UpdateRecordRequest>
+
+export const UpsertRecordsRequest = z.object({
+    tableId: z.string(),
+    // The business key to match on. Without it an upsert is just a create, so it is
+    // required rather than defaulted to something.
+    keyFieldIds: z.array(z.string()).min(1, formErrors.required),
+    records: z.array(z.array(z.object({
+        fieldId: z.string(),
+        value: coerceToString,
+    }))).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
+})
+
+export type UpsertRecordsRequest = z.infer<typeof UpsertRecordsRequest>
+
+// Which half of the upsert happened, per input row. The caller needs this to tell
+// "I created it" from "it was already there", which is the whole point of asking.
+export enum UpsertAction {
+    CREATED = 'created',
+    UPDATED = 'updated',
+}
 
 // Shared by `fieldIds` and `recordIds`. `undefined` survives as "not asked for".
 // `.min(1)` is unreachable over a query string — qs drops an empty array entirely and

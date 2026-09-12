@@ -909,6 +909,205 @@ describe('Record API', () => {
         })
     })
 
+    describeWithAuth('POST /v1/records/upsert', () => app!, (setup) => {
+        it('inserts when the key is new and updates when it is not', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const note = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            note.type = FieldType.TEXT
+            await db.save('field', note)
+
+            const first = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'user-1' }, { fieldId: note.id, value: 'first' }]],
+            })
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+            expect(first?.json()[0].action).toBe('created')
+
+            const second = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'user-1' }, { fieldId: note.id, value: 'second' }]],
+            })
+            expect(second?.statusCode).toBe(StatusCodes.OK)
+            expect(second?.json()[0].action).toBe('updated')
+            expect(second?.json()[0].record.id).toBe(first?.json()[0].record.id)
+            expect(second?.json()[0].record.cells[note.id].value).toBe('second')
+
+            // The whole point: a repeat leaves one row, not two.
+            const all = await ctx.get('/v1/records', { tableId: table.id })
+            expect(all?.json().data.length).toBe(1)
+        })
+
+        // The scenario the ticket describes: the same inbound webhook delivered twice,
+        // arriving at the same moment. Read-then-write lets both see "not seen yet".
+        it('creates exactly one record when two identical upserts race', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+
+            const body = {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'delivery-1' }]],
+            }
+            const [a, b] = await Promise.all([
+                ctx.post('/v1/records/upsert', body),
+                ctx.post('/v1/records/upsert', body),
+            ])
+
+            expect([a?.statusCode, b?.statusCode]).toEqual([StatusCodes.OK, StatusCodes.OK])
+            const actions = [a?.json()[0].action, b?.json()[0].action].sort()
+            expect(actions).toEqual(['created', 'updated'])
+
+            const all = await ctx.get('/v1/records', { tableId: table.id })
+            expect(all?.json().data.length).toBe(1)
+        })
+
+        it('matches an absent cell and an empty cell as the same key', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const other = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            other.type = FieldType.TEXT
+            await db.save('field', other)
+            // create strips empty values, so this row has no cell for `other` at all.
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+            const cell = createMockCell({ recordId: record.id, fieldId: key.id, projectId: ctx.project.id })
+            cell.value = 'k'
+            await db.save('cell', cell)
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id, other.id],
+                records: [[{ fieldId: key.id, value: 'k' }, { fieldId: other.id, value: '' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json()[0].action).toBe('updated')
+        })
+
+        it('rejects a record that does not set every key column', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const other = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            other.type = FieldType.TEXT
+            await db.save('field', other)
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id, other.id],
+                records: [[{ fieldId: key.id, value: 'k' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('rejects a key column that is not a column of the table', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [apId()],
+                records: [[{ fieldId: field.id, value: 'k' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('rejects a key repeated inside one batch', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'same' }], [{ fieldId: key.id, value: 'same' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('refuses to guess when the key already matches two records', async () => {
+            const ctx = await setup()
+            const { table, field: key } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            for (const _ of [0, 1]) {
+                await createRecordWithCell({ ctx, tableId: table.id, fieldId: key.id, value: 'dup' })
+            }
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [key.id],
+                records: [[{ fieldId: key.id, value: 'dup' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+    })
+
+    describeWithAuth('POST /v1/records/:id (Conditional update)', () => app!, (setup) => {
+        // "Record the check-in timestamp only on the first check-in" — an ordinary
+        // business rule that was three steps and a race before this.
+        it('applies when the condition holds and refuses when it does not', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+
+            const first = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: field.id, value: 'first-writer' }],
+                precondition: [{ fieldId: field.id, operator: FilterOperator.NOT_EXISTS }],
+            })
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+            expect(first?.json().cells[field.id].value).toBe('first-writer')
+
+            const second = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: field.id, value: 'second-writer' }],
+                precondition: [{ fieldId: field.id, operator: FilterOperator.NOT_EXISTS }],
+            })
+            expect(second?.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(second?.json().code).toBe('RECORD_PRECONDITION_FAILED')
+
+            // Refused, not silently skipped: the first writer's value survives.
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[field.id].value).toBe('first-writer')
+        })
+
+        it('applies when an expected value still matches', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const record = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'pending' })
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: field.id, value: 'done' }],
+                precondition: [{ fieldId: field.id, operator: FilterOperator.EQ, value: 'pending' }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().cells[field.id].value).toBe('done')
+        })
+
+        it('leaves the record untouched when an unconditional update would have applied', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            const record = await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'pending' })
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: field.id, value: 'done' }],
+                precondition: [{ fieldId: field.id, operator: FilterOperator.EQ, value: 'something-else' }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[field.id].value).toBe('pending')
+        })
+    })
+
     describeWithAuth('POST /v1/records/batch (Update many)', () => app!, (setup) => {
         it('updates every record in one request', async () => {
             const ctx = await setup()

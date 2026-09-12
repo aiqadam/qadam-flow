@@ -3,6 +3,7 @@ import {
     DeleteRecordsRequest,
     GetRecordRequest,
     ListRecordsRequest,
+    partition,
     Permission,
     PopulatedRecord,
     PrincipalType,
@@ -10,6 +11,8 @@ import {
     SERVICE_KEY_SECURITY_OPENAPI,
     UpdateRecordRequest,
     UpdateRecordsRequest,
+    UpsertAction,
+    UpsertRecordsRequest,
 } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
@@ -70,6 +73,27 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             authorization: request.headers.authorization as string,
             agentUpdate: request.body.agentUpdate ?? false,
         }, 'updated')
+    })
+
+    fastify.post('/upsert', UpsertRequest, async (request, reply) => {
+        const results = await recordService.upsert({
+            request: request.body,
+            projectId: request.projectId,
+        })
+        await reply.status(StatusCodes.OK).send(results)
+
+        // Split by outcome so RECORD_CREATED and RECORD_UPDATED webhooks each fire
+        // for the rows they actually describe.
+        const [created, updated] = partition(results, (result) => result.action === UpsertAction.CREATED)
+        for (const [records, event] of [[created, 'created'], [updated, 'updated']] as const) {
+            await recordSideEffects(fastify.log).handleRecordsEvent({
+                tableId: request.body.tableId,
+                projectId: request.projectId,
+                records: records.map((result) => result.record),
+                logger: request.log,
+                authorization: request.headers.authorization as string,
+            }, event)
+        }
     })
 
     fastify.post('/:id', UpdateRequest, async (request, reply) => {
@@ -152,6 +176,32 @@ const GetRecordByIdRequest = {
         response: {
             [StatusCodes.OK]: PopulatedRecord,
             [StatusCodes.NOT_FOUND]: z.string(),
+        },
+    },
+}
+
+const UpsertRequest = {
+    config: {
+        security: securityAccess.project([PrincipalType.USER, PrincipalType.ENGINE, PrincipalType.SERVICE], Permission.WRITE_TABLE, {
+            type: ProjectResourceType.TABLE,
+            tableName: TableEntity,
+            entitySourceType: EntitySourceType.BODY,
+            lookup: {
+                paramKey: 'tableId',
+                entityField: 'id',
+            },
+        }),
+    },
+    schema: {
+        tags: ['records'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        description: 'Insert or update records matched on a key',
+        body: UpsertRecordsRequest,
+        response: {
+            [StatusCodes.OK]: z.array(z.object({
+                action: z.enum(UpsertAction),
+                record: PopulatedRecord,
+            })),
         },
     },
 }

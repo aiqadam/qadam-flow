@@ -329,6 +329,71 @@ describe('Engine Services Integration', () => {
         })
     })
 
+    describe('storage.service — putIfAbsent and TTL (#384)', () => {
+        function store(flowId: string) {
+            return createContextStore({ apiUrl, prefix: '', flowId, engineToken })
+        }
+
+        it('stores on the first call and reports the holder on the second', async () => {
+            const flowStore = store(apId())
+            const key = `dedup-${apId()}`
+
+            const first = await flowStore.putIfAbsent(key, { delivery: 1 })
+            expect(first).toEqual({ stored: true, value: { delivery: 1 } })
+
+            const second = await flowStore.putIfAbsent(key, { delivery: 2 })
+            expect(second.stored).toBe(false)
+            // The value that won, not the one that lost — so a dedup check needs no
+            // second round-trip to find out what is actually stored.
+            expect(second.value).toEqual({ delivery: 1 })
+
+            expect(await flowStore.get(key)).toEqual({ delivery: 1 })
+        })
+
+        // The webhook-retry shape from the ticket: two deliveries inside the window
+        // that read-then-write leaves open.
+        it('lets exactly one of two concurrent callers store the key', async () => {
+            const flowStore = store(apId())
+            const key = `race-${apId()}`
+
+            const results = await Promise.all([
+                flowStore.putIfAbsent(key, { caller: 'a' }),
+                flowStore.putIfAbsent(key, { caller: 'b' }),
+            ])
+
+            expect(results.filter((result) => result.stored).length).toBe(1)
+            const winner = results.find((result) => result.stored)
+            expect(await flowStore.get(key)).toEqual(winner?.value)
+        })
+
+        it('frees the key once the entry has expired, and not before', async () => {
+            const flowStore = store(apId())
+            const key = `ttl-${apId()}`
+
+            expect((await flowStore.putIfAbsent(key, { first: true }, StoreScope.FLOW, { ttlSeconds: 1 })).stored).toBe(true)
+            expect((await flowStore.putIfAbsent(key, { second: true }, StoreScope.FLOW, { ttlSeconds: 1 })).stored).toBe(false)
+
+            await new Promise((resolve) => setTimeout(resolve, 1100))
+
+            // Read enforces expiry too, so the value is gone before any sweep runs.
+            expect(await flowStore.get(key)).toBeNull()
+            const afterExpiry = await flowStore.putIfAbsent(key, { third: true }, StoreScope.FLOW, { ttlSeconds: 60 })
+            expect(afterExpiry.stored).toBe(true)
+            expect(await flowStore.get(key)).toEqual({ third: true })
+        })
+
+        it('keeps a value with no ttl forever, as every entry written before ttl existed does', async () => {
+            const flowStore = store(apId())
+            const key = `no-ttl-${apId()}`
+
+            await flowStore.put(key, { kept: true })
+            await new Promise((resolve) => setTimeout(resolve, 50))
+
+            expect(await flowStore.get(key)).toEqual({ kept: true })
+            expect((await flowStore.putIfAbsent(key, { other: true })).stored).toBe(false)
+        })
+    })
+
     describe('step-files.service — createFileUploader().write()', () => {
         it('should upload a file and return a URL', async () => {
             const originalMaxFileSize = process.env.AP_MAX_FILE_SIZE_MB

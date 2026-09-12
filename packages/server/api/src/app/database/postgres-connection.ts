@@ -14,6 +14,7 @@ import { AddApiKey1784922234136 } from './migration/postgres/1784922234136-AddAp
 import { FixEntityMetadataDrift1785100000000 } from './migration/postgres/1785100000000-FixEntityMetadataDrift'
 import { AddChatConversation1785486141722 } from './migration/postgres/1785486141722-AddChatConversation'
 import { AllowMultipleCustomAIProviders1785490000000 } from './migration/postgres/1785490000000-AllowMultipleCustomAIProviders'
+import { AddStoreEntryExpiresAt1789204010898 } from './migration/postgres/1789204010898-AddStoreEntryExpiresAt'
 import { AddFlowRunDispatchMode1789026491526 } from './migration/postgres/1789026491526-AddFlowRunDispatchMode'
 
 const getSslConfig = (): boolean | TlsOptions => {
@@ -37,6 +38,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddChatConversation1785486141722,
         AllowMultipleCustomAIProviders1785490000000,
         AddFlowRunDispatchMode1789026491526,
+        AddStoreEntryExpiresAt1789204010898,
     ]
 }
 

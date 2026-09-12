@@ -38,5 +38,14 @@
   "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.": "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.",
   "Add one or more records to update": "Add one or more records to update",
   "Record IDs": "Record IDs",
-  "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.": "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both."
+  "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.": "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.",
+  "Upsert Record(s)": "Upsert Record(s)",
+  "Match records on a key and insert or update them, so a repeat does not create a duplicate.": "Match records on a key and insert or update them, so a repeat does not create a duplicate.",
+  "Key Columns": "Key Columns",
+  "The columns that identify a record. A row matching on these is updated; anything else is inserted.": "The columns that identify a record. A row matching on these is updated; anything else is inserted.",
+  "The records to insert or update. Every record must set each key column.": "The records to insert or update. Every record must set each key column.",
+  "Add one or more records to insert or update": "Add one or more records to insert or update",
+  "Only If": "Only If",
+  "Conditions": "Conditions",
+  "Apply the update only if the record still matches these conditions, checked and written in one step. Use \"Does not exist\" to mean \"only if this column is still empty\" — that is how you write \"record it only the first time\". If a condition no longer holds the step fails with RECORD_PRECONDITION_FAILED rather than silently doing nothing.": "Apply the update only if the record still matches these conditions, checked and written in one step. Use \"Does not exist\" to mean \"only if this column is still empty\" — that is how you write \"record it only the first time\". If a condition no longer holds the step fails with RECORD_PRECONDITION_FAILED rather than silently doing nothing."
 }

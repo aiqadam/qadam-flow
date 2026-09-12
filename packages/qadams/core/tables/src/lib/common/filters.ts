@@ -1,3 +1,4 @@
+import { Property } from '@aiqadam/qadams-framework';
 import { Field, FieldType, Filter, FilterOperator, tryCatchSync } from '@aiqadam/shared';
 import { columnUtils } from './columns';
 
@@ -9,6 +10,46 @@ export const filterUtils = {
   // that returns the whole table and reads exactly like "everything matched".
   toWireFilters({ rawFilters, fields }: { rawFilters: unknown; fields: Field[] }): Filter[] {
     return toEntries({ value: rawFilters, nested: false }).map((entry, index) => toWireFilter({ entry, index, fields }));
+  },
+
+  // The same editor shape the Find Records filter uses, so a condition written in
+  // one place reads the same in the other.
+  buildConditionProps({ fields }: { fields: Field[] }) {
+    return Property.Array({
+      displayName: 'Conditions',
+      required: false,
+      properties: {
+        field: Property.StaticDropdown({
+          displayName: 'Field',
+          required: true,
+          options: {
+            options: fields.map((field) => ({
+              label: field.name,
+              value: { id: field.externalId, type: field.type, name: field.name },
+            })),
+          },
+        }),
+        operator: Property.StaticDropdown({
+          displayName: 'Operator',
+          required: true,
+          options: {
+            options: [
+              { label: 'Equals', value: FilterOperator.EQ },
+              { label: 'Not Equals', value: FilterOperator.NEQ },
+              { label: 'In', value: FilterOperator.IN },
+              { label: 'Not In', value: FilterOperator.NOT_IN },
+              { label: 'Exists', value: FilterOperator.EXISTS },
+              { label: 'Does not exist', value: FilterOperator.NOT_EXISTS },
+            ],
+          },
+        }),
+        value: Property.ShortText({
+          displayName: 'Value',
+          description: 'For "In" / "Not In", pass a comma-separated list or a list variable.',
+          required: false,
+        }),
+      },
+    });
   },
 
   // "In" / "Not In" accept either a list variable or a comma-separated string.
