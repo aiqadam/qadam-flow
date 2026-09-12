@@ -586,6 +586,23 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
         })
 
+        // A binding that resolves to an empty string is the ordinary way to get
+        // here, and an empty cell is excluded from ordering — so accepting it
+        // would make gte match every row with a non-empty cell.
+        it('rejects a blank range value on a TEXT column instead of matching every row', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Alpha' })
+            await createRecordWithCell({ ctx, tableId: table.id, fieldId: field.id, value: 'Beta' })
+
+            const response = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: field.id, operator: FilterOperator.GTE, value: '' }] })}`,
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
         it('rejects an uninterpretable range value even when the table is empty', async () => {
             const ctx = await setup()
             const { table, field } = await createTableWithTypedField({ ctx, type: FieldType.NUMBER })

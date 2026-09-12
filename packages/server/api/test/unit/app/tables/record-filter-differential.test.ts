@@ -70,7 +70,7 @@ function compare({ type, filter, cellValue }: { type: FieldType, filter: Filter,
     return {
         type,
         operator: filter.operator,
-        cell: cellValue === MISSING ? '<no cell>' : JSON.stringify(cellValue),
+        cell: cellValue === MISSING ? '<no cell>' : String(JSON.stringify(cellValue)),
         operand: 'value' in filter ? JSON.stringify(filter.value) : '-',
         widened: now,
     }
@@ -106,13 +106,19 @@ describe('recordFilter, against the implementation it replaced', () => {
     const disagreements = everyDisagreement()
     const widened = disagreements.filter((row) => row.widened)
 
+    // The one sanctioned difference: the old code tested `=== null`, this one
+    // treats `undefined` as absent too. Unreachable in production — cell.value is
+    // NOT NULL and both write paths coalesce with `?? ''` — but kept in the matrix
+    // and named here rather than omitted, so it cannot hide anything beside it.
+    const unsanctioned = widened.filter((row) => !(row.operator === FilterOperator.NOT_EXISTS && row.cell === 'undefined'))
+
     it('matches no additional row on any operator that was only moved, not rewritten', () => {
-        const untouched = widened.filter((row) => !ORDERING_OPERATORS.includes(row.operator))
+        const untouched = unsanctioned.filter((row) => !ORDERING_OPERATORS.includes(row.operator))
         expect(describeAll(untouched)).toEqual([])
     })
 
     it('matches no additional row on a NUMBER column, where the old comparison was already correct', () => {
-        const onNumbers = widened.filter((row) => row.type === FieldType.NUMBER)
+        const onNumbers = unsanctioned.filter((row) => row.type === FieldType.NUMBER)
         expect(describeAll(onNumbers)).toEqual([])
     })
 
@@ -125,6 +131,21 @@ describe('recordFilter, against the implementation it replaced', () => {
 
     it('covers enough of the input space to mean something', () => {
         expect(disagreements.length).toBeGreaterThan(100)
+    })
+
+    // Without this, the blanket exclusion of DATE/TEXT ranges from the two tests
+    // above would let a range matcher that matches EVERYTHING pass unnoticed.
+    it('rejects an operand no column type can order, on every column type', () => {
+        const accepted = FIELD_TYPES.filter((type) => {
+            try {
+                recordFilter.compile({ filters: [{ fieldId: 'f1', operator: FilterOperator.GTE, value: '   ' }], fields: [makeField(type)], tableId: 't1' })
+                return true
+            }
+            catch {
+                return false
+            }
+        })
+        expect(accepted).toEqual([])
     })
 })
 
@@ -139,7 +160,7 @@ const EXISTENCE_OPERATORS = [FilterOperator.EXISTS, FilterOperator.NOT_EXISTS] a
 const ORDERING_OPERATORS: FilterOperator[] = [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE]
 
 const CELL_VALUES: unknown[] = [
-    MISSING, null, '', '   ', 'Alpha', 'alpha', 'beta', '0', '10', '-1.5', '1e2', '0x10', 'Infinity', 'NaN',
+    MISSING, null, undefined, '', '   ', 'Alpha', 'alpha', 'beta', '0', '10', '-1.5', '1e2', '0x10', 'Infinity', 'NaN',
     '2026-01-01T00:00:00Z', '2026-09-10T09:00:00Z', '2026-12-31T23:59:59Z', '2027-01-01T00:00:00Z', '2026-09-10',
     0, 10, -1.5, true, false, 'true',
 ]

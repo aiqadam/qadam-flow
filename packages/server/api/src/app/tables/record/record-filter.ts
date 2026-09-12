@@ -47,7 +47,7 @@ function assertEveryFilterNamesAColumn({ filters, fieldsById, tableId }: { filte
     if (unknownFieldIds.length === 0) {
         return
     }
-    const message = `Filter references field(s) not present in table ${tableId}: ${unknownFieldIds.join(', ')}`
+    const message = truncate(`Filter references field(s) not present in table ${tableId}: ${unknownFieldIds.join(', ')}`)
     throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
 }
 
@@ -124,6 +124,15 @@ function buildOrderingMatcher({ field, operator, value }: { field: Field, operat
         // case-insensitively: a column of names should not sort "Zoe" before "alice".
         case FieldType.TEXT:
         case FieldType.STATIC_DROPDOWN: {
+            // Symmetric with the two branches above, and load-bearing: an empty
+            // cell is excluded by toComparableText, so without this every
+            // non-empty cell compares strictly greater than "" and `gt`/`gte`
+            // match the whole table. A binding that resolves to an empty string
+            // — an absent optional field on a trigger payload — is the ordinary
+            // way to get here.
+            if (value.trim().length === 0) {
+                throw uninterpretableOperand({ field, operator, value, expected: 'a value to compare against' })
+            }
             const operand = value.toLowerCase()
             return (cellValue) => {
                 const cell = toComparableText(cellValue)
@@ -201,9 +210,15 @@ function isEmptyCell(value: unknown): boolean {
 }
 
 function uninterpretableOperand({ field, operator, value, expected }: { field: Field, operator: OrderingOperator, value: string, expected: string }): QadamFlowError {
-    const shown = value.length > MAX_REPORTED_VALUE_LENGTH ? `${value.slice(0, MAX_REPORTED_VALUE_LENGTH)}…` : value
-    const message = `Filter "${operator}" on column "${field.name}" needs ${expected}, but got "${shown}". Column "${field.name}" is of type ${field.type}.`
+    const name = truncate(field.name)
+    const message = `Filter "${operator}" on column "${name}" needs ${expected}, but got "${truncate(value)}". Column "${name}" is of type ${field.type}.`
     return new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+}
+
+// Every interpolated value is bounded, not just the operand: this message is
+// carried on `Error.message` and lands in server logs and persisted run output.
+function truncate(value: string): string {
+    return value.length <= MAX_REPORTED_VALUE_LENGTH ? value : `${value.slice(0, MAX_REPORTED_VALUE_LENGTH)}…`
 }
 
 const MAX_REPORTED_VALUE_LENGTH = 100

@@ -128,10 +128,18 @@ describe('recordFilter', () => {
     })
 
     describe('an uninterpretable filter value raises instead of returning an empty page', () => {
+        // The blank cases are the ones that bite: an empty cell is excluded from
+        // ordering, so a blank operand on a text column would otherwise compare
+        // strictly less than every non-empty cell and match the whole table.
         it.each([
             ['a non-numeric value on a Number column', 'overbook_pct', 'ten'],
             ['an unparseable value on a Date column', 'starts_at', 'yesterday'],
             ['epoch milliseconds on a Date column', 'starts_at', '1757494800000'],
+            ['a blank value on a Number column', 'overbook_pct', '  '],
+            ['a blank value on a Date column', 'starts_at', '  '],
+            ['an empty value on a Text column', 'title', ''],
+            ['a whitespace value on a Text column', 'title', '   '],
+            ['an empty value on a Single Select column', 'status', ''],
         ])('%s', (_label, fieldId, value) => {
             expect(() => recordFilter.compile({
                 filters: [{ fieldId, operator: FilterOperator.LT, value }],
