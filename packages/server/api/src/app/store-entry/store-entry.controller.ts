@@ -25,6 +25,19 @@ export const storeEntryController: FastifyPluginAsyncZod = async (fastify) => {
     },
     )
 
+    fastify.post('/put-if-absent', PutIfAbsentRequest, async (request, reply) => {
+        const sizeOfValue = sizeof(request.body.value)
+        if (sizeOfValue > STORE_VALUE_MAX_SIZE) {
+            await reply.status(StatusCodes.REQUEST_TOO_LONG).send({})
+            return
+        }
+        const result = await storeEntryService.putIfAbsent({
+            projectId: request.principal.projectId,
+            request: request.body,
+        })
+        await reply.status(StatusCodes.OK).send(result)
+    })
+
     fastify.get('/', GetRequest, async (request, reply) => {
         const value = await storeEntryService.getOne({
             projectId: request.principal.projectId,
@@ -49,6 +62,15 @@ export const storeEntryController: FastifyPluginAsyncZod = async (fastify) => {
 }
 
 const CreateRequest =  {
+    config: {
+        security: securityAccess.engine(),
+    },
+    schema: {
+        body: PutStoreEntryRequest,
+    },
+}
+
+const PutIfAbsentRequest = {
     config: {
         security: securityAccess.engine(),
     },

@@ -1,8 +1,10 @@
-import { apId, ErrorCode, FlowId, FlowVersion, isNil, PopulatedTriggerSource, QadamFlowError, TemplateTelemetryEventType, TriggerSource } from '@aiqadam/shared'
+import { apId, ErrorCode, FlowId, flowStructureUtil, FlowVersion, isNil, PopulatedTriggerSource, QadamFlowError, TemplateTelemetryEventType, TriggerSource } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { In } from 'typeorm'
+import { ArrayContains, In } from 'typeorm'
+import { appConnectionsRepo } from '../../app-connection/app-connection-service/app-connection-service'
 import { repoFactory } from '../../core/db/repo-factory'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
+import { rejectedPromiseHandler } from '../../helper/promise-handler'
 import { templateTelemetryService } from '../../template/template-telemetry/template-telemetry.service'
 import { jobQueue } from '../../workers/job-queue/job-queue'
 import { flowTriggerSideEffect } from './flow-trigger-side-effect'
@@ -10,6 +12,44 @@ import { TriggerSourceEntity } from './trigger-source-entity'
 import { triggerUtils } from './trigger-utils'
 
 export const triggerSourceRepo = repoFactory(TriggerSourceEntity)
+
+/**
+ * The delivery mode lives on the connection, so answering "is this transport available" needs the
+ * connection, not the step. Only `metadata` is read — unencrypted, and scoped to this project.
+ */
+async function readTriggerConnectionMetadata({ flowVersion, projectId }: ReadTriggerConnectionMetadataParams): Promise<Record<string, unknown> | undefined> {
+    const auth: unknown = flowVersion.trigger.settings?.input?.auth
+    if (typeof auth !== 'string') {
+        return undefined
+    }
+    const externalId = flowStructureUtil.extractConnectionIdsFromAuth(auth)[0]
+    if (isNil(externalId)) {
+        return undefined
+    }
+    const connection = await appConnectionsRepo().findOne({
+        where: { projectIds: ArrayContains([projectId]), externalId },
+        select: ['metadata'],
+    })
+    return connection?.metadata ?? undefined
+}
+
+/**
+ * Imported on demand rather than at module scope. A static import pulls the host's whole graph —
+ * the webhook service, the connection service, the puller registry — into every module that
+ * touches trigger sources, which is enough to create an evaluation-order cycle in unrelated code.
+ */
+const longPollingHostLazy = (log: FastifyBaseLogger) => ({
+    async assertTransportIsAvailable(params: { qadamName: string, readConnectionMetadata: () => Promise<Record<string, unknown> | undefined> }): Promise<void> {
+        const { longPollingHost } = await import('../long-polling/long-polling-host')
+        await longPollingHost(log).assertTransportIsAvailable(params)
+    },
+    requestSync(): void {
+        rejectedPromiseHandler(
+            import('../long-polling/long-polling-host').then(({ longPollingHost }) => longPollingHost(log).requestSync()),
+            log,
+        )
+    },
+})
 
 export const triggerSourceService = (log: FastifyBaseLogger) => {
     return {
@@ -22,6 +62,15 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
                 simulate,
             }, '[triggerSourceService#enable] Enabling trigger source')
             const qadamTrigger = await triggerUtils(log).getQadamTriggerOrThrow({ flowVersion, projectId })
+            // Before the engine's ON_ENABLE hook runs: for a pull-transport trigger that hook
+            // removes the webhook, so refusing afterwards would leave the flow with no delivery.
+            // Read lazily and only for a qadam that has a puller: an eagerly-evaluated argument here
+            // would put one `findOne` on every publish and every flow enable, product-wide, for a
+            // value `assertTransportIsAvailable` discards immediately in all but one qadam.
+            await longPollingHostLazy(log).assertTransportIsAvailable({
+                qadamName: flowVersion.trigger.settings.qadamName,
+                readConnectionMetadata: () => readTriggerConnectionMetadata({ flowVersion, projectId }),
+            })
             const existingTriggerSource = await triggerSourceRepo().findOne({
                 where: {
                     flowId: flowVersion.flowId,
@@ -69,10 +118,12 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             }
 
             log.info('[triggerSourceService#enable] Enabled flow trigger side effect')
-            return triggerSourceRepo().save({
+            const saved = await triggerSourceRepo().save({
                 ...triggerSource,
                 schedule: scheduleOptions,
             })
+            longPollingHostLazy(log).requestSync()
+            return saved
         },
         async get(params: GetTriggerParams): Promise<TriggerSource | null> {
             const { projectId, id } = params
@@ -181,6 +232,7 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
                 projectId,
             })
             log.info('[triggerSourceService#disable] Soft deleted trigger source')
+            longPollingHostLazy(log).requestSync()
             if (templateId) {
                 templateTelemetryService(log).sendEvent({
                     eventType: TemplateTelemetryEventType.DEACTIVATE,
@@ -190,6 +242,11 @@ export const triggerSourceService = (log: FastifyBaseLogger) => {
             }
         },
     }
+}
+
+type ReadTriggerConnectionMetadataParams = {
+    flowVersion: FlowVersion
+    projectId: string
 }
 
 type ExistsByFlowIdParams = {

@@ -23,7 +23,6 @@
   "The ID of the record to do the action on.": "Het ID van het record waar u de actie aan wilt doen.",
   "The values to update. Leave empty to keep current value.": "De waarden om bij te werken. Laat leeg om de huidige waarde te behouden.",
   "Maximum number of records to return (default no limit).": "Maximum aantal records om terug te sturen (standaard geen limiet).",
-  "Filter conditions to apply": "Filter voorwaarden toe te passen",
   "New Record Created": "Nieuw Record Gemaakt",
   "Record Updated": "Record bijgewerkt",
   "Record Deleted": "Record verwijderd",

@@ -56,7 +56,7 @@ afterAll(async () => {
     await app.close()
 }, 15_000)
 
-async function setupSubflowFixtures() {
+async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue') {
     const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
 
     const webhookPiece = createMockQadamMetadata({
@@ -186,6 +186,7 @@ async function setupSubflowFixtures() {
                     },
                 },
                 waitForResponse: true,
+                executionMode,
             },
             propertySettings: {},
             errorHandlingOptions: {},
@@ -700,6 +701,225 @@ describe('Execute Flow E2E', () => {
                 },
             }),
         )
+    }, 180_000)
+
+    it('executes parent → child subflow with executionMode "inline"', async () => {
+        const { parentFlow, parentFlowVersion, mockPlatform, mockProject } = await setupSubflowFixtures('inline')
+
+        const flowRun = await flowRunService(app.log).start({
+            flowId: parentFlow.id,
+            payload: { body: { name: 'Alice' } },
+            platformId: mockPlatform.id,
+            executionType: ExecutionType.BEGIN,
+            environment: RunEnvironment.TESTING,
+            streamStepProgress: StreamStepProgress.NONE,
+            executeTrigger: false,
+            flowVersionId: parentFlowVersion.id,
+            projectId: mockProject.id,
+            workerHandlerId: undefined,
+            httpRequestId: undefined,
+            failParentOnFailure: undefined,
+        })
+
+        const result = await pollFlowRunToCompletion(flowRun.id, mockProject.id)
+
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+        expect(result.steps.step_1.output).toEqual(
+            expect.objectContaining({
+                status: 'success',
+                data: {
+                    greeting: 'Hello Alice',
+                    processed: true,
+                },
+            }),
+        )
+
+        // Observability: the inline child still gets a real FlowRun row with
+        // parentRunId set, even though it never touched BullMQ.
+        const childRun = await db.findOneBy<{ id: string, status: string, flowId: string }>('flow_run', {
+            parentRunId: flowRun.id,
+        })
+        expect(childRun?.status).toBe(FlowRunStatus.SUCCEEDED)
+    }, 180_000)
+
+    it('nests inline calls two levels deep, with each hop parented to its immediate caller (not the outermost run)', async () => {
+        const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+        const webhookPiece = createMockQadamMetadata({
+            name: '@aiqadam/qadam-webhook',
+            version: '0.1.34',
+            platformId: undefined,
+            packageType: PackageType.REGISTRY,
+            qadamType: QadamType.OFFICIAL,
+        })
+        const subflowsPiece = createMockQadamMetadata({
+            name: '@aiqadam/qadam-subflows',
+            version: '0.4.14',
+            platformId: undefined,
+            packageType: PackageType.REGISTRY,
+            qadamType: QadamType.OFFICIAL,
+        })
+        await databaseConnection().getRepository('qadam_metadata').save([webhookPiece, subflowsPiece])
+
+        // grandchild: callableFlow trigger -> returnResponse
+        const grandchildFlow = createMockFlow({ projectId: mockProject.id, status: FlowStatus.ENABLED })
+        const grandchildFlowVersion = createMockFlowVersion({
+            flowId: grandchildFlow.id,
+            state: FlowVersionState.LOCKED,
+            trigger: {
+                type: FlowTriggerType.PIECE,
+                name: 'trigger',
+                displayName: 'Callable Flow',
+                valid: true,
+                lastUpdatedDate: new Date().toISOString(),
+                settings: {
+                    qadamName: '@aiqadam/qadam-subflows',
+                    qadamVersion: '0.4.14',
+                    triggerName: 'callableFlow',
+                    input: { mode: 'simple', exampleData: { sampleData: {} } },
+                    propertySettings: {},
+                },
+                nextAction: {
+                    type: FlowActionType.PIECE as const,
+                    name: 'step_1',
+                    displayName: 'Return Response',
+                    valid: true,
+                    settings: {
+                        qadamName: '@aiqadam/qadam-subflows',
+                        qadamVersion: '0.4.14',
+                        actionName: 'returnResponse',
+                        input: { mode: 'simple', response: { response: { level: 'grandchild' } } },
+                        propertySettings: {},
+                        errorHandlingOptions: {},
+                    },
+                },
+            },
+        })
+        await db.save('flow', grandchildFlow)
+        await db.save('flow_version', grandchildFlowVersion)
+        await db.update('flow', grandchildFlow.id, { publishedVersionId: grandchildFlowVersion.id })
+
+        // child: callableFlow trigger -> callFlow(inline) -> grandchild
+        const childFlow = createMockFlow({ projectId: mockProject.id, status: FlowStatus.ENABLED })
+        const childFlowVersion = createMockFlowVersion({
+            flowId: childFlow.id,
+            state: FlowVersionState.LOCKED,
+            trigger: {
+                type: FlowTriggerType.PIECE,
+                name: 'trigger',
+                displayName: 'Callable Flow',
+                valid: true,
+                lastUpdatedDate: new Date().toISOString(),
+                settings: {
+                    qadamName: '@aiqadam/qadam-subflows',
+                    qadamVersion: '0.4.14',
+                    triggerName: 'callableFlow',
+                    input: { mode: 'simple', exampleData: { sampleData: {} } },
+                    propertySettings: {},
+                },
+                nextAction: {
+                    type: FlowActionType.PIECE as const,
+                    name: 'step_1',
+                    displayName: 'Call Grandchild',
+                    valid: true,
+                    settings: {
+                        qadamName: '@aiqadam/qadam-subflows',
+                        qadamVersion: '0.4.14',
+                        actionName: 'callFlow',
+                        input: {
+                            flow: { externalId: grandchildFlow.externalId, exampleData: { sampleData: {} } },
+                            mode: 'simple',
+                            flowProps: { payload: {} },
+                            waitForResponse: true,
+                            executionMode: 'inline',
+                        },
+                        propertySettings: {},
+                        errorHandlingOptions: {},
+                    },
+                },
+            },
+        })
+        await db.save('flow', childFlow)
+        await db.save('flow_version', childFlowVersion)
+        await db.update('flow', childFlow.id, { publishedVersionId: childFlowVersion.id })
+
+        // parent: empty trigger -> callFlow(inline) -> child
+        const parentCallFlowAction = {
+            type: FlowActionType.PIECE as const,
+            name: 'step_1',
+            displayName: 'Call Child',
+            valid: true,
+            settings: {
+                qadamName: '@aiqadam/qadam-subflows',
+                qadamVersion: '0.4.14',
+                actionName: 'callFlow',
+                input: {
+                    flow: { externalId: childFlow.externalId, exampleData: { sampleData: {} } },
+                    mode: 'simple',
+                    flowProps: { payload: {} },
+                    waitForResponse: true,
+                    executionMode: 'inline',
+                },
+                propertySettings: {},
+                errorHandlingOptions: {},
+            },
+        }
+        const parentFlow = createMockFlow({ projectId: mockProject.id })
+        const parentFlowVersion = createMockFlowVersion({
+            flowId: parentFlow.id,
+            state: FlowVersionState.DRAFT,
+            trigger: {
+                type: FlowTriggerType.PIECE,
+                name: 'trigger',
+                displayName: 'Catch Webhook',
+                valid: true,
+                lastUpdatedDate: new Date().toISOString(),
+                settings: {
+                    qadamName: '@aiqadam/qadam-webhook',
+                    qadamVersion: '0.1.34',
+                    triggerName: 'catch_webhook',
+                    input: { authType: 'none' },
+                    propertySettings: {},
+                },
+                nextAction: parentCallFlowAction,
+            },
+        })
+        await db.save('flow', parentFlow)
+        await db.save('flow_version', parentFlowVersion)
+        await db.update('flow', parentFlow.id, { publishedVersionId: parentFlowVersion.id })
+
+        const flowRun = await flowRunService(app.log).start({
+            flowId: parentFlow.id,
+            payload: {},
+            platformId: mockPlatform.id,
+            executionType: ExecutionType.BEGIN,
+            environment: RunEnvironment.TESTING,
+            streamStepProgress: StreamStepProgress.NONE,
+            executeTrigger: false,
+            flowVersionId: parentFlowVersion.id,
+            projectId: mockProject.id,
+            workerHandlerId: undefined,
+            httpRequestId: undefined,
+            failParentOnFailure: undefined,
+        })
+
+        const result = await pollFlowRunToCompletion(flowRun.id, mockProject.id)
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+
+        const childRun = await db.findOneBy<{ id: string, parentRunId: string, flowId: string }>('flow_run', {
+            parentRunId: flowRun.id,
+        })
+        expect(childRun?.flowId).toBe(childFlow.id)
+
+        const grandchildRun = await db.findOneBy<{ id: string, parentRunId: string, flowId: string }>('flow_run', {
+            flowId: grandchildFlow.id,
+        })
+        // The bug this guards against: if the depth guard anchored on the outermost
+        // job's run id instead of the immediate caller's, the grandchild's
+        // parentRunId would equal `flowRun.id` (the parent) instead of the child's
+        // own run id — collapsing the chain and letting cyclic inline flows recurse
+        // unbounded within one process.
+        expect(grandchildRun?.parentRunId).toBe(childRun?.id)
+        expect(grandchildRun?.parentRunId).not.toBe(flowRun.id)
     }, 180_000)
 
     it('executes a webhook → delay_for → code flow without infinite loop', async () => {

@@ -41,6 +41,10 @@ export const FlowRunEntity = new EntitySchema<FlowRunSchema>({
             ...ApIdSchema,
             nullable: true,
         },
+        dispatchMode: {
+            type: String,
+            nullable: true,
+        },
         failParentOnFailure: {
             type: Boolean,
             nullable: false,

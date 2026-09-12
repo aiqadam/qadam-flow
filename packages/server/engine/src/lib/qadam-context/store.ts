@@ -1,17 +1,30 @@
 import { URL } from 'node:url'
-import { Store, StoreScope } from '@aiqadam/qadams-framework'
+import { Store, StorePutIfAbsentResult, StorePutOptions, StoreScope } from '@aiqadam/qadams-framework'
 import { DeleteStoreEntryRequest, ExecutionError, FetchError, FlowId, isNil, PutStoreEntryRequest, StorageError, StorageInvalidKeyError, StorageLimitError, STORE_KEY_MAX_LENGTH, STORE_VALUE_MAX_SIZE, StoreEntry } from '@aiqadam/shared'
 import { utils } from '../utils'
 
 export function createContextStore({ apiUrl, prefix, flowId, engineToken }: { apiUrl: string, prefix: string, flowId: FlowId, engineToken: string }): Store {
     return {
-        async put<T>(key: string, value: T, scope = StoreScope.FLOW): Promise<T> {
+        async put<T>(key: string, value: T, scope = StoreScope.FLOW, options?: StorePutOptions): Promise<T> {
             const modifiedKey = createKey(prefix, scope, flowId, key)
             await createStoreClient({ apiUrl, engineToken }).put({
                 key: modifiedKey,
                 value,
+                ttlSeconds: options?.ttlSeconds,
             })
             return value
+        },
+        async putIfAbsent<T>(key: string, value: T, scope = StoreScope.FLOW, options?: StorePutOptions): Promise<StorePutIfAbsentResult<T>> {
+            const modifiedKey = createKey(prefix, scope, flowId, key)
+            const result = await createStoreClient({ apiUrl, engineToken }).putIfAbsent({
+                key: modifiedKey,
+                value,
+                ttlSeconds: options?.ttlSeconds,
+            })
+            return {
+                stored: result?.stored ?? false,
+                value: (result?.entry?.value ?? null) as T | null,
+            }
         },
         async delete(key: string, scope = StoreScope.FLOW): Promise<void> {
             const modifiedKey = createKey(prefix, scope, flowId, key)
@@ -61,6 +74,34 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                 })
             }
             return storeEntry
+        },
+
+        async putIfAbsent(request: PutStoreEntryRequest): Promise<PutIfAbsentResponse | null> {
+            const url = buildUrl(apiUrl, undefined, 'put-if-absent')
+
+            const { data, error } = await utils.tryCatchAndThrowOnEngineError((async () => {
+                const sizeOfValue = utils.sizeof(request.value)
+                if (sizeOfValue > STORE_VALUE_MAX_SIZE) {
+                    throw new StorageLimitError(request.key, STORE_VALUE_MAX_SIZE)
+                }
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${engineToken}`,
+                    },
+                    body: JSON.stringify(request),
+                })
+                if (!response.ok) {
+                    return handleResponseError({ key: request.key, response })
+                }
+                return response.json() as Promise<PutIfAbsentResponse | null>
+            }))
+
+            if (error) {
+                return handleFetchError({ url, cause: error })
+            }
+            return data
         },
 
         async put(request: PutStoreEntryRequest): Promise<StoreEntry | null> {
@@ -146,8 +187,8 @@ function createKey(prefix: string, scope: StoreScope, flowId: FlowId, key: strin
     }
 }
 
-function buildUrl(apiUrl: string, key?: string): URL {
-    const url = new URL(`${apiUrl}v1/store-entries`)
+function buildUrl(apiUrl: string, key?: string, path?: string): URL {
+    const url = new URL(`${apiUrl}v1/store-entries${path ? `/${path}` : ''}`)
     if (key) {
         url.searchParams.set('key', key)
     }
@@ -180,7 +221,13 @@ type CreateStoreClientParams = {
 type StoreClient = {
     get(key: string): Promise<StoreEntry | null>
     put(request: PutStoreEntryRequest): Promise<StoreEntry | null>
+    putIfAbsent(request: PutStoreEntryRequest): Promise<PutIfAbsentResponse | null>
     delete(request: DeleteStoreEntryRequest): Promise<null>
+}
+
+type PutIfAbsentResponse = {
+    stored: boolean
+    entry: StoreEntry | null
 }
 
 type HandleResponseErrorParams = {

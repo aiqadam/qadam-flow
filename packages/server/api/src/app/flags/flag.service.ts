@@ -1,5 +1,5 @@
-import { apVersionUtil, safeHttp } from '@aiqadam/server-utils'
-import { ApFlagId, ExecutionMode, Flag, isNil } from '@aiqadam/shared'
+import { apVersionUtil, buildInfoUtil, safeHttp } from '@aiqadam/server-utils'
+import { ApFlagId, ExecutionMode, Flag, isNil, PrincipalType } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger, FastifyRequest } from 'fastify'
 import { In } from 'typeorm'
@@ -33,6 +33,8 @@ export const flagService = (_log: FastifyBaseLogger) => ({
                 ApFlagId.SHOW_POWERED_BY_IN_FORM,
                 ApFlagId.CLOUD_AUTH_ENABLED,
                 ApFlagId.CURRENT_VERSION,
+                ApFlagId.BUILD_COMMIT_SHA,
+                ApFlagId.BUILD_TIMESTAMP,
                 ApFlagId.EMAIL_AUTH_ENABLED,
                 ApFlagId.EXECUTION_DATA_RETENTION_DAYS,
                 ApFlagId.ENVIRONMENT,
@@ -288,6 +290,28 @@ export const flagService = (_log: FastifyBaseLogger) => ({
                 updated,
             },
         )
+
+        // Commit-level build provenance is more precise than CURRENT_VERSION/LATEST_VERSION
+        // (which GET /v1/flags already returns to anyone, unauthenticated) — it lets a caller
+        // pin down exactly which commits, including unreleased security fixes, are or are not
+        // present on this instance. Gated to authenticated users to avoid handing that out for
+        // free; the UI that renders it only ever appears inside the signed-in dashboard anyway.
+        if (request.principal.type === PrincipalType.USER) {
+            flags.push(
+                {
+                    id: ApFlagId.BUILD_COMMIT_SHA,
+                    value: buildInfoUtil.getCommitSha(),
+                    created,
+                    updated,
+                },
+                {
+                    id: ApFlagId.BUILD_TIMESTAMP,
+                    value: buildInfoUtil.getBuildTimestamp(),
+                    created,
+                    updated,
+                },
+            )
+        }
 
         if (system.isApp()) {
             flags.push(

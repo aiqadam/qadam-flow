@@ -294,6 +294,8 @@ function AppConnectionsPage() {
                 <RenameConnectionDialog
                   connectionId={row.original.id}
                   currentName={row.original.displayName}
+                  qadamName={row.original.qadamName}
+                  currentMetadata={row.original.metadata}
                   onRename={() => {
                     refetch();
                   }}

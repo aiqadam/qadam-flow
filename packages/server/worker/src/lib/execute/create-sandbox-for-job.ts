@@ -1,4 +1,4 @@
-import { ExecutionMode, maxSocketHttpBufferSizeBytes, NetworkMode, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
+import { ExecutionMode, FlowRunStatus, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
 import { getEnginePath, getGlobalCacheCommonPath, getGlobalCodeCachePath } from '../cache/cache-paths'
@@ -8,6 +8,8 @@ import { simpleProcess } from '../sandbox/fork'
 import { isolateProcess } from '../sandbox/isolate'
 import { createSandbox } from '../sandbox/sandbox'
 import { Sandbox, SandboxMount } from '../sandbox/types'
+import { InlineJobContext } from './sandbox-manager'
+import { provisionFlowPieces } from './utils/flow-helpers'
 
 export function createSandboxForJob(params: {
     log: Logger
@@ -15,8 +17,9 @@ export function createSandboxForJob(params: {
     boxId: number
     reusable: boolean
     proxyPort: number | null
+    getCurrentJobContext: () => InlineJobContext | null
 }): Sandbox {
-    const { log, apiClient, boxId, reusable, proxyPort } = params
+    const { log, apiClient, boxId, reusable, proxyPort, getCurrentJobContext } = params
     const settings = workerSettings.getSettings()
     const sandboxId = nanoid()
 
@@ -25,6 +28,7 @@ export function createSandboxForJob(params: {
         uploadRunLog: (input) => apiClient.uploadRunLog(input),
         sendFlowResponse: (input) => apiClient.sendFlowResponse(input),
         updateStepProgress: (input) => apiClient.updateStepProgress(input),
+        resolveInlineFlow: (input) => resolveInlineFlow({ input, log, apiClient, getCurrentJobContext }),
     }
 
     const memoryLimitMb = parseMemoryLimit(settings.SANDBOX_MEMORY_LIMIT)
@@ -56,6 +60,63 @@ export function createSandboxForJob(params: {
 
 export function isIsolateMode(mode: ExecutionMode): boolean {
     return mode === ExecutionMode.SANDBOX_PROCESS || mode === ExecutionMode.SANDBOX_CODE_AND_PROCESS
+}
+
+async function resolveInlineFlow(params: {
+    input: { flowId: string, payload: unknown, parentRunId: string }
+    log: Logger
+    apiClient: WorkerToApiContract
+    getCurrentJobContext: () => InlineJobContext | null
+}): Promise<ResolveInlineFlowResult> {
+    const { input, log, apiClient, getCurrentJobContext } = params
+    const jobContext = getCurrentJobContext()
+    if (isNil(jobContext)) {
+        return { ok: false, error: 'Inline subflows are only supported when called from a running flow.' }
+    }
+
+    // callerProjectId/callerPlatformId/environment come from the worker's own
+    // trusted current-job identity — never from the engine. parentRunId is the
+    // one field that MUST come from the engine's own current run (`input.parentRunId`,
+    // not `jobContext.parentRunId`): a nested inline call (child calling another
+    // child inline) is nested under the immediate parent's run, not the outermost
+    // job's — using the job-level value here would let cyclic inline flows recurse
+    // unbounded, since every nested call would report the same ancestor to the depth
+    // guard. The API cross-checks `parentRunId` actually belongs to `callerProjectId`
+    // before trusting it, so this can't be used to attach a child under a foreign run.
+    const started = await apiClient.startInlineFlowRun({
+        callerProjectId: jobContext.projectId,
+        callerPlatformId: jobContext.platformId,
+        parentRunId: input.parentRunId,
+        environment: jobContext.environment,
+        flowId: input.flowId,
+        payload: input.payload,
+    })
+    if (!started.ok) {
+        return started
+    }
+
+    const provisioned = await provisionFlowPieces({
+        flowVersion: started.flowVersion,
+        platformId: jobContext.platformId,
+        flowId: started.flowVersion.flowId,
+        projectId: jobContext.projectId,
+        log,
+        apiClient,
+    })
+    if (!provisioned) {
+        // The child FlowRun row already exists (created above) — leaving it RUNNING
+        // forever would be a stuck run with no reaper anywhere in the codebase, since
+        // execution never reaches inline-flow-executor.ts's own finalize step.
+        await apiClient.uploadRunLog({
+            runId: started.childRunId,
+            projectId: jobContext.projectId,
+            status: FlowRunStatus.INTERNAL_ERROR,
+            finishTime: new Date().toISOString(),
+        })
+        return { ok: false, error: 'Failed to provision the subflow\'s pieces.' }
+    }
+
+    return started
 }
 
 function getProcessMaker(executionMode: string, log: Logger, boxId: number) {

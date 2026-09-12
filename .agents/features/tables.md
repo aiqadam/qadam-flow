@@ -15,7 +15,10 @@ A built-in relational database feature that lets users store structured data dir
 - `packages/server/api/src/app/tables/record/record.controller.ts` — record endpoints
 - `packages/server/api/src/app/tables/record/record.entity.ts` — Record entity
 - `packages/server/api/src/app/tables/record/cell.entity.ts` — Cell entity
+- `packages/server/api/src/app/tables/record/record-filter.ts` — compiles a `Filter[]` into JS matchers, plus the SQL predicate for each operator the database can reproduce exactly
+- `packages/server/api/src/app/tables/record/record-query.ts` — builds the record query, pushing those predicates down as `EXISTS` sub-queries
 - `packages/server/api/src/app/tables/record/record-side-effects.ts` — fires TableWebhook flows on record events
+- `packages/qadams/core/tables/src/lib/common/index.ts` — the Tables qadam's server calls; resolves a table id and its field schema once per run (`memoisePerRun`), since every action otherwise pays two HTTP round-trips before its own request
 - `packages/server/api/src/app/tables/tables.module.ts` — module registration
 - `packages/shared/src/lib/automation/tables/table.ts` — Table schema
 - `packages/shared/src/lib/automation/tables/field.ts` — Field schema and FieldType enum
@@ -73,8 +76,13 @@ A built-in relational database feature that lets users store structured data dir
 - `table.exportTable()` — returns fields + rows as JSON
 - `table.createWebhook()` / `table.deleteWebhook()` — link table events to flows
 - `record.create()` — bulk insert (max 50 per batch, transactional), validates field count
-- `record.list()` — with filters (EQ, NEQ, GT, GTE, LT, LTE, CO, EXISTS, NOT_EXISTS)
-- `record.update()` — update cells (empty fields unchanged)
+- `record.list()` — with filters (EQ, NEQ, GT, GTE, LT, LTE, CO, IN, NOT_IN, EXISTS, NOT_EXISTS). A filter naming a field that is not a column of the table is **rejected** (`ErrorCode.VALIDATION`), not dropped — dropping it read as "no filter" and returned the whole table (#382).
+- `record.list()` / `record.getById()` — optional `fieldIds` projection. The cell query covers projected **∪ filtered** columns, never just the projection: a filter whose column was not fetched finds no cell, which the missing-cell guard reads as a match for NOT_EXISTS — the whole table. A `fieldIds` entry that is not a column of the table is rejected (`ErrorCode.VALIDATION`), never dropped.
+- `record.list()` — EQ, NEQ, IN, NOT_IN, EXISTS and NOT_EXISTS are evaluated by Postgres as `EXISTS (SELECT 1 FROM cell …)` sub-queries (`record-query.ts`), so a keyed lookup no longer loads every record and cell of the table. CO and the four ordering operators are **not** pushed down — `toLowerCase`/`Intl.Collator` and the database's collation disagree — and the JS matcher in `record-filter.ts` still runs over whatever comes back and remains the authority on what matches; SQL only ever removes rows it would have rejected. `LIMIT` moves into SQL only when every filter was pushed down, otherwise the JS pass would be handed a short page. Guarded by a differential test (`test/integration/ce/tables/record-filter-pushdown.test.ts`) that compares each operator's endpoint result against the JS-only result over adversarial values.
+- `record.list()` — optional `recordIds` pushes an id restriction into SQL (served by `idx_record_table_id_project_id_record_id`) instead of materialising the table; the controller defaults `limit` to the id count so a lookup is not truncated to `DEFAULT_PAGE_SIZE`
+- `record.upsert()` — `POST /v1/records/upsert`. Matches on a declared key column set and inserts or updates, reporting which happened per row. Serialised by `pg_advisory_xact_lock` keyed on the table, taken **inside** the transaction — a Postgres transaction-scoped lock rather than the Redis `distributedLock`, because it cannot expire before the insert it guards commits, and under `REDIS_TYPE=MEMORY` the Redis one is per-process. There is no declared unique index to arbitrate on yet (#409). An absent cell and an empty cell are the same key value.
+- `record.update()` — update cells (empty fields unchanged). Optional `precondition` (an array of `Filter`) makes it compare-and-set: evaluated under a `pessimistic_write` row lock inside the same transaction as the write, raising `RECORD_PRECONDITION_FAILED` (409) rather than silently writing nothing. The row lock is taken unconditionally, so a plain concurrent update cannot clobber between a conditional update's check and its write.
+- `record.updateMany()` — `POST /v1/records/batch`. One transaction, one field lookup and one cell upsert per chunk for the whole batch. Every id is checked against the requested `tableId`; a miss rolls the batch back. A repeated record id, or the same column twice in one record, is rejected before the upsert — Postgres would otherwise raise "cannot affect row a second time" as a 500. Does **not** call `validateCount`: an update creates no rows.
 - `record.delete()` / `record.deleteAll()` — bulk delete
 
 ## Access Control
@@ -82,7 +90,7 @@ A built-in relational database feature that lets users store structured data dir
 All table / field / record routes use `securityAccess.project([...], <permission>, <resource>)`. The required permission per resource:
 
 - **Read** (`GET /v1/tables`, `GET /v1/tables/:id`, `GET /v1/fields`, `GET /v1/fields/:id`, `GET /v1/records`, `GET /v1/records/:id`): `READ_TABLE`
-- **Write** (`POST /v1/tables`, `POST /v1/tables/:id`, `DELETE /v1/tables/:id`, `POST /v1/fields`, `POST /v1/fields/:id`, `DELETE /v1/fields/:id`, `POST /v1/records`, `POST /v1/records/:id`, `DELETE /v1/records`): `WRITE_TABLE`
+- **Write** (`POST /v1/records/batch`, `POST /v1/records/upsert`, `POST /v1/tables`, `POST /v1/tables/:id`, `DELETE /v1/tables/:id`, `POST /v1/fields`, `POST /v1/fields/:id`, `DELETE /v1/fields/:id`, `POST /v1/records`, `POST /v1/records/:id`, `DELETE /v1/records`): `WRITE_TABLE`
 
 Default project roles: `ADMIN` and `EDITOR` have both; `VIEWER` has only `READ_TABLE`. Custom roles inherit whatever permissions are configured.
 

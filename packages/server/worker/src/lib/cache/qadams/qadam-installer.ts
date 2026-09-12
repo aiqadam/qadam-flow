@@ -1,6 +1,6 @@
 import { rm, writeFile } from 'node:fs/promises'
 import path, { dirname, join } from 'node:path'
-import { fileSystemUtils, memoryLock } from '@aiqadam/server-utils'
+import { fileLock, fileSystemUtils } from '@aiqadam/server-utils'
 import {
     ExecutionMode,
     getQadamNameFromAlias,
@@ -24,8 +24,13 @@ import { bunRunner } from '../code/bun-runner'
 const tracer = trace.getTracer('qadam-installer')
 
 const usedQadamsMemoryCache: Record<string, boolean> = {}
-const relativeQadamPath = (piece: QadamPackage) => join('./', 'qadams', `${piece.qadamName}-${piece.qadamVersion}`)
-const qadamPath = (rootWorkspace: string, piece: QadamPackage) => join(rootWorkspace, 'qadams', `${piece.qadamName}-${piece.qadamVersion}`)
+// The workspaces glob in createRootPackageJson has to address this same directory. When the two
+// drifted apart (the glob still said `pieces/**` after the rename), bun matched no workspace,
+// exited 0 with "No packages!", and created no node_modules — so qadamCheckIfAlreadyInstalled
+// deleted the `ready` marker and every job reinstalled from scratch, forever.
+const QADAMS_DIR = 'qadams'
+const relativeQadamPath = (piece: QadamPackage) => join('./', QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
+const qadamPath = (rootWorkspace: string, piece: QadamPackage) => join(rootWorkspace, QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
 
 export const qadamInstaller = (log: Logger, apiClient: WorkerToApiContract) => ({
     async install({ pieces, includeFilters }: InstallParams): Promise<void> {
@@ -55,7 +60,8 @@ function getCustomPiecesPath(platformId: string): string {
 async function installQadams(rootWorkspace: string, pieces: QadamPackage[], includeFilters: boolean, log: Logger, apiClient: WorkerToApiContract): Promise<void> {
     const devQadams = workerSettings.getSettings().DEV_QADAMS
     const nonDevQadams = pieces.filter(piece => !devQadams.includes(getQadamNameFromAlias(piece.qadamName)))
-    const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, nonDevQadams)
+    const installableQadams = nonDevQadams.filter(needsInstalling)
+    const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, installableQadams)
 
     if (isEmpty(qadamsToInstall)) {
         log.debug({ rootWorkspace }, '[qadamInstaller] No new qadams to install (already installed)')
@@ -66,10 +72,16 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
         qadamsToInstall: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
     }, '[qadamInstaller] Installing qadams in workspace')
 
-    await memoryLock.runExclusive({
-        key: `install-pieces-${rootWorkspace}`,
+    // rootWorkspace is a shared cache directory bind-mounted into every worker replica
+    // (docker-compose.yml runs several worker containers against the same host path), so an
+    // in-process memoryLock here would only serialize installs within one container — two
+    // replicas installing the same not-yet-cached qadam at the same time would still race on
+    // the files underneath. fileLock puts the lock on disk next to rootWorkspace itself, which
+    // every replica sharing that mount observes.
+    await fileLock.runExclusive({
+        path: rootWorkspace,
         fn: async () => {
-            const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, pieces)
+            const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, installableQadams)
             if (isEmpty(qadamsToInstall)) {
                 log.info({ rootWorkspace }, '[qadamInstaller] No new qadams to install in lock (already installed)')
                 return
@@ -141,6 +153,24 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
             })
         },
     })
+}
+
+// Official qadams are compiled into the image (`Dockerfile`: "Qadams must be pre-compiled because
+// the runtime loader scans <qadam>/dist/ in standalone mode (no cloud registry)") and the engine's
+// loader falls back to `packages/qadams/**/dist` for exactly that reason. They are published to no
+// registry — `npm view @aiqadam/qadam-subflows` is a 404, and `.npmrc` maps no `@aiqadam` scope —
+// so asking bun to install one does not resolve:
+//
+//   error: GET https://registry.npmjs.org/@aiqadam%2fqadam-subflows - 404
+//   error: @aiqadam/qadam-subflows@0.4.14 failed to resolve
+//
+// That was invisible only because the workspaces glob matched nothing and bun exited 0 without
+// looking. With the glob fixed it becomes a failed install, a rollback, and a failed job — for a
+// qadam the engine would have loaded from `dist` anyway. A custom qadam is the opposite case: an
+// ARCHIVE resolves from a tarball on disk, and a CUSTOM registry package names something that
+// really is published, so both have to be installed for the engine to find them at all.
+function needsInstalling(piece: QadamPackage): boolean {
+    return piece.packageType === PackageType.ARCHIVE || piece.qadamType === QadamType.CUSTOM
 }
 
 async function rollbackInstallation(rootWorkspace: string, pieces: QadamPackage[]): Promise<void> {
@@ -222,7 +252,7 @@ async function createRootPackageJson({ path }: { path: string }): Promise<void> 
         'name': 'fast-workspace',
         'version': '1.0.0',
         'workspaces': [
-            'pieces/**',
+            `${QADAMS_DIR}/**`,
         ],
     }, null, 2), 'utf8')
 }

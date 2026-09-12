@@ -1,13 +1,18 @@
 import {
     CreateRecordsRequest,
     DeleteRecordsRequest,
+    GetRecordRequest,
     ListRecordsRequest,
+    partition,
     Permission,
     PopulatedRecord,
     PrincipalType,
     SeekPage,
     SERVICE_KEY_SECURITY_OPENAPI,
     UpdateRecordRequest,
+    UpdateRecordsRequest,
+    UpsertAction,
+    UpsertRecordsRequest,
 } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
@@ -18,7 +23,7 @@ import { securityAccess } from '../../core/security/authorization/fastify-securi
 import { TableEntity } from '../table/table.entity'
 import { recordSideEffects } from './record-side-effects'
 import { RecordEntity } from './record.entity'
-import { recordService } from './record.service'
+import { recordService, UpsertResult } from './record.service'
 
 const DEFAULT_PAGE_SIZE = 10
 
@@ -45,7 +50,47 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
         return recordService.getById({
             id: request.params.id,
             projectId: request.projectId,
+            fieldIds: request.query.fieldIds,
         })
+    })
+
+    // A new route rather than an extension of an existing one: `POST /v1/records` is
+    // pinned to 201 + a created-records array by the web client, the qadam and the MCP
+    // tool, and `POST /v1/records/:id` has no id to address a batch with. Static
+    // segments outrank parametric ones in find-my-way, and an apId() is 21 chars, so
+    // no record id can ever be the literal "batch".
+    fastify.post('/batch', BatchUpdateRequest, async (request, reply) => {
+        const records = await recordService.updateMany({
+            request: request.body,
+            projectId: request.projectId,
+        })
+        await reply.status(StatusCodes.OK).send(records)
+        await recordSideEffects(fastify.log).handleRecordsEvent({
+            tableId: request.body.tableId,
+            projectId: request.projectId,
+            records,
+            logger: request.log,
+            authorization: request.headers.authorization as string,
+            agentUpdate: request.body.agentUpdate ?? false,
+        }, 'updated')
+    })
+
+    fastify.post('/upsert', UpsertRequest, async (request, reply) => {
+        const results = await recordService.upsert({
+            request: request.body,
+            projectId: request.projectId,
+        })
+        await reply.status(StatusCodes.OK).send(results)
+
+        for (const [records, event] of splitByUpsertOutcome(results)) {
+            await recordSideEffects(fastify.log).handleRecordsEvent({
+                tableId: request.body.tableId,
+                projectId: request.projectId,
+                records,
+                logger: request.log,
+                authorization: request.headers.authorization as string,
+            }, event)
+        }
     })
 
     fastify.post('/:id', UpdateRequest, async (request, reply) => {
@@ -85,8 +130,10 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             tableId: request.query.tableId,
             projectId: request.projectId,
             cursorRequest: request.query.cursor ?? null,
-            limit: request.query.limit ?? DEFAULT_PAGE_SIZE,
+            limit: request.query.limit ?? request.query.recordIds?.length ?? DEFAULT_PAGE_SIZE,
             filters: request.query.filters ?? null,
+            fieldIds: request.query.fieldIds,
+            recordIds: request.query.recordIds,
         })
     })
 }
@@ -122,9 +169,70 @@ const GetRecordByIdRequest = {
         params: z.object({
             id: z.string(),
         }),
+        querystring: GetRecordRequest,
         response: {
             [StatusCodes.OK]: PopulatedRecord,
             [StatusCodes.NOT_FOUND]: z.string(),
+        },
+    },
+}
+
+// Extracted so the predicate is testable: inverting it fires RECORD_CREATED for rows
+// that were updated, which re-runs every "New Record" flow on a repeat delivery — the
+// exact failure upsert exists to prevent — and no HTTP-level test can see it.
+export function splitByUpsertOutcome(results: UpsertResult[]): [UpsertResult['record'][], 'created' | 'updated'][] {
+    const [created, updated] = partition(results, (result) => result.action === UpsertAction.CREATED)
+    return [
+        [created.map((result) => result.record), 'created'],
+        [updated.map((result) => result.record), 'updated'],
+    ]
+}
+
+const UpsertRequest = {
+    config: {
+        security: securityAccess.project([PrincipalType.USER, PrincipalType.ENGINE, PrincipalType.SERVICE], Permission.WRITE_TABLE, {
+            type: ProjectResourceType.TABLE,
+            tableName: TableEntity,
+            entitySourceType: EntitySourceType.BODY,
+            lookup: {
+                paramKey: 'tableId',
+                entityField: 'id',
+            },
+        }),
+    },
+    schema: {
+        tags: ['records'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        description: 'Insert or update records matched on a key',
+        body: UpsertRecordsRequest,
+        response: {
+            [StatusCodes.OK]: z.array(z.object({
+                action: z.enum(UpsertAction),
+                record: PopulatedRecord,
+            })),
+        },
+    },
+}
+
+const BatchUpdateRequest = {
+    config: {
+        security: securityAccess.project([PrincipalType.USER, PrincipalType.ENGINE, PrincipalType.SERVICE], Permission.WRITE_TABLE, {
+            type: ProjectResourceType.TABLE,
+            tableName: TableEntity,
+            entitySourceType: EntitySourceType.BODY,
+            lookup: {
+                paramKey: 'tableId',
+                entityField: 'id',
+            },
+        }),
+    },
+    schema: {
+        tags: ['records'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        description: 'Update many records in one request',
+        body: UpdateRecordsRequest,
+        response: {
+            [StatusCodes.OK]: z.array(PopulatedRecord),
         },
     },
 }

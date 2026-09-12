@@ -52,6 +52,7 @@ import {
   QadamsOAuth2AppsMap,
   newConnectionUtils,
 } from '@/features/connections';
+import { DeliveryModeSetting } from '@/features/connections/components/delivery-mode-setting';
 import { formUtils } from '@/features/qadams';
 import { flagsHooks } from '@/hooks/flags-hooks';
 
@@ -101,6 +102,11 @@ function CreateOrEditConnectionSection({
           redirectUrl: redirectUrl ?? '',
           projectId: projectIdOverride ?? undefined,
         }),
+        // Seeded from the connection being reconnected: without it the selector shows a default
+        // that is not what is stored, and saving silently overwrites the real setting.
+        ...(reconnectConnection?.metadata
+          ? { metadata: reconnectConnection.metadata }
+          : {}),
         ...(isGlobalConnection ? { scope: AppConnectionScope.PLATFORM } : {}),
         projectIds: reconnectConnection?.projectIds ?? [],
         preSelectForNewProjects: false,
@@ -226,6 +232,7 @@ function CreateOrEditConnectionSection({
             )}
             <div className="mt-3.5">
               <ConnectionSettings selectedAuth={selectedAuth} piece={piece} />
+              <DeliveryModeSetting qadamName={piece.name} />
             </div>
           </ScrollArea>
           {errorMessage && (

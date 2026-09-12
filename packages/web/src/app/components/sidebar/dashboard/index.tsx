@@ -52,6 +52,7 @@ import { STATIC_PAGES } from '../../global-search/static-pages';
 import { SidebarGeneralItemType } from '../ap-sidebar-group';
 import { ApSidebarItem, SidebarItemType } from '../ap-sidebar-item';
 import ProjectSideBarItem from '../project';
+import { SidebarBuildInfo } from '../sidebar-build-info';
 import { AppSidebarHeader } from '../sidebar-header';
 import SidebarUsageLimits from '../sidebar-usage-limits';
 import { SidebarUser } from '../sidebar-user';
@@ -322,6 +323,7 @@ export function ProjectDashboardSidebar({
           {state === 'expanded' && <DelayedSidebarUsageLimits />}
           <SidebarPlatformAdminLink />
           <SidebarUser />
+          {state === 'expanded' && <SidebarBuildInfo />}
         </SidebarFooter>
       </Sidebar>
     )
