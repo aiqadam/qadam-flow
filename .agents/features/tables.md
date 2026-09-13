@@ -5,6 +5,7 @@ A built-in relational database feature that lets users store structured data dir
 
 ## Key Files
 - `packages/server/api/src/app/tables/table/table.service.ts` — table CRUD, export, webhook management
+- `packages/server/api/src/app/tables/table-import.service.ts` — shared table-import logic used by `ap_import_table` (`create` and `into-existing` modes). The `into-existing` clear-and-recreate-schema sequence (delete records → delete fields → rename → recreate fields) runs inside one DB transaction via an optional `entityManager` threaded through `fieldService`/`tableService`/`recordService.deleteAll`, so a mid-sequence failure rolls back instead of leaving the table wiped and fieldless.
 - `packages/server/api/src/app/tables/table/table.controller.ts` — table endpoints
 - `packages/server/api/src/app/tables/table/table.entity.ts` — Table entity
 - `packages/server/api/src/app/tables/table/table-webhook.entity.ts` — TableWebhook entity

@@ -3331,12 +3331,31 @@ describe('MCP Tools integration', () => {
                 projectId: ctx.project.id,
                 request: { projectId: ctx.project.id, name: 'Replacement Source' },
             })
-            const sourceField = await fieldService.create({
+            // Multiple fields, including a STATIC_DROPDOWN, so the "into-existing" path below
+            // exercises the concurrent field-delete and field-create Promise.all calls that run
+            // inside the single import transaction with more than one item — a single-field
+            // template would leave that path untested.
+            const sourceFieldA = await fieldService.create({
                 projectId: ctx.project.id,
-                request: { name: 'NewField', type: FieldType.TEXT, tableId: sourceTable.id },
+                request: { name: 'NewFieldA', type: FieldType.TEXT, tableId: sourceTable.id },
+            })
+            const sourceFieldB = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'NewFieldB', type: FieldType.NUMBER, tableId: sourceTable.id },
+            })
+            const sourceFieldC = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'NewFieldC', type: FieldType.STATIC_DROPDOWN, tableId: sourceTable.id, data: { options: [{ value: 'a' }, { value: 'b' }] } },
             })
             await recordService.create({
-                request: { tableId: sourceTable.id, records: [[{ fieldId: sourceField.id, value: 'Fresh' }]] },
+                request: {
+                    tableId: sourceTable.id,
+                    records: [[
+                        { fieldId: sourceFieldA.id, value: 'Fresh' },
+                        { fieldId: sourceFieldB.id, value: '1' },
+                        { fieldId: sourceFieldC.id, value: 'a' },
+                    ]],
+                },
                 projectId: ctx.project.id,
                 logger: mockLog,
             })
@@ -3347,12 +3366,22 @@ describe('MCP Tools integration', () => {
                 projectId: ctx.project.id,
                 request: { projectId: ctx.project.id, name: 'Old Table' },
             })
-            const existingField = await fieldService.create({
+            const existingFieldA = await fieldService.create({
                 projectId: ctx.project.id,
-                request: { name: 'OldField', type: FieldType.TEXT, tableId: existingTable.id },
+                request: { name: 'OldFieldA', type: FieldType.TEXT, tableId: existingTable.id },
+            })
+            const existingFieldB = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'OldFieldB', type: FieldType.TEXT, tableId: existingTable.id },
             })
             await recordService.create({
-                request: { tableId: existingTable.id, records: [[{ fieldId: existingField.id, value: 'Stale' }]] },
+                request: {
+                    tableId: existingTable.id,
+                    records: [[
+                        { fieldId: existingFieldA.id, value: 'Stale' },
+                        { fieldId: existingFieldB.id, value: 'AlsoStale' },
+                    ]],
+                },
                 projectId: ctx.project.id,
                 logger: mockLog,
             })
@@ -3361,7 +3390,7 @@ describe('MCP Tools integration', () => {
 
             expect(text(result)).toContain('✅')
             const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
-            expect(fields.map(f => f.name)).toEqual(['NewField'])
+            expect(fields.map(f => f.name)).toEqual(['NewFieldA', 'NewFieldB', 'NewFieldC'])
         })
 
         it('106. ap_import_table — tenant isolation: existingTableId from another project is rejected', async () => {
@@ -3414,7 +3443,10 @@ describe('MCP Tools integration', () => {
 
             const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'into-existing', existingTableId: existingTable.id })
 
-            expect(text(result)).toContain('❌')
+            // Pins the pre-flight `assertImportableTable` branch specifically — not just "some
+            // error happened" — so removing that check regresses this test even though the
+            // transaction wrap alone would still leave KeepMe/the record intact via rollback.
+            expect(text(result)).toContain('unsupported type')
             const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
             expect(fields.map(f => f.name)).toEqual(['KeepMe'])
             const recordCount = await recordService.count({ projectId: ctx.project.id, tableId: existingTable.id })
@@ -3453,11 +3485,62 @@ describe('MCP Tools integration', () => {
 
             const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'into-existing', existingTableId: existingTable.id })
 
-            expect(text(result)).toContain('❌')
+            // Pins the pre-flight `assertImportableTable` branch specifically — see 106a's note.
+            expect(text(result)).toContain('no dropdown options')
             const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
             expect(fields.map(f => f.name)).toEqual(['KeepMe'])
             const recordCount = await recordService.count({ projectId: ctx.project.id, tableId: existingTable.id })
             expect(recordCount).toEqual(1)
+        })
+
+        // Regression guard for a pool-starvation bug (the same class already pinned in
+        // record.test.ts's "does not starve the connection pool when many cell writes
+        // overlap"): recordService.deleteAll used to format its (discarded) return value via
+        // fieldService.getAll on the DEFAULT connection while the caller's own transaction
+        // still held a connection. Each concurrent "into-existing" import against a table
+        // with existing rows then held one connection and waited for a second; past
+        // AP_POSTGRES_POOL_SIZE (pg's own default of 10, set nowhere in this repo) concurrent
+        // overlaps, none could be issued and none released — no Postgres lock cycle, so
+        // nothing broke it, and the process served this path until restarted. 12 overlapping
+        // imports against a pool of 10: raise the count if the default pool size ever does.
+        it('106c. ap_import_table — does not starve the connection pool across concurrent "into-existing" imports', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const CONCURRENT_IMPORTS = 12
+
+            const tables = await Promise.all(Array.from({ length: CONCURRENT_IMPORTS }, async (_, index) => {
+                const table = await tableService.create({
+                    projectId: ctx.project.id,
+                    request: { projectId: ctx.project.id, name: `Pool Test Table ${index}` },
+                })
+                const field = await fieldService.create({
+                    projectId: ctx.project.id,
+                    request: { name: 'Existing', type: FieldType.TEXT, tableId: table.id },
+                })
+                await recordService.create({
+                    request: { tableId: table.id, records: [[{ fieldId: field.id, value: `row-${index}` }]] },
+                    projectId: ctx.project.id,
+                    logger: mockLog,
+                })
+                return table
+            }))
+
+            const results = await Promise.all(tables.map((table) => apImportTableTool(mcp, mockLog).execute({
+                template: {
+                    name: 'Replacement',
+                    summary: '', description: '', qadams: [], tags: [], blogUrl: '', metadata: {}, author: '', categories: [],
+                    type: 'SHARED', status: 'PUBLISHED',
+                    tables: [{
+                        id: apId(), name: 'Replacement', externalId: apId(), status: 'ENABLED',
+                        fields: [{ id: apId(), name: 'Replaced', type: FieldType.TEXT, externalId: apId() }],
+                        data: { type: 'CSV', rows: [] },
+                    }],
+                },
+                mode: 'into-existing',
+                existingTableId: table.id,
+            })))
+
+            expect(results.every((result) => text(result).includes('✅'))).toBe(true)
         })
     })
 

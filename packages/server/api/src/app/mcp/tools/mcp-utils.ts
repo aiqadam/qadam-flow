@@ -27,24 +27,33 @@ const RESOLVABLE_PROP_TYPES = new Set<PropertyType>([
 const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].message}}.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
-    const entityDetail = extractEntityNotFoundDetail(err)
+    const entityDetail = extractQadamFlowErrorDetail(err, 'ENTITY_NOT_FOUND')
     if (entityDetail) {
         return { content: [{ type: 'text', text: `❌ ${prefix}: ${entityDetail} not found. Check the ID or name and try again.` }], isError: true }
+    }
+    const validationDetail = extractQadamFlowErrorDetail(err, 'VALIDATION')
+    if (validationDetail) {
+        return { content: [{ type: 'text', text: `❌ ${prefix}: ${validationDetail}` }], isError: true }
     }
     const raw = err instanceof Error ? err.message : String(err)
     const message = sanitizeErrorMessage(raw)
     return { content: [{ type: 'text', text: `❌ ${prefix}: ${message}` }], isError: true }
 }
 
-function extractEntityNotFoundDetail(err: unknown): string | null {
+// QadamFlowError's own `.message` getter only reflects its constructor's optional second
+// argument, never `error.params.message` — so a plain `err.message` read here would show just
+// the bare error code (e.g. "VALIDATION") for every caller that (like most in this codebase)
+// puts the human-readable detail in `params.message` instead.
+function extractQadamFlowErrorDetail(err: unknown, code: 'ENTITY_NOT_FOUND' | 'VALIDATION'): string | null {
     if (!isObject(err)) return null
     const error = (err as Record<string, unknown>).error
     if (!isObject(error)) return null
     const typed = error as Record<string, unknown>
-    if (typed.code !== 'ENTITY_NOT_FOUND') return null
+    if (typed.code !== code) return null
     if (!isObject(typed.params)) return null
     const params = typed.params as Record<string, unknown>
     if (typeof params.message === 'string') return params.message
+    if (code !== 'ENTITY_NOT_FOUND') return null
     const entityType = typeof params.entityType === 'string' ? params.entityType : null
     const entityId = typeof params.entityId === 'string' ? params.entityId : null
     if (entityType) return `${entityType}${entityId ? ` "${entityId}"` : ''}`

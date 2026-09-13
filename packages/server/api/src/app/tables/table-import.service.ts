@@ -64,8 +64,8 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
     const existingTable = await tableService.getOneOrThrow({ projectId, id: existingTableId })
 
     // The whole clear-and-recreate-schema sequence runs as one transaction: a failure partway
-    // through (a unique-externalId collision on the new fields, for example) rolls back the
-    // deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
+    // through (createFromState's own assertion, or any other DB error mid-sequence) rolls back
+    // the deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
     await transaction(async (entityManager: EntityManager) => {
         await recordService.deleteAll({ tableId: existingTable.id, projectId, entityManager })
         const existingFields = await fieldService.getAll({ projectId, tableId: existingTable.id, entityManager })

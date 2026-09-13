@@ -555,7 +555,7 @@ export const recordService = {
             return []
         }
 
-        return formatRecordsAndFetchField({ records: deletedRecords, tableId, projectId })
+        return formatRecordsAndFetchField({ records: deletedRecords, tableId, projectId, entityManager })
     },
 
     async triggerWebhooks({
@@ -915,10 +915,11 @@ function resolveProjectedFields({ fieldIds, fields, tableId }: { fieldIds: strin
     return fields.filter((field) => requested.has(field.id))
 }
 
-async function formatRecordsAndFetchField({ records, tableId, projectId, fields: prefetchedFields, outputFields }: { records: RecordSchema[], tableId: string, projectId: string, fields?: Field[], outputFields?: Field[] }): Promise<PopulatedRecord[]> {
+async function formatRecordsAndFetchField({ records, tableId, projectId, fields: prefetchedFields, outputFields, entityManager }: { records: RecordSchema[], tableId: string, projectId: string, fields?: Field[], outputFields?: Field[], entityManager?: EntityManager }): Promise<PopulatedRecord[]> {
     const fields = prefetchedFields ?? await fieldService.getAll({
         tableId,
         projectId,
+        entityManager,
     })
     return formatRecords({ records, fields: outputFields ?? fields })
 }
