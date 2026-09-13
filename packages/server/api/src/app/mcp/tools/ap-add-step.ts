@@ -154,6 +154,13 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                         displayName,
                         valid: false,
                         settings: {
+                            // `conditions: [[]]` is deliberately kept as the unconfigured seed, and
+                            // is now inert rather than dominant: the engine reads a group that
+                            // asserts nothing as non-matching, and the router validator rejects the
+                            // branch, so the step is `valid: false` until the author fills the
+                            // condition in or deletes the branch. Before #429 the same value meant
+                            // "matches everything", so this branch won ahead of every branch
+                            // ap_add_branch inserted after it and made them dead code.
                             branches: [
                                 { branchName: 'Branch 1', branchType: BranchExecutionType.CONDITION, conditions: [[]] },
                                 { branchName: 'Otherwise', branchType: BranchExecutionType.FALLBACK },
@@ -224,10 +231,16 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                         structuredContent: { ...structured, valid: true },
                     }
                 }
+                // A router is not configured with ap_update_step, and its seeded "Branch 1" carries no
+                // conditions — pointing at the wrong tool is how routers were left with an unconfigured
+                // first branch while real branches were appended behind it (#429).
+                const nextStepHint = stepType === FlowActionType.ROUTER
+                    ? 'Its first branch ("Branch 1", index 0) has no conditions yet, so the router is invalid until you either give it conditions with ap_update_branch or remove it with ap_delete_branch. Add the remaining cases with ap_add_branch.'
+                    : `Now use ap_update_step with stepName="${stepName}" to configure its settings.`
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Step "${displayName}" (${stepName}) added. Now use ap_update_step with stepName="${stepName}" to configure its settings.${draftWarning}`,
+                        text: `✅ Step "${displayName}" (${stepName}) added. ${nextStepHint}${draftWarning}`,
                     }],
                     structuredContent: structured,
                 }

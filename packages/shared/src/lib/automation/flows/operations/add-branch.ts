@@ -2,6 +2,7 @@ import { insertAt } from '../../../core/common'
 import { FlowActionType, RouterAction } from '../actions/action'
 import { FlowVersion } from '../flow-version'
 import { flowStructureUtil } from '../util/flow-structure-util'
+import { routerBranchUtil } from '../util/router-branch-util'
 import { AddBranchRequest } from '.'
 
 
@@ -11,12 +12,14 @@ function _addBranch(flowVersion: FlowVersion, request: AddBranchRequest): FlowVe
             return parentStep
         }
         const routerAction = parentStep as RouterAction
+        const settings = {
+            ...routerAction.settings,
+            branches: insertAt(routerAction.settings.branches, request.branchIndex, flowStructureUtil.createBranch(request.branchName, request.conditions)),
+        }
         return {
             ...routerAction,
-            settings: {
-                ...routerAction.settings,
-                branches: insertAt(routerAction.settings.branches, request.branchIndex, flowStructureUtil.createBranch(request.branchName, request.conditions)),
-            },
+            valid: routerBranchUtil.isSettingsValid(settings),
+            settings,
             children: insertAt(routerAction.children, request.branchIndex, null),
         }
     })

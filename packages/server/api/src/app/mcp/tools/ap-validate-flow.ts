@@ -86,7 +86,13 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
         else {
             invalidCount++
             if (!flowStructureUtil.isTrigger(step.type)) {
-                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is invalid (use ap_update_step to fix).` })
+                // A router is never fixed with ap_update_step — the usual cause is a non-fallback
+                // branch carrying no conditions, which can never match and makes its children
+                // unreachable (#429).
+                const fixHint = step.type === FlowActionType.ROUTER
+                    ? 'every non-fallback branch needs at least one condition — use ap_update_branch to configure it, or ap_delete_branch to drop it'
+                    : 'use ap_update_step to fix'
+                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is invalid (${fixHint}).` })
             }
         }
 

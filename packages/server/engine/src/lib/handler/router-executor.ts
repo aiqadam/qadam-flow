@@ -123,6 +123,13 @@ async function handleRouterExecution({ action, executionState, constants, censor
 export function evaluateConditions(conditionGroups: BranchCondition[][]): boolean {
     let orOperator = false
     for (const conditionGroup of conditionGroups) {
+        // A group with no conditions used to leave `andGroup` at its `true` seed and match
+        // unconditionally, so a CONDITION branch carrying `[[]]` — what the MCP router skeleton
+        // wrote — won ahead of every real branch added after it, silently making them dead code
+        // (#429). Nothing is asserted by an empty group, so it contributes nothing to the OR.
+        if (conditionGroup.length === 0) {
+            continue
+        }
         let andGroup = true
         for (const condition of conditionGroup) {
             const castedCondition = condition

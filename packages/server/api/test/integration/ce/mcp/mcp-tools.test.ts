@@ -379,6 +379,15 @@ describe('MCP Tools integration', () => {
         })
         expect(text(routerResult)).toContain('✅')
 
+        // A branch with no conditions can never match, so the tool refuses to insert one.
+        const noConditionsResult = await apAddBranchTool(mcp, mockLog).execute({
+            flowId,
+            routerStepName: 'step_1',
+            branchName: 'Always Wins',
+        })
+        expect(text(noConditionsResult)).toContain('❌')
+        expect(text(noConditionsResult)).toContain('conditions is required')
+
         // ap_add_branch inserts before the fallback (last) branch.
         // Router has 2 branches → insert at index max(0, 2-1) = 1
         // Result: Branch 1[0], VIP Customer[1], Otherwise[2]
@@ -386,9 +395,16 @@ describe('MCP Tools integration', () => {
             flowId,
             routerStepName: 'step_1',
             branchName: 'VIP Customer',
+            conditions: [[{
+                firstValue: '{{trigger[\'output\'].tier}}',
+                operator: 'TEXT_EXACTLY_MATCHES',
+                secondValue: 'vip',
+            }]],
         })
         expect(text(addBranchResult)).toContain('✅')
         expect(text(addBranchResult)).toContain('VIP Customer')
+        // The seeded Branch 1 still carries no conditions, so the router is not publishable yet.
+        expect(text(addBranchResult)).toContain('marked invalid')
 
         // Delete Branch 1 at index 0 (a non-fallback branch)
         // Result after delete: VIP Customer[0], Otherwise[1]
@@ -1008,6 +1024,19 @@ describe('MCP Tools integration', () => {
             stepLocationRelativeToParent: StepLocationRelativeToParent.INSIDE_LOOP,
             stepType: FlowActionType.ROUTER,
             displayName: 'Priority Router',
+        })
+
+        // Branch 0 ships without conditions, which makes the router invalid: a branch that asserts
+        // nothing can never match, so "High Priority" below would be unreachable (#429).
+        await apUpdateBranchTool(mcp, mockLog).execute({
+            flowId,
+            routerStepName: 'step_2',
+            branchIndex: 0,
+            conditions: [[{
+                firstValue: '{{step_1[\'output\'].item.priority}}',
+                operator: 'TEXT_EXACTLY_MATCHES',
+                secondValue: 'high',
+            }]],
         })
 
         await apAddStepTool(mcp, mockLog).execute({

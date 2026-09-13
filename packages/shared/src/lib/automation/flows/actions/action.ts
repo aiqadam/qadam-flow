@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { STEP_NAME_REGEX } from '../../../core/common'
+import { formErrors } from '../../../form-errors'
 import { VersionType } from '../../qadams'
 import { PropertySettings } from '../properties'
 import { SampleDataSetting } from '../sample-data'
@@ -232,6 +233,18 @@ function buildBranchConditionValid(addMinLength: boolean) {
     ])
 }
 
+// A CONDITION branch carrying no conditions at all is rejected only by the validating variant.
+// The engine treats a group that asserts nothing as non-matching (see `evaluateConditions`), so
+// such a branch can never run and its children are unreachable — publishing one is always an
+// authoring mistake, and accepting it is what let #429 ship routers whose every real branch was
+// dead code.
+function buildBranchConditionGroups(addMinLength: boolean) {
+    if (!addMinLength) {
+        return z.array(z.array(buildBranchConditionValid(false)))
+    }
+    return z.array(z.array(buildBranchConditionValid(true)).min(1, formErrors.required)).min(1, formErrors.required)
+}
+
 export const ValidBranchCondition = buildBranchConditionValid(true)
 export type ValidBranchCondition = z.infer<typeof ValidBranchCondition>
 
@@ -259,7 +272,7 @@ export const RouterBranchesSchema = (addMinLength: boolean) =>
     z.array(
         z.union([
             z.object({
-                conditions: z.array(z.array(buildBranchConditionValid(addMinLength))),
+                conditions: buildBranchConditionGroups(addMinLength),
                 branchType: z.literal(BranchExecutionType.CONDITION),
                 branchName: z.string(),
             }),

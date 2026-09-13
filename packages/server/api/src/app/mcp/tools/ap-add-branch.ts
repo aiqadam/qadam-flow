@@ -29,12 +29,19 @@ export const apAddBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLog
             flowId: z.string().describe('The id of the flow'),
             routerStepName: z.string().describe('The name of the ROUTER step to add a branch to. Use ap_flow_structure to get valid values.'),
             branchName: z.string().describe('Display name for the new branch (e.g. "Branch 1")'),
-            conditions: mcpUtils.BRANCH_CONDITIONS_INPUT_SCHEMA.optional().describe('Conditions array (outer array = OR groups, inner array = AND conditions). Required for condition-type branches; omit to use an empty condition group.'),
+            conditions: mcpUtils.BRANCH_CONDITIONS_INPUT_SCHEMA.optional().describe('Conditions array (outer array = OR groups, inner array = AND conditions). Required: a branch with no conditions asserts nothing, so it can never match and its steps would never run.'),
         },
         annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {
             try {
                 const { flowId, routerStepName, branchName, conditions } = addBranchInput.parse(args)
+
+                // Omitting conditions used to insert a branch carrying `[[]]`, which the engine read
+                // as matching everything — so it shadowed every branch below it (#429). It is never
+                // a useful branch either way, so it is refused at the tool boundary.
+                if (isNil(conditions) || conditions.length === 0) {
+                    return { content: [{ type: 'text', text: '❌ conditions is required: a branch with no conditions can never match, so any step inside it would be unreachable. Pass conditions, or use the router\'s fallback branch for the "everything else" case.' }] }
+                }
 
                 const [flow, project] = await Promise.all([
                     flowService(log).getOnePopulated({ id: flowId, projectId: mcp.projectId }),
