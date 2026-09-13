@@ -526,9 +526,10 @@ export const recordService = {
     async deleteAll({
         tableId,
         projectId,
+        entityManager,
     }: DeleteAllParams): Promise<PopulatedRecord[]> {
-        const deletedRecords = await transaction(async (entityManager: EntityManager) => {
-            const records = await entityManager.getRepository(RecordEntity).find({
+        const deleteWithManager = async (manager: EntityManager): Promise<RecordSchema[]> => {
+            const records = await manager.getRepository(RecordEntity).find({
                 where: { projectId, tableId },
                 relations: ['cells'],
             })
@@ -536,7 +537,7 @@ export const recordService = {
             const recordIds = records.map((record) => record.id)
 
             if (recordIds.length > 0) {
-                await entityManager.getRepository(RecordEntity).delete({
+                await manager.getRepository(RecordEntity).delete({
                     id: In(recordIds),
                     projectId,
                     tableId,
@@ -544,7 +545,11 @@ export const recordService = {
             }
 
             return records
-        })
+        }
+
+        const deletedRecords = isNil(entityManager)
+            ? await transaction(deleteWithManager)
+            : await deleteWithManager(entityManager)
 
         if (deletedRecords.length === 0) {
             return []
@@ -670,6 +675,7 @@ type DeleteParams = {
 type DeleteAllParams = {
     tableId: string
     projectId: string
+    entityManager?: EntityManager
 }
 
 type TriggerWebhooksParams = {

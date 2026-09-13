@@ -1,5 +1,7 @@
 import { ErrorCode, FieldType, isNil, QadamFlowError, SAFE_EXTERNAL_ID_PATTERN, SharedTemplate, Table, TableDataState } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
+import { EntityManager } from 'typeorm'
+import { transaction } from '../core/db/transaction'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { fieldService } from './field/field.service'
@@ -61,12 +63,17 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
     // Tenant-scoped: throws ENTITY_NOT_FOUND for a table belonging to another project.
     const existingTable = await tableService.getOneOrThrow({ projectId, id: existingTableId })
 
-    await recordService.deleteAll({ tableId: existingTable.id, projectId })
-    const existingFields = await fieldService.getAll({ projectId, tableId: existingTable.id })
-    await Promise.all(existingFields.map((field) => fieldService.delete({ id: field.id, projectId })))
+    // The whole clear-and-recreate-schema sequence runs as one transaction: a failure partway
+    // through (a unique-externalId collision on the new fields, for example) rolls back the
+    // deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
+    await transaction(async (entityManager: EntityManager) => {
+        await recordService.deleteAll({ tableId: existingTable.id, projectId, entityManager })
+        const existingFields = await fieldService.getAll({ projectId, tableId: existingTable.id, entityManager })
+        await Promise.all(existingFields.map((field) => fieldService.delete({ id: field.id, projectId, entityManager })))
 
-    await tableService.update({ projectId, id: existingTable.id, request: { name: targetName } })
-    await Promise.all(tableTemplate.fields.map((field) => fieldService.createFromState({ projectId, field, tableId: existingTable.id })))
+        await tableService.update({ projectId, id: existingTable.id, request: { name: targetName }, entityManager })
+        await Promise.all(tableTemplate.fields.map((field) => fieldService.createFromState({ projectId, field, tableId: existingTable.id, entityManager })))
+    })
 
     return tableService.getOneOrThrow({ projectId, id: existingTable.id })
 }

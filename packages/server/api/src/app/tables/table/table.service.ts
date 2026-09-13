@@ -22,7 +22,7 @@ import {
     UpdateTableRequest,
     UserWithMetaInformation,
 } from '@aiqadam/shared'
-import { ArrayContains, ILike, In, IsNull } from 'typeorm'
+import { ArrayContains, EntityManager, ILike, In, IsNull } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { getFolderIdFromRequest } from '../../flows/flow/flow.service'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
@@ -105,8 +105,9 @@ export const tableService = {
     async getOneOrThrow({
         projectId,
         id,
+        entityManager,
     }: GetByIdParams): Promise<Table> {
-        const table = await tableRepo().findOne({
+        const table = await tableRepo(entityManager).findOne({
             where: { projectId, id },
         })
         if (isNil(table)) {
@@ -303,6 +304,7 @@ export const tableService = {
         projectId,
         id,
         request,
+        entityManager,
     }: UpdateParams): Promise<Table> {
 
         const updateData: Record<string, unknown> = {
@@ -312,8 +314,8 @@ export const tableService = {
             folderId: request.folderId,
         }
 
-        await tableRepo().update({ id, projectId }, updateData)
-        return this.getOneOrThrow({ projectId, id })
+        await tableRepo(entityManager).update({ id, projectId }, updateData)
+        return this.getOneOrThrow({ projectId, id, entityManager })
     },
     async count({ projectId, folderId }: CountParams): Promise<number> {
         const where: Record<string, unknown> = { projectId }
@@ -344,6 +346,7 @@ type ListParams = {
 type GetByIdParams = {
     projectId: string
     id: string
+    entityManager?: EntityManager
 }
 
 type GetOneByExternalIdParams = {
@@ -383,6 +386,7 @@ type UpdateParams = {
     projectId: string
     id: string
     request: UpdateTableRequest
+    entityManager?: EntityManager
 }
 
 type CountParams = {

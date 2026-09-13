@@ -1,5 +1,5 @@
 import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, isNil, QadamFlowError, UpdateFieldRequest } from '@aiqadam/shared'
-import { In } from 'typeorm'
+import { EntityManager, In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -8,9 +8,9 @@ import { FieldEntity } from './field.entity'
 const fieldRepo = repoFactory<Field>(FieldEntity)
 
 export const fieldService = {
-    async create({ request, projectId }: CreateParams): Promise<Field> {
-        await this.validateCount({ projectId, tableId: request.tableId })
-        const field = await fieldRepo().save({
+    async create({ request, projectId, entityManager }: CreateParams): Promise<Field> {
+        await this.validateCount({ projectId, tableId: request.tableId, entityManager })
+        const field = await fieldRepo(entityManager).save({
             ...request,
             projectId,
             id: apId(),
@@ -19,12 +19,13 @@ export const fieldService = {
         return field
     },
 
-    async createFromState({ projectId, field, tableId }: CreateFromStateParams): Promise<Field> {
+    async createFromState({ projectId, field, tableId, entityManager }: CreateFromStateParams): Promise<Field> {
         switch (field.type) {
             case FieldType.STATIC_DROPDOWN: {
                 assertNotNullOrUndefined(field.data, 'Data is required for static dropdown field')
                 return this.create({
                     projectId,
+                    entityManager,
                     request: {
                         name: field.name,
                         type: field.type,
@@ -39,6 +40,7 @@ export const fieldService = {
             case FieldType.TEXT: {
                 return this.create({
                     projectId,
+                    entityManager,
                     request: {
                         name: field.name,
                         type: field.type,
@@ -58,8 +60,8 @@ export const fieldService = {
         }
     },
 
-    async getAll({ projectId, tableId }: GetAllParams): Promise<Field[]> {
-        return fieldRepo().find({
+    async getAll({ projectId, tableId, entityManager }: GetAllParams): Promise<Field[]> {
+        return fieldRepo(entityManager).find({
             where: { projectId, tableId },
             order: {
                 created: 'ASC',
@@ -102,8 +104,8 @@ export const fieldService = {
         return field
     },
 
-    async delete({ id, projectId }: DeleteParams): Promise<void> {
-        await fieldRepo().delete({
+    async delete({ id, projectId, entityManager }: DeleteParams): Promise<void> {
+        await fieldRepo(entityManager).delete({
             id,
             projectId,
         })
@@ -119,8 +121,8 @@ export const fieldService = {
         return this.getById({ id, projectId })
     },
 
-    async count({ projectId, tableId }: CountParams): Promise<number> {
-        return fieldRepo().count({
+    async count({ projectId, tableId, entityManager }: CountParams): Promise<number> {
+        return fieldRepo(entityManager).count({
             where: { projectId, tableId },
         })
     },
@@ -139,17 +141,20 @@ export const fieldService = {
 type CreateParams = {
     projectId: string
     request: CreateFieldRequest
+    entityManager?: EntityManager
 }
 
 type CreateFromStateParams = {
     projectId: string
     field: FieldState
     tableId: string
+    entityManager?: EntityManager
 }
 
 type GetAllParams = {
     projectId: string
     tableId: string
+    entityManager?: EntityManager
 }
 
 type GetAllByTableIdsParams = {
@@ -165,6 +170,7 @@ type GetByIdParams = {
 type DeleteParams = {
     id: string
     projectId: string
+    entityManager?: EntityManager
 }
 
 type UpdateParams = {
@@ -176,4 +182,5 @@ type UpdateParams = {
 type CountParams = {
     projectId: string
     tableId: string
+    entityManager?: EntityManager
 }
