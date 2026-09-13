@@ -74,6 +74,38 @@ describe('buildSchema — STATIC_DROPDOWN option enforcement', () => {
         expect(parse(staticDropdown(TWO_OPTIONS, false), null).success).toBe(true)
     })
 
+    it('rejects a large value against primitive-only options without walking it', () => {
+        // The `timezone` dropdown of @aiqadam/qadam-schedule declares 419 primitive options. Comparing
+        // the submitted value against each one in turn used to re-serialise it 419 times, which is
+        // seconds of non-yielding work on the API's single thread for a multi-megabyte value.
+        const manyOptions = staticDropdown({
+            options: Array.from({ length: 419 }, (_, index) => ({ label: `tz-${index}`, value: `tz-${index}` })),
+        })
+        const hugeValue = Array.from({ length: 200_000 }, (_, index) => `x-${index}`)
+
+        const startedAt = process.hrtime.bigint()
+        const result = parse(manyOptions, hugeValue)
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6
+
+        expect(result.success).toBe(false)
+        expect(elapsedMs).toBeLessThan(250)
+    })
+
+    it('rejects a deeply nested value rather than throwing out of the refinement', () => {
+        // zod re-throws whatever a refinement throws rather than turning it into a validation
+        // failure, so an unguarded recursion would surface as a 500 on flow update. Confirmed
+        // load-bearing: with MAX_OPTION_DEPTH raised out of the way this case throws
+        // `RangeError: Maximum call stack size exceeded` on Node 26.
+        const objectOption = staticDropdown({ options: [{ label: 'Child', value: { externalId: 'c1' } }] })
+        let nested: unknown = 'leaf'
+        for (let depth = 0; depth < 100_000; depth++) {
+            nested = [nested]
+        }
+
+        expect(() => parse(objectOption, nested)).not.toThrow()
+        expect(parse(objectOption, nested).success).toBe(false)
+    })
+
     it('leaves DROPDOWN on the non-null check, since its options resolve at run time', () => {
         const dynamicDropdown = {
             type: PropertyType.DROPDOWN,

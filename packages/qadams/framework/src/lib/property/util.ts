@@ -128,15 +128,50 @@ function definedValueSchema() {
 //
 // `Dropdown` is deliberately left on the non-null check: its options are produced by a function at
 // run time, so there is no declared set to compare against here.
+//
+// Both option sets are built once, when the schema is built, and the submitted value is turned into
+// a comparable form at most once per parse. Comparing it against each option in turn instead would
+// re-serialise the whole submitted value per option — with the 419-option `timezone` dropdown of
+// `@aiqadam/qadam-schedule` and a multi-megabyte value, that is seconds of non-yielding work on the
+// API's single thread, reachable by anyone who may edit a flow.
 function staticDropdownSchema(property: QadamProperty) {
   const declaredValues = readDeclaredOptionValues(property);
   if (declaredValues.length === 0) {
     return definedValueSchema();
   }
+  const primitiveOptions = new Set(
+    declaredValues.filter((declared) => !isObjectLike(declared)).map((declared) => String(declared)),
+  );
+  const objectOptions = new Set(
+    declaredValues.filter(isObjectLike).map((declared) => canonicalize(declared, 0)),
+  );
   return definedValueSchema().refine(
-    (val) => isDynamicExpression(val) || declaredValues.some((declared) => valuesMatch(declared, val)),
+    (val) => matchesDeclaredOption(val, primitiveOptions, objectOptions),
     { message: formErrors.valueNotInOptions },
   );
+}
+
+// Stored step input travels through JSON and through form state, so a value that is semantically
+// the declared option can differ from it in type (`1` vs `"1"`) or in key order. Comparing loosely
+// keeps the check from failing flows that were valid before it existed; it costs only the ability
+// to distinguish a number option from its own string spelling, which no dropdown relies on.
+function matchesDeclaredOption(value: unknown, primitiveOptions: Set<string>, objectOptions: Set<string>): boolean {
+  if (isNil(value) || isDynamicExpression(value)) {
+    // `null`/`undefined` is already reported by the defined-value check; saying it twice would only
+    // replace that message with a less specific one.
+    return true;
+  }
+  if (!isObjectLike(value)) {
+    return primitiveOptions.has(String(value));
+  }
+  // No object option can be matched by anything, so a hostile array or deep object is rejected
+  // without being walked at all — which is the common case, since almost every dropdown in the
+  // repo declares primitive option values.
+  if (objectOptions.size === 0) {
+    return false;
+  }
+  const canonicalValue = canonicalize(value, 0);
+  return canonicalValue !== TOO_DEEP && objectOptions.has(canonicalValue);
 }
 
 function readDeclaredOptionValues(property: QadamProperty): unknown[] {
@@ -155,36 +190,34 @@ function isDynamicExpression(value: unknown): boolean {
   return typeof value === 'string' && value.includes('{{');
 }
 
-// Stored step input travels through JSON and through form state, so a value that is semantically
-// the declared option can differ from it in type (`1` vs `"1"`) or in key order. Comparing loosely
-// keeps the check from failing flows that were valid before it existed; it costs only the ability
-// to distinguish a number option from its own string spelling, which no dropdown relies on.
-function valuesMatch(declared: unknown, value: unknown): boolean {
-  if (declared === value) {
-    return true;
-  }
-  if (isNil(declared) || isNil(value)) {
-    return false;
-  }
-  if (typeof declared === 'object' || typeof value === 'object') {
-    return canonicalize(declared) === canonicalize(value);
-  }
-  return String(declared) === String(value);
+function isObjectLike(value: unknown): boolean {
+  return typeof value === 'object' && value !== null;
 }
 
-function canonicalize(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalize).join(',')}]`;
+// Recursion over a value the caller controls needs a floor. Without this cap, a nested array
+// overflows the stack here — reproduced on Node 26 at 20k, 60k and 400k levels — and zod re-throws
+// whatever a refinement throws rather than turning it into a validation failure, so it would
+// surface as a 500 on flow update rather than a rejected value. A value deeper than any real
+// dropdown option cannot be one, so a sentinel that matches nothing is both cheap and correct.
+function canonicalize(value: unknown, depth: number): string {
+  if (depth > MAX_OPTION_DEPTH) {
+    return TOO_DEEP;
   }
-  if (typeof value === 'object' && value !== null) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalize(entry, depth + 1)).join(',')}]`;
+  }
+  if (isObjectLike(value)) {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, entryValue]) => entryValue !== undefined)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalize(entryValue)}`);
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalize(entryValue, depth + 1)}`);
     return `{${entries.join(',')}}`;
   }
   return JSON.stringify(value) ?? 'undefined';
 }
+
+const MAX_OPTION_DEPTH = 32;
+const TOO_DEEP = ' too-deep';
 
   export const piecePropertiesUtils = {
     buildSchema

@@ -27,6 +27,7 @@ const loopSettingsValidator = LoopOnItemsActionSettings.and(z.object({
     items: z.string().min(1),
 }))
 const routerSettingsValidator = RouterActionSettingsWithValidation
+const MAX_LOGGED_UNDECLARED_KEYS = 20
 const codeSettingsValidator = CodeActionSettings.and(z.object({
     sourceCode: SourceCode.and(z.object({
         code: z.string().min(1),
@@ -61,7 +62,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         if (!isNil(result.cleanInput)) {
                             clonedRequest.request.action.settings.input = result.cleanInput
                         }
-                        warnOnUndeclaredKeys({ log, settings: clonedRequest.request.action.settings, result })
+                        warnOnUndeclaredKeys({ log, qadamName: clonedRequest.request.action.settings.qadamName, qadamVersion: clonedRequest.request.action.settings.qadamVersion, component: clonedRequest.request.action.settings.actionName, result })
                         break
                     }
                     case FlowActionType.ROUTER:
@@ -92,7 +93,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         if (!isNil(result.cleanInput)) {
                             clonedRequest.request.settings.input = result.cleanInput
                         }
-                        warnOnUndeclaredKeys({ log, settings: clonedRequest.request.settings, result })
+                        warnOnUndeclaredKeys({ log, qadamName: clonedRequest.request.settings.qadamName, qadamVersion: clonedRequest.request.settings.qadamVersion, component: clonedRequest.request.settings.actionName, result })
                         break
                     }
                     case FlowActionType.ROUTER:
@@ -121,6 +122,7 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
                         if (result.valid && result.cleanInput) {
                             clonedRequest.request.settings.input = result.cleanInput
                         }
+                        warnOnUndeclaredKeys({ log, qadamName: clonedRequest.request.settings.qadamName, qadamVersion: clonedRequest.request.settings.qadamVersion, component: clonedRequest.request.settings.triggerName, result })
                         break
                     }
                 }
@@ -142,19 +144,25 @@ export const flowVersionValidationUtil = (log: FastifyBaseLogger) => ({
     },
 })
 
-function warnOnUndeclaredKeys({ log, settings, result }: {
+// The key list is caller-sized, so it is capped before it reaches the log: a step carrying
+// thousands of undeclared keys would otherwise turn every write into a proportional burst of log
+// volume. Only names are logged, never values.
+function warnOnUndeclaredKeys({ log, qadamName, qadamVersion, component, result }: {
     log: FastifyBaseLogger
-    settings: QadamActionSettings
+    qadamName: string
+    qadamVersion: string
+    component: string | undefined
     result: ValidationResult
 }): void {
     if (result.undeclaredKeys.length === 0) {
         return
     }
     log.warn({
-        qadamName: settings.qadamName,
-        qadamVersion: settings.qadamVersion,
-        actionName: settings.actionName,
-        undeclaredKeys: result.undeclaredKeys,
+        qadamName,
+        qadamVersion,
+        component,
+        undeclaredKeyCount: result.undeclaredKeys.length,
+        undeclaredKeys: result.undeclaredKeys.slice(0, MAX_LOGGED_UNDECLARED_KEYS),
     }, 'Step input carries keys the resolved qadam metadata does not declare; keeping them rather than erasing the caller\'s write')
 }
 
@@ -219,9 +227,16 @@ async function validateTrigger({ settings, platformId, log }: ValidateTriggerPar
 // key the resolved metadata does not declare is kept verbatim. Dropping it silently erased a
 // caller's own write whenever the step's pinned qadam version resolved to metadata older than the
 // value being written — the write returned success, the step was marked `valid: true`, and the
-// value was simply gone (#381). Preserving it costs only that a prop removed by a later qadam
-// version lingers unused in `input`; the engine ignores undeclared keys
-// (`props-processor.ts` skips any key with no matching property).
+// value was simply gone (#381).
+//
+// What preserving them costs, stated precisely: `props-processor.ts` copies the whole resolved
+// input (`{ ...resolvedInput }`) and only skips undeclared keys for *processing*, so they do reach
+// the qadam's `propsValue` unprocessed, and a handful of qadams spread `propsValue` straight into
+// an outbound request body. This is not a new capability — `IMPORT_FLOW` expands into
+// sub-operations inside `flowOperations.apply`, i.e. after `prepareRequest`, so undeclared keys
+// were always storable and always reached `propsValue` by that route. The projection filtered one
+// entrance and not the other; this makes it consistent rather than opening anything.
+// See the `warnOnUndeclaredKeys` log for the operator-visible signal.
 function validateProps(
     props: QadamPropertyMap,
     input: Record<string, unknown> | undefined,

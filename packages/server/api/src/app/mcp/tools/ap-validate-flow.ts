@@ -7,6 +7,7 @@ import {
     Permission,
     ProjectScopedMcpServer,
     Step,
+    unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -149,12 +150,17 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
     })
 
     const inlineTargets = callFlowSteps.filter(step => readCallFlowInput(step).executionMode === INLINE_EXECUTION_MODE)
-    const pauseIssues = await Promise.all(inlineTargets.map(async (step) => {
+    const roots = unique(inlineTargets
+        .map(step => readCallFlowInput(step).flow?.externalId)
+        .filter((externalId): externalId is string => !isNil(externalId)))
+    if (roots.length === 0) {
+        return payloadIssues
+    }
+
+    const graph = await loadInlineCallGraph({ roots, projectId, log })
+    const pauseIssues = inlineTargets.flatMap((step) => {
         const externalId = readCallFlowInput(step).flow?.externalId
-        if (isNil(externalId)) {
-            return []
-        }
-        const pausingStep = await findPausingStepInCallGraph({ rootExternalId: externalId, projectId, log })
+        const pausingStep = isNil(externalId) ? null : findPausingFlow({ root: externalId, graph })
         if (isNil(pausingStep)) {
             return []
         }
@@ -163,53 +169,87 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
             stepName: step.name,
             message: `"${step.displayName}" runs its subflow inline, but "${pausingStep.flowName}" pauses at "${pausingStep.stepDisplayName}" (${pausingStep.reason}). An inline child has no queue job to resume from — switch this step to Queue execution mode.`,
         }]
-    }))
+    })
 
-    return [...payloadIssues, ...pauseIssues.flat()]
+    return [...payloadIssues, ...pauseIssues]
 }
 
-// Walks the inline call graph the way the engine executes it: an inline child runs inside the
-// parent's own run, so its steps — and its own inline children — belong to this check, while a
-// Queue-mode child runs as a separate job and is not walked into (it only matters here because
-// waiting on one is itself a pause).
-async function findPausingStepInCallGraph({ rootExternalId, projectId, log }: {
-    rootExternalId: string
+// Every reachable flow is fetched exactly once, for all roots together, and the per-root answer is
+// then read off the in-memory graph. Walking each root separately would refetch the shared part of
+// the graph once per root — and `flowService.list` returns whole flow versions, so that is real
+// bandwidth and heap, driven by a caller who only needs READ_FLOW.
+async function loadInlineCallGraph({ roots, projectId, log }: {
+    roots: string[]
     projectId: string
     log: FastifyBaseLogger
-}): Promise<PausingStep | null> {
-    const visited = new Set<string>()
-    let frontier = [rootExternalId]
+}): Promise<Map<string, FlowNode>> {
+    const graph = new Map<string, FlowNode>()
+    let frontier = roots
 
     while (frontier.length > 0) {
-        const unvisited = frontier.filter(externalId => !visited.has(externalId))
-        if (unvisited.length === 0) {
-            return null
+        const unresolved = unique(frontier.filter(externalId => !graph.has(externalId)))
+        if (unresolved.length === 0) {
+            return graph
         }
-        unvisited.forEach(externalId => visited.add(externalId))
 
         // The draft is what the author is about to publish, which is what a pre-publish gate should
         // judge — `flowService.list` defaults to DRAFT for exactly that reason.
-        const flows = await flowService(log).list({ projectIds: [projectId], externalIdsOrIds: unvisited })
-        const nextFrontier: string[] = []
-
-        for (const flow of flows.data) {
-            for (const step of flowStructureUtil.getAllSteps(flow.version.trigger)) {
-                if ('skip' in step && step.skip === true) {
-                    continue
-                }
-                const reason = readPauseReason(step)
-                if (!isNil(reason)) {
-                    return { flowName: flow.version.displayName, stepDisplayName: step.displayName, reason }
-                }
-                if (isCallFlowStep(step) && readCallFlowInput(step).executionMode === INLINE_EXECUTION_MODE) {
-                    const childExternalId = readCallFlowInput(step).flow?.externalId
-                    if (!isNil(childExternalId)) {
-                        nextFrontier.push(childExternalId)
-                    }
-                }
-            }
+        const flows = await flowService(log).list({ projectIds: [projectId], externalIdsOrIds: unresolved })
+        for (const reference of unresolved) {
+            const flow = flows.data.find(candidate => candidate.externalId === reference || candidate.id === reference)
+            // A reference that resolves to nothing — deleted, or belonging to another project — is
+            // recorded as unknown so it is never queried again, and reported as neither pausing nor
+            // safe. It is indistinguishable from a non-existent id to the caller either way.
+            graph.set(reference, isNil(flow) ? UNRESOLVED_FLOW : readFlowNode(flow))
         }
-        frontier = nextFrontier
+        frontier = unresolved.flatMap(reference => graph.get(reference)?.inlineChildren ?? [])
+    }
+    return graph
+}
+
+// Reads the one fact the walk needs from a flow: whether it pauses on its own, and which flows it
+// runs inline. A Queue-mode child runs as a separate job and is not an edge here — it only matters
+// because waiting on one is itself a pause, which `readPauseReason` reports.
+function readFlowNode(flow: { version: { displayName: string, trigger: Step } }): FlowNode {
+    const steps = flowStructureUtil.getAllSteps(flow.version.trigger)
+        .filter(step => !('skip' in step && step.skip === true))
+    const pausingStep = steps.reduce<PausingStep | null>((found, step) => {
+        if (!isNil(found)) {
+            return found
+        }
+        const reason = readPauseReason(step)
+        return isNil(reason)
+            ? null
+            : { flowName: flow.version.displayName, stepDisplayName: step.displayName, reason }
+    }, null)
+    const inlineChildren = steps.flatMap((step) => {
+        if (!isCallFlowStep(step) || readCallFlowInput(step).executionMode !== INLINE_EXECUTION_MODE) {
+            return []
+        }
+        const childExternalId = readCallFlowInput(step).flow?.externalId
+        return isNil(childExternalId) ? [] : [childExternalId]
+    })
+    return { pausingStep, inlineChildren }
+}
+
+function findPausingFlow({ root, graph }: { root: string, graph: Map<string, FlowNode> }): PausingStep | null {
+    const seen = new Set<string>()
+    const pending = [root]
+
+    while (pending.length > 0) {
+        const reference = pending.pop()
+        if (isNil(reference) || seen.has(reference)) {
+            continue
+        }
+        seen.add(reference)
+        const node = graph.get(reference)
+        if (isNil(node)) {
+            continue
+        }
+        if (!isNil(node.pausingStep)) {
+            return node.pausingStep
+        }
+        pending.push(...node.inlineChildren)
     }
     return null
 }
@@ -344,6 +384,7 @@ const DELAY_UNIT_MS: Record<string, number> = {
     hours: 60 * 60 * 1000,
     days: 24 * 60 * 60 * 1000,
 }
+const UNRESOLVED_FLOW: FlowNode = { pausingStep: null, inlineChildren: [] }
 const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
     [`${DELAY_QADAM}:delay_until`]: 'a Delay Until',
     '@aiqadam/qadam-approval:wait_for_approval': 'a Wait for Approval',
@@ -413,6 +454,11 @@ type PausingStep = {
     flowName: string
     stepDisplayName: string
     reason: string
+}
+
+type FlowNode = {
+    pausingStep: PausingStep | null
+    inlineChildren: string[]
 }
 
 type ValidationResult = {
