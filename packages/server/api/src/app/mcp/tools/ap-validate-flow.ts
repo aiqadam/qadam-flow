@@ -438,15 +438,14 @@ const UNRESOLVED_FLOW: FlowNode = { pausingStep: null, inlineChildren: [], expec
 //
 // This is an allowlist, and it is the check's known limit: a qadam added later that pauses will
 // validate green here and still fail at run time with the `inline-flow-executor.ts` error. Making
-// it exhaustive needs a declared marker on the action rather than a table — filed as a follow-up
-// rather than guessed at here, because a wrong entry produces a false "cannot publish" on a flow
-// that works.
+// it exhaustive needs a declared marker on the action rather than a table — #426, not guessed at
+// here, because a wrong entry produces a false "cannot publish" on a flow that works.
 //
-// Second limit, in the conditional cases: `wait_until_ready` and `waitForResponse` are read as
-// literals, so a value bound to a template expression reads as "does not pause" while the engine's
-// plain truthiness check would pause. `delayFor` is the one that reports rather than assumes when
-// its value is not statically known; the other two assume safe. Both are still strictly better
-// than `main`, which checked none of this, but neither is a guarantee.
+// Second limit, tracked in the same ticket: in the conditional cases `wait_until_ready` and
+// `waitForResponse` are read as literals, so a value bound to a template expression reads as "does
+// not pause" while the engine's plain truthiness check would pause. `delayFor` is the one that
+// reports rather than assumes when its value is not statically known; the other two assume safe.
+// Both are still strictly better than no check at all, but neither is a guarantee.
 const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
     [`${DELAY_QADAM}:delay_until`]: 'a Delay Until',
     '@aiqadam/qadam-approval:wait_for_approval': 'a Wait for Approval',
