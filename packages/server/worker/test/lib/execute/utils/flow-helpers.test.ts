@@ -194,16 +194,16 @@ describe('extractCodeArtifacts', () => {
 })
 
 describe('provisionFlowPieces', () => {
-    const mockDisableFlow = vi.fn()
     const mockWarn = vi.fn()
-    const logWithWarn = { warn: mockWarn } as any
-    const apiClientWithDisable = { disableFlow: mockDisableFlow } as any
+    const mockError = vi.fn()
+    const mockLogger = { warn: mockWarn, error: mockError } as any
+    const apiClient = {} as any
 
     beforeEach(() => {
         mockGetPiece.mockReset()
         mockProvision.mockReset()
-        mockDisableFlow.mockReset()
         mockWarn.mockReset()
+        mockError.mockReset()
         mockGetPiece.mockImplementation(({ qadamName, qadamVersion }: { qadamName: string, qadamVersion: string }) => ({
             qadamName,
             qadamVersion,
@@ -223,15 +223,18 @@ describe('provisionFlowPieces', () => {
             platformId: mockPlatformId,
             flowId: 'flow-1',
             projectId: 'project-1',
-            log: logWithWarn,
-            apiClient: apiClientWithDisable,
+            log: mockLogger,
+            apiClient,
         })
-        expect(result).toBe(true)
-        expect(mockDisableFlow).not.toHaveBeenCalled()
+        expect(result).toEqual({ provisioned: true })
+        expect(mockError).not.toHaveBeenCalled()
     })
 
-    it('returns false and calls disableFlow when piece metadata is not found', async () => {
-        mockGetPiece.mockRejectedValue(new PieceNotFoundError('@aiqadam/qadam-agent', '0.3.7'))
+    // #432: this used to ask the API to disable the flow, which fanned out an ON_DISABLE trigger
+    // hook that provisioned the same flow, hit the same missing piece and asked for another
+    // disable — blocking on the status-change lock until the caller's 60 s timeout unwound it.
+    it('reports a missing piece without disabling the flow', async () => {
+        mockGetPiece.mockRejectedValue(new PieceNotFoundError('@aiqadam/qadam-tables', '0.3.1'))
         const fv = makeFlowVersion({
             ...qadamTrigger,
             nextAction: { ...qadamAction },
@@ -241,17 +244,16 @@ describe('provisionFlowPieces', () => {
             platformId: mockPlatformId,
             flowId: 'flow-1',
             projectId: 'project-1',
-            log: logWithWarn,
-            apiClient: apiClientWithDisable,
+            log: mockLogger,
+            apiClient,
         })
-        expect(result).toBe(false)
-        expect(mockDisableFlow).toHaveBeenCalledWith({
-            flowId: 'flow-1',
-            projectId: 'project-1',
-        })
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1' })
+        expect(mockError).toHaveBeenCalledTimes(1)
+        expect(mockError.mock.calls[0][0]).toMatchObject({ flowId: 'flow-1', projectId: 'project-1' })
+        expect(String(mockError.mock.calls[0][0].error)).toContain('0.3.1')
     })
 
-    it('throws on transient provisioner errors without disabling the flow', async () => {
+    it('throws on transient provisioner errors', async () => {
         mockProvision.mockRejectedValue(new Error('Failed to provision piece'))
         const fv = makeFlowVersion({
             ...qadamTrigger,
@@ -262,30 +264,9 @@ describe('provisionFlowPieces', () => {
             platformId: mockPlatformId,
             flowId: 'flow-1',
             projectId: 'project-1',
-            log: logWithWarn,
-            apiClient: apiClientWithDisable,
+            log: mockLogger,
+            apiClient,
         })).rejects.toThrow('Failed to provision piece')
-        expect(mockDisableFlow).not.toHaveBeenCalled()
-    })
-
-    it('returns false even if disableFlow fails', async () => {
-        mockGetPiece.mockRejectedValue(new PieceNotFoundError('@aiqadam/qadam-agent', '0.3.7'))
-        mockDisableFlow.mockRejectedValue(new Error('Network error'))
-        const mockError = vi.fn()
-        const logWithError = { warn: mockWarn, error: mockError } as any
-        const fv = makeFlowVersion({
-            ...qadamTrigger,
-            nextAction: { ...qadamAction },
-        })
-        const result = await provisionFlowPieces({
-            flowVersion: fv,
-            platformId: mockPlatformId,
-            flowId: 'flow-1',
-            projectId: 'project-1',
-            log: logWithError,
-            apiClient: apiClientWithDisable,
-        })
-        expect(result).toBe(false)
-        expect(mockError).toHaveBeenCalled()
+        expect(mockError).not.toHaveBeenCalled()
     })
 })

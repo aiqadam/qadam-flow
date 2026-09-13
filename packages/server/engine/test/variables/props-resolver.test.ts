@@ -243,15 +243,84 @@ describe('Props resolver', () => {
         ).toEqual(5)
     })
 
-    test('Test resolve text with undefined variables', async () => {
+    test('Test resolve text with a path that does not exist on a known step', async () => {
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput:
-                'test {{configs.bar}} {{trigger.output.items[4]}}',
+            unresolvedInput: 'test {{trigger.output.items[4]}}',
             executionState,
         })
         expect(
             resolvedInput,
-        ).toEqual('test  ')
+        ).toEqual('test ')
+    })
+
+    // #392: `{{VAR}}` used to resolve to an empty string, which is a legitimate value everywhere —
+    // so a typo reached the step as wrong data instead of as an error.
+    test('a reference that names neither a step nor a built-in fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: 'test {{configs.bar}}',
+            executionState,
+        })).rejects.toThrow('is not defined (in {{configs.bar}})')
+    })
+
+    // The double-quoted form is one character away from the syntax the error above recommends, and
+    // it used to resolve to an empty string without the variable API ever being called.
+    test('a project-variable reference written with double quotes resolves the same name', async () => {
+        const single = propsResolverService.resolve({ unresolvedInput: '{{variables[\'SIGNING_KEY\']}}', executionState })
+        const double = propsResolverService.resolve({ unresolvedInput: '{{variables["SIGNING_KEY"]}}', executionState })
+
+        const [singleError, doubleError] = await Promise.all([
+            single.then(() => null, (err: Error) => err.message),
+            double.then(() => null, (err: Error) => err.message),
+        ])
+        expect(doubleError).toEqual(singleError)
+        expect(doubleError).toContain('v1/worker/variables/SIGNING_KEY')
+    })
+
+    // The connection branch had no coverage at all, and it carries the same both-quote-styles rule
+    // as `variables` — an unparseable one now raises rather than resolving to an empty string.
+    test('a connection reference written with double quotes resolves the same name', async () => {
+        const [singleError, doubleError] = await Promise.all([
+            propsResolverService.resolve({ unresolvedInput: '{{connections[\'slack\']}}', executionState }).then(() => null, (err: Error) => err.message),
+            propsResolverService.resolve({ unresolvedInput: '{{connections["slack"]}}', executionState }).then(() => null, (err: Error) => err.message),
+        ])
+        expect(doubleError).toEqual(singleError)
+        expect(doubleError).toContain('v1/worker/app-connections/slack')
+    })
+
+    // Padding inside the brackets is not accepted on purpose: parsing the name while
+    // `parsePathAfterConnectionName` still measures the prefix by length would resolve the
+    // connection and then throw its value away, which is the silent empty string all over again.
+    test('a padded bracket reference fails the resolve rather than resolving to empty', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{connections[ \'slack\' ]}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{variables[ \'SIGNING_KEY\' ]}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+    })
+
+    test('a connection reference that names nothing readable fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{connections}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+    })
+
+    test('a project-variable reference that names nothing readable fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{variables[SIGNING_KEY]}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+    })
+
+    test('the error on an unknown reference points at the project-variable syntax', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{SIGNING_KEY}}',
+            executionState,
+        })).rejects.toThrow('{{variables[\'SIGNING_KEY\']}}')
     })
 
     test('failed step output resolves to empty string', async () => {
@@ -294,9 +363,18 @@ describe('Props resolver', () => {
         expect(resolvedInput).toEqual('')
     })
 
-    test('non-existent step resolves to empty string', async () => {
-        const { resolvedInput } = await propsResolverService.resolve({
+    test('a step name the flow does not contain fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
             unresolvedInput: '{{step_99}}',
+            executionState: FlowExecutorContext.empty(),
+        })).rejects.toThrow('is not defined (in {{step_99}})')
+    })
+
+    // A step that exists but has not produced output yet — an untaken branch, a step further down —
+    // is not an authoring mistake and keeps resolving to an empty string.
+    test('a step of this flow that has not run yet still resolves to empty string', async () => {
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: '{{step_7}}',
             executionState: FlowExecutorContext.empty(),
         })
         expect(resolvedInput).toEqual('')

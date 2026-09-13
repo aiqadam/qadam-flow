@@ -1,4 +1,4 @@
-import { BranchCondition, BranchOperator, FlowAction, FlowRunStatus, RouterExecutionType } from '@aiqadam/shared'
+import { BranchCondition, BranchExecutionType, BranchOperator, FlowAction, FlowActionType, FlowRunStatus, RouterExecutionType } from '@aiqadam/shared'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
 import { buildCodeAction, buildQadamAction, buildRouterWithOneCondition, generateMockEngineConstants } from './test-helper'
@@ -429,5 +429,72 @@ describe('router with branching different conditions', () => {
         })
         expect(result.steps.router).toBeUndefined()
         expect(result.steps.echo_step.output).toEqual({ 'key': 3 })
+    })
+
+    // #429: the MCP router skeleton wrote a first branch carrying `[[]]`, which the evaluator
+    // read as matching everything, so it ran ahead of every conditioned branch added after it.
+    it('should not match a condition branch whose condition group is empty', async () => {
+        const router: FlowAction = {
+            name: 'router',
+            displayName: 'Your Router Name',
+            type: FlowActionType.ROUTER,
+            skip: false,
+            valid: true,
+            settings: {
+                branches: [
+                    { conditions: [[]], branchType: BranchExecutionType.CONDITION, branchName: 'Branch 1' },
+                    {
+                        conditions: [[{
+                            operator: BranchOperator.TEXT_EXACTLY_MATCHES,
+                            firstValue: 'create_start',
+                            secondValue: 'create_start',
+                            caseSensitive: false,
+                        }]],
+                        branchType: BranchExecutionType.CONDITION,
+                        branchName: 'create_start',
+                    },
+                    { branchType: BranchExecutionType.FALLBACK, branchName: 'Otherwise' },
+                ],
+                executionType: RouterExecutionType.EXECUTE_FIRST_MATCH,
+            },
+            children: [
+                buildQadamAction({
+                    name: 'data_mapper',
+                    qadamName: '@aiqadam/qadam-data-mapper',
+                    actionName: 'advanced_mapping',
+                    input: { mapping: { 'key': '{{ 1 + 2 }}' } },
+                }),
+                buildQadamAction({
+                    name: 'data_mapper_1',
+                    qadamName: '@aiqadam/qadam-data-mapper',
+                    actionName: 'advanced_mapping',
+                    input: { mapping: { 'key': '{{ 2 + 4 }}' } },
+                }),
+                buildQadamAction({
+                    name: 'fallback_mapper',
+                    qadamName: '@aiqadam/qadam-data-mapper',
+                    actionName: 'advanced_mapping',
+                    input: { mapping: { 'key': '{{ 3 + 6 }}' } },
+                }),
+            ],
+        }
+
+        const result = await flowExecutor.execute({
+            action: router,
+            executionState: FlowExecutorContext.empty(),
+            constants: generateMockEngineConstants(),
+        })
+
+        expect(result.verdict).toStrictEqual({ status: FlowRunStatus.RUNNING })
+        expect(result.steps.router.output).toEqual({
+            branches: [
+                { branchName: 'Branch 1', branchIndex: 1, evaluation: false },
+                { branchName: 'create_start', branchIndex: 2, evaluation: true },
+                { branchName: 'Otherwise', branchIndex: 3, evaluation: false },
+            ],
+        })
+        expect(result.steps.data_mapper).toBeUndefined()
+        expect(result.steps.data_mapper_1.output).toEqual({ 'key': 6 })
+        expect(result.steps.fallback_mapper).toBeUndefined()
     })
 })

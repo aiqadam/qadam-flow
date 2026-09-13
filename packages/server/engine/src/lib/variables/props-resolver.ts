@@ -1,5 +1,5 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { applyFunctionToValues, extractMustacheTokens, FormulaEvaluationError, formulaEvaluator, isNil, isString } from '@aiqadam/shared'
+import { applyFunctionToValues, extractMustacheTokens, FormulaEvaluationError, formulaEvaluator, isNil, isString, UnresolvedTemplateReferenceError } from '@aiqadam/shared'
 
 import { initCodeSandbox } from '../core/code/code-sandbox'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
@@ -9,6 +9,15 @@ import { utils } from '../utils'
 
 const CONNECTIONS = 'connections'
 const VARIABLES = 'variables'
+// Both quote styles. `{{variables["NAME"]}}` is one character away from the form the unresolved-
+// reference error itself recommends, and matching only `'` made that typo resolve to `''`.
+// No whitespace tolerance, deliberately: `['x']` and `["x"]` are the same length, so the
+// double-quoted form lands on the same index as the single-quoted one in
+// `parsePathAfterConnectionName`, which reconstructs its prefix by length. Accepting
+// `[ 'x' ]` would parse the name and then leave that arithmetic short by the padding, so the
+// leftover `]` would fail to evaluate and the expression would resolve to `''` again — after
+// burning a real connection fetch. Padded forms stay unparseable, which now means they raise.
+const BRACKET_NAME_PATTERN = /\[(['"])([^'"]+)\1\]/
 const FLATTEN_NESTED_KEYS_PATTERN = /\{\{\s*flattenNestedKeys(.*?)\}\}/g
 async function replaceTokensAsync(
     str: string,
@@ -44,6 +53,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
                 projectId,
                 apiUrl,
                 currentState,
+                stepNames,
             }
             const resolvedInput = await applyFunctionToValues<T>(
                 unresolvedInput,
@@ -70,7 +80,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
 }
 
 const mergeFlattenedKeysArraysIntoOneArray = async (token: string, partsThatNeedResolving: string[],
-    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput'>,
+    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames'>,
     contextVersion: ContextVersion | undefined,
 ) => {
     const resolvedValues: Record<string, unknown> = {}
@@ -114,10 +124,10 @@ function extractReferencedStepNames(input: unknown, stepNames: string[]): Set<st
  * tokenThatNeedResolving: [`{{firstName}}`, `{{lastName}}`]
  */
 async function resolveInputAsync(params: ResolveInputInternalParams): Promise<unknown> {
-    const { input, currentState, engineToken, projectId, apiUrl, censoredInput } = params
+    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames } = params
 
     if (formulaEvaluator.containsWrapper(input)) {
-        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, contextVersion: params.contextVersion }
+        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, contextVersion: params.contextVersion }
         const { expression: preResolvedExpr, vars: preResolvedVars } = await preResolveFormulaVars({ expression: input, resolveOptions: formulaOptions })
         const { result, error } = formulaEvaluator.evaluate({ expression: preResolvedExpr, sampleData: preResolvedVars })
         if (error) {
@@ -133,6 +143,7 @@ async function resolveInputAsync(params: ResolveInputInternalParams): Promise<un
         apiUrl,
         currentState,
         censoredInput,
+        stepNames,
     }
     const inputContainsOnlyOneTokenToResolve =
         tokensThatNeedResolving.length === 1 &&
@@ -169,7 +180,12 @@ async function resolveSingleToken(params: ResolveSingleTokenParams): Promise<unk
     if (variableName.startsWith(CONNECTIONS)) {
         return handleConnection(params)
     }
-    return evalInScope(normalizeInvalidDotKeys(variableName), { ...currentState }, { flattenNestedKeys })
+    return evalInScope({
+        js: normalizeInvalidDotKeys(variableName),
+        contextAsScope: { ...currentState },
+        functions: { flattenNestedKeys },
+        unresolvedReference: { expression: variableName, stepNames: params.stepNames },
+    })
 }
 
 // Rewrites `.<key>` into `['<key>']` when <key> starts with a digit and the dot
@@ -224,8 +240,11 @@ function normalizeInvalidDotKeys(expr: string): string {
 async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown> {
     const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
     const name = parseVariableName(variableName)
+    // Same defect as `{{VAR}}`, one level further in: the expression declares itself a project
+    // variable and then names nothing this can read, and returning `''` made it a working HMAC key
+    // of the empty string. Nothing below this point can distinguish it from a real value (#392).
     if (isNil(name)) {
-        return ''
+        throw new UnresolvedTemplateReferenceError({ expression: variableName })
     }
     if (censoredInput) {
         return '**REDACTED**'
@@ -235,8 +254,8 @@ async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown
 
 function parseVariableName(variableName: string): string | null {
     if (variableName.startsWith(`${VARIABLES}[`)) {
-        const match = variableName.match(/\['([^']+)'\]/)
-        return match ? match[1] : null
+        const match = variableName.match(BRACKET_NAME_PATTERN)
+        return match ? match[2] : null
     }
     if (variableName.startsWith(`${VARIABLES}.`)) {
         return variableName.split('.')[1] ?? null
@@ -248,7 +267,7 @@ async function handleConnection(params: ResolveSingleTokenParams): Promise<unkno
     const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
     const connectionName = parseConnectionNameOnly(variableName)
     if (isNil(connectionName)) {
-        return ''
+        throw new UnresolvedTemplateReferenceError({ expression: variableName })
     }
     if (censoredInput) {
         return '**REDACTED**'
@@ -258,7 +277,7 @@ async function handleConnection(params: ResolveSingleTokenParams): Promise<unkno
     if (isNil(pathAfterConnectionName) || pathAfterConnectionName.length === 0) {
         return connection
     }
-    return evalInScope(pathAfterConnectionName, { connection }, { flattenNestedKeys })
+    return evalInScope({ js: pathAfterConnectionName, contextAsScope: { connection }, functions: { flattenNestedKeys } })
 }
 
 function parsePathAfterConnectionName(variableName: string, connectionName: string): string | null {
@@ -284,18 +303,16 @@ function parseConnectionNameOnly(variableName: string): string | null {
 
 function parseSquareBracketConnectionPath(variableName: string): string | null {
     // Find the connection name inside {{connections['connectionName'].path}}
-    const matches = variableName.match(/\['([^']+)'\]/g)
-    if (matches && matches.length >= 1) {
-        // Remove the square brackets and quotes from the connection name
-
-        const secondPath = matches[0].replace(/\['|'\]/g, '')
-        return secondPath
-    }
-    return null
+    // Same both-quote-styles rule as `parseVariableName`. Matching only `'` here would leave
+    // `{{connections["x"]}}` unparseable, which now means a raised error rather than the old silent
+    // empty string — a worse outcome than simply reading the name, and inconsistent with the
+    // message this failure produces, which presents both roots the same way.
+    const match = variableName.match(BRACKET_NAME_PATTERN)
+    return match ? match[2] : null
 }
 
 // eslint-disable-next-line @typescript-eslint/ban-types
-async function evalInScope(js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>): Promise<unknown> {
+async function evalInScope({ js, contextAsScope, functions, unresolvedReference }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] } }): Promise<unknown> {
     const { data: result, error: resultError } = await utils.tryCatchAndThrowOnEngineError((async () => {
         const codeSandbox = await initCodeSandbox()
 
@@ -308,10 +325,35 @@ async function evalInScope(js: string, contextAsScope: Record<string, unknown>, 
     }))
 
     if (resultError) {
+        assertReferenceIsResolvable({ error: resultError, unresolvedReference })
         console.warn('[evalInScope] Error evaluating variable', resultError)
         return ''
     }
     return result ?? ''
+}
+
+// `{{VAR}}` — the short form everyone tries first — is evaluated against the run's step outputs,
+// so it raised a ReferenceError that was swallowed into an empty string. That is the worst possible
+// outcome: an empty string is a valid value everywhere, so the typo travelled downstream as wrong
+// data, and as an HMAC key it silently reduced the signature to one anyone can forge (#392).
+//
+// Only a name that is not a step in this flow raises. A reference to a step that exists but has not
+// run yet — a branch that was not taken, a step further down — still resolves to an empty string,
+// which is long-standing behaviour and not what this is about. With no flow to check against
+// (`stepNames` empty, e.g. the MCP single-action path) nothing can be decided, so nothing raises.
+function assertReferenceIsResolvable({ error, unresolvedReference }: { error: Error, unresolvedReference?: { expression: string, stepNames: string[] } }): void {
+    if (isNil(unresolvedReference) || unresolvedReference.stepNames.length === 0) {
+        return
+    }
+    const match = /\b([A-Za-z_$][A-Za-z0-9_$]*) is not defined\b/.exec(error.message)
+    if (isNil(match)) {
+        return
+    }
+    const reference = match[1]
+    if (unresolvedReference.stepNames.includes(reference)) {
+        return
+    }
+    throw new UnresolvedTemplateReferenceError({ expression: unresolvedReference.expression, reference, cause: error })
 }
 
 function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
@@ -331,7 +373,7 @@ function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
     return []
 }
 
-type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion'>
+type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames'>
 
 async function preResolveFormulaVars({ expression, resolveOptions }: {
     expression: string
@@ -365,6 +407,7 @@ async function preResolveFormulaVars({ expression, resolveOptions }: {
 type ResolveSingleTokenParams = {
     variableName: string
     currentState: Record<string, unknown>
+    stepNames: string[]
     engineToken: string
     projectId: string
     apiUrl: string
@@ -374,6 +417,7 @@ type ResolveSingleTokenParams = {
 
 type ResolveInputInternalParams = {
     input: string
+    stepNames: string[]
     engineToken: string
     projectId: string
     apiUrl: string

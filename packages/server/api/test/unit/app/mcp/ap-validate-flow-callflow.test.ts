@@ -17,6 +17,20 @@ vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     })),
 }))
 
+// `ap_validate_flow` resolves every pinned qadam version so it can report pins this installation
+// cannot serve (#432). These fixtures are all about callFlow, so every pin resolves.
+vi.mock('../../../../src/app/project/project-service', () => ({
+    projectService: vi.fn(() => ({
+        getPlatformId: vi.fn().mockResolvedValue('platform-1'),
+    })),
+}))
+
+vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
+    qadamMetadataService: vi.fn(() => ({
+        get: vi.fn().mockResolvedValue({ name: '@aiqadam/qadam-subflows', version: '0.4.14' }),
+    })),
+}))
+
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger

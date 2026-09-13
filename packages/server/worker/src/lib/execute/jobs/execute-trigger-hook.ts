@@ -3,6 +3,7 @@ import {
     EngineResponseStatus,
     ExecuteTriggerHookJobData,
     isNil,
+    TriggerHookType,
     tryCatch,
     WorkerJobType,
 } from '@aiqadam/shared'
@@ -24,10 +25,23 @@ export const executeTriggerHookJob: JobHandler<ExecuteTriggerHookJobData, Synchr
             return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
         }
 
-        const provisioned = await provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient })
-        if (!provisioned) {
-            ctx.log.info({ flowId: data.flowId }, 'Failed to provision pieces for trigger hook, skipping')
-            return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
+        const provision = await provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient })
+        if (!provision.provisioned) {
+            ctx.log.info({ flowId: data.flowId, hookType: data.hookType, unavailableQadam: provision.unavailableQadam }, 'Failed to provision qadams for trigger hook')
+            // ON_DISABLE must still succeed: refusing to disable a flow whose pin is gone would make
+            // the broken flow impossible to turn off, which is the opposite of what #432 wants. Every
+            // other hook — ON_ENABLE above all — reports the failure, so `assertEngineResponseIsOk`
+            // raises and enabling or publishing fails with the pin named, instead of returning OK and
+            // leaving a flow that reads ENABLED and registers no webhook and polls nothing.
+            if (data.hookType === TriggerHookType.ON_DISABLE) {
+                return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
+            }
+            return {
+                kind: JobResultKind.SYNCHRONOUS,
+                status: EngineResponseStatus.INTERNAL_ERROR,
+                response: undefined,
+                errorMessage: `This flow has a step pinned to ${provision.unavailableQadam}, which this installation does not have. Re-point that step at an available version — ap_validate_flow lists it — then enable the flow again.`,
+            }
         }
 
         const sandbox = ctx.sandboxManager.acquire({ log: ctx.log, apiClient: ctx.apiClient })

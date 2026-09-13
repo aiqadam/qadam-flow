@@ -274,6 +274,8 @@ function buildSkeleton({ step, name, resolvedPieceVersion, resolvedPieceName }: 
                 displayName: step.displayName,
                 valid: false,
                 settings: {
+                    // See ap-add-step.ts on why the unconfigured `[[]]` seed is kept: post-#429 it
+                    // never matches and it makes the router `valid: false` until it is configured.
                     branches: [
                         { branchName: 'Branch 1', branchType: BranchExecutionType.CONDITION, conditions: [[]] },
                         { branchName: 'Otherwise', branchType: BranchExecutionType.FALLBACK },

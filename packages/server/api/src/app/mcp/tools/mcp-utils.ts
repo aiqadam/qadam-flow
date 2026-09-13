@@ -268,7 +268,7 @@ function routerInvalidWarning({ stepName, trigger }: { stepName: string, trigger
     if (isNil(step) || step.valid) {
         return ''
     }
-    return `\n⚠️ The router "${stepName}" is now marked invalid (step.valid=false) — the UI will show "Incomplete" and the flow cannot be published. Inspect the branch conditions with ap_flow_structure: every condition needs a non-empty firstValue, and any non-single-value operator (TEXT_*, NUMBER_*, DATE_*, LIST_CONTAINS/LIST_DOES_NOT_CONTAIN) needs a non-empty secondValue.`
+    return `\n⚠️ The router "${stepName}" is now marked invalid (step.valid=false) — the UI will show "Incomplete" and the flow cannot be published. Inspect the branch conditions with ap_flow_structure: every non-fallback branch needs at least one condition (a branch that asserts nothing can never match — configure it with ap_update_branch or drop it with ap_delete_branch), every condition needs a non-empty firstValue, and any non-single-value operator (TEXT_*, NUMBER_*, DATE_*, LIST_CONTAINS/LIST_DOES_NOT_CONTAIN) needs a non-empty secondValue.`
 }
 
 function publishedFlowWarning(publishedVersionId: string | null | undefined): string {

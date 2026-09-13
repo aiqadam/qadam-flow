@@ -11,7 +11,7 @@ export async function provisionFlowPieces(params: {
     projectId: string
     log: Logger
     apiClient: WorkerToApiContract
-}): Promise<boolean> {
+}): Promise<ProvisionFlowQadamsResult> {
     const { flowVersion, platformId, flowId, projectId, log, apiClient } = params
     const { error } = await tryCatch(async () => {
         const pieces = await extractQadamPackages(flowVersion, platformId, log, apiClient)
@@ -22,16 +22,23 @@ export async function provisionFlowPieces(params: {
         if (!(error instanceof PieceNotFoundError)) {
             throw error
         }
-        log.warn({ error: String(error), flowId }, 'Flow disabled due to missing piece')
-        const { error: disableError } = await tryCatch(
-            () => apiClient.disableFlow({ flowId, projectId }),
-        )
-        if (disableError) {
-            log.error({ error: String(disableError), flowId }, 'Failed to disable flow after missing piece')
-        }
-        return false
+        // Deliberately does NOT disable the flow. Disabling it from here was self-recursive: the
+        // status change fans out an ON_DISABLE trigger hook, that hook provisions the same flow,
+        // fails on the same missing piece, and asks for another disable — which then blocks on the
+        // status-change lock the first one still holds, until the caller's 60 s TRIGGER_TIMEOUT
+        // unwinds it. Measured p90 was 60 s against a p50 of 88 ms, and it also made publishing
+        // such a flow over MCP hang for a full minute (#432).
+        //
+        // What each of the six callers does with the result instead: `execute-trigger-hook` reports
+        // the pin to the enable/publish path so that fails loudly (except ON_DISABLE, which must
+        // still succeed); `execute-flow` and `create-sandbox-for-job` mark the run FAILED;
+        // `execute-polling`, `execute-webhook` and `renew-webhook` are fire-and-forget and skip
+        // this tick, which is the one genuinely silent case — `ap_validate_flow` reports the pin so
+        // it is visible without waiting for a tick that never fires.
+        log.error({ error: String(error), flowId, projectId }, 'Flow step is pinned to a qadam version this image does not have; skipping provisioning')
+        return { provisioned: false, unavailableQadam: `${error.qadamName}@${error.qadamVersion}` }
     }
-    return true
+    return { provisioned: true }
 }
 
 export async function extractQadamPackages(flowVersion: FlowVersion, platformId: string, log: Logger, apiClient: WorkerToApiContract): Promise<QadamPackage[]> {
@@ -59,3 +66,7 @@ export function extractCodeArtifacts(flowVersion: FlowVersion): CodeArtifact[] {
             flowVersionState: flowVersion.state,
         }))
 }
+
+export type ProvisionFlowQadamsResult =
+    | { provisioned: true }
+    | { provisioned: false, unavailableQadam: string }

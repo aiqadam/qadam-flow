@@ -379,6 +379,15 @@ describe('MCP Tools integration', () => {
         })
         expect(text(routerResult)).toContain('✅')
 
+        // A branch with no conditions can never match, so the tool refuses to insert one.
+        const noConditionsResult = await apAddBranchTool(mcp, mockLog).execute({
+            flowId,
+            routerStepName: 'step_1',
+            branchName: 'Always Wins',
+        })
+        expect(text(noConditionsResult)).toContain('❌')
+        expect(text(noConditionsResult)).toContain('conditions is required')
+
         // ap_add_branch inserts before the fallback (last) branch.
         // Router has 2 branches → insert at index max(0, 2-1) = 1
         // Result: Branch 1[0], VIP Customer[1], Otherwise[2]
@@ -386,9 +395,16 @@ describe('MCP Tools integration', () => {
             flowId,
             routerStepName: 'step_1',
             branchName: 'VIP Customer',
+            conditions: [[{
+                firstValue: '{{trigger[\'output\'].tier}}',
+                operator: 'TEXT_EXACTLY_MATCHES',
+                secondValue: 'vip',
+            }]],
         })
         expect(text(addBranchResult)).toContain('✅')
         expect(text(addBranchResult)).toContain('VIP Customer')
+        // The seeded Branch 1 still carries no conditions, so the router is not publishable yet.
+        expect(text(addBranchResult)).toContain('marked invalid')
 
         // Delete Branch 1 at index 0 (a non-fallback branch)
         // Result after delete: VIP Customer[0], Otherwise[1]
@@ -1008,6 +1024,19 @@ describe('MCP Tools integration', () => {
             stepLocationRelativeToParent: StepLocationRelativeToParent.INSIDE_LOOP,
             stepType: FlowActionType.ROUTER,
             displayName: 'Priority Router',
+        })
+
+        // Branch 0 ships without conditions, which makes the router invalid: a branch that asserts
+        // nothing can never match, so "High Priority" below would be unreachable (#429).
+        await apUpdateBranchTool(mcp, mockLog).execute({
+            flowId,
+            routerStepName: 'step_2',
+            branchIndex: 0,
+            conditions: [[{
+                firstValue: '{{step_1[\'output\'].item.priority}}',
+                operator: 'TEXT_EXACTLY_MATCHES',
+                secondValue: 'high',
+            }]],
         })
 
         await apAddStepTool(mcp, mockLog).execute({
@@ -2845,6 +2874,140 @@ describe('MCP Tools integration', () => {
 
             const input = await readStoredInput({ flowId, projectId: ctx.project.id })
             expect(input.providerId).toBe('row-openai')
+        })
+    })
+
+    // #432: an image upgrade that drops a pinned qadam version leaves the flow LOCKED, valid and
+    // ENABLED; it only fails when something next provisions it, and the cause appears in worker
+    // logs and nowhere a flow owner looks.
+    describe('ap_validate_flow — pinned qadam version no longer available', () => {
+        it('reports a step pinned to a version this installation does not have', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Stale Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.settings.qadamVersion = '0.0.1-gone'
+            await db.save('flow_version', flowVersion)
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('Unavailable Qadam Versions')
+            expect(text(result)).toContain('@aiqadam/qadam-test-email@0.0.1-gone')
+            expect(result.structuredContent?.valid).toBe(false)
+            expect(JSON.stringify(result.structuredContent?.issues)).toContain('qadam_version')
+        })
+
+        // The worker provisions every PIECE step in the version regardless of `skip`, so excluding
+        // skipped steps here would report exactly the flow this category exists to catch as ready.
+        it('reports a dead pin that sits on a skipped step', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Skipped Stale Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.PIECE,
+                qadamName: '@aiqadam/qadam-test-email',
+                actionName: 'send_email',
+                displayName: 'Send Email',
+                input: { receiver: ['a@b.com'], subject: 's', body: 'b' },
+            })
+
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.nextAction.skip = true
+            flowVersion.trigger.nextAction.settings.qadamVersion = '0.0.1-gone'
+            await db.save('flow_version', flowVersion)
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('Unavailable Qadam Versions')
+            expect(text(result)).toContain('step_1')
+        })
+
+        // A router written before #429 was stored with `valid: true` and a LOCKED version is never
+        // re-validated, so recomputing here is the only detection path that population ever gets.
+        it('reports a stored-valid router whose branch carries no conditions', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Stale Valid Router Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.ROUTER,
+                displayName: 'Priority Router',
+            })
+
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.nextAction.valid = true
+            await db.save('flow_version', flowVersion)
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('stored as valid')
+            expect(text(result)).toContain('step_1')
+        })
+
+        it('does not report a project-variable reference as a missing step', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Project Variable Reference Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.CODE,
+                displayName: 'Sign Payload',
+                sourceCode: 'export const code = async (inputs) => inputs',
+                input: { key: '{{variables[\'SIGNING_KEY\']}}' },
+            })
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('ready to publish')
+            expect(text(result)).not.toContain('variables')
+        })
+
+        it('says nothing about a step whose pinned version resolves', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Healthy Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).not.toContain('Unavailable Qadam Versions')
         })
     })
 })
