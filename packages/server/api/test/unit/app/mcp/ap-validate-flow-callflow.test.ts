@@ -259,6 +259,33 @@ describe('ap_validate_flow — callFlow checks', () => {
         expect(text).toContain('not known until run time')
     })
 
+    it('does not let a prototype-chain unit name suppress the Delay warning', async () => {
+        // `DELAY_UNIT_MS['constructor']` returns an inherited function on a bare index, which makes
+        // the duration NaN and reports the step as not pausing — the one answer a flow author must
+        // not be handed by accident.
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            displayName: 'Parent',
+            externalId: 'parent',
+            firstAction: callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'inline', payload: { key: 'greeting' } }),
+        }))
+        mockList.mockResolvedValue(calleeResolving([
+            flowWith({
+                displayName: 'Child',
+                externalId: 'child',
+                firstAction: qadamStep({
+                    name: 'step_1',
+                    qadamName: '@aiqadam/qadam-delay',
+                    actionName: 'delayFor',
+                    input: { unit: 'constructor', delayFor: 5 },
+                }),
+            }),
+        ]))
+
+        const text = await validate()
+
+        expect(text).toContain('not known until run time')
+    })
+
     it('finds a pausing step through a nested inline callFlow', async () => {
         mockGetOnePopulated.mockResolvedValue(flowWith({
             displayName: 'Parent',

@@ -149,7 +149,7 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
         return []
     }
 
-    const graph = await loadInlineCallGraph({ roots, projectId, log })
+    const graph = await loadCallGraph({ roots, projectId, log })
 
     // An empty payload is only a defect when the callee actually takes arguments. A callable flow
     // that takes none legitimately stores `{}` — flagging that would leave the flow permanently
@@ -190,7 +190,7 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
 // then read off the in-memory graph. Walking each root separately would refetch the shared part of
 // the graph once per root — and `flowService.list` returns whole flow versions, so that is real
 // bandwidth and heap, driven by a caller who only needs READ_FLOW.
-async function loadInlineCallGraph({ roots, projectId, log }: {
+async function loadCallGraph({ roots, projectId, log }: {
     roots: string[]
     projectId: string
     log: FastifyBaseLogger
@@ -313,7 +313,11 @@ function readPauseReason(step: Step): string | null {
 // arrives at run time is exactly the case that would otherwise fail on a user.
 function readDelayForPauseReason(step: QadamStep): string | null {
     const input = step.settings.input ?? {}
-    const unitMs = DELAY_UNIT_MS[String(input.unit ?? 'seconds')]
+    // `hasOwn`, not a bare index: `unit: "constructor"` would otherwise return an inherited
+    // function, make `isNil(unitMs)` false, and leave `amount * unitMs` as NaN — reporting the step
+    // as not pausing, which is the one answer a flow author must not be given by accident.
+    const unitName = String(input.unit ?? 'seconds')
+    const unitMs = Object.hasOwn(DELAY_UNIT_MS, unitName) ? DELAY_UNIT_MS[unitName] : undefined
     const amount = typeof input.delayFor === 'number' ? input.delayFor : Number(input.delayFor)
     if (isNil(unitMs) || !Number.isFinite(amount)) {
         return 'a Delay whose duration is not known until run time, so it may pause'
@@ -350,8 +354,8 @@ function isEmptyPayload(payload: unknown): boolean {
     if (Array.isArray(payload)) {
         return payload.length === 0
     }
-    if (typeof payload === 'object') {
-        return Object.keys(payload as Record<string, unknown>).length === 0
+    if (isPlainObject(payload)) {
+        return Object.keys(payload).length === 0
     }
     return false
 }
@@ -437,6 +441,12 @@ const UNRESOLVED_FLOW: FlowNode = { pausingStep: null, inlineChildren: [], expec
 // it exhaustive needs a declared marker on the action rather than a table — filed as a follow-up
 // rather than guessed at here, because a wrong entry produces a false "cannot publish" on a flow
 // that works.
+//
+// Second limit, in the conditional cases: `wait_until_ready` and `waitForResponse` are read as
+// literals, so a value bound to a template expression reads as "does not pause" while the engine's
+// plain truthiness check would pause. `delayFor` is the one that reports rather than assumes when
+// its value is not statically known; the other two assume safe. Both are still strictly better
+// than `main`, which checked none of this, but neither is a guarantee.
 const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
     [`${DELAY_QADAM}:delay_until`]: 'a Delay Until',
     '@aiqadam/qadam-approval:wait_for_approval': 'a Wait for Approval',

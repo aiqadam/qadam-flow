@@ -191,17 +191,19 @@ function matchesDeclaredOption({ value, primitiveOptions, objectOptions }: {
 
 function readDeclaredOptionValues(property: QadamProperty): unknown[] {
   const options = 'options' in property ? property.options : undefined;
-  if (!isPlainRecord(options)) {
+  if (!isObjectOrArray(options)) {
     return [];
   }
   const entries = options.options;
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries.map((entry) => (isPlainRecord(entry) ? entry.value : undefined));
+  // A malformed entry contributes nothing rather than an `undefined` that would land in the
+  // accepted set as the literal string "undefined".
+  return entries.filter(isObjectOrArray).map((entry) => entry.value);
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+function isObjectOrArray(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
@@ -210,7 +212,7 @@ function isDynamicExpression(value: unknown): boolean {
 }
 
 function isObjectLike(value: unknown): boolean {
-  return isPlainRecord(value);
+  return isObjectOrArray(value);
 }
 
 // Recursion over a value the caller controls needs a floor. Without this cap, a nested array
@@ -225,7 +227,7 @@ function canonicalize({ value, depth }: { value: unknown, depth: number }): stri
   if (Array.isArray(value)) {
     return `[${value.map((entry) => canonicalize({ value: entry, depth: depth + 1 })).join(',')}]`;
   }
-  if (isPlainRecord(value)) {
+  if (isObjectOrArray(value)) {
     const entries = Object.entries(value)
       .filter(([, entryValue]) => entryValue !== undefined)
       .sort(([left], [right]) => left.localeCompare(right))
