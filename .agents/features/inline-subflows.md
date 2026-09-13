@@ -200,7 +200,9 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   **draft** version, because it exists to judge what the author is about to publish; the runtime
   check in `inline-flow-executor.ts` remains the authority for what actually executes, and neither
   replaces the other. Its known limit: the pausing actions it recognises are an **allowlist**
-  (`ALWAYS_PAUSING_ACTIONS`, plus the conditional `delayFor` and assemblyai `transcribe` cases),
+  (`ALWAYS_PAUSING_ACTIONS`, eleven entries, plus three conditional cases: `delayFor` above its 10s
+  threshold, assemblyai `transcribe` when `wait_until_ready` is set, and a Queue-mode `callFlow`
+  that waits for a response),
   derived by grepping every qadam for `waitForWaitpoint`. A qadam added later that pauses will
   validate green and still fail at run time. Making this exhaustive needs a declared marker on the
   action rather than a table — tracked in #426, together with the narrower gap that the conditional
