@@ -29,11 +29,12 @@ export async function provisionFlowPieces(params: {
         // unwinds it. Measured p90 was 60 s against a p50 of 88 ms, and it also made publishing
         // such a flow over MCP hang for a full minute (#432).
         //
-        // Every caller already handles `false`: the trigger-hook, polling, renew-webhook and
-        // webhook jobs skip, and `execute-flow` marks the run FAILED. So a missing pin now costs
-        // one clean, attributed failure per attempt instead of an unexplained self-disable whose
-        // only trace was in worker logs. `ap_validate_flow` reports the pin so it is visible
-        // before it ever gets this far.
+        // What each of the six callers does with the result instead: `execute-trigger-hook` reports
+        // the pin to the enable/publish path so that fails loudly (except ON_DISABLE, which must
+        // still succeed); `execute-flow` and `create-sandbox-for-job` mark the run FAILED;
+        // `execute-polling`, `execute-webhook` and `renew-webhook` are fire-and-forget and skip
+        // this tick, which is the one genuinely silent case — `ap_validate_flow` reports the pin so
+        // it is visible without waiting for a tick that never fires.
         log.error({ error: String(error), flowId, projectId }, 'Flow step is pinned to a qadam version this image does not have; skipping provisioning')
         return { provisioned: false, unavailableQadam: `${error.qadamName}@${error.qadamVersion}` }
     }

@@ -276,6 +276,24 @@ describe('Props resolver', () => {
         expect(doubleError).toContain('v1/worker/variables/SIGNING_KEY')
     })
 
+    // The connection branch had no coverage at all, and it carries the same both-quote-styles rule
+    // as `variables` — an unparseable one now raises rather than resolving to an empty string.
+    test('a connection reference written with double quotes resolves the same name', async () => {
+        const [singleError, doubleError] = await Promise.all([
+            propsResolverService.resolve({ unresolvedInput: '{{connections[\'slack\']}}', executionState }).then(() => null, (err: Error) => err.message),
+            propsResolverService.resolve({ unresolvedInput: '{{connections["slack"]}}', executionState }).then(() => null, (err: Error) => err.message),
+        ])
+        expect(doubleError).toEqual(singleError)
+        expect(doubleError).toContain('v1/worker/app-connections/slack')
+    })
+
+    test('a connection reference that names nothing readable fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{connections}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+    })
+
     test('a project-variable reference that names nothing readable fails the resolve', async () => {
         await expect(propsResolverService.resolve({
             unresolvedInput: '{{variables[SIGNING_KEY]}}',

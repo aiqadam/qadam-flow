@@ -2990,6 +2990,7 @@ describe('MCP Tools integration', () => {
 
             const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
 
+            expect(text(result)).toContain('ready to publish')
             expect(text(result)).not.toContain('variables')
         })
 

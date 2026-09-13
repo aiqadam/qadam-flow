@@ -297,14 +297,12 @@ function parseConnectionNameOnly(variableName: string): string | null {
 
 function parseSquareBracketConnectionPath(variableName: string): string | null {
     // Find the connection name inside {{connections['connectionName'].path}}
-    const matches = variableName.match(/\['([^']+)'\]/g)
-    if (matches && matches.length >= 1) {
-        // Remove the square brackets and quotes from the connection name
-
-        const secondPath = matches[0].replace(/\['|'\]/g, '')
-        return secondPath
-    }
-    return null
+    // Same both-quote-styles rule as `parseVariableName`. Matching only `'` here would leave
+    // `{{connections["x"]}}` unparseable, which now means a raised error rather than the old silent
+    // empty string — a worse outcome than simply reading the name, and inconsistent with the
+    // message this failure produces, which presents both roots the same way.
+    const match = variableName.match(BRACKET_NAME_PATTERN)
+    return match ? match[2] : null
 }
 
 // eslint-disable-next-line @typescript-eslint/ban-types

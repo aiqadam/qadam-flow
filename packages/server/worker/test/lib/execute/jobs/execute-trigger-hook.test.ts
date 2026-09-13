@@ -27,6 +27,7 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
 }))
 
 import { executeTriggerHookJob } from '../../../../src/lib/execute/jobs/execute-trigger-hook'
+import type { JobContext } from '../../../../src/lib/execute/types'
 import { provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
 
 const mockProvisionFlowPieces = vi.mocked(provisionFlowPieces)
@@ -42,6 +43,7 @@ function makeFlowVersion(): FlowVersion {
             name: 'trigger',
             valid: true,
             displayName: 'Tables Trigger',
+            lastUpdatedDate: '2024-01-01T00:00:00Z',
             type: FlowTriggerType.PIECE,
             settings: {
                 qadamName: '@aiqadam/qadam-tables',
@@ -62,7 +64,7 @@ function makeFlowVersion(): FlowVersion {
     }
 }
 
-function makeContext(): any {
+function makeContext(): JobContext {
     return {
         log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         apiClient: {},
@@ -75,7 +77,7 @@ function makeContext(): any {
         internalApiUrl: 'http://127.0.0.1:3000/',
         engineToken: 'engineToken',
         jobId: 'job-1',
-    }
+    } as unknown as JobContext
 }
 
 function makeJobData(hookType: TriggerHookType): ExecuteTriggerHookJobData {

@@ -131,7 +131,7 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
             // routers that silently changed which branch they take on upgrade — the whole affected
             // population — have no detection path at all.
             if (step.valid && !RouterActionSettingsWithValidation.safeParse(settings).success) {
-                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is stored as valid but at least one non-fallback branch carries no conditions. Such a branch can never match, so its steps never run — configure it with ap_update_branch or drop it with ap_delete_branch, then republish.` })
+                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is stored as valid but no longer satisfies router validation. The usual cause is a non-fallback branch with no conditions: such a branch can never match, so its steps never run — inspect it with ap_flow_structure, then configure it with ap_update_branch or drop it with ap_delete_branch and republish.` })
             }
             const branches = settings.branches ?? []
             for (let i = 0; i < children.length; i++) {
