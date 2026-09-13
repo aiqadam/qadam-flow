@@ -203,7 +203,9 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   (`ALWAYS_PAUSING_ACTIONS`, plus the conditional `delayFor` and assemblyai `transcribe` cases),
   derived by grepping every qadam for `waitForWaitpoint`. A qadam added later that pauses will
   validate green and still fail at run time. Making this exhaustive needs a declared marker on the
-  action rather than a table.
+  action rather than a table — tracked in #426, together with the narrower gap that the conditional
+  cases (`wait_until_ready`, `waitForResponse`) are read as literals and so miss a value bound to a
+  template expression.
 - No live step-by-step streaming for an inline child in "Test Flow" mode — only the parent's own
   steps stream live; the child's full step history is still persisted and visible once it finishes.
 - Narrow race: the child `FlowRun` row is created by the API (`inlineFlowRunService.start`) before

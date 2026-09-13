@@ -145,6 +145,8 @@ function staticDropdownSchema(property: QadamProperty) {
   // `1..4`, `@aiqadam/qadam-clickup`'s channel `visibility` defaults to `'public'` against
   // `'PUBLIC'`/`'PRIVATE'` — and the builder seeds every form from `defaultValue`, so without this
   // a NocoDB connection could not be created at all and existing ClickUp steps would flip invalid.
+  // Correcting those declarations, and scanning for the ones nobody has found yet, is #427; this
+  // accommodation stays either way, since a qadam is free to ship a default the list omits.
   const acceptedValues = 'defaultValue' in property && !isNil(property.defaultValue)
     ? [...declaredValues, property.defaultValue]
     : declaredValues;
