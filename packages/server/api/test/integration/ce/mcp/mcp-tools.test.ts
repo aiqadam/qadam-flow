@@ -3,6 +3,10 @@ import {
     AgentQadamProps,
     AgentToolType,
     apId,
+    AppConnectionStatus,
+    AppConnectionType,
+    chunk,
+    FieldType,
     FlowActionType,
     FlowCreatorType,
     FlowRunStatus,
@@ -20,6 +24,7 @@ import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { flowService } from '../../../../src/app/flows/flow/flow.service'
+import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { system } from '../../../../src/app/helper/system/system'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { apAddBranchTool } from '../../../../src/app/mcp/tools/ap-add-branch'
@@ -28,12 +33,18 @@ import { apBuildFlowTool } from '../../../../src/app/mcp/tools/ap-build-flow'
 import { apCreateFlowTool } from '../../../../src/app/mcp/tools/ap-create-flow'
 import { apDeleteBranchTool } from '../../../../src/app/mcp/tools/ap-delete-branch'
 import { apDeleteStepTool } from '../../../../src/app/mcp/tools/ap-delete-step'
+import { apDeleteVariableTool } from '../../../../src/app/mcp/tools/ap-delete-variable'
 import { apDuplicateFlowTool } from '../../../../src/app/mcp/tools/ap-duplicate-flow'
+import { apExportFlowTool } from '../../../../src/app/mcp/tools/ap-export-flow'
+import { apExportTableTool } from '../../../../src/app/mcp/tools/ap-export-table'
 import { apFlowStructureTool } from '../../../../src/app/mcp/tools/ap-flow-structure'
 import { apGetPiecePropsTool } from '../../../../src/app/mcp/tools/ap-get-qadam-props'
 import { apGetRunTool } from '../../../../src/app/mcp/tools/ap-get-run'
+import { apImportFlowTool } from '../../../../src/app/mcp/tools/ap-import-flow'
+import { apImportTableTool } from '../../../../src/app/mcp/tools/ap-import-table'
 import { apListFlowsTool } from '../../../../src/app/mcp/tools/ap-list-flows'
 import { apListRunsTool } from '../../../../src/app/mcp/tools/ap-list-runs'
+import { apListVariablesTool } from '../../../../src/app/mcp/tools/ap-list-variables'
 import { apLockAndPublishTool } from '../../../../src/app/mcp/tools/ap-lock-and-publish'
 import { apRenameFlowTool } from '../../../../src/app/mcp/tools/ap-rename-flow'
 import { apResearchPiecesTool } from '../../../../src/app/mcp/tools/ap-research-qadams'
@@ -41,11 +52,16 @@ import { apRunActionTool } from '../../../../src/app/mcp/tools/ap-run-action'
 import { apUpdateBranchTool } from '../../../../src/app/mcp/tools/ap-update-branch'
 import { apUpdateStepTool } from '../../../../src/app/mcp/tools/ap-update-step'
 import { apUpdateTriggerTool } from '../../../../src/app/mcp/tools/ap-update-trigger'
+import { apUpsertVariableTool } from '../../../../src/app/mcp/tools/ap-upsert-variable'
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 import { apValidateStepConfigTool } from '../../../../src/app/mcp/tools/ap-validate-step-config'
 import { mcpUtils } from '../../../../src/app/mcp/tools/mcp-utils'
+import { fieldService } from '../../../../src/app/tables/field/field.service'
+import { recordService } from '../../../../src/app/tables/record/record.service'
+import { tableService } from '../../../../src/app/tables/table/table.service'
+import { variableService } from '../../../../src/app/variable/variable.service'
 import { db } from '../../../helpers/db'
-import { createMockProject, createMockQadamMetadata } from '../../../helpers/mocks'
+import { createMockConnection, createMockProject, createMockQadamMetadata } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -3008,6 +3024,523 @@ describe('MCP Tools integration', () => {
             const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
 
             expect(text(result)).not.toContain('Unavailable Qadam Versions')
+        })
+    })
+
+    describe('ap_export_flow / ap_import_flow', () => {
+        it('93. ap_export_flow — exports a flow as a SharedTemplate JSON', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Export Flow Source')
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const result = await apExportFlowTool(mcp, mockLog).execute({ flowId })
+            const template = JSON.parse(text(result))
+
+            expect(template.name).toBe('Export Flow Source')
+            expect(template.flows).toHaveLength(1)
+            expect(template.flows[0].trigger.settings.qadamName).toBe('@aiqadam/qadam-test-email')
+        })
+
+        it('94. ap_export_flow — never leaks a connection\'s secret value', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const secretValue = 'SUPER-SECRET-CONNECTION-VALUE-93a1'
+
+            const connection = createMockConnection({
+                platformId: ctx.platform.id,
+                projectIds: [ctx.project.id],
+                qadamName: '@aiqadam/qadam-test-email',
+                displayName: 'Export Secrets Connection',
+            }, ctx.user.id)
+            await db.save('app_connection', {
+                ...connection,
+                value: await encryptUtils.encryptObject({ type: AppConnectionType.SECRET_TEXT, secret_text: secretValue }),
+                status: AppConnectionStatus.ACTIVE,
+            })
+
+            const flowId = await createFlowAndGetId(mcp, 'Export Flow With Auth')
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.PIECE,
+                displayName: 'Send Email',
+                qadamName: '@aiqadam/qadam-test-email',
+                auth: connection.externalId,
+            })
+
+            const result = await apExportFlowTool(mcp, mockLog).execute({ flowId })
+            const exportedText = text(result)
+
+            expect(exportedText).not.toContain(secretValue)
+            // The step's `auth` input was set to `{{connections['<externalId>']}}` — the bracket
+            // syntax every MCP write tool actually emits — and must be fully stripped from
+            // settings.input. Regression guard for the dot-syntax-only regex in
+            // removeConnectionsFromInput that used to leave this reference in place.
+            // Note: `connectionIds` on the version is a separate, always-populated field this
+            // stripping does not (and never did) touch — see ap-export-flow.ts's description for
+            // why the tool does not claim connection identifiers are removed from the export.
+            const parsed = JSON.parse(exportedText)
+            expect(parsed.flows[0].trigger.nextAction.settings.input.auth).toBeUndefined()
+        })
+
+        it('94a. ap_export_flow — strips a bracket-syntax connection reference with a trailing property path', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Export Flow With Path Auth')
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.CODE,
+                displayName: 'Uses Connection Path',
+            })
+            // The bracket-with-property-path form the engine's own resolver supports
+            // (props-resolver.ts's parseSquareBracketConnectionPath) — the dot-only and
+            // bracket-without-path regexes both miss this shape.
+            await apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: { someField: '{{connections[\'some-connection-id\'].access_token}}' },
+            })
+
+            const result = await apExportFlowTool(mcp, mockLog).execute({ flowId })
+            const parsed = JSON.parse(text(result))
+
+            expect(parsed.flows[0].trigger.nextAction.settings.input.someField).toBeUndefined()
+        })
+
+        it('95. ap_export_flow — tenant isolation: a flowId from another project is not found', async () => {
+            const ctxA = await createTestContext(app)
+            const ctxB = await createTestContext(app)
+            const mcpA = makeMcp(ctxA.project.id)
+            const mcpB = makeMcp(ctxB.project.id)
+            const flowId = await createFlowAndGetId(mcpA, 'Isolated Export Flow')
+
+            const result = await apExportFlowTool(mcpB, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('❌')
+            expect(text(result)).toContain('ENTITY_NOT_FOUND')
+        })
+
+        it('96. ap_import_flow — round trip: export from one project, import into another, then validate', async () => {
+            const ctxA = await createTestContext(app)
+            const ctxB = await createTestContext(app)
+            const mcpA = makeMcp(ctxA.project.id)
+            const mcpB = makeMcp(ctxB.project.id)
+            const flowId = await createFlowAndGetId(mcpA, 'Round Trip Source Flow')
+            await apUpdateTriggerTool(mcpA, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const exported = await apExportFlowTool(mcpA, mockLog).execute({ flowId })
+            const template = JSON.parse(text(exported))
+
+            const imported = await apImportFlowTool({ mcp: mcpB, userId: ctxB.user.id }, mockLog).execute({ template })
+            expect(text(imported)).toContain('✅')
+            const match = text(imported).match(/\(id: (\S+?)\)/)
+            if (!match) throw new Error(`Could not extract flowId from: ${text(imported)}`)
+            const importedFlowId = match[1]
+
+            const validated = await apValidateFlowTool(mcpB, mockLog).execute({ flowId: importedFlowId })
+            expect(text(validated)).toContain('ready to publish')
+
+            const structure = await apFlowStructureTool(mcpB, mockLog).execute({ flowId: importedFlowId })
+            expect(text(structure)).toContain('@aiqadam/qadam-test-email')
+        })
+
+        it('97. ap_import_flow — overwrites an existing flow\'s draft when flowId is given', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const sourceFlowId = await createFlowAndGetId(mcp, 'Overwrite Source Flow')
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId: sourceFlowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+            const exported = await apExportFlowTool(mcp, mockLog).execute({ flowId: sourceFlowId })
+            const template = JSON.parse(text(exported))
+
+            const targetFlowId = await createFlowAndGetId(mcp, 'Overwrite Target Flow')
+
+            const result = await apImportFlowTool({ mcp, userId: ctx.user.id }, mockLog).execute({ template, flowId: targetFlowId })
+
+            expect(text(result)).toContain('✅')
+            const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId: targetFlowId })
+            expect(text(structure)).toContain('@aiqadam/qadam-test-email')
+        })
+
+        it('98. ap_import_flow — rejects a template with more than one flow', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Multi Flow Source')
+            const exported = await apExportFlowTool(mcp, mockLog).execute({ flowId })
+            const template = JSON.parse(text(exported))
+            template.flows.push(template.flows[0])
+
+            const result = await apImportFlowTool({ mcp, userId: ctx.user.id }, mockLog).execute({ template })
+
+            expect(text(result)).toContain('❌')
+            expect(text(result)).toContain('exactly one flow')
+        })
+
+        it('99. ap_import_flow — tenant isolation: a flowId from another project is rejected, original left untouched', async () => {
+            const ctxA = await createTestContext(app)
+            const ctxB = await createTestContext(app)
+            const mcpA = makeMcp(ctxA.project.id)
+            const mcpB = makeMcp(ctxB.project.id)
+            const originalFlowId = await createFlowAndGetId(mcpA, 'Untouched Original Flow')
+            const templateFlowId = await createFlowAndGetId(mcpB, 'Attacker Template Source')
+            const exported = await apExportFlowTool(mcpB, mockLog).execute({ flowId: templateFlowId })
+            const template = JSON.parse(text(exported))
+
+            const result = await apImportFlowTool({ mcp: mcpB, userId: ctxB.user.id }, mockLog).execute({ template, flowId: originalFlowId })
+
+            expect(text(result)).toContain('❌')
+
+            const originalStructure = await apFlowStructureTool(mcpA, mockLog).execute({ flowId: originalFlowId })
+            expect(text(originalStructure)).not.toContain('not found')
+            expect(text(originalStructure)).toContain('Untouched Original Flow')
+            expect(text(originalStructure)).not.toContain('Attacker Template Source')
+        })
+    })
+
+    describe('ap_export_table / ap_import_table', () => {
+        it('100. ap_export_table — defaults to schema only (no row data)', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const table = await tableService.create({
+                projectId: ctx.project.id,
+                request: {
+                    projectId: ctx.project.id,
+                    name: 'Schema Only Table',
+                    fields: [{ name: 'Name', type: FieldType.TEXT, externalId: apId(), data: null }],
+                },
+            })
+
+            const result = await apExportTableTool(mcp, mockLog).execute({ tableId: table.id })
+            const template = JSON.parse(text(result))
+
+            expect(template.tables[0].fields).toHaveLength(1)
+            expect(template.tables[0].data).toBeNull()
+        })
+
+        it('101. ap_export_table — includeRecords returns row data', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const table = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'With Records Table' },
+            })
+            const field = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Name', type: FieldType.TEXT, tableId: table.id },
+            })
+            await recordService.create({
+                request: { tableId: table.id, records: [[{ fieldId: field.id, value: 'Alice' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            const result = await apExportTableTool(mcp, mockLog).execute({ tableId: table.id, includeRecords: true })
+            const cleanText = text(result).replace(/\n\n⚠️.*$/s, '')
+            const template = JSON.parse(cleanText)
+
+            expect(template.tables[0].data.rows).toHaveLength(1)
+            expect(template.tables[0].data.rows[0][0].value).toBe('Alice')
+        })
+
+        it('102. ap_export_table — truncates row data past the 500-row cap with an explicit note', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const table = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Big Table' },
+            })
+            const field = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Name', type: FieldType.TEXT, tableId: table.id },
+            })
+            const rows = Array.from({ length: 501 }, (_, i) => [{ fieldId: field.id, value: `row-${i}` }])
+            for (const batch of chunk(rows, 50)) {
+                await recordService.create({
+                    request: { tableId: table.id, records: batch },
+                    projectId: ctx.project.id,
+                    logger: mockLog,
+                })
+            }
+
+            const result = await apExportTableTool(mcp, mockLog).execute({ tableId: table.id, includeRecords: true })
+            const resultText = text(result)
+
+            expect(resultText).toContain('truncated to 500 of 501 rows')
+        })
+
+        it('103. ap_export_table — tenant isolation: a tableId from another project is not found', async () => {
+            const ctxA = await createTestContext(app)
+            const ctxB = await createTestContext(app)
+            const mcpB = makeMcp(ctxB.project.id)
+            const table = await tableService.create({
+                projectId: ctxA.project.id,
+                request: { projectId: ctxA.project.id, name: 'Isolated Table' },
+            })
+
+            const result = await apExportTableTool(mcpB, mockLog).execute({ tableId: table.id })
+
+            expect(text(result)).toContain('❌')
+            expect(text(result)).toContain('not found')
+        })
+
+        it('104. ap_import_table — mode "create" builds a new table with fields and rows', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const sourceTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Import Source Table' },
+            })
+            const field = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Name', type: FieldType.TEXT, tableId: sourceTable.id },
+            })
+            await recordService.create({
+                request: { tableId: sourceTable.id, records: [[{ fieldId: field.id, value: 'Bob' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+            const exported = await apExportTableTool(mcp, mockLog).execute({ tableId: sourceTable.id, includeRecords: true })
+            const cleanText = text(exported).replace(/\n\n⚠️.*$/s, '')
+            const template = JSON.parse(cleanText)
+
+            const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'create' })
+
+            expect(text(result)).toContain('✅')
+            expect(text(result)).toContain('1 row(s) inserted')
+        })
+
+        it('105. ap_import_table — mode "into-existing" clears and replaces an existing table', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const sourceTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Replacement Source' },
+            })
+            const sourceField = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'NewField', type: FieldType.TEXT, tableId: sourceTable.id },
+            })
+            await recordService.create({
+                request: { tableId: sourceTable.id, records: [[{ fieldId: sourceField.id, value: 'Fresh' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+            const exported = await apExportTableTool(mcp, mockLog).execute({ tableId: sourceTable.id, includeRecords: true })
+            const template = JSON.parse(text(exported).replace(/\n\n⚠️.*$/s, ''))
+
+            const existingTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Old Table' },
+            })
+            const existingField = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'OldField', type: FieldType.TEXT, tableId: existingTable.id },
+            })
+            await recordService.create({
+                request: { tableId: existingTable.id, records: [[{ fieldId: existingField.id, value: 'Stale' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'into-existing', existingTableId: existingTable.id })
+
+            expect(text(result)).toContain('✅')
+            const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(fields.map(f => f.name)).toEqual(['NewField'])
+        })
+
+        it('106. ap_import_table — tenant isolation: existingTableId from another project is rejected', async () => {
+            const ctxA = await createTestContext(app)
+            const ctxB = await createTestContext(app)
+            const mcpB = makeMcp(ctxB.project.id)
+            const otherProjectTable = await tableService.create({
+                projectId: ctxA.project.id,
+                request: { projectId: ctxA.project.id, name: 'Not Yours' },
+            })
+            const sourceTable = await tableService.create({
+                projectId: ctxB.project.id,
+                request: { projectId: ctxB.project.id, name: 'Import Source' },
+            })
+            const exported = await apExportTableTool(mcpB, mockLog).execute({ tableId: sourceTable.id })
+            const template = JSON.parse(text(exported))
+
+            const result = await apImportTableTool(mcpB, mockLog).execute({ template, mode: 'into-existing', existingTableId: otherProjectTable.id })
+
+            expect(text(result)).toContain('❌')
+        })
+
+        it('106a. ap_import_table — rejects an unsupported field type before touching the existing table', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const existingTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Table To Preserve' },
+            })
+            const existingField = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'KeepMe', type: FieldType.TEXT, tableId: existingTable.id },
+            })
+            await recordService.create({
+                request: { tableId: existingTable.id, records: [[{ fieldId: existingField.id, value: 'Still Here' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            const template = {
+                name: 'Malformed Template',
+                summary: '', description: '', qadams: [], tags: [], blogUrl: '', metadata: {}, author: '', categories: [],
+                type: 'SHARED', status: 'PUBLISHED',
+                tables: [{
+                    id: apId(), name: 'Malformed', externalId: apId(), status: 'ENABLED',
+                    fields: [{ id: apId(), name: 'Bad', type: 'BOOLEAN', externalId: apId() }],
+                    data: { type: 'CSV', rows: [] },
+                }],
+            }
+
+            const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'into-existing', existingTableId: existingTable.id })
+
+            expect(text(result)).toContain('❌')
+            const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(fields.map(f => f.name)).toEqual(['KeepMe'])
+            const recordCount = await recordService.count({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(recordCount).toEqual(1)
+        })
+
+        it('106b. ap_import_table — rejects a STATIC_DROPDOWN field with no options before touching the existing table', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const existingTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Table To Preserve 2' },
+            })
+            const existingField = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'KeepMe', type: FieldType.TEXT, tableId: existingTable.id },
+            })
+            await recordService.create({
+                request: { tableId: existingTable.id, records: [[{ fieldId: existingField.id, value: 'Still Here' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            // No "data" key at all — the shape a real template produces when the exporting side
+            // omits it, which passed field-type validation alone before options/data were checked.
+            const template = {
+                name: 'Malformed Dropdown Template',
+                summary: '', description: '', qadams: [], tags: [], blogUrl: '', metadata: {}, author: '', categories: [],
+                type: 'SHARED', status: 'PUBLISHED',
+                tables: [{
+                    id: apId(), name: 'Malformed', externalId: apId(), status: 'ENABLED',
+                    fields: [{ id: apId(), name: 'Bad', type: FieldType.STATIC_DROPDOWN, externalId: apId() }],
+                    data: { type: 'CSV', rows: [] },
+                }],
+            }
+
+            const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'into-existing', existingTableId: existingTable.id })
+
+            expect(text(result)).toContain('❌')
+            const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(fields.map(f => f.name)).toEqual(['KeepMe'])
+            const recordCount = await recordService.count({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(recordCount).toEqual(1)
+        })
+    })
+
+    describe('ap_list_variables / ap_upsert_variable / ap_delete_variable', () => {
+        it('107. ap_list_variables — never returns the value, only name and reference', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            await variableService(mockLog).create({
+                projectId: ctx.project.id,
+                platformId: ctx.platform.id,
+                name: 'API_TOKEN',
+                value: 'a-very-secret-value',
+                ownerId: null,
+                metadata: undefined,
+            })
+
+            const result = await apListVariablesTool(mcp, mockLog).execute({})
+            const resultText = text(result)
+
+            expect(resultText).toContain('API_TOKEN')
+            expect(resultText).toContain('{{variables[\'API_TOKEN\']}}')
+            expect(resultText).not.toContain('a-very-secret-value')
+        })
+
+        it('108. ap_upsert_variable — creates, then rotates the value a running flow resolves', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+
+            const created = await apUpsertVariableTool(mcp, mockLog).execute({ name: 'ROTATING_KEY', value: 'value-a' })
+            expect(text(created)).toContain('created')
+            expect(text(created)).not.toContain('value-a')
+
+            const before = await variableService(mockLog).getDecryptedValueForWorker({ projectId: ctx.project.id, name: 'ROTATING_KEY' })
+            expect(before).toBe('value-a')
+
+            const rotated = await apUpsertVariableTool(mcp, mockLog).execute({ name: 'ROTATING_KEY', value: 'value-b' })
+            expect(text(rotated)).toContain('rotated')
+            expect(text(rotated)).not.toContain('value-b')
+
+            const after = await variableService(mockLog).getDecryptedValueForWorker({ projectId: ctx.project.id, name: 'ROTATING_KEY' })
+            expect(after).toBe('value-b')
+        })
+
+        it('109. ap_delete_variable — deletes by exact name', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            await apUpsertVariableTool(mcp, mockLog).execute({ name: 'TO_DELETE', value: 'x' })
+
+            const result = await apDeleteVariableTool(mcp, mockLog).execute({ name: 'TO_DELETE' })
+
+            expect(text(result)).toContain('✅')
+            const list = await apListVariablesTool(mcp, mockLog).execute({})
+            expect(text(list)).not.toContain('TO_DELETE')
+        })
+
+        it('110. ap_delete_variable — rejects when both name and id are given, and when neither is given', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+
+            const neither = await apDeleteVariableTool(mcp, mockLog).execute({})
+            expect(text(neither)).toContain('❌')
+
+            const both = await apDeleteVariableTool(mcp, mockLog).execute({ name: 'X', id: apId() })
+            expect(text(both)).toContain('❌')
+        })
+
+        it('111. ap_delete_variable — tenant isolation: a name from another project is not found', async () => {
+            const ctxA = await createTestContext(app)
+            const ctxB = await createTestContext(app)
+            const mcpB = makeMcp(ctxB.project.id)
+            await variableService(mockLog).create({
+                projectId: ctxA.project.id,
+                platformId: ctxA.platform.id,
+                name: 'PROJECT_A_ONLY',
+                value: 'secret',
+                ownerId: null,
+                metadata: undefined,
+            })
+
+            const result = await apDeleteVariableTool(mcpB, mockLog).execute({ name: 'PROJECT_A_ONLY' })
+
+            expect(text(result)).toContain('❌')
+            expect(text(result)).toContain('not found')
         })
     })
 })

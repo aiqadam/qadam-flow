@@ -11,17 +11,23 @@ import { apDeleteFlowTool } from './ap-delete-flow'
 import { apDeleteRecordsTool } from './ap-delete-records'
 import { apDeleteStepTool } from './ap-delete-step'
 import { apDeleteTableTool } from './ap-delete-table'
+import { apDeleteVariableTool } from './ap-delete-variable'
 import { apDuplicateFlowTool } from './ap-duplicate-flow'
+import { apExportFlowTool } from './ap-export-flow'
+import { apExportTableTool } from './ap-export-table'
 import { apFindRecordsTool } from './ap-find-records'
 import { apFlowStructureTool } from './ap-flow-structure'
 import { apGetPiecePropsTool } from './ap-get-qadam-props'
 import { apGetRunTool } from './ap-get-run'
+import { apImportFlowTool } from './ap-import-flow'
+import { apImportTableTool } from './ap-import-table'
 import { apInsertRecordsTool } from './ap-insert-records'
 import { apListAiModelsTool } from './ap-list-ai-models'
 import { apListConnectionsTool } from './ap-list-connections'
 import { apListFlowsTool } from './ap-list-flows'
 import { apListRunsTool } from './ap-list-runs'
 import { apListTablesTool } from './ap-list-tables'
+import { apListVariablesTool } from './ap-list-variables'
 import { apLockAndPublishTool } from './ap-lock-and-publish'
 import { apManageFieldsTool } from './ap-manage-fields'
 import { apManageNotesTool } from './ap-manage-notes'
@@ -39,6 +45,7 @@ import { apUpdateBranchTool } from './ap-update-branch'
 import { apUpdateRecordTool } from './ap-update-record'
 import { apUpdateStepTool } from './ap-update-step'
 import { apUpdateTriggerTool } from './ap-update-trigger'
+import { apUpsertVariableTool } from './ap-upsert-variable'
 import { apValidateFlowTool } from './ap-validate-flow'
 import { apValidateStepConfigTool } from './ap-validate-step-config'
 
@@ -96,6 +103,13 @@ export const ALL_CONTROLLABLE_TOOL_NAMES: string[] = [
     'ap_test_step',
     'ap_retry_run',
     'ap_run_action',
+    'ap_export_flow',
+    'ap_import_flow',
+    'ap_export_table',
+    'ap_import_table',
+    'ap_list_variables',
+    'ap_upsert_variable',
+    'ap_delete_variable',
 ]
 
 export const qadamFlowTools = (mcp: ProjectScopedMcpServer, userId: string | undefined, log: FastifyBaseLogger): McpToolDefinition[] => [
@@ -140,4 +154,11 @@ export const qadamFlowTools = (mcp: ProjectScopedMcpServer, userId: string | und
     apRetryRunTool(mcp, log),
     apRunActionTool(mcp, log),
     apSetupGuideTool(mcp, log),
+    apExportFlowTool(mcp, log),
+    apImportFlowTool({ mcp, userId }, log),
+    apExportTableTool(mcp, log),
+    apImportTableTool(mcp, log),
+    apListVariablesTool(mcp, log),
+    apUpsertVariableTool(mcp, log),
+    apDeleteVariableTool(mcp, log),
 ]

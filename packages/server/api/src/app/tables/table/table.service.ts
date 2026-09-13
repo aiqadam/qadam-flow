@@ -142,6 +142,8 @@ export const tableService = {
         tableId,
         userMetadata,
         projectId,
+        includeRecords = true,
+        maxRecords,
     }: GetTemplateParams): Promise<SharedTemplate> {
         const table = await this.getOneOrThrow({
             id: tableId,
@@ -170,10 +172,14 @@ export const tableService = {
             })),
         }
 
-        const records = await recordRepo().find({
-            where: { tableId: table.id, projectId },
-            relations: ['cells'],
-        })
+        const records = includeRecords
+            ? await recordRepo().find({
+                where: { tableId: table.id, projectId },
+                relations: ['cells'],
+                order: { created: 'ASC' },
+                ...(maxRecords === undefined ? {} : { take: maxRecords }),
+            })
+            : []
 
         const rows: TableDataState['rows'] = records.map((record) => {
             const row: { fieldId: string, value: string }[] = []
@@ -189,10 +195,12 @@ export const tableService = {
 
         const tableTemplate: TableTemplate = {
             ...tableState,
-            data: {
-                type: TableImportDataType.CSV,
-                rows,
-            },
+            data: includeRecords
+                ? {
+                    type: TableImportDataType.CSV,
+                    rows,
+                }
+                : null,
         }
 
         const template: SharedTemplate = {
@@ -386,4 +394,6 @@ type GetTemplateParams = {
     tableId: string
     userMetadata: UserWithMetaInformation | null
     projectId: string
+    includeRecords?: boolean
+    maxRecords?: number
 }

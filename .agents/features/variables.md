@@ -40,7 +40,7 @@ All mount under `/v1/variables`. Project-scoped via the body / query / `:id` loo
 
 | Method | Path | Auth | Permission | Description |
 |---|---|---|---|---|
-| POST | `/v1/variables` | USER + SERVICE | `WRITE_VARIABLE` | Upsert by `(projectId, name)`. Fires `VARIABLE_UPSERTED`. |
+| POST | `/v1/variables` | USER + SERVICE | `WRITE_VARIABLE` | Create only — **not** an upsert. Fails with `QadamFlowError(VALIDATION)` on a duplicate `(projectId, name)` (real unique index `idx_variable_project_id_and_name`). Fires `VARIABLE_UPSERTED`. |
 | GET | `/v1/variables` | USER + SERVICE | `READ_VARIABLE` | Paginated list. Filters by `name` substring. |
 | POST | `/v1/variables/:id/reveal` | USER only | `WRITE_VARIABLE` | Returns `{ value }`. Fires `VARIABLE_VALUE_REVEALED`. |
 | DELETE | `/v1/variables/:id` | USER + SERVICE | `WRITE_VARIABLE` | Hard delete. Fires `VARIABLE_DELETED`. |
@@ -50,6 +50,14 @@ Worker route (engine-only, via engine principal token):
 | Method | Path | Description |
 |---|---|---|
 | GET | `/v1/worker/variables/:name` | Returns the decrypted `{ value }` for the project carried in the engine principal. Called by the engine while resolving `{{variables['NAME']}}` mentions. |
+
+## MCP Tools
+
+`packages/server/api/src/app/mcp/tools/{ap-list-variables,ap-upsert-variable,ap-delete-variable}.ts` (all controllable, see `mcp.md`):
+
+- `ap_list_variables` — `READ_VARIABLE`, read-only. Lists `VariableWithoutSensitiveData` (name/id/owner/timestamps only — never `value`).
+- `ap_upsert_variable` — `WRITE_VARIABLE`. There is **no server-side upsert-by-name path**, so the tool implements it itself: exact-name lookup via `variableService.getByNameOrNull` (a plain `projectId`+`platformId`+`name` equality query, not a substring match), then `variableService.create` or `.update({ id })`. A `QadamFlowError(VALIDATION)` from a create-race (another writer created the same name between the lookup and the create call) is caught and retried once as an update. The response echoes only the name and the `{{variables['NAME']}}` reference — never the value, and never logged.
+- `ap_delete_variable` — `WRITE_VARIABLE`, destructive. Accepts `name` (resolved the same way) or `id`; rejects if both or neither are given.
 
 ## Engine Resolution
 

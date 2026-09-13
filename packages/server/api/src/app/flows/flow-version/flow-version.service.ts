@@ -368,7 +368,9 @@ function removeConnectionsFromInput(
             replacedObj[key] = removeConnectionsFromInput(value as Record<string, unknown>)
         }
         else if (typeof value === 'string') {
-            const replacedValue = value.replace(/\{{connections\.[^}]*}}/g, '')
+            const replacedValue = value
+                .replace(/\{{connections\.[^}]*}}/g, '')
+                .replace(/\{{connections\[(['"])[^'"]*\1\][^}]*}}/g, '')
             replacedObj[key] = replacedValue === '' ? undefined : replacedValue
         }
         else {

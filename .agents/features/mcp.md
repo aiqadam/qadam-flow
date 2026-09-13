@@ -8,6 +8,7 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 - `packages/server/api/src/app/mcp/mcp-server-controller.ts` — HTTP endpoints (get, update, rotate, protocol handler, agent validator)
 - `packages/server/api/src/app/mcp/mcp-entity.ts` — McpServer entity
 - `packages/server/api/src/app/mcp/tools/index.ts` — static tool exports
+- `packages/server/api/src/app/tables/table-import.service.ts` — `tableImportService.importTemplate`, the shared create/into-existing table import logic used by `ap_import_table` (kept out of `table.service.ts` to avoid a circular import with `record.service.ts`, which already imports `tableService`)
 - `packages/server/api/src/app/mcp/oauth/` — OAuth 2.0 PKCE flow for MCP clients that require OAuth
 - `packages/shared/src/lib/automation/mcp/mcp.ts` — McpServer schema, McpToolDefinition type
 - `packages/shared/src/lib/automation/mcp/mcp-oauth.ts` — MCP OAuth types
@@ -65,6 +66,9 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 - `ap_manage_fields`, `ap_insert_records`, `ap_update_record`, `ap_delete_records` — record operations
 - `ap_test_flow`, `ap_test_step` — flow/step testing
 - `ap_retry_run`, `ap_run_action` — run management
+- `ap_export_flow`, `ap_import_flow` — export a flow as a secret-free `SharedTemplate` JSON (same shape as `GET /v1/flows/:id/template`) / import one, either overwriting a flow's draft (`flowId` given) or creating a new flow
+- `ap_export_table`, `ap_import_table` — export a table's schema (+ optional row data, capped at 500 rows with an explicit truncation note) as a `SharedTemplate` JSON / import one via `tableImportService.importTemplate` (`create` or `into-existing`, capped at 1000 imported rows)
+- `ap_list_variables`, `ap_upsert_variable`, `ap_delete_variable` — project variable management; see `variables.md`. `ap_upsert_variable` does the find-by-name-then-create-or-update itself — there is no server-side upsert endpoint (`variable.service.ts`'s `create` throws `QadamFlowError(VALIDATION)` on a duplicate name)
 
 **Dynamic flow tools**: Each enabled flow with MCP trigger piece is registered as a callable tool. Name format: `{toolName}_{flowId.substring(0, 4)}`. Execution: submits webhook to flow (sync if `returnsResponse`, async otherwise).
 
