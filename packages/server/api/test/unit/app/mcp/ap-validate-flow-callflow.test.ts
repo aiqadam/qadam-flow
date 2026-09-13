@@ -63,10 +63,11 @@ function callFlowStep({ name, externalId, executionMode, payload, waitForRespons
     })
 }
 
-function flowWith({ displayName, externalId, firstAction }: {
+function flowWith({ displayName, externalId, firstAction, sampleData }: {
     displayName: string
     externalId: string
     firstAction?: unknown
+    sampleData?: Record<string, unknown>
 }) {
     return {
         id: `id-${externalId}`,
@@ -85,13 +86,17 @@ function flowWith({ displayName, externalId, firstAction }: {
                     qadamName: '@aiqadam/qadam-subflows',
                     qadamVersion: '0.4.14',
                     triggerName: 'callableFlow',
-                    input: {},
+                    input: { exampleData: { sampleData: sampleData ?? { key: 'greeting' } } },
                     propertySettings: {},
                 },
                 nextAction: firstAction,
             },
         },
     }
+}
+
+function calleeResolving(flows: ReturnType<typeof flowWith>[]) {
+    return { data: flows, next: null, previous: null }
 }
 
 async function validate(): Promise<string> {
@@ -105,17 +110,62 @@ describe('ap_validate_flow — callFlow checks', () => {
         mockList.mockResolvedValue({ data: [], next: null, previous: null })
     })
 
-    it('flags a callFlow step whose payload is empty', async () => {
+    it('flags a callFlow step whose payload is empty while the callee declares arguments', async () => {
         mockGetOnePopulated.mockResolvedValue(flowWith({
             displayName: 'Parent',
             externalId: 'parent',
             firstAction: callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'queue', payload: {} }),
         }))
+        mockList.mockResolvedValue(calleeResolving([flowWith({ displayName: 'Child', externalId: 'child' })]))
 
         const text = await validate()
 
         expect(text).toContain('Subflow Payloads')
         expect(text).toContain('empty payload')
+    })
+
+    it('leaves an empty payload alone when the callee takes no arguments', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            displayName: 'Parent',
+            externalId: 'parent',
+            firstAction: callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'queue', payload: {} }),
+        }))
+        mockList.mockResolvedValue(calleeResolving([
+            flowWith({ displayName: 'Child', externalId: 'child', sampleData: {} }),
+        ]))
+
+        const text = await validate()
+
+        expect(text).toContain('ready to publish')
+    })
+
+    it('ignores a skipped callFlow step, the way every other check does', async () => {
+        const skipped = {
+            ...callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'inline', payload: {} }),
+            skip: true,
+        }
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            displayName: 'Parent',
+            externalId: 'parent',
+            firstAction: skipped,
+        }))
+        mockList.mockResolvedValue(calleeResolving([
+            flowWith({
+                displayName: 'Child',
+                externalId: 'child',
+                firstAction: qadamStep({
+                    name: 'step_1',
+                    qadamName: '@aiqadam/qadam-approval',
+                    actionName: 'wait_for_approval',
+                    input: {},
+                }),
+            }),
+        ]))
+
+        const text = await validate()
+
+        expect(text).not.toContain('Subflow Payloads')
+        expect(text).not.toContain('Inline Subflows That Pause')
     })
 
     it('accepts a callFlow step that carries a payload', async () => {

@@ -132,34 +132,46 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
     projectId: string
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
-    const callFlowSteps = flowStructureUtil.getAllSteps(trigger).filter(isCallFlowStep)
+    // A skipped step does not run, so it cannot fail — which is already how `validateFlow` treats
+    // one, and how the callee walk treats a skipped step inside a subflow. Judging a skipped
+    // `callFlow` step more harshly than either would be the odd one out.
+    const callFlowSteps = flowStructureUtil.getAllSteps(trigger)
+        .filter(step => !('skip' in step && step.skip === true))
+        .filter(isCallFlowStep)
     if (callFlowSteps.length === 0) {
         return []
     }
 
+    const roots = unique(callFlowSteps
+        .map(step => readCallFlowInput(step).externalId)
+        .filter((externalId): externalId is string => !isNil(externalId)))
+    if (roots.length === 0) {
+        return []
+    }
+
+    const graph = await loadInlineCallGraph({ roots, projectId, log })
+
+    // An empty payload is only a defect when the callee actually takes arguments. A callable flow
+    // that takes none legitimately stores `{}` — flagging that would leave the flow permanently
+    // "not ready to publish" with no way to suppress it, and `structuredContent.valid` is derived
+    // from the issue count, so an agent would loop trying to fix a non-problem.
     const payloadIssues = callFlowSteps.flatMap((step) => {
-        const payload = readCallFlowInput(step).flowProps?.payload
-        if (!isEmptyPayload(payload)) {
+        const input = readCallFlowInput(step)
+        const externalId = input.externalId
+        const callee = isNil(externalId) ? undefined : graph.get(externalId)
+        if (!isEmptyPayload(input.payload) || isNil(callee) || !callee.expectsArguments) {
             return []
         }
         return [{
             category: 'subflow_payload' as const,
             stepName: step.name,
-            message: `"${step.displayName}" calls a subflow with an empty payload — the child will run with no arguments. Set flowProps.payload with ap_update_step.`,
+            message: `"${step.displayName}" calls a subflow with an empty payload, but that subflow declares arguments — the child will run with none. Set flowProps.payload with ap_update_step.`,
         }]
     })
 
     const inlineTargets = callFlowSteps.filter(step => readCallFlowInput(step).executionMode === INLINE_EXECUTION_MODE)
-    const roots = unique(inlineTargets
-        .map(step => readCallFlowInput(step).flow?.externalId)
-        .filter((externalId): externalId is string => !isNil(externalId)))
-    if (roots.length === 0) {
-        return payloadIssues
-    }
-
-    const graph = await loadInlineCallGraph({ roots, projectId, log })
     const pauseIssues = inlineTargets.flatMap((step) => {
-        const externalId = readCallFlowInput(step).flow?.externalId
+        const externalId = readCallFlowInput(step).externalId
         const pausingStep = isNil(externalId) ? null : findPausingFlow({ root: externalId, graph })
         if (isNil(pausingStep)) {
             return []
@@ -213,6 +225,7 @@ async function loadInlineCallGraph({ roots, projectId, log }: {
 function readFlowNode(flow: { version: { displayName: string, trigger: Step } }): FlowNode {
     const steps = flowStructureUtil.getAllSteps(flow.version.trigger)
         .filter(step => !('skip' in step && step.skip === true))
+    const expectsArguments = !isEmptyPayload(readCallableFlowSampleData(flow.version.trigger))
     const pausingStep = steps.reduce<PausingStep | null>((found, step) => {
         if (!isNil(found)) {
             return found
@@ -226,10 +239,25 @@ function readFlowNode(flow: { version: { displayName: string, trigger: Step } })
         if (!isCallFlowStep(step) || readCallFlowInput(step).executionMode !== INLINE_EXECUTION_MODE) {
             return []
         }
-        const childExternalId = readCallFlowInput(step).flow?.externalId
+        const childExternalId = readCallFlowInput(step).externalId
         return isNil(childExternalId) ? [] : [childExternalId]
     })
-    return { pausingStep, inlineChildren }
+    return { pausingStep, inlineChildren, expectsArguments }
+}
+
+// The `Callable Flow` trigger's `exampleData.sampleData` is the child's declared argument shape —
+// it is what `call-flow.ts` seeds the parent's payload field from. Empty means the child takes no
+// arguments, so a parent calling it with none is correct rather than broken.
+function readCallableFlowSampleData(trigger: Step): unknown {
+    if (trigger.type !== FlowTriggerType.PIECE) {
+        return undefined
+    }
+    const exampleData = trigger.settings.input?.exampleData
+    return isPlainObject(exampleData) ? exampleData.sampleData : undefined
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function findPausingFlow({ root, graph }: { root: string, graph: Map<string, FlowNode> }): PausingStep | null {
@@ -258,14 +286,22 @@ function readPauseReason(step: Step): string | null {
     if (!isQadamStep(step)) {
         return null
     }
-    const { qadamName, actionName } = step.settings
+    const { qadamName, actionName, input } = step.settings
     if (isCallFlowStep(step)) {
-        const input = readCallFlowInput(step)
-        const waitsOnQueuedChild = input.executionMode !== INLINE_EXECUTION_MODE && input.waitForResponse === true
+        const callFlowInput = readCallFlowInput(step)
+        const waitsOnQueuedChild = callFlowInput.executionMode !== INLINE_EXECUTION_MODE && callFlowInput.waitForResponse
         return waitsOnQueuedChild ? 'a Queue-mode Call Flow that waits for a response' : null
     }
     if (qadamName === DELAY_QADAM && actionName === DELAY_FOR_ACTION) {
         return readDelayForPauseReason(step)
+    }
+    // `transcribe` only waits when the author asked it to wait; submitting and moving on is the
+    // default, and flagging that would be a false "cannot publish" on a flow that works.
+    if (qadamName === ASSEMBLYAI_QADAM && actionName === ASSEMBLYAI_TRANSCRIBE_ACTION) {
+        const waitUntilReady = (input ?? {}).wait_until_ready
+        return waitUntilReady === true || waitUntilReady === 'true'
+            ? 'an AssemblyAI transcription set to wait until it is ready'
+            : null
     }
     const reason = ALWAYS_PAUSING_ACTIONS[`${qadamName}:${actionName}`]
     return reason ?? null
@@ -276,7 +312,7 @@ function readPauseReason(step: Step): string | null {
 // amount that is not statically known is reported rather than assumed safe — a delay whose value
 // arrives at run time is exactly the case that would otherwise fail on a user.
 function readDelayForPauseReason(step: QadamStep): string | null {
-    const input = (step.settings.input ?? {}) as { delayFor?: unknown, unit?: unknown }
+    const input = step.settings.input ?? {}
     const unitMs = DELAY_UNIT_MS[String(input.unit ?? 'seconds')]
     const amount = typeof input.delayFor === 'number' ? input.delayFor : Number(input.delayFor)
     if (isNil(unitMs) || !Number.isFinite(amount)) {
@@ -296,7 +332,15 @@ function isCallFlowStep(step: Step): step is QadamStep {
 }
 
 function readCallFlowInput(step: QadamStep): CallFlowInput {
-    return (step.settings.input ?? {}) as CallFlowInput
+    const input = step.settings.input ?? {}
+    const flow = isPlainObject(input.flow) ? input.flow : undefined
+    const flowProps = isPlainObject(input.flowProps) ? input.flowProps : undefined
+    return {
+        externalId: typeof flow?.externalId === 'string' ? flow.externalId : undefined,
+        payload: flowProps?.payload,
+        executionMode: typeof input.executionMode === 'string' ? input.executionMode : undefined,
+        waitForResponse: input.waitForResponse === true,
+    }
 }
 
 function isEmptyPayload(payload: unknown): boolean {
@@ -384,12 +428,30 @@ const DELAY_UNIT_MS: Record<string, number> = {
     hours: 60 * 60 * 1000,
     days: 24 * 60 * 60 * 1000,
 }
-const UNRESOLVED_FLOW: FlowNode = { pausingStep: null, inlineChildren: [] }
+const UNRESOLVED_FLOW: FlowNode = { pausingStep: null, inlineChildren: [], expectsArguments: false }
+// Derived by grepping every qadam for `waitForWaitpoint` — creating a waitpoint is not enough
+// (`approval:create_approval_links` does that and keeps running); waiting on one is what pauses.
+//
+// This is an allowlist, and it is the check's known limit: a qadam added later that pauses will
+// validate green here and still fail at run time with the `inline-flow-executor.ts` error. Making
+// it exhaustive needs a declared marker on the action rather than a table — filed as a follow-up
+// rather than guessed at here, because a wrong entry produces a false "cannot publish" on a flow
+// that works.
 const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
     [`${DELAY_QADAM}:delay_until`]: 'a Delay Until',
     '@aiqadam/qadam-approval:wait_for_approval': 'a Wait for Approval',
     '@aiqadam/qadam-webhook:return_response_and_wait_for_next_webhook': 'a webhook wait',
+    '@aiqadam/qadam-slack:request_approval_message': 'a Slack approval request',
+    '@aiqadam/qadam-slack:request_approval_direct_message': 'a Slack approval request',
+    '@aiqadam/qadam-microsoft-teams:request_approval_direct_message': 'a Teams approval request',
+    '@aiqadam/qadam-microsoft-teams:request_approval_in_channel': 'a Teams approval request',
+    '@aiqadam/qadam-discord:request_approval_message': 'a Discord approval request',
+    '@aiqadam/qadam-telegram-bot:request_approval_message': 'a Telegram approval request',
+    '@aiqadam/qadam-gmail:request_approval_in_mail': 'a Gmail approval request',
+    '@aiqadam/qadam-microsoft-outlook:request_approval_in_mail': 'an Outlook approval request',
 }
+const ASSEMBLYAI_QADAM = '@aiqadam/qadam-assemblyai'
+const ASSEMBLYAI_TRANSCRIBE_ACTION = 'transcribe'
 
 const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
@@ -444,10 +506,10 @@ type ValidationIssue = {
 type QadamStep = Extract<Step, { type: FlowActionType.PIECE }>
 
 type CallFlowInput = {
-    flow?: { externalId?: string }
-    flowProps?: { payload?: unknown }
-    executionMode?: string
-    waitForResponse?: boolean
+    externalId: string | undefined
+    payload: unknown
+    executionMode: string | undefined
+    waitForResponse: boolean
 }
 
 type PausingStep = {
@@ -457,6 +519,7 @@ type PausingStep = {
 }
 
 type FlowNode = {
+    expectsArguments: boolean
     pausingStep: PausingStep | null
     inlineChildren: string[]
 }

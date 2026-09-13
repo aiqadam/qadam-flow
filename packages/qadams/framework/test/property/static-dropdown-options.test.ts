@@ -7,12 +7,13 @@ function propsWith(property: unknown): QadamPropertyMap {
     return { mode: property } as unknown as QadamPropertyMap
 }
 
-function staticDropdown(options: unknown, required = true) {
+function staticDropdown(options: unknown, required = true, defaultValue?: unknown) {
     return {
         type: PropertyType.STATIC_DROPDOWN,
         displayName: 'Mode',
         required,
         options,
+        ...(defaultValue === undefined ? {} : { defaultValue }),
     }
 }
 
@@ -72,6 +73,38 @@ describe('buildSchema — STATIC_DROPDOWN option enforcement', () => {
 
     it('leaves an optional dropdown able to be null', () => {
         expect(parse(staticDropdown(TWO_OPTIONS, false), null).success).toBe(true)
+    })
+
+    it('accepts an empty string, which is what the builder stores when a dropdown is toggled to dynamic mode', () => {
+        // `getDefaultPropertyValue` returns '' for a dropdown in dynamic-input mode, before any
+        // expression has been typed. Rejecting it would make the field invalid the moment the
+        // author flips the toggle — a state that was valid before this check existed.
+        expect(parse(staticDropdown(TWO_OPTIONS), '').success).toBe(true)
+    })
+
+    it('accepts the prop\'s own defaultValue even when it is absent from the option list', () => {
+        // @aiqadam/qadam-nocodb declares `version` with defaultValue 0 against options 1..4, and the
+        // connection dialog seeds the form from defaultValue — so rejecting it would block creating
+        // a NocoDB connection entirely.
+        const nocodbVersion = staticDropdown({
+            options: [1, 2, 3, 4].map(value => ({ label: `v${value}`, value })),
+        }, false, 0)
+
+        expect(parse(nocodbVersion, 0).success).toBe(true)
+        expect(parse(nocodbVersion, 99).success).toBe(false)
+    })
+
+    it('accepts a defaultValue whose case differs from the declared options', () => {
+        // @aiqadam/qadam-clickup's channel `visibility` defaults to 'public' against 'PUBLIC'/'PRIVATE'.
+        const clickupVisibility = staticDropdown({
+            options: [
+                { label: 'Public', value: 'PUBLIC' },
+                { label: 'Private', value: 'PRIVATE' },
+            ],
+        }, true, 'public')
+
+        expect(parse(clickupVisibility, 'public').success).toBe(true)
+        expect(parse(clickupVisibility, 'protected').success).toBe(false)
     })
 
     it('rejects a large value against primitive-only options without walking it', () => {

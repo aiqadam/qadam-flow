@@ -142,6 +142,21 @@ describe('flowVersionValidationUtil.prepareRequest', () => {
         expect(valid).toBe(true)
     })
 
+    it('caps the undeclared key names it logs, and logs names only', async () => {
+        const manyUndeclared = Object.fromEntries(
+            Array.from({ length: 50 }, (_, index) => [`undeclared_${index}`, `secret-value-${index}`]),
+        )
+
+        await prepare({ ...callFlowInput(), ...manyUndeclared })
+
+        const warn = vi.mocked(log.warn)
+        expect(warn).toHaveBeenCalledTimes(1)
+        const [payload] = warn.mock.calls[0] as [{ undeclaredKeys: string[], undeclaredKeyCount: number }]
+        expect(payload.undeclaredKeyCount).toBe(50)
+        expect(payload.undeclaredKeys).toHaveLength(20)
+        expect(JSON.stringify(payload)).not.toContain('secret-value')
+    })
+
     it('marks the step invalid when a static dropdown value is not one of the declared options', async () => {
         const { valid, input } = await prepare(callFlowInput({ executionMode: 'totally-made-up' }))
 

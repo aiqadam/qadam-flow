@@ -139,14 +139,23 @@ function staticDropdownSchema(property: QadamProperty) {
   if (declaredValues.length === 0) {
     return definedValueSchema();
   }
+  // A prop's own `defaultValue` has to be acceptable even when it is absent from the prop's option
+  // list, or the check would contradict the declaration it is checking. Several shipped qadams are
+  // in exactly that state — `@aiqadam/qadam-nocodb`'s `version` defaults to `0` against options
+  // `1..4`, `@aiqadam/qadam-clickup`'s channel `visibility` defaults to `'public'` against
+  // `'PUBLIC'`/`'PRIVATE'` — and the builder seeds every form from `defaultValue`, so without this
+  // a NocoDB connection could not be created at all and existing ClickUp steps would flip invalid.
+  const acceptedValues = 'defaultValue' in property && !isNil(property.defaultValue)
+    ? [...declaredValues, property.defaultValue]
+    : declaredValues;
   const primitiveOptions = new Set(
-    declaredValues.filter((declared) => !isObjectLike(declared)).map((declared) => String(declared)),
+    acceptedValues.filter((declared) => !isObjectLike(declared)).map((declared) => String(declared)),
   );
   const objectOptions = new Set(
-    declaredValues.filter(isObjectLike).map((declared) => canonicalize(declared, 0)),
+    acceptedValues.filter(isObjectLike).map((declared) => canonicalize({ value: declared, depth: 0 })),
   );
   return definedValueSchema().refine(
-    (val) => matchesDeclaredOption(val, primitiveOptions, objectOptions),
+    (val) => matchesDeclaredOption({ value: val, primitiveOptions, objectOptions }),
     { message: formErrors.valueNotInOptions },
   );
 }
@@ -155,10 +164,16 @@ function staticDropdownSchema(property: QadamProperty) {
 // the declared option can differ from it in type (`1` vs `"1"`) or in key order. Comparing loosely
 // keeps the check from failing flows that were valid before it existed; it costs only the ability
 // to distinguish a number option from its own string spelling, which no dropdown relies on.
-function matchesDeclaredOption(value: unknown, primitiveOptions: Set<string>, objectOptions: Set<string>): boolean {
-  if (isNil(value) || isDynamicExpression(value)) {
-    // `null`/`undefined` is already reported by the defined-value check; saying it twice would only
-    // replace that message with a less specific one.
+function matchesDeclaredOption({ value, primitiveOptions, objectOptions }: {
+  value: unknown
+  primitiveOptions: Set<string>
+  objectOptions: Set<string>
+}): boolean {
+  // An unset value is not a wrong one. `null`/`undefined` is already reported by the defined-value
+  // check, and `''` is what the builder puts in a dropdown the author has just toggled into
+  // dynamic-input mode (`getDefaultPropertyValue`) — rejecting it would make the field invalid
+  // until a whole expression has been typed, which it never was before this check existed.
+  if (isNil(value) || value === '' || isDynamicExpression(value)) {
     return true;
   }
   if (!isObjectLike(value)) {
@@ -170,20 +185,24 @@ function matchesDeclaredOption(value: unknown, primitiveOptions: Set<string>, ob
   if (objectOptions.size === 0) {
     return false;
   }
-  const canonicalValue = canonicalize(value, 0);
+  const canonicalValue = canonicalize({ value, depth: 0 });
   return canonicalValue !== TOO_DEEP && objectOptions.has(canonicalValue);
 }
 
 function readDeclaredOptionValues(property: QadamProperty): unknown[] {
   const options = 'options' in property ? property.options : undefined;
-  if (isNil(options) || typeof options !== 'object') {
+  if (!isPlainRecord(options)) {
     return [];
   }
-  const entries = (options as { options?: unknown }).options;
+  const entries = options.options;
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries.map((entry) => (entry as { value?: unknown })?.value);
+  return entries.map((entry) => (isPlainRecord(entry) ? entry.value : undefined));
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function isDynamicExpression(value: unknown): boolean {
@@ -191,7 +210,7 @@ function isDynamicExpression(value: unknown): boolean {
 }
 
 function isObjectLike(value: unknown): boolean {
-  return typeof value === 'object' && value !== null;
+  return isPlainRecord(value);
 }
 
 // Recursion over a value the caller controls needs a floor. Without this cap, a nested array
@@ -199,18 +218,18 @@ function isObjectLike(value: unknown): boolean {
 // whatever a refinement throws rather than turning it into a validation failure, so it would
 // surface as a 500 on flow update rather than a rejected value. A value deeper than any real
 // dropdown option cannot be one, so a sentinel that matches nothing is both cheap and correct.
-function canonicalize(value: unknown, depth: number): string {
+function canonicalize({ value, depth }: { value: unknown, depth: number }): string {
   if (depth > MAX_OPTION_DEPTH) {
     return TOO_DEEP;
   }
   if (Array.isArray(value)) {
-    return `[${value.map((entry) => canonicalize(entry, depth + 1)).join(',')}]`;
+    return `[${value.map((entry) => canonicalize({ value: entry, depth: depth + 1 })).join(',')}]`;
   }
-  if (isObjectLike(value)) {
-    const entries = Object.entries(value as Record<string, unknown>)
+  if (isPlainRecord(value)) {
+    const entries = Object.entries(value)
       .filter(([, entryValue]) => entryValue !== undefined)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalize(entryValue, depth + 1)}`);
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalize({ value: entryValue, depth: depth + 1 })}`);
     return `{${entries.join(',')}}`;
   }
   return JSON.stringify(value) ?? 'undefined';
