@@ -115,6 +115,17 @@ export const variableService = (log: FastifyBaseLogger) => ({
         return getOneOrThrowWithoutValue(params)
     },
 
+    async getByNameOrNull(params: GetByNameParams): Promise<VariableWithoutSensitiveData | null> {
+        const { projectId, platformId, name } = params
+        const row = await variableRepo()
+            .createQueryBuilder('variable')
+            .leftJoinAndSelect('variable.owner', 'owner')
+            .leftJoinAndSelect('owner.identity', 'owner_identity')
+            .where({ projectId, platformId, name })
+            .getOne()
+        return isNil(row) ? null : stripSensitiveData(row)
+    },
+
     async getDecryptedValue(params: GetOneParams): Promise<string> {
         const { id, projectId, platformId } = params
         const row = await variableRepo().findOneBy({ id, projectId, platformId })
@@ -249,6 +260,12 @@ type GetOneParams = {
     id: ApId
     projectId: string
     platformId: string
+}
+
+type GetByNameParams = {
+    projectId: string
+    platformId: string
+    name: string
 }
 
 type GetForWorkerParams = {

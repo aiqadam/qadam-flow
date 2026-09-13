@@ -199,6 +199,49 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
         name: 'ap_delete_records',
         description: 'Delete records by their IDs',
       },
+      {
+        name: 'ap_export_table',
+        description:
+          'Export a table (schema and optionally row data) as a SharedTemplate JSON',
+      },
+      {
+        name: 'ap_import_table',
+        description:
+          'Import a table from a SharedTemplate JSON — create new or replace an existing table',
+      },
+    ],
+  },
+  {
+    label: 'GitOps',
+    tools: [
+      {
+        name: 'ap_export_flow',
+        description: 'Export a flow as a secret-free SharedTemplate JSON',
+      },
+      {
+        name: 'ap_import_flow',
+        description:
+          'Import a flow from a SharedTemplate JSON — create new or overwrite an existing flow draft',
+      },
+    ],
+  },
+  {
+    label: 'Variables',
+    tools: [
+      {
+        name: 'ap_list_variables',
+        description:
+          'List project variables (names and metadata only, never values)',
+      },
+      {
+        name: 'ap_upsert_variable',
+        description:
+          'Create a project variable, or rotate its value if it already exists',
+      },
+      {
+        name: 'ap_delete_variable',
+        description: 'Permanently delete a project variable',
+      },
     ],
   },
   {

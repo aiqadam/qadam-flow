@@ -526,9 +526,19 @@ export const recordService = {
     async deleteAll({
         tableId,
         projectId,
+        entityManager,
+        returnDeleted = true,
     }: DeleteAllParams): Promise<PopulatedRecord[]> {
-        const deletedRecords = await transaction(async (entityManager: EntityManager) => {
-            const records = await entityManager.getRepository(RecordEntity).find({
+        const deleteWithManager = async (manager: EntityManager): Promise<RecordSchema[]> => {
+            // A caller that discards the result must not pay to build it: at the configured ceiling
+            // of 10k records x 100 fields the `cells` relation alone is a million rows, materialised
+            // and formatted while this holds the import transaction's connection open.
+            if (!returnDeleted) {
+                await manager.getRepository(RecordEntity).delete({ projectId, tableId })
+                return []
+            }
+
+            const records = await manager.getRepository(RecordEntity).find({
                 where: { projectId, tableId },
                 relations: ['cells'],
             })
@@ -536,7 +546,7 @@ export const recordService = {
             const recordIds = records.map((record) => record.id)
 
             if (recordIds.length > 0) {
-                await entityManager.getRepository(RecordEntity).delete({
+                await manager.getRepository(RecordEntity).delete({
                     id: In(recordIds),
                     projectId,
                     tableId,
@@ -544,13 +554,17 @@ export const recordService = {
             }
 
             return records
-        })
+        }
+
+        const deletedRecords = isNil(entityManager)
+            ? await transaction(deleteWithManager)
+            : await deleteWithManager(entityManager)
 
         if (deletedRecords.length === 0) {
             return []
         }
 
-        return formatRecordsAndFetchField({ records: deletedRecords, tableId, projectId })
+        return formatRecordsAndFetchField({ records: deletedRecords, tableId, projectId, entityManager })
     },
 
     async triggerWebhooks({
@@ -670,6 +684,8 @@ type DeleteParams = {
 type DeleteAllParams = {
     tableId: string
     projectId: string
+    entityManager?: EntityManager
+    returnDeleted?: boolean
 }
 
 type TriggerWebhooksParams = {
@@ -909,10 +925,11 @@ function resolveProjectedFields({ fieldIds, fields, tableId }: { fieldIds: strin
     return fields.filter((field) => requested.has(field.id))
 }
 
-async function formatRecordsAndFetchField({ records, tableId, projectId, fields: prefetchedFields, outputFields }: { records: RecordSchema[], tableId: string, projectId: string, fields?: Field[], outputFields?: Field[] }): Promise<PopulatedRecord[]> {
+async function formatRecordsAndFetchField({ records, tableId, projectId, fields: prefetchedFields, outputFields, entityManager }: { records: RecordSchema[], tableId: string, projectId: string, fields?: Field[], outputFields?: Field[], entityManager?: EntityManager }): Promise<PopulatedRecord[]> {
     const fields = prefetchedFields ?? await fieldService.getAll({
         tableId,
         projectId,
+        entityManager,
     })
     return formatRecords({ records, fields: outputFields ?? fields })
 }

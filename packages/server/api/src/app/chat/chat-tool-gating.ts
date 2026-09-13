@@ -11,6 +11,10 @@
  *
  * The annotations cannot be the source of truth, which is why this list is hand-written and tested
  * against the registry. Audited across all 42 registered tools on 2026-07-31:
+ * (re-audited on 2026-09-13 for the seven export/import/variable tools added by #438, which take the
+ * registry to 48; the annotation-derived selection is no better on those than it was on the original
+ * 42 — `ap_import_flow` declares `destructiveHint: true` even when it creates rather than overwrites,
+ * and the three read tools declare `readOnlyHint: true`, which is right but is not what decides this)
  * `destructiveHint || openWorldHint` selects the five deletes, `ap_run_action`, `ap_test_flow`,
  * `ap_test_step` and `ap_list_ai_models` — so it **under**-selects (missing `ap_lock_and_publish`
  * and `ap_change_flow_status`, which publish or enable a flow that then runs against real data, and
@@ -48,6 +52,15 @@
  * - `ap_update_record` — overwrites cells with no history to restore from.
  * - `ap_retry_run` — re-executes a published flow against real data. Raised as an open question on
  *   #264; gating is the safe direction and reversing it is one line.
+ * - `ap_import_flow` / `ap_import_table` — both overwrite an existing flow or table in place, and
+ *   the table one clears every row and column before recreating the schema.
+ * - `ap_upsert_variable` / `ap_delete_variable` — a variable holds a secret; rotating or removing one
+ *   changes what every published flow referencing it sends, with no value to restore from.
+ *
+ * `ap_export_flow`, `ap_export_table` and `ap_list_variables` join the read-only group instead. They
+ * write nothing, `ap_list_variables` returns no variable *value* at all, and the data the two exports
+ * reach is already reachable through `ap_flow_structure` and `ap_find_records`, which are ungated —
+ * so gating them would add a confirmation without adding a boundary.
  */
 export const chatToolGating = {
     /**
@@ -77,6 +90,8 @@ export const chatToolGating = {
 }
 
 const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+    'ap_export_flow',
+    'ap_export_table',
     'ap_find_records',
     'ap_flow_structure',
     'ap_get_piece_props',
@@ -86,6 +101,7 @@ const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_list_flows',
     'ap_list_runs',
     'ap_list_tables',
+    'ap_list_variables',
     'ap_read_step_code',
     'ap_research_pieces',
     'ap_resolve_property_chain',

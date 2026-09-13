@@ -1,5 +1,5 @@
-import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, isNil, QadamFlowError, UpdateFieldRequest } from '@aiqadam/shared'
-import { In } from 'typeorm'
+import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, isNil, QadamFlowError, spreadIfDefined, UpdateFieldRequest } from '@aiqadam/shared'
+import { EntityManager, In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -8,10 +8,16 @@ import { FieldEntity } from './field.entity'
 const fieldRepo = repoFactory<Field>(FieldEntity)
 
 export const fieldService = {
-    async create({ request, projectId }: CreateParams): Promise<Field> {
-        await this.validateCount({ projectId, tableId: request.tableId })
-        const field = await fieldRepo().save({
+    async create({ request, projectId, entityManager, created }: CreateParams): Promise<Field> {
+        await this.validateCount({ projectId, tableId: request.tableId, entityManager })
+        // `created` is accepted so a caller building a whole table's columns at once can make their
+        // order reproducible. Left to the column default it is `now()`, which inside a transaction
+        // is the *transaction* timestamp and therefore identical for every field of that batch —
+        // and `getAll` orders by `created` with no tiebreaker, so the column order would be
+        // whatever the heap happened to return.
+        const field = await fieldRepo(entityManager).save({
             ...request,
+            ...spreadIfDefined('created', created?.toISOString()),
             projectId,
             id: apId(),
             externalId: request.externalId ?? apId(),
@@ -19,12 +25,14 @@ export const fieldService = {
         return field
     },
 
-    async createFromState({ projectId, field, tableId }: CreateFromStateParams): Promise<Field> {
+    async createFromState({ projectId, field, tableId, entityManager, created }: CreateFromStateParams): Promise<Field> {
         switch (field.type) {
             case FieldType.STATIC_DROPDOWN: {
                 assertNotNullOrUndefined(field.data, 'Data is required for static dropdown field')
                 return this.create({
                     projectId,
+                    entityManager,
+                    created,
                     request: {
                         name: field.name,
                         type: field.type,
@@ -39,6 +47,8 @@ export const fieldService = {
             case FieldType.TEXT: {
                 return this.create({
                     projectId,
+                    entityManager,
+                    created,
                     request: {
                         name: field.name,
                         type: field.type,
@@ -58,8 +68,8 @@ export const fieldService = {
         }
     },
 
-    async getAll({ projectId, tableId }: GetAllParams): Promise<Field[]> {
-        return fieldRepo().find({
+    async getAll({ projectId, tableId, entityManager }: GetAllParams): Promise<Field[]> {
+        return fieldRepo(entityManager).find({
             where: { projectId, tableId },
             order: {
                 created: 'ASC',
@@ -102,8 +112,8 @@ export const fieldService = {
         return field
     },
 
-    async delete({ id, projectId }: DeleteParams): Promise<void> {
-        await fieldRepo().delete({
+    async delete({ id, projectId, entityManager }: DeleteParams): Promise<void> {
+        await fieldRepo(entityManager).delete({
             id,
             projectId,
         })
@@ -119,8 +129,8 @@ export const fieldService = {
         return this.getById({ id, projectId })
     },
 
-    async count({ projectId, tableId }: CountParams): Promise<number> {
-        return fieldRepo().count({
+    async count({ projectId, tableId, entityManager }: CountParams): Promise<number> {
+        return fieldRepo(entityManager).count({
             where: { projectId, tableId },
         })
     },
@@ -139,17 +149,22 @@ export const fieldService = {
 type CreateParams = {
     projectId: string
     request: CreateFieldRequest
+    entityManager?: EntityManager
+    created?: Date
 }
 
 type CreateFromStateParams = {
     projectId: string
     field: FieldState
     tableId: string
+    entityManager?: EntityManager
+    created?: Date
 }
 
 type GetAllParams = {
     projectId: string
     tableId: string
+    entityManager?: EntityManager
 }
 
 type GetAllByTableIdsParams = {
@@ -165,6 +180,7 @@ type GetByIdParams = {
 type DeleteParams = {
     id: string
     projectId: string
+    entityManager?: EntityManager
 }
 
 type UpdateParams = {
@@ -176,4 +192,5 @@ type UpdateParams = {
 type CountParams = {
     projectId: string
     tableId: string
+    entityManager?: EntityManager
 }

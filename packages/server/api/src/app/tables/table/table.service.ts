@@ -22,7 +22,7 @@ import {
     UpdateTableRequest,
     UserWithMetaInformation,
 } from '@aiqadam/shared'
-import { ArrayContains, ILike, In, IsNull } from 'typeorm'
+import { ArrayContains, EntityManager, ILike, In, IsNull } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { getFolderIdFromRequest } from '../../flows/flow/flow.service'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
@@ -52,8 +52,12 @@ export const tableService = {
             folderId,
         })
         if (request.fields) {
-            await Promise.all(request.fields.map(async (field) => {
-                await fieldService.createFromState({ projectId, field, tableId: table.id })
+            // Stamped per index rather than left to the column default: concurrent inserts commit in
+            // an arbitrary order, and `fieldService.getAll` sorts on `created` with no tiebreaker, so
+            // without this the caller's column order is not what they get back.
+            const createdAt = Date.now()
+            await Promise.all(request.fields.map(async (field, index) => {
+                await fieldService.createFromState({ projectId, field, tableId: table.id, created: new Date(createdAt + index) })
             }))
         }
         return table
@@ -105,8 +109,9 @@ export const tableService = {
     async getOneOrThrow({
         projectId,
         id,
+        entityManager,
     }: GetByIdParams): Promise<Table> {
-        const table = await tableRepo().findOne({
+        const table = await tableRepo(entityManager).findOne({
             where: { projectId, id },
         })
         if (isNil(table)) {
@@ -138,10 +143,19 @@ export const tableService = {
         return table
     },
 
+    async getOneByExternalIdOrNull({
+        projectId,
+        externalId,
+    }: GetOneByExternalIdParams): Promise<Table | null> {
+        return tableRepo().findOneBy({ projectId, externalId })
+    },
+
     async getTemplate({
         tableId,
         userMetadata,
         projectId,
+        includeRecords = true,
+        maxRecords,
     }: GetTemplateParams): Promise<SharedTemplate> {
         const table = await this.getOneOrThrow({
             id: tableId,
@@ -170,10 +184,14 @@ export const tableService = {
             })),
         }
 
-        const records = await recordRepo().find({
-            where: { tableId: table.id, projectId },
-            relations: ['cells'],
-        })
+        const records = includeRecords
+            ? await recordRepo().find({
+                where: { tableId: table.id, projectId },
+                relations: ['cells'],
+                order: { created: 'ASC' },
+                ...(maxRecords === undefined ? {} : { take: maxRecords }),
+            })
+            : []
 
         const rows: TableDataState['rows'] = records.map((record) => {
             const row: { fieldId: string, value: string }[] = []
@@ -189,10 +207,12 @@ export const tableService = {
 
         const tableTemplate: TableTemplate = {
             ...tableState,
-            data: {
-                type: TableImportDataType.CSV,
-                rows,
-            },
+            data: includeRecords
+                ? {
+                    type: TableImportDataType.CSV,
+                    rows,
+                }
+                : null,
         }
 
         const template: SharedTemplate = {
@@ -295,6 +315,7 @@ export const tableService = {
         projectId,
         id,
         request,
+        entityManager,
     }: UpdateParams): Promise<Table> {
 
         const updateData: Record<string, unknown> = {
@@ -304,8 +325,8 @@ export const tableService = {
             folderId: request.folderId,
         }
 
-        await tableRepo().update({ id, projectId }, updateData)
-        return this.getOneOrThrow({ projectId, id })
+        await tableRepo(entityManager).update({ id, projectId }, updateData)
+        return this.getOneOrThrow({ projectId, id, entityManager })
     },
     async count({ projectId, folderId }: CountParams): Promise<number> {
         const where: Record<string, unknown> = { projectId }
@@ -336,6 +357,7 @@ type ListParams = {
 type GetByIdParams = {
     projectId: string
     id: string
+    entityManager?: EntityManager
 }
 
 type GetOneByExternalIdParams = {
@@ -375,6 +397,7 @@ type UpdateParams = {
     projectId: string
     id: string
     request: UpdateTableRequest
+    entityManager?: EntityManager
 }
 
 type CountParams = {
@@ -386,4 +409,6 @@ type GetTemplateParams = {
     tableId: string
     userMetadata: UserWithMetaInformation | null
     projectId: string
+    includeRecords?: boolean
+    maxRecords?: number
 }
