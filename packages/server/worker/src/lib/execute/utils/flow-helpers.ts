@@ -11,7 +11,7 @@ export async function provisionFlowPieces(params: {
     projectId: string
     log: Logger
     apiClient: WorkerToApiContract
-}): Promise<boolean> {
+}): Promise<ProvisionFlowQadamsResult> {
     const { flowVersion, platformId, flowId, projectId, log, apiClient } = params
     const { error } = await tryCatch(async () => {
         const pieces = await extractQadamPackages(flowVersion, platformId, log, apiClient)
@@ -35,9 +35,9 @@ export async function provisionFlowPieces(params: {
         // only trace was in worker logs. `ap_validate_flow` reports the pin so it is visible
         // before it ever gets this far.
         log.error({ error: String(error), flowId, projectId }, 'Flow step is pinned to a qadam version this image does not have; skipping provisioning')
-        return false
+        return { provisioned: false, unavailableQadam: `${error.qadamName}@${error.qadamVersion}` }
     }
-    return true
+    return { provisioned: true }
 }
 
 export async function extractQadamPackages(flowVersion: FlowVersion, platformId: string, log: Logger, apiClient: WorkerToApiContract): Promise<QadamPackage[]> {
@@ -65,3 +65,7 @@ export function extractCodeArtifacts(flowVersion: FlowVersion): CodeArtifact[] {
             flowVersionState: flowVersion.state,
         }))
 }
+
+export type ProvisionFlowQadamsResult =
+    | { provisioned: true }
+    | { provisioned: false, unavailableQadam: string }

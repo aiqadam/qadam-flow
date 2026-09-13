@@ -8,6 +8,19 @@ const resolver = createVariableResolver({
     apiUrl: 'http://127.0.0.1:3000/',
 })
 
+async function obtainError(name: string): Promise<ExecutionError> {
+    try {
+        await resolver.obtain(name)
+    }
+    catch (error) {
+        if (error instanceof ExecutionError) {
+            return error
+        }
+        throw error
+    }
+    throw new Error(`expected obtain("${name}") to reject`)
+}
+
 function stubFetch(status: number, body: unknown = {}): void {
     vi.stubGlobal('fetch', vi.fn(async () => ({
         ok: status >= 200 && status < 300,
@@ -32,19 +45,17 @@ describe('variable resolver', () => {
     it('reports a missing variable as a USER error naming the variable', async () => {
         stubFetch(404)
 
-        const error = await resolver.obtain('NONEXISTENT').catch((err: unknown) => err)
+        const error = await obtainError('NONEXISTENT')
 
-        expect(error).toBeInstanceOf(ExecutionError)
-        expect((error as ExecutionError).type).toBe(ExecutionErrorType.USER)
-        expect((error as ExecutionError).message).toContain('NONEXISTENT')
+        expect(error.type).toBe(ExecutionErrorType.USER)
+        expect(error.message).toContain('NONEXISTENT')
     })
 
     it('keeps a server-side failure an ENGINE error', async () => {
         stubFetch(500)
 
-        const error = await resolver.obtain('SIGNING_KEY').catch((err: unknown) => err)
+        const error = await obtainError('SIGNING_KEY')
 
-        expect(error).toBeInstanceOf(ExecutionError)
-        expect((error as ExecutionError).type).toBe(ExecutionErrorType.ENGINE)
+        expect(error.type).toBe(ExecutionErrorType.ENGINE)
     })
 })

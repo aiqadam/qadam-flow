@@ -29,7 +29,7 @@ vi.mock('../../../../src/lib/config/worker-settings', () => ({
 }))
 
 vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
-    provisionFlowPieces: vi.fn().mockResolvedValue(true),
+    provisionFlowPieces: vi.fn().mockResolvedValue({ provisioned: true }),
 }))
 
 import { executeFlowJob } from '../../../../src/lib/execute/jobs/execute-flow'

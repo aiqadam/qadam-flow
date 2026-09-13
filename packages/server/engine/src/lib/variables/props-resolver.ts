@@ -9,6 +9,9 @@ import { utils } from '../utils'
 
 const CONNECTIONS = 'connections'
 const VARIABLES = 'variables'
+// Both quote styles. `{{variables["NAME"]}}` is one character away from the form the unresolved-
+// reference error itself recommends, and matching only `'` made that typo resolve to `''`.
+const BRACKET_NAME_PATTERN = /\[\s*(['"])([^'"]+)\1\s*\]/
 const FLATTEN_NESTED_KEYS_PATTERN = /\{\{\s*flattenNestedKeys(.*?)\}\}/g
 async function replaceTokensAsync(
     str: string,
@@ -231,8 +234,11 @@ function normalizeInvalidDotKeys(expr: string): string {
 async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown> {
     const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
     const name = parseVariableName(variableName)
+    // Same defect as `{{VAR}}`, one level further in: the expression declares itself a project
+    // variable and then names nothing this can read, and returning `''` made it a working HMAC key
+    // of the empty string. Nothing below this point can distinguish it from a real value (#392).
     if (isNil(name)) {
-        return ''
+        throw new UnresolvedTemplateReferenceError({ expression: variableName })
     }
     if (censoredInput) {
         return '**REDACTED**'
@@ -242,8 +248,8 @@ async function handleVariable(params: ResolveSingleTokenParams): Promise<unknown
 
 function parseVariableName(variableName: string): string | null {
     if (variableName.startsWith(`${VARIABLES}[`)) {
-        const match = variableName.match(/\['([^']+)'\]/)
-        return match ? match[1] : null
+        const match = variableName.match(BRACKET_NAME_PATTERN)
+        return match ? match[2] : null
     }
     if (variableName.startsWith(`${VARIABLES}.`)) {
         return variableName.split('.')[1] ?? null
@@ -255,7 +261,7 @@ async function handleConnection(params: ResolveSingleTokenParams): Promise<unkno
     const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
     const connectionName = parseConnectionNameOnly(variableName)
     if (isNil(connectionName)) {
-        return ''
+        throw new UnresolvedTemplateReferenceError({ expression: variableName })
     }
     if (censoredInput) {
         return '**REDACTED**'

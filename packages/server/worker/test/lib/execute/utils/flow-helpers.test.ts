@@ -226,7 +226,7 @@ describe('provisionFlowPieces', () => {
             log: mockLogger,
             apiClient,
         })
-        expect(result).toBe(true)
+        expect(result).toEqual({ provisioned: true })
         expect(mockError).not.toHaveBeenCalled()
     })
 
@@ -247,7 +247,7 @@ describe('provisionFlowPieces', () => {
             log: mockLogger,
             apiClient,
         })
-        expect(result).toBe(false)
+        expect(result).toEqual({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1' })
         expect(mockError).toHaveBeenCalledTimes(1)
         expect(mockError.mock.calls[0][0]).toMatchObject({ flowId: 'flow-1', projectId: 'project-1' })
         expect(String(mockError.mock.calls[0][0].error)).toContain('0.3.1')

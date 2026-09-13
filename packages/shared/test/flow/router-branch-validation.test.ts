@@ -10,9 +10,9 @@ import {
     flowStructureUtil,
     RouterAction,
     RouterActionSettings,
+    RouterActionSettingsWithValidation,
     RouterExecutionType,
 } from '../../src'
-import { RouterActionSettingsWithValidation } from '../../src/lib/automation/flows/actions/action'
 
 const CONDITION = {
     operator: BranchOperator.TEXT_EXACTLY_MATCHES,

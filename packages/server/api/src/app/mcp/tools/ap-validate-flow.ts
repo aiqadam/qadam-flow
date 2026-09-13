@@ -6,6 +6,7 @@ import {
     McpToolDefinition,
     Permission,
     ProjectScopedMcpServer,
+    RouterActionSettingsWithValidation,
     Step,
     tryCatch,
     unique,
@@ -125,6 +126,13 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
 
         if (step.type === FlowActionType.ROUTER) {
             const { children, settings } = step
+            // Recomputed rather than read off `step.valid`, because a router written before #429
+            // was stored as valid and a LOCKED version is never re-validated. Without this, the
+            // routers that silently changed which branch they take on upgrade — the whole affected
+            // population — have no detection path at all.
+            if (step.valid && !RouterActionSettingsWithValidation.safeParse(settings).success) {
+                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is stored as valid but at least one non-fallback branch carries no conditions. Such a branch can never match, so its steps never run — configure it with ap_update_branch or drop it with ap_delete_branch, then republish.` })
+            }
             const branches = settings.branches ?? []
             for (let i = 0; i < children.length; i++) {
                 if (isNil(children[i])) {
@@ -150,8 +158,11 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     platformId: string
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
+    // No `skip` filter, unlike every other check here: `extractQadamPackages` in the worker
+    // provisions every PIECE step in the version regardless of `skip`, so a dead pin on a skipped
+    // step still fails provisioning on every trigger tick and every run. Excluding it would report
+    // exactly the flow this category exists to catch as ready to publish.
     const qadamSteps = flowStructureUtil.getAllSteps(trigger)
-        .filter(step => !('skip' in step && step.skip === true))
         .filter((step): step is Extract<Step, { settings: { qadamName: string, qadamVersion: string } }> =>
             (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
             && !isNil(step.settings.qadamName)
@@ -471,7 +482,10 @@ function extractReferencedStepNames({ value }: { value: string }): string[] {
     let match
     while ((match = regex.exec(value)) !== null) {
         const name = match[1]
-        if (name !== 'connections') {
+        // `variables` belongs beside `connections`: both are context roots, not steps. Reporting
+        // `{{variables['X']}}` as "references a step that does not exist" put a false positive on
+        // the exact form the engine's unresolved-reference error tells the author to switch to.
+        if (name !== 'connections' && name !== 'variables') {
             names.add(name)
         }
     }

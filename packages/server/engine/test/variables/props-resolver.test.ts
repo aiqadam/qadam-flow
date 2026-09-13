@@ -262,6 +262,27 @@ describe('Props resolver', () => {
         })).rejects.toThrow('is not defined (in {{configs.bar}})')
     })
 
+    // The double-quoted form is one character away from the syntax the error above recommends, and
+    // it used to resolve to an empty string without the variable API ever being called.
+    test('a project-variable reference written with double quotes resolves the same name', async () => {
+        const single = propsResolverService.resolve({ unresolvedInput: '{{variables[\'SIGNING_KEY\']}}', executionState })
+        const double = propsResolverService.resolve({ unresolvedInput: '{{variables["SIGNING_KEY"]}}', executionState })
+
+        const [singleError, doubleError] = await Promise.all([
+            single.then(() => null, (err: Error) => err.message),
+            double.then(() => null, (err: Error) => err.message),
+        ])
+        expect(doubleError).toEqual(singleError)
+        expect(doubleError).toContain('v1/worker/variables/SIGNING_KEY')
+    })
+
+    test('a project-variable reference that names nothing readable fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{variables[SIGNING_KEY]}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+    })
+
     test('the error on an unknown reference points at the project-variable syntax', async () => {
         await expect(propsResolverService.resolve({
             unresolvedInput: '{{SIGNING_KEY}}',

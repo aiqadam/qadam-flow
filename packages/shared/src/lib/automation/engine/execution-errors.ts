@@ -117,14 +117,19 @@ export class VariableNotFoundError extends ExecutionError {
 // valid value everywhere, so the mistake surfaced as wrong data rather than as an error — and
 // where the value was key material, as an HMAC keyed with `""` that still verified against itself.
 export class UnresolvedTemplateReferenceError extends ExecutionError {
-    constructor({ expression, reference, cause }: { expression: string, reference: string, cause?: unknown }) {
-        super(
-            'UnresolvedTemplateReference',
-            formatMessage(`"${reference}" is not defined (in {{${expression}}}). It is neither a step in this flow nor a built-in. To read a project variable use {{variables['${reference}']}}; to read a step's output use {{stepName['output'].field}}.`),
-            ExecutionErrorType.USER,
-            cause,
-        )
+    constructor({ expression, reference, cause }: { expression: string, reference?: string, cause?: unknown }) {
+        super('UnresolvedTemplateReference', formatMessage(buildUnresolvedReferenceMessage({ expression, reference })), ExecutionErrorType.USER, cause)
     }
+}
+
+// Without a `reference` the expression did declare a context root — `variables[…]` or
+// `connections[…]` — and then named nothing readable inside it, which is the same mistake one level
+// further in and deserves the syntax rather than a name it cannot quote back.
+function buildUnresolvedReferenceMessage({ expression, reference }: { expression: string, reference?: string }): string {
+    if (reference === undefined) {
+        return `{{${expression}}} does not name anything this run can read. A project variable is written {{variables['NAME']}} and a connection {{connections['NAME']}}, with the exact name in quotes.`
+    }
+    return `"${reference}" is not defined (in {{${expression}}}). It is neither a step in this flow nor a built-in. To read a project variable use {{variables['${reference}']}}; to read a step's output use {{stepName['output'].field}}.`
 }
 
 export class EngineGenericError extends ExecutionError {

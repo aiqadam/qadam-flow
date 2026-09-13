@@ -39,7 +39,7 @@ export const apAddBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLog
                 // Omitting conditions used to insert a branch carrying `[[]]`, which the engine read
                 // as matching everything — so it shadowed every branch below it (#429). It is never
                 // a useful branch either way, so it is refused at the tool boundary.
-                if (isNil(conditions) || conditions.length === 0) {
+                if (isNil(conditions) || conditions.length === 0 || conditions.some(group => group.length === 0)) {
                     return { content: [{ type: 'text', text: '❌ conditions is required: a branch with no conditions can never match, so any step inside it would be unreachable. Pass conditions, or use the router\'s fallback branch for the "everything else" case.' }] }
                 }
 

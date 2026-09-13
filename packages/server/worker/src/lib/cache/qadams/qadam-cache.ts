@@ -90,7 +90,7 @@ async function getQadamPackage(query: PieceCacheKey, apiClient: WorkerToApiContr
 }
 
 export class PieceNotFoundError extends Error {
-    constructor(qadamName: string, qadamVersion: string) {
+    constructor(public readonly qadamName: string, public readonly qadamVersion: string) {
         super(`Piece metadata not found for ${qadamName}@${qadamVersion}`)
         this.name = 'PieceNotFoundError'
     }

@@ -103,7 +103,7 @@ async function resolveInlineFlow(params: {
         log,
         apiClient,
     })
-    if (!provisioned) {
+    if (!provisioned.provisioned) {
         // The child FlowRun row already exists (created above) — leaving it RUNNING
         // forever would be a stuck run with no reaper anywhere in the codebase, since
         // execution never reaches inline-flow-executor.ts's own finalize step.
