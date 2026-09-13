@@ -2876,4 +2876,48 @@ describe('MCP Tools integration', () => {
             expect(input.providerId).toBe('row-openai')
         })
     })
+
+    // #432: an image upgrade that drops a pinned qadam version leaves the flow LOCKED, valid and
+    // ENABLED; it only fails when something next provisions it, and the cause appears in worker
+    // logs and nowhere a flow owner looks.
+    describe('ap_validate_flow — pinned qadam version no longer available', () => {
+        it('reports a step pinned to a version this installation does not have', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Stale Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.settings.qadamVersion = '0.0.1-gone'
+            await db.save('flow_version', flowVersion)
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('Unavailable Qadam Versions')
+            expect(text(result)).toContain('@aiqadam/qadam-test-email@0.0.1-gone')
+            expect((result as { structuredContent?: { valid: boolean, issues: { category: string }[] } }).structuredContent?.valid).toBe(false)
+            expect((result as { structuredContent?: { issues: { category: string }[] } }).structuredContent?.issues.some(i => i.category === 'qadam_version')).toBe(true)
+        })
+
+        it('says nothing about a step whose pinned version resolves', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Healthy Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).not.toContain('Unavailable Qadam Versions')
+        })
+    })
 })

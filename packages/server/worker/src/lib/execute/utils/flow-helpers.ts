@@ -22,13 +22,19 @@ export async function provisionFlowPieces(params: {
         if (!(error instanceof PieceNotFoundError)) {
             throw error
         }
-        log.warn({ error: String(error), flowId }, 'Flow disabled due to missing piece')
-        const { error: disableError } = await tryCatch(
-            () => apiClient.disableFlow({ flowId, projectId }),
-        )
-        if (disableError) {
-            log.error({ error: String(disableError), flowId }, 'Failed to disable flow after missing piece')
-        }
+        // Deliberately does NOT disable the flow. Disabling it from here was self-recursive: the
+        // status change fans out an ON_DISABLE trigger hook, that hook provisions the same flow,
+        // fails on the same missing piece, and asks for another disable — which then blocks on the
+        // status-change lock the first one still holds, until the caller's 60 s TRIGGER_TIMEOUT
+        // unwinds it. Measured p90 was 60 s against a p50 of 88 ms, and it also made publishing
+        // such a flow over MCP hang for a full minute (#432).
+        //
+        // Every caller already handles `false`: the trigger-hook, polling, renew-webhook and
+        // webhook jobs skip, and `execute-flow` marks the run FAILED. So a missing pin now costs
+        // one clean, attributed failure per attempt instead of an unexplained self-disable whose
+        // only trace was in worker logs. `ap_validate_flow` reports the pin so it is visible
+        // before it ever gets this far.
+        log.error({ error: String(error), flowId, projectId }, 'Flow step is pinned to a qadam version this image does not have; skipping provisioning')
         return false
     }
     return true

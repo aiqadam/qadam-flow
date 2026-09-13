@@ -61,7 +61,6 @@ export type WorkerToApiContract = {
     extendLock(input: { jobId: string, token: string, queueName: string }): Promise<void>
     getUsedQadams(input: Record<string, never>): Promise<QadamPackage[]>
     markQadamAsUsed(input: { pieces: QadamPackage[] }): Promise<void>
-    disableFlow(input: DisableFlowRequest): Promise<void>
     sendChatEvent(input: SendChatEventRequest): Promise<void>
     getChatConfig(input: GetChatConfigRequest): Promise<ChatConfigResponse>
     saveChatMessages(input: SaveChatMessagesRequest): Promise<void>
@@ -199,9 +198,4 @@ export type ExecuteChatToolRequest = {
 
 export type ExecuteChatToolResponse = {
     result: unknown
-}
-
-export type DisableFlowRequest = {
-    flowId: string
-    projectId: string
 }

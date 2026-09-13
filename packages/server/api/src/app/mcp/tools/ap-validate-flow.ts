@@ -7,11 +7,14 @@ import {
     Permission,
     ProjectScopedMcpServer,
     Step,
+    tryCatch,
     unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
+import { projectService } from '../../project/project-service'
+import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { mcpUtils } from './mcp-utils'
 
 export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -31,12 +34,20 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 }
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
-                const callFlowIssues = await validateCallFlowSteps({
-                    trigger: flow.version.trigger,
-                    projectId: mcp.projectId,
-                    log,
-                })
-                const result = { ...structural, issues: [...structural.issues, ...callFlowIssues] }
+                const platformId = await projectService(log).getPlatformId(mcp.projectId)
+                const [callFlowIssues, qadamVersionIssues] = await Promise.all([
+                    validateCallFlowSteps({
+                        trigger: flow.version.trigger,
+                        projectId: mcp.projectId,
+                        log,
+                    }),
+                    validatePinnedQadamVersions({
+                        trigger: flow.version.trigger,
+                        platformId,
+                        log,
+                    }),
+                ])
+                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues] }
                 return {
                     content: [{ type: 'text', text: formatValidationResult({ result, flowDisplayName: flow.version.displayName }) }],
                     structuredContent: {
@@ -127,6 +138,47 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
     }
 
     return { totalSteps: allSteps.length, validSteps: validCount, invalidSteps: invalidCount, skippedSteps: skippedCount, issues }
+}
+
+// A step keeps the exact qadam version it was configured with. When an image upgrade drops that
+// version and #424's bundled fallback cannot reach the replacement — a caret range does not cross a
+// minor for a 0.x package, so a `0.3.1` pin never resolves to a bundled `0.4.5` — the flow stays
+// LOCKED, valid and ENABLED and fails only when something next provisions it, with the cause
+// visible in worker logs and nowhere a flow owner looks (#432).
+async function validatePinnedQadamVersions({ trigger, platformId, log }: {
+    trigger: Step
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<ValidationIssue[]> {
+    const qadamSteps = flowStructureUtil.getAllSteps(trigger)
+        .filter(step => !('skip' in step && step.skip === true))
+        .filter((step): step is Extract<Step, { settings: { qadamName: string, qadamVersion: string } }> =>
+            (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
+            && !isNil(step.settings.qadamName)
+            && !isNil(step.settings.qadamVersion))
+
+    // Distinct (name, version) pairs only: a flow with twelve tables steps on one pin should cost
+    // one resolution, not twelve, and the answer cannot differ between them.
+    const pins = unique(qadamSteps.map(step => `${step.settings.qadamName}@${step.settings.qadamVersion}`))
+    const resolutions = new Map<string, boolean>(await Promise.all(pins.map(async (pin): Promise<[string, boolean]> => {
+        const separator = pin.lastIndexOf('@')
+        const name = pin.slice(0, separator)
+        const version = pin.slice(separator + 1)
+        const { data: metadata } = await tryCatch(() => qadamMetadataService(log).get({ platformId, name, version }))
+        return [pin, !isNil(metadata)]
+    })))
+
+    return qadamSteps.flatMap((step) => {
+        const pin = `${step.settings.qadamName}@${step.settings.qadamVersion}`
+        if (resolutions.get(pin) === true) {
+            return []
+        }
+        return [{
+            category: 'qadam_version' as const,
+            stepName: step.name,
+            message: `"${step.displayName}" is pinned to ${pin}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point the step at an available version — delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+        }]
+    })
 }
 
 // `ap_validate_flow` is the only pre-publish gate an automated flow builder has, and until now it
@@ -468,9 +520,10 @@ const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
 const ASSEMBLYAI_QADAM = '@aiqadam/qadam-assemblyai'
 const ASSEMBLYAI_TRANSCRIBE_ACTION = 'transcribe'
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
+    qadam_version: 'Unavailable Qadam Versions',
     template_reference: 'Template References',
     empty_branch: 'Empty Branches',
     subflow_payload: 'Subflow Payloads',
@@ -513,7 +566,7 @@ function formatValidationResult({ result, flowDisplayName }: { result: Validatio
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause'
+    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause'
     stepName: string
     message: string
 }
