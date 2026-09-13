@@ -243,15 +243,30 @@ describe('Props resolver', () => {
         ).toEqual(5)
     })
 
-    test('Test resolve text with undefined variables', async () => {
+    test('Test resolve text with a path that does not exist on a known step', async () => {
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput:
-                'test {{configs.bar}} {{trigger.output.items[4]}}',
+            unresolvedInput: 'test {{trigger.output.items[4]}}',
             executionState,
         })
         expect(
             resolvedInput,
-        ).toEqual('test  ')
+        ).toEqual('test ')
+    })
+
+    // #392: `{{VAR}}` used to resolve to an empty string, which is a legitimate value everywhere —
+    // so a typo reached the step as wrong data instead of as an error.
+    test('a reference that names neither a step nor a built-in fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: 'test {{configs.bar}}',
+            executionState,
+        })).rejects.toThrow('is not defined (in {{configs.bar}})')
+    })
+
+    test('the error on an unknown reference points at the project-variable syntax', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{SIGNING_KEY}}',
+            executionState,
+        })).rejects.toThrow('{{variables[\'SIGNING_KEY\']}}')
     })
 
     test('failed step output resolves to empty string', async () => {
@@ -294,9 +309,18 @@ describe('Props resolver', () => {
         expect(resolvedInput).toEqual('')
     })
 
-    test('non-existent step resolves to empty string', async () => {
-        const { resolvedInput } = await propsResolverService.resolve({
+    test('a step name the flow does not contain fails the resolve', async () => {
+        await expect(propsResolverService.resolve({
             unresolvedInput: '{{step_99}}',
+            executionState: FlowExecutorContext.empty(),
+        })).rejects.toThrow('is not defined (in {{step_99}})')
+    })
+
+    // A step that exists but has not produced output yet — an untaken branch, a step further down —
+    // is not an authoring mistake and keeps resolving to an empty string.
+    test('a step of this flow that has not run yet still resolves to empty string', async () => {
+        const { resolvedInput } = await propsResolverService.resolve({
+            unresolvedInput: '{{step_7}}',
             executionState: FlowExecutorContext.empty(),
         })
         expect(resolvedInput).toEqual('')

@@ -1,5 +1,7 @@
-import { EngineGenericError, ExecutionError, FetchError } from '@aiqadam/shared'
+import { EngineGenericError, ExecutionError, FetchError, VariableNotFoundError } from '@aiqadam/shared'
 import { utils } from '../utils'
+
+const HTTP_NOT_FOUND = 404
 
 export const createVariableResolver = ({ projectId: _projectId, engineToken, apiUrl }: CreateVariableResolverParams): VariableResolver => {
     return {
@@ -33,6 +35,12 @@ export const createVariableResolver = ({ projectId: _projectId, engineToken, api
 }
 
 const handleResponseError = ({ name, httpStatus }: { name: string, httpStatus: number }): never => {
+    // A 404 is the author naming a variable that does not exist. Reporting it as an ENGINE error
+    // failed the whole run with INTERNAL_ERROR and no step list, so nothing said which of the
+    // flow's steps held the bad name (#392). Every other status really is an engine-side failure.
+    if (httpStatus === HTTP_NOT_FOUND) {
+        throw new VariableNotFoundError(name)
+    }
     throw new EngineGenericError('VariableResolutionError', `Variable ${name} could not be resolved (HTTP ${httpStatus})`)
 }
 
