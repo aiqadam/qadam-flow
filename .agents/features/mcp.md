@@ -70,6 +70,8 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 - `ap_export_table`, `ap_import_table` — export a table's schema (+ optional row data, capped at 500 rows with an explicit truncation note) as a `SharedTemplate` JSON / import one via `tableImportService.importTemplate` (`create` or `into-existing`, capped at 1000 imported rows)
 - `ap_list_variables`, `ap_upsert_variable`, `ap_delete_variable` — project variable management; see `variables.md`. `ap_upsert_variable` does the find-by-name-then-create-or-update itself — there is no server-side upsert endpoint (`variable.service.ts`'s `create` throws `QadamFlowError(VALIDATION)` on a duplicate name)
 
+**Chat gating.** Every tool registered here is also reachable from the chat agent, where `chat-tool-gating.ts` is **default-deny**: a tool nobody listed requires user approval per call. Adding a tool therefore means deciding its group there and updating the counted assertions in `test/unit/app/chat/chat-tool-gating.test.ts` — that test exists precisely so a new tool cannot join the ungated set silently. `ap_export_flow` / `ap_export_table` / `ap_list_variables` are in the read-only group (they write nothing, and their data is already reachable via the ungated `ap_flow_structure` / `ap_find_records`); the four import/variable writers are gated.
+
 **Dynamic flow tools**: Each enabled flow with MCP trigger piece is registered as a callable tool. Name format: `{toolName}_{flowId.substring(0, 4)}`. Execution: submits webhook to flow (sync if `returnsResponse`, async otherwise).
 
 ## Tool Pattern

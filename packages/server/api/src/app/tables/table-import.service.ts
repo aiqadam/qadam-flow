@@ -37,20 +37,30 @@ export const tableImportService = {
 
         const table = mode === 'into-existing'
             ? await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate })
-            : await tableService.create({
-                projectId,
-                request: {
-                    projectId,
-                    name: targetName,
-                    externalId: tableTemplate.externalId,
-                    fields: tableTemplate.fields,
-                },
-            })
+            : await createTableFromTemplate({ projectId, targetName, tableTemplate })
 
         const { importedCount, truncated } = await importRows({ projectId, tableId: table.id, data: tableTemplate.data, cap: maxRecords, log })
 
         return { table, importedCount, truncated, cap: maxRecords }
     },
+}
+
+async function createTableFromTemplate({ projectId, targetName, tableTemplate }: CreateTableFromTemplateParams): Promise<Table> {
+    // The template's externalId is what makes an export portable — a flow that addresses the table by
+    // it keeps working after an import into another project. Reusing it inside a project that already
+    // has that externalId would instead mint a second table sharing it, and `getOneByExternalIdOrThrow`
+    // resolves such a pair arbitrarily, so only the colliding case falls back to a fresh id.
+    const collision = await tableService.getOneByExternalIdOrNull({ projectId, externalId: tableTemplate.externalId })
+
+    return tableService.create({
+        projectId,
+        request: {
+            projectId,
+            name: targetName,
+            ...(isNil(collision) ? { externalId: tableTemplate.externalId } : {}),
+            fields: tableTemplate.fields,
+        },
+    })
 }
 
 async function importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }: ImportIntoExistingTableParams): Promise<Table> {
@@ -67,12 +77,16 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
     // through (createFromState's own assertion, or any other DB error mid-sequence) rolls back
     // the deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
     await transaction(async (entityManager: EntityManager) => {
-        await recordService.deleteAll({ tableId: existingTable.id, projectId, entityManager })
+        await recordService.deleteAll({ tableId: existingTable.id, projectId, entityManager, returnDeleted: false })
         const existingFields = await fieldService.getAll({ projectId, tableId: existingTable.id, entityManager })
         await Promise.all(existingFields.map((field) => fieldService.delete({ id: field.id, projectId, entityManager })))
 
         await tableService.update({ projectId, id: existingTable.id, request: { name: targetName }, entityManager })
-        await Promise.all(tableTemplate.fields.map((field) => fieldService.createFromState({ projectId, field, tableId: existingTable.id, entityManager })))
+        // Every insert in this transaction would otherwise share one `now()` default, and fields are
+        // read back ordered by `created` with no tiebreaker — so the template's column order has to
+        // be written into the timestamps to survive the round trip.
+        const createdAt = Date.now()
+        await Promise.all(tableTemplate.fields.map((field, index) => fieldService.createFromState({ projectId, field, tableId: existingTable.id, entityManager, created: new Date(createdAt + index) })))
     })
 
     return tableService.getOneOrThrow({ projectId, id: existingTable.id })
@@ -148,7 +162,7 @@ function assertImportableTable(tableTemplate: NonNullable<SharedTemplate['tables
     }
 }
 
-export type TableImportMode = 'create' | 'into-existing'
+type TableImportMode = 'create' | 'into-existing'
 
 type ImportTemplateParams = {
     projectId: string
@@ -165,6 +179,12 @@ type ImportTemplateResult = {
     importedCount: number
     truncated: boolean
     cap: number
+}
+
+type CreateTableFromTemplateParams = {
+    projectId: string
+    targetName: string
+    tableTemplate: NonNullable<SharedTemplate['tables']>[number]
 }
 
 type ImportIntoExistingTableParams = {

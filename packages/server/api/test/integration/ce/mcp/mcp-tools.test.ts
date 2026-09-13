@@ -23,6 +23,7 @@ import {
 import { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { transaction } from '../../../../src/app/core/db/transaction'
 import { flowService } from '../../../../src/app/flows/flow/flow.service'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { system } from '../../../../src/app/helper/system/system'
@@ -3115,6 +3116,43 @@ describe('MCP Tools integration', () => {
             expect(parsed.flows[0].trigger.nextAction.settings.input.someField).toBeUndefined()
         })
 
+        it('94b. ap_export_flow — strips connection references nested in an array, and padded ones', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Export Flow With Array Auth')
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.CODE,
+                displayName: 'Uses Connection In Array',
+            })
+            // Array-valued props (header lists, multi-selects) used to be copied through whole, so a
+            // reference inside one survived an export that claims to clear them. The padded form is
+            // here because the engine trims a token before resolving it, so it resolves at runtime.
+            await apUpdateStepTool(mcp, mockLog).execute({
+                flowId,
+                stepName: 'step_1',
+                input: {
+                    headers: [
+                        { key: 'Authorization', value: '{{connections[\'some-connection-id\'].access_token}}' },
+                        { key: 'X-Other', value: 'plain-value' },
+                    ],
+                    padded: '{{ connections[\'some-connection-id\'] }}',
+                    paddedDot: '{{ connections.some_connection }}',
+                },
+            })
+
+            const result = await apExportFlowTool(mcp, mockLog).execute({ flowId })
+            const parsed = JSON.parse(text(result))
+            const exportedInput = parsed.flows[0].trigger.nextAction.settings.input
+
+            expect(exportedInput.headers[0].value).toBeUndefined()
+            expect(exportedInput.headers[1].value).toEqual('plain-value')
+            expect(exportedInput.padded).toBeUndefined()
+            expect(exportedInput.paddedDot).toBeUndefined()
+        })
+
         it('95. ap_export_flow — tenant isolation: a flowId from another project is not found', async () => {
             const ctxA = await createTestContext(app)
             const ctxB = await createTestContext(app)
@@ -3281,6 +3319,10 @@ describe('MCP Tools integration', () => {
             const resultText = text(result)
 
             expect(resultText).toContain('truncated to 500 of 501 rows')
+            // The note is computed from a COUNT, so it says "500" even if the payload carried some
+            // other number of rows — the cap itself has to be asserted on the payload.
+            const parsed = JSON.parse(resultText.replace(/\n\n⚠️.*$/s, ''))
+            expect(parsed.tables[0].data.rows.length).toEqual(500)
         })
 
         it('103. ap_export_table — tenant isolation: a tableId from another project is not found', async () => {
@@ -3322,6 +3364,39 @@ describe('MCP Tools integration', () => {
 
             expect(text(result)).toContain('✅')
             expect(text(result)).toContain('1 row(s) inserted')
+        })
+
+        it('104a. ap_import_table — mode "create" keeps the template externalId, but never mints a duplicate of one already in the project', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const sharedExternalId = apId()
+            const template = {
+                name: 'Portable', summary: '', description: '', qadams: [], tags: [], blogUrl: '', metadata: {}, author: '', categories: [],
+                type: 'SHARED', status: 'PUBLISHED',
+                tables: [{
+                    id: apId(), name: 'Portable', externalId: sharedExternalId, status: 'ENABLED',
+                    fields: [{ id: apId(), name: 'Only', type: FieldType.TEXT, externalId: apId() }],
+                    data: { type: 'CSV', rows: [] },
+                }],
+            }
+
+            // First import into a project that has no such externalId: the template's own is kept, so
+            // a flow addressing the table by externalId keeps resolving after the move.
+            const first = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'create' })
+            expect(text(first)).toContain('✅')
+            const afterFirst = await tableService.list({ projectId: ctx.project.id, cursor: undefined, limit: 10, externalIds: [sharedExternalId], name: undefined, folderId: undefined })
+            expect(afterFirst.data.length).toEqual(1)
+
+            // Re-importing the same template into the same project must not produce a second table
+            // sharing that externalId — getOneByExternalIdOrThrow would then resolve the pair
+            // arbitrarily, and neither table is reliably addressable again.
+            const second = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'create' })
+            expect(text(second)).toContain('✅')
+            const afterSecond = await tableService.list({ projectId: ctx.project.id, cursor: undefined, limit: 10, externalIds: [sharedExternalId], name: undefined, folderId: undefined })
+            expect(afterSecond.data.length).toEqual(1)
+
+            const allTables = await tableService.list({ projectId: ctx.project.id, cursor: undefined, limit: 10, name: 'Portable', externalIds: undefined, folderId: undefined })
+            expect(allTables.data.length).toEqual(2)
         })
 
         it('105. ap_import_table — mode "into-existing" clears and replaces an existing table', async () => {
@@ -3391,6 +3466,43 @@ describe('MCP Tools integration', () => {
             expect(text(result)).toContain('✅')
             const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
             expect(fields.map(f => f.name)).toEqual(['NewFieldA', 'NewFieldB', 'NewFieldC'])
+        })
+
+        it('105a. ap_import_table — "into-existing" preserves the template\'s column order across enough fields to rule out luck', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const existingTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Order Target' },
+            })
+            await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Doomed', type: FieldType.TEXT, tableId: existingTable.id },
+            })
+
+            // Ten fields, deliberately not in alphabetical order. Every field of this import is
+            // inserted inside one transaction, where the `created` column default is the single
+            // transaction timestamp — identical for all of them — and `fieldService.getAll` orders by
+            // `created` with no tiebreaker. Without an explicit per-field stamp the returned order is
+            // whatever the heap gives back, which three fields are small enough to hide.
+            const names = ['Zulu', 'Alpha', 'Mike', 'Bravo', 'Yankee', 'Charlie', 'X-ray', 'Delta', 'Whiskey', 'Echo']
+            const result = await apImportTableTool(mcp, mockLog).execute({
+                template: {
+                    name: 'Ordered', summary: '', description: '', qadams: [], tags: [], blogUrl: '', metadata: {}, author: '', categories: [],
+                    type: 'SHARED', status: 'PUBLISHED',
+                    tables: [{
+                        id: apId(), name: 'Ordered', externalId: apId(), status: 'ENABLED',
+                        fields: names.map((name) => ({ id: apId(), name, type: FieldType.TEXT, externalId: apId() })),
+                        data: { type: 'CSV', rows: [] },
+                    }],
+                },
+                mode: 'into-existing',
+                existingTableId: existingTable.id,
+            })
+
+            expect(text(result)).toContain('✅')
+            const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(fields.map(f => f.name)).toEqual(names)
         })
 
         it('106. ap_import_table — tenant isolation: existingTableId from another project is rejected', async () => {
@@ -3493,16 +3605,12 @@ describe('MCP Tools integration', () => {
             expect(recordCount).toEqual(1)
         })
 
-        // Regression guard for a pool-starvation bug (the same class already pinned in
-        // record.test.ts's "does not starve the connection pool when many cell writes
-        // overlap"): recordService.deleteAll used to format its (discarded) return value via
-        // fieldService.getAll on the DEFAULT connection while the caller's own transaction
-        // still held a connection. Each concurrent "into-existing" import against a table
-        // with existing rows then held one connection and waited for a second; past
-        // AP_POSTGRES_POOL_SIZE (pg's own default of 10, set nowhere in this repo) concurrent
-        // overlaps, none could be issued and none released — no Postgres lock cycle, so
-        // nothing broke it, and the process served this path until restarted. 12 overlapping
-        // imports against a pool of 10: raise the count if the default pool size ever does.
+        // End-to-end guard that the import transaction as a whole never waits on a second
+        // connection: 12 overlapping imports against pg's default pool of 10 (AP_POSTGRES_POOL_SIZE
+        // is set nowhere in this repo). Any call added inside that transaction which reaches for
+        // the default connection deadlocks every one of them with no Postgres lock cycle to break
+        // it, so this fails by timing out rather than by asserting. 106d pins the specific call
+        // that did exactly this; raise the count here if the default pool size ever changes.
         it('106c. ap_import_table — does not starve the connection pool across concurrent "into-existing" imports', async () => {
             const ctx = await createTestContext(app)
             const mcp = makeMcp(ctx.project.id)
@@ -3541,6 +3649,42 @@ describe('MCP Tools integration', () => {
             })))
 
             expect(results.every((result) => text(result).includes('✅'))).toBe(true)
+        })
+
+        // The bug 106c was originally written for: recordService.deleteAll formatted its return
+        // value through fieldService.getAll on the DEFAULT connection while the caller's
+        // transaction still held one. The import path no longer asks for that return value
+        // (`returnDeleted: false`), so it can no longer reach this — which is exactly why the guard
+        // has to call the service directly. Drop `entityManager` from formatRecordsAndFetchField's
+        // call in record.service.ts and this test hangs instead of failing fast.
+        it('106d. recordService.deleteAll — returning the deleted rows inside a caller transaction takes no second connection', async () => {
+            const ctx = await createTestContext(app)
+            const CONCURRENT_DELETES = 12
+
+            const tables = await Promise.all(Array.from({ length: CONCURRENT_DELETES }, async (_, index) => {
+                const table = await tableService.create({
+                    projectId: ctx.project.id,
+                    request: { projectId: ctx.project.id, name: `Pool Guard Table ${index}` },
+                })
+                const field = await fieldService.create({
+                    projectId: ctx.project.id,
+                    request: { name: 'Existing', type: FieldType.TEXT, tableId: table.id },
+                })
+                await recordService.create({
+                    request: { tableId: table.id, records: [[{ fieldId: field.id, value: `row-${index}` }]] },
+                    projectId: ctx.project.id,
+                    logger: mockLog,
+                })
+                return table
+            }))
+
+            const deleted = await Promise.all(tables.map((table) => transaction((entityManager) =>
+                recordService.deleteAll({ tableId: table.id, projectId: ctx.project.id, entityManager, returnDeleted: true }),
+            )))
+
+            // Non-empty is what makes the guard load-bearing: an empty table short-circuits before
+            // the formatting call this exists to cover.
+            expect(deleted.every((records) => records.length === 1)).toBe(true)
         })
     })
 

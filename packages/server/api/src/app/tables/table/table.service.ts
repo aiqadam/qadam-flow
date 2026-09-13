@@ -52,8 +52,12 @@ export const tableService = {
             folderId,
         })
         if (request.fields) {
-            await Promise.all(request.fields.map(async (field) => {
-                await fieldService.createFromState({ projectId, field, tableId: table.id })
+            // Stamped per index rather than left to the column default: concurrent inserts commit in
+            // an arbitrary order, and `fieldService.getAll` sorts on `created` with no tiebreaker, so
+            // without this the caller's column order is not what they get back.
+            const createdAt = Date.now()
+            await Promise.all(request.fields.map(async (field, index) => {
+                await fieldService.createFromState({ projectId, field, tableId: table.id, created: new Date(createdAt + index) })
             }))
         }
         return table
@@ -137,6 +141,13 @@ export const tableService = {
             })
         }
         return table
+    },
+
+    async getOneByExternalIdOrNull({
+        projectId,
+        externalId,
+    }: GetOneByExternalIdParams): Promise<Table | null> {
+        return tableRepo().findOneBy({ projectId, externalId })
     },
 
     async getTemplate({

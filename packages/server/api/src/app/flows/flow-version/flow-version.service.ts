@@ -352,32 +352,41 @@ async function applySingleOperation(
     return updatedFlowVersion
 }
 
+// The engine trims a template token before resolving it (`props-resolver.ts`), so `{{ connections[...] }}`
+// with padding resolves at runtime and has to be stripped here as well. The bracket form mirrors the
+// engine's own BRACKET_NAME_PATTERN, quote style and all.
+const CONNECTION_DOT_REFERENCE = /\{\{\s*connections\.[^}]*\}\}/g
+const CONNECTION_BRACKET_REFERENCE = /\{\{\s*connections\s*\[(['"])[^'"]*\1\][^}]*\}\}/g
+
 function removeConnectionsFromInput(
     obj: Record<string, unknown>,
 ): Record<string, unknown> {
     if (isNil(obj)) {
         return obj
     }
-    const replacedObj: Record<string, unknown> = {}
+    return Object.fromEntries(
+        Object.entries(obj).map(([key, value]) => [key, stripConnectionReferences(value)]),
+    )
+}
 
-    for (const [key, value] of Object.entries(obj)) {
-        if (Array.isArray(value)) {
-            replacedObj[key] = value
-        }
-        else if (typeof value === 'object' && value !== null) {
-            replacedObj[key] = removeConnectionsFromInput(value as Record<string, unknown>)
-        }
-        else if (typeof value === 'string') {
-            const replacedValue = value
-                .replace(/\{{connections\.[^}]*}}/g, '')
-                .replace(/\{{connections\[(['"])[^'"]*\1\][^}]*}}/g, '')
-            replacedObj[key] = replacedValue === '' ? undefined : replacedValue
-        }
-        else {
-            replacedObj[key] = value
-        }
+// Arrays used to be passed through whole, which quietly exempted every list-shaped prop
+// (multi-selects, header/query-param lists) from the stripping the export promises.
+function stripConnectionReferences(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(stripConnectionReferences)
     }
-    return replacedObj
+    if (typeof value === 'object' && value !== null) {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, nested]) => [key, stripConnectionReferences(nested)]),
+        )
+    }
+    if (typeof value !== 'string') {
+        return value
+    }
+    const stripped = value
+        .replace(CONNECTION_DOT_REFERENCE, '')
+        .replace(CONNECTION_BRACKET_REFERENCE, '')
+    return stripped === '' ? undefined : stripped
 }
 
 type GetFlowVersionOrThrowParams = {

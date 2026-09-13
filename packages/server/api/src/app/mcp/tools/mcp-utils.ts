@@ -1,5 +1,5 @@
 import { PropertyType, QadamMetadataModel, QadamPropertyMap } from '@aiqadam/qadams-framework'
-import { AgentQadamProps, AgentToolType, BranchOperator, FlowActionType, flowStructureUtil, isNil, isObject, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
+import { AgentQadamProps, AgentToolType, BranchOperator, ErrorCode, FlowActionType, flowStructureUtil, isNil, isObject, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
 import type { RouterAction, Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -27,33 +27,34 @@ const RESOLVABLE_PROP_TYPES = new Set<PropertyType>([
 const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].message}}.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
-    const entityDetail = extractQadamFlowErrorDetail(err, 'ENTITY_NOT_FOUND')
+    // Every branch below is sanitized, including the two that read a `params.message` written by
+    // our own code: this runs for all MCP tools, and the sanitizer's job is to keep a container
+    // path out of a client-visible string no matter which throw site produced it.
+    const entityDetail = extractQadamFlowErrorDetail({ err, code: ErrorCode.ENTITY_NOT_FOUND })
     if (entityDetail) {
-        return { content: [{ type: 'text', text: `❌ ${prefix}: ${entityDetail} not found. Check the ID or name and try again.` }], isError: true }
+        return { content: [{ type: 'text', text: `❌ ${prefix}: ${sanitizeErrorMessage(entityDetail)} not found. Check the ID or name and try again.` }], isError: true }
     }
-    const validationDetail = extractQadamFlowErrorDetail(err, 'VALIDATION')
+    const validationDetail = extractQadamFlowErrorDetail({ err, code: ErrorCode.VALIDATION })
     if (validationDetail) {
-        return { content: [{ type: 'text', text: `❌ ${prefix}: ${validationDetail}` }], isError: true }
+        return { content: [{ type: 'text', text: `❌ ${prefix}: ${sanitizeErrorMessage(validationDetail)}` }], isError: true }
     }
     const raw = err instanceof Error ? err.message : String(err)
-    const message = sanitizeErrorMessage(raw)
-    return { content: [{ type: 'text', text: `❌ ${prefix}: ${message}` }], isError: true }
+    return { content: [{ type: 'text', text: `❌ ${prefix}: ${sanitizeErrorMessage(raw)}` }], isError: true }
 }
 
 // QadamFlowError's own `.message` getter only reflects its constructor's optional second
 // argument, never `error.params.message` — so a plain `err.message` read here would show just
 // the bare error code (e.g. "VALIDATION") for every caller that (like most in this codebase)
 // puts the human-readable detail in `params.message` instead.
-function extractQadamFlowErrorDetail(err: unknown, code: 'ENTITY_NOT_FOUND' | 'VALIDATION'): string | null {
+function extractQadamFlowErrorDetail({ err, code }: ExtractQadamFlowErrorDetailParams): string | null {
     if (!isObject(err)) return null
-    const error = (err as Record<string, unknown>).error
+    const error = err.error
     if (!isObject(error)) return null
-    const typed = error as Record<string, unknown>
-    if (typed.code !== code) return null
-    if (!isObject(typed.params)) return null
-    const params = typed.params as Record<string, unknown>
+    if (error.code !== code) return null
+    const params = error.params
+    if (!isObject(params)) return null
     if (typeof params.message === 'string') return params.message
-    if (code !== 'ENTITY_NOT_FOUND') return null
+    if (code !== ErrorCode.ENTITY_NOT_FOUND) return null
     const entityType = typeof params.entityType === 'string' ? params.entityType : null
     const entityId = typeof params.entityId === 'string' ? params.entityId : null
     if (entityType) return `${entityType}${entityId ? ` "${entityId}"` : ''}`
@@ -494,6 +495,11 @@ export const mcpUtils = {
 }
 
 export type { PropSummary }
+
+type ExtractQadamFlowErrorDetailParams = {
+    err: unknown
+    code: ErrorCode.ENTITY_NOT_FOUND | ErrorCode.VALIDATION
+}
 
 type FindResolvablePropsParams = {
     props: PropSummary[]

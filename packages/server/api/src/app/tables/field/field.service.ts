@@ -1,4 +1,4 @@
-import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, isNil, QadamFlowError, UpdateFieldRequest } from '@aiqadam/shared'
+import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, isNil, QadamFlowError, spreadIfDefined, UpdateFieldRequest } from '@aiqadam/shared'
 import { EntityManager, In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { system } from '../../helper/system/system'
@@ -8,10 +8,16 @@ import { FieldEntity } from './field.entity'
 const fieldRepo = repoFactory<Field>(FieldEntity)
 
 export const fieldService = {
-    async create({ request, projectId, entityManager }: CreateParams): Promise<Field> {
+    async create({ request, projectId, entityManager, created }: CreateParams): Promise<Field> {
         await this.validateCount({ projectId, tableId: request.tableId, entityManager })
+        // `created` is accepted so a caller building a whole table's columns at once can make their
+        // order reproducible. Left to the column default it is `now()`, which inside a transaction
+        // is the *transaction* timestamp and therefore identical for every field of that batch —
+        // and `getAll` orders by `created` with no tiebreaker, so the column order would be
+        // whatever the heap happened to return.
         const field = await fieldRepo(entityManager).save({
             ...request,
+            ...spreadIfDefined('created', created?.toISOString()),
             projectId,
             id: apId(),
             externalId: request.externalId ?? apId(),
@@ -19,13 +25,14 @@ export const fieldService = {
         return field
     },
 
-    async createFromState({ projectId, field, tableId, entityManager }: CreateFromStateParams): Promise<Field> {
+    async createFromState({ projectId, field, tableId, entityManager, created }: CreateFromStateParams): Promise<Field> {
         switch (field.type) {
             case FieldType.STATIC_DROPDOWN: {
                 assertNotNullOrUndefined(field.data, 'Data is required for static dropdown field')
                 return this.create({
                     projectId,
                     entityManager,
+                    created,
                     request: {
                         name: field.name,
                         type: field.type,
@@ -41,6 +48,7 @@ export const fieldService = {
                 return this.create({
                     projectId,
                     entityManager,
+                    created,
                     request: {
                         name: field.name,
                         type: field.type,
@@ -142,6 +150,7 @@ type CreateParams = {
     projectId: string
     request: CreateFieldRequest
     entityManager?: EntityManager
+    created?: Date
 }
 
 type CreateFromStateParams = {
@@ -149,6 +158,7 @@ type CreateFromStateParams = {
     field: FieldState
     tableId: string
     entityManager?: EntityManager
+    created?: Date
 }
 
 type GetAllParams = {

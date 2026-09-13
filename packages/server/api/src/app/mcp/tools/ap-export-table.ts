@@ -23,8 +23,9 @@ export const apExportTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
             try {
                 const { tableId, includeRecords } = exportTableInput.parse(args)
 
-                // Schema-only requests (the default) skip the record fetch entirely — the
-                // service never loads a row or cell for them.
+                // Defaulting to schema-only keeps the common GitOps call cheap: a table with
+                // rows would otherwise be fetched with its whole `cells` relation just to be
+                // discarded by a caller that only wanted the shape.
                 const template = await tableService.getTemplate({
                     tableId,
                     userMetadata: null,

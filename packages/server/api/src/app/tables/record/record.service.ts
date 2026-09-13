@@ -527,8 +527,17 @@ export const recordService = {
         tableId,
         projectId,
         entityManager,
+        returnDeleted = true,
     }: DeleteAllParams): Promise<PopulatedRecord[]> {
         const deleteWithManager = async (manager: EntityManager): Promise<RecordSchema[]> => {
+            // A caller that discards the result must not pay to build it: at the configured ceiling
+            // of 10k records x 100 fields the `cells` relation alone is a million rows, materialised
+            // and formatted while this holds the import transaction's connection open.
+            if (!returnDeleted) {
+                await manager.getRepository(RecordEntity).delete({ projectId, tableId })
+                return []
+            }
+
             const records = await manager.getRepository(RecordEntity).find({
                 where: { projectId, tableId },
                 relations: ['cells'],
@@ -676,6 +685,7 @@ type DeleteAllParams = {
     tableId: string
     projectId: string
     entityManager?: EntityManager
+    returnDeleted?: boolean
 }
 
 type TriggerWebhooksParams = {
