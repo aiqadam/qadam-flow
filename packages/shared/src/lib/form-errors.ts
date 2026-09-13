@@ -11,4 +11,5 @@ export const formErrors = {
     modelIdentifierTooLong: 'modelIdentifierTooLong',
     invalidAzureResourceName: 'invalidAzureResourceName',
     invalidAwsRegion: 'invalidAwsRegion',
+    valueNotInOptions: 'valueNotInOptions',
 } as const

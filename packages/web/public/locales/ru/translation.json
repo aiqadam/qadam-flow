@@ -1983,6 +1983,7 @@
   "invalidAzureResourceName": "Имя ресурса Azure — 2–64 буквы, цифры или дефисы, без URL и имени хоста",
   "The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.": "Сохранённое имя ресурса Azure недействительно. Пересохраните провайдера с именем из 2–64 букв, цифр и дефисов.",
   "invalidAwsRegion": "Регион AWS — строчные буквы, цифры или дефисы, например us-east-1",
+  "valueNotInOptions": "Значение должно быть одним из доступных вариантов этого поля",
   "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "Сохранённый регион AWS недействителен. Пересохраните провайдера с регионом, например us-east-1.",
   "This platform has reached its limit of custom AI providers": "На этой платформе достигнут лимит пользовательских AI-провайдеров"
 }

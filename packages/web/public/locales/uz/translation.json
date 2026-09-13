@@ -1983,6 +1983,7 @@
   "invalidAzureResourceName": "Azure resurs nomi 2–64 ta harf, raqam yoki defisdan iborat bo'lishi kerak — URL yoki xost nomi emas",
   "The stored Azure resource name is not valid. Re-save this provider with a resource name of 2-64 letters, digits and hyphens.": "Saqlangan Azure resurs nomi yaroqsiz. Provayderni 2–64 ta harf, raqam va defisdan iborat nom bilan qayta saqlang.",
   "invalidAwsRegion": "AWS hududi kichik harflar, raqamlar yoki defislardan iborat bo'lishi kerak — masalan us-east-1",
+  "valueNotInOptions": "Qiymat ushbu maydonning mavjud variantlaridan biri bo'lishi kerak",
   "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "Saqlangan AWS hududi yaroqsiz. Provayderni us-east-1 kabi hudud bilan qayta saqlang.",
   "This platform has reached its limit of custom AI providers": "Bu platformada moslashtirilgan AI provayderlari limitiga yetildi"
 }
