@@ -46,11 +46,16 @@ export const apImportTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 const truncationNote = result.truncated
                     ? `\n⚠️ truncated to ${result.cap} rows — the template contained more rows than the import cap.`
                     : ''
+                // Silence here would be a trap for the GitOps use case this tool exists for: a flow
+                // that addresses the table by the template's externalId will not resolve to this copy.
+                const externalIdNote = result.externalIdReplaced
+                    ? `\n⚠️ this project already has a table with the template's externalId, so a new one (${result.table.externalId}) was assigned — references to the original externalId will not resolve to this table.`
+                    : ''
 
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Table "${result.table.name}" (id: ${result.table.id}) imported. ${result.importedCount} row(s) inserted.${truncationNote}`,
+                        text: `✅ Table "${result.table.name}" (id: ${result.table.id}) imported. ${result.importedCount} row(s) inserted.${truncationNote}${externalIdNote}`,
                     }],
                 }
             }

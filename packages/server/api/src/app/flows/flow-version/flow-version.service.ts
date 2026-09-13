@@ -365,19 +365,24 @@ function removeConnectionsFromInput(
         return obj
     }
     return Object.fromEntries(
-        Object.entries(obj).map(([key, value]) => [key, stripConnectionReferences(value)]),
+        Object.entries(obj).map(([key, value]) => [key, stripConnectionReferences({ value })]),
     )
 }
 
 // Arrays used to be passed through whole, which quietly exempted every list-shaped prop
 // (multi-selects, header/query-param lists) from the stripping the export promises.
-function stripConnectionReferences(value: unknown): unknown {
+//
+// `insideArray` exists because the two containers need different empties. Dropping an object key
+// makes it vanish from the exported JSON, which is what a cleared input should look like; doing the
+// same to an array element would instead leave a `null` hole that JSON.stringify writes out and
+// ap_import_flow writes back — a `null` where a `string[]` prop declares a string.
+function stripConnectionReferences({ value, insideArray = false }: StripConnectionReferencesParams): unknown {
     if (Array.isArray(value)) {
-        return value.map(stripConnectionReferences)
+        return value.map((item) => stripConnectionReferences({ value: item, insideArray: true }))
     }
     if (typeof value === 'object' && value !== null) {
         return Object.fromEntries(
-            Object.entries(value).map(([key, nested]) => [key, stripConnectionReferences(nested)]),
+            Object.entries(value).map(([key, nested]) => [key, stripConnectionReferences({ value: nested })]),
         )
     }
     if (typeof value !== 'string') {
@@ -386,7 +391,15 @@ function stripConnectionReferences(value: unknown): unknown {
     const stripped = value
         .replace(CONNECTION_DOT_REFERENCE, '')
         .replace(CONNECTION_BRACKET_REFERENCE, '')
-    return stripped === '' ? undefined : stripped
+    if (stripped !== '') {
+        return stripped
+    }
+    return insideArray ? '' : undefined
+}
+
+type StripConnectionReferencesParams = {
+    value: unknown
+    insideArray?: boolean
 }
 
 type GetFlowVersionOrThrowParams = {

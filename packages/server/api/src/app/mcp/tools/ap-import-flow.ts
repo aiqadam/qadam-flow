@@ -38,8 +38,8 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
 
                 const project = await projectService(log).getOneOrThrow(mcp.projectId)
 
-                const operation = {
-                    type: FlowOperationType.IMPORT_FLOW as const,
+                const operation: ImportFlowOperation = {
+                    type: FlowOperationType.IMPORT_FLOW,
                     request: {
                         displayName: name,
                         trigger: flowTemplate.trigger,
@@ -126,6 +126,16 @@ function validateTemplateShape(template: Record<string, unknown>): ValidateTempl
         return { ok: false, error: 'template.flows must contain exactly one flow — ap_import_flow supports single-flow import only.' }
     }
     return { ok: true, name: parsed.data.name, flowTemplate: flows[0] }
+}
+
+type ImportFlowOperation = {
+    type: FlowOperationType.IMPORT_FLOW
+    request: {
+        displayName: string
+        trigger: FlowVersionTemplate['trigger']
+        schemaVersion: string | null
+        notes: FlowVersionTemplate['notes'] | null
+    }
 }
 
 type ValidateTemplateShapeResult =

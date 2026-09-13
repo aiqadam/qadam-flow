@@ -11,6 +11,10 @@
  *
  * The annotations cannot be the source of truth, which is why this list is hand-written and tested
  * against the registry. Audited across all 42 registered tools on 2026-07-31:
+ * (re-audited on 2026-09-13 for the seven export/import/variable tools added by #438, which take the
+ * registry to 48; the annotation-derived selection is no better on those than it was on the original
+ * 42 — `ap_import_flow` declares `destructiveHint: true` even when it creates rather than overwrites,
+ * and the three read tools declare `readOnlyHint: true`, which is right but is not what decides this)
  * `destructiveHint || openWorldHint` selects the five deletes, `ap_run_action`, `ap_test_flow`,
  * `ap_test_step` and `ap_list_ai_models` — so it **under**-selects (missing `ap_lock_and_publish`
  * and `ap_change_flow_status`, which publish or enable a flow that then runs against real data, and

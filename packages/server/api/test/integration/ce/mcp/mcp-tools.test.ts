@@ -3140,6 +3140,7 @@ describe('MCP Tools integration', () => {
                     ],
                     padded: '{{ connections[\'some-connection-id\'] }}',
                     paddedDot: '{{ connections.some_connection }}',
+                    tokens: ['{{connections[\'some-connection-id\']}}', 'keep-me'],
                 },
             })
 
@@ -3151,6 +3152,10 @@ describe('MCP Tools integration', () => {
             expect(exportedInput.headers[1].value).toEqual('plain-value')
             expect(exportedInput.padded).toBeUndefined()
             expect(exportedInput.paddedDot).toBeUndefined()
+            // An array element that strips to nothing must stay a string. Dropping it the way an
+            // object key is dropped leaves a hole that serializes as `null`, and ap_import_flow
+            // would write that null back into a prop whose schema declares string[].
+            expect(exportedInput.tokens).toEqual(['', 'keep-me'])
         })
 
         it('95. ap_export_flow — tenant isolation: a flowId from another project is not found', async () => {
@@ -3392,11 +3397,44 @@ describe('MCP Tools integration', () => {
             // arbitrarily, and neither table is reliably addressable again.
             const second = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'create' })
             expect(text(second)).toContain('✅')
+            // Silently dropping the portable externalId would leave a GitOps caller believing its
+            // flows still resolve to this table.
+            expect(text(second)).toContain('externalId')
+            expect(text(first)).not.toContain('externalId')
             const afterSecond = await tableService.list({ projectId: ctx.project.id, cursor: undefined, limit: 10, externalIds: [sharedExternalId], name: undefined, folderId: undefined })
             expect(afterSecond.data.length).toEqual(1)
 
             const allTables = await tableService.list({ projectId: ctx.project.id, cursor: undefined, limit: 10, name: 'Portable', externalIds: undefined, folderId: undefined })
             expect(allTables.data.length).toEqual(2)
+        })
+
+        it('104b. ap_import_table — mode "create" preserves the template\'s column order too', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+
+            // `tableService.create` builds its fields with a concurrent Promise.all on separate
+            // connections, so commit order — and therefore the `created` the columns are sorted by —
+            // is not the array order unless each one is stamped. 104/104a use a single field and so
+            // cannot see this; `create` mode is a different code path from 105a's `into-existing`.
+            const names = ['Zulu', 'Alpha', 'Mike', 'Bravo', 'Yankee', 'Charlie', 'X-ray', 'Delta', 'Whiskey', 'Echo']
+            const result = await apImportTableTool(mcp, mockLog).execute({
+                template: {
+                    name: 'Created Ordered', summary: '', description: '', qadams: [], tags: [], blogUrl: '', metadata: {}, author: '', categories: [],
+                    type: 'SHARED', status: 'PUBLISHED',
+                    tables: [{
+                        id: apId(), name: 'Created Ordered', externalId: apId(), status: 'ENABLED',
+                        fields: names.map((name) => ({ id: apId(), name, type: FieldType.TEXT, externalId: apId() })),
+                        data: { type: 'CSV', rows: [] },
+                    }],
+                },
+                mode: 'create',
+            })
+
+            expect(text(result)).toContain('✅')
+            const tables = await tableService.list({ projectId: ctx.project.id, cursor: undefined, limit: 10, name: 'Created Ordered', externalIds: undefined, folderId: undefined })
+            expect(tables.data.length).toEqual(1)
+            const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: tables.data[0].id })
+            expect(fields.map(f => f.name)).toEqual(names)
         })
 
         it('105. ap_import_table — mode "into-existing" clears and replaces an existing table', async () => {
@@ -3503,6 +3541,12 @@ describe('MCP Tools integration', () => {
             expect(text(result)).toContain('✅')
             const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
             expect(fields.map(f => f.name)).toEqual(names)
+            // The order above is the user-visible outcome, but without the fix it is *unspecified*
+            // rather than wrong — a planner change could return insertion order and pass. Strictly
+            // increasing `created` is the property the code actually guarantees, and it cannot hold
+            // by accident: unstamped inserts in one transaction all share the transaction timestamp.
+            const timestamps = fields.map(f => new Date(f.created).getTime())
+            expect(timestamps.every((value, index) => index === 0 || value > timestamps[index - 1])).toBe(true)
         })
 
         it('106. ap_import_table — tenant isolation: existingTableId from another project is rejected', async () => {

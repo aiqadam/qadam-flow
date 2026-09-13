@@ -35,32 +35,39 @@ export const tableImportService = {
         assertImportableTable(tableTemplate)
         const targetName = name ?? tableTemplate.name
 
-        const table = mode === 'into-existing'
-            ? await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate })
+        const created = mode === 'into-existing'
+            ? { table: await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }), externalIdReplaced: false }
             : await createTableFromTemplate({ projectId, targetName, tableTemplate })
 
-        const { importedCount, truncated } = await importRows({ projectId, tableId: table.id, data: tableTemplate.data, cap: maxRecords, log })
+        const { importedCount, truncated } = await importRows({ projectId, tableId: created.table.id, data: tableTemplate.data, cap: maxRecords, log })
 
-        return { table, importedCount, truncated, cap: maxRecords }
+        return { table: created.table, importedCount, truncated, cap: maxRecords, externalIdReplaced: created.externalIdReplaced }
     },
 }
 
-async function createTableFromTemplate({ projectId, targetName, tableTemplate }: CreateTableFromTemplateParams): Promise<Table> {
+async function createTableFromTemplate({ projectId, targetName, tableTemplate }: CreateTableFromTemplateParams): Promise<CreatedTable> {
     // The template's externalId is what makes an export portable — a flow that addresses the table by
     // it keeps working after an import into another project. Reusing it inside a project that already
     // has that externalId would instead mint a second table sharing it, and `getOneByExternalIdOrThrow`
     // resolves such a pair arbitrarily, so only the colliding case falls back to a fresh id.
+    //
+    // Check-then-create, with no unique index on (projectId, externalId) to arbitrate: two imports of
+    // the same template racing each other can still both keep it. That narrows the window from always
+    // to concurrent-only; closing it needs the index, which is a migration on a populated table and
+    // does not belong in this change.
     const collision = await tableService.getOneByExternalIdOrNull({ projectId, externalId: tableTemplate.externalId })
+    const externalIdReplaced = !isNil(collision)
 
-    return tableService.create({
+    const table = await tableService.create({
         projectId,
         request: {
             projectId,
             name: targetName,
-            ...(isNil(collision) ? { externalId: tableTemplate.externalId } : {}),
+            ...(externalIdReplaced ? {} : { externalId: tableTemplate.externalId }),
             fields: tableTemplate.fields,
         },
     })
+    return { table, externalIdReplaced }
 }
 
 async function importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }: ImportIntoExistingTableParams): Promise<Table> {
@@ -179,6 +186,12 @@ type ImportTemplateResult = {
     importedCount: number
     truncated: boolean
     cap: number
+    externalIdReplaced: boolean
+}
+
+type CreatedTable = {
+    table: Table
+    externalIdReplaced: boolean
 }
 
 type CreateTableFromTemplateParams = {

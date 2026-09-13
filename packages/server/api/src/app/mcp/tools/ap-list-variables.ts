@@ -46,7 +46,9 @@ export const apListVariablesTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     }
 }
 
+// The owner's email is deliberately not printed. This tool is ungated for the chat agent, and no
+// other ungated tool emits a project member's email — printing it would put one into a third-party
+// model provider's context on an unconfirmed call, for information the model has no use for.
 function formatVariableLine(variable: VariableWithoutSensitiveData): string {
-    const owner = variable.owner ? ` — owner: ${variable.owner.email}` : ''
-    return `- ${variable.name} (id: ${variable.id}) — reference: {{variables['${variable.name}']}}, created: ${variable.created}, updated: ${variable.updated}${owner}`
+    return `- ${variable.name} (id: ${variable.id}) — reference: {{variables['${variable.name}']}}, created: ${variable.created}, updated: ${variable.updated}`
 }
