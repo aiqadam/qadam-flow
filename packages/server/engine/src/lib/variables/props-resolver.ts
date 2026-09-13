@@ -11,7 +11,13 @@ const CONNECTIONS = 'connections'
 const VARIABLES = 'variables'
 // Both quote styles. `{{variables["NAME"]}}` is one character away from the form the unresolved-
 // reference error itself recommends, and matching only `'` made that typo resolve to `''`.
-const BRACKET_NAME_PATTERN = /\[\s*(['"])([^'"]+)\1\s*\]/
+// No whitespace tolerance, deliberately: `['x']` and `["x"]` are the same length, so the
+// double-quoted form lands on the same index as the single-quoted one in
+// `parsePathAfterConnectionName`, which reconstructs its prefix by length. Accepting
+// `[ 'x' ]` would parse the name and then leave that arithmetic short by the padding, so the
+// leftover `]` would fail to evaluate and the expression would resolve to `''` again — after
+// burning a real connection fetch. Padded forms stay unparseable, which now means they raise.
+const BRACKET_NAME_PATTERN = /\[(['"])([^'"]+)\1\]/
 const FLATTEN_NESTED_KEYS_PATTERN = /\{\{\s*flattenNestedKeys(.*?)\}\}/g
 async function replaceTokensAsync(
     str: string,

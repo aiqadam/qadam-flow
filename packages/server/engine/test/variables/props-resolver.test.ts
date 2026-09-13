@@ -287,6 +287,21 @@ describe('Props resolver', () => {
         expect(doubleError).toContain('v1/worker/app-connections/slack')
     })
 
+    // Padding inside the brackets is not accepted on purpose: parsing the name while
+    // `parsePathAfterConnectionName` still measures the prefix by length would resolve the
+    // connection and then throw its value away, which is the silent empty string all over again.
+    test('a padded bracket reference fails the resolve rather than resolving to empty', async () => {
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{connections[ \'slack\' ]}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+
+        await expect(propsResolverService.resolve({
+            unresolvedInput: '{{variables[ \'SIGNING_KEY\' ]}}',
+            executionState,
+        })).rejects.toThrow('does not name anything this run can read')
+    })
+
     test('a connection reference that names nothing readable fails the resolve', async () => {
         await expect(propsResolverService.resolve({
             unresolvedInput: '{{connections}}',
