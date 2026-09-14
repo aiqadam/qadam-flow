@@ -52,7 +52,7 @@ working — never edit a mirror; add content under `.agents/` only.
 | Path | Size | When | What |
 | --- | --- | --- | --- |
 | `AGENTS.md` (this file) + per-package `AGENTS.md` | — | Every session | Rules every task needs |
-| `.agents/features/*.md` | 35–220 lines each | Before modifying a module | Entity schemas, services, data flows |
+| `.agents/features/*.md` | 35–221 lines each | Before modifying a module | Entity schemas, services, data flows |
 | `.agents/rules/*.md` | 2–15 lines each (the mintlify writing rule is ~400) | Every session | Critical safety checks (entity registration, data isolation, edition safety, safe HTTP, environment) |
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | When invoked | Step-by-step workflows (`add-feature`, `add-entity`, `add-endpoint`, `db-migration`, `qadam-builder`) |
 | `.agents/agents/*.md` | 25–65 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |

@@ -76,8 +76,8 @@
 # ---------------------------------------------------------------------------
 # WHY IT FAILS CLOSED
 # ---------------------------------------------------------------------------
-# CLAUDE.md keeps a list of "commands that look like verification but verify
-# nothing" — a tsc invocation that type-checks zero files, a turbo filter that
+# .agents/docs/verification-pitfalls.md keeps a list of "commands that look
+# like verification but verify nothing" — a tsc invocation that type-checks zero files, a turbo filter that
 # skips a package, a `jq 'all(…)'` over a set that has not populated yet. Every
 # one of them reported success from an empty measurement. This script refuses to
 # join that list: an empty commit range, a missing tag, a shallow clone, a

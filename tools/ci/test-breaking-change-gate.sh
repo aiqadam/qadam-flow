@@ -5,8 +5,8 @@
 #
 # The point of this file is the REJECT cases. A gate exercised only on the happy
 # path is not a gate: it would pass identically if its classifier matched
-# nothing at all, which is exactly the failure mode CLAUDE.md's "commands that
-# look like verification but verify nothing" list is made of. So every accept
+# nothing at all, which is exactly the failure mode .agents/docs/verification-pitfalls.md's
+# "commands that look like verification but verify nothing" list is made of. So every accept
 # case below has a paired reject case that differs in one thing, and the UNKNOWN
 # block asserts that an unmeasurable release fails instead of sailing through.
 #

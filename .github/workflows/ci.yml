@@ -760,7 +760,7 @@ jobs:
       # Reuse run.sh's own .env generator rather than hand-rolling a second one. run.sh is what
       # every real install runs, so a divergence between the two would be a defect this job
       # cannot see — including the AP_ENVIRONMENT footgun, where anything outside {prod,dev,test}
-      # makes the server throw at startup (see .claude/rules/environment.md).
+      # makes the server throw at startup (see .agents/rules/environment.md).
       # QADAM_FLOW_SOURCE_ONLY=1 loads its helpers without installing anything — the same entry
       # point tools/ci/test-run-sh.sh uses — so the compose file that runs is the bundled one
       # from this checkout, not a download of whatever is on main.
