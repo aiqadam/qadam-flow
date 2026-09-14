@@ -42,7 +42,7 @@ export function classifyChatError(error: unknown): ClassifiedChatError {
     }
 }
 
-// Exported types and constants live at the end of the file (CLAUDE.md:61).
+// Types at the end of the file; exported constants right after imports (AGENTS.md file order).
 export const CHAT_ERROR_CODES = {
     PROVIDER_FIRST_BYTE_TIMEOUT: 'PROVIDER_FIRST_BYTE_TIMEOUT',
     PROVIDER_IDLE_TIMEOUT: 'PROVIDER_IDLE_TIMEOUT',

@@ -36,7 +36,7 @@ import { safeHttp } from './safe-http'
 // Every provider gets `fetch: safeHttp.fetch`, not just CUSTOM. CUSTOM is the obvious SSRF case —
 // its `baseUrl` is admin config — but AZURE (`resourceName`) and CLOUDFLARE_GATEWAY
 // (`accountId`/`gatewayId`) also interpolate operator-supplied values into the URL, and
-// `.claude/rules/safe-http.md` requires the filtered client even for fixed, trusted endpoints.
+// `.agents/rules/safe-http.md` requires the filtered client even for fixed, trusted endpoints.
 // Operators pointing chat at an in-cluster model server must allow-list it via AP_SSRF_ALLOW_LIST.
 
 function createChatModel({ provider, auth, config, modelId }: {

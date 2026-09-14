@@ -6,7 +6,7 @@ import { isNil, tryCatch } from '@aiqadam/shared'
  *
  * These strategies used to call `httpClient` from `@aiqadam/qadams-common`, which is a bare
  * `new AxiosHttpClient()` — no `request-filtering-agent`, so no private/loopback/link-local/
- * cloud-metadata filtering at all. `.claude/rules/safe-http.md` applies to everything under
+ * cloud-metadata filtering at all. `.agents/rules/safe-http.md` applies to everything under
  * `packages/server/{api,worker,utils}`, and importing an already-constructed client from another
  * package was simply a way around the lint rule, not an exemption from the requirement (#276).
  *

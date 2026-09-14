@@ -194,7 +194,7 @@ two, ask — don't treat either number as settled.
 ## Foundation
 
 **Spacing** — base unit 4px. Scale: 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 · 80 · 96. Standard card
-padding 24px. No negative margins (also banned by `packages/web/CLAUDE.md`).
+padding 24px. No negative margins (also banned by `packages/web/AGENTS.md`).
 
 **Radius** — `sm` 6 · **default 8** · `md` 10 · `lg` 12 · `xl` 16 · `full` 9999. Inputs and
 buttons 8, cards 12, modals 16.
@@ -295,7 +295,7 @@ no abstract gradients — the real UI is the illustration.
 
 ## Building product UI
 
-Follow `packages/web/CLAUDE.md`; it is authoritative for the frontend. In brief:
+Follow `packages/web/AGENTS.md`; it is authoritative for the frontend. In brief:
 
 - Reuse `packages/web/src/components/ui/` (Shadcn/Radix "new-york" on Tailwind v4, base colour
   `neutral`) before creating anything; extend an existing component rather than forking it.

@@ -1,6 +1,6 @@
 ---
 name: web
-description: Frontend agent for the Activepieces web application (packages/web). Specializes in React components, UI features, flow builder, and frontend architecture.
+description: Frontend agent for the Qadam Flow web application (packages/web). Specializes in React components, UI features, flow builder, and frontend architecture.
 model: sonnet
 tools:
   - Read
@@ -14,7 +14,7 @@ tools:
 
 # Web Frontend Agent
 
-You work in `packages/web`. Read `packages/web/CLAUDE.md` for patterns.
+You work in `packages/web`. Read `packages/web/AGENTS.md` for patterns.
 
 Key non-obvious rules:
 - Reset forms via `key` prop, not `form.reset()`

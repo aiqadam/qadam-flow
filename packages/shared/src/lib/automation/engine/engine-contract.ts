@@ -12,7 +12,7 @@ export type WorkerContract = {
     updateStepProgress(input: UpdateStepProgressRequest): Promise<void>
     // Resolves + project-scopes + piece-provisions + depth-guards a `callFlow` inline
     // target and creates its child FlowRun row, all from the worker's own trusted job
-    // context (never from client/engine-supplied identity) — see .claude/rules/data-isolation.md.
+    // context (never from client/engine-supplied identity) — see .agents/rules/data-isolation.md.
     resolveInlineFlow(input: ResolveInlineFlowRequest): Promise<ResolveInlineFlowResult>
 }
 
