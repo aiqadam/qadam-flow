@@ -73,7 +73,7 @@ Key terms used by this feature (link to glossary definitions if they exist).
 ```
 
 **Never add an "Edition Availability" section.** This repo ships a single edition — see
-`.claude/rules/edition-safety.md`. There is no `ApEdition` enum, no plan tier, and the
+`.agents/rules/edition-safety.md`. There is no `ApEdition` enum, no plan tier, and the
 module-local `getPlan()` in `packages/server/api/src/app/platform/platform.service.ts` returns a
 fixed object, so any per-edition statement is untrue by construction. (`getPlan` is not a member of
 `platformService` — the public surface is `getOneWithPlan` / `getOneWithPlanOrThrow` /

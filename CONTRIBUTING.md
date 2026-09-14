@@ -18,7 +18,7 @@ You don't have to write core code to matter here:
 
 ## Architecture overview
 
-Qadam Flow is a TypeScript monorepo built on the Activepieces engine. For a full architecture reference — module boundaries, coding conventions, entity registration rules, and key utilities — see [`CLAUDE.md`](./CLAUDE.md).
+Qadam Flow is a TypeScript monorepo built on the Activepieces engine. For a full architecture reference — module boundaries, coding conventions, entity registration rules, and key utilities — see [`AGENTS.md`](./AGENTS.md).
 
 ## Development setup
 Prerequisites: Node.js (LTS), pnpm, PostgreSQL, Redis.

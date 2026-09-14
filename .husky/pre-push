@@ -13,21 +13,15 @@ do
     fi
 done
 
-if [ "$CLAUDE_PUSH" = "yes" ]; then
-  RUN_CHECKS="y"
-elif [ -n "${CI:-}" ] && [ "$CI" != "false" ] && [ "$CI" != "0" ]; then
-  RUN_CHECKS="n"
-elif [ -t 1 ]; then
-  # IDE / CI Git runs with stdout on a pipe, not a TTY — do not prompt (avoids blocking forever on read /dev/tty)
-  printf "Run checks before pushing? [Y]es (lint + tests) / [n]o / [l]int only " > /dev/tty
-  if read -r RUN_CHECKS < /dev/tty; then
-    :
-  else
-    RUN_CHECKS="n"
-  fi
-else
+if [ -z "${RUN_CHECKS:-}" ] && [ -n "${CI:-}" ] && [ "$CI" != "false" ] && [ "$CI" != "0" ]; then
   RUN_CHECKS="n"
 fi
+if [ -z "${RUN_CHECKS:-}" ] && [ -t 1 ]; then
+  # IDE / CI Git runs with stdout on a pipe, not a TTY — do not prompt (avoids blocking forever on read /dev/tty)
+  printf "Run checks before pushing? [Y]es (lint + tests) / [n]o / [l]int only " > /dev/tty
+  read -r RUN_CHECKS < /dev/tty || RUN_CHECKS="n"
+fi
+: "${RUN_CHECKS:=n}"
 
 case "$RUN_CHECKS" in
   [nN][oO]|[nN])

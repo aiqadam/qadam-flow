@@ -50,7 +50,7 @@ footprint mark. The CSS and the platform-branding default did not.
 4. **Radius**: `sm 6` / **default 8** / `md 10` / `lg 12` / `xl 16`. Inputs & buttons 8, cards 12,
    modals 16. Matches the repo's `--radius: 0.5rem`.
 5. **Spacing base 4px**; scale 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 · 80 · 96. Card padding 24.
-   **No negative margins** (banned in `packages/web/CLAUDE.md`).
+   **No negative margins** (banned in `packages/web/AGENTS.md`).
 6. **Borders 1px**, `var(--border)`. Never thicker.
 7. **Type**: Geist display, Inter body, JetBrains Mono for technical detail (times, IDs, tags).
    Latin *and* Cyrillic must read equally well. The repo ships Inter latin-only and no Geist —
@@ -79,6 +79,6 @@ not copied**. When unsure, link.
 1. Open <https://brand.aiqadam.org> — brand pillar for colour/type/logo/voice, system pillar for
    tokens/components/spacing. Then this folder's `README.md`.
 2. Product screens: reuse `packages/web/src/components/ui/` (Shadcn/Radix) before inventing
-   anything; follow `packages/web/CLAUDE.md`.
+   anything; follow `packages/web/AGENTS.md`.
 3. If the brand site doesn't answer your question, say it is unspecified and ask — don't invent a
    value and don't inherit the upstream one.

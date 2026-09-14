@@ -43,6 +43,21 @@ If a ticket turns out to rest on a wrong premise, correct the ticket in a commen
 before writing code against it. That is not scope creep; it is the cheapest work in
 the whole session.
 
+## Agent knowledge map — single source: `.agents/`
+
+All agent-facing knowledge lives under `.agents/`. `.claude/` and `.cursor/`
+mirror parts of it via git symlinks so each harness's auto-discovery keeps
+working — never edit a mirror; add content under `.agents/` only.
+
+| Path | Size | When | What |
+| --- | --- | --- | --- |
+| `AGENTS.md` (this file) + per-package `AGENTS.md` | — | Every session | Rules every task needs |
+| `.agents/features/*.md` | 35–220 lines each | Before modifying a module | Entity schemas, services, data flows |
+| `.agents/rules/*.md` | 2–15 lines each (the mintlify writing rule is ~400) | Every session | Critical safety checks (entity registration, data isolation, edition safety, safe HTTP, environment) |
+| `.agents/skills/*/SKILL.md` | 12–1100 lines each | When invoked | Step-by-step workflows (`add-feature`, `add-entity`, `add-endpoint`, `db-migration`, `qadam-builder`) |
+| `.agents/agents/*.md` | 25–65 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |
+| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, sandbox tooling |
+
 ## Architecture (Non-Obvious Rules)
 
 - **Multi-tenant**: Platform → Projects → Users. ALL queries MUST filter by `projectId` or `platformId`.
@@ -54,29 +69,6 @@ the whole session.
 - **Multi-server**: Use `distributedLock`, BullMQ deduplication, or `FOR UPDATE SKIP LOCKED` for concurrent operations.
 - **Managed PostgreSQL**: No custom extensions. Use `sanitizeObjectForPostgresql()` for external data.
 - **Before modifying a module**: Read its `.agents/features/<name>.md` file for entities, services, and integration details.
-| `.agents/features/*.md` | ~60 lines each | When Claude explores the feature | Entity schemas, services, data flows |
-| `.claude/rules/` | 3-5 lines each | Every session | Critical safety checks (entity registration, data isolation, edition safety) |
-| `.agents/skills/` | 30-65 lines each | When invoked | Step-by-step workflows (`/add-feature`, `/add-entity`, `/add-endpoint`, `/qadam-builder`) |
-| `.claude/agents/` | 40-70 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |
-- **Exported types and constants must be placed at the end of the file**, after all logic (functions, hooks, components, classes, etc.). This keeps the logic front and centre when reading a file, and groups the public contract at a predictable location.
-
-  ```ts
-  // ✅ Correct
-  function doSomething() { ... }
-
-  export const MY_CONST = 'value';
-  export type MyType = { ... };
-  // ✅ Correct
-  const businessService = () => { ... }
-
-  export const MY_CONST = 'value';
-  export type MyType = { ... };
-
-  // ❌ Wrong — types/consts mixed in before logic
-  export const MY_CONST = 'value';
-  export type MyType = { ... };
-  function doSomething() { ... }
-  ```
 
 ## Coding Conventions
 
@@ -89,10 +81,25 @@ the whole session.
 - **Helper functions** — Define non-exported helpers outside of const declarations
 - **Named parameters** — Always use a single destructured object parameter instead of positional arguments. This applies to every function with more than one parameter, regardless of type. It prevents mix-ups at the call site and makes future additions non-breaking.
 - **Prefer immutable data flow** — Functions should produce data by returning it, not by mutating an array/object the caller passes in. If a helper accumulates results (logs, derived rows, computed bindings), it should build the collection locally and return it — not take a pre-allocated bag the caller will read after. Local mutation inside a function's own body is fine; mutation that crosses the function boundary is not. Build new collections with `.map` / `.filter` / `.reduce` / spread rather than in-place `push` / `splice` / property assignment when feasible.
-- **File order**: Imports → Exported functions/constants → Helper functions → Types
+- **File order**: Imports → Exported functions/constants → Helper functions → Types. **Types (exported or not) go at the end of the file**, after all logic — the public type contract sits in one predictable place. **Exported constants go at the top**, right after imports: the namespace-const pattern (services, utils, repos) is the file's table of contents, not something to bury at the bottom (server canon: [STYLE.md](packages/server/STYLE.md)).
+- **Sanctioned file-order exceptions** (audit across the monorepo, do not stretch them): a zod schema's `z.infer` type may sit adjacent to its schema (paired or grouped with sibling schemas); a small local type may sit directly above its only consumer; a trailing enum after a type block is fine in shared domain files. These are idioms the codebase uses deliberately — they are not license to move types wholesale back up a file.
+
+  ```ts
+  // imports
+  import { isNil } from '@aiqadam/shared'
+
+  // exported namespace / constants — top, after imports
+  export const flowService = (log: FastifyBaseLogger) => ({ /* ... */ })
+
+  // helpers — unexported
+  const lockFlowVersionIfNotLocked = async ({ /* ... */ }) => { /* ... */ }
+
+  // types — end of file
+  export type CreateParams = { projectId: ProjectId; /* ... */ }
+  ```
 - **Comments** — Only comment to explain *why* something is done, never *what* the code is doing. Code should be self-explanatory; comments that restate the code add noise and rot.
 - **Util file exports** — When a util file exposes multiple plain functions or constants (non-React), do not export them individually. Instead, group them into a single named `const` and export that one object (e.g. `export const myUtils = { fn1, fn2 }`). Callers use `myUtils.fn1()` at the call site. **React components** in the same file should be **named exports** (e.g. `export function MyAlert()` or `export const MyAlert = …`) and imported by name — do not bundle them into a wrapper object for the sake of this rule.
-- **Safe outbound HTTP (SSRF)** — For any outbound HTTP in `packages/server/{api,worker,utils}`, use `safeHttp.axios` / `safeHttp.createAxios({ ... })` from `@aiqadam/server-utils`, or `safeHttp.fetch` when a library takes a `fetch` override and nothing else. Never use raw `fetch` or `axios.create` for URLs that come from user input, admin config, OAuth endpoints, or third-party integrations — they bypass the SSRF filter (private/loopback/metadata IPs). See `.claude/rules/safe-http.md`.
+- **Safe outbound HTTP (SSRF)** — For any outbound HTTP in `packages/server/{api,worker,utils}`, use `safeHttp.axios` / `safeHttp.createAxios({ ... })` from `@aiqadam/server-utils`, or `safeHttp.fetch` when a library takes a `fetch` override and nothing else. Never use raw `fetch` or `axios.create` for URLs that come from user input, admin config, OAuth endpoints, or third-party integrations — they bypass the SSRF filter (private/loopback/metadata IPs). See `.agents/rules/safe-http.md`.
 
 ## Query Error Handling
 
@@ -112,7 +119,7 @@ npm run test-api      # CE API integration + migration check (this repo has no E
 ```
 API tests: `setupTestEnvironment()` + `createTestContext(app)` → `ctx.post()`, `ctx.get()`. DB auto-cleaned between tests.
 
-- **`AP_ENVIRONMENT` valid values are `prod` / `dev` / `test`** (the `ApEnvironment` enum). The test env is `test`, NOT `TESTING`. Beware the footgun: `ApEnvironment.TESTING === 'test'` but the unrelated `RunEnvironment.TESTING === 'TESTING'` — using `TESTING` for `AP_ENVIRONMENT` silently disables every `environment === ApEnvironment.TESTING` branch. Startup now throws on an invalid value. See `.claude/rules/environment.md`.
+- **`AP_ENVIRONMENT` valid values are `prod` / `dev` / `test`** (the `ApEnvironment` enum). The test env is `test`, NOT `TESTING`. Beware the footgun: `ApEnvironment.TESTING === 'test'` but the unrelated `RunEnvironment.TESTING === 'TESTING'` — using `TESTING` for `AP_ENVIRONMENT` silently disables every `environment === ApEnvironment.TESTING` branch. Startup now throws on an invalid value. See `.agents/rules/environment.md`.
 - CE integration tests share one Postgres DB, so they must run serially — `test-ce-command` passes `--no-file-parallelism`. Don't re-enable file parallelism for `test/integration`.
 - **Test files are linted too.** The `api` package's `lint` script covers `test/**/*.ts` as well as `src/`, and the `CE Integration Tests` / `Lint + Unit Tests` CI jobs enforce it — so `test/` code must satisfy the same ESLint rules as `src/` (import order, single quotes, no unused vars, no floating promises, …). Two rules are relaxed for `test/**/*.ts` only, via an override in `packages/server/api/.eslintrc.json`: `no-explicit-any` and `no-dynamic-delete` (tests legitimately poke internals and build negative fixtures). Run `npm run lint-dev` before finishing — it auto-fixes most test-lint issues.
 
@@ -146,8 +153,12 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
   Closes #123
 
   Signed-off-by: Name <email>
-  Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+  Co-Authored-By: <agent or model that wrote the code> <contact>
   ```
+
+  (The `Co-Authored-By` trailer is harness-specific — keep whatever your harness/model adds, e.g.
+  `Co-Authored-By: opencode (GLM) <noreply@example.com>`. No hardcoded brand belongs in the
+  template.)
 
   Verify before pushing, don't eyeball the message — and check the whole branch, not just `HEAD`,
   because the job checks every non-merge commit in the PR:
@@ -159,7 +170,12 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 
 ## Git Push
 
-- Always prefix `git push` with `CLAUDE_PUSH=yes` to auto-approve the pre-push lint/test gate, e.g. `CLAUDE_PUSH=yes git push -u origin HEAD`.
+- Always prefix `git push` with `RUN_CHECKS=yes` to auto-approve the pre-push lint/test gate, e.g.
+  `RUN_CHECKS=yes git push -u origin HEAD`. (`RUN_CHECKS=lint` runs lint only, `RUN_CHECKS=n` or
+  `SKIP_CHECK=1` skips — the latter bypasses the whole hook including the direct-to-`main` guard.)
+- The hook is not installed in every sandbox/devcontainer — check that `core.hooksPath` is set;
+  a successful gated push from a tree without the hook proves nothing. See
+  [`sandbox-environment.md`](.agents/docs/sandbox-environment.md).
 
 ## Pull Requests
 
@@ -180,240 +196,19 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
 - After touching anything under `packages/web`, also run `npm run typecheck` — `vite build` does not
   type-check, so a type error there surfaces nowhere else until CI.
+- **Before trusting any verification output** — especially a command that returned clean — read
+  [`verification-pitfalls.md`](.agents/docs/verification-pitfalls.md). An empty output is not a
+  passing check; several plausible commands here check nothing at all.
+- Touching CI install or caching (`bun.lock`, turbo `inputs`, `tools/ci/install-deps.sh`, the
+  `refresh-cache` label)? Read [`node-modules-cache.md`](.agents/docs/node-modules-cache.md) first.
+- Working inside the sandbox/devcontainer? Read
+  [`sandbox-environment.md`](.agents/docs/sandbox-environment.md) first — several tools are missing
+  there, and anything routed through `turbo run` or a git hook proves nothing inside it.
 
-### Commands that look like verification but verify nothing
-
-These have each produced a confident "verified, clean" claim that was worthless. Check the command
-before trusting its silence — an empty output is not the same as a passing check.
-
-- **`tsc --noEmit -p packages/server/api`** type-checks **zero files**. That `tsconfig.json` has
-  `"files": []`, `"include": []` and only project `references`, and non-build-mode `tsc -p` does not
-  follow references. It exits 0 and prints nothing on any input. Confirm with `--listFiles`.
-  Use `tsc --noEmit -p packages/server/api/tsconfig.app.json` or `tsc -b packages/server/api`.
-- **`tsc` on the api package without built workspace deps** reports ~1600 pre-existing
-  `Cannot find module '@aiqadam/...'` errors. In an environment where `bun install` has not run,
-  local type-checking of that package proves nothing either way; CI is the authoritative signal.
-  Say so rather than substituting a command that returns clean.
-- **A package missing the script turbo is asked to run silently checks nothing.** `turbo run lint
-  --filter=X` on a package with no `lint` script is a no-op that still reports success — this is how
-  `packages/server/utils` went unlinted while appearing in `lint-core` (fixed in #148). Before
-  trusting a filter, confirm the target package actually declares the script.
-- **An enumerated `--filter` list is itself the defect — it silently omits whatever it does not
-  name.** `lint-core` named six packages and `lint-qadams` globbed `@aiqadam/qadam-*`; between them
-  they missed `@aiqadam/cli`, `tests-e2e`, and — because the glob is `qadam-*` while the packages are
-  `qadam` **s** `-framework` / `-common` — two packages that read as covered and were not (#184).
-  Note the trap in verifying this: `turbo run lint --filter='@aiqadam/qadam-*' --dry=json` *does*
-  list `@aiqadam/qadams-framework` under `.tasks[].package`, because a dependency appears in the
-  graph for its `build` task. Filter on `.task == "lint"` before concluding anything. CI now runs
-  `turbo run lint`, `turbo run typecheck` and `turbo run test` unfiltered, so coverage cannot drift
-  again; keep it that way rather than reintroducing a package list. The `test` one was this same bug
-  a second time: the root `test-unit` script named four packages plus `api`, so
-  `packages/server/worker` (18 files, 215 tests) and all 14 core qadams that declare `test`
-  (40 files, 231 tests) ran in no CI job at all — and the worker suite had been red for months
-  before anyone looked (#215). Note the residual limit, so nobody over-reads it: a
-  package that never declares the script is still silently uncovered — that is the #148 class, which
-  an unfiltered run does not solve. That limit was live for `typecheck` until #245: seven of the eight
-  TypeScript packages declared no such script, so the unfiltered job checked `web` and nothing else,
-  and `packages/server/engine` — whose `build` is esbuild, which strips types without checking them —
-  had never been type-checked at all. Closing it cost 250 errors, two of them live bugs (#246, #248).
-  All eight now declare one; do not remove a `typecheck` script to make a red build green.
-  **The class is not gone, only this instance of it.** Still uncovered today, each for a stated
-  reason: the ~230 qadam packages are checked by their `build` but their tsconfigs exclude `test/**`,
-  so the ~14 core qadams shipping tests have none checked; `shared` and `engine` check `src` only
-  (13 and 21 errors respectively if their spec projects are turned on); and `packages/server/worker`'s
-  `lint` glob is still `src/**`, so its tests are type-checked but not linted (~97 pre-existing
-  findings). Before trusting any `turbo run <task>`, confirm the packages you care about actually
-  declare the script — `--dry=json`, filtered on `.task`, with `<NONEXISTENT>` counted as uncovered.
-- **Renaming an npm script needs a sweep that is not extension-scoped.** `.husky/pre-push` invokes
-  root scripts and has no file extension, so a `grep --include='*.yml' --include='*.json'
-  --include='*.md' --include='*.sh'` sweep for `lint-core` missed it entirely and the rename would
-  have broken every `CLAUDE_PUSH=yes git push` with a "Lint failed" message that named the wrong
-  cause (caught in review on #184). Grep the whole tree with only `node_modules`/`dist` excluded.
-  Also note the hook is **not installed in the sandbox container** (no `core.hooksPath`, no
-  `.git/hooks/pre-push`), so a successful `CLAUDE_PUSH=yes` push there is not evidence that the
-  gate passes — it is evidence that the gate did not run.
-- **Turbo `inputs` narrower than the files the script actually covers makes a check silently
-  cache-skip.** `lint`'s `inputs` listed `src/**` but not `test/**`, while the `api` lint script
-  covers `'src/**/*.ts' 'test/**/*.ts'` — so with remote caching on, a PR touching only
-  `packages/server/api/test/**` got a cache hit and linted nothing, repo-wide (fixed in #148).
-  A green check here means "the inputs turbo hashed did not change", not "the script ran".
-  Audit with `turbo run <task> --filter=<pkg> --dry=json` and compare the resolved input list
-  against the glob the script itself uses.
-- **A relative `inputs` path that does not exist is dropped silently, with no warning.** `lint`
-  carried `"../../.eslintrc.json"`, which only reaches the repo root from a depth-2 package; from
-  `packages/server/*` it resolved to the non-existent `packages/.eslintrc.json` and from the qadams
-  to `packages/qadams/.eslintrc.json`, so no shared ESLint config was hashed at all and editing a
-  rule served a cached pass (#164). Address repo-root files with `$TURBO_ROOT$/…`, and confirm the
-  entry actually appears in the `--dry=json` `inputs` map — an entry in `turbo.json` is not
-  evidence that turbo resolved it.
-- **A skipped required check never reports a conclusion.** Under the repo ruleset
-  (`strict_required_status_checks_policy: true`), a required context that is skipped via
-  `paths-ignore` or a job-level `if:` leaves the PR permanently unmergeable. A required job must
-  always run and always resolve, even when it short-circuits.
-- **Empty check conclusions read as pending, not passing.** `gh pr view --json statusCheckRollup`
-  returns `""` (not `null`) for an in-flight check. Treat any falsy conclusion as pending, or you
-  will read a running pipeline as green.
-- **Reading the repo from a working tree that has drifted behind `origin/main` produces confident,
-  wrong measurements with no symptom.** A long session merges PRs while `/workspace` stays on the
-  commit it started at; every `grep`, `cat` and `node -e "require('./package.json')"` then reports
-  the old tree. This is how the root `test-unit` filter list was quoted into an issue after the
-  filter had already been widened. `git fetch && git merge --ff-only origin/main` before measuring
-  anything you intend to publish, or read the file via `git show origin/main:<path>` so the source
-  is unambiguous.
-- **A filename is not a manifest.** `packages/web/src/assets/fonts/inter-v20-latin-500.ttf` and
-  `-600.ttf` are named as Latin subsets and are full 2,849-codepoint `Inter 18pt` builds including
-  Cyrillic and Greek; the `.woff2` files beside them, identically named, really are Latin subsets.
-  An issue was filed asserting "every Inter subset shipped is Latin-only" purely from the names.
-  When a claim is about a file's *contents* — glyph coverage, exported symbols, which routes a
-  bundle registers — open the file. The cheap corroboration here was size: 343 KB versus 24 KB at a
-  comparable weight is not a format difference.
-- **A swallowed failure is worse than a failing command, and it hides in build files, not just CI.**
-  `Dockerfile` carried `RUN bun install || true` from the fork import. When `redis-memory-server`'s
-  postinstall began failing, the `|| true` discarded it, the build continued with no `node_modules`,
-  and it died twenty lines later at `npx turbo run build` with `exit code: 127`. Every symptom pointed
-  at turbo; the cause was the install. It survived many reviews because this list was read as being
-  about *test and CI* commands. It is not. Grep anything you are about to trust for `|| true`,
-  `|| exit 0`, `set +e`, `continue-on-error`, and `2>/dev/null` on a step whose success the next step
-  depends on — in `Dockerfile`, `docker-entrypoint.sh`, `run.sh` and npm scripts, not only under
-  `.github/`. If a step's failure would change what the next step does, it must not be allowed to pass.
-  Two caveats learned the hard way. **Count the occurrences before claiming a sweep** — this
-  `Dockerfile` has three `bun install` invocations and only one was covered, so the fix was partial
-  while its own commit message implied otherwise. And **`docker-entrypoint.sh` runs `set -uo pipefail`
-  without `-e` on purpose**, with an in-file comment explaining that the `AP_WORKER_TOKEN` mint depends
-  on it; that one is a documented exception, not a bug to "fix".
-- **Establish provenance with `git blame` before attributing a defect to anyone.** The `|| true` above
-  reads exactly like something a coding agent would add to force a green build, and it was assumed to
-  be that. `git blame` puts it in the `Init` fork-import commit — inherited from upstream, not written
-  by any session here. Blaming the wrong author in a commit message, an issue or a report is itself a
-  defect, and it is cheap to avoid.
-- **A tool that cannot do its job may still emit a plausible artifact instead of failing.** Rendering
-  the Open Graph card with `@resvg/resvg-js` in this container produced a valid 13 KB PNG containing
-  the logo and **no text at all** — there are no system fonts installed, so every text node was
-  dropped silently. Exit code 0, sane file size, correct dimensions. For anything whose output is
-  visual or binary, inspect the artifact itself (`Read` the image, parse the bytes); a size and an
-  exit code are not evidence. Relatedly, when a pipeline is `generate → consume`, confirm the
-  generate step ran: a missing `python3` failed one step while the next happily consumed the stale
-  input from the previous run.
-- **Pushing to the branch of an already-merged PR exits 0 and changes nothing.** The ref updates, the
-  push reports success, and no warning appears anywhere — but the PR is closed, so the commit never
-  reaches `main`. A review finding on #168 was fixed this way three minutes after that PR merged, and
-  then reported in its own comment thread as landed; `main` never received it. Before pushing a review
-  fixup, check `gh pr view <n> --json state`, and afterwards confirm the commit is reachable from
-  `main` with `git branch -r --contains <sha>` rather than concluding from a successful push. "The
-  command reported success" is not "the outcome happened" — which is the whole subject of this list.
-- **A wait loop over the check rollup reports success from an incomplete set.** `gh pr checks <n>
-  --json bucket --jq 'all(.bucket!="pending")'` is vacuously **true** in the first seconds after a
-  push, when only the fast contexts (`PR Title`, `Classify changed paths`) have registered — `all`
-  over a set that does not yet contain the required checks says "everything resolved". A watcher
-  built on it exited immediately and reported a PR green while `Lint + Unit Tests` had not started.
-  Name the required contexts and require each to be present **and** non-pending:
-  `[.[]|select(.name=="Lint + Unit Tests" or …)|select(.bucket!="pending")]|length` against the
-  expected count. Then run the expression once before trusting it and confirm it returns the
-  *not-ready* answer — a gate only ever checked against the state it should accept is not checked.
-- **A loop whose tool is missing hangs silently instead of failing.** The replacement for the above
-  piped into `jq`, which is not installed here (see the table below): every iteration printed
-  `jq: command not found` into a log nobody was reading, the condition never became true, and it ran
-  until killed by hand. `gh` has `--jq` built in and needs no external binary. Same family as the
-  missing `python3` above: run a command once and look at its output before looping on it.
-- **A test that fails after your own edit is not evidence for the first mechanism you think of.**
-  Deleting a `vi.mock` factory left one `mockReset()` reference behind, so four tests failed with
-  `ReferenceError`. That was read as "the mock is load-bearing" and written into a commit message as
-  fact — the mock was inert, because the module under test never imported the path it mocked. Read
-  the actual error before writing the conclusion, and state a mechanism only after confirming it by
-  removing the thing and watching the behaviour change.
-- **"It passes" does not tell you why, and the why decides what the test covers.** A case in
-  `test/unit/app/workers/machine/machine-list-filter.test.ts` was credited as tenant-isolation
-  coverage. It is not: `machineService.list` ignores its `platformId` argument and drops every
-  `DEDICATED` worker, so the test cannot fail if platform scoping regresses — there is none to
-  regress (#202). Before crediting a test with covering something, break that thing on purpose and
-  confirm the test goes red.
-
-### Controlling the node_modules cache
-
-A cache hit and a cold install are different runs, and conflating them has already cost a session.
-On a hit, bun does **not** re-run install scripts for a package it sees at the right version — so a
-green check on a cache hit is not evidence that anything install-related works. `redis-memory-server`'s
-broken postinstall stayed invisible for exactly this reason until a PR happened to touch `bun.lock`.
-
-Four controls, cheapest first:
-
-- **Read the state instead of guessing.** The `Report node_modules cache state` step emits
-  `state=cache-hit|cold` three ways: the run summary (visible in the UI), a `::notice::` annotation
-  (readable via `gh api repos/:owner/:repo/check-runs/<id>/annotations`), and a step output. Prefer the
-  annotation when scripting — step outputs are **not** exposed by the Actions API, and `_verify.yml`
-  declares no `workflow_call` `outputs:`, so the output is only usable inside that job. `gh api
-  .../jobs` gives step *conclusions* but not this distinction, which is why the step exists at all.
-- **`gh cache list` / `gh cache delete`** — self-service, no code change, effective immediately. The
-  right tool for "this one cache entry is wrong, bin it".
-- **The `refresh-cache` PR label** — skips cache restore for that PR only, forcing a real install
-  without disturbing what other branches are using. Use it when a change alters install *behaviour*
-  but no hashed manifest, since that PR would otherwise get a hit and never exercise its own change.
-  **The label takes effect on the next push, not on being applied** — and this is the part that makes
-  it work or not. `ci.yml` uses the default `pull_request` activity types, so labelling fires no run,
-  and *Re-run all jobs* replays the original event payload in which the label is absent, silently
-  coming back a cache hit. So: apply the label, then push — an empty commit is enough:
-
-  ```bash
-  gh pr edit <n> --add-label refresh-cache
-  git commit --allow-empty -s -m 'chore: force a cold install' && CLAUDE_PUSH=yes git push
-  ```
-
-  Adding `labeled` to the trigger to remove that step was tried and reverted: it fires a full
-  duplicate pipeline on **every** label event, and CONTRIBUTING.md makes one primary label mandatory
-  on every PR — roughly +11 min of serialised CI per PR (see #156). Worse, every `pull_request` event
-  shares the `refs/pull/N/merge` ref, so a `labeled` event lands in the same concurrency group with
-  `cancel-in-progress` true and cancels the run already in flight, flipping required checks to
-  `cancelled`. One deliberate empty commit is cheaper than that on every PR forever.
-  (Skipping restore also skips the save, so a labelled run consumes nothing and publishes nothing.)
-- **`vars.NODE_MODULES_CACHE_EPOCH`** (repository variable, defaults to `v1`) — bumping it invalidates
-  every entry with no commit and no PR. Blunt and repo-wide; prefer the label or `gh cache delete`.
-
-What the key covers: `bun.lock`, `bunfig.toml`, `package.json`, `.npmrc` and
-**`tools/ci/install-deps.sh`** itself. That last one is there because the script sets the environment
-the install runs under, and while nothing hashed it, a tree built under different install behaviour was
-served from cache with no symptom. **Put install-affecting env in `install-deps.sh`** — it is hashed, so
-behaviour and cache identity cannot drift apart.
-
-Hashing the script is deliberately conservative: editing its comments costs a needless cold install on
-every branch. That is the accepted price. The alternative was tried and reverted in #242 — a separate
-`tools/ci/install.env`, parsed by hand so prose edits stayed cheap. Three review rounds found three
-fail-open defects in that parser, each able to apply half an environment and return 0, which is exactly
-the failure the separation existed to prevent. Sourcing returns the *last* command's status, so a bad
-line mid-file is silently skipped; hand-parsing has to get `export`'s status, readonly names, quoting
-and the grammar all right. A conservative key needs none of it. If prose edits ever become frequent
-enough to matter, measure the cost before reaching for a parser again.
-
-`tools/ci/install-deps.test.sh` asserts every one of those inputs is present, so dropping one fails
-the build rather than silently widening what a stale entry can hide.
-
-Scope caveat: `install-deps.sh` governs **CI's** install only. `Dockerfile` sets
-`REDISMS_DISABLE_POSTINSTALL=1` itself, in the `base` stage, because it has three `bun install`
-invocations and cannot read a CI script. The two are independent and nothing asserts they agree —
-changing one means checking the other by hand.
-
-### What the sandbox container does not have
-
-Verified with `command -v`, not from memory. Three separate stalls in one session came from assuming
-one of these was present.
-
-| tool | state | consequence |
-| --- | --- | --- |
-| `bun` | **missing** | `turbo` cannot execute any task — `npm run lint-all`, `typecheck`, `test-unit` all die with `Unable to find package manager binary`, because `packageManager` is `bun@1.3.3`. `turbo … --dry=json` still works, so audits are fine and runs are not. |
-| `jq` | **missing** | pipelines into it fail per iteration; use `gh --jq`, which needs no binary. |
-| `python3` / `python` | **missing** | see the `generate → consume` entry above. |
-| `turbo`, `tsc` on PATH | missing | use `npx`. |
-| `psql`, `redis-cli` | missing | integration tests need the docker-compose services, not a bare shell. |
-| `node` | v22 | CI pins **24** (`_verify.yml`); a version-sensitive local result is not authoritative. |
-| git hooks | **not installed** | `core.hooksPath` empty, no `.git/hooks/pre-push`, no `.husky/_`. A successful `CLAUDE_PUSH=yes git push` here is evidence the gate **did not run**. |
-| `docker`, `gh`, `node`, `npx` | present | usable. |
-
-So the authoritative local signals are `npx vitest`, `npx eslint`, `npx tsc` and
-`turbo … --dry=json`; anything routed through `turbo run` or a git hook proves nothing here, and
-saying so is better than substituting a command that returns clean.
 
 ## Review Agents
 
-Two read-only reviewer subagents live in `.claude/agents/`. Their charters are the source of truth —
+Two read-only reviewer subagents live in `.agents/agents/`. Their charters are the source of truth —
 read the file, don't paraphrase it from here.
 
 | Agent | Use it for |
@@ -433,8 +228,11 @@ read the file, don't paraphrase it from here.
 ## White-Labeling & Edition Paths
 
 - **All customer-facing UI must be white-labeled.** Sign-in/signup pages, email templates, logos, and any user-visible branding must use the platform's configured appearance (name, colors, logos) — never hardcode "Activepieces" in user-facing surfaces.
-- **Never copy upstream EE source — clean-room reimplement instead.** Upstream `packages/ee/` (and `packages/server/api/src/app/ee`) is under the proprietary Activepieces Enterprise License, not MIT; this repo is MIT-only. When restoring a feature that lived under upstream `ee/` (API keys, SSO, RBAC, audit logs, git sync), NEVER copy the EE source verbatim (no `git show <upstream-sha>:packages/ee/...`, no pasting bodies/structure) — that infringes the Enterprise License. Reimplement from behavior only (HTTP contract, schema-as-idea, auth flow); copyright protects the specific source, not the functionality or API. Code already in the MIT core is safe to reuse. See `.claude/rules/edition-safety.md`.
+- **Never copy upstream EE source — clean-room reimplement instead.** Upstream `packages/ee/` (and `packages/server/api/src/app/ee`) is under the proprietary Activepieces Enterprise License, not MIT; this repo is MIT-only. When restoring a feature that lived under upstream `ee/` (API keys, SSO, RBAC, audit logs, git sync), NEVER copy the EE source verbatim (no `git show <upstream-sha>:packages/ee/...`, no pasting bodies/structure) — that infringes the Enterprise License. Reimplement from behavior only (HTTP contract, schema-as-idea, auth flow); copyright protects the specific source, not the functionality or API. Code already in the MIT core is safe to reuse. See `.agents/rules/edition-safety.md`.
 
 ## Useful Links
 
 - [Database Migrations Playbook](.agents/skills/db-migration/SKILL.md)
+- [Verification Pitfalls](.agents/docs/verification-pitfalls.md)
+- [CI node_modules Cache](.agents/docs/node-modules-cache.md)
+- [Sandbox Environment](.agents/docs/sandbox-environment.md)

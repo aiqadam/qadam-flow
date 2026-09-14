@@ -70,7 +70,7 @@ Email templates live in `src/assets/emails/`. When creating or modifying email t
 - **Bold sparingly in body** — Only bold dynamic names the user needs to identify quickly (project name, role, flow name). Never bold static text.
 - **Outlook compatibility** — Include `<!--[if mso]>` font-family override block. Use table-based layout with inline styles only.
 - **No external dependencies** — No `<link>` stylesheets, no tracking pixels, no external font CSS. The `@font-face` CDN URLs in `<style>` are acceptable as progressive enhancement.
-- **Footer** — Use `{{> footer}}` Mustache partial. It renders the address only on Cloud edition.
+- **Footer** — Use the shared `footer.html` partial via `{{> footer}}`. It sits flat in the emails directory (no `partials/` subfolder) and is registered globally by `smtp-email-sender.ts`; it renders `{{footerContent}}` only when the template's vars provide it.
 
 ## N+1 Query Prevention
 

@@ -1,6 +1,6 @@
 # Server Style Guide
 
-Backend-specific conventions for `packages/server/*`. The root [CLAUDE.md](../../CLAUDE.md) covers cross-cutting rules (no `any`, named params, file order, comments-why-not-what, util exports, etc.) — read it first. This doc only adds what is specific to server code.
+Backend-specific conventions for `packages/server/*`. The root [AGENTS.md](../../AGENTS.md) covers cross-cutting rules (no `any`, named params, file order, comments-why-not-what, util exports, etc.) — read it first. This doc only adds what is specific to server code.
 
 ---
 
@@ -46,7 +46,7 @@ Naming:
 
 - `xxxService` — orchestrates business logic, talks to repos
 - `xxxHelper` — smaller collaborator used by services (e.g. `s3Helper`, `appearanceHelper`)
-- `xxxUtils` — pure utility functions grouped under one object (per root CLAUDE.md util rule)
+- `xxxUtils` — pure utility functions grouped under one object (per root AGENTS.md util rule)
 - `xxxRepo` — thin `repoFactory(Entity)` export
 
 ---

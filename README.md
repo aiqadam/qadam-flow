@@ -99,7 +99,7 @@ Read [CONTRIBUTING](./CONTRIBUTING.md) and the [Code of Conduct](./CODE_OF_CONDU
 npm start    # setup dev environment + start all services
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full dev setup, and [CLAUDE.md](./CLAUDE.md) for architecture overview and coding conventions.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full dev setup, and [AGENTS.md](./AGENTS.md) for architecture overview and coding conventions.
 
 ## License
 

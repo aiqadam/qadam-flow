@@ -92,7 +92,7 @@ E2E_PASSWORD='TestPassword123!@#' \
 ```
 
 `--workers=1` is not optional: `enabledForChat` is a per-platform singleton, so two chat specs in
-parallel flip the provider out from under each other. See `../CLAUDE.md`.
+parallel flip the provider out from under each other. See `../AGENTS.md`.
 
 ## Gotchas that cost time the first run
 

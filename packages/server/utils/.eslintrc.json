@@ -24,15 +24,15 @@
           "error",
           {
             "selector": "CallExpression[callee.name='fetch']",
-            "message": "Raw fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) / safeHttp.fetch(...) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+            "message": "Raw fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) / safeHttp.fetch(...) from @aiqadam/server-utils instead. See .agents/rules/safe-http.md."
           },
           {
             "selector": "CallExpression[callee.object.name='globalThis'][callee.property.name='fetch']",
-            "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) / safeHttp.fetch(...) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+            "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) / safeHttp.fetch(...) from @aiqadam/server-utils instead. See .agents/rules/safe-http.md."
           },
           {
             "selector": "CallExpression[callee.type='MemberExpression'][callee.object.name!='globalThis'][callee.object.name!='safeHttp'][callee.property.name='fetch']",
-            "message": "Raw <obj>.fetch(...) (e.g. window.fetch) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) / safeHttp.fetch(...) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+            "message": "Raw <obj>.fetch(...) (e.g. window.fetch) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) / safeHttp.fetch(...) from @aiqadam/server-utils instead. See .agents/rules/safe-http.md."
           }
         ]
       }
@@ -50,11 +50,11 @@
           "error",
           {
             "selector": "CallExpression[callee.name='fetch']",
-            "message": "Raw fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+            "message": "Raw fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .agents/rules/safe-http.md."
           },
           {
             "selector": "CallExpression[callee.object.name='globalThis'][callee.property.name='fetch']",
-            "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .claude/rules/safe-http.md."
+            "message": "Raw globalThis.fetch(...) bypasses request-filtering-agent's SSRF protection. Use safeHttp.axios / safeHttp.createAxios({ ... }) from @aiqadam/server-utils instead. See .agents/rules/safe-http.md."
           }
         ]
       }
