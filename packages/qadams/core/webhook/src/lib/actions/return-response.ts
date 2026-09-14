@@ -132,23 +132,15 @@ export const returnResponse = createAction({
         break;
     }
     
-    switch(respond){
-      case FlowExecution.STOP:
-        {
-          context.run.stop({
-            response,
-          });
-          break;
-        }
-      case FlowExecution.RESPOND:
-        {
-          context.run.respond({
-            response,
-          });
-          break;
-        }
-        case undefined:
-          break;
+    if (respond === FlowExecution.RESPOND) {
+      context.run.respond({
+        response,
+      });
+    }
+    else {
+      context.run.stop({
+        response,
+      });
     }
  
 
