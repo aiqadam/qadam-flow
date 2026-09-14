@@ -82,6 +82,14 @@
           {
             "selector": "CallExpression[callee.object.name='app'][callee.property.name='route'] Property[key.name='method'][value.type='ArrayExpression'][value.elements.0.value=/^(PUT|PATCH)$/i]",
             "message": "PUT/PATCH method inside app.route({...}) is not allowed: this repo uses POST for all create/update mutations and DELETE for deletes. See AGENTS.md."
+          },
+          {
+            "selector": "CallExpression[callee.object.name='app'][callee.property.name='route'] Property[key.name='method'][value.type='ArrayExpression'][value.elements.1.value=/^(PUT|PATCH)$/i]",
+            "message": "PUT/PATCH method inside app.route({...}) is not allowed: this repo uses POST for all create/update mutations and DELETE for deletes. See AGENTS.md."
+          },
+          {
+            "selector": "CallExpression[callee.object.name='app'][callee.property.name='route'] Property[key.name='method'][value.type='ArrayExpression'][value.elements.2.value=/^(PUT|PATCH)$/i]",
+            "message": "PUT/PATCH method inside app.route({...}) is not allowed: this repo uses POST for all create/update mutations and DELETE for deletes. See AGENTS.md."
           }
         ]
       }
