@@ -74,7 +74,9 @@ export class AddMyColumn1234567890 implements Migration {
 - `release = '<version>'` — the upcoming release version from root `package.json`
 - `down()` — must reverse `up()` (required)
 
-CI fails if any of these are missing.
+The `Migration` type marks all three optional, and no CI job runs
+`tools/scripts/check-migration-rollback.ts` (which validates them), so nothing
+fails the build for a missing one — review is what catches it. Set them.
 
 ### Step 5: REGISTER THE MIGRATION
 
@@ -142,6 +144,6 @@ export class AddMyIndex1234567890 implements Migration {
 
 1. **Always generate via CLI** — never write migration SQL by hand; use `npm run db-migration` to generate from the entity diff
 2. **Never use `MigrationInterface`** — always patch the generated file to use `Migration` from `../../migration`
-3. **`breaking`, `release`, and `down()` are mandatory** — CI will reject the migration without them
+3. **`breaking`, `release`, and `down()` are mandatory** — set them explicitly; nothing in CI rejects a migration that omits one
 4. **Register in `postgres-connection.ts`** — migration won't run without this
 5. **`CONCURRENTLY`** — always set `transaction = false` when using it

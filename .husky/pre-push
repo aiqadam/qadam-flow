@@ -18,7 +18,7 @@ if [ -z "${RUN_CHECKS:-}" ] && [ -n "${CI:-}" ] && [ "$CI" != "false" ] && [ "$C
 fi
 if [ -z "${RUN_CHECKS:-}" ] && [ -t 1 ]; then
   # IDE / CI Git runs with stdout on a pipe, not a TTY — do not prompt (avoids blocking forever on read /dev/tty)
-  printf "Run checks before pushing? [Y]es (lint + tests) / [n]o / [l]int only " > /dev/tty
+  printf "Run checks before pushing? [Y]es (lint + tests) / [n]o / [l]int only / [r]eview " > /dev/tty
   if read -r RUN_CHECKS < /dev/tty; then
     # Enter (empty answer) accepts the advertised [Y]es default and runs the full gate.
     [ -z "$RUN_CHECKS" ] && RUN_CHECKS="y"
@@ -40,6 +40,37 @@ case "$RUN_CHECKS" in
       echo "lint-dev auto-fixed files. Commit the changes before pushing:"
       git status --short
       exit 1
+    fi
+    ;;
+  [rR][eE][vV][iI][eE][wW]|[rR])
+    # Advisory AI review (#444). Deliberately its own branch: it must never run
+    # as part of the y/lint gate, and only `critical` findings can stop a push —
+    # after an explicit confirmation, because false positives exist.
+    echo "Running AI review (advisory)..."
+    node tools/scripts/review.mjs
+    review_status=$?
+    if [ "$review_status" -eq 2 ]; then
+      # No TTY means no human to take responsibility for the override — fail
+      # closed rather than hanging on /dev/tty or pushing silently.
+      if [ -t 1 ]; then
+        printf "Critical findings reported above. Push anyway? [y/N] " > /dev/tty
+        answer=""
+        read -r answer < /dev/tty || answer=""
+        case "$answer" in
+          [yY]|[yY][eE][sS])
+            echo "Pushing anyway."
+            ;;
+          *)
+            echo "Push cancelled. Fix the critical findings, or push again with RUN_CHECKS=n to skip the review."
+            exit 1
+            ;;
+        esac
+      else
+        echo "Critical findings reported above, and no terminal to confirm a push-anyway. Aborting the push."
+        exit 1
+      fi
+    elif [ "$review_status" -ne 0 ]; then
+      echo "Review did not complete (exit $review_status). Advisory only — continuing the push."
     fi
     ;;
   *)

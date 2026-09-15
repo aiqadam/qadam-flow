@@ -24,6 +24,7 @@
     "lint-dev": "turbo run lint --filter='!@aiqadam/qadam-*' --force -- --fix",
     "test-unit": "turbo run test",
     "test-api": "turbo run check-migrations test-ce --filter=api --concurrency=1",
+    "review": "node tools/scripts/review.mjs",
     "cli": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json  packages/cli/src/index.ts",
     "create-qadam": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json  packages/cli/src/index.ts qadams create",
     "create-action": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json  packages/cli/src/index.ts actions create",
