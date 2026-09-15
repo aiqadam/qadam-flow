@@ -29,6 +29,9 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
             const compression = contentEncoding === 'zstd' ? FileCompression.ZSTD : FileCompression.NONE
             const contentLength = Number(request.headers['content-length'] ?? 0)
 
+            if (!signedFileTransport.shouldRedirectForType(fileType)) {
+                return
+            }
             const readUrl = await filesService.constructReadUrl({
                 fileId,
                 fileType,
@@ -36,10 +39,6 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
                 internal: true,
             })
             void reply.header(fileTransportHeaders.READ_URL, readUrl)
-
-            if (!signedFileTransport.shouldRedirectForType(fileType)) {
-                return
-            }
             const file = await fileService(request.log).save({
                 fileId,
                 projectId: principal.projectId,
@@ -91,6 +90,7 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
             platformId: principal.platform.id,
             internal: true,
         })
+        void reply.header(fileTransportHeaders.READ_URL, readUrl)
         return reply.status(StatusCodes.OK).send({ fileId, readUrl })
     })
 

@@ -214,6 +214,11 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 Two read-only reviewer subagents live in `.agents/agents/`. Their charters are the source of truth —
 read the file, don't paraphrase it from here.
 
+- **Delegate with the charter, never an improvised brief.** Hand the subagent its
+  `.agents/agents/<name>.md` charter file as binding instructions. Never re-type or paraphrase a
+  charter from memory, and never invent a new agent or edit a charter without asking the user.
+  See `.agents/rules/agent-delegation.md`.
+
 | Agent | Use it for |
 | --- | --- |
 | `code-quality` | Correctness, project-convention violations, dead code left by a removal, missing test coverage, and PR-body claims the diff does not support |
