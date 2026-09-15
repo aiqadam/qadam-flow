@@ -33,6 +33,8 @@ case "$RUN_CHECKS" in
     echo "Skipping lint and tests."
     ;;
   [lL][iI][nN][tT]|[lL])
+    echo "Checking i18n catalogs..."
+    npm run check-i18n || { echo ""; echo "i18n catalogs are out of sync. Run: npm run check-i18n -- --fix"; exit 1; }
     echo "Running lint-dev (with auto-fix)..."
     npm run lint-dev || { echo ""; echo "Lint failed. Fix the remaining issues and try again."; exit 1; }
     if [ -n "$(git status --porcelain)" ]; then
@@ -74,6 +76,8 @@ case "$RUN_CHECKS" in
     fi
     ;;
   *)
+    echo "Checking i18n catalogs..."
+    npm run check-i18n || { echo ""; echo "i18n catalogs are out of sync. Run: npm run check-i18n -- --fix"; exit 1; }
     echo "Running lint..."
     # The complement of the qadams glob, i.e. the same set `lint-dev` fixes, so
     # this covers every non-qadam package including the four that the old

@@ -22,5 +22,5 @@ Key non-obvious rules:
 - Check `EmbeddingState` for components that may be embedded
 - Feature flags via `flagsHooks.useFlag()` and `<FlagGuard>`
 - Routes need 4 wrappers: `React.lazy()` + `ProjectRouterWrapper` + `RoutePermissionGuard` + `SuspenseWrapper`
-- Translations: add to `en/translation.json` only
+- Translations: add to `en` plus `ru`/`uz`/`kk` in the same PR (`npm run check-i18n` enforces parity)
 - Use `cn()` from `@/lib/utils` for className composition

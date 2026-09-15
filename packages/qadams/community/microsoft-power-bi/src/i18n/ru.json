@@ -1,7 +1,5 @@
 {
-  "Microsoft Power BI": "Microsoft Power BI",
   "Create and manage Power BI datasets and push data to them": "Создание и управление наборами данных Power BI и push-данные к ним",
-  "Authentication for Microsoft Power BI": "Аутентификация для Microsoft Power BI",
   "Create Dataset": "Создать набор данных",
   "Push Rows to Dataset Table": "Передать строки к таблице набора данных",
   "Custom API Call": "Пользовательский вызов API",

@@ -1,9 +1,6 @@
 {
-  "Supabase": "Supabase",
   "The open-source Firebase alternative": "The open-source Firebase alternative",
-  "URL": "URL",
   "API Key": "API Key",
-  "\nCopy the **URL** and **Service API Key** from your Supabase project settings.\n": "\nCopy the **URL** and **Service API Key** from your Supabase project settings.\n",
   "Upload File": "Upload File",
   "Custom API Call": "Custom API Call",
   "Upload a file to Supabase Storage": "Upload a file to Supabase Storage",

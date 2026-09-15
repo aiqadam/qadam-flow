@@ -109,6 +109,7 @@ This project uses **ICU MessageFormat** via `i18next-icu` (configured in `src/i1
   ```json
   "membersAddedCount": "{count, plural, =1 {1 member joined {projectName}} other {# members joined {projectName}}}"
   ```
+- **A new key means four files** — add it to `en`, `ru`, `uz` and `kk` with real translations in the same PR, then run `npm run check-i18n`. The check enforces key parity, non-empty values, ICU-argument preservation and exact key sets (`--fix` prunes stale keys); see [docs/about/i18n.mdx](../../docs/about/i18n.mdx).
 
 ## Guidelines
 

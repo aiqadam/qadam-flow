@@ -263,6 +263,15 @@ jobs:
       - name: Set up turbo remote cache (GHA-backed)
         uses: rharkor/caching-for-turbo@v2.3.12
 
+      # Needs the installed workspace (the ICU parser lives in node_modules), so
+      # it cannot join the dependency-free tools/ci tests above. Placed before
+      # the heavies so a translation drift costs a second, not the whole suite.
+      - name: Test the i18n checker
+        run: tools/ci/test-i18n-check.sh
+
+      - name: Check i18n catalogs
+        run: npm run check-i18n
+
       # Unfiltered, deliberately. The enumerated `lint-core` / `lint-qadams`
       # scripts silently missed every package they did not name — `@aiqadam/cli`,
       # `tests-e2e`, and, because the glob was `qadam-*` while the packages are

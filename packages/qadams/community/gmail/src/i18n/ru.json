@@ -1,5 +1,4 @@
 {
-  "Gmail": "Gmail",
   "Email service by Google": "Почтовый сервис от Google",
   "Send Email": "Отправить письмо",
   "Custom API Call": "Пользовательский вызов API",
@@ -26,8 +25,6 @@
   "Body for the email you want to send": "Тело письма, которое вы хотите отправить",
   "Email address to set as the \"Reply-To\" header": "Адрес электронной почты для указания заголовка \"Ответить-Кому\"",
   "The address must be listed in your GMail account's settings": "Адрес должен быть указан в настройках учетной записи GMail",
-  "File to attach to the email you want to send": "Файл для прикрепления к электронной почте, которую вы хотите отправить",
-  "In case you want to change the name of the attachment": "В случае, если вы хотите изменить имя вложения",
   "Reply to this Message-ID": "Ответить на это сообщение",
   "Create draft without sending the actual email": "Создать черновик без отправки фактического письма",
   "Authorization headers are injected automatically from your connection.": "Заголовки авторизации включаются автоматически из вашего соединения.",

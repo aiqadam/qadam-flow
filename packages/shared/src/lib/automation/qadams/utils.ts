@@ -68,4 +68,4 @@ type ExtractQadamFromModuleParams = {
     qadamName: string
     qadamVersion: string
 }
-export const MAX_KEY_LENGTH_FOR_CORWDIN = 512
+export const MAX_QADAM_I18N_KEY_LENGTH = 512

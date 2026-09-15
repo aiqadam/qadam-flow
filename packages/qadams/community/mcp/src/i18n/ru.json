@@ -1,5 +1,4 @@
 {
-  "MCP": "MCP",
   "Connect to your hosted MCP Server using any MCP client to communicate with tools": "Подключитесь к серверу MCP с помощью любого клиента MCP для общения с инструментами",
   "Reply to MCP Client": "Ответить клиенту MCP",
   "Return a response to the MCP client that called the tool.": "Возвращает ответ клиенту MCP, который называется инструментом.",

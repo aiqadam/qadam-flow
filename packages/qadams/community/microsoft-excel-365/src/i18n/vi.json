@@ -1,7 +1,5 @@
 {
-  "Microsoft Excel 365": "Microsoft Excel 365",
   "Spreadsheet software by Microsoft": "Spreadsheet software by Microsoft",
-  "Authentication for Microsoft Excel 365": "Authentication for Microsoft Excel 365",
   "Append Row to Worksheet": "Append Row to Worksheet",
   "Get Worksheets": "Get Worksheets",
   "Get Worksheet Rows": "Get Worksheet Rows",
@@ -56,7 +54,6 @@
   "Lookup Value": "Lookup Value",
   "Return All Matches": "Return All Matches",
   "Name": "Name",
-  "Parent Folder": "Parent Folder",
   "Method": "Method",
   "Headers": "Headers",
   "Query Parameters": "Query Parameters",
@@ -83,7 +80,6 @@
   "The value to lookup": "The value to lookup",
   "If checked, all matching rows will be returned": "If checked, all matching rows will be returned",
   "The name of the new workbook": "The name of the new workbook",
-  "The parent folder to use": "The parent folder to use",
   "Authorization headers are injected automatically from your connection.": "Authorization headers are injected automatically from your connection.",
   "GET": "GET",
   "POST": "POST",

@@ -1,5 +1,4 @@
 {
-  "Reddit": "Реддит",
   "Interact with Reddit - fetch and submit posts.": "Взаимодействовать с Reddit - получать и отправлять сообщения.",
   "\nTo obtain your Reddit API credentials:\n\n1. Go to https://www.reddit.com/prefs/apps.\n2. Click \"create another app...\" at the bottom.\n3. Select \"script\" as the app type.\n4. Fill in the required information:\n   - name: Your app name\n   - description: Brief description\n   - about url: Can be left blank\n   - redirect uri: as shown in Redirect URL field\n5. Click \"create app\".\n6. Note down the client ID (under the app name) and client secret.\n": "\nДля получения учётных данных Reddit API:\n. Перейдите на https://www.reddit.com/prefs/apps.\n2. Нажмите \"Создать другое приложение...\" внизу.\n3. Выберите \"script\" как тип приложения.\n4. Заполните требуемую информацию:\n   - имя: имя вашего приложения\n   - описание: Краткое описание\n   - Url: Может быть оставлено пустым\n   - uri перенаправления: как показано в поле URL Redirect\n5. Нажмите «Создать приложение».\n6. Обратите внимание на ID клиента (под именем приложения) и клиентскую тайну. \n",
   "Retrieve Post": "Получить пост",

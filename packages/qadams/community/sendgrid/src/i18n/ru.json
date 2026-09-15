@@ -1,7 +1,5 @@
 {
-  "SendGrid": "SendGrid",
   "Email delivery service for sending transactional and marketing emails": "Служба доставки электронной почты для отправки транзакций и маркетинговых писем",
-  "API key acquired from your SendGrid settings": "API ключ получен из настроек SendGrid",
   "Send Email": "Отправить письмо",
   "Send Dynamic Template": "Отправить динамический шаблон",
   "Custom API Call": "Пользовательский вызов API",

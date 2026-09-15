@@ -1,5 +1,4 @@
 {
-  "Anthropic Claude": "Anthropic Claude",
   "Follow these instructions to get your Claude API Key:\n\n1. Visit the following website: https://console.anthropic.com/settings/keys.\n2. Once on the website, locate and click on the option to obtain your Claude API Key.\n": "Follow these instructions to get your Claude API Key:\n\n1. Visit the following website: https://console.anthropic.com/settings/keys.\n2. Once on the website, locate and click on the option to obtain your Claude API Key.\n",
   "Ask Claude": "Ask Claude",
   "Extract Structured Data": "Extract Structured Data",
@@ -37,12 +36,6 @@
   "Prompt to guide the AI.": "Prompt to guide the AI.",
   "For complex schema, you can use advanced mode.": "For complex schema, you can use advanced mode.",
   "Authorization headers are injected automatically from your connection.": "Authorization headers are injected automatically from your connection.",
-  "Claude 3 Haiku": "Claude 3 Haiku",
-  "Claude 3 Sonnet": "Claude 3 Sonnet",
-  "Claude 3 Opus": "Claude 3 Opus",
-  "Claude 3.5 Sonnet": "Claude 3.5 Sonnet",
-  "Claude 3.5 Haiku": "Claude 3.5 Haiku",
-  "Claude 3.7 Sonnet": "Claude 3.7 Sonnet",
   "Simple": "Simple",
   "Advanced": "Advanced",
   "GET": "GET",

@@ -1,5 +1,4 @@
 {
-  "Queue": "Очередь",
   "A piece that allows you to push items into a queue, providing a way to throttle requests or process data in a First-In-First-Out (FIFO) manner.": "Фишка, которая позволяет переносить элементы в очередь, предоставляя способ сортировать запросы или обрабатывать данные методом First-In-First-Out (FIFO).",
   "Push to Queue": "Передать в очередь",
   "Pull items from queue": "Потянуть элементы из очереди",

@@ -1,7 +1,5 @@
 {
-  "Microsoft To Do": "Microsoft To Do",
   "Cloud based task management application.": "Cloud based task management application.",
-  "Authenticate with your Microsoft Account. You will need to register an application in the Microsoft Entra admin center.Add **Tasks.ReadWrite**,**User.Read**, **offline_access** scopes.": "Authenticate with your Microsoft Account. You will need to register an application in the Microsoft Entra admin center.Add **Tasks.ReadWrite**,**User.Read**, **offline_access** scopes.",
   "Create Task": "Create Task",
   "Create Task List": "Create Task List",
   "Update Task": "Update Task",

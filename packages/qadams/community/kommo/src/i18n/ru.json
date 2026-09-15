@@ -1,5 +1,4 @@
 {
-  "Kommo": "Kommo",
   "Subdomain": "Поддомен",
   "Token": "Токен",
   "\nPlease follow [Generate Long Live Token](https://developers.kommo.com/docs/long-lived-token) guide for generating token.\n\nYour Kommo account subdomain (e.g., \"mycompany\" if your URL is mycompany.kommo.com).\n\n": "\nПожалуйста, следуйте [Генерировать длинный Live Token](https://developers.kommo.com/docs/long-lived-token) для генерации токена.\n\nПоддомен вашей учетной записи Kommo (например, «mycompany», если ваш URL mycompany.kommo.com).\n\n",

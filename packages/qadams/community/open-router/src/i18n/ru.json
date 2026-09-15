@@ -1,5 +1,4 @@
 {
-  "OpenRouter": "Открытый маршрутизатор",
   "Use any AI model to generate code, text, or images via OpenRouter.ai.": "Используйте любую модель ИИ для генерации кода, текста или изображений через OpenRouter.ai.",
   "\nFollow these instructions to get your OpenAI API Key:\n\n1. Visit the following website: https://openrouter.ai/keys.\n2. Once on the website, click on create a key.\n3. Once you have created a key, copy it and use it for the Api key field on the site.\n": "\nFollow these instructions to get your OpenAI API Key:\n\n1. Visit the following website: https://openrouter.ai/keys.\n2. Once on the website, click on create a key.\n3. Once you have created a key, copy it and use it for the Api key field on the site.\n",
   "Ask LLM": "Спросить LLM",

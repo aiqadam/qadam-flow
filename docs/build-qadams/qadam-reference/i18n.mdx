@@ -14,7 +14,7 @@ icon: 'globe'
   <Step title="Translate">
      Make a copy of `packages/qadams/<community_or_custom>/<your_piece>/src/i18n/translation.json`, name it `<locale>.json` i.e fr.json and translate the values.
     <Tip>
-      For open source qadams, you can use the [Crowdin project](https://crowdin.com/project/activepieces) to translate to different languages. These translations will automatically sync back to your code.
+      The app loads `en`, `ru`, `uz` and `kk`. Add a `<locale>.json` for each language you translate; coverage is optional, but every key must come from `translation.json` — `npm run check-i18n` enforces it.
     </Tip>
   </Step>
   

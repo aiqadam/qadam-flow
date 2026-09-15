@@ -1,11 +1,9 @@
 {
-  "Confluence": "Confluence",
   "Account Email": "Account Email",
   "API token": "API token",
   "Confluence Domain": "Confluence Domain",
   "Account email for basic auth": "Account email for basic auth",
   "API token for basic auth": "API token for basic auth",
-  "Example value - https://your-domain.atlassian.net": "Example value - https://your-domain.atlassian.net",
   "Please refer to this guide to get your api credentials: https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account": "Please refer to this guide to get your api credentials: https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account",
   "Get Page Content": "Get Page Content",
   "Create Page from Template": "Create Page from Template",

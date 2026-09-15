@@ -1,5 +1,4 @@
 {
-  "Binance": "Бинанс",
   "Fetch the price of a crypto pair from Binance": "Получить цену пары криптовалют с Binance",
   "Fetch Pair Price": "Получить цену на пару",
   "Fetch the current price of a pair (e.g. BTC/USDT)": "Получить текущую цену пары (например, BTC/USDT)",

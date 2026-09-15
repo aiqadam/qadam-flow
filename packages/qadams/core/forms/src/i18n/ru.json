@@ -1,5 +1,4 @@
 {
-  "Human Input": "Ввод человека",
   "Trigger a flow through human input.": "Запустите поток через человеческий ввод.",
   "Respond on UI": "Ответить на пользовательский интерфейс",
   "Return a file or text (markdown) as a response.": "Возвращает файл или текст (markdown) в ответ.",

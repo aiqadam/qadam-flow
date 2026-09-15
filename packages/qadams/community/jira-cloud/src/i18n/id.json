@@ -1,5 +1,4 @@
 {
-  "Jira Cloud": "Jira Cloud",
   "Issue tracking and project management": "Issue tracking and project management",
   "Instance URL": "Instance URL",
   "Email": "Email",
@@ -62,7 +61,6 @@
   "Body": "Body",
   "No Error on Failure": "No Error on Failure",
   "Timeout (in seconds)": "Timeout (in seconds)",
-  "The JQL query to use in the search": "The JQL query to use in the search",
   "Maximum number of results": "Maximum number of results",
   "Authorization headers are injected automatically from your connection.": "Authorization headers are injected automatically from your connection.",
   "Created (Descending)": "Created (Descending)",

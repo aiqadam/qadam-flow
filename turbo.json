@@ -211,8 +211,8 @@
       // Same reasoning as `lint` above: inputs narrower than the files tsc actually
       // reads make a check silently cache-skip. Deliberately NOT an enumerated list
       // of directories here, unlike `lint` — every package's tsconfig `include` is
-      // different (tests-e2e compiles `**/*.ts` from the package root, web pulls in
-      // `i18next-parser.config.js`, the server packages use `src`/`test`), so any
+      // different (tests-e2e compiles `**/*.ts` from the package root, the server
+      // packages use `src`/`test`), so any
       // list would be right for some packages and silently short for others. A
       // review of the first draft of this task caught exactly that: `pages/**`,
       // `fixtures/**`, `global-setup.ts` and `checkly.config.ts` were compiled and

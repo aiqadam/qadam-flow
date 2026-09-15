@@ -1,11 +1,5 @@
 {
-  "Intercom": "Интерком",
   "Customer messaging platform for sales, marketing, and support": "Платформа сообщений клиентов для продаж, маркетинга и поддержки",
-  "Region": "Регион",
-  "US": "США",
-  "EU": "EU",
-  "AU": "АУ",
-  "\nPlease follow the instructions to create Intercom Oauth2 app.\n\n1.Log in to your Intercom account and navigate to **Settings > Integrations > Developer Hub**.\n2.Click on **Create a new app** and select the appropriate workspace.\n3.In **Authentication** section, add Redirect URL.\n4.In **Webhooks** section, select the events you want to receive.\n5.Go to the **Basic Information** section and copy the Client ID and Client Secret.\n": "\nПожалуйста, следуйте инструкциям по созданию приложения Intercom Oauth2.\n\n1. перейдите по ссылке **Settings > Integrations > Developer Hub**.\n2.Нажмите на **Создать новое приложение** и выберите соответствующую рабочую область.\n3.In **Authentication** add Redirect URL.\n4.In **Webhooks** select the events you want to receive.\n5.Перейдите в раздел **Основная информация** и скопируйте ID Клиента и Секретный ключ Клиента\n",
   "Add Note": "Добавить заметку",
   "Add note to conversation": "Добавить заметку в разговор",
   "Add/Remove Tag on Contact": "Добавить/Удалить тег в контакте",

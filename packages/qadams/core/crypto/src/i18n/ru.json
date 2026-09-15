@@ -1,5 +1,4 @@
 {
-  "Crypto": "Crypto",
   "Generate random passwords and hash existing text": "Генерировать случайные пароли и хешировать существующий текст",
   "Text to Hash": "Текст в хэш",
   "Generate HMAC Signature": "Создать подпись HMAC",

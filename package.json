@@ -35,9 +35,7 @@
     "publish-qadam-to-api": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json packages/cli/src/index.ts qadams publish",
     "publish-qadam": "npx ts-node -r tsconfig-paths/register --project tools/tsconfig.tools.json tools/scripts/qadams/publish-qadam.ts",
     "workers": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json packages/cli/src/index.ts workers",
-    "pull-i18n": "crowdin pull --config crowdin.yml",
-    "push-i18n": "crowdin upload sources",
-    "i18n:extract": "i18next --config packages/web/i18next-parser.config.js",
+    "check-i18n": "node tools/ci/check-i18n.mjs",
     "bump-translated-qadams": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/qadams/bump-translated-qadams.ts",
     "bump-all-qadams-patch-version": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/qadams/bump-all-qadams-patch-version.ts"
   },
@@ -333,6 +331,7 @@
   "devDependencies": {
     "@commitlint/cli": "17.7.1",
     "@commitlint/config-conventional": "17.7.0",
+    "@formatjs/icu-messageformat-parser": "2.7.8",
     "@playwright/test": "1.54.1",
     "@types/node": "24.11.0",
     "@types/semver": "7.5.6",
@@ -358,7 +357,6 @@
     "eslint-plugin-testing-library": "6.2.2",
     "eslint-plugin-vitest": "0.5.4",
     "husky": "8.0.3",
-    "i18next-parser": "9.3.0",
     "inquirer": "8.2.7",
     "jsonc-eslint-parser": "2.4.1",
     "lint-staged": "15.2.9",

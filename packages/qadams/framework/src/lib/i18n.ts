@@ -1,5 +1,5 @@
 import { I18nForPiece, QadamMetadataModel, QadamMetadataModelSummary } from "./qadam-metadata"
-import { LocalesEnum, MAX_KEY_LENGTH_FOR_CORWDIN } from "@aiqadam/shared"
+import { LocalesEnum, MAX_QADAM_I18N_KEY_LENGTH } from "@aiqadam/shared"
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -90,7 +90,7 @@ function translateProperty(pieceModelOrProperty: Record<string, unknown>, path: 
     return translateProperty(nextObject, parsedKeys.slice(1).join('.'), i18n);
   }
   const propertyValue = pieceModelOrProperty[parsedKeys[0]] as string
-  const valueInI18n = i18n[propertyValue.slice(0, MAX_KEY_LENGTH_FOR_CORWDIN)]
+  const valueInI18n = i18n[propertyValue.slice(0, MAX_QADAM_I18N_KEY_LENGTH)]
   if (valueInI18n) {
     pieceModelOrProperty[parsedKeys[0]] = valueInI18n
   }

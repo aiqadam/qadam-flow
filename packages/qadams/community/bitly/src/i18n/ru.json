@@ -1,5 +1,4 @@
 {
-  "Bitly": "Битли",
   "URL shortening and link management platform with analytics.": "Сокращение URL и система управления связями с аналитикой.",
   "Access Token": "Маркер доступа",
   "\n  To get your Access Token:\n  1. Log in to your Bitly account.\n  2. Click your profile icon in the top right corner.\n  3. Go to **Profile Settings**.\n  4. Navigate to the **Developer settings** section.\n  5. Click on **API**.\n  6. Click the **Generate token** button and enter your password to get your access token.\n  ": "\n  Чтобы получить ваш маркер доступа:\n  1. Войдите в свой Bitly аккаунт.\n  2. Нажмите на значок профиля в правом верхнем углу.\n  3. Перейдите в **Настройки профиля**.\n  4. Перейдите в раздел **Настройки разработчика**.\n  5. Нажмите на **API**.\n  6. Нажмите кнопку **Создать токен** и введите пароль, чтобы получить ваш токен доступа.\n  ",
