@@ -30,6 +30,6 @@ Some values are intentionally identical to their English key: proper nouns and a
 
 Translations for qadams live next to each qadam (`packages/qadams/<area>/<qadam>/src/i18n/`). Coverage is optional — a qadam may ship fewer locales than the UI — but any `<locale>.json` that exists must have a sibling `translation.json` and non-empty values. The same `npm run check-i18n` command enforces that too.
 
-`translation.json` is a generated snapshot, so it is **not** the source of truth for what a qadam may translate: the checker neither prunes a qadam locale file nor flags a key its snapshot does not list — such a key may still be live in metadata that was not regenerated. Never delete qadam keys to satisfy a checker run; a prune of 3014 "stale" keys once removed live Snowflake and Intercom translations that way.
+`translation.json` is a generated snapshot, so it is **not** the source of truth for what a qadam may translate: the checker neither prunes a qadam locale file nor flags a key its snapshot does not list — such a key may still be live in metadata that was not regenerated. Never delete qadam keys to satisfy a checker run; a prune of 3014 "stale" keys once removed still-referenced Snowflake and Intercom translations that way.
 
 Note that the app only loads the four locales above, so a `fr.json` or `de.json` a qadam inherited from upstream is never read.

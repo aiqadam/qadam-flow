@@ -174,6 +174,18 @@ run_check
 expect_status 1 "argument dropped inside a tag"
 expect_contains "icu-arguments: 1" "tag children are visited"
 
+# The mirror case: the translation keeps the argument but drops the tag. That is
+# fine too — collecting the tag node itself as an argument would reject it.
+new_root
+base_catalogs
+write_json "$root/packages/web/public/locales/en/translation.json" '{"greeting": "Hello", "runs": "{count, plural, =1 {1 run} other {# runs}}", "tagged": "Read <b>{count}</b> more"}'
+write_json "$root/packages/web/public/locales/ru/translation.json" '{"greeting": "Привет", "runs": "{count, plural, =0 {0 запусков} =1 {1 запуск} one {# запуск} few {# запуска} many {# запусков} other {# запуска}}", "tagged": "Подробнее: {count}"}'
+write_json "$root/packages/web/public/locales/kk/translation.json" '{"greeting": "Сәлем", "runs": "{count, plural, =1 {1 орындалу} other {# орындалу}}", "tagged": "{count} қосымша"}'
+write_json "$root/packages/web/public/locales/uz/translation.json" '{"greeting": "Salom", "runs": "{count, plural, =1 {1 ijro} other {# ijro}}", "tagged": "Yana {count} ta"}'
+run_check
+expect_status 0 "argument kept outside the tag is not a violation"
+expect_not_contains "icu-arguments" "the tag itself is not an argument"
+
 echo "== ICU arguments are compared as a set, not a multiset =="
 
 new_root
@@ -251,8 +263,8 @@ run_check
 expect_status 0 "qadam locale is allowed to cover a subset of translation.json"
 
 # A key absent from the generated snapshot is not a violation: asserting it was
-# how the 3014-key prune — which deleted live Snowflake/Intercom ru translations —
-# looked green. The fixture pins the pass and the untouched file.
+# how the 3014-key prune — which deleted still-referenced Snowflake/Intercom ru
+# entries — looked green. The fixture pins the pass and the untouched file.
 new_root
 base_catalogs
 mkdir -p "$root/packages/qadams/community/demo/src/i18n"

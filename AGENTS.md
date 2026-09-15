@@ -175,7 +175,7 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Git Push
 
 - Always prefix `git push` with `RUN_CHECKS=yes` to auto-approve the pre-push lint/test gate, e.g.
-  `RUN_CHECKS=yes git push -u origin HEAD`. (`RUN_CHECKS=lint` runs lint only, `RUN_CHECKS=n` or
+  `RUN_CHECKS=yes git push -u origin HEAD`. (`RUN_CHECKS=lint` runs lint plus the i18n check, `RUN_CHECKS=n` or
   `SKIP_CHECK=1` skips — the latter bypasses the whole hook including the direct-to-`main` guard.)
 - The hook is not installed in every checkout — check that `core.hooksPath` is set; a successful
   gated push from a tree without the hook proves nothing.

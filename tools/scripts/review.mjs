@@ -41,6 +41,8 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low', 'unknown']
 const FINDINGS_OPEN = '<review-findings>'
 const FINDINGS_CLOSE = '</review-findings>'
 
+const TOOL_ID = 'qadam-flow/review'
+
 // A batch carries its rule text and diffs in argv, so it stays far below every
 // platform's ARG_MAX. A single file larger than this is skipped with a reason
 // rather than truncated — a truncated diff would be reviewed as a lie.
@@ -133,7 +135,7 @@ const main = () => {
     try {
       if (backend.kind === 'delegate') {
         backendName = `delegation(${backend.agent})`
-        result = runDelegation({ repo, refs: parsed.refs, agent: backend.agent, opts: parsed, tmp })
+        result = runDelegation({ repo, refs: parsed.refs, agent: backend.agent, opts: parsed })
       } else {
         result = runOcrManaged({ repo, refs: parsed.refs, opts: parsed, tmp })
         backendName = result.kind === 'no-endpoint' ? null : 'ocr-managed'
@@ -150,7 +152,7 @@ const main = () => {
             '[review] ocr has no LLM endpoint configured — falling back to delegation via ' + agent + '\n'
           )
           backendName = `delegation(${agent})`
-          result = runDelegation({ repo, refs: parsed.refs, agent, opts: parsed, tmp })
+          result = runDelegation({ repo, refs: parsed.refs, agent, opts: parsed })
         }
       }
     } finally {
@@ -256,7 +258,7 @@ const loadPreview = ({ repo, refs, opts }) => {
   }
 }
 
-const runDelegation = ({ repo, refs, agent, opts, tmp }) => {
+const runDelegation = ({ repo, refs, agent, opts }) => {
   const { preview, background, excluded } = loadPreview({ repo, refs, opts })
   const reviewable = preview.reviewable_files ?? []
   if (reviewable.length === 0) {
@@ -354,7 +356,7 @@ const runEmitPrompts = ({ repo, refs, opts, dir, asJson }) => {
   })
   const manifest = {
     schema: 1,
-    tool: 'qadam-flow/review',
+    tool: TOOL_ID,
     generated_at: new Date().toISOString(),
     mode: refs.commit !== null ? 'commit' : refs.from !== null ? 'range' : 'workspace',
     target: { from: refs.from, to: refs.to, commit: refs.commit, merge_base: preview.merge_base ?? null },
@@ -643,7 +645,7 @@ const buildEnvelope = ({ backend, toolVersion, refs, result, elapsedMs }) => {
   counts.total = result.comments.length
   return {
     schema: 1,
-    tool: 'qadam-flow/review',
+    tool: TOOL_ID,
     generated_at: new Date().toISOString(),
     backend,
     tool_version: toolVersion,
@@ -928,7 +930,7 @@ const readJsonFile = (path) => {
 
 const isOwnManifest = ({ file }) => {
   const parsed = readJsonFile(file)
-  return parsed !== null && parsed.tool === 'qadam-flow/review' && Array.isArray(parsed.batches)
+  return parsed !== null && parsed.tool === TOOL_ID && Array.isArray(parsed.batches)
 }
 
 const parseJson = (text) => {

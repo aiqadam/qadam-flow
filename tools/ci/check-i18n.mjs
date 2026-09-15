@@ -119,8 +119,8 @@ const checkQadams = ({ root }) => {
     // No stale-key invariant here, and no --fix pruning: translation.json is a
     // generated snapshot, so a key missing from it may still be live in the qadam
     // metadata that has not been regenerated. Asserting it was the check's only
-    // way to see the 3014-key prune as green — the prune then deleted live ru
-    // translations (Snowflake auth props, Intercom region labels).
+    // way to see the 3014-key prune as green — the prune then deleted ru entries
+    // still referenced by qadam metadata (Snowflake auth props, Intercom regions).
     if (!fs.existsSync(path.join(path.dirname(file), 'translation.json'))) {
       violations.push({ scope: 'qadam', invariant: 'missing-source', file, detail: 'no sibling translation.json' })
     }
