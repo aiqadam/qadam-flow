@@ -56,7 +56,7 @@ working — never edit a mirror; add content under `.agents/` only.
 | `.agents/rules/*.md` | 2–15 lines each (the mintlify writing rule is ~400) | Every session | Critical safety checks (entity registration, data isolation, edition safety, safe HTTP, environment) |
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | When invoked | Step-by-step workflows (`add-feature`, `add-entity`, `add-endpoint`, `db-migration`, `qadam-builder`) |
 | `.agents/agents/*.md` | 25–65 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |
-| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, sandbox tooling |
+| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache |
 
 ## Architecture (Non-Obvious Rules)
 
@@ -177,9 +177,8 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 - Always prefix `git push` with `RUN_CHECKS=yes` to auto-approve the pre-push lint/test gate, e.g.
   `RUN_CHECKS=yes git push -u origin HEAD`. (`RUN_CHECKS=lint` runs lint only, `RUN_CHECKS=n` or
   `SKIP_CHECK=1` skips — the latter bypasses the whole hook including the direct-to-`main` guard.)
-- The hook is not installed in every sandbox/devcontainer — check that `core.hooksPath` is set;
-  a successful gated push from a tree without the hook proves nothing. See
-  [`sandbox-environment.md`](.agents/docs/sandbox-environment.md).
+- The hook is not installed in every checkout — check that `core.hooksPath` is set; a successful
+  gated push from a tree without the hook proves nothing.
 
 ## Pull Requests
 
@@ -205,10 +204,6 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
   passing check; several plausible commands here check nothing at all.
 - Touching CI install or caching (`bun.lock`, turbo `inputs`, `tools/ci/install-deps.sh`, the
   `refresh-cache` label)? Read [`node-modules-cache.md`](.agents/docs/node-modules-cache.md) first.
-- Working inside the sandbox/devcontainer? Read
-  [`sandbox-environment.md`](.agents/docs/sandbox-environment.md) first — several tools are missing
-  there, and anything routed through `turbo run` or a git hook proves nothing inside it.
-
 
 ## Review Agents
 
@@ -247,4 +242,3 @@ read the file, don't paraphrase it from here.
 - [Database Migrations Playbook](.agents/skills/db-migration/SKILL.md)
 - [Verification Pitfalls](.agents/docs/verification-pitfalls.md)
 - [CI node_modules Cache](.agents/docs/node-modules-cache.md)
-- [Sandbox Environment](.agents/docs/sandbox-environment.md)

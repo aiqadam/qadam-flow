@@ -46,7 +46,7 @@ before trusting its silence — an empty output is not the same as a passing che
   --include='*.md' --include='*.sh'` sweep for `lint-core` missed it entirely and the rename would
   have broken every `RUN_CHECKS=yes git push` with a "Lint failed" message that named the wrong
   cause (caught in review on #184). Grep the whole tree with only `node_modules`/`dist` excluded.
-  Also note the hook is **not installed in the sandbox container** (no `core.hooksPath`, no
+  Also note the hook is **not installed in every checkout** (no `core.hooksPath`, no
   `.git/hooks/pre-push`), so a successful `RUN_CHECKS=yes` push there is not evidence that the
   gate passes — it is evidence that the gate did not run.
 - **Turbo `inputs` narrower than the files the script actually covers makes a check silently
@@ -128,7 +128,7 @@ before trusting its silence — an empty output is not the same as a passing che
   expected count. Then run the expression once before trusting it and confirm it returns the
   *not-ready* answer — a gate only ever checked against the state it should accept is not checked.
 - **A loop whose tool is missing hangs silently instead of failing.** The replacement for the above
-  piped into `jq`, which is not installed here (see [sandbox-environment.md](./sandbox-environment.md)): every iteration printed
+  piped into `jq`, which was not installed in that environment: every iteration printed
   `jq: command not found` into a log nobody was reading, the condition never became true, and it ran
   until killed by hand. `gh` has `--jq` built in and needs no external binary. Same family as the
   missing `python3` above: run a command once and look at its output before looping on it.
