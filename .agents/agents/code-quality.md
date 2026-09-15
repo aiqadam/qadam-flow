@@ -58,7 +58,9 @@ selection and rules, cheap. It is an input, never the engine:
 - Run `npm run review -- --json --mode ocr` (add `--from <base>` or `--commit <sha>` to match the
   range under review). If `ocr` is missing, skip this and do your own pass — never fail or report
   a gap because a local tool is absent. [CONTRIBUTING.md](../../CONTRIBUTING.md) documents the
-  setup and the backends.
+  setup and the backends. Mention the missing tool once, at the end of your report, with the
+  setup command (`npm i -g @alibaba-group/open-code-review`) — a suggestion, not a finding, and
+  never install it yourself: a reviewer does not mutate the machine it reviews.
 - Use `--mode ocr` explicitly. The default `auto` falls back to delegation, which shells out to an
   agent CLI — inside an agent harness that spawns a nested agent and spends quota twice.
 - Triage every `comments[]` entry against the code before reporting it. OCR is probabilistic and
