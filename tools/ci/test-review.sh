@@ -461,6 +461,60 @@ else
   ok_case
 fi
 
+echo "== --emit-prompts: delegation prompts to files, no LLM and no agent =="
+
+reset_review_env
+rm -f "$OCR_STUB_LOG"
+emit_dir="$tmp/prompts"
+review "$bin_full" --emit-prompts "$emit_dir"
+expect_equal "$status" "0" "emit: exit 0"
+expect_contains "$out" "emitted 1 prompt(s) for 1 file(s)" "emit: summary names the prompt and file counts"
+expect_file_contains "$emit_dir/batch-01.prompt.md" "Every query must filter by projectId." "emit: prompt carries the project rule"
+expect_file_contains "$emit_dir/batch-01.prompt.md" "+export const x = 2" "emit: prompt carries the diff"
+expect_file_contains "$emit_dir/batch-01.prompt.md" "<review-findings>" "emit: prompt keeps the findings contract"
+expect_file_contains "$emit_dir/manifest.json" '"prompt_file": "batch-01.prompt.md"' "emit: manifest lists the prompt file"
+expect_file_contains "$emit_dir/manifest.json" '"reason": "user_exclude"' "emit: manifest keeps the exclusion reasons"
+expect_file_missing "$AGENT_STUB_PROMPT" "emit: no agent CLI is invoked"
+expect_file_missing "$artifact" "emit: no findings artifact is written"
+if grep -q "^review --format" "$OCR_STUB_LOG"; then
+  fail_case "emit: must not start an ocr review (no endpoint needed)" "$(cat "$OCR_STUB_LOG")"
+else
+  ok_case
+fi
+
+echo "== --emit-prompts: batching, stale cleanup, error paths =="
+
+reset_review_env
+rm -rf "$emit_dir"
+export OCR_STUB_PREVIEW="$tmp/preview-batch.json"
+export OCR_STUB_RULES="$tmp/rules-batch.json"
+review "$bin_full" --emit-prompts "$emit_dir" --json
+expect_equal "$status" "0" "emit batching: exit 0"
+expect_file_contains "$emit_dir/batch-01.prompt.md" "RULE-ALPHA" "emit batching: the first rule gets its own prompt"
+expect_file_contains "$emit_dir/batch-02.prompt.md" "RULE-BETA" "emit batching: the second rule gets its own prompt"
+if printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",(d)=>s+=d).on("end",()=>{const j=JSON.parse(s);process.exit(j.batches.length===2&&j.batches[1].prompt_file==="batch-02.prompt.md"&&j.target.merge_base===null?0:1)})'; then
+  ok_case
+else
+  fail_case "emit batching --json: stdout is the parseable manifest with both batches" "$out"
+fi
+
+reset_review_env
+review "$bin_full" --emit-prompts "$emit_dir"
+expect_equal "$status" "0" "emit second run: exit 0"
+expect_file_missing "$emit_dir/batch-02.prompt.md" "emit second run: a stale prompt from the previous emit is removed"
+
+reset_review_env
+review "$bin_ocr" --emit-prompts "$emit_dir" --preview
+expect_equal "$status" "1" "emit + --preview: usage error"
+expect_contains "$out" "cannot be combined" "emit + --preview: message names the conflict"
+review "$bin_full" --emit-prompts "$emit_dir" --mode ocr
+expect_equal "$status" "1" "emit + --mode: usage error"
+review "$bin_full" --emit-prompts "$emit_dir" --agent opencode
+expect_equal "$status" "1" "emit + --agent: usage error"
+review "$bin_lonely" --emit-prompts "$emit_dir"
+expect_equal "$status" "1" "emit without ocr: exit 1, not a silent skip"
+expect_contains "$out" 'needs the `ocr` CLI' "emit without ocr: message names the missing CLI"
+
 echo "== mode flags reach ocr unchanged =="
 
 reset_review_env

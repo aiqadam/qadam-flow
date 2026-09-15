@@ -11,7 +11,9 @@
 //                    OCR's deterministic scaffolding itself (`delegate preview`,
 //                    `delegate rule`, `git diff`) and hands the agent a
 //                    self-contained prompt, so the agent needs no tools and no
-//                    permissions — only its own quota.
+//                    permissions — only its own quota. `--emit-prompts <dir>`
+//                    stops one step earlier and writes those same prompts to
+//                    files, for a harness-native agent to answer.
 //   3. skip          neither is available -> one-line hint, exit 0.
 //
 // Exit codes are the hook contract:
@@ -26,7 +28,7 @@
 // Usage: node tools/scripts/review.mjs [flags]   (see USAGE below)
 
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 
@@ -68,6 +70,8 @@ Flags:
   -b, --background <text>  extra context for the reviewer
   -B, --background-file <path>  context from a markdown file
   --preview               list what would be reviewed; no LLM call
+  --emit-prompts <dir>    write the delegation prompts (rules + diffs + findings
+                          contract) to <dir>; no LLM or agent CLI is used
   --json                  print the JSON artifact instead of the summary
   --timeout <minutes>     per-review timeout (default: ${DEFAULT_TIMEOUT_MIN})
   -h, --help              this text
@@ -106,6 +110,13 @@ const main = () => {
         return skip('--preview needs the `ocr` CLI: npm i -g @alibaba-group/open-code-review')
       }
       return runPreview({ repo, refs: parsed.refs, asJson: parsed.json, ocrVersion })
+    }
+
+    if (parsed.emitPrompts !== null) {
+      if (ocr === null) {
+        return fail('--emit-prompts needs the `ocr` CLI for preview/rules: npm i -g @alibaba-group/open-code-review')
+      }
+      return runEmitPrompts({ repo, refs: parsed.refs, opts: parsed, dir: parsed.emitPrompts, asJson: parsed.json })
     }
 
     const backend = resolveBackend({ mode: parsed.mode, ocr, agent })
@@ -245,35 +256,7 @@ const runDelegation = ({ repo, refs, agent, opts, tmp }) => {
     return { kind: 'ok', comments: [], warnings: [], reviewed: [], excluded, mergeBase: preview.merge_base ?? null }
   }
 
-  const ruleByFile = collectRules(repo, reviewable.map((f) => f.path))
-  const warnings = []
-  const batches = []
-  let current = null
-
-  for (const file of reviewable) {
-    const rule = ruleByFile.get(file.path) ?? ''
-    const diff = collectDiff({ repo, refs, path: file.path, preview })
-    if (diff === null || diff.trim() === '') {
-      warnings.push(`no textual diff for ${file.path}; skipped`)
-      continue
-    }
-    if (diff.length + rule.length > MAX_BATCH_CHARS) {
-      warnings.push(
-        `${file.path}: diff too large for delegation (${diff.length} chars); skipped — review it with OCR-managed mode or by hand`
-      )
-      continue
-    }
-    if (
-      current === null ||
-      current.rule !== rule ||
-      current.size + diff.length + rule.length > MAX_BATCH_CHARS
-    ) {
-      current = { rule, files: [], size: 0 }
-      batches.push(current)
-    }
-    current.files.push({ path: file.path, diff })
-    current.size += diff.length + rule.length
-  }
+  const { batches, warnings } = planBatches({ repo, refs, preview })
 
   const comments = []
   const reviewed = []
@@ -302,6 +285,97 @@ const runDelegation = ({ repo, refs, agent, opts, tmp }) => {
   }
 
   return { kind: 'ok', comments, warnings, reviewed, excluded, mergeBase: preview.merge_base ?? null }
+}
+
+const planBatches = ({ repo, refs, preview }) => {
+  const files = preview.reviewable_files ?? []
+  const ruleByFile = collectRules(repo, files.map((f) => f.path))
+  const warnings = []
+  const batches = []
+  let current = null
+
+  for (const file of files) {
+    const rule = ruleByFile.get(file.path) ?? ''
+    const diff = collectDiff({ repo, refs, path: file.path, preview })
+    if (diff === null || diff.trim() === '') {
+      warnings.push(`no textual diff for ${file.path}; skipped`)
+      continue
+    }
+    if (diff.length + rule.length > MAX_BATCH_CHARS) {
+      warnings.push(
+        `${file.path}: diff too large for delegation (${diff.length} chars); skipped — review it with OCR-managed mode or by hand`
+      )
+      continue
+    }
+    if (
+      current === null ||
+      current.rule !== rule ||
+      current.size + diff.length + rule.length > MAX_BATCH_CHARS
+    ) {
+      current = { rule, files: [], size: 0 }
+      batches.push(current)
+    }
+    current.files.push({ path: file.path, diff })
+    current.size += diff.length + rule.length
+  }
+  return { batches, warnings }
+}
+
+const runEmitPrompts = ({ repo, refs, opts, dir, asJson }) => {
+  const preview = ocrJson(
+    ['delegate', 'preview', '--format', 'json', ...modeArgs(refs), ...backgroundArgs(opts)],
+    repo
+  )
+  const background = preview.background ?? opts.background ?? ''
+  const { batches, warnings } = planBatches({ repo, refs, preview })
+  const excluded = (preview.excluded_files ?? []).map((f) => ({ path: f.path, reason: f.exclude_reason ?? '' }))
+
+  const outDir = isAbsolute(dir) ? dir : resolve(repo, dir)
+  mkdirSync(outDir, { recursive: true })
+  // A prompt from an earlier range would silently mix two changesets in one
+  // directory, so the files this command owns are removed before writing.
+  for (const entry of readdirSync(outDir)) {
+    if (entry === 'manifest.json' || /^batch-\d+\.prompt\.md$/.test(entry)) {
+      rmSync(join(outDir, entry), { force: true })
+    }
+  }
+
+  const emitted = batches.map((batch, index) => {
+    const promptFile = `batch-${String(index + 1).padStart(2, '0')}.prompt.md`
+    const prompt = buildPrompt({ batch, background })
+    writeFileSync(join(outDir, promptFile), prompt.endsWith('\n') ? prompt : `${prompt}\n`)
+    return { index: index + 1, prompt_file: promptFile, files: batch.files.map((f) => f.path), chars: prompt.length }
+  })
+  const manifest = {
+    schema: 1,
+    tool: 'qadam-flow/review',
+    generated_at: new Date().toISOString(),
+    mode: refs.commit !== null ? 'commit' : refs.from !== null ? 'range' : 'workspace',
+    target: { from: refs.from, to: refs.to, commit: refs.commit, merge_base: preview.merge_base ?? null },
+    background_included: background.trim() !== '',
+    reviewable_count: (preview.reviewable_files ?? []).length,
+    total_files: preview.total_files ?? null,
+    batches: emitted,
+    excluded_files: excluded,
+    warnings,
+  }
+  writeFileSync(join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+
+  if (asJson) {
+    process.stdout.write(JSON.stringify(manifest, null, 2) + '\n')
+    return EXIT_OK
+  }
+  process.stdout.write(
+    `[review] emitted ${emitted.length} prompt(s) for ${manifest.reviewable_count} file(s) into ${relativePath(repo, outDir)}\n`
+  )
+  for (const batch of emitted) {
+    process.stdout.write(`  prompt  ${batch.prompt_file} <- ${batch.files.join(', ')}\n`)
+  }
+  for (const warning of warnings) {
+    process.stdout.write(`[review] warning: ${warning}\n`)
+  }
+  process.stdout.write('[review] no LLM was called — answer each prompt and collect its findings block.\n')
+  return EXIT_OK
 }
 
 const runPreview = ({ repo, refs, asJson, ocrVersion }) => {
@@ -653,6 +727,7 @@ const parseArgs = (argv) => {
     background: null,
     backgroundFile: null,
     preview: false,
+    emitPrompts: null,
     json: false,
     timeoutMin: DEFAULT_TIMEOUT_MIN,
     help: false,
@@ -711,6 +786,15 @@ const parseArgs = (argv) => {
       case '--preview':
         parsed.preview = true
         break
+      case '--emit-prompts': {
+        const value = readValue(i, arg)
+        if (value.trim() === '') {
+          throw new Error('--emit-prompts requires a directory')
+        }
+        parsed.emitPrompts = value
+        i += 1
+        break
+      }
       case '--json':
         parsed.json = true
         break
@@ -745,6 +829,17 @@ const parseArgs = (argv) => {
   }
   if (parsed.backgroundFile !== null && !existsSync(parsed.backgroundFile)) {
     throw new Error(`--background-file not found: ${parsed.backgroundFile}`)
+  }
+  if (parsed.emitPrompts !== null) {
+    if (parsed.preview) {
+      throw new Error('--emit-prompts cannot be combined with --preview')
+    }
+    if (parsed.mode !== 'auto') {
+      throw new Error('--emit-prompts cannot be combined with --mode')
+    }
+    if (parsed.agent !== null) {
+      throw new Error('--emit-prompts cannot be combined with --agent')
+    }
   }
   return parsed
 }
