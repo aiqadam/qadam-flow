@@ -14,7 +14,7 @@ The UI ships four locales: **English (`en`), Russian (`ru`), Uzbek (`uz`) and Ka
 2. Add the same key with an actual translation to `ru`, `uz` and `kk` in the same pull request.
 3. Run `npm run check-i18n` to confirm the four catalogs agree.
 
-Every key in `en` must exist in all three other locales, values must not be empty, and ICU arguments (`{name}`, `{count, plural, ...}`) must survive translation unchanged. `npm run check-i18n` enforces this in CI and in the pre-push hook.
+Every key in `en` must exist in all three other locales, values must not be empty, and ICU arguments (`{name}`, `{count, plural, ...}`) must survive translation unchanged. `npm run check-i18n` enforces this in CI and in the pre-push `[l]int` path.
 
 ## Removing a key
 
@@ -28,8 +28,8 @@ Some values are intentionally identical to their English key: proper nouns and a
 
 ## Qadam catalogs
 
-Translations for qadams live next to each qadam (`packages/qadams/<area>/<qadam>/src/i18n/`). Coverage is optional — a qadam may ship fewer locales than the UI — but any `<locale>.json` that exists must only use keys from its own `translation.json`, with non-empty values. The same `npm run check-i18n` command enforces that too.
+Translations for qadams live next to each qadam (`packages/qadams/<area>/<qadam>/src/i18n/`). Coverage is optional — a qadam may ship fewer locales than the UI — but any `<locale>.json` that exists must have a sibling `translation.json` and non-empty values. The same `npm run check-i18n` command enforces that too.
 
-`translation.json` is a generated snapshot, so the checker never prunes a qadam locale file automatically: a key it does not list may still be live in metadata that was not regenerated. When the check reports a stale qadam key, regenerate that qadam's `translation.json` (or delete the key by hand once you have confirmed it is dead).
+`translation.json` is a generated snapshot, so it is **not** the source of truth for what a qadam may translate: the checker neither prunes a qadam locale file nor flags a key its snapshot does not list — such a key may still be live in metadata that was not regenerated. Never delete qadam keys to satisfy a checker run; a prune of 3014 "stale" keys once removed live Snowflake and Intercom translations that way.
 
 Note that the app only loads the four locales above, so a `fr.json` or `de.json` a qadam inherited from upstream is never read.

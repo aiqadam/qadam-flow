@@ -162,13 +162,31 @@ run_check
 expect_status 1 "invalid ICU in uz"
 expect_contains "not valid ICU" "invalid ICU in uz"
 
-echo "== ru/kk plural branches do not count as a mismatch =="
+# ICU arguments nested in rich-text tags must be collected too, or a dropped
+# placeholder inside <b>…</b> is a false negative.
+new_root
+base_catalogs
+write_json "$root/packages/web/public/locales/en/translation.json" '{"greeting": "Hello", "runs": "{count, plural, =1 {1 run} other {# runs}}", "tagged": "Read <b>{count}</b> more"}'
+write_json "$root/packages/web/public/locales/ru/translation.json" '{"greeting": "Привет", "runs": "{count, plural, =0 {0 запусков} =1 {1 запуск} one {# запуск} few {# запуска} many {# запусков} other {# запуска}}", "tagged": "Прочитайте <b>{count}</b> ещё"}'
+write_json "$root/packages/web/public/locales/kk/translation.json" '{"greeting": "Сәлем", "runs": "{count, plural, =1 {1 орындалу} other {# орындалу}}", "tagged": "Тағы <b>{count}</b> оқыңыз"}'
+write_json "$root/packages/web/public/locales/uz/translation.json" '{"greeting": "Salom", "runs": "{count, plural, =1 {1 ijro} other {# ijro}}", "tagged": "Yana oqish"}'
+run_check
+expect_status 1 "argument dropped inside a tag"
+expect_contains "icu-arguments: 1" "tag children are visited"
+
+echo "== ICU arguments are compared as a set, not a multiset =="
 
 new_root
 base_catalogs
+# The ru value repeats {projectName} three times where en uses it once; a
+# multiset comparison would fail this fixture, the set must not.
+write_json "$root/packages/web/public/locales/en/translation.json" '{"greeting": "Hello", "runs": "{count, plural, =1 {1 run} other {# runs}}", "named": "Run {projectName} started"}'
+write_json "$root/packages/web/public/locales/ru/translation.json" '{"greeting": "Привет", "runs": "{count, plural, =0 {0 запусков} =1 {1 запуск} one {# запуск} few {# запуска} many {# запусков} other {# запуска}}", "named": "Прогон {projectName} начат, {projectName} идёт, {projectName} завершён"}'
+write_json "$root/packages/web/public/locales/kk/translation.json" '{"greeting": "Сәлем", "runs": "{count, plural, =1 {1 орындалу} other {# орындалу}}", "named": "Басталды {projectName}"}'
+write_json "$root/packages/web/public/locales/uz/translation.json" '{"greeting": "Salom", "runs": "{count, plural, =1 {1 ijro} other {# ijro}}", "named": "Boshlandi {projectName}"}'
 run_check
-expect_status 0 "extra plural branches in ru/kk are not an ICU violation"
-expect_not_contains "icu-arguments" "set comparison, not multiset"
+expect_status 0 "extra plural branches and repeated variables are not an ICU violation"
+expect_not_contains "icu-arguments" "argument comparison is a set, not a multiset"
 
 echo "== the locale list is pinned to LocalesEnum =="
 
@@ -232,6 +250,9 @@ write_json "$root/packages/qadams/community/demo/src/i18n/ru.json" '{"Airtable":
 run_check
 expect_status 0 "qadam locale is allowed to cover a subset of translation.json"
 
+# A key absent from the generated snapshot is not a violation: asserting it was
+# how the 3014-key prune — which deleted live Snowflake/Intercom ru translations —
+# looked green. The fixture pins the pass and the untouched file.
 new_root
 base_catalogs
 mkdir -p "$root/packages/qadams/community/demo/src/i18n"
@@ -239,11 +260,9 @@ write_json "$root/packages/qadams/community/demo/src/i18n/translation.json" '{"A
 write_json "$root/packages/qadams/community/demo/src/i18n/ru.json" '{"Airtable": "Airtable", "Gone": "Исчез"}'
 cp "$root/packages/qadams/community/demo/src/i18n/ru.json" "$root/before-fix.json"
 run_check
-expect_status 1 "qadam stale key"
-expect_contains "stale-key: 1" "qadam stale key"
+expect_status 0 "a key missing from the qadam snapshot is not a violation"
 run_check --fix
-expect_status 1 "qadam stale keys are never pruned by --fix"
-expect_contains "never pruned automatically" "qadam guidance explains the manual step"
+expect_status 0 "a key missing from the qadam snapshot passes --fix too"
 cmp -s "$root/before-fix.json" "$root/packages/qadams/community/demo/src/i18n/ru.json" && ok || bad "--fix must leave qadam catalogs untouched"
 
 # The qadam catalogs have no trailing newline today; the web catalogs do. The
@@ -261,7 +280,7 @@ trailing_root() {
 
 trailing_root
 run_check --fix
-expect_status 1 "fixer prunes only the web catalog, the qadam key still fails"
+expect_status 0 "fixer prunes the web catalog and leaves the qadam file alone"
 cmp -s "$root/before-fix.json" "$root/packages/qadams/community/demo/src/i18n/ru.json" && ok || bad "qadam catalog changed under --fix"
 if [ "$(tail -c 1 "$root/packages/web/public/locales/uz/translation.json" | wc -l)" -eq 1 ]; then ok; else bad "web file lost its trailing newline"; fi
 node -e "const j=require('$root/packages/web/public/locales/uz/translation.json'); if ('stale' in j) process.exit(1)" || bad "web stale key was not pruned"
@@ -286,13 +305,14 @@ expect_contains "missing-source: 1" "qadam locale without a source"
 echo "== --init-allowlist =="
 
 new_root
-write_json "$root/packages/web/public/locales/en/translation.json" '{"greeting": "Hello", "footer": "Build"}'
-write_json "$root/packages/web/public/locales/ru/translation.json" '{"greeting": "Hello", "footer": "Build"}'
-write_json "$root/packages/web/public/locales/kk/translation.json" '{"greeting": "Hello", "footer": "Build"}'
-write_json "$root/packages/web/public/locales/uz/translation.json" '{"greeting": "Hello", "footer": "Build"}'
+write_json "$root/packages/web/public/locales/en/translation.json" '{"greeting": "Hello", "footer": "Build", "1,000": "1,000"}'
+write_json "$root/packages/web/public/locales/ru/translation.json" '{"greeting": "Hello", "footer": "Build", "1,000": "1,000"}'
+write_json "$root/packages/web/public/locales/kk/translation.json" '{"greeting": "Hello", "footer": "Build", "1,000": "1,000"}'
+write_json "$root/packages/web/public/locales/uz/translation.json" '{"greeting": "Hello", "footer": "Build", "1,000": "1,000"}'
 run_check --init-allowlist
 expect_status 0 "--init-allowlist always succeeds"
-node -e "const a=require('$root/tools/ci/i18n-allowlist.json'); if (a.entries.length !== 2) process.exit(1)" || bad "--init-allowlist must record both identical keys"
+node -e "const a=require('$root/tools/ci/i18n-allowlist.json'); if (a.entries.length !== 3) process.exit(1)" || bad "--init-allowlist must record every identical key"
+node -e "const a=require('$root/tools/ci/i18n-allowlist.json'); const e=a.entries.find((x)=>x.key==='1,000'); if (!e || e.reason !== 'numeral') process.exit(1)" || bad "a numeric key must be classified as a numeral"
 run_check
 expect_status 0 "a check against the generated allowlist passes"
 

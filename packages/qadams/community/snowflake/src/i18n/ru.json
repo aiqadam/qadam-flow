@@ -1,5 +1,7 @@
 {
   "Data warehouse built for the cloud": "Хранилище данных построено для облака",
+  "Username": "Имя пользователя",
+  "Password": "Пароль",
   "Database": "База данных",
   "Warehouse": "Склад",
   "Run Query": "Запустить запрос",

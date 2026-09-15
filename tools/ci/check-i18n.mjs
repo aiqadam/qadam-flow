@@ -6,8 +6,9 @@
 // dropped, so every key in `en/translation.json` must exist in all three other
 // locales with a real translation. Qadam catalogs are translated per-locale when
 // someone volunteers the work, so coverage is NOT required there — but every
-// `<locale>.json` that exists must only contain keys its `translation.json` declares,
-// with non-empty values.
+// `<locale>.json` that exists must have a sibling `translation.json` and non-empty
+// values. Stale qadam keys are deliberately not an invariant: `translation.json`
+// is a generated snapshot, so a key missing from it may still be live.
 //
 // Usage:
 //   node tools/ci/check-i18n.mjs                 # check
@@ -115,16 +116,14 @@ const checkQadams = ({ root }) => {
       if (value === '') violations.push({ scope: 'qadam', invariant: 'empty-value', file, detail: JSON.stringify(key) })
     }
     if (path.basename(file) === 'translation.json') continue
-    const sourceFile = path.join(path.dirname(file), 'translation.json')
-    if (!fs.existsSync(sourceFile)) {
+    // No stale-key invariant here, and no --fix pruning: translation.json is a
+    // generated snapshot, so a key missing from it may still be live in the qadam
+    // metadata that has not been regenerated. Asserting it was the check's only
+    // way to see the 3014-key prune as green — the prune then deleted live ru
+    // translations (Snowflake auth props, Intercom region labels).
+    if (!fs.existsSync(path.join(path.dirname(file), 'translation.json'))) {
       violations.push({ scope: 'qadam', invariant: 'missing-source', file, detail: 'no sibling translation.json' })
-      continue
     }
-    const source = readJson({ file: sourceFile })
-    // Never pruned by --fix: translation.json is a generated snapshot, so a key
-    // missing from it may still be live in the qadam metadata that has not been
-    // regenerated. Deleting such a key automatically would delete a translation.
-    for (const key of Object.keys(catalog).filter((key) => !(key in source))) violations.push({ scope: 'qadam', invariant: 'stale-key', file, detail: JSON.stringify(key) })
   }
   return { violations, fixed: [] }
 }
@@ -159,6 +158,8 @@ const collectIcuArguments = ({ value }) => {
       else if (node.type === ICU_TYPE.plural || node.type === ICU_TYPE.select) {
         args.add(`${node.value}:${node.type}`)
         for (const option of Object.values(node.options)) visit(option.value)
+      } else if (node.type === ICU_TYPE.tag) {
+        visit(node.children)
       }
     }
   }
@@ -187,8 +188,8 @@ const initAllowlist = ({ root }) => {
 }
 
 const classifyAllowlistReason = ({ key }) => {
-  if (/^[${}[\]:,0-9+./-]+$/.test(key) || key.includes('${')) return 'code or template string'
   if (/^[\d,]+$/.test(key)) return 'numeral'
+  if (/^[${}[\]:,0-9+./-]+$/.test(key) || key.includes('${')) return 'code or template string'
   if (/^[A-Z][A-Za-z0-9. ()-]*$/.test(key) && !key.includes(' ')) return 'proper noun or acronym'
   return 'proper noun, acronym, or label kept as-is'
 }
@@ -266,9 +267,6 @@ const printReport = ({ violations, fixed }) => {
   }
   const hints = []
   if (violations.some((violation) => violation.scope === 'web' && violation.invariant === 'stale-key')) hints.push('--fix prunes stale web keys')
-  if (violations.some((violation) => violation.scope === 'qadam' && violation.invariant === 'stale-key')) {
-    hints.push("qadam stale keys are never pruned automatically — regenerate that qadam's translation.json or delete the key manually")
-  }
   console.log(`\ni18n check failed: ${violations.length} violation(s).${hints.length > 0 ? ` ${hints.join('; ')}.` : ''}`)
   process.exitCode = 1
 }
