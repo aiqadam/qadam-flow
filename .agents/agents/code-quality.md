@@ -48,25 +48,18 @@ Most findings here are violations of documented conventions, not exotic bugs.
 6. **Altitude & duplication** — logic that belongs in a service sitting in a controller, a helper
    reimplemented instead of reused, side effects not separated into `*-side-effects.ts`.
 
-## OCR as an extra input (optional)
+## OCR as an extra input
 
-OCR is [alibaba/open-code-review](https://github.com/alibaba/open-code-review), the AI review CLI
-this repo wraps as `npm run review`; its conventions live in `.opencodereview/`. When the `ocr`
-binary is installed it is a second reader you can put on the same range — deterministic file
-selection and rules, cheap. It is an input, never the engine:
+The orchestrator runs the advisory pass before it spawns you and points you at the artifact — the
+`comments[]` list in `.git/qadam-review/last.json`, or the findings file it collected when the
+pass ran via `--emit-prompts`. It is an input, never the engine:
 
-- Run `npm run review -- --json --mode ocr` (add `--from <base>` or `--commit <sha>` to match the
-  range under review). If `ocr` is missing, skip this and do your own pass — never fail or report
-  a gap because a local tool is absent. [CONTRIBUTING.md](../../CONTRIBUTING.md) documents the
-  setup and the backends. Mention the missing tool once, at the end of your report, with the
-  setup command (`npm i -g @alibaba-group/open-code-review`) — a suggestion, not a finding, and
-  never install it yourself: a reviewer does not mutate the machine it reviews.
-- Use `--mode ocr` explicitly. The default `auto` falls back to delegation, which shells out to an
-  agent CLI — inside an agent harness that spawns a nested agent and spends quota twice.
-- Triage every `comments[]` entry against the code before reporting it. OCR is probabilistic and
-  its artifact is not evidence: a finding you cannot reproduce from the source is a false
-  positive, and paraphrasing the tool instead of reading the diff is the failure this charter
-  exists to prevent.
+- Do your own pass first; only then triage the artifact.
+- Triage means verifying every comment against the code you read. A finding you cannot reproduce
+  from the source is a false positive to report as such, never a finding to pass through.
+- Never install or run `ocr` / `npm run review` yourself; a reviewer does not mutate the machine
+  it reviews. If the brief says the pass was unavailable, note that once and proceed — a missing
+  tool is not a gap to report.
 - The tool's convention source is `.opencodereview/rule.json` + `.opencodereview/rules/*.md`. If a
   finding rests on a rule that contradicts AGENTS.md, report the rule drift as a finding too.
 - Tool findings do not change your verdict. Your own pass over correctness, tests, dead code and
