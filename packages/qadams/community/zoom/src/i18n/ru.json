@@ -1,7 +1,5 @@
 {
-  "Zoom": "Масштаб",
   "Video conferencing, web conferencing, webinars, screen sharing": "Видеоконференции, веб-конференции, вебинары, демонстрация экрана",
-  "\n  1. Go to [marketplace.zoom.us](https://marketplace.zoom.us/) and log in to your account.\n  2. In the upper-right corner, click **Develop** then **Build App**.\n  3. Select **General App**.\n  4. Copy the Client ID and Client Secret.Add Redirect URL and press continue.\n  5. Go to **Scopes** from left side bar and add **meeting:write:meeting** and **meeting:write:registrant** as scopes.": "\n  1. Перейдите в [marketplace.zoom.us](https://marketplace.zoom.us/) и войдите в свою учетную запись.\n  2. В правом верхнем углу нажмите **Разработка** и **Build App**.\n  3. Выберите **Общее приложение**.\n  4. Скопируйте ID клиента и Client Secret.Add Redirect URL и нажмите continue.\n  5. Перейдите в **Области** слева и добавьте **meeting:write:meeting** и **meeting:write:registrant** в качестве рамок.",
   "Create Zoom Meeting": "Создать встречу масштаба",
   "Create Zoom Meeting Registrant": "Создать Регистрация встречи масштаба",
   "Custom API Call": "Пользовательский вызов API",

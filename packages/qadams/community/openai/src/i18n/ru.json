@@ -1,5 +1,4 @@
 {
-  "OpenAI": "OpenAI",
   "Use the many tools ChatGPT has to offer.": "Используйте много инструментов ChatGPT может предложить.",
   "Follow these instructions to get your OpenAI API Key:\n\n1. Visit the following website: https://platform.openai.com/account/api-keys.\n2. Once on the website, locate and click on the option to obtain your OpenAI API Key.\n\nIt is strongly recommended that you add your credit card information to your OpenAI account and upgrade to the paid plan **before** generating the API Key. This will help you prevent 429 errors.\n": "Следуйте этим инструкциям, чтобы получить ваш OpenAI API ключ:\n\n1. Посетите следующий веб-сайт: https://platform.openai. om/account/api-keys.\n2. Когда на веб-сайте, найдите и нажмите на опцию, чтобы получить ваш OpenAI API ключ.\n\nНастоятельно рекомендуется добавить данные вашей кредитной карты в аккаунт OpenAI и перейти на платный план **ранее** при генерации ключа API. Это поможет вам предотвратить ошибки 429.\n",
   "Ask ChatGPT": "Спросить чат-GPT",
@@ -62,7 +61,6 @@
   "A memory key that will keep the chat history shared across runs and flows. Keep it empty to leave your assistant without memory of previous messages.": "Ключ памяти, который будет держать историю чата общими между запусками и потоками. Оставьте пустым чтобы оставить своего помощника без памяти о предыдущих сообщениях.",
   "The model which will generate the image.": "Модель, которая создаст изображение.",
   "The resolution to generate the image in.": "Разрешение для создания изображения.",
-  "Standard is faster, HD has better details.": "Стандарт быстрее, HD имеет лучшие детали.",
   "The image URL or file you want GPT's vision to read.": "URL изображения или файл, который вы хотите, чтобы видение GPT читалось.",
   "What do you want ChatGPT to tell you about the image?": "Что вы хотите, чтобы ChatGPT рассказал вам об изображении?",
   "Control how the model processes the image and generates textual understanding.": "Контролируйте как модель обрабатывает изображение и генерирует текстовое понимание.",
@@ -77,8 +75,6 @@
   "Language of the audio file the default is en (English).": "Язык аудиофайла по умолчанию - ru (английский).",
   "Audio file to translate": "Аудио файл для перевода",
   "Authorization headers are injected automatically from your connection.": "Заголовки авторизации включаются автоматически из вашего соединения.",
-  "tts-1": "тс-1",
-  "tts-1-hd": "Ттс-1-ч",
   "alloy": "alloy",
   "echo": "эхо",
   "fable": "фибель",

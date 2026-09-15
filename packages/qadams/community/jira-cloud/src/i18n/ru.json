@@ -1,5 +1,4 @@
 {
-  "Jira Cloud": "Облако Jira",
   "Issue tracking and project management": "Отслеживание проблем и управление проектами",
   "Instance URL": "URL экземпляра",
   "Email": "Почта",
@@ -62,7 +61,6 @@
   "Body": "Тело",
   "No Error on Failure": "Нет ошибок при ошибке",
   "Timeout (in seconds)": "Таймаут (в секундах)",
-  "The JQL query to use in the search": "JQL запрос для использования в поиске",
   "Maximum number of results": "Максимальное количество результатов",
   "Authorization headers are injected automatically from your connection.": "Заголовки авторизации включаются автоматически из вашего соединения.",
   "Created (Descending)": "Создано (по убыванию)",

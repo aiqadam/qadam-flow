@@ -56,7 +56,7 @@ working — never edit a mirror; add content under `.agents/` only.
 | `.agents/rules/*.md` | 2–15 lines each (the mintlify writing rule is ~400) | Every session | Critical safety checks (entity registration, data isolation, edition safety, safe HTTP, environment) |
 | `.agents/skills/*/SKILL.md` | 12–1100 lines each | When invoked | Step-by-step workflows (`add-feature`, `add-entity`, `add-endpoint`, `db-migration`, `qadam-builder`) |
 | `.agents/agents/*.md` | 25–65 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |
-| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache, sandbox tooling |
+| `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache |
 
 ## Architecture (Non-Obvious Rules)
 
@@ -100,6 +100,7 @@ working — never edit a mirror; add content under `.agents/` only.
 - **Comments** — Only comment to explain *why* something is done, never *what* the code is doing. Code should be self-explanatory; comments that restate the code add noise and rot.
 - **Util file exports** — When a util file exposes multiple plain functions or constants (non-React), do not export them individually. Instead, group them into a single named `const` and export that one object (e.g. `export const myUtils = { fn1, fn2 }`). Callers use `myUtils.fn1()` at the call site. **React components** in the same file should be **named exports** (e.g. `export function MyAlert()` or `export const MyAlert = …`) and imported by name — do not bundle them into a wrapper object for the sake of this rule.
 - **Safe outbound HTTP (SSRF)** — For any outbound HTTP in `packages/server/{api,worker,utils}`, use `safeHttp.axios` / `safeHttp.createAxios({ ... })` from `@aiqadam/server-utils`, or `safeHttp.fetch` when a library takes a `fetch` override and nothing else. Never use raw `fetch` or `axios.create` for URLs that come from user input, admin config, OAuth endpoints, or third-party integrations — they bypass the SSRF filter (private/loopback/metadata IPs). See `.agents/rules/safe-http.md`.
+- **i18n keys are four-locale by definition** — a key added to `packages/web/public/locales/en/translation.json` needs an actual `ru`/`uz`/`kk` translation in the same PR. `npm run check-i18n` enforces key parity, non-empty values, ICU-argument preservation and exact key sets (`--fix` prunes stale keys); `tools/ci/i18n-allowlist.json` records the deliberate exceptions. See [docs/about/i18n.mdx](docs/about/i18n.mdx).
 
 ## Query Error Handling
 
@@ -174,11 +175,10 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 ## Git Push
 
 - Always prefix `git push` with `RUN_CHECKS=yes` to auto-approve the pre-push lint/test gate, e.g.
-  `RUN_CHECKS=yes git push -u origin HEAD`. (`RUN_CHECKS=lint` runs lint only, `RUN_CHECKS=n` or
+  `RUN_CHECKS=yes git push -u origin HEAD`. (`RUN_CHECKS=lint` runs lint plus the i18n check, `RUN_CHECKS=n` or
   `SKIP_CHECK=1` skips — the latter bypasses the whole hook including the direct-to-`main` guard.)
-- The hook is not installed in every sandbox/devcontainer — check that `core.hooksPath` is set;
-  a successful gated push from a tree without the hook proves nothing. See
-  [`sandbox-environment.md`](.agents/docs/sandbox-environment.md).
+- The hook is not installed in every checkout — check that `core.hooksPath` is set; a successful
+  gated push from a tree without the hook proves nothing.
 
 ## Pull Requests
 
@@ -204,10 +204,6 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
   passing check; several plausible commands here check nothing at all.
 - Touching CI install or caching (`bun.lock`, turbo `inputs`, `tools/ci/install-deps.sh`, the
   `refresh-cache` label)? Read [`node-modules-cache.md`](.agents/docs/node-modules-cache.md) first.
-- Working inside the sandbox/devcontainer? Read
-  [`sandbox-environment.md`](.agents/docs/sandbox-environment.md) first — several tools are missing
-  there, and anything routed through `turbo run` or a git hook proves nothing inside it.
-
 
 ## Review Agents
 
@@ -218,6 +214,9 @@ read the file, don't paraphrase it from here.
   `.agents/agents/<name>.md` charter file as binding instructions. Never re-type or paraphrase a
   charter from memory, and never invent a new agent or edit a charter without asking the user.
   See `.agents/rules/agent-delegation.md`.
+- **Run the review pass first.** Before spawning a `code-quality` reviewer, run `npm run review`
+  and attach its artifact to the brief alongside the feature description — see
+  `.agents/rules/agent-delegation.md` for the `--emit-prompts` fallback when no backend exists.
 
 | Agent | Use it for |
 | --- | --- |
@@ -243,4 +242,3 @@ read the file, don't paraphrase it from here.
 - [Database Migrations Playbook](.agents/skills/db-migration/SKILL.md)
 - [Verification Pitfalls](.agents/docs/verification-pitfalls.md)
 - [CI node_modules Cache](.agents/docs/node-modules-cache.md)
-- [Sandbox Environment](.agents/docs/sandbox-environment.md)

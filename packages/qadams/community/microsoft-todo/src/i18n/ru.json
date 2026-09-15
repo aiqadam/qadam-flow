@@ -1,7 +1,5 @@
 {
-  "Microsoft To Do": "Microsoft To Do",
   "Cloud based task management application.": "Облачное приложение для управления задачами.",
-  "Authenticate with your Microsoft Account. You will need to register an application in the Microsoft Entra admin center.Add **Tasks.ReadWrite**,**User.Read**, **offline_access** scopes.": "Авторизуйтесь с учетной записью Майкрософт. Вам нужно зарегистрировать приложение в области администрирования Microsoft Entra. Добавить **Tasks.ReadWrite**,**User.Read**, **offline_access** .",
   "Create Task": "Создать задачу",
   "Create Task List": "Создать список задач",
   "Update Task": "Обновить задачу",

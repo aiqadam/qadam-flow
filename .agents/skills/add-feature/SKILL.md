@@ -48,7 +48,7 @@ Read `.agents/features/<module-name>.md` first (e.g. `.agents/features/tables.md
 - API client: See `features/tables/api/tables-api.ts`
 - Hooks: See `features/tables/hooks/table-hooks.ts`
 - Route: `React.lazy()` + `ProjectRouterWrapper()` + `RoutePermissionGuard` + `SuspenseWrapper`
-- Translations: `packages/web/public/locales/en/translation.json` only
+- Translations: `en` plus `ru`/`uz`/`kk` in the same PR (`npm run check-i18n` enforces parity)
 - Feature flags: `flagsHooks.useFlag()` or `<FlagGuard>`
 
 ## Step 5: Tests

@@ -4,31 +4,32 @@ description: ""
 icon: "language"
 ---
 
-
 This guide helps you understand how to change or add new translations.
 
-Qadam Flow uses Crowdin because it helps translators who don't know how to code. It also makes the approval process easier. The pipeline automatically syncs new text from the code and translations back into the code.
+The UI ships four locales: **English (`en`), Russian (`ru`), Uzbek (`uz`) and Kazakh (`kk`)** — the rebrand is Central-Asia first. `packages/web/public/locales/en/translation.json` is the source of truth; the other three files mirror it key for key. There is no external translation service: every locale file is maintained in this repository, and a translation is reviewed like any other code change.
 
-Target languages: **Russian, Uzbek, Kazakh, and English** — the rebrand is Central-Asia first.
+## Adding or changing a string
 
-## Contribute to existing translations
+1. Add the key to `packages/web/public/locales/en/translation.json`.
+2. Add the same key with an actual translation to `ru`, `uz` and `kk` in the same pull request.
+3. Run `npm run check-i18n` to confirm the four catalogs agree.
 
-1. Create a Crowdin account.
-2. Open the Qadam Flow Crowdin project (link will be added once the project is provisioned — open an issue on [GitHub](https://github.com/aiqadam/qadam-flow/issues) if you'd like access).
-3. Click on the language you want to translate.
-4. Click on "Translate All".
-5. Select strings you want to translate and click "Save".
-
-## Adding a new language
-
-Open an issue on [GitHub](https://github.com/aiqadam/qadam-flow/issues) requesting the language — we will add it to the project and you can start translating.
+Every key in `en` must exist in all three other locales, values must not be empty, and ICU arguments (`{name}`, `{count, plural, ...}`) must survive translation unchanged. `npm run check-i18n` enforces this in CI and in the pre-push `[l]int` path.
 
 ## Removing a key
 
-`packages/web/public/locales/en/translation.json` is the **only** file to edit when a string dies.
-`crowdin.yml` declares it as the source and every other `packages/web/public/locales/<code>/translation.json`
-as a Crowdin-managed translation, so Crowdin drops the key from the target locales on its next sync.
+Remove it from `en`. A key that no longer exists in `en` is never looked up at runtime, but a leftover entry in a translated file is still a violation: run `npm run check-i18n -- --fix` to prune it from the other three files.
 
-Do **not** hand-edit the target locale files to mirror a removal. A key that no longer exists in `en`
-is never looked up at runtime, so a leftover entry in a translated file is inert — and hand edits are
-overwritten by the next Crowdin push anyway. There is no key-parity check in CI, and there should not be one.
+Nothing detects an `en` key that no code references any more — removing an unused key is a manual review, since the extractor was removed along with Crowdin. If you find one, remove it from all four catalogs (or from `en` and let `--fix` do the rest).
+
+## Proper nouns and code strings
+
+Some values are intentionally identical to their English key: proper nouns and acronyms (`Git`, `SAML`, `AI`), numerals, template strings (`${additionalCost}`), and technical labels kept as loanwords in a locale. `tools/ci/i18n-allowlist.json` records every such exception with a reason. Add an entry there only when a string genuinely must not be translated — an unlisted English value fails the check.
+
+## Qadam catalogs
+
+Translations for qadams live next to each qadam (`packages/qadams/<area>/<qadam>/src/i18n/`). Coverage is optional — a qadam may ship fewer locales than the UI — but any `<locale>.json` that exists must have a sibling `translation.json` and non-empty values. The same `npm run check-i18n` command enforces that too.
+
+`translation.json` is a generated snapshot, so it is **not** the source of truth for what a qadam may translate: the checker neither prunes a qadam locale file nor flags a key its snapshot does not list — such a key may still be live in metadata that was not regenerated. Never delete qadam keys to satisfy a checker run; a prune of 3014 "stale" keys once removed still-referenced Snowflake and Intercom translations that way.
+
+Note that the app only loads the four locales above, so a `fr.json` or `de.json` a qadam inherited from upstream is never read.

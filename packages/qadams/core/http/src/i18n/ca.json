@@ -1,5 +1,4 @@
 {
-  "HTTP": "HTTP",
   "Sends HTTP requests and return responses": "Sends HTTP requests and return responses",
   "Send HTTP request": "Send HTTP request",
   "Method": "Method",
@@ -28,6 +27,5 @@
   "JSON": "JSON",
   "Raw": "Raw",
   "Retry on all errors (4xx, 5xx)": "Retry on all errors (4xx, 5xx)",
-  "Continue flow": "Continue flow",
   "Retry on internal errors (5xx)": "Retry on internal errors (5xx)"
 }

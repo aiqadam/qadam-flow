@@ -1,5 +1,4 @@
 {
-  "Stability AI": "ИИ стабильности",
   "Generative AI video model based on the image model Stable Diffusion.": "Генерация видеомодели ИИ на основе модели Стабильной Диффузии изображения.",
   "API Key": "Ключ API",
   "Please visit https://platform.stability.ai/docs/getting-started/authentication to get your API Key": "Пожалуйста, посетите https://platform.stability.ai/docs/getting-started/authentication для получения API Key",

@@ -42,8 +42,10 @@ the language rules OCR already merges from its system layer.
   configured appearance (name, colors, logos). A hardcoded product name or logo
   in user-facing UI is a finding.
 - **Zod messages are i18n keys.** Every user-facing validation message must be
-  a key that exists in `packages/web/public/locales/en/translation.json`. Raw
-  English sentences are a finding.
+  a key that exists in all four UI catalogs
+  (`packages/web/public/locales/{en,ru,uz,kk}/translation.json`), with the
+  ru/uz/kk translations in the same PR (`npm run check-i18n` enforces parity).
+  Raw English sentences are a finding.
 - **Query error dialog.** A React Query that fetches primary page data (table
   rows, list data) must set `meta: { showErrorDialog: true }`; without it the
   user stares at a blank table with no explanation. Do not add the flag to

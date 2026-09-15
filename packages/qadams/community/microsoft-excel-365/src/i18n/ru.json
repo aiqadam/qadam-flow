@@ -1,7 +1,5 @@
 {
-  "Microsoft Excel 365": "Microsoft Excel 365",
   "Spreadsheet software by Microsoft": "Программное обеспечение для таблиц Microsoft",
-  "Authentication for Microsoft Excel 365": "Аутентификация для Microsoft Excel 365",
   "Append Row to Worksheet": "Добавить строку в таблицу",
   "Get Worksheets": "Получить рабочие таблицы",
   "Get Worksheet Rows": "Получить строки",
@@ -56,7 +54,6 @@
   "Lookup Value": "Значение поиска",
   "Return All Matches": "Вернуть все матчи",
   "Name": "Наименование",
-  "Parent Folder": "Родительская папка",
   "Method": "Метод",
   "Headers": "Заголовки",
   "Query Parameters": "Параметры запроса",
@@ -83,7 +80,6 @@
   "The value to lookup": "Значение поиска",
   "If checked, all matching rows will be returned": "Если отмечено, все соответствующие строки будут возвращены",
   "The name of the new workbook": "Название новой рабочей книги",
-  "The parent folder to use": "Родительская папка для использования",
   "Authorization headers are injected automatically from your connection.": "Заголовки авторизации включаются автоматически из вашего соединения.",
   "GET": "ПОЛУЧИТЬ",
   "POST": "ПОСТ",

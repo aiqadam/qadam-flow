@@ -1,0 +1,444 @@
+{
+  "entries": [
+    {
+      "key": "+{difference}",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "code or template string"
+    },
+    {
+      "key": "${additionalCost}",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "code or template string"
+    },
+    {
+      "key": "${totalCost}",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "code or template string"
+    },
+    {
+      "key": "0",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "numeral"
+    },
+    {
+      "key": "1,000",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "numeral"
+    },
+    {
+      "key": "100,000",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "numeral"
+    },
+    {
+      "key": "2,000,000",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "numeral"
+    },
+    {
+      "key": "500,000",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "numeral"
+    },
+    {
+      "key": "Admin",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "AI",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "AM",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "AWS Access Key ID",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "AWS Secret Access Key",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Beta",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Body",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Box",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Chat",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Client ID",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Client Secret",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "CSV",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Email",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Embedding",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "example.com",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "sample value"
+    },
+    {
+      "key": "flow",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "product term kept as-is"
+    },
+    {
+      "key": "Flow",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "product term kept as-is"
+    },
+    {
+      "key": "Flows",
+      "locales": [
+        "ru"
+      ],
+      "reason": "product term kept as-is"
+    },
+    {
+      "key": "Form Data",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Git",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Global",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Google",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "HTTP {status}",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "code or template string"
+    },
+    {
+      "key": "JSON",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "logo",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Minimum",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Model ID",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "N/A",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "NPM Registry",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Operator",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "org-3412321",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "sample value"
+    },
+    {
+      "key": "PM",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Push",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Qadam",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "product term kept as-is"
+    },
+    {
+      "key": "Qadams",
+      "locales": [
+        "ru"
+      ],
+      "reason": "product term kept as-is"
+    },
+    {
+      "key": "RAM",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Router",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "SAML",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "SAML 2.0",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Sandbox",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "Simple HTTP",
+      "locales": [
+        "ru",
+        "uz"
+      ],
+      "reason": "protocol or configuration label"
+    },
+    {
+      "key": "SSE",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "acronym or proper noun"
+    },
+    {
+      "key": "Streamable HTTP",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "protocol or configuration label"
+    },
+    {
+      "key": "Trigger",
+      "locales": [
+        "uz"
+      ],
+      "reason": "technical label kept as loanword"
+    },
+    {
+      "key": "useMultiSelect must be used within MultiSelectProvider",
+      "locales": [
+        "kk",
+        "uz"
+      ],
+      "reason": "code or template string"
+    },
+    {
+      "key": "Webhook URL",
+      "locales": [
+        "ru"
+      ],
+      "reason": "protocol or configuration label"
+    }
+  ]
+}

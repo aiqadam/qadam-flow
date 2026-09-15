@@ -61,6 +61,8 @@ npm run review                    # staged + unstaged + untracked changes
 npm run review -- --from main     # everything on this branch since main
 npm run review -- --commit <sha>  # one commit
 npm run review -- --preview       # what would be reviewed; no LLM call
+npm run review -- --emit-prompts .git/qadam-review/prompts
+                                  # write the review prompts to files; no LLM call
 npm run review -- -b "context"    # extra context, e.g. the ticket summary
 ```
 
@@ -75,7 +77,10 @@ The backend is detected at runtime, in this order:
    already on your machine (`opencode`, `claude`, `codex` or `cursor-agent`).
    The agent needs no tools or permissions — it reviews the prompt it is given
    and returns findings as JSON.
-3. **Skip** — neither is available: you get a one-line hint and nothing else
+3. **Emitted prompts** — `--emit-prompts <dir>` works whenever `ocr` is installed:
+   the script writes one `batch-NN.prompt.md` per rule batch plus `manifest.json`,
+   and an agent harness answers them itself, with no endpoint or agent CLI.
+4. **Skip** — neither is available: you get a one-line hint and nothing else
    happens.
 
 The pre-push hook offers the same as an `[r]eview` answer alongside
@@ -85,7 +90,11 @@ no terminal to ask on (a piped or IDE-run git push), where the push is aborted
 instead of hanging. The review never runs as part of the `[Y]es` gate.
 
 Each run writes its findings to `.git/qadam-review/last.json` in the current
-worktree (never committed), so you can inspect or diff the artifact later.
+worktree (never committed), so you can inspect or diff the artifact later. When review
+agents are used, the orchestrating agent runs this pass before spawning them and hands
+the artifact to each reviewer alongside its charter — see
+[`.agents/rules/agent-delegation.md`](./.agents/rules/agent-delegation.md) for the
+no-backend case (`--emit-prompts`).
 
 ## Issue & PR labels
 

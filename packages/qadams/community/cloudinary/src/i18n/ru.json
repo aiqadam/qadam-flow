@@ -1,5 +1,4 @@
 {
-  "Cloudinary": "Облачный",
   "Cloudinary is a cloud-based image and video management platform that allows you to upload, store, manage, and deliver your media assets. It provides a range of features for image and video optimization, transformation, and delivery.": "Cloudinary это облачная платформа для управления изображениями и видео, позволяющая загружать, хранить, управлять и доставлять ваши медиаресурсы. Он предоставляет ряд возможностей для оптимизации изображения и видео, преобразования и доставки.",
   "API Key": "Ключ API",
   "API Secret": "Секрет API",

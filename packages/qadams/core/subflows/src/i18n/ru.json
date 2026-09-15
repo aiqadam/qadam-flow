@@ -1,5 +1,4 @@
 {
-  "Sub Flows": "Под-потоки",
   "Trigger and call another sub flow.": "Запустите и вызовите другой подпоток.",
   "Call Flow": "Вызов по тесту",
   "Return Response": "Ответ на возврат",
@@ -9,7 +8,6 @@
   "Mode": "Режим",
   "Wait for Response": "Ожидание ответа",
   "Response": "Замечание",
-  "The flow to execute": "Выполняемый поток",
   "Choose Simple for key-value or Advanced for JSON.": "Выберите простую для ключевого значения или Расширенные для JSON.",
   "Simple": "Простой",
   "Advanced": "Расширенные",

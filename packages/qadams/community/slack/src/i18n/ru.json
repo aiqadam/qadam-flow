@@ -1,5 +1,4 @@
 {
-  "Slack": "Slack",
   "Channel-based messaging platform": "Платформа обмена сообщениями на основе каналов",
   "Add Reaction to Message": "Добавить реакцию в сообщение",
   "Send Message To A User": "Отправить сообщение пользователю",
@@ -101,8 +100,6 @@
   "The username of the bot": "Имя пользователя бота",
   "The profile picture of the bot": "Изображение профиля бота",
   "See https://api.slack.com/block-kit for specs": "См. спецификации https://api.slack.com/block-kit",
-  "The text of your message": "Текст вашего сообщения",
-  "Provide the ts (timestamp) value of the **parent** message to make this message a reply. Do not use the ts value of the reply itself; use its parent instead. For example `1710304378.475129`.Alternatively, you can easily obtain the message link by clicking on the three dots next to the parent message and selecting the `Copy link` option.": "Предоставьте значение ts (метки времени) в **родительском** сообщении, чтобы сделать это сообщение ответом. Не используйте значение ts самого ответа; используйте его родителя. Например, `1710304378. 75129`.Или вы можете легко получить ссылку сообщения, нажав на три точки рядом с родительским сообщением и выбрав опцию `Copy link`.",
   "When replying to a thread, also make the message visible to everyone in the channel (only applicable when Thread Timestamp is provided)": "При ответе на тему также сделайте сообщение видимым для всех в канале (применимо только при предоставлении временной метки темы)",
   "Enable link unfurling for this message": "Включить разворачивание ссылок для этого сообщения",
   "You can pass the file ID from the New Message Trigger payload.": "Вы можете передать идентификатор файла из нового сообщения Триггер.",
@@ -142,7 +139,6 @@
   "Triggers when a new message is posted to any channel.": "Включает при отправке нового сообщения в любой канал.",
   "Triggers when a new message is posted to a specific #channel you choose.": "Включает при отправке нового сообщения в выбранный вами #канал.",
   "Triggers when a message was posted in a direct message channel.": "Срабатывает при отправке сообщения в канале прямого сообщения.",
-  "Triggers when a username is mentioned.": "Триггеры при упоминании имени пользователя.",
   "Triggers when a username is mentioned in a direct message channel.": "Включает упоминание имени пользователя в канале прямого сообщения.",
   "Triggers when a new reaction is added to a message": "Триггеры при добавлении новой реакции в сообщение",
   "Triggers when a channel is created": "Триггеры при создании канала",

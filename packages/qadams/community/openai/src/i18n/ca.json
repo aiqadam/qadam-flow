@@ -1,5 +1,4 @@
 {
-  "OpenAI": "OpenAI",
   "Use the many tools ChatGPT has to offer.": "Use the many tools ChatGPT has to offer.",
   "Follow these instructions to get your OpenAI API Key:\n\n1. Visit the following website: https://platform.openai.com/account/api-keys.\n2. Once on the website, locate and click on the option to obtain your OpenAI API Key.\n\nIt is strongly recommended that you add your credit card information to your OpenAI account and upgrade to the paid plan **before** generating the API Key. This will help you prevent 429 errors.\n": "Follow these instructions to get your OpenAI API Key:\n\n1. Visit the following website: https://platform.openai.com/account/api-keys.\n2. Once on the website, locate and click on the option to obtain your OpenAI API Key.\n\nIt is strongly recommended that you add your credit card information to your OpenAI account and upgrade to the paid plan **before** generating the API Key. This will help you prevent 429 errors.\n",
   "Ask ChatGPT": "Ask ChatGPT",
@@ -62,7 +61,6 @@
   "A memory key that will keep the chat history shared across runs and flows. Keep it empty to leave your assistant without memory of previous messages.": "A memory key that will keep the chat history shared across runs and flows. Keep it empty to leave your assistant without memory of previous messages.",
   "The model which will generate the image.": "The model which will generate the image.",
   "The resolution to generate the image in.": "The resolution to generate the image in.",
-  "Standard is faster, HD has better details.": "Standard is faster, HD has better details.",
   "The image URL or file you want GPT's vision to read.": "The image URL or file you want GPT's vision to read.",
   "What do you want ChatGPT to tell you about the image?": "What do you want ChatGPT to tell you about the image?",
   "Control how the model processes the image and generates textual understanding.": "Control how the model processes the image and generates textual understanding.",
@@ -77,8 +75,6 @@
   "Language of the audio file the default is en (English).": "Language of the audio file the default is en (English).",
   "Audio file to translate": "Audio file to translate",
   "Authorization headers are injected automatically from your connection.": "Authorization headers are injected automatically from your connection.",
-  "tts-1": "tts-1",
-  "tts-1-hd": "tts-1-hd",
   "alloy": "alloy",
   "echo": "echo",
   "fable": "fable",

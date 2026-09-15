@@ -1,5 +1,4 @@
 {
-  "HTTP (OAuth2)": "HTTP (OAuth2)",
   "Authorize URL": "Авторизовать URL",
   "Token URL": "URL токена",
   "Scopes (whitespace separated)": "Области (разделенные пробелами)",

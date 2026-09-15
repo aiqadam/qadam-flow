@@ -1,5 +1,4 @@
 {
-  "Calendly": "Календарь",
   "Simple, modern scheduling": "Простое и современное планирование",
   "\n## Obtain your Calendly Personal Token\n1. Go to https://calendly.com/integrations/api_webhooks\n2. Click on \"Create New Token\"\n3. Copy the token and paste it in the field below\n": "\n## Получить свой Календарный Личный Токен\n1. Перейдите по ссылке https://calendly.com/integrations/api_webhooks\n2. Нажмите на \"Создать новый токен\"\n3. Скопируйте токен и вставьте его в поле ниже\n",
   "Custom API Call": "Пользовательский вызов API",

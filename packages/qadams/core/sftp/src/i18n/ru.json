@@ -1,5 +1,4 @@
 {
-  "FTP/SFTP": "FTP/SFTP",
   "Connect to FTP, FTPS or SFTP servers": "Подключение к FTP, FTPS или SFTP серверам",
   "Protocol": "Protocol",
   "Allow Unauthorized Certificates": "Разрешить несанкционированные сертификаты",
@@ -12,7 +11,6 @@
   "The host of the server": "Сервер",
   "The port of the server": "Порт сервера",
   "The username to authenticate with": "Имя пользователя для аутентификации с",
-  "The password to authenticate with": "Пароль для аутентификации с",
   "SFTP": "SFTP",
   "FTP": "FTP",
   "FTPS": "FTPS",

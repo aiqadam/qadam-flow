@@ -6,7 +6,7 @@ import { makeFolderRecursive, readPackageJson } from '../utils/files';
 import { join } from 'node:path';
 import { exec } from '../utils/exec';
 import { qadamTranslation } from '@aiqadam/qadams-framework';
-import { MAX_KEY_LENGTH_FOR_CORWDIN } from '@aiqadam/shared';
+import { MAX_QADAM_I18N_KEY_LENGTH } from '@aiqadam/shared';
 
 const findQadamInModule = async (qadamOutputFile: string) => {
     const module = await import(qadamOutputFile);
@@ -45,11 +45,11 @@ const generateTranslationFileFromQadam = (qadam: Record<string, unknown>) => { c
       const value = getPropertyValue(qadam, path)
       if (value) {
         if (typeof value === 'string') {
-          translation[value.slice(0, MAX_KEY_LENGTH_FOR_CORWDIN)] = value
+          translation[value.slice(0, MAX_QADAM_I18N_KEY_LENGTH)] = value
         }
         else if (Array.isArray(value)) {
           value.forEach(item => {
-            translation[item.slice(0, MAX_KEY_LENGTH_FOR_CORWDIN)] = item
+            translation[item.slice(0, MAX_QADAM_I18N_KEY_LENGTH)] = item
           })
         }
       }

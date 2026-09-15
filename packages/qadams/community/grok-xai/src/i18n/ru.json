@@ -1,5 +1,4 @@
 {
-  "Grok by xAI": "Grok по xAI",
   "AI chatbot by xAI that answers questions, generates text, extracts data, and provides real-time insights.": "AI chatbot от xAI, который отвечает на вопросы, генерирует текст, извлекает данные и обеспечивает понимание в реальном времени.",
   "\n**Get your xAI API Key**\n\n1. Sign up at [xAI](https://x.ai)\n2. Go to your [API dashboard](https://console.x.ai)\n3. Generate a new API key\n4. Copy and paste the key here\n\nYour API key should start with `xai-`\n  ": "\n**Получить xAI API ключ**\n\n1. Зарегистрироваться на [xAI](https://x.ai)\n2. Перейдите на вашу [API dashboard](https://console.x.ai)\n3. Сгенерируйте новый ключ API\n4. Скопируйте и вставьте ключ здесь\n\nВаш ключ API должен начинаться с `xai-`\n  ",
   "Ask Grok": "Спросить Grok",

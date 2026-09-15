@@ -1,5 +1,4 @@
 {
-  "Jotform": "Jotform",
   "Create online forms and surveys": "Create online forms and surveys",
   "API Key": "API Key",
   "Region": "Region",
@@ -23,6 +22,5 @@
   "DELETE": "DELETE",
   "HEAD": "HEAD",
   "New Submission": "New Submission",
-  "Triggers when a new submission is submitted": "Triggers when a new submission is submitted",
   "Form": "Form"
 }

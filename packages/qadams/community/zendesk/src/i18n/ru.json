@@ -1,5 +1,4 @@
 {
-  "Zendesk": "Зендеск",
   "Customer service software and support ticket system": "Программное обеспечение обслуживания клиентов и система поддержки заявок",
   "Agent Email": "E-mail Агента",
   "Token": "Токен",
@@ -193,7 +192,6 @@
   "The user's signature for email responses": "Подпись пользователя для ответов по электронной почте",
   "Select the brands that the agent can access (for agents only)": "Выберите бренды, которые агент может получить доступ (только для агентов)",
   "Array of tags to apply to the user": "Массив тегов, применяемых к пользователю",
-  "Custom user field values": "Пользовательские значения полей пользователя",
   "Array of identity objects with type and value. Example: [{\"type\": \"email\", \"value\": \"test@user.com\"}, {\"type\": \"twitter\", \"value\": \"username\"}]": "Массив идентификационных объектов с типом и значением. Пример: [{\"type\": \"email\", \"value\": \"test@user.com\"}, {\"type\": \"twitter\", \"value\": \"username\"}]",
   "Select the user to work with": "Выберите пользователя для работы с",
   "I understand that deleted users are not recoverable and this action cannot be undone.": "Я понимаю, что удаленные пользователи не могут быть восстановлены, и это действие не может быть отменено.",
