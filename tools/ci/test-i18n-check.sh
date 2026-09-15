@@ -178,6 +178,7 @@ rm -rf "$root/packages/web/public/locales/kk"
 run_check
 expect_status 1 "declared locale has no directory"
 expect_contains "locales-enum: 1" "declared locale has no directory"
+expect_not_contains "undefined —" "locales-enum violations carry a real file"
 
 new_root
 base_catalogs
@@ -186,6 +187,40 @@ write_json "$root/packages/web/public/locales/tr/translation.json" '{"greeting":
 run_check
 expect_status 1 "undeclared locale directory"
 expect_contains "locales-enum: 1" "undeclared locale directory"
+expect_not_contains "undefined —" "undeclared-directory violations carry a real file"
+
+# A two-letter constant outside the enum is not a locale declaration.
+new_root
+base_catalogs
+cat > "$root/packages/shared/src/lib/core/common/locale.ts" <<'EOF'
+export const DEFAULT_COUNTRY = 'us'
+
+export enum LocalesEnum {
+    ENGLISH = 'en',
+    RUSSIAN = 'ru',
+    UZBEK = 'uz',
+    KAZAKH = 'kk',
+}
+EOF
+run_check
+expect_status 0 "two-letter constant outside LocalesEnum is ignored"
+
+# A declared locale whose catalog file is gone is a violation, not a crash.
+new_root
+base_catalogs
+rm "$root/packages/web/public/locales/uz/translation.json"
+run_check
+expect_status 1 "declared locale with no catalog file"
+expect_contains "missing-file: 1" "declared locale with no catalog file"
+expect_not_contains "ENOENT" "missing catalog file does not crash the checker"
+
+# A malformed allowlist entry is a configuration error, not a crash mid-run.
+new_root
+base_catalogs
+write_json "$root/tools/ci/i18n-allowlist.json" '{"entries": [{"key": "greeting"}]}'
+run_check
+expect_status 1 "malformed allowlist entry"
+expect_contains "every entry needs" "malformed allowlist entry names the file"
 
 echo "== qadam catalogs: consistency without coverage =="
 
@@ -202,29 +237,34 @@ base_catalogs
 mkdir -p "$root/packages/qadams/community/demo/src/i18n"
 write_json "$root/packages/qadams/community/demo/src/i18n/translation.json" '{"Airtable": "Airtable"}'
 write_json "$root/packages/qadams/community/demo/src/i18n/ru.json" '{"Airtable": "Airtable", "Gone": "Исчез"}'
+cp "$root/packages/qadams/community/demo/src/i18n/ru.json" "$root/before-fix.json"
 run_check
 expect_status 1 "qadam stale key"
 expect_contains "stale-key: 1" "qadam stale key"
 run_check --fix
-expect_status 0 "qadam stale key is pruned by --fix"
-node -e "const j=require('$root/packages/qadams/community/demo/src/i18n/ru.json'); if ('Gone' in j) process.exit(1)" || bad "--fix must remove the qadam stale key"
+expect_status 1 "qadam stale keys are never pruned by --fix"
+expect_contains "never pruned automatically" "qadam guidance explains the manual step"
+cmp -s "$root/before-fix.json" "$root/packages/qadams/community/demo/src/i18n/ru.json" && ok || bad "--fix must leave qadam catalogs untouched"
 
 # The qadam catalogs have no trailing newline today; the web catalogs do. The
-# fixer must not normalise either convention.
+# fixer must prune web keys without normalising the newline convention, and must
+# leave qadam catalogs byte-for-byte untouched.
 trailing_root() {
   new_root
   base_catalogs
   mkdir -p "$root/packages/qadams/community/demo/src/i18n"
   write_json "$root/packages/qadams/community/demo/src/i18n/translation.json" '{"Airtable": "Airtable"}'
   printf '{"Airtable": "Airtable", "Gone": "Исчез"}' > "$root/packages/qadams/community/demo/src/i18n/ru.json"
+  cp "$root/packages/qadams/community/demo/src/i18n/ru.json" "$root/before-fix.json"
   write_json "$root/packages/web/public/locales/uz/translation.json" '{"greeting": "Salom", "runs": "{count, plural, =1 {1 ijro} other {# ijro}}", "stale": "eski"}'
 }
 
 trailing_root
 run_check --fix
-expect_status 0 "fixer preserves the missing trailing newline"
-if [ "$(tail -c 1 "$root/packages/qadams/community/demo/src/i18n/ru.json" | wc -l)" -eq 0 ]; then ok; else bad "qadam file grew a trailing newline"; fi
+expect_status 1 "fixer prunes only the web catalog, the qadam key still fails"
+cmp -s "$root/before-fix.json" "$root/packages/qadams/community/demo/src/i18n/ru.json" && ok || bad "qadam catalog changed under --fix"
 if [ "$(tail -c 1 "$root/packages/web/public/locales/uz/translation.json" | wc -l)" -eq 1 ]; then ok; else bad "web file lost its trailing newline"; fi
+node -e "const j=require('$root/packages/web/public/locales/uz/translation.json'); if ('stale' in j) process.exit(1)" || bad "web stale key was not pruned"
 
 new_root
 base_catalogs

@@ -93,7 +93,9 @@ the language rules OCR already merges from its system layer.
 ## Validation messages
 
 - Every Zod `.min()`, `.refine()`, `.superRefine()` and similar that surfaces a
-  user-facing message must pass a string that exists as a key in
-  `packages/web/public/locales/en/translation.json`; use the `formErrors`
+  user-facing message must pass a string that exists in all four UI catalogs
+  (`packages/web/public/locales/{en,ru,uz,kk}/translation.json` — `en` is the
+  source, and a new key needs its ru/uz/kk translations in the same PR, see
+  `npm run check-i18n`); use the `formErrors`
   constant from `@aiqadam/shared` for common messages. Raw English sentences
   are a finding.

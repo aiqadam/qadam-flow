@@ -11,7 +11,7 @@
 //
 // Usage:
 //   node tools/ci/check-i18n.mjs                 # check
-//   node tools/ci/check-i18n.mjs --fix           # prune stale keys, then check
+//   node tools/ci/check-i18n.mjs --fix           # prune stale web keys, then check
 //   node tools/ci/check-i18n.mjs --init-allowlist
 //   node tools/ci/check-i18n.mjs --root <dir>    # used by the fixture tests
 //
@@ -42,7 +42,7 @@ const main = () => {
   }
   const allowlist = readAllowlist({ root: options.root })
   const web = checkWeb({ root: options.root, allowlist, fix: options.fix })
-  const qadams = checkQadams({ root: options.root, fix: options.fix })
+  const qadams = checkQadams({ root: options.root })
   printReport({ violations: [...web.violations, ...qadams.violations], fixed: [...web.fixed, ...qadams.fixed] })
 }
 
@@ -68,15 +68,19 @@ const checkWeb = ({ root, allowlist, fix }) => {
   const dirs = listDirs({ dir: path.join(root, WEB_LOCALES) })
   const declared = readLocalesEnum({ root })
   for (const locale of declared) {
-    if (!dirs.includes(locale)) violations.push({ scope: 'web', invariant: 'locales-enum', detail: `locale '${locale}' is declared in LocalesEnum but has no ${WEB_LOCALES}/${locale} directory` })
+    if (!dirs.includes(locale)) violations.push({ scope: 'web', invariant: 'locales-enum', file: path.join(root, LOCALES_ENUM), detail: `locale '${locale}' is declared in LocalesEnum but has no ${WEB_LOCALES}/${locale} directory` })
   }
   for (const dir of dirs) {
-    if (!declared.includes(dir)) violations.push({ scope: 'web', invariant: 'locales-enum', detail: `directory ${WEB_LOCALES}/${dir} is not declared in LocalesEnum (${declared.join(', ')})` })
+    if (!declared.includes(dir)) violations.push({ scope: 'web', invariant: 'locales-enum', file: path.join(root, WEB_LOCALES, dir), detail: `directory ${WEB_LOCALES}/${dir} is not declared in LocalesEnum (${declared.join(', ')})` })
   }
   const source = readJson({ file: path.join(root, WEB_LOCALES, SOURCE_LOCALE, 'translation.json') })
   for (const locale of declared.filter((l) => l !== SOURCE_LOCALE)) {
     if (!dirs.includes(locale)) continue
     const file = path.join(root, WEB_LOCALES, locale, 'translation.json')
+    if (!fs.existsSync(file)) {
+      violations.push({ scope: 'web', invariant: 'missing-file', file, detail: `${locale}/translation.json does not exist` })
+      continue
+    }
     const raw = fs.readFileSync(file, 'utf8')
     let catalog = readJson({ file })
     const sourceKeys = Object.keys(source)
@@ -102,13 +106,11 @@ const checkWeb = ({ root, allowlist, fix }) => {
   return { violations, fixed }
 }
 
-const checkQadams = ({ root, fix }) => {
+const checkQadams = ({ root }) => {
   const violations = []
-  const fixed = []
   const files = walkI18nFiles({ dir: path.join(root, QADAMS) })
   for (const file of files) {
-    const raw = fs.readFileSync(file, 'utf8')
-    let catalog = readJson({ file })
+    const catalog = readJson({ file })
     for (const [key, value] of Object.entries(catalog)) {
       if (value === '') violations.push({ scope: 'qadam', invariant: 'empty-value', file, detail: JSON.stringify(key) })
     }
@@ -119,15 +121,12 @@ const checkQadams = ({ root, fix }) => {
       continue
     }
     const source = readJson({ file: sourceFile })
-    const stale = Object.keys(catalog).filter((key) => !(key in source))
-    if (fix && stale.length > 0) {
-      catalog = Object.fromEntries(Object.entries(catalog).filter(([key]) => key in source))
-      writeJson({ file, value: catalog, trailingNewline: raw.endsWith('\n') })
-      fixed.push({ file, detail: `pruned ${stale.length} stale key(s)` })
-    }
+    // Never pruned by --fix: translation.json is a generated snapshot, so a key
+    // missing from it may still be live in the qadam metadata that has not been
+    // regenerated. Deleting such a key automatically would delete a translation.
     for (const key of Object.keys(catalog).filter((key) => !(key in source))) violations.push({ scope: 'qadam', invariant: 'stale-key', file, detail: JSON.stringify(key) })
   }
-  return { violations, fixed }
+  return { violations, fixed: [] }
 }
 
 const compareIcu = ({ source, translation }) => {
@@ -203,12 +202,19 @@ const readAllowlist = ({ root }) => {
   const file = path.join(root, ALLOWLIST)
   if (!fs.existsSync(file)) return new Map()
   const parsed = readJson({ file })
-  return new Map((parsed.entries ?? []).map((entry) => [entry.key, entry]))
+  const entries = parsed.entries ?? []
+  for (const entry of entries) {
+    if (typeof entry.key !== 'string' || !Array.isArray(entry.locales) || entry.locales.length === 0) {
+      throw new Error(`${ALLOWLIST}: every entry needs a "key" and a non-empty "locales" array (offending entry: ${JSON.stringify(entry)})`)
+    }
+  }
+  return new Map(entries.map((entry) => [entry.key, entry]))
 }
 
 const readLocalesEnum = ({ root }) => {
   const content = fs.readFileSync(path.join(root, LOCALES_ENUM), 'utf8')
-  const declared = [...content.matchAll(/=\s*'([a-z]{2})'/g)].map((match) => match[1])
+  const body = content.match(/enum\s+LocalesEnum\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+  const declared = [...body.matchAll(/=\s*'([a-z]{2})'/g)].map((match) => match[1])
   if (declared.length === 0) throw new Error(`could not read any locales from ${LOCALES_ENUM}`)
   return declared
 }
@@ -258,7 +264,12 @@ const printReport = ({ violations, fixed }) => {
     console.log(`i18n check passed${fixed.length > 0 ? ` (${fixed.length} file(s) fixed)` : ''}`)
     return
   }
-  console.log(`\ni18n check failed: ${violations.length} violation(s). Run with --fix to prune stale keys.`)
+  const hints = []
+  if (violations.some((violation) => violation.scope === 'web' && violation.invariant === 'stale-key')) hints.push('--fix prunes stale web keys')
+  if (violations.some((violation) => violation.scope === 'qadam' && violation.invariant === 'stale-key')) {
+    hints.push("qadam stale keys are never pruned automatically — regenerate that qadam's translation.json or delete the key manually")
+  }
+  console.log(`\ni18n check failed: ${violations.length} violation(s).${hints.length > 0 ? ` ${hints.join('; ')}.` : ''}`)
   process.exitCode = 1
 }
 

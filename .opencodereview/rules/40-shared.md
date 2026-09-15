@@ -48,7 +48,9 @@ the language rules OCR already merges from its system layer.
   `tryCatchSync` and `formErrors` are the shared primitives; new error paths
   should use them instead of ad-hoc shapes.
 - **i18n keys.** Zod messages that surface to users must still be translation
-  keys (`packages/web/public/locales/en/translation.json`), never raw English.
+  keys present in all four UI catalogs
+  (`packages/web/public/locales/{en,ru,uz,kk}/translation.json` — `npm run
+  check-i18n` enforces parity), never raw English.
 - **Util exports.** A util file exposing several plain functions exports one
   grouped `const` object (`export const myUtils = { fn1, fn2 }`), not
   individual functions.

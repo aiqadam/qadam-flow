@@ -1,20 +1,6 @@
 {
   "entries": [
     {
-      "key": "{activeFlowsLimit} flows",
-      "locales": [
-        "ru"
-      ],
-      "reason": "code or template string"
-    },
-    {
-      "key": "{selectedLimit} flows",
-      "locales": [
-        "ru"
-      ],
-      "reason": "code or template string"
-    },
-    {
       "key": "+{difference}",
       "locales": [
         "kk",

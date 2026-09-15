@@ -20,10 +20,16 @@ Every key in `en` must exist in all three other locales, values must not be empt
 
 Remove it from `en`. A key that no longer exists in `en` is never looked up at runtime, but a leftover entry in a translated file is still a violation: run `npm run check-i18n -- --fix` to prune it from the other three files.
 
+Nothing detects an `en` key that no code references any more — removing an unused key is a manual review, since the extractor was removed along with Crowdin. If you find one, remove it from all four catalogs (or from `en` and let `--fix` do the rest).
+
 ## Proper nouns and code strings
 
 Some values are intentionally identical to their English key: proper nouns and acronyms (`Git`, `SAML`, `AI`), numerals, template strings (`${additionalCost}`), and technical labels kept as loanwords in a locale. `tools/ci/i18n-allowlist.json` records every such exception with a reason. Add an entry there only when a string genuinely must not be translated — an unlisted English value fails the check.
 
 ## Qadam catalogs
 
-Translations for qadams live next to each qadam (`packages/qadams/<area>/<qadam>/src/i18n/`). Coverage is optional — a qadam may ship fewer locales than the UI — but any `<locale>.json` that exists must only use keys from its own `translation.json`, with non-empty values. The same `npm run check-i18n` command enforces that too. Note that the app only loads the four locales above, so a `fr.json` or `de.json` a qadam inherited from upstream is never read.
+Translations for qadams live next to each qadam (`packages/qadams/<area>/<qadam>/src/i18n/`). Coverage is optional — a qadam may ship fewer locales than the UI — but any `<locale>.json` that exists must only use keys from its own `translation.json`, with non-empty values. The same `npm run check-i18n` command enforces that too.
+
+`translation.json` is a generated snapshot, so the checker never prunes a qadam locale file automatically: a key it does not list may still be live in metadata that was not regenerated. When the check reports a stale qadam key, regenerate that qadam's `translation.json` (or delete the key by hand once you have confirmed it is dead).
+
+Note that the app only loads the four locales above, so a `fr.json` or `de.json` a qadam inherited from upstream is never read.
