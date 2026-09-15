@@ -184,7 +184,12 @@ const resolveBackend = ({ mode, ocr, agent }) => {
       ? { kind: 'unavailable', reason: '--mode delegate but no agent CLI found on PATH' }
       : { kind: 'delegate', agent }
   }
-  return ocr === null ? { kind: 'unavailable', reason: 'ocr is not installed' } : { kind: 'ocr' }
+  return ocr === null
+    ? {
+        kind: 'unavailable',
+        reason: 'ocr is not installed — optional setup: npm i -g @alibaba-group/open-code-review',
+      }
+    : { kind: 'ocr' }
 }
 
 const runOcrManaged = ({ repo, refs, opts, tmp }) => {
@@ -841,9 +846,7 @@ const firstLine = (text) => (text ?? '').trim().split('\n')[0]?.trim() ?? ''
 const relativePath = (repo, path) => path.startsWith(repo) ? path.slice(repo.length + 1) : path
 
 const skip = (reason) => {
-  process.stdout.write(
-    `[review] skipped — ${reason}\n[review] advisory only: install/set up the reviewer when convenient; the push is not affected.\n`
-  )
+  process.stdout.write(`[review] skipped — ${reason}\n[review] advisory only: this does not affect the push.\n`)
   return EXIT_OK
 }
 

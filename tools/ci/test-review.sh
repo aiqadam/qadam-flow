@@ -303,6 +303,7 @@ rm -f "$OCR_STUB_LOG"
 review "$bin_lonely"
 expect_equal "$status" "0" "no-ocr: exit 0 (advisory)"
 expect_contains "$out" "ocr is not installed" "no-ocr: hint names the missing CLI"
+expect_contains "$out" "npm i -g @alibaba-group/open-code-review" "no-ocr: hint gives the install command"
 expect_contains "$out" "advisory" "no-ocr: message says it is advisory"
 expect_file_missing "$artifact" "no-ocr: no artifact on a skip"
 
