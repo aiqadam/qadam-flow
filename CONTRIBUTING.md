@@ -48,6 +48,45 @@ This adds a `Signed-off-by: Your Name <email>` line. PRs with unsigned commits c
 - [ ] Lint and build pass locally
 - [ ] Docs / translations updated if behavior changed
 
+## Optional: review before you push
+
+`npm run review` runs an **advisory** AI review of your changes against this
+repo's own conventions, which live in [`.opencodereview/rule.json`](./.opencodereview/rule.json)
+(tenant isolation, entity registration, safe HTTP, i18n keys, migration safety,
+and so on). It is a complement to — never a replacement for — CI and the review
+agents. It cannot fail your build.
+
+```bash
+npm run review                    # staged + unstaged + untracked changes
+npm run review -- --from main     # everything on this branch since main
+npm run review -- --commit <sha>  # one commit
+npm run review -- --preview       # what would be reviewed; no LLM call
+npm run review -- -b "context"    # extra context, e.g. the ticket summary
+```
+
+The backend is detected at runtime, in this order:
+
+1. **OCR-managed** — the [`ocr` CLI](https://github.com/alibaba/open-code-review)
+   is installed and has an LLM endpoint configured (`ocr config provider`, or
+   the `OCR_LLM_*` / `ANTHROPIC_*` environment variables). Most deterministic
+   and the cheapest per review: `npm i -g @alibaba-group/open-code-review`.
+2. **Delegation** — `ocr` is installed but has no endpoint: the script gathers
+   the file list, rules and diffs itself and hands them to a headless agent CLI
+   already on your machine (`opencode`, `claude`, `codex` or `cursor-agent`).
+   The agent needs no tools or permissions — it reviews the prompt it is given
+   and returns findings as JSON.
+3. **Skip** — neither is available: you get a one-line hint and nothing else
+   happens.
+
+The pre-push hook offers the same as an `[r]eview` answer alongside
+`[Y]es` / `[n]o` / `[l]int`. A push is stopped only when a `critical` finding is
+reported, and even then you can confirm and push anyway — except when there is
+no terminal to ask on (a piped or IDE-run git push), where the push is aborted
+instead of hanging. The review never runs as part of the `[Y]es` gate.
+
+Each run writes its findings to `.git/qadam-review/last.json` in the current
+worktree (never committed), so you can inspect or diff the artifact later.
+
 ## Issue & PR labels
 
 We keep a small, consistent label taxonomy so the backlog stays readable. When you open an issue through a template, the **type** label is applied automatically; a maintainer sets the priority and track during triage — you don't have to.

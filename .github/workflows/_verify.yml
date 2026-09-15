@@ -89,6 +89,15 @@ jobs:
         timeout-minutes: 2
         run: tools/ci/test-version-tag-gate.sh
 
+      # The advisory review dispatcher (#444) is a node script, so it sits below
+      # setup-node rather than with the pure-shell suites above. It pins the
+      # behaviour matrix of `npm run review` and the hook's [r]eview branch
+      # against stub ocr/agent CLIs: a review that cannot run must skip, never
+      # block, and only a confirmed `critical` finding may stop a push.
+      - name: Test the review dispatcher
+        timeout-minutes: 3
+        run: tools/ci/test-review.sh
+
       - uses: oven-sh/setup-bun@v2
         id: bun
         with:
