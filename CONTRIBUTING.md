@@ -85,7 +85,9 @@ no terminal to ask on (a piped or IDE-run git push), where the push is aborted
 instead of hanging. The review never runs as part of the `[Y]es` gate.
 
 Each run writes its findings to `.git/qadam-review/last.json` in the current
-worktree (never committed), so you can inspect or diff the artifact later.
+worktree (never committed), so you can inspect or diff the artifact later. When review
+agents are used, the orchestrating agent runs this pass before spawning them and hands
+the artifact to each reviewer alongside its charter.
 
 ## Issue & PR labels
 

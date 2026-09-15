@@ -218,6 +218,9 @@ read the file, don't paraphrase it from here.
   `.agents/agents/<name>.md` charter file as binding instructions. Never re-type or paraphrase a
   charter from memory, and never invent a new agent or edit a charter without asking the user.
   See `.agents/rules/agent-delegation.md`.
+- **Run the review pass first.** Before spawning a `code-quality` reviewer, run `npm run review`
+  and attach `.git/qadam-review/last.json` to the brief alongside the feature description — see
+  `.agents/rules/agent-delegation.md`.
 
 | Agent | Use it for |
 | --- | --- |
