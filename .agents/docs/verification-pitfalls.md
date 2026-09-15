@@ -71,9 +71,9 @@ before trusting its silence — an empty output is not the same as a passing che
   returns `""` (not `null`) for an in-flight check. Treat any falsy conclusion as pending, or you
   will read a running pipeline as green.
 - **Reading the repo from a working tree that has drifted behind `origin/main` produces confident,
-  wrong measurements with no symptom.** A long session merges PRs while `/workspace` stays on the
-  commit it started at; every `grep`, `cat` and `node -e "require('./package.json')"` then reports
-  the old tree. This is how the root `test-unit` filter list was quoted into an issue after the
+  wrong measurements with no symptom.** A long session merges PRs while the working tree stays on
+  the commit it started at; every `grep`, `cat` and `node -e "require('./package.json')"` then
+  reports the old tree. This is how the root `test-unit` filter list was quoted into an issue after the
   filter had already been widened. `git fetch && git merge --ff-only origin/main` before measuring
   anything you intend to publish, or read the file via `git show origin/main:<path>` so the source
   is unambiguous.
