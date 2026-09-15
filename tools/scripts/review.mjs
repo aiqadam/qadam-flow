@@ -241,7 +241,7 @@ const runOcrManaged = ({ repo, refs, opts, tmp }) => {
   }
 }
 
-const runDelegation = ({ repo, refs, agent, opts, tmp }) => {
+const loadPreview = ({ repo, refs, opts }) => {
   // Background goes through OCR's own `-b`/`-B` handling on the preview rather
   // than being read here: its 1 MiB / 8000-char limits and sanitization are the
   // documented behavior, and preview echoes the resolved text.
@@ -249,9 +249,16 @@ const runDelegation = ({ repo, refs, agent, opts, tmp }) => {
     ['delegate', 'preview', '--format', 'json', ...modeArgs(refs), ...backgroundArgs(opts)],
     repo
   )
-  const background = preview.background ?? opts.background ?? ''
+  return {
+    preview,
+    background: preview.background ?? opts.background ?? '',
+    excluded: (preview.excluded_files ?? []).map((f) => ({ path: f.path, reason: f.exclude_reason ?? '' })),
+  }
+}
+
+const runDelegation = ({ repo, refs, agent, opts, tmp }) => {
+  const { preview, background, excluded } = loadPreview({ repo, refs, opts })
   const reviewable = preview.reviewable_files ?? []
-  const excluded = (preview.excluded_files ?? []).map((f) => ({ path: f.path, reason: f.exclude_reason ?? '' }))
   if (reviewable.length === 0) {
     return { kind: 'ok', comments: [], warnings: [], reviewed: [], excluded, mergeBase: preview.merge_base ?? null }
   }
@@ -322,16 +329,15 @@ const planBatches = ({ repo, refs, preview }) => {
 }
 
 const runEmitPrompts = ({ repo, refs, opts, dir, asJson }) => {
-  const preview = ocrJson(
-    ['delegate', 'preview', '--format', 'json', ...modeArgs(refs), ...backgroundArgs(opts)],
-    repo
-  )
-  const background = preview.background ?? opts.background ?? ''
+  const { preview, background, excluded } = loadPreview({ repo, refs, opts })
   const { batches, warnings } = planBatches({ repo, refs, preview })
-  const excluded = (preview.excluded_files ?? []).map((f) => ({ path: f.path, reason: f.exclude_reason ?? '' }))
 
   const outDir = isAbsolute(dir) ? dir : resolve(repo, dir)
   mkdirSync(outDir, { recursive: true })
+  const manifestFile = join(outDir, 'manifest.json')
+  if (existsSync(manifestFile) && !isOwnManifest({ file: manifestFile })) {
+    throw new Error(`--emit-prompts: ${manifestFile} was not written by this tool — pick another directory`)
+  }
   // A prompt from an earlier range would silently mix two changesets in one
   // directory, so the files this command owns are removed before writing.
   for (const entry of readdirSync(outDir)) {
@@ -359,7 +365,7 @@ const runEmitPrompts = ({ repo, refs, opts, dir, asJson }) => {
     excluded_files: excluded,
     warnings,
   }
-  writeFileSync(join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+  writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + '\n')
 
   if (asJson) {
     process.stdout.write(JSON.stringify(manifest, null, 2) + '\n')
@@ -918,6 +924,11 @@ const readJsonFile = (path) => {
   } catch {
     return null
   }
+}
+
+const isOwnManifest = ({ file }) => {
+  const parsed = readJsonFile(file)
+  return parsed !== null && parsed.tool === 'qadam-flow/review' && Array.isArray(parsed.batches)
 }
 
 const parseJson = (text) => {

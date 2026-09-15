@@ -503,6 +503,14 @@ review "$bin_full" --emit-prompts "$emit_dir"
 expect_equal "$status" "0" "emit second run: exit 0"
 expect_file_missing "$emit_dir/batch-02.prompt.md" "emit second run: a stale prompt from the previous emit is removed"
 
+foreign_dir="$tmp/foreign-prompts"
+mkdir -p "$foreign_dir"
+printf '{"unrelated": true}\n' > "$foreign_dir/manifest.json"
+review "$bin_full" --emit-prompts "$foreign_dir"
+expect_equal "$status" "1" "emit into a dir with a foreign manifest: exit 1"
+expect_contains "$out" "was not written by this tool" "emit: the refusal names the foreign manifest"
+expect_file_contains "$foreign_dir/manifest.json" '"unrelated": true' "emit: the foreign manifest is left intact"
+
 reset_review_env
 review "$bin_ocr" --emit-prompts "$emit_dir" --preview
 expect_equal "$status" "1" "emit + --preview: usage error"
@@ -641,10 +649,16 @@ expect_file_contains "$STUB_NPX_LOG" "turbo run lint" "hook y: runs the lint gat
 expect_file_contains "$STUB_NPM_LOG" "run test-unit" "hook y: runs unit tests"
 expect_file_contains "$STUB_NPM_LOG" "run test-api" "hook y: runs api tests"
 expect_file_missing "$STUB_NODE_LOG" "hook y: review must not be part of the y gate"
+if grep -q "run check-i18n" "$STUB_NPM_LOG"; then
+  fail_case "hook y: the frozen y gate must not gain the i18n check" "$(cat "$STUB_NPM_LOG")"
+else
+  ok_case
+fi
 
 rm -f "$STUB_NODE_LOG" "$STUB_NPM_LOG" "$STUB_NPX_LOG"
 run_hook lint 0
 expect_equal "$status" "0" "hook lint: exit 0"
+expect_file_contains "$STUB_NPM_LOG" "run check-i18n" "hook lint: runs the i18n check"
 expect_file_contains "$STUB_NPM_LOG" "run lint-dev" "hook lint: runs lint-dev"
 expect_file_missing "$STUB_NODE_LOG" "hook lint: review must not be part of the lint gate"
 

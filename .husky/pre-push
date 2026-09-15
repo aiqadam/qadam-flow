@@ -76,8 +76,6 @@ case "$RUN_CHECKS" in
     fi
     ;;
   *)
-    echo "Checking i18n catalogs..."
-    npm run check-i18n || { echo ""; echo "i18n catalogs are out of sync. Run: npm run check-i18n -- --fix"; exit 1; }
     echo "Running lint..."
     # The complement of the qadams glob, i.e. the same set `lint-dev` fixes, so
     # this covers every non-qadam package including the four that the old
