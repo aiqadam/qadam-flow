@@ -48,6 +48,25 @@ Most findings here are violations of documented conventions, not exotic bugs.
 6. **Altitude & duplication** — logic that belongs in a service sitting in a controller, a helper
    reimplemented instead of reused, side effects not separated into `*-side-effects.ts`.
 
+## OCR as an extra input (optional)
+
+When `ocr` is installed, the repo's advisory review is a second reader you can put on the same
+range — deterministic file selection and rules, cheap. It is an input, never the engine:
+
+- Run `npm run review -- --json --mode ocr` (add `--from <base>` or `--commit <sha>` to match the
+  range under review). If `ocr` is missing, skip this and do your own pass — never fail or report
+  a gap because a local tool is absent.
+- Use `--mode ocr` explicitly. The default `auto` falls back to delegation, which shells out to an
+  agent CLI — inside an agent harness that spawns a nested agent and spends quota twice.
+- Triage every `comments[]` entry against the code before reporting it. OCR is probabilistic and
+  its artifact is not evidence: a finding you cannot reproduce from the source is a false
+  positive, and paraphrasing the tool instead of reading the diff is the failure this charter
+  exists to prevent.
+- The tool's convention source is `.opencodereview/rule.json` + `.opencodereview/rules/*.md`. If a
+  finding rests on a rule that contradicts AGENTS.md, report the rule drift as a finding too.
+- Tool findings do not change your verdict. Your own pass over correctness, tests, dead code and
+  PR-body claims is still the deliverable.
+
 ## How to reach a verdict
 
 - Verify every finding by reading the actual file. Do not report from a diff hunk alone.
