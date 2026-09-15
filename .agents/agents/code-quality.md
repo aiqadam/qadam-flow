@@ -50,12 +50,15 @@ Most findings here are violations of documented conventions, not exotic bugs.
 
 ## OCR as an extra input (optional)
 
-When `ocr` is installed, the repo's advisory review is a second reader you can put on the same
-range — deterministic file selection and rules, cheap. It is an input, never the engine:
+OCR is [alibaba/open-code-review](https://github.com/alibaba/open-code-review), the AI review CLI
+this repo wraps as `npm run review`; its conventions live in `.opencodereview/`. When the `ocr`
+binary is installed it is a second reader you can put on the same range — deterministic file
+selection and rules, cheap. It is an input, never the engine:
 
 - Run `npm run review -- --json --mode ocr` (add `--from <base>` or `--commit <sha>` to match the
   range under review). If `ocr` is missing, skip this and do your own pass — never fail or report
-  a gap because a local tool is absent.
+  a gap because a local tool is absent. [CONTRIBUTING.md](../../CONTRIBUTING.md) documents the
+  setup and the backends.
 - Use `--mode ocr` explicitly. The default `auto` falls back to delegation, which shells out to an
   agent CLI — inside an agent harness that spawns a nested agent and spends quota twice.
 - Triage every `comments[]` entry against the code before reporting it. OCR is probabilistic and

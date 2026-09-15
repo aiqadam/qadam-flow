@@ -141,7 +141,7 @@ npx turbo run serve --filter=web -- --mode=cloud # Run local frontend against th
 
 When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth provider will redirect back to `flow.aiqadam.org` after sign-in instead of your local frontend, breaking the flow. Use API-key / basic-auth connections, or test OAuth2 against a fully local backend.
 
-`npm run review` is advisory and opt-in: it never runs as part of lint/tests and never blocks by itself. `.opencodereview/rule.json` encodes the conventions in this file for the reviewer — when a convention here changes, update the matching file under `.opencodereview/rules/`. The pre-push hook offers the same as `[r]eview`; see [CONTRIBUTING.md](./CONTRIBUTING.md).
+`npm run review` is advisory and opt-in: it never runs as part of lint/tests and never blocks by itself. It wraps [alibaba/open-code-review](https://github.com/alibaba/open-code-review) (the `ocr` CLI) — failure points, delegation and the `[r]eview` hook shape are in [CONTRIBUTING.md](./CONTRIBUTING.md). `.opencodereview/rule.json` encodes the conventions in this file for the reviewer — when a convention here changes, update the matching file under `.opencodereview/rules/`.
 
 ## Git Commits (DCO)
 
