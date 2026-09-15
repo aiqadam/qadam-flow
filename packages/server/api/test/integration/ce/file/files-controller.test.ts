@@ -57,6 +57,7 @@ describe('Files Controller', () => {
         })
 
         it('returns a worker-reachable readUrl built from AP_INTERNAL_URL, not the public frontend host', async () => {
+            const constructReadUrlSpy = vi.spyOn(filesService, 'constructReadUrl')
             const previousInternalUrl = process.env.AP_INTERNAL_URL
             process.env.AP_INTERNAL_URL = 'http://qadam-flow-app'
             try {
@@ -85,8 +86,10 @@ describe('Files Controller', () => {
                 const readUrl = response!.json().readUrl as string
                 expect(new URL(readUrl).origin).toBe('http://qadam-flow-app')
                 expect(response?.headers['x-ap-file-read-url']).toBe(readUrl)
+                expect(constructReadUrlSpy).toHaveBeenCalledTimes(1)
             }
             finally {
+                constructReadUrlSpy.mockRestore()
                 if (previousInternalUrl === undefined) {
                     delete process.env.AP_INTERNAL_URL
                 }
