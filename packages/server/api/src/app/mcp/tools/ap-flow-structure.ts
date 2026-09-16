@@ -36,7 +36,7 @@ type StepInfo = {
 function getStepInput(step: Step): Record<string, unknown> | null {
     const settings = isObject(step.settings) ? step.settings : null
     const input = settings?.input
-    return isObject(input) ? input : null
+    return isObject(input) && Object.keys(input).length > 0 ? input : null
 }
 
 function getConfigStatus(step: Step): string {
@@ -331,10 +331,10 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), and valid insert locations for ap_add_step. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), and valid insert locations for ap_add_step. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
-            includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input'),
+            includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
         },
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async ({ flowId, includeInput }) => {
