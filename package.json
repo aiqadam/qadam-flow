@@ -4,7 +4,7 @@
   "packageManager": "bun@1.3.3",
   "scripts": {
     "prebuild": "node tools/scripts/install-bun.js",
-    "prepare": "husky install",
+    "prepare": "[ ! -d .git ] || husky install",
     "serve:frontend": "turbo run serve --filter=web",
     "serve:backend": "turbo run serve --filter=api",
     "serve:engine": "turbo run serve --filter=@aiqadam/engine",
