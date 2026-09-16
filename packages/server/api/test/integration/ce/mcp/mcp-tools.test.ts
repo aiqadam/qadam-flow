@@ -1474,6 +1474,118 @@ describe('MCP Tools integration', () => {
         expect(output).toContain('vip')
     })
 
+    // ── ap_flow_structure — includeInput flag and structuredContent input ──
+
+    it('52a. ap_flow_structure — structuredContent omits input without includeInput flag', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const flowId = await createFlowAndGetId(mcp, 'SC Input Omission Test')
+
+        await apUpdateTriggerTool(mcp, mockLog).execute({
+            flowId,
+            qadamName: '@aiqadam/qadam-test-email',
+            triggerName: 'new_email',
+        })
+
+        await apAddStepTool(mcp, mockLog).execute({
+            flowId,
+            parentStepName: 'trigger',
+            stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+            stepType: FlowActionType.PIECE,
+            displayName: 'Send Email',
+            qadamName: '@aiqadam/qadam-test-email',
+        })
+
+        await apUpdateStepTool(mcp, mockLog).execute({
+            flowId,
+            stepName: 'step_1',
+            actionName: 'send_email',
+            input: { to: 'test@example.com', subject: 'Hello' },
+        })
+
+        const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+
+        expect(result.structuredContent).toBeDefined()
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('"input"')
+    })
+
+    it('52b. ap_flow_structure — structuredContent includes input with includeInput=true', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const flowId = await createFlowAndGetId(mcp, 'SC Input Inclusion Test')
+
+        await apUpdateTriggerTool(mcp, mockLog).execute({
+            flowId,
+            qadamName: '@aiqadam/qadam-test-email',
+            triggerName: 'new_email',
+        })
+
+        await apAddStepTool(mcp, mockLog).execute({
+            flowId,
+            parentStepName: 'trigger',
+            stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+            stepType: FlowActionType.PIECE,
+            displayName: 'Send Email',
+            qadamName: '@aiqadam/qadam-test-email',
+        })
+
+        await apUpdateStepTool(mcp, mockLog).execute({
+            flowId,
+            stepName: 'step_1',
+            actionName: 'send_email',
+            input: { to: 'test@example.com', subject: 'Hello' },
+        })
+
+        const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId, includeInput: true })
+
+        expect(result.structuredContent).toMatchObject({
+            steps: expect.arrayContaining([
+                expect.objectContaining({
+                    name: 'step_1',
+                    input: expect.objectContaining({ to: 'test@example.com', subject: 'Hello' }),
+                }),
+            ]),
+        })
+    })
+
+    it('52c. ap_flow_structure — includeInput=true returns untruncated input', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const flowId = await createFlowAndGetId(mcp, 'Untruncated Input Test')
+        const longSubject = `subject-${'x'.repeat(600)}`
+
+        await apUpdateTriggerTool(mcp, mockLog).execute({
+            flowId,
+            qadamName: '@aiqadam/qadam-test-email',
+            triggerName: 'new_email',
+        })
+
+        await apAddStepTool(mcp, mockLog).execute({
+            flowId,
+            parentStepName: 'trigger',
+            stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+            stepType: FlowActionType.PIECE,
+            displayName: 'Send Email',
+            qadamName: '@aiqadam/qadam-test-email',
+        })
+
+        await apUpdateStepTool(mcp, mockLog).execute({
+            flowId,
+            stepName: 'step_1',
+            actionName: 'send_email',
+            input: { to: 'test@example.com', subject: longSubject },
+        })
+
+        const resultDefault = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+        const resultVerbose = await apFlowStructureTool(mcp, mockLog).execute({ flowId, includeInput: true })
+
+        expect(text(resultDefault)).toContain('(truncated)')
+        expect(text(resultDefault)).not.toContain(longSubject)
+        expect(text(resultVerbose)).not.toContain('(truncated)')
+        expect(text(resultVerbose)).toContain(longSubject)
+        expect(JSON.stringify(resultVerbose.structuredContent?.steps)).toContain(longSubject)
+    })
+
     // ── ap_duplicate_flow ────────────────────────────────────────────
 
     it('53. ap_duplicate_flow — duplicates a flow with all steps preserved', async () => {

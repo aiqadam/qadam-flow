@@ -25,6 +25,7 @@ Get the full structure of a flow: step tree, configuration status, step input va
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|
 | `flowId` | string | Yes | The flow ID |
+| `includeInput` | boolean | No | When true, return each step's full untruncated input in `structuredContent` and render text `input:` lines untruncated (default text output truncates long inputs) |
 
 ### ap_read_step_code
 
