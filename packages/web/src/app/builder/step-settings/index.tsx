@@ -28,6 +28,7 @@ import { cn, GAP_SIZE_FOR_STEP_SETTINGS } from '@/lib/utils';
 
 import { ActionErrorHandlingForm } from '../qadam-properties/action-error-handling';
 import { DynamicPropertiesProvider } from '../qadam-properties/dynamic-properties-context';
+import { StepLogSettingsForm } from '../qadam-properties/step-log-settings';
 import { SidebarHeader } from '../sidebar-header';
 import { StepDataPanelHost } from '../step-data/step-data-panel-host';
 import {
@@ -229,6 +230,7 @@ const StepSettingsContainer = () => {
             }
           ></ActionErrorHandlingForm>
         )}
+        <StepLogSettingsForm />
       </div>
     </ScrollArea>
   );

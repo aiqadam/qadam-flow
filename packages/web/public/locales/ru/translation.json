@@ -2015,5 +2015,10 @@
   "invalidAwsRegion": "Регион AWS — строчные буквы, цифры или дефисы, например us-east-1",
   "valueNotInOptions": "Значение должно быть одним из доступных вариантов этого поля",
   "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "Сохранённый регион AWS недействителен. Пересохраните провайдера с регионом, например us-east-1.",
-  "This platform has reached its limit of custom AI providers": "На этой платформе достигнут лимит пользовательских AI-провайдеров"
+  "This platform has reached its limit of custom AI providers": "На этой платформе достигнут лимит пользовательских AI-провайдеров",
+  "Logging": "Логирование",
+  "Log input": "Логировать вход",
+  "Log output": "Логировать выход",
+  "Save this step input in the run log. Turn off to hide it.": "Сохранять входные данные шага в логе. Выключите, чтобы скрыть.",
+  "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Сохранять выходные данные шага в логе. Выключите, чтобы скрыть. Значение по-прежнему передаётся следующему шагу."
 }

@@ -2015,5 +2015,10 @@
   "invalidAwsRegion": "AWS hududi kichik harflar, raqamlar yoki defislardan iborat bo'lishi kerak — masalan us-east-1",
   "valueNotInOptions": "Qiymat ushbu maydonning mavjud variantlaridan biri bo'lishi kerak",
   "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "Saqlangan AWS hududi yaroqsiz. Provayderni us-east-1 kabi hudud bilan qayta saqlang.",
-  "This platform has reached its limit of custom AI providers": "Bu platformada moslashtirilgan AI provayderlari limitiga yetildi"
+  "This platform has reached its limit of custom AI providers": "Bu platformada moslashtirilgan AI provayderlari limitiga yetildi",
+  "Logging": "Log yozish",
+  "Log input": "Kirishni logga yozish",
+  "Log output": "Chiqishni logga yozish",
+  "Save this step input in the run log. Turn off to hide it.": "Qadam kiritish ma'lumotlarini run logiga saqlang. Yashirish uchun o'chiring.",
+  "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Qadam chiqish ma'lumotlarini run logiga saqlang. Yashirish uchun o'chiring. Qiymat keyingi qadamga oqib o'tadi."
 }

@@ -2015,5 +2015,10 @@
   "invalidAwsRegion": "AWS аймағы кіші әріптер, цифрлар немесе дефис болуы керек — мысалы us-east-1",
   "valueNotInOptions": "Мән осы өрістің қолжетімді нұсқаларының бірі болуы керек",
   "The stored AWS region is not valid. Re-save this provider with a region such as us-east-1.": "Сақталған AWS аймағы жарамсыз. Провайдерді us-east-1 сияқты аймақпен қайта сақтаңыз.",
-  "This platform has reached its limit of custom AI providers": "Бұл платформада теңшелетін AI провайдерлерінің шегіне жетілді"
+  "This platform has reached its limit of custom AI providers": "Бұл платформада теңшелетін AI провайдерлерінің шегіне жетілді",
+  "Logging": "Логгiлеу",
+  "Log input": "Кірісті логқа жазу",
+  "Log output": "Шығысты логқа жазу",
+  "Save this step input in the run log. Turn off to hide it.": "Қадам кіріс деректерін run логында сақтаңыз. Жасыру үшін өшіріңіз.",
+  "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Қадам шығыс деректерін run логында сақтаңыз. Жасыру үшін өшіріңіз. Мән келесі қадамға жіберіледі."
 }

@@ -28,6 +28,12 @@ const commonActionProps = {
     displayName: z.string(),
     skip: z.boolean().optional(),
     lastUpdatedDate: z.string(),
+    // Opt-outs from the run log (#389). Absent means "log it" — old flow versions stay valid and
+    // read as logged. The engine keeps the live value flowing to the next step either way; only the
+    // persisted/flushed copy is replaced. See `logInput`/`logOutput` handling in the engine's
+    // FlowExecutorContext.
+    logInput: z.boolean().optional(),
+    logOutput: z.boolean().optional(),
 }
 const commonActionSettings = {
     sampleData: SampleDataSetting.optional(),
@@ -349,6 +355,8 @@ type BaseActionProps = {
     displayName: string
     skip?: boolean
     lastUpdatedDate: string
+    logInput?: boolean
+    logOutput?: boolean
 }
 
 export type FlowAction =

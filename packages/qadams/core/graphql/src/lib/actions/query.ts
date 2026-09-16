@@ -138,13 +138,15 @@ export const query = createAction({
           httpsAgent,
         });
 
-        const proxied_response = await axiosClient.request(request);
-        return proxied_response.data;
+        return await httpClient.sendRequest(request, axiosClient);
       }
       return await httpClient.sendRequest(request);
     } catch (error) {
-      if (failsafe) {
-        return (error as HttpError).errorMessage();
+      // `error instanceof HttpError` is both the convention-correct narrowing and the fix: the
+      // previous cast made `failsafe` throw `TypeError: errorMessage is not a function` on any
+      // non-HttpError (e.g. a proxy-path AxiosError), replacing the failsafe output with a crash.
+      if (failsafe && error instanceof HttpError) {
+        return error.errorMessage();
       }
 
       throw error;

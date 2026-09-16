@@ -19,6 +19,7 @@ import {
     StepOutputType,
 } from '@aiqadam/shared'
 import { engineFileApi } from '../../engine-file-api'
+import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { loggingUtils } from '../../helper/logging-utils'
 import { utils } from '../../utils'
 import { StepExecutionPath } from './step-execution-path'
@@ -38,6 +39,7 @@ export class FlowExecutorContext {
     engineApi?: EngineApiConfig
     resolvedStepOutputCache: Map<string, Promise<unknown>>
     slicingEnabled: boolean
+    stepLogPolicy: Record<string, StepLogPolicy>
 
     /**
      * Execution time in milliseconds
@@ -55,10 +57,11 @@ export class FlowExecutorContext {
         this.engineApi = copyFrom?.engineApi
         this.resolvedStepOutputCache  = copyFrom?.resolvedStepOutputCache  ?? new Map()
         this.slicingEnabled = copyFrom?.slicingEnabled ?? true
+        this.stepLogPolicy = copyFrom?.stepLogPolicy ?? {}
     }
 
     static empty(params?: FlowExecutorContextInit): FlowExecutorContext {
-        return new FlowExecutorContext({ engineApi: params?.engineApi, slicingEnabled: params?.slicingEnabled })
+        return new FlowExecutorContext({ engineApi: params?.engineApi, slicingEnabled: params?.slicingEnabled, stepLogPolicy: params?.stepLogPolicy })
     }
 
     public finishExecution(): FlowExecutorContext {
@@ -118,7 +121,8 @@ export class FlowExecutorContext {
     }
 
     public async upsertStep(stepName: string, stepOutput: BaseStepOutput): Promise<FlowExecutorContext> {
-        const truncated = withTruncatedInput(stepOutput)
+        const stepLogPolicy = this.stepLogPolicy[stepName]
+        const truncated = logRedaction.withRedactedInput(withTruncatedInput(stepOutput), stepLogPolicy)
         let finalized: BaseStepOutput
         if (truncated.type === FlowActionType.LOOP_ON_ITEMS) {
             finalized = truncated
@@ -131,7 +135,9 @@ export class FlowExecutorContext {
             finalized = truncated
         }
         else {
-            const sliced = this.slicingEnabled
+            // A step whose output is not logged is never sliced: the slice file is written
+            // separately and would outlive the redaction applied to the serialized step.
+            const sliced = this.slicingEnabled && stepLogPolicy?.logOutput !== false
                 ? await maybeSliceOutput(truncated.output, this.engineApi)
                 : undefined
             finalized = new GenericStepOutput({
@@ -149,6 +155,16 @@ export class FlowExecutorContext {
             ...this,
             steps,
         })
+    }
+
+    // The copy handed to the log serializer. Redaction happens here, not in `upsertStep`, because
+    // the in-memory output is the value later steps resolve against — replacing it in place would
+    // break them. See `logRedaction.isOutputRedactionEnabled` for the PAUSED exception.
+    public stepsForLog(): Readonly<Record<string, StepOutput>> {
+        if (!logRedaction.hasPolicy({ stepLogPolicy: this.stepLogPolicy }) || !logRedaction.isOutputRedactionEnabled({ status: this.verdict.status })) {
+            return this.steps
+        }
+        return logRedaction.redactStepsForLog({ steps: this.steps, stepLogPolicy: this.stepLogPolicy })
     }
 
     public getStepOutput(stepName: string, path?: StepExecutionPath['path']): StepOutput | undefined {
@@ -290,4 +306,5 @@ export type EngineApiConfig = {
 export type FlowExecutorContextInit = {
     engineApi?: EngineApiConfig
     slicingEnabled?: boolean
+    stepLogPolicy?: Record<string, StepLogPolicy>
 }

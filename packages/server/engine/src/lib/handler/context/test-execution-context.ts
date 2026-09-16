@@ -28,6 +28,7 @@ export const testExecutionContext = {
         let flowExecutionContext = FlowExecutorContext.empty({
             engineApi: { engineToken, internalApiUrl: apiUrl },
             slicingEnabled: false,
+            stepLogPolicy: engineConstants.stepLogPolicy,
         })
         if (isNil(flowVersion)) {
             return flowExecutionContext

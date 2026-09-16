@@ -115,7 +115,7 @@ export const flowRunProgressReporter = {
 
             const serialized = await logSerializer.serialize({
                 executionState: {
-                    steps: flowExecutorContext.steps,
+                    steps: flowExecutorContext.stepsForLog(),
                     tags: Array.from(flowExecutorContext.tags),
                 },
             })
