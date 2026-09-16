@@ -33,6 +33,7 @@ import { apAddStepTool } from '../../../../src/app/mcp/tools/ap-add-step'
 import { apBuildFlowTool } from '../../../../src/app/mcp/tools/ap-build-flow'
 import { apCreateFlowTool } from '../../../../src/app/mcp/tools/ap-create-flow'
 import { apDeleteBranchTool } from '../../../../src/app/mcp/tools/ap-delete-branch'
+import { apDeleteRecordsTool } from '../../../../src/app/mcp/tools/ap-delete-records'
 import { apDeleteStepTool } from '../../../../src/app/mcp/tools/ap-delete-step'
 import { apDeleteVariableTool } from '../../../../src/app/mcp/tools/ap-delete-variable'
 import { apDuplicateFlowTool } from '../../../../src/app/mcp/tools/ap-duplicate-flow'
@@ -3812,6 +3813,79 @@ describe('MCP Tools integration', () => {
 
             expect(text(result)).toContain('❌')
             expect(text(result)).toContain('not found')
+        })
+    })
+
+    describe('ap_delete_records', () => {
+        it('112. ap_delete_records — deletes the given records from the named table', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const table = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Delete Target Table' },
+            })
+            const field = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Name', type: FieldType.TEXT, tableId: table.id },
+            })
+            const created = await recordService.create({
+                request: { tableId: table.id, records: [[{ fieldId: field.id, value: 'row-1' }], [{ fieldId: field.id, value: 'row-2' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            const result = await apDeleteRecordsTool(mcp, mockLog).execute({ tableId: table.id, recordIds: [created[0].id] })
+
+            expect(text(result)).toContain('✅')
+            expect(await recordService.count({ projectId: ctx.project.id, tableId: table.id })).toBe(1)
+        })
+
+        it('113. ap_delete_records — refuses a record that belongs to another table', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const targetTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Delete Target Table' },
+            })
+            const otherTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Other Table' },
+            })
+            const field = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Name', type: FieldType.TEXT, tableId: otherTable.id },
+            })
+            const [recordInOtherTable] = await recordService.create({
+                request: { tableId: otherTable.id, records: [[{ fieldId: field.id, value: 'keep me' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            const result = await apDeleteRecordsTool(mcp, mockLog).execute({ tableId: targetTable.id, recordIds: [recordInOtherTable.id] })
+
+            expect(text(result)).toContain('❌')
+            expect(await recordService.count({ projectId: ctx.project.id, tableId: otherTable.id })).toBe(1)
+        })
+
+        it('114. ap_delete_records — rejects a call without a tableId', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+
+            const result = await apDeleteRecordsTool(mcp, mockLog).execute({ recordIds: [apId()] })
+
+            // The name, not just the ❌: an unknown record with a valid tableId
+            // fails the same way visually, so only the validation text proves the
+            // schema still requires tableId.
+            expect(text(result)).toContain('tableId')
+        })
+
+        it('115. ap_delete_records — rejects an empty recordIds list', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+
+            const result = await apDeleteRecordsTool(mcp, mockLog).execute({ tableId: apId(), recordIds: [] })
+
+            expect(text(result)).toContain('❌')
         })
     })
 })

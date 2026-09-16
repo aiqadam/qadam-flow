@@ -179,7 +179,11 @@ export type GetRecordRequest = z.infer<typeof GetRecordRequest>
 
 export const DeleteRecordsRequest = z.object({
     tableId: z.string(),
-    ids: z.array(z.string()),
+    // An empty list used to reach the lookup as `id: undefined`, which TypeORM
+    // reads as "no constraint on id" — the deletion target became an arbitrary
+    // record's table. Deleting nothing is never the intent of an empty batch, so
+    // it is rejected at the edge, as `in`/`not_in` already are.
+    ids: z.array(z.string()).min(1, formErrors.required),
 })
 
 export type DeleteRecordsRequest = z.infer<typeof DeleteRecordsRequest>
