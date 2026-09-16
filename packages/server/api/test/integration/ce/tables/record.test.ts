@@ -1456,6 +1456,65 @@ describe('Record API', () => {
 
             expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
         })
+
+        it('refuses a record that belongs to another table, deleting nothing', async () => {
+            const ctx = await setup()
+            const { table: tableA } = await createTableWithField(ctx)
+            const { table: tableB } = await createTableWithField(ctx)
+            const recordInB = createMockRecord({ tableId: tableB.id, projectId: ctx.project.id })
+            await db.save('record', recordInB)
+
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/records',
+                body: {
+                    tableId: tableA.id,
+                    ids: [recordInB.id],
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+
+            const getResponse = await ctx.get(`/v1/records/${recordInB.id}`)
+            expect(getResponse?.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects the whole batch when an id other than the first is unknown, deleting none of it', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+            await db.save('record', record)
+
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/records',
+                body: {
+                    tableId: table.id,
+                    ids: [record.id, apId()],
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+
+            const getResponse = await ctx.get(`/v1/records/${record.id}`)
+            expect(getResponse?.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects an empty ids array', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/records',
+                body: {
+                    tableId: table.id,
+                    ids: [],
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
     })
 })
 

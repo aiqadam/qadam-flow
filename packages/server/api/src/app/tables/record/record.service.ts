@@ -328,23 +328,8 @@ export const recordService = {
             // leaves update()'s precondition check and its write interleavable by this
             // batch, which turns a compare-and-set into a silent lost update: the CAS
             // returns 200 "I claimed it" and this batch overwrites the value it
-            // claimed. Ascending id order, so two overlapping batches cannot cycle.
-            const existingIds = new Set((await entityManager.getRepository(RecordEntity).find({
-                where: { id: In(records.map((record) => record.id)), projectId, tableId },
-                select: ['id'],
-                order: { id: 'ASC' },
-                lock: { mode: 'for_no_key_update' },
-            })).map((record) => record.id))
-
-            // Every id is checked, not just the first, and a miss rolls the whole
-            // batch back rather than half-applying it.
-            const missingId = records.find((record) => !existingIds.has(record.id))?.id
-            if (!isNil(missingId)) {
-                throw new QadamFlowError({
-                    code: ErrorCode.ENTITY_NOT_FOUND,
-                    params: { entityType: 'Record', entityId: missingId },
-                })
-            }
+            // claimed.
+            await lockExistingRecordIds({ entityManager, ids: records.map((record) => record.id), projectId, tableId })
 
             const cellsToUpsert = records.flatMap((record) =>
                 record.cells
@@ -490,37 +475,36 @@ export const recordService = {
         })
     },
 
+    // The table is taken from the caller and used in every where, never derived
+    // from the records. Deriving it from ids[0] — which is what this used to do —
+    // deleted from whatever table the first record happened to belong to while
+    // the caller, and the authorization layer that resolved the body's tableId,
+    // had named a different one (#406).
     async delete({
+        tableId,
         ids,
         projectId,
     }: DeleteParams): Promise<PopulatedRecord[]> {
-        const firstRecord = await recordRepo().findOne({
-            where: { id: ids[0], projectId },
-            select: ['tableId'],
-        })
-        if (isNil(firstRecord)) {
-            throw new QadamFlowError({
-                code: ErrorCode.ENTITY_NOT_FOUND,
-                params: { entityType: 'Record', entityId: ids[0] },
+        let batchFields: Field[] = []
+        const deletedRecords = await transaction(async (entityManager: EntityManager) => {
+            // Through the service, not a hand-rolled query: the created-ASC ordering
+            // the response depends on lives there, and a future tiebreaker added to
+            // it has to reach this path too.
+            batchFields = await fieldService.getAll({ projectId, tableId, entityManager })
+
+            await lockExistingRecordIds({ entityManager, ids, projectId, tableId })
+
+            const records = await entityManager.getRepository(RecordEntity).find({
+                where: { id: In(ids), projectId, tableId },
+                relations: ['cells'],
             })
-        }
 
-        const records = await recordRepo().find({
-            where: { id: In(ids), projectId, tableId: firstRecord.tableId },
-            relations: ['cells'],
+            await entityManager.getRepository(RecordEntity).delete({ id: In(ids), projectId, tableId })
+
+            return records
         })
 
-        await recordRepo().delete({
-            id: In(ids),
-            projectId,
-            tableId: firstRecord.tableId,
-        })
-
-        if (records.length === 0) {
-            return []
-        }
-
-        return formatRecordsAndFetchField({ records, tableId: firstRecord.tableId, projectId })
+        return formatRecordsAndFetchField({ records: deletedRecords, tableId, projectId, fields: batchFields })
     },
 
     async deleteAll({
@@ -677,6 +661,7 @@ export type UpsertResult = {
 }
 
 type DeleteParams = {
+    tableId: string
     ids: string[]
     projectId: string
 }
@@ -774,6 +759,35 @@ async function assertPreconditionHolds({ entityManager, record, request, project
         code: ErrorCode.RECORD_PRECONDITION_FAILED,
         params: { recordId: record.id },
     })
+}
+
+// The record rows are locked before anything writes or deletes, in ascending id
+// order as update()/updateMany()/upsert() all take theirs: an unordered set of row
+// locks is how two overlapping batches cycle into a 40P01. Without the lock, a
+// batch's existence check and its write are interleavable by a concurrent delete of
+// the same rows, and both report success.
+//
+// Every id is checked, not just the first, and a miss rejects the whole batch rather
+// than half-applying it. A record that lives in another table is a miss, not a
+// deletion or update target — which is the point: this is where the tableId the
+// authorization layer resolved against the request body becomes load-bearing for
+// behaviour too (#406). Shared by delete() and updateMany() so the two paths cannot
+// drift apart on what "belongs to this table" means.
+async function lockExistingRecordIds({ entityManager, ids, projectId, tableId }: { entityManager: EntityManager, ids: string[], projectId: string, tableId: string }): Promise<void> {
+    const existingIds = new Set((await entityManager.getRepository(RecordEntity).find({
+        where: { id: In(ids), projectId, tableId },
+        select: ['id'],
+        order: { id: 'ASC' },
+        lock: { mode: 'for_no_key_update' },
+    })).map((record) => record.id))
+
+    const missingId = ids.find((id) => !existingIds.has(id))
+    if (!isNil(missingId)) {
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: { entityType: 'Record', entityId: missingId },
+        })
+    }
 }
 
 function assertKeyFieldsBelongToTable({ keyFieldIds, fieldIds, tableId }: { keyFieldIds: string[], fieldIds: Set<string>, tableId: string }): void {
