@@ -16,7 +16,7 @@ import { cn, GAP_SIZE_FOR_STEP_SETTINGS } from '@/lib/utils';
 
 const StepLogSettingsForm = React.memo(() => {
   const form = useFormContext<FlowAction | FlowTrigger>();
-  const stepType = form.getValues('type')
+  const stepType = form.getValues('type');
 
   if (
     ![
