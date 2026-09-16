@@ -41,6 +41,7 @@ function buildFlowVersion(router: RouterAction): FlowVersion {
         updatedBy: null,
         connectionIds: [],
         agentIds: [],
+        notes: [],
         trigger: {
             name: 'trigger',
             type: FlowTriggerType.EMPTY,
@@ -148,5 +149,82 @@ describe('router branch validation', () => {
         })
 
         expect(flowStructureUtil.getStep('router', updated.trigger)?.valid).toBe(true)
+    })
+
+    it('marks an ADD_ACTION router invalid when the caller claims valid:true for a condition-less branch', () => {
+        const flowVersion = buildFlowVersion(buildRouter({ branches: [FALLBACK_BRANCH], valid: true }))
+
+        const updated = flowOperations.apply(flowVersion, {
+            type: FlowOperationType.ADD_ACTION,
+            request: {
+                parentStep: 'trigger',
+                action: {
+                    name: 'router_1',
+                    displayName: 'Router',
+                    type: FlowActionType.ROUTER,
+                    valid: true,
+                    settings: buildRouterSettings([
+                        { conditions: [[]], branchType: BranchExecutionType.CONDITION, branchName: 'Branch 1' },
+                        FALLBACK_BRANCH,
+                    ]),
+                },
+            },
+        })
+
+        expect(flowStructureUtil.getStep('router_1', updated.trigger)?.valid).toBe(false)
+    })
+
+    it('keeps an ADD_ACTION router valid when the caller claims valid:true for a conditioned branch', () => {
+        const flowVersion = buildFlowVersion(buildRouter({ branches: [FALLBACK_BRANCH], valid: true }))
+
+        const updated = flowOperations.apply(flowVersion, {
+            type: FlowOperationType.ADD_ACTION,
+            request: {
+                parentStep: 'trigger',
+                action: {
+                    name: 'router_1',
+                    displayName: 'Router',
+                    type: FlowActionType.ROUTER,
+                    valid: true,
+                    settings: buildRouterSettings([
+                        { conditions: [[CONDITION]], branchType: BranchExecutionType.CONDITION, branchName: 'create_start' },
+                        FALLBACK_BRANCH,
+                    ]),
+                },
+            },
+        })
+
+        expect(flowStructureUtil.getStep('router_1', updated.trigger)?.valid).toBe(true)
+    })
+
+    it('marks an IMPORT_FLOW router invalid when the import claims valid:true for a condition-less branch', () => {
+        const flowVersion = buildFlowVersion(buildRouter({ branches: [FALLBACK_BRANCH], valid: true }))
+
+        const updated = flowOperations.apply(flowVersion, {
+            type: FlowOperationType.IMPORT_FLOW,
+            request: {
+                displayName: 'imported',
+                trigger: {
+                    name: 'trigger',
+                    type: FlowTriggerType.EMPTY,
+                    displayName: 'trigger',
+                    valid: true,
+                    settings: {},
+                    lastUpdatedDate: '2026-05-02T00:00:00.000Z',
+                    nextAction: buildRouter({
+                        branches: [
+                            { conditions: [[]], branchType: BranchExecutionType.CONDITION, branchName: 'Branch 1' },
+                            FALLBACK_BRANCH,
+                        ],
+                        valid: true,
+                    }),
+                },
+                schemaVersion: null,
+                notes: null,
+            },
+        })
+
+        expect(flowStructureUtil.getStep('router', updated.trigger)?.valid).toBe(false)
+        expect(updated.valid).toBe(false)
     })
 })

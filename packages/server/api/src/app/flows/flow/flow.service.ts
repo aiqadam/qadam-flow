@@ -6,6 +6,7 @@ import {
     Cursor,
     ErrorCode,
     Flow,
+    FlowActionType,
     FlowCreator,
     FlowId,
     FlowOperationRequest,
@@ -13,6 +14,7 @@ import {
     FlowOperationType,
     flowQadamUtil,
     FlowStatus,
+    flowStructureUtil,
     FlowTriggerType,
     FlowVersion,
     FlowVersionId,
@@ -23,6 +25,7 @@ import {
     PopulatedFlow,
     ProjectId,
     QadamFlowError,
+    RouterActionSettingsWithValidation,
     SeekPage,
     SharedTemplate,
     spreadIfDefined,
@@ -515,6 +518,8 @@ export const flowService = (log: FastifyBaseLogger) => ({
             versionId: undefined,
         })
 
+        assertFlowVersionPublishable({ flowVersion: flowVersionToPublish })
+
         if (flowToUpdate.status === FlowStatus.ENABLED && !isNil(flowToUpdate.publishedVersionId)) {
             await triggerSourceService(log).disable({
                 flowId: flowToUpdate.id,
@@ -736,6 +741,33 @@ const lockFlowVersionIfNotLocked = async ({
     })
 }
 
+// The publish gate is `step.valid`: the MCP tool and the web builder both refuse to publish with
+// invalid steps, but the REST LOCK_AND_PUBLISH route locked whatever the draft held. Reject here —
+// the single choke point both callers pass through — so the gate is universal (#436).
+const assertFlowVersionPublishable = ({ flowVersion }: AssertFlowVersionPublishableParams): void => {
+    const invalidSteps = flowStructureUtil.getAllSteps(flowVersion.trigger).filter((step) => {
+        if ('skip' in step && step.skip === true) {
+            return false
+        }
+        if (!step.valid) {
+            return true
+        }
+        // A router stored as valid before #429 (or smuggled in through IMPORT_FLOW before #436)
+        // keeps its flag on a LOCKED version that is never re-validated — recompute instead of
+        // trusting it, the way `ap_validate_flow` does.
+        return step.type === FlowActionType.ROUTER && !RouterActionSettingsWithValidation.safeParse(step.settings).success
+    })
+    if (invalidSteps.length > 0) {
+        const stepList = invalidSteps.map((step) => `"${step.name}" (${step.displayName})`).join(', ')
+        throw new QadamFlowError({
+            code: ErrorCode.FLOW_OPERATION_INVALID,
+            params: {
+                message: `Flow has invalid steps: ${stepList}. Fix these steps before publishing.`,
+            },
+        })
+    }
+}
+
 
 async function applyStatusChange(params: {
     id: FlowId
@@ -890,6 +922,10 @@ type LockFlowVersionIfNotLockedParams = {
     platformId: PlatformId
     entityManager: EntityManager
     log: FastifyBaseLogger
+}
+
+type AssertFlowVersionPublishableParams = {
+    flowVersion: FlowVersion
 }
 
 type ExistsByProjectAndStatusParams = {

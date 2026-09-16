@@ -1,4 +1,5 @@
 import {
+    BranchExecutionType,
     FlowActionType,
     FlowOperationType,
     FlowStatus,
@@ -7,6 +8,7 @@ import {
     PackageType,
     PopulatedFlow,
     QadamType,
+    RouterExecutionType,
     StepLocationRelativeToParent,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
@@ -656,6 +658,54 @@ describe('Flow Operations API', () => {
             const body = response?.json()
             expect(body.version.displayName).toBe('Imported Flow')
             expect(body.version.state).toBe(FlowVersionState.DRAFT)
+        })
+
+        it('marks an imported router with a condition-less branch invalid even when the import claims valid:true', async () => {
+            const ctx = await createTestContext(app!)
+
+            const createResponse = await ctx.post('/v1/flows', {
+                displayName: 'test flow',
+                projectId: ctx.project.id,
+            }, { query: { projectId: ctx.project.id } })
+            const flow: PopulatedFlow = createResponse?.json()
+
+            const response = await ctx.post(`/v1/flows/${flow.id}`, {
+                type: FlowOperationType.IMPORT_FLOW,
+                request: {
+                    displayName: 'Imported Flow',
+                    trigger: {
+                        type: FlowTriggerType.EMPTY,
+                        name: 'trigger',
+                        settings: {},
+                        valid: true,
+                        displayName: 'Select Trigger',
+                        lastUpdatedDate: new Date().toISOString(),
+                        nextAction: {
+                            name: 'router_1',
+                            displayName: 'Router',
+                            type: FlowActionType.ROUTER,
+                            valid: true,
+                            settings: {
+                                branches: [
+                                    { conditions: [[]], branchType: BranchExecutionType.CONDITION, branchName: 'Branch 1' },
+                                    { branchType: BranchExecutionType.FALLBACK, branchName: 'Otherwise' },
+                                ],
+                                executionType: RouterExecutionType.EXECUTE_FIRST_MATCH,
+                            },
+                            children: [null, null],
+                            lastUpdatedDate: new Date().toISOString(),
+                        },
+                    },
+                    schemaVersion: null,
+                    notes: null,
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.version.trigger.nextAction.name).toBe('router_1')
+            expect(body.version.trigger.nextAction.valid).toBe(false)
+            expect(body.version.valid).toBe(false)
         })
     })
 

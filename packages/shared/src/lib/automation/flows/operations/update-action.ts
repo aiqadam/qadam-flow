@@ -3,6 +3,7 @@ import { isNil } from '../../../core/common'
 import { FlowAction, FlowActionType, SingleActionSchema } from '../actions/action'
 import { FlowVersion } from '../flow-version'
 import { flowStructureUtil } from '../util/flow-structure-util'
+import { routerBranchUtil } from '../util/router-branch-util'
 import { UpdateActionRequest } from './index'
 
 function _updateAction(flowVersion: FlowVersion, request: UpdateActionRequest): FlowVersion {
@@ -79,7 +80,10 @@ function _updateAction(flowVersion: FlowVersion, request: UpdateActionRequest): 
             }
         }
         const parseResult = SingleActionSchema.safeParse(updatedAction)
-        const valid = (isNil(request.valid) ? true : request.valid) && parseResult.success
+        // Same bypass as `createAction`: UPDATE_ACTION sub-operations expanded inside
+        // `flowOperations.apply` never see `prepareRequest`, so recompute router validity here (#436).
+        const routerValid = request.type === FlowActionType.ROUTER ? routerBranchUtil.isSettingsValid(request.settings) : true
+        const valid = (isNil(request.valid) ? true : request.valid) && parseResult.success && routerValid
         return {
             ...updatedAction,
             valid,

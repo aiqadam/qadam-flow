@@ -4,6 +4,7 @@ import { ErrorCode, QadamFlowError } from '../../../core/common/qadam-flow-error
 import { FlowAction, FlowActionType, LoopOnItemsAction, RouterAction, SingleActionSchema } from '../actions/action'
 import { FlowVersion } from '../flow-version'
 import { flowStructureUtil, Step } from '../util/flow-structure-util'
+import { routerBranchUtil } from '../util/router-branch-util'
 import { AddActionRequest, StepLocationRelativeToParent, UpdateActionRequest } from './index'
 
 type ActionCreationProps = {
@@ -61,7 +62,12 @@ function createAction(request: UpdateActionRequest, {
             break
     }
     const parseResult = SingleActionSchema.safeParse(action)
-    const valid = (isNil(request.valid) ? true : request.valid) && parseResult.success
+    // IMPORT_FLOW expands into ADD_ACTION sub-operations inside `flowOperations.apply`, i.e. after
+    // `prepareRequest` — so the caller's `valid` flag arrives untouched and the non-validating
+    // `RouterActionSettings` parse above accepts a condition-less branch. Recompute router validity
+    // here so every path that bypasses `prepareRequest` gets the same gate (#436).
+    const routerValid = request.type === FlowActionType.ROUTER ? routerBranchUtil.isSettingsValid(request.settings) : true
+    const valid = (isNil(request.valid) ? true : request.valid) && parseResult.success && routerValid
     return {
         ...action,
         valid,
