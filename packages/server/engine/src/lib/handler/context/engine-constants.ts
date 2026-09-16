@@ -1,5 +1,6 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
 import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType } from '@aiqadam/shared'
+import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { createPropsResolver, PropsResolver } from '../../variables/props-resolver'
 
 type RetryConstants = {
@@ -29,6 +30,7 @@ type EngineConstantsParams = {
     timeoutInSeconds: number
     platformId: PlatformId
     stepNames: string[]
+    stepLogPolicy?: Record<string, StepLogPolicy>
     isInlineChild?: boolean
     inlineDepth?: number
 }
@@ -66,6 +68,7 @@ export class EngineConstants {
     public readonly stepNameToTest?: string
     public readonly logsFileId?: string
     public readonly stepNames: string[] = []
+    public readonly stepLogPolicy: Record<string, StepLogPolicy>
     public readonly isInlineChild: boolean
     public readonly inlineDepth: number
     private project: Project | null = null
@@ -114,6 +117,7 @@ export class EngineConstants {
         this.platformId = params.platformId
         this.timeoutInSeconds = params.timeoutInSeconds
         this.stepNames = params.stepNames
+        this.stepLogPolicy = params.stepLogPolicy ?? {}
         this.isInlineChild = params.isInlineChild ?? false
         this.inlineDepth = params.inlineDepth ?? 0
     }
@@ -140,6 +144,7 @@ export class EngineConstants {
             timeoutInSeconds: input.timeoutInSeconds,
             platformId: input.platformId,
             stepNames: flowStructureUtil.getAllSteps(input.flowVersion.trigger).map((step) => step.name),
+            stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }),
         })
     }
 
@@ -188,6 +193,7 @@ export class EngineConstants {
             timeoutInSeconds: input.timeoutInSeconds,
             platformId: input.platformId,
             stepNames: input.flowVersion?.trigger ? flowStructureUtil.getAllSteps(input.flowVersion.trigger).map((step) => step.name) : [],
+            stepLogPolicy: input.flowVersion?.trigger ? logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }) : {},
         })
     }
 
@@ -212,6 +218,7 @@ export class EngineConstants {
             timeoutInSeconds: input.timeoutInSeconds,
             platformId: input.platformId,
             stepNames: flowStructureUtil.getAllSteps(input.flowVersion.trigger).map((step) => step.name),
+            stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }),
         })
     }
     public getPropsResolver(contextVersion: ContextVersion | undefined): PropsResolver {

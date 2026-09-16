@@ -1,5 +1,6 @@
+import { createServer, Server } from 'http'
 import { ApFile, LATEST_CONTEXT_VERSION, QadamAuth, Property } from '@aiqadam/qadams-framework'
-import { FlowActionType, FlowTriggerType, formulaEvaluator, GenericStepOutput, PropertyExecutionType, PropertySettings, StepOutputStatus } from '@aiqadam/shared'
+import { AppConnectionStatus, FlowActionType, FlowTriggerType, formulaEvaluator, GenericStepOutput, PropertyExecutionType, PropertySettings, StepOutputStatus } from '@aiqadam/shared'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { StepExecutionPath } from '../../src/lib/handler/context/step-execution-path'
 import { propsProcessor } from '../../src/lib/variables/props-processor'
@@ -307,6 +308,101 @@ describe('Props resolver', () => {
             unresolvedInput: '{{connections}}',
             executionState,
         })).rejects.toThrow('does not name anything this run can read')
+    })
+
+    // `{{connections['db'].host}}` handed `host` to a scope whose only binding was `connection`
+    // (the prefix was reconstructed with a dot the parser never required), the ReferenceError was
+    // swallowed, and the expression resolved to `''` — so `Bearer {{connections['api'].access_token}}`
+    // sent an empty token while looking like it worked (#437).
+    describe('connection sub-path references', () => {
+        const connectionValue = {
+            host: 'db.example.com',
+            credentials: {
+                access_token: 'token-123',
+            },
+        }
+        let connectionServer: Server
+        let subPathResolverService: ReturnType<typeof createPropsResolver>
+
+        beforeAll(async () => {
+            connectionServer = createServer((_req, res) => {
+                res.statusCode = 200
+                res.setHeader('content-type', 'application/json')
+                res.end(JSON.stringify({
+                    status: AppConnectionStatus.ACTIVE,
+                    value: connectionValue,
+                }))
+            })
+            await new Promise<void>((resolve) => connectionServer.listen(0, '127.0.0.1', () => resolve()))
+            const address = connectionServer.address()
+            if (address === null || typeof address === 'string') {
+                throw new Error('connection mock server failed to bind to a TCP port')
+            }
+            subPathResolverService = createPropsResolver({
+                projectId: 'PROJECT_ID',
+                engineToken: 'WORKER_TOKEN',
+                apiUrl: `http://127.0.0.1:${address.port}/`,
+                contextVersion: LATEST_CONTEXT_VERSION,
+                stepNames: ['trigger', 'step_1', 'step_2'],
+            })
+        })
+        afterAll(async () => {
+            await new Promise<void>((resolve) => connectionServer.close(() => resolve()))
+        })
+
+        test('reads a field off a connection through the bracket form', async () => {
+            const { resolvedInput } = await subPathResolverService.resolve({
+                unresolvedInput: '{{connections[\'db\'].host}}',
+                executionState,
+            })
+            expect(resolvedInput).toEqual('db.example.com')
+        })
+
+        test('reads a nested field, in both quote styles', async () => {
+            const single = await subPathResolverService.resolve({
+                unresolvedInput: '{{connections[\'db\'].credentials.access_token}}',
+                executionState,
+            })
+            const double = await subPathResolverService.resolve({
+                unresolvedInput: '{{connections["db"].credentials.access_token}}',
+                executionState,
+            })
+            expect(single.resolvedInput).toEqual('token-123')
+            expect(double.resolvedInput).toEqual('token-123')
+        })
+
+        test('the dot form and the dot-before-bracket form still read a field', async () => {
+            const dot = await subPathResolverService.resolve({
+                unresolvedInput: '{{connections.db.host}}',
+                executionState,
+            })
+            const dotBeforeBracket = await subPathResolverService.resolve({
+                unresolvedInput: '{{connections.[\'db\'].host}}',
+                executionState,
+            })
+            expect(dot.resolvedInput).toEqual('db.example.com')
+            expect(dotBeforeBracket.resolvedInput).toEqual('db.example.com')
+        })
+
+        test('the whole-object form returns the connection itself', async () => {
+            const { resolvedInput } = await subPathResolverService.resolve({
+                unresolvedInput: '{{connections[\'db\']}}',
+                executionState,
+            })
+            expect(resolvedInput).toEqual(connectionValue)
+        })
+
+        test('an unreadable field fails the resolve instead of resolving to empty', async () => {
+            await expect(subPathResolverService.resolve({
+                unresolvedInput: '{{connections[\'db\'].missing}}',
+                executionState,
+            })).rejects.toThrow('does not name anything this run can read')
+
+            await expect(subPathResolverService.resolve({
+                unresolvedInput: '{{connections["db"].credentials.nope.deeper}}',
+                executionState,
+            })).rejects.toThrow('does not name anything this run can read')
+        })
     })
 
     test('a project-variable reference that names nothing readable fails the resolve', async () => {

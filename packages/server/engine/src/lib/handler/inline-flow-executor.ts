@@ -17,6 +17,7 @@ import {
 } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { engineFileApi } from '../engine-file-api'
+import { logRedaction } from '../helper/log-redaction'
 import { utils } from '../utils'
 import { workerSocket } from '../worker-socket'
 import { EngineConstants } from './context/engine-constants'
@@ -82,12 +83,14 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         timeoutInSeconds: parentConstants.timeoutInSeconds,
         platformId: parentConstants.platformId,
         stepNames: flowStructureUtil.getAllSteps(flowVersion.trigger).map((step) => step.name),
+        stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: flowVersion.trigger }),
         isInlineChild: true,
         inlineDepth: parentConstants.inlineDepth + 1,
     })
 
     const withTriggerStep = await FlowExecutorContext.empty({
         engineApi: { engineToken: childConstants.engineToken, internalApiUrl: childConstants.internalApiUrl },
+        stepLogPolicy: childConstants.stepLogPolicy,
     }).upsertStep(flowVersion.trigger.name, GenericStepOutput.create({
         type: flowVersion.trigger.type,
         status: StepOutputStatus.SUCCEEDED,
@@ -170,7 +173,7 @@ async function finalizeInlineChildRun(params: { constants: EngineConstants, fina
 
     const serialized = await logSerializer.serialize({
         executionState: {
-            steps: finalContext.steps,
+            steps: finalContext.stepsForLog(),
             tags: Array.from(finalContext.tags),
         },
     })

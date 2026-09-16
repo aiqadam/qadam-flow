@@ -19,6 +19,8 @@ function createAction(request: UpdateActionRequest, {
         valid: false,
         skip: request.skip,
         lastUpdatedDate: dayjs().toISOString(),
+        logInput: request.logInput,
+        logOutput: request.logOutput,
         settings: {
             ...request.settings,
             customLogoUrl: request.settings.customLogoUrl,

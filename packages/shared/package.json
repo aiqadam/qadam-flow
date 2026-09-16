@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/shared",
-  "version": "0.133.0",
+  "version": "0.133.1",
   "type": "commonjs",
   "sideEffects": false,
   "main": "./dist/src/index.js",

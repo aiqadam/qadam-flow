@@ -17,6 +17,8 @@ function _updateAction(flowVersion: FlowVersion, request: UpdateActionRequest): 
             valid: false,
             skip: request.skip,
             lastUpdatedDate: dayjs().toISOString(),
+            logInput: request.logInput,
+            logOutput: request.logOutput,
             settings: {
                 ...stepToUpdate.settings,
                 customLogoUrl: request.settings.customLogoUrl,

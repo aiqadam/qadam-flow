@@ -80,6 +80,7 @@ const executieSingleStepOrFlowOperation = async (input: ResolvedExecuteFlowOpera
             engineToken: constants.engineToken,
             internalApiUrl: constants.internalApiUrl,
         },
+        stepLogPolicy: constants.stepLogPolicy,
     })
     const executionState = await resolveStateOrThrowOnNonUserError({ input, constants, baseContext: emptyContext })
     if (executionState.verdict.status !== FlowRunStatus.RUNNING) {

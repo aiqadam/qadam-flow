@@ -11,12 +11,10 @@ const CONNECTIONS = 'connections'
 const VARIABLES = 'variables'
 // Both quote styles. `{{variables["NAME"]}}` is one character away from the form the unresolved-
 // reference error itself recommends, and matching only `'` made that typo resolve to `''`.
-// No whitespace tolerance, deliberately: `['x']` and `["x"]` are the same length, so the
-// double-quoted form lands on the same index as the single-quoted one in
-// `parsePathAfterConnectionName`, which reconstructs its prefix by length. Accepting
-// `[ 'x' ]` would parse the name and then leave that arithmetic short by the padding, so the
-// leftover `]` would fail to evaluate and the expression would resolve to `''` again — after
-// burning a real connection fetch. Padded forms stay unparseable, which now means they raise.
+// No whitespace tolerance, deliberately: the pattern anchors the quote directly against `[`,
+// so `[ 'x' ]` stays unparseable, which means it raises rather than reading a name — the padded
+// form is the one users hit when they hand-edit the error's recommended syntax, and failing
+// loudly is what tells them which character to remove.
 const BRACKET_NAME_PATTERN = /\[(['"])([^'"]+)\1\]/
 const FLATTEN_NESTED_KEYS_PATTERN = /\{\{\s*flattenNestedKeys(.*?)\}\}/g
 async function replaceTokensAsync(
@@ -277,12 +275,32 @@ async function handleConnection(params: ResolveSingleTokenParams): Promise<unkno
     if (isNil(pathAfterConnectionName) || pathAfterConnectionName.length === 0) {
         return connection
     }
-    return evalInScope({ js: pathAfterConnectionName, contextAsScope: { connection }, functions: { flattenNestedKeys } })
+    return evalInScope({
+        js: pathAfterConnectionName,
+        contextAsScope: { connection },
+        functions: { flattenNestedKeys },
+        unresolvedReference: { expression: variableName, stepNames: params.stepNames },
+        // A sub-path that cannot be read used to resolve to `''` — the same silent-empty-string
+        // class as #392, reached through documented syntax like
+        // `Authorization: Bearer {{connections['api'].access_token}}`. An unreadable field has no
+        // legitimate empty value to fall back to, so it fails the step naming the expression (#437).
+        failOnUnreadablePath: true,
+    })
 }
 
+// The remainder is sliced off the *matched* text, never off a prefix reconstructed by length:
+// `parseSquareBracketConnectionPath` matches `['name']` anywhere, including the dotless form the
+// builder and the docs emit, so the old `` connections.['name'] `` reconstruction was one
+// character longer than the real syntax and handed the bare field name (`host`) to a scope whose
+// only binding is `connection`. Bracket form keeps the same `connection` prefix the dot form has.
 function parsePathAfterConnectionName(variableName: string, connectionName: string): string | null {
     if (variableName.includes('[')) {
-        return variableName.substring(`connections.['${connectionName}']`.length)
+        const match = variableName.match(BRACKET_NAME_PATTERN)
+        if (isNil(match) || isNil(match.index)) {
+            return null
+        }
+        const remainder = variableName.substring(match.index + match[0].length)
+        return remainder.length === 0 ? remainder : `connection${remainder}`
     }
     const cp = variableName.substring(`connections.${connectionName}`.length)
     if (cp.length === 0) {
@@ -312,22 +330,27 @@ function parseSquareBracketConnectionPath(variableName: string): string | null {
 }
 
 // eslint-disable-next-line @typescript-eslint/ban-types
-async function evalInScope({ js, contextAsScope, functions, unresolvedReference }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] } }): Promise<unknown> {
+async function evalInScope({ js, contextAsScope, functions, unresolvedReference, failOnUnreadablePath = false }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] }, failOnUnreadablePath?: boolean }): Promise<unknown> {
     const { data: result, error: resultError } = await utils.tryCatchAndThrowOnEngineError((async () => {
         const codeSandbox = await initCodeSandbox()
 
-        const result = await codeSandbox.runScript({
+        return codeSandbox.runScript({
             script: js,
             scriptContext: contextAsScope,
             functions,
         })
-        return result ?? ''
     }))
 
     if (resultError) {
+        if (failOnUnreadablePath && !isNil(unresolvedReference)) {
+            throw new UnresolvedTemplateReferenceError({ expression: unresolvedReference.expression, cause: resultError })
+        }
         assertReferenceIsResolvable({ error: resultError, unresolvedReference })
         console.warn('[evalInScope] Error evaluating variable', resultError)
         return ''
+    }
+    if (failOnUnreadablePath && result === undefined && !isNil(unresolvedReference)) {
+        throw new UnresolvedTemplateReferenceError({ expression: unresolvedReference.expression })
     }
     return result ?? ''
 }
