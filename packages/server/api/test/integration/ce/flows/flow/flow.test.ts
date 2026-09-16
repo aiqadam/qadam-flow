@@ -1,5 +1,7 @@
 import { WebhookRenewStrategy } from '@aiqadam/qadams-framework'
 import {
+    BranchExecutionType,
+    FlowActionType,
     FlowOperationType,
     FlowStatus,
     FlowTriggerType,
@@ -9,6 +11,7 @@ import {
     PrincipalType,
     PropertyExecutionType,
     QadamType,
+    RouterExecutionType,
     TriggerStrategy,
     TriggerTestStrategy,
     WebhookHandshakeStrategy,
@@ -269,6 +272,166 @@ describe('Flow API', () => {
                 expect(responseBody.version.state).toBe('LOCKED')
                 expect(responseBody.templateId).toBeNull()
             }
+        })
+
+        it('Rejects publishing a draft that holds an invalid router step', async () => {
+            const ctx = await createTestContext(app!)
+
+            const mockQadamMetadata1 = createMockQadamMetadata({
+                name: '@aiqadam/qadam-schedule',
+                version: '0.1.5',
+                triggers: {
+                    every_hour: {
+                        name: 'every_hour',
+                        displayName: 'Every Hour',
+                        description: 'Triggers the current flow every hour',
+                        requireAuth: true,
+                        props: {},
+                        type: TriggerStrategy.WEBHOOK,
+                        handshakeConfiguration: { strategy: WebhookHandshakeStrategy.NONE },
+                        renewConfiguration: { strategy: WebhookRenewStrategy.NONE },
+                        sampleData: {},
+                        testStrategy: TriggerTestStrategy.TEST_FUNCTION,
+                    },
+                },
+                qadamType: QadamType.OFFICIAL,
+                packageType: PackageType.REGISTRY,
+            })
+            await db.save('qadam_metadata', mockQadamMetadata1)
+
+            const mockFlow = createMockFlow({
+                projectId: ctx.project.id,
+                status: FlowStatus.DISABLED,
+            })
+            await db.save('flow', mockFlow)
+
+            const mockFlowVersion = createMockFlowVersion({
+                flowId: mockFlow.id,
+                updatedBy: ctx.user.id,
+                state: FlowVersionState.DRAFT,
+                trigger: {
+                    type: FlowTriggerType.PIECE,
+                    settings: {
+                        qadamName: '@aiqadam/qadam-schedule',
+                        qadamVersion: '0.1.5',
+                        input: { run_on_weekends: false },
+                        triggerName: 'every_hour',
+                        propertySettings: {
+                            run_on_weekends: { type: PropertyExecutionType.MANUAL },
+                        },
+                    },
+                    valid: true,
+                    name: 'trigger',
+                    displayName: 'Schedule',
+                    lastUpdatedDate: new Date().toISOString(),
+                    nextAction: {
+                        name: 'router_1',
+                        displayName: 'Router',
+                        type: FlowActionType.ROUTER,
+                        valid: false,
+                        settings: {
+                            branches: [
+                                { conditions: [[]], branchType: BranchExecutionType.CONDITION, branchName: 'Branch 1' },
+                                { branchType: BranchExecutionType.FALLBACK, branchName: 'Otherwise' },
+                            ],
+                            executionType: RouterExecutionType.EXECUTE_FIRST_MATCH,
+                        },
+                        children: [null, null],
+                        lastUpdatedDate: new Date().toISOString(),
+                    },
+                },
+            })
+            await db.save('flow_version', mockFlowVersion)
+
+            const response = await ctx.post(`/v1/flows/${mockFlow.id}`, {
+                type: FlowOperationType.LOCK_AND_PUBLISH,
+                request: {},
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const body = response?.json()
+            expect(body.code).toBe('FLOW_OPERATION_INVALID')
+            expect(body.params.message).toContain('router_1')
+        })
+
+        it('Rejects publishing a draft whose router is stored valid but no longer satisfies router validation', async () => {
+            const ctx = await createTestContext(app!)
+
+            const mockQadamMetadata1 = createMockQadamMetadata({
+                name: '@aiqadam/qadam-schedule',
+                version: '0.1.5',
+                triggers: {
+                    every_hour: {
+                        name: 'every_hour',
+                        displayName: 'Every Hour',
+                        description: 'Triggers the current flow every hour',
+                        requireAuth: true,
+                        props: {},
+                        type: TriggerStrategy.WEBHOOK,
+                        handshakeConfiguration: { strategy: WebhookHandshakeStrategy.NONE },
+                        renewConfiguration: { strategy: WebhookRenewStrategy.NONE },
+                        sampleData: {},
+                        testStrategy: TriggerTestStrategy.TEST_FUNCTION,
+                    },
+                },
+                qadamType: QadamType.OFFICIAL,
+                packageType: PackageType.REGISTRY,
+            })
+            await db.save('qadam_metadata', mockQadamMetadata1)
+
+            const mockFlow = createMockFlow({
+                projectId: ctx.project.id,
+                status: FlowStatus.DISABLED,
+            })
+            await db.save('flow', mockFlow)
+
+            const mockFlowVersion = createMockFlowVersion({
+                flowId: mockFlow.id,
+                updatedBy: ctx.user.id,
+                state: FlowVersionState.DRAFT,
+                trigger: {
+                    type: FlowTriggerType.PIECE,
+                    settings: {
+                        qadamName: '@aiqadam/qadam-schedule',
+                        qadamVersion: '0.1.5',
+                        input: { run_on_weekends: false },
+                        triggerName: 'every_hour',
+                        propertySettings: {
+                            run_on_weekends: { type: PropertyExecutionType.MANUAL },
+                        },
+                    },
+                    valid: true,
+                    name: 'trigger',
+                    displayName: 'Schedule',
+                    lastUpdatedDate: new Date().toISOString(),
+                    nextAction: {
+                        name: 'router_1',
+                        displayName: 'Router',
+                        type: FlowActionType.ROUTER,
+                        valid: true,
+                        settings: {
+                            branches: [
+                                { conditions: [[]], branchType: BranchExecutionType.CONDITION, branchName: 'Branch 1' },
+                                { branchType: BranchExecutionType.FALLBACK, branchName: 'Otherwise' },
+                            ],
+                            executionType: RouterExecutionType.EXECUTE_FIRST_MATCH,
+                        },
+                        children: [null, null],
+                        lastUpdatedDate: new Date().toISOString(),
+                    },
+                },
+            })
+            await db.save('flow_version', mockFlowVersion)
+
+            const response = await ctx.post(`/v1/flows/${mockFlow.id}`, {
+                type: FlowOperationType.LOCK_AND_PUBLISH,
+                request: {},
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const body = response?.json()
+            expect(body.code).toBe('FLOW_OPERATION_INVALID')
+            expect(body.params.message).toContain('router_1')
         })
     })
 
