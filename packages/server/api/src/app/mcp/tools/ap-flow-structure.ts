@@ -6,6 +6,7 @@ import {
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    isObject,
     McpToolDefinition,
     Note,
     Permission,
@@ -29,6 +30,13 @@ type StepInfo = {
     valid: boolean
     skip?: boolean
     configStatus: string
+    input: Record<string, unknown> | null
+}
+
+function getStepInput(step: Step): Record<string, unknown> | null {
+    const settings = isObject(step.settings) ? step.settings : null
+    const input = settings?.input
+    return isObject(input) ? input : null
 }
 
 function getConfigStatus(step: Step): string {
@@ -61,14 +69,15 @@ function hasSampleData(step: Step): boolean {
     return typeof sampleData === 'object' && sampleData !== null && 'sampleDataFileId' in sampleData && sampleData.sampleDataFileId != null
 }
 
-function formatStepSettings(step: Step): string[] {
+function formatStepSettings(step: Step, includeInput: boolean): string[] {
     const lines: string[] = []
     const settings = step.settings as Record<string, unknown>
 
     if (step.type === FlowTriggerType.PIECE || step.type === FlowActionType.PIECE) {
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
-            lines.push(`  input: ${mcpUtils.truncate(JSON.stringify(input), 500)}`)
+            const formatted = JSON.stringify(input)
+            lines.push(`  input: ${includeInput ? formatted : mcpUtils.truncate(formatted, 500)}`)
         }
     }
     else if (step.type === FlowActionType.CODE) {
@@ -81,7 +90,8 @@ function formatStepSettings(step: Step): string[] {
         }
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
-            lines.push(`  input: ${mcpUtils.truncate(JSON.stringify(input), 300)}`)
+            const formatted = JSON.stringify(input)
+            lines.push(`  input: ${includeInput ? formatted : mcpUtils.truncate(formatted, 300)}`)
         }
     }
     else if (step.type === FlowActionType.LOOP_ON_ITEMS) {
@@ -138,6 +148,7 @@ function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName:
                 valid: step.valid,
                 skip: (step as { skip?: boolean }).skip,
                 configStatus: getConfigStatus(step),
+                input: getStepInput(step),
             }
         }
         let parentName: string | null = null
@@ -190,6 +201,7 @@ function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName:
             valid: step.valid,
             skip: (step as { skip?: boolean }).skip,
             configStatus: getConfigStatus(step),
+            input: getStepInput(step),
         }
     })
     return { structure, stepByName }
@@ -202,6 +214,7 @@ function formatFlowStructure(
     stepByName: Map<string, Step>,
     positions: Map<string, { x: number, y: number }>,
     notes: Note[],
+    includeInput: boolean,
 ): string {
     const lines: string[] = []
     lines.push(`# Flow: ${flowDisplayName} (id: ${flowId})`)
@@ -224,7 +237,7 @@ function formatFlowStructure(
             }
             lines.push(`- [TRIGGER] ${step.name} | ${step.type} | "${step.displayName}"${triggerDetail} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
             if (fullStep) {
-                lines.push(...formatStepSettings(fullStep))
+                lines.push(...formatStepSettings(fullStep, includeInput))
             }
             continue
         }
@@ -240,7 +253,7 @@ function formatFlowStructure(
         lines.push(`- ${step.name} | ${step.type} | "${step.displayName}"${stepDetail} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
 
         if (fullStep) {
-            lines.push(...formatStepSettings(fullStep))
+            lines.push(...formatStepSettings(fullStep, includeInput))
         }
 
         if (step.type === FlowActionType.ROUTER && fullStep) {
@@ -318,12 +331,13 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), and valid insert locations for ap_add_step.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), and valid insert locations for ap_add_step. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
+            includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input'),
         },
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-        execute: async ({ flowId }) => {
+        execute: async ({ flowId, includeInput }) => {
             try {
                 const flow = await flowService(log).getOnePopulated({
                     id: String(flowId),
@@ -334,7 +348,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 }
                 const { structure, stepByName } = buildFlowStructure(flow.version.trigger)
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
-                const text = formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [])
+                const text = formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [], !!includeInput)
                 return {
                     content: [{ type: 'text', text }],
                     structuredContent: {
@@ -350,6 +364,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             ...(s.branchName !== undefined ? { branchName: s.branchName } : {}),
                             valid: s.valid,
                             configStatus: s.configStatus,
+                            ...(includeInput && s.input !== null ? { input: s.input } : {}),
                         })),
                         stepCount: structure.length,
                     },

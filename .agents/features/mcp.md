@@ -40,7 +40,7 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 
 **Locked tools** (always enabled if MCP is on):
 - `ap_list_flows` — list all flows in project
-- `ap_flow_structure` — get flow definition and structure
+- `ap_flow_structure` — get flow definition and structure; `includeInput=true` adds each step's full untruncated `input` to `structuredContent`
 - `ap_read_step_code` — read full source code of a CODE step
 - `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
   five issue categories: `step_validity`, `template_reference`, `empty_branch`, and — since #391 —
