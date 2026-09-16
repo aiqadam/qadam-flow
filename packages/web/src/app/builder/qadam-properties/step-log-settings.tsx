@@ -16,7 +16,7 @@ import { cn, GAP_SIZE_FOR_STEP_SETTINGS } from '@/lib/utils';
 
 const StepLogSettingsForm = React.memo(() => {
   const form = useFormContext<FlowAction | FlowTrigger>();
-  const stepType = form.getValues('type') as string;
+  const stepType = form.getValues('type');
 
   if (
     ![
@@ -24,7 +24,7 @@ const StepLogSettingsForm = React.memo(() => {
       FlowActionType.PIECE,
       FlowActionType.LOOP_ON_ITEMS,
       FlowActionType.ROUTER,
-    ].includes(stepType as FlowActionType)
+    ].includes(stepType)
   ) {
     return null;
   }
