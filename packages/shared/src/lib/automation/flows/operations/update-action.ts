@@ -80,8 +80,8 @@ function _updateAction(flowVersion: FlowVersion, request: UpdateActionRequest): 
             }
         }
         const parseResult = SingleActionSchema.safeParse(updatedAction)
-        // Same bypass as `createAction`: UPDATE_ACTION sub-operations expanded inside
-        // `flowOperations.apply` never see `prepareRequest`, so recompute router validity here (#436).
+        // Same bypass as `createAction`: direct `flowOperations.apply` callers never see
+        // `prepareRequest`, so recompute router validity here (#436).
         const routerValid = request.type === FlowActionType.ROUTER ? routerBranchUtil.isSettingsValid(request.settings) : true
         const valid = (isNil(request.valid) ? true : request.valid) && parseResult.success && routerValid
         return {
