@@ -71,6 +71,83 @@ describe('Authentication API', () => {
             expect(platformCount).toBe(0)
             expect(projectCount).toBe(0)
         })
+
+        // GET /v1/users/me for an ONBOARDING principal (platform-user-controller.ts) resolves by
+        // identityId with platformId IS NULL. platform-user-community.test.ts covers that lookup
+        // logic, but seeds its row via mockBasicUser, which inserts a User directly and does not
+        // prove the real sign-up path ever creates one — it didn't: this exact gap 404'd every
+        // fresh instance's first sign-up until the no-platform branch above started bootstrapping
+        // the row. This test goes through the real endpoint both times, no direct DB seeding.
+        it('lets the ONBOARDING principal from a fresh sign-up read its own record via /users/me', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+                headers: {
+                    authorization: `Bearer ${onboardingToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const responseBody = response?.json()
+            expect(responseBody?.email).toBe(mockSignUpRequest.email.toLocaleLowerCase().trim())
+            expect(responseBody?.platformId).toBeNull()
+        })
+
+        // createPlatformWithProject (platform.service.ts) reuses the platformId:null row the
+        // no-platform branch above bootstraps, rather than inserting a second one for the same
+        // identityId — the (platformId, identityId) unique index would otherwise reject it. This
+        // exercises the real sign-up -> create-platform chain to guard that reuse.
+        it('creates the platform on the row sign-up bootstrapped, without a duplicate-key error', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+
+            // act
+            const response = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/platforms',
+                headers: {
+                    authorization: `Bearer ${onboardingToken}`,
+                },
+                body: { name: 'Acme' },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const responseBody = response?.json()
+            expect(responseBody?.platformId).toBeDefined()
+
+            const userCount = await databaseConnection().getRepository('user').count()
+            expect(userCount).toBe(1)
+
+            const meResponse = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users/me',
+                headers: {
+                    authorization: `Bearer ${responseBody.token}`,
+                },
+            })
+            expect(meResponse?.statusCode).toBe(StatusCodes.OK)
+            const meBody = meResponse?.json()
+            expect(meBody?.platformId).toBe(responseBody.platformId)
+            expect(meBody?.platformRole).toBe('ADMIN')
+        })
     })
 
     describe('Sign in Endpoint', () => {

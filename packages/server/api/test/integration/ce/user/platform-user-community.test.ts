@@ -60,6 +60,11 @@ describe('User API', () => {
             expect(responseBody.password).toBeUndefined()
         })
 
+        // This seeds the platformId:null row directly via mockBasicUser, so it only proves the
+        // lookup logic — not that the real sign-up flow ever produces such a row (it didn't,
+        // until authentication.service.ts's no-platform branch started bootstrapping one; see
+        // 'lets the ONBOARDING principal from a fresh sign-up read its own record via /users/me'
+        // in authentication.test.ts for the end-to-end guard against that gap recurring).
         it('Returns the record for an ONBOARDING principal with no platform yet', async () => {
             // arrange
             const { mockUserIdentity, mockUser: onboardingUser } = await mockBasicUser({
