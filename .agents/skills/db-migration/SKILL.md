@@ -76,15 +76,17 @@ export class AddMyColumn1234567890 implements Migration {
 - `down()` — must reverse `up()` (required)
 
 The `Migration` type marks `breaking`/`release` optional, but `_verify.yml`'s
-"Check new migration metadata" step runs `tools/scripts/check-migration-rollback.ts`
-(`npm run check-migration-metadata`) as a required check on every PR (#445): a
-new migration missing `name`, `breaking`, an invalid/missing `release`, or
-missing `down()` fails the build and names the field. `down()` missing is
-actually caught earlier still, at compile time — typeorm's
-`MigrationInterface.down` is non-optional. `name` matters beyond the gate too:
-`rollback-migrations.ts` keys manifest-based rollback on it, so a blank one
-silently drops the migration from that path instead of failing loudly. Set
-all four anyway; do not rely on the gate to catch it.
+"Check new migration metadata" step (part of the required `Lint + Unit Tests`
+check, not a separate context of its own) runs
+`tools/scripts/check-migration-rollback.ts` (`npm run check-migration-metadata`)
+on every PR (#445): a new migration missing `name`, `breaking`, an
+invalid/missing `release`, or missing `down()` fails the build and names the
+field. `down()` missing is actually caught earlier still, at compile time —
+typeorm's `MigrationInterface.down` is non-optional. `name` matters beyond the
+gate too: `rollback-migrations.ts` keys manifest-based rollback on it, so a
+blank or mismatched one silently drops the migration from that path instead
+of failing loudly — the gate also checks it matches the exported class name.
+Set all four anyway; do not rely on the gate to catch it.
 
 ### Step 5: REGISTER THE MIGRATION
 

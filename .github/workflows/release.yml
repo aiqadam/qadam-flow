@@ -101,12 +101,14 @@ jobs:
       - name: Check the tag against the root package.json version
         run: tools/ci/check-version-matches-tag.sh "${{ github.ref_name }}"
 
-  # Informational, not a gate: tools/scripts/check-release-migrations.ts never
-  # exits non-zero — it lists which migrations are tagged `release` for this
-  # version and flags the breaking ones, in the Actions log next to the gates
-  # above. #445 found it unwired (no package.json script, no workflow step)
-  # despite its own header framing it as a release-time tool. Not in `build`'s
-  # `needs`: a listing with no pass/fail has nothing to gate on.
+  # Informational, not a gate: tools/scripts/check-release-migrations.ts lists
+  # which migrations are tagged `release` for this version and flags the
+  # breaking ones, in the Actions log next to the gates above. #445 found it
+  # unwired (no package.json script, no workflow step) despite its own header
+  # framing it as a release-time tool. Not in `build`'s `needs`, and
+  # `continue-on-error: true` at the job level: a listing has nothing to gate
+  # on, so an install flake or an unexpected script failure here must not
+  # redden an otherwise-good release the way a real gate's failure should.
   #
   # check-manifest-migrations.ts, the sibling script, is deliberately NOT wired
   # in here. It needs a manifest of migration names already applied on the
@@ -118,16 +120,33 @@ jobs:
     name: Migrations tagged for this release
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v6
+        id: node
         with:
           node-version: 24
 
       - uses: oven-sh/setup-bun@v2
+        id: bun
         with:
           bun-version: 1.3.3
+
+      # Restore-only, same key `_verify.yml`'s `verify` job writes — see that
+      # job's cache-restore step for what each key component is for. Without
+      # this, every tag push pays a cold `bun install` (~230s, per that job's
+      # own measurement) just to print a list.
+      - name: Restore built node_modules
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
 
       - name: Install dependencies
         run: tools/ci/install-deps.sh

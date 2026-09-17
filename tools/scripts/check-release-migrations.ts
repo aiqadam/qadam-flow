@@ -1,6 +1,8 @@
-// Informational only (never exits non-zero) — run by release.yml's
-// `release-migrations` job on every tag push, next to the breaking-change and
-// version-tag gates. See that job's comment for why it is not itself a gate.
+// Informational — run by release.yml's `release-migrations` job on every tag
+// push, next to the breaking-change and version-tag gates. It does exit 1 on
+// a usage error (no version argument), but the wired call always supplies
+// one; that job is `continue-on-error: true` regardless, so this is not
+// itself a gate either way. See that job's comment for why.
 import * as fs from 'fs'
 import { getMigrations } from '../../packages/server/api/src/app/database/postgres-connection'
 import { Migration } from '../../packages/server/api/src/app/database/migration'

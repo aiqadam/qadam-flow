@@ -59,7 +59,7 @@ function main(): void {
 
         try {
             if (testCase.expectSubstrings.length === 0) {
-                assert.deepEqual(errors, [], `expected no errors, got: ${JSON.stringify(errors)}`)
+                assert.deepStrictEqual(errors, [], `expected no errors, got: ${JSON.stringify(errors)}`)
             }
             else {
                 for (const substring of testCase.expectSubstrings) {

@@ -3,16 +3,9 @@
 // rollback-migrations.ts's expectations, which read `breaking`/`release`/
 // `down()` off every registered migration and silently mis-behave (skip a
 // version, or roll back destructively without --force) when one is missing.
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import * as path from 'path'
 import semver from 'semver'
-
-const MIGRATION_DIRS = [
-    'packages/server/api/src/app/database/migration/postgres',
-    'packages/server/api/src/app/database/migration/common',
-]
-
-const REPO_ROOT = path.resolve(__dirname, '../..')
 
 export function validateMigrationInstance(instance: MigrationCandidate): string[] {
     const errors: string[] = []
@@ -40,6 +33,13 @@ export function validateMigrationInstance(instance: MigrationCandidate): string[
     return errors
 }
 
+const MIGRATION_DIRS = [
+    'packages/server/api/src/app/database/migration/postgres',
+    'packages/server/api/src/app/database/migration/common',
+]
+
+const REPO_ROOT = path.resolve(__dirname, '../..')
+
 // `origin/<base>...HEAD` is a branch-ref fallback for local/manual runs. In CI
 // the exact PR_BASE_SHA/PR_HEAD_SHA (from github.event.pull_request.{base,head}.sha)
 // are used instead — a branch ref can move between checkout and this step running,
@@ -51,8 +51,12 @@ function getChangedMigrationFiles(): string[] {
         ? `${PR_BASE_SHA}...${PR_HEAD_SHA}`
         : `origin/${process.env.GITHUB_BASE_REF ?? 'main'}...HEAD`
 
-    const diffOutput = execSync(
-        `git diff --name-only --no-renames --diff-filter=A ${range}`,
+    // execFileSync, not execSync + a template-literal command string: it spawns
+    // git directly with an argv array rather than through a shell, so `range`
+    // cannot be interpreted as shell syntax regardless of what it contains.
+    const diffOutput = execFileSync(
+        'git',
+        ['diff', '--name-only', '--no-renames', '--diff-filter=A', range],
         { encoding: 'utf-8' },
     ).trim()
 
@@ -94,7 +98,17 @@ async function checkMigrationFile(filePath: string): Promise<string[]> {
         return ['No exported migration class found']
     }
 
-    return validateMigrationInstance(new MigrationClass())
+    const instance = new MigrationClass()
+    const errors = validateMigrationInstance(instance)
+
+    // validateMigrationInstance() only checks presence — this is the part of
+    // "must match the exported class name" it can't do, since it never sees
+    // the class itself, only the instance.
+    if (instance.name && instance.name !== MigrationClass.name) {
+        errors.push(`"name" ('${instance.name}') does not match the exported class name ('${MigrationClass.name}')`)
+    }
+
+    return errors
 }
 
 async function main(): Promise<void> {
