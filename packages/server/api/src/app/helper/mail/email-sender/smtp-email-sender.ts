@@ -19,6 +19,7 @@ const ALLOWED_TEMPLATE_NAMES = new Set<EmailTemplateData['name']>([
     'verify-email',
     'reset-password',
     'issue-created',
+    'badge-awarded',
 ])
 
 export const smtpEmailSender = (log: FastifyBaseLogger): SMTPEmailSender => {
@@ -185,6 +186,7 @@ const getEmailSubject = ({ templateName, vars }: GetEmailSubjectArgs): string =>
         'verify-email': 'Verify your email address',
         'reset-password': 'Reset your password',
         'issue-created': `[${vars.projectName}] Flow has an issue "${vars.flowName}"`,
+        'badge-awarded': `You earned the "${vars.badgeTitle}" badge`,
     }
 
     return templateToSubject[templateName]

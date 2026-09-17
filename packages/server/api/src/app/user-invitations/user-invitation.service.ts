@@ -10,12 +10,14 @@ import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
 import { platformService } from '../platform/platform.service'
 import { ProjectMemberEntity } from '../project/project-member.entity'
+import { ProjectRoleEntity } from '../project/project-role.entity'
 import { projectService } from '../project/project-service'
 import { userService } from '../user/user-service'
 import { UserInvitationEntity } from './user-invitation.entity'
 
 const repo = repoFactory(UserInvitationEntity)
 const projectMemberRepo = repoFactory(ProjectMemberEntity)
+const projectRoleRepo = repoFactory(ProjectRoleEntity)
 
 export const userInvitationsService = (log: FastifyBaseLogger) => ({
     async getOneByInvitationTokenOrThrow(invitationToken: string): Promise<UserInvitation> {
@@ -88,6 +90,7 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
                         projectRoleId: invitation.projectRoleId,
                         platformId: invitation.platformId,
                     }, ['userId', 'projectId'])
+                    await sendProjectMemberAddedEmail({ invitation, log })
                     break
                 }
             }
@@ -265,6 +268,27 @@ const sendInvitationEmail = async ({ userInvitation, invitationLink, log }: Send
     }
 }
 
+const sendProjectMemberAddedEmail = async ({ invitation, log }: SendProjectMemberAddedEmailParams): Promise<void> => {
+    const { error } = await tryCatch(async () => {
+        assertNotNullOrUndefined(invitation.projectId, 'projectId')
+        assertNotNullOrUndefined(invitation.projectRoleId, 'projectRoleId')
+        const [projectName, projectRole] = await Promise.all([
+            resolveInvitationEntityName(invitation, log),
+            projectRoleRepo().findOneByOrFail({ id: invitation.projectRoleId }),
+        ])
+        await emailService(log).sendProjectMemberAdded({
+            email: invitation.email,
+            platformId: invitation.platformId,
+            projectId: invitation.projectId,
+            projectName,
+            role: projectRole.name,
+        })
+    })
+    if (error) {
+        log.error({ error, email: invitation.email, platformId: invitation.platformId }, '[userInvitationsService#sendProjectMemberAddedEmail] failed to send project member added email')
+    }
+}
+
 const resolveInvitationEntityName = async (userInvitation: UserInvitation, log: FastifyBaseLogger): Promise<string> => {
     if (userInvitation.type === InvitationType.PROJECT) {
         assertNotNullOrUndefined(userInvitation.projectId, 'projectId')
@@ -277,6 +301,11 @@ const resolveInvitationEntityName = async (userInvitation: UserInvitation, log: 
 type SendInvitationEmailParams = {
     userInvitation: UserInvitation
     invitationLink: string
+    log: FastifyBaseLogger
+}
+
+type SendProjectMemberAddedEmailParams = {
+    invitation: UserInvitation
     log: FastifyBaseLogger
 }
 

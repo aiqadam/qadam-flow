@@ -1,9 +1,11 @@
-import { apId, ApplicationEvent, BADGES, isNil, WebsocketClientEvent } from '@aiqadam/shared'
+import { apId, ApplicationEvent, BADGES, isNil, tryCatch, WebsocketClientEvent } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { websocketService } from '../../core/websockets.service'
 import { applicationEvents } from '../../helper/application-events'
+import { emailService } from '../../helper/mail/email-service'
+import { userService } from '../user-service'
 import { BadgeCheck } from './badge-check'
 import { UserBadgeEntity } from './badge-entity'
 import { flowsBadgesCheck } from './checks/active-flows-badges'
@@ -65,7 +67,22 @@ async function processBadgeChecks(
                 badge: badgeName,
                 userId,
             })
+
+            await sendBadgeAwardedEmail({ userId, badgeName, log })
         }
+    }
+}
+
+async function sendBadgeAwardedEmail({ userId, badgeName, log }: SendBadgeAwardedEmailParams): Promise<void> {
+    const { email, firstName, platformId } = await userService(log).getMetaInformation({ id: userId })
+    const { error } = await tryCatch(() => emailService(log).sendBadgeAwarded({
+        email,
+        platformId: platformId ?? undefined,
+        firstName,
+        badge: BADGES[badgeName],
+    }))
+    if (error) {
+        log.error({ error, userId, badgeName }, '[badgeService#sendBadgeAwardedEmail] failed to send badge awarded email')
     }
 }
 
@@ -81,4 +98,10 @@ export const userBadgeService = (log: FastifyBaseLogger) => ({
         })
     },
 })
+
+type SendBadgeAwardedEmailParams = {
+    userId: string
+    badgeName: keyof typeof BADGES
+    log: FastifyBaseLogger
+}
 

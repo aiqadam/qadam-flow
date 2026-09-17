@@ -39,6 +39,24 @@ export const emailService = (log: FastifyBaseLogger) => ({
         })
     },
 
+    async sendBadgeAwarded({ email, platformId, firstName, badge }: SendBadgeAwardedArgs): Promise<void> {
+        log.info({ email, platformId, badgeTitle: badge.title }, '[emailService#sendBadgeAwarded] sending badge awarded email')
+        const badgeImageUrl = await domainHelper.getPublicUrl({ path: badge.imageUrl })
+        await emailSender(log).send({
+            emails: [email],
+            platformId,
+            templateData: {
+                name: 'badge-awarded',
+                vars: {
+                    firstName,
+                    badgeTitle: badge.title,
+                    badgeDescription: badge.description,
+                    badgeImageUrl,
+                },
+            },
+        })
+    },
+
     async sendFlowIssueAlert({ emails, platformId, vars }: SendFlowIssueAlertArgs): Promise<void> {
         log.info({ platformId, flowName: vars.flowName }, '[emailService#sendFlowIssueAlert] sending flow failure alert')
         await emailSender(log).send({
@@ -93,6 +111,17 @@ type SendProjectMemberAddedArgs = {
     projectId: string | undefined
     projectName: string
     role: string
+}
+
+type SendBadgeAwardedArgs = {
+    email: string
+    platformId: string | undefined
+    firstName: string
+    badge: {
+        imageUrl: string
+        title: string
+        description: string
+    }
 }
 
 type SendOtpArgs = {

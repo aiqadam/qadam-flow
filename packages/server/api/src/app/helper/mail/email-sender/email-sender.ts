@@ -48,12 +48,20 @@ type IssueCreatedTemplateData = BaseEmailTemplateData<'issue-created', {
     failedStepMessage: string
 }>
 
+type BadgeAwardedTemplateData = BaseEmailTemplateData<'badge-awarded', {
+    firstName: string
+    badgeTitle: string
+    badgeDescription: string
+    badgeImageUrl: string
+}>
+
 export type EmailTemplateData =
   | InvitationEmailTemplateData
   | ProjectMemberAddedEmailTemplateData
   | ResetPasswordEmailTemplateData
   | VerifyEmailTemplateData
   | IssueCreatedTemplateData
+  | BadgeAwardedTemplateData
 
 type SendArgs = {
     emails: string[]
