@@ -18,6 +18,17 @@ import { execute } from './operations'
 
 const INITIAL_CONNECT_TIMEOUT_MS = 60_000
 
+// Pure so the redaction the redirect below applies to the stderr surface stays pinned by a unit
+// test. The guard only recognises a marker in the first argument, which is why failure-payload
+// lines must be emitted marker-first rather than as a bare error object (#403).
+export const sanitizeConsoleErrorArgs = (args: unknown[]): unknown[] => {
+    const first = args[0]
+    if (typeof first === 'string' && ERROR_MESSAGES_TO_REDACT.some(m => first.includes(m))) {
+        return [first, 'REDACTED']
+    }
+    return args
+}
+
 let socket: Socket | undefined
 let workerClient: WorkerContract | undefined
 let notifyClient: WorkerNotifyContract | undefined
@@ -81,10 +92,7 @@ export const workerSocket = {
 
         const originalError = console.error
         console.error = function (...args): void {
-            let sanitizedArgs = [...args]
-            if (typeof args[0] === 'string' && ERROR_MESSAGES_TO_REDACT.some(m => args[0].includes(m))) {
-                sanitizedArgs = [sanitizedArgs[0], 'REDACTED']
-            }
+            const sanitizedArgs = sanitizeConsoleErrorArgs(args)
             notifyClient?.stderr({ message: sanitizedArgs.join(' ') + '\n' })
             originalError.apply(console, sanitizedArgs)
         }

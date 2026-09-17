@@ -34,7 +34,14 @@ export const SYNTHETIC_FLOW_RUN_IDS = [
  * full request body of every failing qadam request reached engine stderr. `packages/qadams/common`
  * asserts the emitted string against this list, because writing that test from this constant rather
  * than from the real line is what let the two drift apart unnoticed.
+ *
+ * `'[Engine#'` covers the engine's own failure-payload lines (`operations/index.ts`,
+ * `helper/qadam-helper.ts`): the remainder is an arbitrary escaped error, so the guard blanks
+ * it on the stderr surface. On the operations path the detail is not lost — the same error is
+ * returned in the RPC response and persisted as the run's internal error; on the executeProps
+ * path the failure is deliberately swallowed into a placeholder for the builder either way.
  */
 export const ERROR_MESSAGES_TO_REDACT = [
     'HttpClient#',
+    '[Engine#',
 ]

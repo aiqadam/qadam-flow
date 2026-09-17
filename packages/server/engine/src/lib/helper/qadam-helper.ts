@@ -116,7 +116,8 @@ export const qadamHelper = {
         }))
         
         if (executePropsError) {
-            console.error(executePropsError)
+            // Marker-first: same guard as operations/index.ts — a bare error object never matches (#403).
+            console.error('[Engine#executeProps] Operation failed:', executePropsError)
             return {
                 type: property.type,
                 options: {
