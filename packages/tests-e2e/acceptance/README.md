@@ -101,11 +101,13 @@ parallel flip the provider out from under each other. See `../AGENTS.md`.
   it on, the first sign-up emails an OTP synchronously and `global-setup.ts` dies before any test
   runs. It is the same two-phase dance the CI job does, for the same reason. Putting `AP_SMTP_*` in
   `.env` before the first `docker compose up` is the single easiest way to lose an hour here.
-- **The acceptance mail cases are gated on `E2E_MAILPIT_URL`, not on the `@smtp` tag.** They sit in a
-  serial describe with the Viewer / locale / theme cases, which have no mail dependency and should
-  not be held back to phase 2 — so the describe stays untagged and the two mail tests skip on their
-  own when the variable is unset. Phase 1 above therefore runs them and they skip; phase 2 runs them
-  for real.
+- **The acceptance mail cases are gated on `E2E_MAILPIT_URL`, not primarily on the `@smtp` tag.**
+  They sit in a serial describe with the Viewer / locale / theme cases, which have no mail
+  dependency, so the describe as a whole stays untagged. The two mail cases themselves do carry
+  `@smtp` (#342) — CI's e2e job selects its second phase with `--grep '@smtp'`, so without the tag
+  they would never be collected there at all. It makes no difference to the run above: with no
+  `--grep`, every test in the file is collected regardless of tag, and each mail case's own
+  `test.skip(mailpit === '')` is what actually gates it — unset in phase 1, set in phase 2.
 - **The OTP throttle is not a bug.** A PENDING code younger than ten minutes suppresses a resend, so
   a second password-reset request within that window sends nothing. Confirm the first code before
   expecting a second mail.

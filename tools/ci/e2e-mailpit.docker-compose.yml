@@ -1,0 +1,44 @@
+# CI-only override for the E2E job (#342): adds a real Mailpit SMTP server so the two mail
+# acceptance specs (invitation, password reset) stop skipping. Staged into place as
+# `docker-compose.override.yml` by the "Boot the stack" step, which is why plain `docker compose`
+# commands later in the job pick it up with no extra `-f` flag. Not part of a normal install; not
+# read unless this job copies it there.
+#
+# This is deliberately mail-only. packages/tests-e2e/acceptance/docker-compose.override.yml also
+# wires host.docker.internal for the Chat e2e stub (#337) — a separate, still-open concern with a
+# different risk profile, tracked apart per the issues' own reasoning.
+#
+# WHY THE CERTIFICATE. `smtp-email-sender.ts#initSmtpClient` sets `requireTLS: !useSSL` and passes
+# no `tls` options, so nodemailer performs a mandatory STARTTLS upgrade with certificate
+# verification left ON. A stock Mailpit serves a self-signed cert, which that connection rejects.
+# Rather than weaken the sender for a test, the job generates a cert for the name the app dials
+# (`mailpit`), mounts it read-only into both containers, and points `app` at it via
+# NODE_EXTRA_CA_CERTS — so the app's TLS behaviour here is identical to production. The key/cert
+# live under `./certs`, generated fresh every run and never committed (see .gitignore).
+services:
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: mailpit
+    restart: unless-stopped
+    ports:
+      # Only the web UI is published. SMTP (1025) is dialed over the compose network by `app`
+      # alone; publishing an auth-accept-any SMTP listener on the runner's interfaces would be a
+      # gratuitous exposure for no test that needs it.
+      - '8025:8025'
+    environment:
+      - MP_SMTP_TLS_CERT=/certs/mailpit.crt
+      - MP_SMTP_TLS_KEY=/certs/mailpit.key
+      # Accept whatever credentials the app is configured with — auth happens over the encrypted
+      # channel above, so this does not need --smtp-auth-allow-insecure.
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=false
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      - qadam-flow
+
+  app:
+    environment:
+      - NODE_EXTRA_CA_CERTS=/certs/mailpit.crt
+    volumes:
+      - ./certs:/certs:ro

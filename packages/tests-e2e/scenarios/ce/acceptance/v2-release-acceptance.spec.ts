@@ -34,11 +34,21 @@ import {
  * self-signed cert is rejected. Boot the stack with the acceptance compose override, which mounts
  * a cert issued for the name the app dials and points `NODE_EXTRA_CA_CERTS` at it, then set
  * `E2E_MAILPIT_URL`. Without it the mail case skips rather than passing vacuously.
+ *
+ * **The two mail cases carry `@smtp` (#342), the other three do not.** For a human running the
+ * README's manual harness this makes no difference — phase 2 there re-runs the whole file with no
+ * `--grep`, on purpose, since filtering isn't worth the bookkeeping for one person typing commands.
+ * CI's e2e job, however, selects phase 2 by tag (`--grep '@smtp'`, the same filter
+ * `failure-alerts-toggle.spec.ts` uses), so without the tag these two would never be collected in
+ * either CI phase — which is exactly the defect this issue fixes. The Viewer/locale/theme cases
+ * need no mail and stay untagged, so CI still runs them in phase 1 as before. One side effect
+ * worth knowing: under CI's split, frames 01-06 (the mail cases) are actually written during
+ * phase 2, after frames 07-17 — "numbered in execution order" only holds within a single phase.
  */
 test.describe('v2.0.0 release acceptance — features with no UI coverage', () => {
   test.describe.configure({ mode: 'serial', timeout: 180_000 });
 
-  test('an invitation sent from the UI arrives as a real email (#SMTP, mailer)', async ({
+  test('an invitation sent from the UI arrives as a real email (#SMTP, mailer)', { tag: '@smtp' }, async ({
     page,
   }) => {
     // `?? ''` rather than `=== undefined`: an exported-but-empty E2E_MAILPIT_URL is easy to
@@ -76,7 +86,7 @@ test.describe('v2.0.0 release acceptance — features with no UI coverage', () =
     await shot(page, '04-the-invitation-email-as-the-recipient-sees-it');
   });
 
-  test('a password reset request sends a real email (mailer, OTP)', async ({ page }) => {
+  test('a password reset request sends a real email (mailer, OTP)', { tag: '@smtp' }, async ({ page }) => {
     const mailpit = process.env.E2E_MAILPIT_URL ?? '';
     test.skip(mailpit === '', 'needs a Mailpit whose TLS certificate the app trusts; set E2E_MAILPIT_URL');
     const before = await messageCount(page, mailpit);
