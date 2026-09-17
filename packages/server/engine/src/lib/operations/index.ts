@@ -46,7 +46,10 @@ export async function execute(operationType: EngineOperationType, operation: Eng
         }
     })
     if (result.error) {
-        console.error(result.error)
+        // Marker-first: the stderr guard blanks the payload only behind a recognised marker, and
+        // a bare error object as the first argument never matches (#403). The full error is still
+        // returned below and persisted as the run's internal error.
+        console.error('[Engine#executeOperation] Operation failed:', result.error)
         return {
             response: undefined,
             status: EngineResponseStatus.INTERNAL_ERROR,
