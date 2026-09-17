@@ -1,3 +1,10 @@
+// Manual operator tool, not a CI step (#445 considered and rejected wiring it
+// in). It previews `rollbackToManifest()`'s candidate list for a given target
+// manifest, so it is only useful with a manifest of migration names already
+// applied on the instance being rolled back — CI has no way to obtain that
+// for a tag build, since it would require live introspection of a running
+// deployment. Run it by hand (`npm run check-manifest-migrations -- '[...]'`)
+// before a manifest-based `node dist/src/rollback.js` on a real deployment.
 import * as fs from 'fs'
 import { identifyCandidatesByManifest } from '../../packages/server/api/src/app/database/rollback-migrations'
 import { getMigrations } from '../../packages/server/api/src/app/database/postgres-connection'

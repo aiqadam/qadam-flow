@@ -25,7 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # fetch-depth: 0 is load-bearing for the "Check new migration metadata"
+      # step below (#445): it diffs PR_BASE_SHA...PR_HEAD_SHA, both of which
+      # must be reachable locally, and a depth-1 checkout would only have HEAD.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # These run before any install, deliberately: they are pure shell, so they
       # still report if the install step later flakes. This workflow is only ever
@@ -271,6 +276,28 @@ jobs:
 
       - name: Check i18n catalogs
         run: npm run check-i18n
+
+      # Reject-case fixtures for the migration metadata gate below (#445). Needs
+      # ts-node/semver from node_modules, so it sits down here rather than with
+      # the pure-shell suite above.
+      - name: Test the migration metadata gate
+        run: tools/ci/test-check-migration-rollback.sh
+
+      # tools/scripts/check-migration-rollback.ts existed but was never wired
+      # into any job (#445): a migration missing `breaking`, `release`, or
+      # `down()` compiled and merged with nothing red. It reads
+      # PR_BASE_SHA...PR_HEAD_SHA rather than a branch ref for the same reason
+      # ci.yml's `changes`/e2e jobs diff fixed SHAs — a branch ref can move
+      # between checkout and this step running. Skipped outside pull_request:
+      # there is no PR diff to check on a push-to-main or tag build, matching
+      # why the breaking-change/version-tag release gates live in release.yml
+      # and not here.
+      - name: Check new migration metadata
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run check-migration-metadata
 
       # Unfiltered, deliberately. The enumerated `lint-core` / `lint-qadams`
       # scripts silently missed every package they did not name — `@aiqadam/cli`,
