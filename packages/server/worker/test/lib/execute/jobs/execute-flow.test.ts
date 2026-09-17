@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import {
     QadamFlowError,
     ErrorCode,
+    EngineResponseStatus,
     ExecutionType,
     FlowActionType,
     FlowRunStatus,
@@ -34,6 +35,9 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
 
 import { executeFlowJob } from '../../../../src/lib/execute/jobs/execute-flow'
 import { JobResultKind } from '../../../../src/lib/execute/types'
+import { provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
+
+const mockProvisionFlowPieces = vi.mocked(provisionFlowPieces)
 
 function makeFlowVersion(): FlowVersion {
     return {
@@ -184,6 +188,17 @@ describe('executeFlowJob', () => {
                 expect.objectContaining({ status: FlowRunStatus.INTERNAL_ERROR }),
             )
         })
+
+        it('omits logsFileId when reporting the missing RESUME logs file', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ logsFileId: undefined as unknown as string })
+
+            await expect(executeFlowJob.execute(ctx, data)).rejects.toBeInstanceOf(QadamFlowError)
+
+            const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
+            expect(reported.status).toBe(FlowRunStatus.INTERNAL_ERROR)
+            expect(reported.logsFileId).toBeUndefined()
+        })
     })
 
     describe('missing piece handling', () => {
@@ -202,6 +217,74 @@ describe('executeFlowJob', () => {
             )
 
             expect(ctx.sandboxManager.acquire).not.toHaveBeenCalled()
+        })
+
+        it('omits logsFileId when the flow version is not found, the engine never ran', async () => {
+            mockGetVersion.mockResolvedValue(null)
+
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, logsFileId: 'logs-file-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
+            expect(reported.status).toBe(FlowRunStatus.FAILED)
+            expect(reported.logsFileId).toBeUndefined()
+        })
+
+        it('omits logsFileId when piece provisioning fails, the engine never ran', async () => {
+            mockProvisionFlowPieces.mockResolvedValueOnce({ provisioned: false, unavailableQadam: '@aiqadam/qadam-tables@0.3.1' })
+
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, logsFileId: 'logs-file-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
+            expect(reported.status).toBe(FlowRunStatus.FAILED)
+            expect(reported.logsFileId).toBeUndefined()
+            expect(ctx.sandboxManager.acquire).not.toHaveBeenCalled()
+        })
+
+        it('keeps logsFileId when piece provisioning throws, preserving the internalError detail', async () => {
+            mockProvisionFlowPieces.mockRejectedValueOnce(new Error('registry unreachable'))
+
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, logsFileId: 'logs-file-1' })
+
+            await expect(executeFlowJob.execute(ctx, data)).rejects.toThrow('registry unreachable')
+
+            const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
+            expect(reported.status).toBe(FlowRunStatus.INTERNAL_ERROR)
+            expect(reported.logsFileId).toBe('logs-file-1')
+            expect(reported.internalError).toBeDefined()
+        })
+
+        it('keeps logsFileId on sandbox timeout, the engine may have uploaded snapshots', async () => {
+            const ctx = makeMockContext()
+            ctx.mockSandbox.execute.mockRejectedValueOnce(new QadamFlowError({
+                code: ErrorCode.SANDBOX_EXECUTION_TIMEOUT,
+                params: { standardOutput: '', standardError: '' },
+            }, 'timed out'))
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, logsFileId: 'logs-file-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
+            expect(reported.status).toBe(FlowRunStatus.TIMEOUT)
+            expect(reported.logsFileId).toBe('logs-file-1')
+        })
+
+        it('keeps logsFileId when the engine reports an internal error', async () => {
+            const ctx = makeMockContext()
+            ctx.mockSandbox.execute.mockResolvedValueOnce({ status: EngineResponseStatus.INTERNAL_ERROR, error: 'boom' })
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, logsFileId: 'logs-file-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
+            expect(reported.status).toBe(FlowRunStatus.INTERNAL_ERROR)
+            expect(reported.logsFileId).toBe('logs-file-1')
         })
     })
 })

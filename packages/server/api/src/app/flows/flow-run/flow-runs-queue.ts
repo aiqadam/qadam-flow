@@ -1,8 +1,10 @@
-import { apId, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined } from '@aiqadam/shared'
-import { Queue, Worker } from 'bullmq'
+import { apId, FileType, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch } from '@aiqadam/shared'
+import { Job, Queue, Worker } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
+import { QueryFailedError } from 'typeorm'
 import { distributedLock, distributedStore, redisConnections } from '../../database/redis-connections'
+import { fileService } from '../../file/file.service'
 import { domainHelper } from '../../helper/domain-helper'
 import { exceptionHandler } from '../../helper/exception-handler'
 import { system } from '../../helper/system/system'
@@ -43,90 +45,16 @@ export const runsMetadataQueue = (log: FastifyBaseLogger) => ({
                     timeoutInSeconds: 30,
                     fn: async () => {
                         try {
+                            await drainRunsMetadataUpdates({ log, job, key })
+                            // Released only after the updates are durably stored: uploads that
+                            // merged into the hash while this job was active are picked up by
+                            // the drain loop instead of fanning out into duplicate jobs.
+                            // (BullMQ also clears the key on finalization; this covers the
+                            // success path explicitly. It is deliberately not cleared on
+                            // failure, so uploads during the retry backoff coalesce into the
+                            // pending retry, which re-reads the hash.)
                             await runsMetadataQueue(log).get().removeDeduplicationKey(job.data.runId)
-                            const runMetadata = await distributedStore.hgetJson<RunsMetadataUpsertData>(key)
-                            if (isNil(runMetadata) || Object.keys(runMetadata).length === 0) {
-                                log.info({
-                                    jobId: job.id,
-                                    runId: job.data.runId,
-                                }, '[runsMetadataQueue#worker] Runs metadata not found, skipping job')
-                                return
-                            }
-
-                            const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
-                            let savedFlowRun: FlowRun
-                            if (!isNil(existingFlowRun)) {
-                                await flowRunRepo().update(job.data.runId, {
-                                    ...spreadIfDefined('projectId', runMetadata.projectId),
-                                    ...spreadIfDefined('flowId', runMetadata.flowId),
-                                    ...spreadIfDefined('flowVersionId', runMetadata.flowVersionId),
-                                    ...spreadIfDefined('environment', runMetadata.environment),
-                                    ...spreadIfDefined('startTime', runMetadata.startTime),
-                                    ...spreadIfDefined('finishTime', runMetadata.finishTime),
-                                    ...spreadIfDefined('status', runMetadata.status),
-                                    ...spreadIfDefined('tags', runMetadata.tags),
-                                    ...spreadIfDefined('failedStep', runMetadata.failedStep),
-                                    ...spreadIfDefined('stepNameToTest', runMetadata.stepNameToTest),
-                                    ...spreadIfDefined('parentRunId', runMetadata.parentRunId),
-                                    ...spreadIfDefined('failParentOnFailure', runMetadata.failParentOnFailure),
-                                    ...spreadIfDefined('dispatchMode', runMetadata.dispatchMode),
-                                    ...spreadIfDefined('logsFileId', runMetadata.logsFileId),
-                                    ...spreadIfDefined('updated', runMetadata.updated),
-                                    ...spreadIfDefined('stepsCount', runMetadata.stepsCount),
-                                })
-                                const updatedFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
-                                if (isNil(updatedFlowRun)) {
-                                    log.info({
-                                        jobId: job.id,
-                                        runId: job.data.runId,
-                                    }, '[runsMetadataQueue#worker] Flow run was deleted during update, skipping job')
-                                    return
-                                }
-                                savedFlowRun = updatedFlowRun
-                            }
-                            else {
-                                const flowId = runMetadata.flowId
-                                const flowExists = !isNil(flowId) && await flowService(log).exists(flowId)
-                                if (!flowExists) {
-                                    log.info({
-                                        jobId: job.id,
-                                        runId: job.data.runId,
-                                    }, '[runsMetadataQueue#worker] Flow does not exist (deleted), skipping job')
-                                    return
-                                }
-                                savedFlowRun = await flowRunRepo().save(runMetadata)
-                            }
-
-                            const parentRunId = savedFlowRun.parentRunId
-                            const shouldMarkParentAsFailed = savedFlowRun.failParentOnFailure && !isNil(parentRunId) && ![FlowRunStatus.SUCCEEDED, FlowRunStatus.RUNNING, FlowRunStatus.PAUSED, FlowRunStatus.QUEUED].includes(savedFlowRun.status)
-                            if (shouldMarkParentAsFailed) {
-                                await markParentRunAsFailed({
-                                    parentRunId,
-                                    childRunId: savedFlowRun.id,
-                                    projectId: savedFlowRun.projectId,
-                                    log,
-                                })
-                            }
-
-                            if (!isNil(runMetadata.requestId)) {
-                                await distributedStore.deleteKeyIfFieldValueMatches(key, 'requestId', runMetadata.requestId)
-                            }
-                            if (!isNil(runMetadata.finishTime)) {
-                                await flowRunSideEffects(log).onFinish(savedFlowRun)
-                            }
-
-                            if (savedFlowRun.status === FlowRunStatus.PAUSED) {
-                                const latestWaitpoint = await waitpointService(log).getByFlowRunId(savedFlowRun.id)
-                                const isPreCompleted = !isNil(latestWaitpoint)
-                                    && latestWaitpoint.status === WaitpointStatus.COMPLETED
-                                if (isPreCompleted) {
-                                    await resumeService(log).resumeFromWaitpoint({
-                                        flowRunId: savedFlowRun.id,
-                                        waitpointId: latestWaitpoint.id,
-                                        resumePayload: latestWaitpoint.resumePayload,
-                                    })
-                                }
-                            }
+                            await reenqueueWhenUpdatesArrivedLate({ log, job, key })
                         }
                         catch (error) {
                             log.error({
@@ -173,6 +101,195 @@ export const runsMetadataQueue = (log: FastifyBaseLogger) => ({
     },
 
 })
+
+const MAX_DRAIN_ITERATIONS = 10
+
+async function drainRunsMetadataUpdates({ log, job, key }: DrainRunsMetadataParams): Promise<void> {
+    for (let iteration = 0; iteration < MAX_DRAIN_ITERATIONS; iteration++) {
+        const processed = await processRunsMetadataUpdate({ log, job, key })
+        if (!processed) {
+            return
+        }
+    }
+}
+
+async function reenqueueWhenUpdatesArrivedLate({ log, job, key }: DrainRunsMetadataParams): Promise<void> {
+    const leftover = await distributedStore.hgetJson<RunsMetadataUpsertData>(key)
+    if (isNil(leftover) || Object.keys(leftover).length === 0) {
+        return
+    }
+    // Merged after the final drain read while this job was still active, so no job
+    // remains to consume it. Re-enqueued without merging: the hash already holds the
+    // fresh fields, and re-merging a stale snapshot would clobber them.
+    log.info({
+        jobId: job.id,
+        runId: job.data.runId,
+    }, '[runsMetadataQueue#worker] Updates arrived during finalization, re-enqueueing')
+    await runsMetadataQueue(log).get().add(
+        'update-run-metadata',
+        { runId: job.data.runId, projectId: job.data.projectId },
+        { deduplication: { id: job.data.runId } },
+    )
+}
+
+async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataParams): Promise<boolean> {
+    const runMetadata = await distributedStore.hgetJson<RunsMetadataUpsertData>(key)
+    if (isNil(runMetadata) || Object.keys(runMetadata).length === 0) {
+        log.info({
+            jobId: job.id,
+            runId: job.data.runId,
+        }, '[runsMetadataQueue#worker] Runs metadata not found, skipping job')
+        return false
+    }
+
+    const logsFileId = await resolveWritableLogsFileId({ log, job, runMetadata })
+    const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
+    let savedFlowRun: FlowRun
+    if (!isNil(existingFlowRun)) {
+        await updateFlowRunIgnoringDanglingLogsFile({ runId: job.data.runId, runMetadata, logsFileId, log, job })
+        const updatedFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
+        if (isNil(updatedFlowRun)) {
+            log.info({
+                jobId: job.id,
+                runId: job.data.runId,
+            }, '[runsMetadataQueue#worker] Flow run was deleted during update, skipping job')
+            return false
+        }
+        savedFlowRun = updatedFlowRun
+    }
+    else {
+        const flowId = runMetadata.flowId
+        const flowExists = !isNil(flowId) && await flowService(log).exists(flowId)
+        if (!flowExists) {
+            log.info({
+                jobId: job.id,
+                runId: job.data.runId,
+            }, '[runsMetadataQueue#worker] Flow does not exist (deleted), skipping job')
+            return false
+        }
+        savedFlowRun = await flowRunRepo().save({
+            ...runMetadata,
+            logsFileId: logsFileId ?? null,
+        })
+    }
+
+    const parentRunId = savedFlowRun.parentRunId
+    const shouldMarkParentAsFailed = savedFlowRun.failParentOnFailure && !isNil(parentRunId) && ![FlowRunStatus.SUCCEEDED, FlowRunStatus.RUNNING, FlowRunStatus.PAUSED, FlowRunStatus.QUEUED].includes(savedFlowRun.status)
+    if (shouldMarkParentAsFailed) {
+        await markParentRunAsFailed({
+            parentRunId,
+            childRunId: savedFlowRun.id,
+            projectId: savedFlowRun.projectId,
+            log,
+        })
+    }
+
+    if (!isNil(runMetadata.requestId)) {
+        await distributedStore.deleteKeyIfFieldValueMatches(key, 'requestId', runMetadata.requestId)
+    }
+    else {
+        // No version marker to compare against, so the payload just processed cannot
+        // be told apart from a fresh one on the next drain read. Drop it outright:
+        // leaving it would reprocess the same update up to MAX_DRAIN_ITERATIONS and
+        // then re-enqueue a job that does it all over again.
+        await distributedStore.delete(key)
+    }
+    if (!isNil(runMetadata.finishTime)) {
+        await flowRunSideEffects(log).onFinish(savedFlowRun)
+    }
+
+    if (savedFlowRun.status === FlowRunStatus.PAUSED) {
+        const latestWaitpoint = await waitpointService(log).getByFlowRunId(savedFlowRun.id)
+        const isPreCompleted = !isNil(latestWaitpoint)
+            && latestWaitpoint.status === WaitpointStatus.COMPLETED
+        if (isPreCompleted) {
+            await resumeService(log).resumeFromWaitpoint({
+                flowRunId: savedFlowRun.id,
+                waitpointId: latestWaitpoint.id,
+                resumePayload: latestWaitpoint.resumePayload,
+            })
+        }
+    }
+    return true
+}
+
+async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
+    if (isNil(runMetadata.logsFileId)) {
+        return undefined
+    }
+    const projectId = runMetadata.projectId ?? job.data.projectId
+    const exists = await fileService(log).exists({
+        projectId,
+        fileId: runMetadata.logsFileId,
+        type: FileType.FLOW_RUN_LOG,
+    })
+    if (exists) {
+        return runMetadata.logsFileId
+    }
+    // A logsFileId whose file was never written must not discard the status write.
+    log.warn({
+        runId: job.data.runId,
+        logsFileId: runMetadata.logsFileId,
+    }, '[runsMetadataQueue#worker] Logs file not found, saving run status without it')
+    return undefined
+}
+
+async function updateFlowRunIgnoringDanglingLogsFile({ runId, runMetadata, logsFileId, log, job }: UpdateFlowRunParams): Promise<void> {
+    const { error } = await tryCatch(() => flowRunRepo().update(runId, buildFlowRunUpdate({ runMetadata, logsFileId })))
+    if (isNil(error)) {
+        return
+    }
+    if (!isNil(logsFileId) && isLogsFileForeignKeyViolation(error)) {
+        // The file vanished between the existence check and the write; status and
+        // finishTime matter more than the log pointer.
+        log.warn({
+            runId: job.data.runId,
+            logsFileId,
+        }, '[runsMetadataQueue#worker] Logs file gone mid-write, retrying status update without it')
+        await flowRunRepo().update(runId, buildFlowRunUpdate({ runMetadata, logsFileId: undefined }))
+        return
+    }
+    throw error
+}
+
+function buildFlowRunUpdate({ runMetadata, logsFileId }: BuildFlowRunUpdateParams) {
+    return {
+        ...spreadIfDefined('projectId', runMetadata.projectId),
+        ...spreadIfDefined('flowId', runMetadata.flowId),
+        ...spreadIfDefined('flowVersionId', runMetadata.flowVersionId),
+        ...spreadIfDefined('environment', runMetadata.environment),
+        ...spreadIfDefined('startTime', runMetadata.startTime),
+        ...spreadIfDefined('finishTime', runMetadata.finishTime),
+        ...spreadIfDefined('status', runMetadata.status),
+        ...spreadIfDefined('tags', runMetadata.tags),
+        ...spreadIfDefined('failedStep', runMetadata.failedStep),
+        ...spreadIfDefined('stepNameToTest', runMetadata.stepNameToTest),
+        ...spreadIfDefined('parentRunId', runMetadata.parentRunId),
+        ...spreadIfDefined('failParentOnFailure', runMetadata.failParentOnFailure),
+        ...spreadIfDefined('dispatchMode', runMetadata.dispatchMode),
+        ...spreadIfDefined('logsFileId', logsFileId),
+        ...spreadIfDefined('updated', runMetadata.updated),
+        ...spreadIfDefined('stepsCount', runMetadata.stepsCount),
+    }
+}
+
+const POSTGRES_FOREIGN_KEY_VIOLATION = '23503'
+const FLOW_RUN_LOGS_FILE_CONSTRAINT = 'fk_flow_run_logs_file_id'
+
+function isLogsFileForeignKeyViolation(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+        return false
+    }
+    const driverError: unknown = error.driverError
+    return (
+        typeof driverError === 'object' &&
+        driverError !== null &&
+        'code' in driverError &&
+        driverError.code === POSTGRES_FOREIGN_KEY_VIOLATION &&
+        'constraint' in driverError &&
+        driverError.constraint === FLOW_RUN_LOGS_FILE_CONSTRAINT
+    )
+}
 
 async function markParentRunAsFailed({
     parentRunId,
@@ -223,4 +340,29 @@ type MarkParentRunAsFailedParams = {
     childRunId: string
     projectId: string
     log: FastifyBaseLogger
+}
+
+type DrainRunsMetadataParams = {
+    log: FastifyBaseLogger
+    job: Job<RunsMetadataJobData>
+    key: string
+}
+
+type ResolveWritableLogsFileIdParams = {
+    log: FastifyBaseLogger
+    job: Job<RunsMetadataJobData>
+    runMetadata: RunsMetadataUpsertData
+}
+
+type UpdateFlowRunParams = {
+    runId: string
+    runMetadata: RunsMetadataUpsertData
+    logsFileId: string | undefined
+    log: FastifyBaseLogger
+    job: Job<RunsMetadataJobData>
+}
+
+type BuildFlowRunUpdateParams = {
+    runMetadata: RunsMetadataUpsertData
+    logsFileId: string | undefined
 }

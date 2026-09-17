@@ -9,6 +9,7 @@ import {
     logSerializer,
     QadamPackage,
     RunInternalError,
+    spreadIfDefined,
     StreamStepProgress,
     truncateFailedStepMessage,
     tryCatch,
@@ -108,9 +109,8 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
         },
 
         async uploadRunLog(input) {
-            const internalErrorEnabled = true
-            if (internalErrorEnabled && !isNil(input.internalError) && !isNil(input.logsFileId)) {
-                await persistInternalErrorToLogs({
+            if (!isNil(input.logsFileId)) {
+                await ensureLogsFileExists({
                     log,
                     projectId: input.projectId,
                     logsFileId: input.logsFileId,
@@ -294,19 +294,25 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
     }
 }
 
-async function persistInternalErrorToLogs({ log, projectId, logsFileId, internalError }: PersistInternalErrorParams): Promise<void> {
+async function ensureLogsFileExists({ log, projectId, logsFileId, internalError }: EnsureLogsFileParams): Promise<void> {
     const { error } = await tryCatch(async () => {
         const existing = await fileService(log).getDataOrUndefined({
             projectId,
             fileId: logsFileId,
             type: FileType.FLOW_RUN_LOG,
         })
+        if (!isNil(existing) && isNil(internalError)) {
+            return
+        }
         const outputFile: ExecutioOutputFile = !isNil(existing)
             ? JSON.parse(existing.data.toString('utf-8'))
             : { executionState: { steps: {}, tags: [] } }
 
         const data = await fileCompressor.compress({
-            data: await logSerializer.serialize({ ...outputFile, internalError }),
+            data: await logSerializer.serialize({
+                ...outputFile,
+                ...spreadIfDefined('internalError', internalError),
+            }),
             compression: FileCompression.ZSTD,
         })
 
@@ -323,13 +329,13 @@ async function persistInternalErrorToLogs({ log, projectId, logsFileId, internal
     })
 
     if (error) {
-        log.error({ error, logsFileId, projectId }, '[workerRpc#uploadRunLog] Failed to persist internal error to logs file')
+        log.error({ error, logsFileId, projectId }, '[workerRpc#uploadRunLog] Failed to ensure logs file exists')
     }
 }
 
-type PersistInternalErrorParams = {
+type EnsureLogsFileParams = {
     log: FastifyBaseLogger
     projectId: string
     logsFileId: string
-    internalError: RunInternalError
+    internalError?: RunInternalError
 }
