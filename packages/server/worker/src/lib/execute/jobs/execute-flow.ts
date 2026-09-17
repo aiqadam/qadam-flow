@@ -31,17 +31,17 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
         const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })
         if (isNil(flowVersion)) {
             ctx.log.info({ flowVersionId: data.flowVersionId }, 'Flow version not found, skipping')
-            await reportFlowStatus(ctx, data, FlowRunStatus.FAILED)
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED })
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
         }
 
         const { data: provisioned, error: provisionError } = await tryCatch(() => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }))
         if (provisionError) {
-            await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, toInternalError(RunInternalErrorSource.WORKER, provisionError))
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
             throw provisionError
         }
         if (!provisioned.provisioned) {
-            await reportFlowStatus(ctx, data, FlowRunStatus.FAILED)
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED })
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
         }
 
@@ -50,7 +50,7 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                 code: ErrorCode.RESUME_LOGS_FILE_MISSING,
                 params: { runId: data.runId },
             }, 'logsFileId is missing for RESUME operation')
-            await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, toInternalError(RunInternalErrorSource.WORKER, resumeLogsFileMissingError))
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, resumeLogsFileMissingError) })
             throw resumeLogsFileMissingError
         }
 
@@ -78,15 +78,21 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             )
 
             if (result.status === EngineResponseStatus.LOG_SIZE_EXCEEDED) {
-                await reportFlowStatus(ctx, data, FlowRunStatus.LOG_SIZE_EXCEEDED)
+                await reportFlowStatus({ ctx, data, status: FlowRunStatus.LOG_SIZE_EXCEEDED, logsFileId: data.logsFileId })
                 return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED, logs: result.logs }
             }
 
             if (result.status === EngineResponseStatus.INTERNAL_ERROR) {
-                await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, {
-                    source: RunInternalErrorSource.ENGINE,
-                    message: result.error ?? 'Engine reported an internal error without details',
-                    occurredAt: new Date().toISOString(),
+                await reportFlowStatus({
+                    ctx,
+                    data,
+                    status: FlowRunStatus.INTERNAL_ERROR,
+                    internalError: {
+                        source: RunInternalErrorSource.ENGINE,
+                        message: result.error ?? 'Engine reported an internal error without details',
+                        occurredAt: new Date().toISOString(),
+                    },
+                    logsFileId: data.logsFileId,
                 })
                 return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, logs: result.logs }
             }
@@ -97,19 +103,19 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             await ctx.sandboxManager.invalidate(ctx.log)
             if (e instanceof QadamFlowError) {
                 if (e.error.code === ErrorCode.SANDBOX_EXECUTION_TIMEOUT) {
-                    await reportFlowStatus(ctx, data, FlowRunStatus.TIMEOUT)
+                    await reportFlowStatus({ ctx, data, status: FlowRunStatus.TIMEOUT, logsFileId: data.logsFileId })
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.TIMEOUT }
                 }
                 if (e.error.code === ErrorCode.SANDBOX_MEMORY_ISSUE) {
-                    await reportFlowStatus(ctx, data, FlowRunStatus.MEMORY_LIMIT_EXCEEDED)
+                    await reportFlowStatus({ ctx, data, status: FlowRunStatus.MEMORY_LIMIT_EXCEEDED, logsFileId: data.logsFileId })
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.MEMORY_ISSUE }
                 }
                 if (e.error.code === ErrorCode.SANDBOX_LOG_SIZE_EXCEEDED) {
-                    await reportFlowStatus(ctx, data, FlowRunStatus.LOG_SIZE_EXCEEDED)
+                    await reportFlowStatus({ ctx, data, status: FlowRunStatus.LOG_SIZE_EXCEEDED, logsFileId: data.logsFileId })
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED }
                 }
             }
-            await reportFlowStatus(ctx, data, FlowRunStatus.INTERNAL_ERROR, toInternalError(RunInternalErrorSource.WORKER, e))
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, e), logsFileId: data.logsFileId })
             throw e
         }
         finally {
@@ -172,19 +178,14 @@ function toInternalError(source: RunInternalErrorSource, error: unknown): RunInt
     }
 }
 
-async function reportFlowStatus(
-    ctx: JobContext,
-    data: ExecuteFlowJobData,
-    status: FlowRunStatus,
-    internalError?: RunInternalError,
-): Promise<void> {
+async function reportFlowStatus({ ctx, data, status, internalError, logsFileId }: ReportFlowStatusParams): Promise<void> {
     await ctx.apiClient.uploadRunLog({
         runId: data.runId,
         status,
         projectId: data.projectId,
         streamStepProgress: data.streamStepProgress,
         finishTime: new Date().toISOString(),
-        logsFileId: data.logsFileId,
+        logsFileId,
         internalError,
     })
 
@@ -199,4 +200,17 @@ async function reportFlowStatus(
 
 function isDedicatedWorker(): boolean {
     return !isNil(system.get(WorkerSystemProp.WORKER_GROUP_ID))
+}
+
+type ReportFlowStatusParams = {
+    ctx: JobContext
+    data: ExecuteFlowJobData
+    status: FlowRunStatus
+    internalError?: RunInternalError
+    // Omitted on paths where the engine never started and there is nothing to persist:
+    // no log file was uploaded under this id, and sending it would violate
+    // fk_flow_run_logs_file_id and discard the whole status write, stranding the run
+    // at QUEUED. Kept wherever the engine may have run, and on the provisioning-throw
+    // path, where the internalError detail is only reachable via the logs file.
+    logsFileId?: string
 }
