@@ -70,13 +70,21 @@ export class AddMyColumn1234567890 implements Migration {
 ```
 
 **Required fields:**
+- `name = '<ExportedClassName>'` — the CLI sets this; do not blank it out
 - `breaking = false` — set to `true` only if rolling back is destructive
 - `release = '<version>'` — the upcoming release version from root `package.json`
 - `down()` — must reverse `up()` (required)
 
-The `Migration` type marks all three optional, and no CI job runs
-`tools/scripts/check-migration-rollback.ts` (which validates them), so nothing
-fails the build for a missing one — review is what catches it. Set them.
+The `Migration` type marks `breaking`/`release` optional, but `_verify.yml`'s
+"Check new migration metadata" step runs `tools/scripts/check-migration-rollback.ts`
+(`npm run check-migration-metadata`) as a required check on every PR (#445): a
+new migration missing `name`, `breaking`, an invalid/missing `release`, or
+missing `down()` fails the build and names the field. `down()` missing is
+actually caught earlier still, at compile time — typeorm's
+`MigrationInterface.down` is non-optional. `name` matters beyond the gate too:
+`rollback-migrations.ts` keys manifest-based rollback on it, so a blank one
+silently drops the migration from that path instead of failing loudly. Set
+all four anyway; do not rely on the gate to catch it.
 
 ### Step 5: REGISTER THE MIGRATION
 
@@ -144,6 +152,6 @@ export class AddMyIndex1234567890 implements Migration {
 
 1. **Always generate via CLI** — never write migration SQL by hand; use `npm run db-migration` to generate from the entity diff
 2. **Never use `MigrationInterface`** — always patch the generated file to use `Migration` from `../../migration`
-3. **`breaking`, `release`, and `down()` are mandatory** — set them explicitly; nothing in CI rejects a migration that omits one
+3. **`name`, `breaking`, `release`, and `down()` are mandatory** — set them explicitly; a required CI check (`npm run check-migration-metadata`) rejects a new migration that omits one
 4. **Register in `postgres-connection.ts`** — migration won't run without this
 5. **`CONCURRENTLY`** — always set `transaction = false` when using it

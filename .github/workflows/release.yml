@@ -101,6 +101,40 @@ jobs:
       - name: Check the tag against the root package.json version
         run: tools/ci/check-version-matches-tag.sh "${{ github.ref_name }}"
 
+  # Informational, not a gate: tools/scripts/check-release-migrations.ts never
+  # exits non-zero — it lists which migrations are tagged `release` for this
+  # version and flags the breaking ones, in the Actions log next to the gates
+  # above. #445 found it unwired (no package.json script, no workflow step)
+  # despite its own header framing it as a release-time tool. Not in `build`'s
+  # `needs`: a listing with no pass/fail has nothing to gate on.
+  #
+  # check-manifest-migrations.ts, the sibling script, is deliberately NOT wired
+  # in here. It needs a manifest of migration names already applied on the
+  # target (currently deployed) instance to compute a rollback plan against —
+  # this pipeline has no way to obtain that; there is no live introspection of
+  # a running deployment from a tag build. It stays a manual operator tool run
+  # ahead of `node dist/src/rollback.js`, documented in its own header comment.
+  release-migrations:
+    name: Migrations tagged for this release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.3
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      - name: List migrations tagged for this release
+        run: npm run check-release-migrations -- "${GITHUB_REF_NAME#v}"
+
   build:
     name: Build ${{ matrix.platform }}
     needs: [verify, breaking-change-gate, version-tag-gate]

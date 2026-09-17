@@ -1,3 +1,6 @@
+// Informational only (never exits non-zero) — run by release.yml's
+// `release-migrations` job on every tag push, next to the breaking-change and
+// version-tag gates. See that job's comment for why it is not itself a gate.
 import * as fs from 'fs'
 import { getMigrations } from '../../packages/server/api/src/app/database/postgres-connection'
 import { Migration } from '../../packages/server/api/src/app/database/migration'
