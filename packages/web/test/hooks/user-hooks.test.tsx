@@ -13,9 +13,11 @@ const harness = vi.hoisted(() => {
   const state: {
     getCurrentUser: () => Promise<UserWithBadges>;
     isJwtExpired: boolean;
+    isOnboarding: boolean;
   } = {
     getCurrentUser: () => Promise.reject(new Error('not configured')),
     isJwtExpired: false,
+    isOnboarding: false,
   };
   return { state };
 });
@@ -25,6 +27,7 @@ vi.mock('@/lib/authentication-session', () => ({
     getCurrentUserId: () => 'user-1',
     getToken: () => 'token',
     isJwtExpired: () => harness.state.isJwtExpired,
+    isOnboarding: () => harness.state.isOnboarding,
   },
 }));
 
@@ -77,6 +80,7 @@ afterEach(async () => {
   root = undefined;
   result = undefined;
   harness.state.isJwtExpired = false;
+  harness.state.isOnboarding = false;
   useApErrorDialogStore.setState({ params: null });
 });
 
@@ -111,6 +115,21 @@ describe('userHooks.useCurrentUser', () => {
   // avoid comes back. Pin it so the visible-error fix above cannot regress it.
   it('does not call the API or open the error dialog when the JWT is expired', async () => {
     harness.state.isJwtExpired = true;
+    const getCurrentUser = vi.fn(() => Promise.resolve({} as UserWithBadges));
+    harness.state.getCurrentUser = getCurrentUser;
+
+    await mount();
+
+    expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(result?.data).toBeNull();
+    expect(useApErrorDialogStore.getState().params).toBeNull();
+  });
+
+  // /create-platform is the only page an ONBOARDING principal ever renders, and it has no
+  // profile block to fill in — so this hook should skip the call outright rather than fetch a
+  // record nothing on the page uses.
+  it('does not call the API or open the error dialog for an ONBOARDING principal', async () => {
+    harness.state.isOnboarding = true;
     const getCurrentUser = vi.fn(() => Promise.resolve({} as UserWithBadges));
     harness.state.getCurrentUser = getCurrentUser;
 

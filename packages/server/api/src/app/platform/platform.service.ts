@@ -88,7 +88,14 @@ export const platformService = (log: FastifyBaseLogger) => ({
         return stripFederatedAuth(savedPlatform)
     },
     async createPlatformWithProject({ identityId, name, invalidatePreviousTokens }: CreatePlatformWithProjectParams): Promise<AuthenticationResponse> {
-        const newUser = await userService(log).create({
+        // signUp's no-platform branch already bootstraps a platformId:null row for this identity
+        // (authentication.service.ts) so GET /v1/users/me has something to answer with during the
+        // onboarding window — reuse it rather than inserting a second one, which would collide with
+        // it on the (platformId, identityId) unique index. `create` below still promotes it to
+        // ADMIN and assigns the real platformId via `addOwnerToPlatform`, so a pre-signUp caller
+        // with no such row yet (there is none in this codebase, but nothing prevents one) still works.
+        const existingUser = await userService(log).getOneByIdentityAndPlatform({ identityId, platformId: null })
+        const newUser = existingUser ?? await userService(log).create({
             identityId,
             platformRole: PlatformRole.ADMIN,
             platformId: null,

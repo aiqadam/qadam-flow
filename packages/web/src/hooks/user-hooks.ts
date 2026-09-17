@@ -17,6 +17,7 @@ export const userHooks = {
     const userId = authenticationSession.getCurrentUserId();
     const token = authenticationSession.getToken();
     const expired = authenticationSession.isJwtExpired(token!);
+    const onboarding = authenticationSession.isOnboarding();
     return useSuspenseQuery<UserWithBadges | null, Error>({
       queryKey: ['currentUser', userId],
       queryFn: async () => {
@@ -24,7 +25,12 @@ export const userHooks = {
         // This is especially important for embedding scenarios where we need to accept
         // a new JWT token rather than triggering the global error handler
 
-        if (!userId || expired) {
+        // An ONBOARDING principal (issued right after sign-up, before a platform exists)
+        // is only ever rendering /create-platform, which has no profile block to fill in —
+        // so this call is unnecessary for it even though the server now answers it (the sign-up
+        // path bootstraps a platform-less user row for exactly this window). Skipping keeps a
+        // fresh /create-platform render from firing a network call it has no use for.
+        if (!userId || expired || onboarding) {
           return null;
         }
         try {
