@@ -52,9 +52,12 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-    void worker.stop()
+    // Awaited, not void: app.close() tears down the Socket.IO server the worker's socket is
+    // connected to, and racing that against worker.stop()'s own shutdown (sandbox managers, egress
+    // stack) is what timed out this hook (in golden-path.test.ts's copy of this pattern) in CI (#464).
+    await worker.stop()
     await app.close()
-}, 15_000)
+}, 30_000)
 
 async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue') {
     const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
