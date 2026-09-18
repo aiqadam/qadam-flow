@@ -23,6 +23,7 @@ import { nanoid } from 'nanoid'
 import { authenticationUtils } from '../authentication/authentication-utils'
 import { userIdentityRepository, userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
+import { distributedLock } from '../database/redis-connections'
 import { defaultTheme } from '../flags/theme'
 import { projectService } from '../project/project-service'
 import { userService } from '../user/user-service'
@@ -90,37 +91,23 @@ export const platformService = (log: FastifyBaseLogger) => ({
     async createPlatformWithProject({ identityId, name, invalidatePreviousTokens }: CreatePlatformWithProjectParams): Promise<AuthenticationResponse> {
         // signUp's no-platform branch already bootstraps a platformId:null row for this identity
         // (authentication.service.ts) so GET /v1/users/me has something to answer with during the
-        // onboarding window — reuse it rather than inserting a second one, which would collide with
-        // it on the (platformId, identityId) unique index. `create` below still promotes it to
-        // ADMIN and assigns the real platformId via `addOwnerToPlatform`, so a pre-signUp caller
-        // with no such row yet (there is none in this codebase, but nothing prevents one) still works.
-        const existingUser = await userService(log).getOneByIdentityAndPlatform({ identityId, platformId: null })
-        const newUser = existingUser ?? await userService(log).create({
-            identityId,
-            platformRole: PlatformRole.ADMIN,
-            platformId: null,
-        })
-        const platform = await this.create({ ownerId: newUser.id, name })
-        const defaultProject = await projectService(log).create({
-            displayName: `${name}'s Project`,
-            ownerId: newUser.id,
-            platformId: platform.id,
-            type: ProjectType.PERSONAL,
-        })
-        if (invalidatePreviousTokens) {
-            await userIdentityRepository().update(identityId, {
-                tokenVersion: nanoid(),
-            })
-        }
-        await authenticationUtils(log).sendTelemetry({
-            identity: await userIdentityService(log).getOneOrFail({ id: identityId }),
-            user: newUser,
-            projectId: defaultProject.id,
-        })
-        return authenticationUtils(log).getProjectAndToken({
-            userId: newUser.id,
-            platformId: platform.id,
-            projectId: defaultProject.id,
+        // onboarding window — reuse it rather than inserting an orphaned second one. Reusing it
+        // is not required by any unique constraint: (platformId, identityId) is a plain unique
+        // index, and Postgres treats every NULL platformId as distinct, so a second insert would
+        // not collide. `create` below still promotes it to ADMIN and assigns the real platformId
+        // via `addOwnerToPlatform`, so a pre-signUp caller with no such row yet (there is none in
+        // this codebase, but nothing prevents one) still works.
+        //
+        // The read-then-promote here is not atomic on its own, and two concurrent onboarding
+        // calls for the same identity (a double-click makes the second click a no-op via the
+        // Button component's `loading` guard, but two tabs or any API client would not) would
+        // otherwise both read the same existingUser row and both promote it, stranding one of the
+        // two platforms with an owner whose own platformId points at the other one. Serialize the
+        // whole claim-and-promote sequence per identity instead of just guarding the read.
+        return distributedLock(log).runExclusive({
+            key: `create-platform-with-project:${identityId}`,
+            timeoutInSeconds: 10,
+            fn: () => claimOnboardingUserAndCreatePlatform({ identityId, name, invalidatePreviousTokens, log }),
         })
     },
     async getAll(): Promise<PlatformWithoutFederatedAuth[]> {
@@ -274,6 +261,37 @@ async function getPlan(_log: FastifyBaseLogger, _platform: PlatformWithoutFedera
     }
 }
 
+async function claimOnboardingUserAndCreatePlatform({ identityId, name, invalidatePreviousTokens, log }: ClaimOnboardingUserAndCreatePlatformParams): Promise<AuthenticationResponse> {
+    const existingUser = await userService(log).getOneByIdentityAndPlatform({ identityId, platformId: null })
+    const newUser = existingUser ?? await userService(log).create({
+        identityId,
+        platformRole: PlatformRole.ADMIN,
+        platformId: null,
+    })
+    const platform = await platformService(log).create({ ownerId: newUser.id, name })
+    const defaultProject = await projectService(log).create({
+        displayName: `${name}'s Project`,
+        ownerId: newUser.id,
+        platformId: platform.id,
+        type: ProjectType.PERSONAL,
+    })
+    if (invalidatePreviousTokens) {
+        await userIdentityRepository().update(identityId, {
+            tokenVersion: nanoid(),
+        })
+    }
+    await authenticationUtils(log).sendTelemetry({
+        identity: await userIdentityService(log).getOneOrFail({ id: identityId }),
+        user: newUser,
+        projectId: defaultProject.id,
+    })
+    return authenticationUtils(log).getProjectAndToken({
+        userId: newUser.id,
+        platformId: platform.id,
+        projectId: defaultProject.id,
+    })
+}
+
 function stripFederatedAuth(platform: Platform): PlatformWithoutFederatedAuth {
     const { federatedAuthProviders: _omitted, ...rest } = platform
     return rest
@@ -308,6 +326,10 @@ type CreatePlatformWithProjectParams = {
     identityId: string
     name: string
     invalidatePreviousTokens: boolean
+}
+
+type ClaimOnboardingUserAndCreatePlatformParams = CreatePlatformWithProjectParams & {
+    log: FastifyBaseLogger
 }
 
 type ListPlatformsForIdentityParams = {

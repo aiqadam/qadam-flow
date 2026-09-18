@@ -1,8 +1,8 @@
 # CI-only override for the E2E job (#342): adds a real Mailpit SMTP server so the two mail
 # acceptance specs (invitation, password reset) stop skipping. Staged into place as
-# `docker-compose.override.yml` by the "Boot the stack" step, which is why plain `docker compose`
-# commands later in the job pick it up with no extra `-f` flag. Not part of a normal install; not
-# read unless this job copies it there.
+# `docker-compose.override.yml` by the "Generate the Mailpit TLS certificate" step (before "Boot
+# the stack" runs), which is why plain `docker compose` commands later in the job pick it up with
+# no extra `-f` flag. Not part of a normal install; not read unless this job copies it there.
 #
 # This is deliberately mail-only. packages/tests-e2e/acceptance/docker-compose.override.yml also
 # wires host.docker.internal for the Chat e2e stub (#337) — a separate, still-open concern with a

@@ -105,9 +105,10 @@ describe('Authentication API', () => {
         })
 
         // createPlatformWithProject (platform.service.ts) reuses the platformId:null row the
-        // no-platform branch above bootstraps, rather than inserting a second one for the same
-        // identityId — the (platformId, identityId) unique index would otherwise reject it. This
-        // exercises the real sign-up -> create-platform chain to guard that reuse.
+        // no-platform branch above bootstraps, rather than inserting an orphaned second one for
+        // the same identityId (nothing rejects a second insert — platformId:null rows aren't
+        // constrained unique). This exercises the real sign-up -> create-platform chain to guard
+        // that reuse, and that it lands on exactly one `user` row (userCount below).
         it('creates the platform on the row sign-up bootstrapped, without a duplicate-key error', async () => {
             // arrange
             const mockSignUpRequest = createMockSignUpRequest()
@@ -147,6 +148,70 @@ describe('Authentication API', () => {
             const meBody = meResponse?.json()
             expect(meBody?.platformId).toBe(responseBody.platformId)
             expect(meBody?.platformRole).toBe('ADMIN')
+        })
+
+        // createPlatformWithProject reuses the bootstrapped platformId:null row rather than
+        // inserting a fresh one per call (see the test above), which means the read-and-promote is
+        // no longer implicitly serialized by a unique-constraint violation on a second insert: two
+        // concurrent calls for the same identity would otherwise both read the same row and both
+        // promote it, leaving one platform's ownerId pointing at a user whose own platformId now
+        // points somewhere else — permanently unable to sign back in. The fix is a distributedLock
+        // keyed on identityId around the whole claim, which serializes the two calls: whichever
+        // runs second finds the row already claimed (platformId no longer null) and falls back to
+        // inserting its own — the same per-call-own-row outcome the code had before the reuse
+        // optimization, just now reached deliberately instead of by accident. This fires two
+        // overlapping requests for real (no service-layer mocking) and asserts both platforms end
+        // up consistently owned rather than one of them corrupted.
+        it('serializes two concurrent create-platform calls for the same onboarding identity instead of stranding one of them', async () => {
+            // arrange
+            const mockSignUpRequest = createMockSignUpRequest()
+            const signUpResponse = await app?.inject({
+                method: 'POST',
+                url: '/api/v1/authentication/sign-up',
+                body: mockSignUpRequest,
+            })
+            const onboardingToken = signUpResponse?.json()?.token
+
+            // act
+            const [responseA, responseB] = await Promise.all([
+                app?.inject({
+                    method: 'POST',
+                    url: '/api/v1/platforms',
+                    headers: { authorization: `Bearer ${onboardingToken}` },
+                    body: { name: 'Acme A' },
+                }),
+                app?.inject({
+                    method: 'POST',
+                    url: '/api/v1/platforms',
+                    headers: { authorization: `Bearer ${onboardingToken}` },
+                    body: { name: 'Acme B' },
+                }),
+            ])
+
+            // assert
+            expect(responseA?.statusCode).toBe(StatusCodes.OK)
+            expect(responseB?.statusCode).toBe(StatusCodes.OK)
+
+            const platformIds = [responseA?.json()?.platformId, responseB?.json()?.platformId]
+            expect(new Set(platformIds).size).toBe(2)
+
+            // One claimed the bootstrapped row, the other fell back to inserting its own — two
+            // distinct, each-consistently-owned users, not one row torn between two platforms.
+            // Checked against the DB directly rather than by replaying each response's own token:
+            // both calls set invalidatePreviousTokens, and that rotation is keyed on identityId
+            // (shared across both platform-scoped user rows), so whichever call's promotion lands
+            // second also invalidates the first call's already-returned token — expected, and
+            // orthogonal to the thing under test here, which is data consistency, not token
+            // lifetime.
+            const userRepo = databaseConnection().getRepository('user')
+            const platformRepo = databaseConnection().getRepository('platform')
+            expect(await userRepo.count()).toBe(2)
+            for (const platformId of platformIds) {
+                const platform = await platformRepo.findOneByOrFail({ id: platformId })
+                const owner = await userRepo.findOneByOrFail({ id: platform.ownerId })
+                expect(owner.platformId).toBe(platformId)
+                expect(owner.platformRole).toBe('ADMIN')
+            }
         })
     })
 

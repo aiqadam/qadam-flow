@@ -12,11 +12,12 @@
 #
 # WHY THE CERTIFICATE. `smtp-email-sender.ts#initSmtpClient` sets `requireTLS: !useSSL` and passes
 # no `tls` options, so nodemailer performs a mandatory STARTTLS upgrade with certificate
-# verification left ON. A stock Mailpit serves a self-signed cert, which that connection rejects —
-# which is exactly why the CI e2e job points SMTP at a dead 127.0.0.1:2525 and asserts only that
-# nothing crashes. Rather than weaken the sender, this mounts a CA the app is told to trust via
-# NODE_EXTRA_CA_CERTS, and issues the cert for the name the app dials (`mailpit`), so the hostname
-# check passes too. The app's TLS behaviour is therefore unchanged from production.
+# verification left ON. A stock Mailpit serves a self-signed cert, which that connection rejects.
+# The CI e2e job (#342) hits this same problem and solves it the same way — a generated-in-job,
+# gitignored cert (tools/ci/e2e-mailpit.docker-compose.yml) — rather than weakening the sender for
+# a test; this override mounts a CA the app is told to trust via NODE_EXTRA_CA_CERTS, and issues
+# the cert for the name the app dials (`mailpit`), so the hostname check passes too. The app's TLS
+# behaviour is therefore unchanged from production.
 services:
   mailpit:
     image: axllent/mailpit:v1.21

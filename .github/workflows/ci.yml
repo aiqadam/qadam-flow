@@ -763,9 +763,9 @@ jobs:
       # left ON, which a stock self-signed Mailpit cert fails. tools/ci/e2e-mailpit.docker-compose.yml
       # (the CI-only override this stages into place) mounts this cert into both `mailpit` and
       # `app` and points `app` at it via NODE_EXTRA_CA_CERTS, so nothing about the app's TLS
-      # behaviour is weakened for the test. Staged as `docker-compose.override.yml` so every plain
-      # `docker compose` command below — including the one already writing next — picks it up with
-      # no extra `-f` flag; Docker Compose merges that filename with the base file automatically.
+      # behaviour is weakened for the test. Staged as `docker-compose.override.yml`, so every plain
+      # `docker compose` command in later steps (starting with "Boot the stack" below) picks it up
+      # with no extra `-f` flag; Docker Compose merges that filename with the base file automatically.
       - name: Generate the Mailpit TLS certificate and enable it for this run
         run: |
           set -euo pipefail
