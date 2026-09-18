@@ -19,7 +19,16 @@
 // `{ value: <literal> }` entries and whose `defaultValue` is itself a literal is checked. A
 // dropdown built from a `.map()`, a spread of an imported constant, or any other non-literal
 // expression is skipped rather than guessed at — a false "no violation" is the safe failure
-// mode here, a false positive blocking every PR touching that file is not.
+// mode here, a false positive blocking every PR touching that file is not. `readLiteral` only
+// recognises string/numeric/boolean literals, so a negative number (`-1`, a `PrefixUnaryExpression`)
+// or a `null`/`as const` default also falls into that same "skip" path, silently — a real
+// mismatch there would not be caught. None exist in the tree today.
+//
+// Values are compared with `String(declared) === String(defaultLiteral)`, the same loose,
+// type-coercing comparison `piecePropertiesUtils.buildSchema` uses at request-validation time
+// (`packages/qadams/framework/src/lib/property/util.ts`), so anything this script accepts is
+// also accepted by the server. It does mean a number and its string spelling (or a boolean and
+// its spelling) are treated as equal, matching the builder's own leniency there.
 //
 // Usage:
 //   node tools/ci/check-dropdown-defaults.mjs
@@ -40,7 +49,7 @@ const main = () => {
   const root = options.root ?? REPO_ROOT
 
   const files = QADAM_ROOTS.flatMap((qadamRoot) => listSourceFiles({ dir: path.join(root, qadamRoot) }))
-  const violations = files.flatMap((file) => scanFile({ file }))
+  const violations = files.flatMap((file) => scanFile({ file, root }))
 
   if (violations.length === 0) {
     console.log(`[check-dropdown-defaults] OK — scanned ${files.length} files, no defaultValue/options mismatches found.`)
@@ -75,7 +84,7 @@ const listSourceFiles = ({ dir }) => {
   })
 }
 
-const scanFile = ({ file }) => {
+const scanFile = ({ file, root }) => {
   const text = fs.readFileSync(file, 'utf-8')
   const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
   const violations = []
@@ -83,7 +92,7 @@ const scanFile = ({ file }) => {
   const visit = (node) => {
     const dropdownCall = asDropdownFactoryCall({ node })
     if (dropdownCall) {
-      const violation = checkDropdownCall({ callNode: dropdownCall, sourceFile, file })
+      const violation = checkDropdownCall({ callNode: dropdownCall, sourceFile, file, root })
       if (violation) {
         violations.push(violation)
       }
@@ -112,7 +121,7 @@ const asDropdownFactoryCall = ({ node }) => {
   return { configObject: arg, isMultiSelect: expression.name.text === 'StaticMultiSelectDropdown' }
 }
 
-const checkDropdownCall = ({ callNode, sourceFile, file }) => {
+const checkDropdownCall = ({ callNode, sourceFile, file, root }) => {
   const defaultValueProp = findProperty({ objectLiteral: callNode.configObject, name: 'defaultValue' })
   if (!defaultValueProp) {
     return null
@@ -159,7 +168,7 @@ const checkDropdownCall = ({ callNode, sourceFile, file }) => {
 
   const { line } = sourceFile.getLineAndCharacterOfPosition(defaultValueProp.getStart(sourceFile))
   return {
-    file: path.relative(REPO_ROOT, file),
+    file: path.relative(root, file),
     line: line + 1,
     defaultValue: JSON.stringify(callNode.isMultiSelect ? defaultLiterals : defaultLiterals[0]),
     declaredOptions: declaredValues.map((v) => JSON.stringify(v)),

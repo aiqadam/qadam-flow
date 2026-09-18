@@ -69,7 +69,7 @@ export const createClickupChannelInSpaceFolderOrList = createAction({
       {
         topic,
         description,
-        visibility,
+        visibility: visibility.toUpperCase(),
         location: {
           id: locationId,
           type: locationType,
