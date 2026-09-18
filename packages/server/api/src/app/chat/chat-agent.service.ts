@@ -440,7 +440,7 @@ async function resolveProjectId({ conversation, log }: { conversation: ChatConve
 const INTEGRATION_COUNT_CACHE_TTL_MS = 60_000
 const integrationCountCache = new Map<string, { count: number, expiresAt: number }>()
 
-async function installedQadamCount({ projectId, platformId, log }: BuildSystemPromptParams): Promise<number> {
+async function installedQadamCount({ projectId, platformId, log }: InstalledQadamCountParams): Promise<number> {
     const cached = integrationCountCache.get(platformId)
     if (!isNil(cached) && cached.expiresAt > Date.now()) {
         return cached.count
@@ -550,6 +550,12 @@ type BuildSystemPromptParams = {
     projectId: string
     platformId: string
     userId: string
+    log: FastifyBaseLogger
+}
+
+type InstalledQadamCountParams = {
+    projectId: string
+    platformId: string
     log: FastifyBaseLogger
 }
 
