@@ -49,6 +49,16 @@ const main = () => {
   const root = options.root ?? REPO_ROOT
 
   const files = QADAM_ROOTS.flatMap((qadamRoot) => listSourceFiles({ dir: path.join(root, qadamRoot) }))
+
+  // A gate that silently reports success when it scanned nothing is worse than no gate: if
+  // `packages/qadams/{community,core}` is ever moved or renamed, this would pass every PR forever
+  // instead of failing once, loudly. Mirrors check-i18n.mjs's guard against reading zero locales.
+  if (files.length === 0) {
+    console.error(`[check-dropdown-defaults] scanned 0 files under ${QADAM_ROOTS.join(', ')} (root: ${root}) — is --root correct, or did a qadams directory move?`)
+    process.exitCode = 1
+    return
+  }
+
   const violations = files.flatMap((file) => scanFile({ file, root }))
 
   if (violations.length === 0) {

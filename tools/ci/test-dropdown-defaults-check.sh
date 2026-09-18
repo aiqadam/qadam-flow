@@ -131,10 +131,14 @@ expect_status 1 "case-mismatched default"
 expect_contains "1 defaultValue/options mismatch" "case-mismatched default"
 expect_contains "demo.ts" "violation names the file"
 expect_contains "\"public\"" "violation names the offending default"
-# Pins the path.relative(root, file) fix: with the root hardcoded to the repo instead of the
-# resolved --root, this would read "../../../../tmp/tmp.XXXX/packages/..." instead.
-expect_contains "packages/qadams/community/demo-qadam/src/lib/actions/demo.ts:" "reported path is relative to --root, not to the repo"
-expect_not_contains "../tmp" "reported path does not leak the fixture's absolute location"
+# Pins the path.relative(root, file) fix. `expect_contains` is a plain substring match, so
+# asserting the clean relative path is present is NOT a regression test on its own — that
+# substring is also present inside the broken "../../../tmp/tmp.XXXX/packages/..." output, so it
+# would pass either way (measured: reverting the fix to path.relative(REPO_ROOT, file) still
+# passes that assertion). What actually distinguishes the two is the absence of any ".." segment,
+# which is independent of where the OS puts temp dirs (unlike matching a literal "/tmp" prefix).
+expect_contains "packages/qadams/community/demo-qadam/src/lib/actions/demo.ts:" "reported path names the fixture file"
+expect_not_contains ".." "reported path is relative to --root, with no ../ escape"
 
 echo "== a numeric default missing from its own options is caught =="
 
@@ -177,7 +181,8 @@ PROPS
 run_check
 expect_status 1 "core qadam with a mismatched default"
 expect_contains "demo-core-qadam" "core qadam path is reported"
-expect_contains "packages/qadams/core/demo-core-qadam/src/lib/actions/demo.ts:" "core qadam path is relative to --root, not to the repo"
+expect_contains "packages/qadams/core/demo-core-qadam/src/lib/actions/demo.ts:" "core qadam path names the fixture file"
+expect_not_contains ".." "core qadam path is relative to --root, with no ../ escape"
 
 echo "== STATIC_MULTI_SELECT_DROPDOWN checks every entry in the default array =="
 
@@ -300,6 +305,16 @@ PROPS
 )"
 run_check
 expect_status 0 "an option whose value is computed makes the whole list unverifiable, so it is skipped"
+
+echo "== scanning zero files is a loud failure, not a silent pass =="
+
+new_root
+# No write_action call: both qadam roots exist (mkdir -p in new_root) but are empty. A checker
+# that reports OK here would pass forever if packages/qadams ever moved or got renamed.
+run_check
+expect_status 1 "an empty tree does not report a false OK"
+expect_contains "scanned 0 files" "the reason is named"
+expect_not_contains "OK —" "an empty tree is never reported as a pass"
 
 echo "== a plain Dropdown (dynamic options) is out of scope =="
 
