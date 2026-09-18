@@ -43,9 +43,13 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-    void worker.stop()
+    // Awaited, not void: closes the race where app.close() tears down the Socket.IO server the
+    // worker's socket is still connected to. The 30s budget (was 15s) is the actual fix for #464 —
+    // qadam-options-e2e.test.ts already awaited both calls in this same order and still hit the
+    // 15s timeout under CI load, so the teardown itself, not the ordering, needed the headroom.
+    await worker.stop()
     await app.close()
-}, 15_000)
+}, 30_000)
 
 async function saveWebhookQadamMetadata(): Promise<void> {
     const webhookPiece = createMockQadamMetadata({

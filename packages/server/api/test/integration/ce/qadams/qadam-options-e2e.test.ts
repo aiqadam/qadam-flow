@@ -48,7 +48,7 @@ beforeAll(async () => {
 afterAll(async () => {
     await worker.stop()
     await app.close()
-}, 15_000)
+}, 30_000)
 
 describe('Piece Options E2E', () => {
     it('returns dynamic properties for webhook authFields via full worker round-trip', async () => {
