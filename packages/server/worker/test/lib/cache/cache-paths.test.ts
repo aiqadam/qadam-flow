@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, utimes } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,7 +20,13 @@ async function ageDirectoryAndContents(dir: string, when: Date): Promise<void> {
 
 beforeEach(async () => {
     originalCwd = process.cwd()
-    tempDir = await mkdtemp(join(tmpdir(), 'cache-paths-test-'))
+    // realpath'd because process.cwd() reports the resolved path after chdir — on macOS,
+    // os.tmpdir() is under /var/folders, itself a symlink to /private/var/folders, so an
+    // un-resolved tempDir here would silently mismatch path.resolve('cache') inside the
+    // source, and by extension any test below that compares a path it built from tempDir
+    // against the exact path a mocked fs call receives (e.g. the EACCES mock keyed on
+    // `target === staleDir`).
+    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'cache-paths-test-')))
     process.chdir(tempDir)
     vi.resetModules()
     // The real logger pulls in @aiqadam/shared's formula module, which fails to

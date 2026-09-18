@@ -1,5 +1,5 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
-import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, isNil, OtpType, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
+import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, isNil, OtpType, PlatformRole, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flagService } from '../flags/flag.service'
 import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
@@ -71,6 +71,20 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
             await authenticationUtils(log).sendTelemetry({ identity: userIdentity, user, projectId: authResponse.projectId ?? '' })
             return authResponse
         }
+        // GET /v1/users/me for the resulting ONBOARDING principal (platform-user-controller.ts)
+        // resolves it by identityId with platformId IS NULL — bootstrap that row now, since
+        // nothing else in this branch ever creates a User for an identity with no platform yet.
+        // createPlatformWithProject (platform.service.ts) reuses this same row rather than
+        // inserting a second one for the identity once a platform actually gets created.
+        // ADMIN here (not MEMBER) matches both getOnboardingResponse's own hardcoded
+        // `platformRole: ADMIN` below and the value addOwnerToPlatform promotes this same row to
+        // once a platform is created — this row's role is otherwise unobservable (platformId is
+        // still null, so it grants nothing), but there is no reason for it to briefly disagree.
+        await userService(log).create({
+            identityId: userIdentity.id,
+            platformRole: PlatformRole.ADMIN,
+            platformId: null,
+        })
         log.info({ email: params.email, provider: params.provider }, 'User signed up without platform')
         return authenticationUtils(log).getOnboardingResponse({ identityId: userIdentity.id })
 

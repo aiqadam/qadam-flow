@@ -757,6 +757,25 @@ jobs:
           echo "image=ghcr.io/aiqadam/qadam-flow:${tag}" >> "$GITHUB_OUTPUT"
           echo "Testing ghcr.io/aiqadam/qadam-flow:${tag}"
 
+      # Generated fresh every run, never committed (see .gitignore) — the mail acceptance specs
+      # (#342) need a real Mailpit to deliver to, and Mailpit needs a certificate the app trusts:
+      # smtp-email-sender.ts#initSmtpClient does a mandatory STARTTLS upgrade with verification
+      # left ON, which a stock self-signed Mailpit cert fails. tools/ci/e2e-mailpit.docker-compose.yml
+      # (the CI-only override this stages into place) mounts this cert into both `mailpit` and
+      # `app` and points `app` at it via NODE_EXTRA_CA_CERTS, so nothing about the app's TLS
+      # behaviour is weakened for the test. Staged as `docker-compose.override.yml`, so every plain
+      # `docker compose` command in later steps (starting with "Boot the stack" below) picks it up
+      # with no extra `-f` flag; Docker Compose merges that filename with the base file automatically.
+      - name: Generate the Mailpit TLS certificate and enable it for this run
+        run: |
+          set -euo pipefail
+          mkdir -p certs
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout certs/mailpit.key -out certs/mailpit.crt \
+            -subj "/CN=mailpit" -addext "subjectAltName=DNS:mailpit,DNS:localhost,IP:127.0.0.1"
+          chmod 644 certs/mailpit.key certs/mailpit.crt
+          cp tools/ci/e2e-mailpit.docker-compose.yml docker-compose.override.yml
+
       # Reuse run.sh's own .env generator rather than hand-rolling a second one. run.sh is what
       # every real install runs, so a divergence between the two would be a defect this job
       # cannot see — including the AP_ENVIRONMENT footgun, where anything outside {prod,dev,test}
@@ -766,7 +785,8 @@ jobs:
       # from this checkout, not a download of whatever is on main.
       #
       # AP_SMTP_* is deliberately NOT set yet — see the "Configure SMTP" step below for why the
-      # suite runs in two phases.
+      # suite runs in two phases. Mailpit itself comes up regardless, from the override staged
+      # above — it just has nothing to receive until that step points the app at it.
       - name: Boot the stack from the bundled docker-compose.yml
         env:
           QADAM_FLOW_IMAGE: ${{ steps.target.outputs.image }}
@@ -810,16 +830,24 @@ jobs:
       # reports SMTP_CONFIGURED=true, which needs all four AP_SMTP_* set. But the same flag
       # changes sign-up: authentication.service.ts auto-verifies a new identity only when SMTP is
       # NOT configured, and otherwise emails a verification OTP — synchronously, with the error
-      # propagating. So with a dummy SMTP host set from the start, the very first sign-up on a
-      # fresh instance returns 500 (`ESOCKET connect ECONNREFUSED`) and global-setup dies before
-      # a single test runs. A reachable dummy does not help either: the user is then created
-      # unverified and never reaches /automations.
+      # propagating. So with SMTP pointed at Mailpit from the start, the very first sign-up on a
+      # fresh instance would try to actually deliver that OTP before Mailpit and its cert exist in
+      # the app's trust store, and global-setup would die before a single test runs. A dummy host
+      # doesn't help either: the user is then created unverified and never reaches /automations.
       # Everything after that first sign-up is invitation-based, and invited identities are
-      # created verified (no OTP), while the invitation email itself is sent through a tryCatch
-      # that logs and swallows — so a dead SMTP is harmless from here on. No mail is ever sent.
+      # created verified (no OTP) — so the point where SMTP turns on is also the point where the
+      # first thing that could actually send mail runs.
       #
-      # Only `app` is recreated: it serves the flags and the sign-up path. The workers would only
-      # matter if something actually delivered mail, and nothing in the suite does.
+      # Mailpit is real now (#342), not a dead endpoint the suite merely proves doesn't crash the
+      # app: AP_SMTP_HOST now points at the `mailpit` service on the compose network, and the
+      # sender fields are set because `smtpEmailSender#send` reads them into the message's `from`
+      # header — leaving them unset does not fail delivery, but does send a message with no
+      # sender identity, which is not what a real install looks like.
+      #
+      # Only `app` is recreated: user-invitation.service.ts and otp-service.ts both send mail
+      # synchronously from the request that triggers them, inside the api process — never queued
+      # to a worker. The workers would only matter if something in the suite triggered worker-sent
+      # mail (failure alerts, badge awards), and nothing here does.
       - name: Configure SMTP and restart the app
         env:
           NO_COLOR: '1'
@@ -827,16 +855,23 @@ jobs:
         run: |
           set -euo pipefail
           . ./run.sh
-          set_env_value AP_SMTP_HOST 127.0.0.1
-          set_env_value AP_SMTP_PORT 2525
-          set_env_value AP_SMTP_USERNAME ci
-          set_env_value AP_SMTP_PASSWORD ci
+          set_env_value AP_SMTP_HOST mailpit
+          set_env_value AP_SMTP_PORT 1025
+          set_env_value AP_SMTP_USERNAME qadam
+          set_env_value AP_SMTP_PASSWORD qadam
+          set_env_value AP_SMTP_SENDER_EMAIL no-reply@qadam.test
+          set_env_value AP_SMTP_SENDER_NAME "Qadam Flow"
           docker compose up -d --force-recreate app
 
       - name: Wait for the API to answer again
         run: tools/ci/wait-for-api.sh http://localhost:8080/api/v1/flags 300
 
-      # Phase 2 of 2: the @smtp specs, now that the flag is on.
+      # Phase 2 of 2: the @smtp specs, now that the flag is on. E2E_MAILPIT_URL (#342) is what the
+      # two acceptance mail cases gate on to run for real instead of skipping — see their own
+      # test.skip() and the docblock atop v2-release-acceptance.spec.ts for why they carry @smtp
+      # at all. Playwright's own list/github reporters say nothing distinguishes a passed test from
+      # a skipped one at a glance in the job summary, so this also writes a JSON report the next
+      # step inspects directly.
       #
       # E2E_EMAIL / E2E_PASSWORD ARE set here, so global-setup signs in instead of signing up:
       # the platform now exists, which makes an uninvited sign-up impossible anyway. They must
@@ -849,7 +884,21 @@ jobs:
           AP_API_URL: http://localhost:8080
           E2E_EMAIL: test@aiqadam.org
           E2E_PASSWORD: TestPassword123!@#
-        run: npx playwright test --grep '@smtp' --workers=1 --timeout=180000 --reporter=list,github
+          E2E_MAILPIT_URL: http://localhost:8025
+          PLAYWRIGHT_JSON_OUTPUT_FILE: smtp-phase-results.json
+        run: npx playwright test --grep '@smtp' --workers=1 --timeout=180000 --reporter=list,github,json
+
+      # A skipped mail spec must not pass unnoticed (#342 — the same requirement as #337's third
+      # box, for the chat specs): Playwright exits 0 whether a test passed or test.skip()-ed, so the
+      # step above staying green proves nothing on its own about whether the mail cases actually
+      # ran. This reads the JSON report the step above just wrote and fails the job if anything in
+      # this @smtp phase skipped, or if either mail spec's title never showed up at all.
+      - name: Assert the @smtp phase actually ran the mail specs
+        working-directory: packages/tests-e2e
+        run: |
+          node ../../tools/ci/assert-no-skipped-specs.mjs smtp-phase-results.json \
+            "arrives as a real email" \
+            "sends a real email"
 
       # The specs write a numbered PNG at every step of each flow. They are the cheapest way
       # to review what the suite actually saw — and, on a red run, the only visual evidence.
