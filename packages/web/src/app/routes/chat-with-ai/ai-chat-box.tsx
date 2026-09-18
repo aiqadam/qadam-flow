@@ -77,6 +77,8 @@ function ChatBoxContent({
     sendMessage,
     cancelStream,
     setConversationId,
+    modelName,
+    setModelName,
   } = useAgentChat({
     onTitleUpdate,
     onConversationCreated,
@@ -271,6 +273,8 @@ function ChatBoxContent({
               placeholder={
                 isEmpty ? t('Ask, build, or run a task...') : undefined
               }
+              modelName={modelName}
+              onModelChange={setModelName}
             />
           </div>
         </div>

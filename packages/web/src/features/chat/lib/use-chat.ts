@@ -15,7 +15,9 @@ import {
   tryCatch,
 } from '@aiqadam/shared';
 import { useQuery } from '@tanstack/react-query';
+import { t } from 'i18next';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import { chatApi } from './chat-api';
 import { chatStoreSelectors, SetChatStore, ToolCallMeta } from './chat-store';
@@ -772,14 +774,26 @@ export function useAgentChat({
   }, [conversationId, store, startStream, setActiveRunId]);
 
   const setModelName = useCallback(async (newModelName: string) => {
+    const convId = conversationIdRef.current;
+    // No conversation yet: nothing to persist to. `createConversation` reads `modelNameRef`
+    // when it starts the first message, so the pick still takes effect.
+    if (!convId) {
+      modelNameRef.current = newModelName;
+      setModelNameState(newModelName);
+      return;
+    }
+    // Persist-then-reflect, not optimistic: flipping local state before the write lands would
+    // show the picker on a model the row never switched to if the request failed, with nothing
+    // telling the user their pick didn't take.
+    const { error } = await tryCatch(() =>
+      chatApi.updateConversation(convId, { modelName: newModelName }),
+    );
+    if (error) {
+      toast.error(t('Could not switch models. Please try again.'));
+      return;
+    }
     modelNameRef.current = newModelName;
     setModelNameState(newModelName);
-    const convId = conversationIdRef.current;
-    if (convId) {
-      await chatApi
-        .updateConversation(convId, { modelName: newModelName })
-        .catch(() => undefined);
-    }
   }, []);
 
   return {
