@@ -43,9 +43,10 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-    // Awaited, not void: app.close() tears down the Socket.IO server the worker's socket is
-    // connected to, and racing that against worker.stop()'s own shutdown (sandbox managers, egress
-    // stack) is what timed out the hook in CI (#464).
+    // Awaited, not void: closes the race where app.close() tears down the Socket.IO server the
+    // worker's socket is still connected to. The 30s budget (was 15s) is the actual fix for #464 —
+    // qadam-options-e2e.test.ts already awaited both calls in this same order and still hit the
+    // 15s timeout under CI load, so the teardown itself, not the ordering, needed the headroom.
     await worker.stop()
     await app.close()
 }, 30_000)
