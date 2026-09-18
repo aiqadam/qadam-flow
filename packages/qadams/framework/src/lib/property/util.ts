@@ -140,13 +140,15 @@ function staticDropdownSchema(property: QadamProperty) {
     return definedValueSchema();
   }
   // A prop's own `defaultValue` has to be acceptable even when it is absent from the prop's option
-  // list, or the check would contradict the declaration it is checking. Several shipped qadams are
-  // in exactly that state — `@aiqadam/qadam-nocodb`'s `version` defaults to `0` against options
-  // `1..4`, `@aiqadam/qadam-clickup`'s channel `visibility` defaults to `'public'` against
-  // `'PUBLIC'`/`'PRIVATE'` — and the builder seeds every form from `defaultValue`, so without this
-  // a NocoDB connection could not be created at all and existing ClickUp steps would flip invalid.
-  // Correcting those declarations, and scanning for the ones nobody has found yet, is #427; this
-  // accommodation stays either way, since a qadam is free to ship a default the list omits.
+  // list, or the check would contradict the declaration it is checking. Several shipped qadams were
+  // in exactly that state until #427 corrected the declarations — `@aiqadam/qadam-nocodb`'s
+  // `version` defaulted to `0` against options `1..4`, `@aiqadam/qadam-clickup`'s channel
+  // `visibility` defaulted to `'public'` against `'PUBLIC'`/`'PRIVATE'` — and the builder seeds
+  // every form from `defaultValue`, so without this accommodation a NocoDB connection could not
+  // have been created at all and existing ClickUp steps would have flipped invalid at the time.
+  // The accommodation itself stays regardless, since a qadam is free to ship a default the list
+  // omits — #427 added a static CI scan (tools/ci/check-dropdown-defaults.mjs) precisely so a new
+  // mismatch is caught before merge instead of quietly falling back on this branch.
   const acceptedValues = 'defaultValue' in property && !isNil(property.defaultValue)
     ? [...declaredValues, property.defaultValue]
     : declaredValues;

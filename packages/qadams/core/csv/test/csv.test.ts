@@ -59,6 +59,15 @@ describe('csvToJsonAction', () => {
     ]);
   });
 
+  test('falls back to comma when a step persisted from before defaultValue was fixed still carries an empty delimiter_type', async () => {
+    const csvText = 'name,age\nAlice,30';
+    const ctx = createMockActionContext({
+      propsValue: { csv_text: csvText, has_headers: true, delimiter_type: '' as unknown as ',' | '\t' },
+    });
+    const result = await csvToJsonAction.run(ctx);
+    expect(result).toEqual([{ name: 'Alice', age: '30' }]);
+  });
+
   test('throws error if input is not a string', async () => {
     const ctx = createMockActionContext({
       propsValue: { csv_text: 123 as unknown as string, has_headers: true, delimiter_type: ',' },

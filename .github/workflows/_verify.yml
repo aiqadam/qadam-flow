@@ -285,6 +285,15 @@ jobs:
       - name: Check i18n catalogs
         run: npm run check-i18n
 
+      # #427: a StaticDropdown/StaticMultiSelectDropdown property whose own defaultValue is
+      # absent from its own declared options. Static AST scan, not a runtime import of built
+      # qadams — see the checker's header comment for why that distinction matters here.
+      - name: Test the dropdown-defaults checker
+        run: tools/ci/test-dropdown-defaults-check.sh
+
+      - name: Check StaticDropdown defaultValue against declared options
+        run: npm run check-dropdown-defaults
+
       # Reject-case fixtures for the migration metadata gate below (#445). Needs
       # ts-node/semver from node_modules, so it sits down here rather than with
       # the pure-shell suite above.

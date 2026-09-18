@@ -42,7 +42,7 @@ export const createClickupChannel = createAction({
           { label: 'Private', value: 'PRIVATE' },
         ],
       },
-      defaultValue: 'public',
+      defaultValue: 'PUBLIC',
     }),
   },
 
@@ -57,7 +57,7 @@ export const createClickupChannel = createAction({
         name,
         topic,
         description,
-        visibility,
+        visibility: typeof visibility === 'string' ? visibility.toUpperCase() : visibility,
       },
       {}
     );

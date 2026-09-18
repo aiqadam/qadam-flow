@@ -20,7 +20,6 @@ export const nocodbAuth = QadamAuth.CustomAuth({
 			displayName: 'API Version',
 			description: 'Required only for self-hosted instances. Not needed for the cloud version.',
 			required: false,
-			defaultValue: 0,
 			options: {
 				options: [
 					{ label: 'Before v0.90.0', value: 1 },

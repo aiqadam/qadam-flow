@@ -83,9 +83,11 @@ describe('buildSchema — STATIC_DROPDOWN option enforcement', () => {
     })
 
     it('accepts the prop\'s own defaultValue even when it is absent from the option list', () => {
-        // @aiqadam/qadam-nocodb declares `version` with defaultValue 0 against options 1..4, and the
-        // connection dialog seeds the form from defaultValue — so rejecting it would block creating
-        // a NocoDB connection entirely.
+        // @aiqadam/qadam-nocodb declared `version` with defaultValue 0 against options 1..4 until
+        // #427 fixed it — the connection dialog seeds the form from defaultValue, so rejecting a
+        // prop's own default (as opposed to correcting the declaration) would have blocked creating
+        // a NocoDB connection entirely. The accommodation this pins stays regardless: a qadam is
+        // free to ship a default its own option list omits.
         const nocodbVersion = staticDropdown({
             options: [1, 2, 3, 4].map(value => ({ label: `v${value}`, value })),
         }, false, 0)
@@ -95,7 +97,9 @@ describe('buildSchema — STATIC_DROPDOWN option enforcement', () => {
     })
 
     it('accepts a defaultValue whose case differs from the declared options', () => {
-        // @aiqadam/qadam-clickup's channel `visibility` defaults to 'public' against 'PUBLIC'/'PRIVATE'.
+        // @aiqadam/qadam-clickup's channel `visibility` defaulted to 'public' against
+        // 'PUBLIC'/'PRIVATE' until #427 fixed the declaration; this pins the accommodation that
+        // covered it in the meantime, which stays regardless for the next qadam in the same state.
         const clickupVisibility = staticDropdown({
             options: [
                 { label: 'Public', value: 'PUBLIC' },

@@ -15,7 +15,6 @@ export const getContacts = createAction({
     filter_type: Property.StaticDropdown({
       displayName: 'Optional Filter',
       description: 'Select one and provide the value.',
-      defaultValue: '',
       required: false,
       options: {
         options: [
@@ -52,7 +51,6 @@ export const getContacts = createAction({
       displayName: 'Optional Filter Status',
       description:
         'Can filter by state: blocked, deleted, unverified or verified.',
-      defaultValue: '',
       required: false,
       options: {
         options: [

@@ -55,7 +55,7 @@ export const createClickupChannelInSpaceFolderOrList = createAction({
           { label: 'Private', value: 'PRIVATE' },
         ],
       },
-      defaultValue: 'public',
+      defaultValue: 'PUBLIC',
     }),
   },
 
@@ -69,7 +69,7 @@ export const createClickupChannelInSpaceFolderOrList = createAction({
       {
         topic,
         description,
-        visibility,
+        visibility: typeof visibility === 'string' ? visibility.toUpperCase() : visibility,
         location: {
           id: locationId,
           type: locationType,
