@@ -36,6 +36,16 @@
       "merge_system_rule": true
     },
     {
+      "path": "packages/qadams/**/*.ts",
+      "rule": ".opencodereview/rules/60-qadams.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "packages/qadams/{community,core}/*/package.json",
+      "rule": ".opencodereview/rules/60-qadams.md",
+      "merge_system_rule": true
+    },
+    {
       "path": "tools/ci/**/*.sh",
       "rule": ".opencodereview/rules/50-ci.md",
       "merge_system_rule": true

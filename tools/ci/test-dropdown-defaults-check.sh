@@ -8,7 +8,7 @@
 # silent on (anything it cannot statically resolve), since a false positive there would block
 # every PR touching a dynamically-built dropdown.
 #
-# Run from the `Lint + Unit Tests` job (it only needs node + the workspace deps).
+# Run from the "Lint + unit test suite" job (it only needs node + the workspace deps).
 #
 #   tools/ci/test-dropdown-defaults-check.sh
 
@@ -135,10 +135,13 @@ expect_contains "\"public\"" "violation names the offending default"
 # asserting the clean relative path is present is NOT a regression test on its own — that
 # substring is also present inside the broken "../../../tmp/tmp.XXXX/packages/..." output, so it
 # would pass either way (measured: reverting the fix to path.relative(REPO_ROOT, file) still
-# passes that assertion). What actually distinguishes the two is the absence of any ".." segment,
-# which is independent of where the OS puts temp dirs (unlike matching a literal "/tmp" prefix).
-expect_contains "packages/qadams/community/demo-qadam/src/lib/actions/demo.ts:" "reported path names the fixture file"
-expect_not_contains ".." "reported path is relative to --root, with no ../ escape"
+# passes that assertion). A bare `expect_not_contains ".."` isn't safe either — it depends on
+# $root itself containing no "..", which holds for mktemp's usual /tmp but silently stops
+# catching the regression if TMPDIR points inside this repo (measured). The checker's own
+# formatter (check-dropdown-defaults.mjs) prints each violation as two spaces + the relative
+# path, so anchoring on that exact prefix is root-position independent — measured to fail under
+# the reverted fix with TMPDIR both inside and outside the repo, and pass with the fix in both.
+expect_contains "  packages/qadams/community/demo-qadam/src/lib/actions/demo.ts:" "reported path names the fixture file, anchored on the formatter's own two-space indent"
 
 echo "== a numeric default missing from its own options is caught =="
 
@@ -181,8 +184,7 @@ PROPS
 run_check
 expect_status 1 "core qadam with a mismatched default"
 expect_contains "demo-core-qadam" "core qadam path is reported"
-expect_contains "packages/qadams/core/demo-core-qadam/src/lib/actions/demo.ts:" "core qadam path names the fixture file"
-expect_not_contains ".." "core qadam path is relative to --root, with no ../ escape"
+expect_contains "  packages/qadams/core/demo-core-qadam/src/lib/actions/demo.ts:" "core qadam path names the fixture file, anchored on the formatter's own two-space indent"
 
 echo "== STATIC_MULTI_SELECT_DROPDOWN checks every entry in the default array =="
 
@@ -313,7 +315,11 @@ new_root
 # that reports OK here would pass forever if packages/qadams ever moved or got renamed.
 run_check
 expect_status 1 "an empty tree does not report a false OK"
-expect_contains "scanned 0 files" "the reason is named"
+# "scanned 0 files" alone is hollow: the false-pass message the guard prevents also contains that
+# substring ("OK — scanned 0 files, no defaultValue/options mismatches found."), so it would pass
+# with the guard removed too (measured). The guard's own message says "files under" where the
+# false-pass message says "files, no" — that's what actually distinguishes them.
+expect_contains "scanned 0 files under" "the reason is named"
 expect_not_contains "OK —" "an empty tree is never reported as a pass"
 
 echo "== a plain Dropdown (dynamic options) is out of scope =="

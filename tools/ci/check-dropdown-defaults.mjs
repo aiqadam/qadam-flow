@@ -22,7 +22,17 @@
 // mode here, a false positive blocking every PR touching that file is not. `readLiteral` only
 // recognises string/numeric/boolean literals, so a negative number (`-1`, a `PrefixUnaryExpression`)
 // or a `null`/`as const` default also falls into that same "skip" path, silently — a real
-// mismatch there would not be caught. None exist in the tree today.
+// mismatch there would not be caught. No negative-number or `as const` default exists in the
+// tree today, but `null` does, on three declarations: `@aiqadam/qadam-clickup`'s `priority_id`
+// and `@aiqadam/hubspot`'s boolean-checkbox dropdown both set `defaultValue: null` against an
+// options list that declares no `null` entry, and `@aiqadam/qadam-slack`'s button `style` sets
+// the same but does declare `{ value: null }`. The two unmatched ones are harmless rather than
+// silently wrong: `staticDropdownSchema`'s own-default accommodation gates on
+// `!isNil(property.defaultValue)`, so a `null` default is never added to the accepted set in
+// the first place, and `matchesDeclaredOption` already treats `null`/`undefined` values as
+// valid unconditionally — the same "unset is not a wrong value" case `''` gets. Functionally
+// identical to dropping `defaultValue`, just spelled explicitly; still worth naming here so the
+// "skipped, not caught" set is accurate rather than asserted empty.
 //
 // Values are compared with `String(declared) === String(defaultLiteral)`, the same loose,
 // type-coercing comparison `piecePropertiesUtils.buildSchema` uses at request-validation time
@@ -41,7 +51,10 @@ import ts from 'typescript'
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..')
-const QADAM_ROOTS = ['packages/qadams/community', 'packages/qadams/core']
+// `common` holds the shared helper props (e.g. the Custom API Call action's `body_type`) that
+// many qadams import rather than declare themselves — the highest-blast-radius StaticDropdown
+// declarations in the repo, and easy to miss since they don't live under a per-qadam folder.
+const QADAM_ROOTS = ['packages/qadams/community', 'packages/qadams/core', 'packages/qadams/common']
 const DROPDOWN_FACTORIES = new Set(['StaticDropdown', 'StaticMultiSelectDropdown'])
 
 const main = () => {
