@@ -3,15 +3,18 @@
 What you need to run `scenarios/ce/acceptance/` against a **published image** rather than a dev
 stack — used to sign off v2.0.0. Nothing here is part of a normal install or of CI.
 
-Two things the bundled `docker-compose.yml` deliberately does not provide, and why each is needed:
+Two things the bundled `docker-compose.yml` deliberately does not provide. CI's `e2e` job now stages
+both too (`tools/ci/e2e-mailpit.docker-compose.yml` / `e2e-chat-stub.docker-compose.yml`, #342 /
+#337) — this harness exists for what the job still can't do: run **on demand**, against any image
+you name, with a human watching the Mailpit inbox and the chat frames rather than only a Playwright
+report.
 
-- **A fake SMTP server with a UI.** CI points SMTP at a dead `127.0.0.1:2525` and asserts only that
-  nothing crashes, so no email has ever been *looked at*. That is how a broken logo reached a
-  release. Mailpit gives every message a web inbox at <http://localhost:8025>.
+- **A fake SMTP server with a UI.** Without it, no email has ever been *looked at* — that is how a
+  broken logo reached a release. Mailpit gives every message a web inbox at
+  <http://localhost:8025>.
 - **`AP_SSRF_ALLOW_LIST` plus `host.docker.internal`.** The Chat specs (`scenarios/ce/chat/`) point a
   CUSTOM AI provider at an OpenAI-compatible stub running inside the Playwright worker, and
-  `safeHttp.fetch` rejects private and loopback addresses. Without this the specs skip — which is
-  exactly what happens in CI today (#337).
+  `safeHttp.fetch` rejects private and loopback addresses. Without this the specs skip.
 
 ## Why the certificate
 

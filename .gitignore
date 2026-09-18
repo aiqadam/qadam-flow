@@ -85,6 +85,7 @@ packages/tests-e2e/test-results/
 packages/tests-e2e/playwright-report/
 packages/tests-e2e/screenshots/
 packages/tests-e2e/smtp-phase-results.json
+packages/tests-e2e/no-smtp-phase-results.json
 /blob-report/
 /playwright/.cache/
 /redis-binaries/
@@ -100,7 +101,7 @@ deploy/terraform/**/terraform-*.tfvars
 # Acceptance harness: the Mailpit TLS key is generated locally, never committed.
 packages/tests-e2e/acceptance/certs/
 
-# CI E2E job: the Mailpit TLS cert it generates for itself (#342), and the compose override that
-# mounts it — both are runtime artifacts of the job, never committed.
+# CI E2E job: the Mailpit TLS cert it generates for itself (#342) — a runtime artifact of the job,
+# never committed. (The CI-only compose overrides that mount it are staged via `COMPOSE_FILE`
+# pointing straight at tools/ci/*.docker-compose.yml, not copied into this directory.)
 /certs/
-/docker-compose.override.yml

@@ -1,0 +1,53 @@
+# CI-only override for the E2E job (#337): lets the `app` container reach the OpenAI-compatible
+# stub that `packages/tests-e2e/scenarios/ce/chat/openai-stub.ts` starts inside the Playwright
+# worker process, so the four `chat-with-ai.spec.ts` cases stop skipping (`chat-real-provider.spec.ts`
+# needs a paid API key nothing here sets, and keeps skipping in CI). Not part of a normal install;
+# not read unless the job stages it (see the "Generate the Mailpit TLS certificate and stage the
+# CI-only compose overrides" step in `.github/workflows/ci.yml`, which sets `COMPOSE_FILE` to
+# include this file alongside `docker-compose.yml` and `e2e-mailpit.docker-compose.yml`).
+#
+# Deliberately a separate file from e2e-mailpit.docker-compose.yml, not merged into it, even though
+# both land in the same job step: different settings (network reachability + an SSRF allow-list,
+# vs. a trusted CA) and a different risk profile — this one widens what the instance under test may
+# reach out to, which is exactly the kind of change worth being able to review and revert on its
+# own. Per the two issues' own reasoning (#337, #342).
+#
+# WHY THESE TWO SETTINGS. The CUSTOM (OpenAI-compatible) AI provider the chat specs configure
+# points at a stub server bound to the *host* network (the Playwright worker), while the app runs
+# *inside* a container — so `extra_hosts` gives the container a route back via
+# `host.docker.internal`. Getting there is not enough on its own: provider calls go through
+# `safeHttp.fetch`, which rejects private/loopback addresses by default, so the route also has to
+# be in `AP_SSRF_ALLOW_LIST`.
+#
+# WHY THIS RANGE, NOT 0.0.0.0/0, AND NOT 127.0.0.1 EITHER. `host-gateway` resolves to whatever
+# address Docker's default bridge network assigns the host — on a GitHub-hosted runner that is
+# inside 172.17.0.0/16, itself inside 172.16.0.0/12, which is the only address the stub is ever
+# actually dialed at (see `stubAdvertisedHost()` in openai-stub.ts). Loopback is deliberately left
+# out, unlike the otherwise-identical recipe documented in `packages/tests-e2e/AGENTS.md`'s
+# "Opt-in specs: Chat with AI" section: a container never reaches its host's `host-gateway` via
+# 127.0.0.1, so keeping it here would only let `safeHttp.fetch` reach loopback-bound services
+# *inside the app container itself* for no CI benefit — including from a project-member-reachable
+# endpoint, not just an admin one (e.g. the agent-tools MCP `validate` route), so it is worth not
+# carrying for free.
+#
+# This is a real, deliberate difference from a stock install: a stock `docker-compose.yml` sets no
+# `AP_SSRF_ALLOW_LIST` and no `extra_hosts`, so its `app` cannot reach anything in this range at
+# all. The exposure stays contained to this one CI run: the stub
+# (`packages/tests-e2e/scenarios/ce/chat/openai-stub.ts`) binds `0.0.0.0` with no auth, but the only
+# thing that makes it *unreachable from outside* is that the GitHub-hosted `ubuntu-latest` runner
+# it and the stack both run on is an ephemeral VM with no inbound routing — not anything about the
+# stub's own binding. Revisit this file if the job ever moves to a self-hosted runner.
+#
+# The allow-list is not confined to the `app` container's own `safeHttp.fetch` calls, either: `app`
+# serves it to every worker as part of the job settings payload
+# (`packages/server/api/src/app/workers/machine/machine-service.ts`), which re-exports it into the
+# flow-engine sandbox's own `AP_SSRF_ALLOW_LIST`
+# (`packages/server/worker/src/lib/execute/create-sandbox-for-job.ts`). In this job that is harmless
+# — nothing sandboxed code could reach through it exists to attack — but it means "lets `app` reach
+# the stub" understates the actual blast radius; a future change here should account for that too.
+services:
+  app:
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      - AP_SSRF_ALLOW_LIST=172.16.0.0/12

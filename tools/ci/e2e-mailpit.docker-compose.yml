@@ -1,12 +1,15 @@
 # CI-only override for the E2E job (#342): adds a real Mailpit SMTP server so the two mail
-# acceptance specs (invitation, password reset) stop skipping. Staged into place as
-# `docker-compose.override.yml` by the "Generate the Mailpit TLS certificate" step (before "Boot
-# the stack" runs), which is why plain `docker compose` commands later in the job pick it up with
-# no extra `-f` flag. Not part of a normal install; not read unless this job copies it there.
+# acceptance specs (invitation, password reset) stop skipping. Staged via the `COMPOSE_FILE`
+# environment variable set by the "Generate the Mailpit TLS certificate and stage the CI-only
+# compose overrides" step (before "Boot the stack" runs), which is why plain `docker compose`
+# commands later in the job pick it up with no extra `-f` flag. Not part of a normal install; not
+# read unless this job stages it.
 #
-# This is deliberately mail-only. packages/tests-e2e/acceptance/docker-compose.override.yml also
-# wires host.docker.internal for the Chat e2e stub (#337) — a separate, still-open concern with a
-# different risk profile, tracked apart per the issues' own reasoning.
+# This is deliberately mail-only, kept as its own file rather than merged with the Chat stub's
+# `e2e-chat-stub.docker-compose.yml` (#337) even though both now land in the same job step and the
+# same `COMPOSE_FILE` list: different settings and a different risk profile (that one widens what
+# the instance under test may reach out to; this one only adds a CA the app is told to trust), so
+# each stays independently reviewable and revertable. See that file's own header for its half.
 #
 # WHY THE CERTIFICATE. `smtp-email-sender.ts#initSmtpClient` sets `requireTLS: !useSSL` and passes
 # no `tls` options, so nodemailer performs a mandatory STARTTLS upgrade with certificate
