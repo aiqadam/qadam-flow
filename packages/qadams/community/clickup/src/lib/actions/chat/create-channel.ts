@@ -57,7 +57,7 @@ export const createClickupChannel = createAction({
         name,
         topic,
         description,
-        visibility: visibility.toUpperCase(),
+        visibility: typeof visibility === 'string' ? visibility.toUpperCase() : visibility,
       },
       {}
     );

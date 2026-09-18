@@ -131,6 +131,10 @@ expect_status 1 "case-mismatched default"
 expect_contains "1 defaultValue/options mismatch" "case-mismatched default"
 expect_contains "demo.ts" "violation names the file"
 expect_contains "\"public\"" "violation names the offending default"
+# Pins the path.relative(root, file) fix: with the root hardcoded to the repo instead of the
+# resolved --root, this would read "../../../../tmp/tmp.XXXX/packages/..." instead.
+expect_contains "packages/qadams/community/demo-qadam/src/lib/actions/demo.ts:" "reported path is relative to --root, not to the repo"
+expect_not_contains "../tmp" "reported path does not leak the fixture's absolute location"
 
 echo "== a numeric default missing from its own options is caught =="
 
@@ -173,6 +177,7 @@ PROPS
 run_check
 expect_status 1 "core qadam with a mismatched default"
 expect_contains "demo-core-qadam" "core qadam path is reported"
+expect_contains "packages/qadams/core/demo-core-qadam/src/lib/actions/demo.ts:" "core qadam path is relative to --root, not to the repo"
 
 echo "== STATIC_MULTI_SELECT_DROPDOWN checks every entry in the default array =="
 

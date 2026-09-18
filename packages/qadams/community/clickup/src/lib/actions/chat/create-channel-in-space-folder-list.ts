@@ -69,7 +69,7 @@ export const createClickupChannelInSpaceFolderOrList = createAction({
       {
         topic,
         description,
-        visibility: visibility.toUpperCase(),
+        visibility: typeof visibility === 'string' ? visibility.toUpperCase() : visibility,
         location: {
           id: locationId,
           type: locationType,
