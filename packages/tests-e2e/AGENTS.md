@@ -50,13 +50,15 @@ AP_FRONTEND_URL=http://localhost:4200 \
 
 ## Running against a deployed instance in CI
 
-The `E2E Suite (docker compose)` job in `.github/workflows/ci.yml` runs this suite on every push to `main`, against the image that push just built, booted with the bundled `docker-compose.yml`. It also runs on a pull request that touches `packages/tests-e2e/**` or `ci.yml` — but on a PR the image is not published, so it tests the last published `:main`: green there means the job works, not that the PR passes e2e. It uploads `screenshots/**` on every run and `test-results/**` on failure. It pins `--workers=1`: eight parallel browsers against one instance made the app stop answering with `ERR_CONNECTION_RESET`, and serially the whole suite is ~2 min.
+The `E2E Suite (docker compose)` job in `.github/workflows/ci.yml` runs this suite on every push to `main`, against the image that push just built, booted with the bundled `docker-compose.yml`. It also runs on a pull request that touches `packages/tests-e2e/**`, `tools/ci/**` or `ci.yml` — but on a PR the image is not published, so it tests the last published `:main`: green there means the job works, not that the PR passes e2e. It uploads `screenshots/**` on every run and `test-results/**` on failure. It pins `--workers=1`: eight parallel browsers against one instance made the app stop answering with `ERR_CONNECTION_RESET`, and serially the whole suite is ~2 min.
 
 **SMTP forces it into two phases, and this is the trap to know about.** Setting `AP_SMTP_*` from the start makes the *first* sign-up on a fresh instance fail: `authentication.service.ts` auto-verifies a new identity only when SMTP is **not** configured, and otherwise emails a verification OTP synchronously, so a dummy SMTP host returns `500 ESOCKET connect ECONNREFUSED` and `global-setup.ts` dies before a single test runs. A *reachable* dummy is no better — the identity is then created unverified and never reaches `/automations` (and `initSmtpClient` sets `requireTLS`, so a plain local sink fails the STARTTLS upgrade anyway).
 
 So the job boots with no SMTP, runs everything not tagged `@smtp` (global-setup signs up and creates the platform), then sets `AP_SMTP_*`, recreates `app`, and runs the `@smtp` specs with `E2E_EMAIL` / `E2E_PASSWORD` so global-setup signs in as the user phase 1 created. Everything after that first sign-up is invitation-based, and invited identities are created verified — no OTP. `AP_SMTP_*` points at a real Mailpit the job also boots (#342), so the two mail acceptance specs (invitation, password reset) actually land in it and get asserted on, rather than only proving the invitation email's `tryCatch` doesn't crash the app.
 
 Tag any new SMTP-dependent spec `@smtp` (`test.describe('…', { tag: '@smtp' }, …)`) rather than naming files in the workflow. Forgetting the tag puts the spec in phase 1, where the disabled toggle fails it loudly.
+
+**Phase 1 also boots with the Chat with AI overrides on (#337).** `tools/ci/e2e-chat-stub.docker-compose.yml` gives `app` a route to `host.docker.internal` and an `AP_SSRF_ALLOW_LIST` covering it, and the phase-1 step sets `E2E_CHAT_STUB_HOST=host.docker.internal` — the same override this file's own "Opt-in specs" recipe below documents for local use, minus the loopback entry (see that file's own header for why CI drops it). That takes the four `chat-with-ai.spec.ts` cases out of `test.skip()` in CI; only `chat-real-provider.spec.ts` (needs a paid API key) still skips there, and a job-level assertion (`assert-no-skipped-specs.mjs`) fails the job if anything else in that phase skips instead of running.
 
 For visible debugging: add `--headed` (opens Chromium) or `--trace on` (records DOM snapshots + network per step; view with `npx playwright show-trace --host 127.0.0.1 --port 9323 test-results/**/trace.zip`).
 
@@ -78,7 +80,11 @@ AP_SMTP_SENDER_EMAIL=no-reply@qadam.test AP_SMTP_SENDER_NAME='Qadam Flow' npm ru
 
 Two specs, both **skipped unless you opt in with an env var**, because neither can run under the
 bundled `docker-compose.yml` as shipped. A skip is loud (Playwright prints the reason); do not read
-a green CI run as evidence that either of them passed.
+a green run as evidence a skipped spec passed.
+
+The CI e2e job stages the override below itself (#337 — see "Running against a deployed instance in
+CI" above), so `chat-with-ai.spec.ts` actually runs there, not just locally. `chat-real-provider.spec.ts`
+still skips in CI — it needs a paid key nothing in the job sets.
 
 **Always invoke this whole directory, never a single file in it, and always with `--workers=1`.**
 Each spec sets `enabledForChat` on its own provider row, but that flag lives on the platform, not

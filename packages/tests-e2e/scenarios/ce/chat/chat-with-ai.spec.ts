@@ -58,9 +58,11 @@ import {
  * **Requires a stack the SSRF filter lets reach the stub.** Provider calls go through
  * `safeHttp.fetch`, which rejects private and loopback addresses, so the instance under test must
  * run with `AP_SSRF_ALLOW_LIST` covering the Docker gateway (e.g. `172.16.0.0/12`). The bundled
- * `docker-compose.yml` does not set it, so the CI e2e job cannot run this spec — it is skipped
- * unless `E2E_CHAT_STUB_HOST` names the address the server should call back on
- * (`host.docker.internal` for a Docker stack reached from the host network).
+ * `docker-compose.yml` does not set it, so this spec skips unless `E2E_CHAT_STUB_HOST` names the
+ * address the server should call back on (`host.docker.internal` for a Docker stack reached from
+ * the host network). CI's `e2e` job stages that override and sets the env var itself (#337,
+ * `tools/ci/e2e-chat-stub.docker-compose.yml`), so this runs for real there — CI is not a stock
+ * install.
  */
 test.describe('Chat with AI on a scripted operator-configured provider (#174, #264, #265, #267, #289)', () => {
   test.skip(

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Tests for tools/ci/assert-no-skipped-specs.mjs (#342).
+# Tests for tools/ci/assert-no-skipped-specs.mjs (#342, extended for #337).
 #
 #   tools/ci/assert-no-skipped-specs.test.sh
 #
-# The gate that stops a skipped mail spec from passing the `e2e` job's @smtp
-# phase unnoticed: Playwright exits 0 whether a test ran or was test.skip()-ed,
-# so this script's own correctness is what the acceptance criterion actually
-# rests on. Pure Node against synthetic fixtures — no Postgres/Redis/Playwright
-# needed — so it runs with the other tools/ci suites before any install.
+# The gate that stops a skipped mail spec (#342) or chat spec (#337) from passing its `e2e` job
+# phase unnoticed: Playwright exits 0 whether a test ran or was test.skip()-ed, so this script's
+# own correctness is what the acceptance criterion actually rests on. Pure Node against synthetic
+# fixtures — no Postgres/Redis/Playwright needed — so it runs with the other tools/ci suites before
+# any install.
 
 set -uo pipefail
 
@@ -84,6 +84,35 @@ write_report "$report" \
 
 expect_status 1 'required title never ran' \
   "$report" 'arrives as a real email' 'sends a real email'
+
+echo "== a skip matching --ignore-skip does not fail the job =="
+
+report="${tmp}/one-expected-skip.json"
+write_report "$report" \
+  "$(spec 'reaches the AI provider row the operator configured (#174)' expected)" \
+  "$(spec 'streams a real answer from the provider the operator configured (#174)' skipped)"
+
+expect_status 0 'ignored skip alone' \
+  "$report" --ignore-skip 'streams a real answer from the provider the operator configured' \
+  'reaches the AI provider row the operator configured (#174)'
+
+echo "== --ignore-skip only exempts the matching title, not other skips =="
+
+report="${tmp}/ignored-plus-unrelated-skip.json"
+write_report "$report" \
+  "$(spec 'streams a real answer from the provider the operator configured (#174)' skipped)" \
+  "$(spec 'an unrelated spec' skipped)"
+
+expect_status 1 'other skip still fails when --ignore-skip matches a different spec' \
+  "$report" --ignore-skip 'streams a real answer from the provider the operator configured'
+
+echo "== a trailing --ignore-skip with no value fails rather than silently matching 'undefined' =="
+
+report="${tmp}/trailing-ignore-skip.json"
+write_report "$report" \
+  "$(spec 'an unrelated spec' expected)"
+
+expect_status 1 'trailing --ignore-skip with no value' "$report" --ignore-skip
 
 echo "== a report with zero specs fails rather than reading as an empty pass =="
 

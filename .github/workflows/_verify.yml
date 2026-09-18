@@ -78,10 +78,10 @@ jobs:
         timeout-minutes: 2
         run: tools/ci/wait-for-api.test.sh
 
-      # The gate that stops a skipped @smtp mail spec from passing the e2e job's
-      # phase-2 report unnoticed (#342) — Playwright itself exits 0 either way, so
-      # this script's own correctness is the acceptance criterion. Pure Node
-      # against synthetic fixtures, so it belongs up here with the others.
+      # The gate that stops a skipped @smtp mail spec (#342) or chat spec (#337) from passing its
+      # e2e job phase report unnoticed — Playwright itself exits 0 either way, so this script's
+      # own correctness is the acceptance criterion. Pure Node against synthetic fixtures, so it
+      # belongs up here with the others.
       - name: Test the skipped-spec assertion gate
         timeout-minutes: 2
         run: tools/ci/assert-no-skipped-specs.test.sh
