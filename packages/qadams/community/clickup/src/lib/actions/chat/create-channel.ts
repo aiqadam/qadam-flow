@@ -42,7 +42,7 @@ export const createClickupChannel = createAction({
           { label: 'Private', value: 'PRIVATE' },
         ],
       },
-      defaultValue: 'public',
+      defaultValue: 'PUBLIC',
     }),
   },
 

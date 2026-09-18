@@ -29,7 +29,7 @@ export const csvToJsonAction = createAction({
     delimiter_type: Property.StaticDropdown({
       displayName: 'Delimiter Type',
       description: 'Select the delimiter type for the CSV text.',
-      defaultValue: '',
+      defaultValue: ',',
       required: true,
       options: {
         options: [
