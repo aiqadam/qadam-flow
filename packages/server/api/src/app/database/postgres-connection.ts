@@ -16,6 +16,7 @@ import { AddChatConversation1785486141722 } from './migration/postgres/178548614
 import { AllowMultipleCustomAIProviders1785490000000 } from './migration/postgres/1785490000000-AllowMultipleCustomAIProviders'
 import { AddFlowRunDispatchMode1789026491526 } from './migration/postgres/1789026491526-AddFlowRunDispatchMode'
 import { AddStoreEntryExpiresAt1789204010898 } from './migration/postgres/1789204010898-AddStoreEntryExpiresAt'
+import { BackfillLogoFlowLockup1789800000000 } from './migration/postgres/1789800000000-BackfillLogoFlowLockup'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -39,6 +40,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AllowMultipleCustomAIProviders1785490000000,
         AddFlowRunDispatchMode1789026491526,
         AddStoreEntryExpiresAt1789204010898,
+        BackfillLogoFlowLockup1789800000000,
     ]
 }
 

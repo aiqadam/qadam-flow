@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { ApEnvironment, ErrorCode, isNil, PlatformWithoutFederatedAuth, QadamFlowError, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { ApEnvironment, ErrorCode, isNil, PlatformWithoutFederatedAuth, QadamFlowError, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import Mustache from 'mustache'
 import nodemailer, { Transporter } from 'nodemailer'
@@ -93,19 +93,20 @@ export const isSmtpConfigured = (): boolean => {
 
 /**
  * An email has no base URL, so a root-relative asset path can never resolve in a mail client.
- * `defaultTheme.logos.fullLogoUrl` was `/logo.svg` until #333, and `platform.service.ts` persists
- * that default into the platform row at creation time, so any platform created before #333 still
- * holds the relative path — meaning all five templates in `ALLOWED_TEMPLATE_NAMES` shipped a broken
- * image for those installs. It is invisible from inside the product, where the identical path
- * resolves against the app's own origin.
+ * `defaultTheme.logos.fullLogoUrl` was `/logo.svg` until #333, and `platform.service.ts` persisted
+ * that default into the platform row at creation time, so any platform created before #333 held the
+ * relative path — meaning every template in `ALLOWED_TEMPLATE_NAMES` shipped a broken image for
+ * those installs. A migration backfills existing rows still holding the old default; this function
+ * remains the guard for a value that reaches here relative for some other reason. It is invisible
+ * from inside the product, where the identical path resolves against the app's own origin.
  *
  * Resolution goes through `domainHelper.getPublicUrl`, the same helper that builds the invitation
  * and OTP links in these very emails, so the logo cannot end up on a different host from the button
  * next to it.
  *
  * A value that already carries a scheme is left untouched: that covers an operator's CDN URL and a
- * `data:` URI, which prefixing would corrupt. `new URL(value)` succeeding is precisely the
- * "has a scheme" test. A protocol-relative `//cdn/logo.png` throws there and is therefore treated
+ * `data:` URI, which prefixing would corrupt. `URL.canParse(value)` returning true is precisely the
+ * "has a scheme" test. A protocol-relative `//cdn/logo.png` fails it and is therefore treated
  * as relative — rare enough to accept, and it degrades to a wrong URL rather than a broken send.
  *
  * It degrades instead of throwing, and that is deliberate. `domainHelper.getPublicUrl` is
@@ -119,8 +120,7 @@ export const isSmtpConfigured = (): boolean => {
  * caller gets the original relative value back, i.e. exactly the behaviour that shipped before.
  */
 export async function toAbsoluteAssetUrl({ assetUrl, log }: ToAbsoluteAssetUrlArgs): Promise<string> {
-    const { data: parsed } = tryCatchSync(() => new URL(assetUrl))
-    if (!isNil(parsed)) {
+    if (URL.canParse(assetUrl)) {
         return assetUrl
     }
     const { data: absolute, error } = await tryCatch(() => domainHelper.getPublicUrl({ path: assetUrl }))
@@ -148,7 +148,7 @@ const renderEmailBody = async ({ platform, templateData, log }: RenderEmailBodyA
     const footer = await readFile(footerPath, 'utf-8')
     const primaryColor = platform?.primaryColor ?? defaultTheme.colors.primary.default
     const primaryColorLight = hexToLightTint({ hex: primaryColor })
-    const fullLogoUrl = await toAbsoluteAssetUrl({ assetUrl: platform?.fullLogoUrl ?? defaultTheme.logos.fullLogoUrl, log })
+    const fullLogoUrl = await toAbsoluteAssetUrl({ assetUrl: nonEmpty(platform?.fullLogoUrl) ?? defaultTheme.logos.fullLogoUrl, log })
     const platformName = platform?.name ?? defaultTheme.websiteName
 
     return Mustache.render(template, {
@@ -198,6 +198,10 @@ const hexToLightTint = ({ hex }: { hex: string }): string => {
         return '#ffffff'
     }
     return tinycolor.mix('#ffffff', hex, LIGHT_TINT_PERCENT).toHexString()
+}
+
+const nonEmpty = (value: string | undefined | null): string | undefined => {
+    return isNil(value) || value === '' ? undefined : value
 }
 
 export type SMTPEmailSender = EmailSender & {
