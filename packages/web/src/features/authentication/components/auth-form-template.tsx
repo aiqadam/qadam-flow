@@ -3,6 +3,7 @@ import { t } from 'i18next';
 import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
+import { FullLogo } from '@/components/custom/full-logo';
 import { useTheme } from '@/components/providers/theme-provider';
 import { authenticationSession } from '@/lib/authentication-session';
 import { useRedirectAfterLogin } from '@/lib/navigation-utils';
@@ -100,15 +101,6 @@ const AuthSeparator = ({
   ) : null;
 };
 
-const AuthBrandLockup = () => (
-  <div className="flex flex-col items-center select-none">
-    <img src="/logo-full.svg" alt="AI Qadam" className="h-24" />
-    <div className="text-2xl font-light tracking-[0.45em] text-foreground/85 pl-[0.45em]">
-      FLOW
-    </div>
-  </div>
-);
-
 const AuthImage = () => {
   const branding = flagsHooks.useWebsiteBranding();
 
@@ -148,8 +140,8 @@ const AuthLayout = ({
     <div className="h-screen w-full overflow-hidden flex bg-white relative">
       {/* Form — left side */}
       <div className="flex flex-col w-full lg:w-1/2 p-5 lg:px-[100px]">
-        <div className="pt-3 flex justify-center">
-          <AuthBrandLockup />
+        <div className="pt-3 flex justify-center select-none">
+          <FullLogo />
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="w-full max-w-xs overflow-y-auto px-1">{children}</div>

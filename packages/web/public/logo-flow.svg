@@ -8,6 +8,13 @@
      choice rather than a bug. After regenerating, check that no pixel of the PNG touches an edge
      (scan the alpha channel of row 0, the last row, and both edge columns) instead of judging it
      from a thumbnail.
+     The wordmark is teal, not the banner's near-black ink (#373A42): this asset is also served as
+     FullLogo's default on 5 unauthenticated web pages (forget-password, change-password,
+     verify-email, accept-invitation, mcp-authorize) and loaded via <img>, which cannot see the
+     host page's dark-mode CSS — so a fixed dark fill went invisible on a dark background (#340
+     item 2). Teal is the same colour /logo.svg already relies on for exactly this reason: one
+     mid-lightness tone with enough contrast against both a white and a dark surface, rather than a
+     per-theme variant this asset has no way to select at render time.
      AI Qadam footprint mark (c) 2026 AI Qadam Community - a trademark, not MIT. Embedded for the
      official Qadam Flow project under the community brand-use policy
      (https://brand.aiqadam.org/brand-use.html). Do not alter the mark. -->
@@ -16,12 +23,10 @@
     AI Qadam footprint mark © 2026 AI Qadam Community — a trademark, not MIT.
     Embedded for the official Qadam Flow project under the community brand-use
     policy (https://brand.aiqadam.org/brand-use.html). Do not alter the mark.
-    Light-theme variant; see qadam-flow-banner-dark.svg for dark.
+    Single dark-safe variant, unlike qadam-flow-banner-{light,dark}.svg — see the top comment.
   -->
   <style>
-    .aiq-teal  { fill: #3CA29E; }
-    .aiq-ink   { fill: #373A42; }
-    .aiq-muted { fill: #5B606B; }
+    .aiq-teal { fill: #3CA29E; }
   </style>
 
   <svg x="80" y="72" width="134" height="216" viewBox="108 -5 206 340" role="img" aria-label="AI Qadam">
@@ -35,5 +40,5 @@
   <rect class="aiq-teal" x="248" y="96" width="3" height="110" rx="1.5"/>
 
   <text x="286" y="114" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="3" class="aiq-teal">AN AI QADAM BUILD PROJECT</text>
-  <text x="284" y="190" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="86" font-weight="800" letter-spacing="-1" class="aiq-ink">Qadam Flow</text>
+  <text x="284" y="190" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="86" font-weight="800" letter-spacing="-1" class="aiq-teal">Qadam Flow</text>
 </svg>
