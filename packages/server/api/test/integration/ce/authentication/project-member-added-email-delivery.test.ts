@@ -160,7 +160,7 @@ describe('Project member added email delivery', () => {
         const message = capturedMessages[0]
         expect(message.rcptTo).toContain(inviteeIdentity.email)
         const body = decodeQuotedPrintable(message.raw)
-        expect(body).toContain(teamProject.displayName)
+        expect(body).toContain(escapeMustacheHtml(teamProject.displayName))
         expect(body).toContain(DefaultProjectRole.EDITOR)
     })
 
@@ -188,11 +188,35 @@ describe('Project member added email delivery', () => {
         // "invited" phrasing, never the project-member-added "you've been added" one.
         expect(capturedMessages).toHaveLength(1)
         const body = decodeQuotedPrintable(capturedMessages[0].raw)
-        expect(body).toContain(`You have been invited to "${teamProject.displayName}" project`)
-        expect(body).not.toContain(`You've been added to ${teamProject.displayName}`)
+        const escapedDisplayName = escapeMustacheHtml(teamProject.displayName)
+        expect(body).toContain(`You have been invited to "${escapedDisplayName}" project`)
+        expect(body).not.toContain(`You've been added to ${escapedDisplayName}`)
     })
 })
 
 function decodeQuotedPrintable(s: string): string {
     return s.replace(/=\r\n/g, '').replace(/=([0-9A-F]{2})/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+}
+
+// The project display names in this file come from `faker.animal.bird()`, unseeded — most of the
+// time a plain string, but a real species name can carry an apostrophe (e.g. "Harris's Sparrow").
+// smtp-email-sender.ts renders these templates with Mustache.render(), whose default `{{var}}`
+// tag HTML-escapes the interpolated value (mustache.js's own entityMap), so the raw decoded body
+// contains `&#39;`, never a literal `'`. Comparing against the raw, unescaped displayName made
+// this test deterministically fail whenever Faker happened to draw a name with an escapable
+// character — reproduced with `Harris's Sparrow`. Escaping the expected value the same way the
+// template does is the fix, not touching the Faker call: the test's job is to check delivery
+// mechanics, not to pin what a bird name looks like.
+function escapeMustacheHtml(s: string): string {
+    const entityMap: Record<string, string> = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        '\'': '&#39;',
+        '/': '&#x2F;',
+        '`': '&#x60;',
+        '=': '&#x3D;',
+    }
+    return s.replace(/[&<>"'`=/]/g, (char) => entityMap[char])
 }
