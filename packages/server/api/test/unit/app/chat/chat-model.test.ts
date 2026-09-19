@@ -48,13 +48,38 @@ describe('chatModel.resolve', () => {
         expect(listModels).not.toHaveBeenCalled()
     })
 
-    it('prefers the model the conversation pinned over anything else', async () => {
+    it('prefers the model the conversation pinned over anything else, once the provider vouches for it', async () => {
         getChatProvider.mockResolvedValue(provider({ models: [{ modelId: 'from-config', modelType: AIProviderModelType.TEXT }] }))
+        listModels.mockResolvedValue([
+            { id: 'from-config', type: AIProviderModelType.TEXT },
+            { id: 'pinned-model', type: AIProviderModelType.TEXT },
+        ])
 
         const resolved = await chatModel.resolve({ platformId: 'plat', modelName: 'pinned-model', log })
 
         expect(resolved.modelId).toBe('pinned-model')
-        expect(listModels).not.toHaveBeenCalled()
+    })
+
+    // The gap #377's app-sec review caught: before this, any string reaching `resolve` as
+    // `modelName` was trusted outright — a chat user could pin an arbitrary id, billed to
+    // whichever model that string happened to name on the operator's provider. A pinned model
+    // must now be a real, TEXT-typed entry in this provider's own catalogue.
+    it('refuses a pinned model that is not in the provider catalogue, rather than trusting the caller', async () => {
+        getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
+        listModels.mockResolvedValue([{ id: 'the-only-real-model', type: AIProviderModelType.TEXT }])
+
+        const error = await resolveError('attacker-supplied-model-id')
+
+        expect(error.error.code).toBe('AI_MODEL_NOT_SUPPORTED')
+    })
+
+    it('refuses a pinned model that exists but is not a TEXT model', async () => {
+        getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
+        listModels.mockResolvedValue([{ id: 'an-image-model', type: AIProviderModelType.IMAGE }])
+
+        const error = await resolveError('an-image-model')
+
+        expect(error.error.code).toBe('AI_MODEL_NOT_SUPPORTED')
     })
 
     it('takes the first text model from the stored catalogue without asking the provider', async () => {

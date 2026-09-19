@@ -26,6 +26,7 @@ import { rejectedPromiseHandler } from '../helper/promise-handler'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { mcpServerService } from '../mcp/mcp-service'
+import { qadamMetadataService } from '../qadams/metadata/qadam-metadata-service'
 import { chatApprovals } from './chat-approvals'
 import { chatConversationService } from './chat-conversation.service'
 import { classifyChatError } from './chat-error-classify'
@@ -171,6 +172,21 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
         abortRun(displacedRunId)
     },
 })
+
+export async function buildSystemPrompt({ projectId, platformId, userId, log }: BuildSystemPromptParams): Promise<string> {
+    const template = await readFile(SYSTEM_PROMPT_PATH, 'utf-8')
+    // Only the one project the conversation is bound to. Listing the user's others told the model
+    // about workspaces it has no tool to reach — the tools are closed over this project alone —
+    // which invites it to offer something it cannot do, and puts other project names into a
+    // context that has no use for them.
+    const activeProject = await chatProjects.findAccessible({ projectId, platformId, userId, log })
+    const installedQadams = await installedQadamCount({ projectId, platformId, log })
+
+    return template
+        .replaceAll('{{PROJECT_CONTEXT}}', `You are working in the project "${activeProject?.displayName ?? projectId}" (${projectId}). Every tool call runs against it.`)
+        .replaceAll('{{FRONTEND_URL}}', system.get(AppSystemProp.FRONTEND_URL) ?? '')
+        .replaceAll('{{INTEGRATION_COUNT}}', String(installedQadams))
+}
 
 // Keyed by run id, not conversation id. Keyed by conversation, a finishing run deleted whatever
 // controller was current — so cancel-then-send left the second run live with nothing able to stop
@@ -413,17 +429,30 @@ async function resolveProjectId({ conversation, log }: { conversation: ChatConve
     return defaultProject.id
 }
 
-async function buildSystemPrompt({ projectId, platformId, userId, log }: BuildSystemPromptParams): Promise<string> {
-    const template = await readFile(SYSTEM_PROMPT_PATH, 'utf-8')
-    // Only the one project the conversation is bound to. Listing the user's others told the model
-    // about workspaces it has no tool to reach — the tools are closed over this project alone —
-    // which invites it to offer something it cannot do, and puts other project names into a
-    // context that has no use for them.
-    const activeProject = await chatProjects.findAccessible({ projectId, platformId, userId, log })
+// `buildSystemPrompt` runs on every message send and every tool-approval resume (both call sites
+// above), ahead of the first token — so a naive `qadamMetadataService.list()` on every call would
+// put a full scan-and-hydrate of `qadam_metadata` (`fetchLatestCompatiblePiecesFromDB`, then a
+// second `find` hydrating every row's full actions/triggers JSON, then a sort+search pass) on the
+// critical path of every single turn. `qadamMetadataService`'s own `dedupe()` only collapses
+// *concurrent* calls — it deletes its key in a `finally`, so it is not a cache across turns. A
+// short TTL is enough: this number only has to be honest to within the length of one conversation,
+// never to the millisecond, and it re-reads within a minute of a qadam being installed/removed.
+const INTEGRATION_COUNT_CACHE_TTL_MS = 60_000
+const integrationCountCache = new Map<string, { count: number, expiresAt: number }>()
 
-    return template
-        .replaceAll('{{PROJECT_CONTEXT}}', `You are working in the project "${activeProject?.displayName ?? projectId}" (${projectId}). Every tool call runs against it.`)
-        .replaceAll('{{FRONTEND_URL}}', system.get(AppSystemProp.FRONTEND_URL) ?? '')
+async function installedQadamCount({ projectId, platformId, log }: InstalledQadamCountParams): Promise<number> {
+    const cached = integrationCountCache.get(platformId)
+    if (!isNil(cached) && cached.expiresAt > Date.now()) {
+        return cached.count
+    }
+    // `list()` scopes to official qadams plus this platform's own CUSTOM ones
+    // (`filterQadamBasedOnType`), so the catalogue size the assistant claims matches what this
+    // platform actually has installed, not the repo's total piece count. `projectId` is passed
+    // through for interface parity with the other `list()` call sites (e.g. `ap-research-qadams.ts`)
+    // — it plays no role in the current filtering.
+    const installedQadams = await qadamMetadataService(log).list({ projectId, platformId, includeHidden: false })
+    integrationCountCache.set(platformId, { count: installedQadams.length, expiresAt: Date.now() + INTEGRATION_COUNT_CACHE_TTL_MS })
+    return installedQadams.length
 }
 
 function buildUserMessage({ content, files }: SendChatMessageRequest): ModelMessage {
@@ -521,6 +550,12 @@ type BuildSystemPromptParams = {
     projectId: string
     platformId: string
     userId: string
+    log: FastifyBaseLogger
+}
+
+type InstalledQadamCountParams = {
+    projectId: string
+    platformId: string
     log: FastifyBaseLogger
 }
 

@@ -17,6 +17,7 @@ import {
 
 import { ActionPreviewCard } from './action-preview-card';
 import { ChatInput } from './chat-input';
+import { ChatModelPicker } from './chat-model-picker';
 import { ConnectionPickerCard } from './connection-picker-card';
 import {
   ConnectionRequiredData,
@@ -35,6 +36,8 @@ export function ChatBottomBar({
   lastAssistantMessage,
   lastMessageId,
   placeholder,
+  modelName,
+  onModelChange,
 }: ChatBottomBarProps) {
   const pendingPlanPart = useChatStoreContext((s) =>
     chatStoreSelectors.pendingPlanApproval({
@@ -170,6 +173,15 @@ export function ChatBottomBar({
         onStop={onStop}
         onInputChange={onInputChange}
         placeholder={placeholder ?? t('Reply...')}
+        leftActions={
+          onModelChange && (
+            <ChatModelPicker
+              modelName={modelName ?? null}
+              onModelChange={onModelChange}
+              disabled={isStreaming}
+            />
+          )
+        }
       />
     </motion.div>
   );
@@ -235,4 +247,6 @@ type ChatBottomBarProps = {
   lastAssistantMessage: ChatUIMessage | undefined;
   lastMessageId: string | undefined;
   placeholder?: string;
+  modelName?: string | null;
+  onModelChange?: (modelName: string) => void;
 };
