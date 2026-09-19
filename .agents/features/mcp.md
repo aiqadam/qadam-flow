@@ -1,7 +1,7 @@
 # MCP Module
 
 ## Summary
-Exposes an Activepieces project as a Model Context Protocol (MCP) server so that AI clients (Claude Desktop, Cursor, Windsurf) can read and manipulate flows, connections, tables, and other project resources through a typed tool interface. Each project gets exactly one MCP server record with a bearer token for authentication; the server is built per-request from a combination of static locked/controllable tools and dynamic flow-as-tool entries.
+Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI clients (Claude Desktop, Cursor, Windsurf) can read and manipulate flows, connections, tables, and other project resources through a typed tool interface. Each project gets exactly one MCP server record with a bearer token for authentication; the server is built per-request from a combination of static locked/controllable tools and dynamic flow-as-tool entries.
 
 ## Key Files
 - `packages/server/api/src/app/mcp/mcp-service.ts` — server build logic, tool registration, token auth
@@ -87,7 +87,7 @@ Exposes an Activepieces project as a Model Context Protocol (MCP) server so that
 - `POST /v1/mcp/:projectId/rotate` — rotate auth token
 - `POST /v1/mcp/:projectId/http` — StreamableHTTP MCP protocol endpoint (main protocol handler)
 
-External MCP server validation for the **agent piece** lives under `packages/server/api/src/app/agents/` (endpoint: `POST /v1/projects/:projectId/agent-tools/mcp/validate`), not here — it's a probe for URLs the agent will later connect to, not part of the Activepieces-as-MCP-server feature.
+External MCP server validation for the **agent piece** lives under `packages/server/api/src/app/agents/` (endpoint: `POST /v1/projects/:projectId/agent-tools/mcp/validate`), not here — it's a probe for URLs the agent will later connect to, not part of the Qadam Flow-as-MCP-server feature.
 
 ## Authentication
 

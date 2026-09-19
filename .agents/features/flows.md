@@ -1,7 +1,7 @@
 # Flows Module
 
 ## Summary
-Flows are the core automation primitive in Activepieces. Each flow is a versioned directed graph of trigger and action steps stored as a JSONB tree. The module handles the full lifecycle: draft editing via a single-endpoint operation dispatch, publishing (locking a version and registering the trigger source), enabling/disabling, folder organization, sample data capture for testing, human-input forms/chat interfaces, and the visual builder frontend powered by XYFlow. All 26 flow modification types are dispatched through one endpoint (`POST /v1/flows/:id`) with a discriminated-union body.
+Flows are the core automation primitive in Qadam Flow. Each flow is a versioned directed graph of trigger and action steps stored as a JSONB tree. The module handles the full lifecycle: draft editing via a single-endpoint operation dispatch, publishing (locking a version and registering the trigger source), enabling/disabling, folder organization, sample data capture for testing, human-input forms/chat interfaces, and the visual builder frontend powered by XYFlow. All 26 flow modification types are dispatched through one endpoint (`POST /v1/flows/:id`) with a discriminated-union body.
 
 ## Key Files
 - `packages/server/api/src/app/flows/flow/flow.service.ts` — core service (operations, publish, enable/disable)

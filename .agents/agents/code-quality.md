@@ -1,6 +1,6 @@
 ---
 name: code-quality
-description: Code-quality reviewer for Qadam Flow. Audits a diff, branch, or PR for correctness bugs, convention violations from AGENTS.md, dead code, missing test coverage, and claims in the PR body that the diff does not support. Read-only — reports findings, never edits code. Use before merging anything.
+description: Code-quality reviewer for Qadam Flow. Audits a diff, branch, or PR for correctness bugs, convention violations from AGENTS.md, dead code, missing test coverage, and claims in the PR body that the diff does not support. Read-only — reports findings, never edits code. Use before you report any code change complete.
 model: opus
 tools:
   - Read

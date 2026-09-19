@@ -1,5 +1,12 @@
 # Qadam SDK
 
+## Skills for this package
+
+The **`qadam-builder` skill is mandatory** for creating or changing a qadam — its actions,
+triggers, props or auth. It carries the patterns this file only summarises (`props-patterns.md`,
+`auth-patterns.md`, `trigger-patterns.md`, `output-quality.md`, `ux-guidelines.md`). Full
+registry: [`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md).
+
 ## Quick Start
 
 ```bash

@@ -39,9 +39,10 @@ sat in this folder unnoticed until the site was first published.
 
 ## Conventions
 
-Writing style, component usage and frontmatter rules are in
-[`.agents/rules/mintlify.md`](../.agents/rules/mintlify.md). The `mintlify` skill
-(`.agents/skills/mintlify/`) covers navigation and API-reference setup.
+The `mintlify` skill (`.agents/skills/mintlify/`) is mandatory for any change in this
+folder — it covers navigation and API-reference setup, and its
+[`writing-style.md`](../.agents/skills/mintlify/writing-style.md) carries the writing
+style, component usage and frontmatter rules.
 
 Brand colours in `docs.json` follow the AI Qadam brand teal, not the product's shipping
 purple — see `.agents/skills/design/` for which of the two applies to a given surface.

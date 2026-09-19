@@ -1,10 +1,10 @@
 ---
 name: playwright-e2e-testing
-description: "Playwright modern end-to-end testing framework with cross-browser automation, auto-wait, and built-in test runner"
+description: "Playwright end-to-end testing for Qadam Flow: cross-browser automation, auto-wait, fixtures and the built-in test runner. Use when adding, debugging or restructuring a spec in packages/tests-e2e, or when a test is flaky, slow or badly selected. For exploratory clicking through a running app rather than a committed spec, use the agent-browser skill instead."
 progressive_disclosure:
   entry_point:
-    summary: "Playwright modern end-to-end testing framework with cross-browser automation, auto-wait, and built-in test runner"
-    when_to_use: "When writing tests, implementing playwright-e2e-testing, or ensuring code quality."
+    summary: "Playwright end-to-end testing for Qadam Flow: cross-browser automation, auto-wait, fixtures and the built-in test runner"
+    when_to_use: "When adding, debugging or restructuring a spec in packages/tests-e2e."
     quick_start: "1. Review the core concepts below. 2. Apply patterns to your use case. 3. Follow best practices for implementation."
 ---
 # Playwright E2E Testing Skill

@@ -1,7 +1,7 @@
 # CE Platform Configuration
 
 ## Summary
-A Platform is the top-level tenant namespace in Activepieces. Every installation has at least one platform. It owns branding (logo, colors, favicon), authentication settings (email auth toggle, allowed auth domains, federated SSO providers), piece filtering rules, and a `PlatformPlan` that governs feature flags and resource limits. An identity can own more than one platform (`listPlatformsForIdentityWithAtleastProject` powers the platform switcher), though a self-hosted install normally has one. Platform admins can update branding, auth settings, and piece pinning. There is no delete-platform route: `platform.controller.ts` registers only `POST /`, `POST /:id`, `GET /:id` and `GET /assets/:id`.
+A Platform is the top-level tenant namespace in Qadam Flow. Every installation has at least one platform. It owns branding (logo, colors, favicon), authentication settings (email auth toggle, allowed auth domains, federated SSO providers), piece filtering rules, and a `PlatformPlan` that governs feature flags and resource limits. An identity can own more than one platform (`listPlatformsForIdentityWithAtleastProject` powers the platform switcher), though a self-hosted install normally has one. Platform admins can update branding, auth settings, and piece pinning. There is no delete-platform route: `platform.controller.ts` registers only `POST /`, `POST /:id`, `GET /:id` and `GET /assets/:id`.
 
 ## Key Files
 - `packages/server/api/src/app/platform/platform.controller.ts` — POST `/` (create), POST `/:id` (update), GET `/:id` (read), GET `/assets/:id` (logo/favicon download)
@@ -20,7 +20,7 @@ A Platform is the top-level tenant namespace in Activepieces. Every installation
 - **FilteredPieceBehavior** — `ALLOWED` (allowlist) or `BLOCKED` (blocklist) applied to `filteredPieceNames`
 - **federatedAuthProviders** — JSONB column storing OAuth2 / SAML config; sensitive fields (secrets, certs) are stripped before returning `PlatformWithoutSensitiveData`
 - **pinnedPieces** — ordered list of piece names shown at the top of the piece selector
-- **cloudAuthEnabled** — whether platform-managed OAuth (Activepieces-hosted app credentials) is active
+- **cloudAuthEnabled** — whether platform-managed OAuth (Qadam Flow-hosted app credentials) is active
 
 ## Entity
 

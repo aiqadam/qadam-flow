@@ -1,6 +1,6 @@
 ---
 name: server
-description: Backend agent for the Activepieces server API (packages/server/api). Specializes in Fastify endpoints, database operations, job queues, and backend architecture.
+description: Backend specialist for the Qadam Flow server API (packages/server/api): Fastify endpoints, TypeORM entities, services, queued jobs. Use when implementing or changing backend code and you want the work done by a specialist rather than inline. Optional — the reviewers are not.
 model: sonnet
 tools:
   - Read

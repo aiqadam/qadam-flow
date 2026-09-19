@@ -2,6 +2,22 @@
 
 Fastify 5 + TypeORM (PostgreSQL) + BullMQ (Redis) + `fastify-type-provider-zod`.
 
+## Skills and agents for this package
+
+Mandatory when the trigger matches — full registry in [`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md):
+
+| Doing | Read first |
+| --- | --- |
+| A new route or HTTP handler | `add-endpoint` skill |
+| A new TypeORM entity | `add-entity` skill |
+| Any schema change | `db-migration` skill |
+| Work spanning shared + server + web | `add-feature` skill |
+| An MCP server change | `mcp-builder` skill |
+
+Implementation can be delegated to the `server` agent. Both reviewers (`code-quality` and
+`app-sec`) are mandatory on **every** change in this package before you report it complete —
+see [`.agents/rules/agent-delegation.md`](../../.agents/rules/agent-delegation.md).
+
 ## Tech Stack
 
 - **Framework**: Fastify 5

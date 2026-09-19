@@ -1,11 +1,11 @@
 ---
 name: ubiquitous-language
-description: Maintains feature documentation in .agents/features/ and performs mandatory feature overlap detection before any new feature is proposed. Also builds a shared domain vocabulary for Activepieces. Use when the user asks to define domain terms, build a glossary, harden terminology, create ubiquitous language, references "domain model" or "DDD", or asks about adding a new feature.
+description: Maintains feature documentation in .agents/features/ and performs mandatory feature overlap detection before any new feature is proposed. Also builds a shared domain vocabulary for Qadam Flow. Use when the user asks to define domain terms, build a glossary, harden terminology, create ubiquitous language, references "domain model" or "DDD", or asks about adding a new feature.
 ---
 
-# Activepieces Ubiquitous Language
+# Qadam Flow Ubiquitous Language
 
-Maintain per-feature documentation in `.agents/features/`, establish a shared vocabulary for the Activepieces domain, and prevent redundant features by detecting overlap with existing functionality before any new work begins.
+Maintain per-feature documentation in `.agents/features/`, establish a shared vocabulary for the Qadam Flow domain, and prevent redundant features by detecting overlap with existing functionality before any new work begins.
 
 ## Trigger Phrases
 
@@ -51,7 +51,7 @@ Always present your findings to the user before proceeding. Never silently skip 
 
 ### Step 2: FEATURE DOCUMENTATION
 
-Every feature in Activepieces must have a corresponding `.md` file in `.agents/features/`. This is a living registry that agents and developers use to understand what exists before building something new.
+Every feature in Qadam Flow must have a corresponding `.md` file in `.agents/features/`. This is a living registry that agents and developers use to understand what exists before building something new.
 
 #### 2a. When creating a new feature
 
@@ -121,7 +121,7 @@ Do not silently resolve ambiguities — always confirm with the user.
 Create or update this file as the central domain glossary. Structure it as follows:
 
 ```markdown
-# Domain Glossary — Activepieces
+# Domain Glossary — Qadam Flow
 
 > Last updated: <date>
 

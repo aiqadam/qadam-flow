@@ -102,6 +102,19 @@ jobs:
         timeout-minutes: 2
         run: tools/ci/test-version-tag-gate.sh
 
+      # The agent-docs wiring gate: a skill or charter that is registered nowhere, or carries a
+      # description no harness can trigger on, is one no agent is ever told to use — which is
+      # how seven of fourteen skills came to be referenced nowhere outside their own directory.
+      # Node-only and dependency-free, so it sits above the install and still reports on a
+      # docs-only PR.
+      - name: Test the agent-docs wiring gate
+        timeout-minutes: 2
+        run: tools/ci/test-agent-docs-check.sh
+
+      - name: Check agent docs wiring
+        timeout-minutes: 2
+        run: npm run check-agent-docs
+
       # The advisory review dispatcher (#444) is a node script, so it sits below
       # setup-node rather than with the pure-shell suites above. It pins the
       # behaviour matrix of `npm run review` and the hook's [r]eview branch
