@@ -2,6 +2,13 @@
 
 Playwright-driven full-stack tests. This is the ONLY package that owns the E2E layer under the unit / integration / e2e / smoke taxonomy.
 
+## Skills for this package
+
+The **`playwright-e2e-testing` skill is mandatory** for adding, debugging or restructuring a
+spec here. For exploratory clicking through a running app — as opposed to a committed spec —
+use the `agent-browser` skill instead and write nothing to this package. Full registry:
+[`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md).
+
 ## Layout
 
 ```

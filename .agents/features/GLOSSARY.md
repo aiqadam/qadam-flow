@@ -1,4 +1,4 @@
-# Domain Glossary — Activepieces
+# Domain Glossary — Qadam Flow
 
 > Last updated: 2026-07-26
 
@@ -44,7 +44,7 @@
 | Connection Type | The authentication strategy for a connection: OAUTH2, CLOUD_OAUTH2, PLATFORM_OAUTH2, SECRET_TEXT, BASIC_AUTH, CUSTOM_AUTH, NO_AUTH. | auth type | App Connection |
 | externalId | A stable UUID used to cross-reference flows or connections across imports, templates, and environments. | — | Flow, App Connection, Project Release |
 | Global Connection | A platform-scoped App Connection shared across all projects (scope = PLATFORM). | shared connection | App Connection, Platform |
-| OAuth App | Custom OAuth2 client credentials registered per piece to override Activepieces defaults. | — | App Connection, Piece |
+| OAuth App | Custom OAuth2 client credentials registered per piece to override Qadam Flow defaults. | — | App Connection, Piece |
 | Piece | A packaged integration (npm package) that provides triggers and actions for a specific service or capability. | connector, plugin, integration, app | Action, Trigger, Piece Metadata |
 | Piece Metadata | The registry entry for an installed piece — name, version, auth schema, available actions/triggers. | — | Piece |
 
@@ -74,7 +74,7 @@
 | RBAC | Role-Based Access Control — enforcement of permissions based on a user's ProjectRole within a project. | authorization, ACL | ProjectRole, Permission |
 | SAML | Enterprise SSO via SAML 2.0 protocol — login request, IdP redirect, ACS callback, assertion parsing. | — | Federated Auth, SSO |
 | SCIM | SCIM 2.0 provisioning protocol that syncs users and groups from an IdP (Okta, etc.) to platform users and projects. | user provisioning, directory sync | Platform, User, Project |
-| Secret Manager | An external vault integration (AWS Secrets Manager, HashiCorp Vault, CyberArk Conjur, 1Password) for storing connection secrets outside Activepieces. | vault, credential store | App Connection |
+| Secret Manager | An external vault integration (AWS Secrets Manager, HashiCorp Vault, CyberArk Conjur, 1Password) for storing connection secrets outside Qadam Flow. | vault, credential store | App Connection |
 | UserIdentity | The authentication identity record (email, password hash, provider, verified flag) — one identity can map to users across multiple platforms. | account, identity | User, tokenVersion |
 | tokenVersion | An incrementing counter on UserIdentity; bumping it invalidates all existing JWT sessions for that identity. | — | UserIdentity, Session |
 
@@ -109,6 +109,6 @@
 |---|---|---|---|
 | Alert | An email notification sent when a flow fails, with Redis-based deduplication (24-hour window per flow version). | notification | Flow, FlowRun |
 | Badge | A gamification award (9 types) given to users for milestones like first build, webhook usage, or AI piece adoption. | achievement, reward | User |
-| MCP Server | A per-project Model Context Protocol endpoint that exposes Activepieces tools to AI clients (Claude Desktop, Cursor, etc.). | — | MCP, Agent |
+| MCP Server | A per-project Model Context Protocol endpoint that exposes Qadam Flow tools to AI clients (Claude Desktop, Cursor, etc.). | — | MCP, Agent |
 | Template | A reusable flow blueprint (official, custom, or shared) that can be imported to create new flows with pre-configured steps. | recipe, preset, starter | Flow |
 | User Invitation | A JWT-linked invitation to join a platform or project, auto-accepted for existing users on project invites. | invite | User, ProjectMember |

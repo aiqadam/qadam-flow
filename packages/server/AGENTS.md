@@ -2,6 +2,23 @@
 
 Fastify 5 + TypeORM (PostgreSQL) + BullMQ (Redis) + `fastify-type-provider-zod`.
 
+## Skills and agents for this package
+
+Mandatory when the trigger matches — full registry in [`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md):
+
+| Doing | Read first |
+| --- | --- |
+| A new route or HTTP handler | `add-endpoint` skill |
+| A new TypeORM entity | `add-entity` skill |
+| Any schema change | `db-migration` skill |
+| Work spanning shared + server + web | `add-feature` skill |
+| An MCP server change | `mcp-builder` skill |
+
+Implementation can be delegated to the `server` agent. The `code-quality` agent and the
+`app-sec` agent are both mandatory on **every** change in this package before you report it
+complete —
+see [`.agents/rules/agent-delegation.md`](../../.agents/rules/agent-delegation.md).
+
 ## Tech Stack
 
 - **Framework**: Fastify 5
@@ -82,5 +99,5 @@ Email templates live in `src/assets/emails/`. When creating or modifying email t
 
 - Read existing code before making changes to understand patterns
 - Follow the existing controller/service pattern when adding new endpoints
-- Write database migrations for schema changes, never modify entities directly without a migration . use db-migration skill
+- Write database migrations for schema changes; never modify entities directly without one — follow the `db-migration` skill
 - No Enterprise Edition code exists in this repo. All features are available to all users.

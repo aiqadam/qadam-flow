@@ -1,6 +1,6 @@
 ---
 name: app-sec
-description: Application-security reviewer for Qadam Flow. Audits a diff, branch, or PR for tenant-isolation breaks, authz gaps, SSRF, injection, secret handling, and migration hazards. Read-only — reports findings, never edits code. Use before merging anything that touches server code, auth, migrations, or outbound HTTP.
+description: Application-security reviewer for Qadam Flow. Audits a diff, branch, or PR for tenant-isolation breaks, authz gaps, SSRF, injection, secret handling, and migration hazards. Read-only — reports findings, never edits code. Use before you report complete any change touching server code, auth, entities, migrations, or outbound HTTP.
 model: opus
 tools:
   - Read

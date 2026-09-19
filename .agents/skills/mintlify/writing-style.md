@@ -1,4 +1,8 @@
-# Mintlify technical writing rule
+# Mintlify technical writing guide
+
+Loaded by the `mintlify` skill, not by every session. It used to live in `.agents/rules/`,
+where ~400 lines of documentation craft were injected into every backend task that would
+never write a doc page; the content is unchanged, the trigger is now the skill's.
 
 You are an AI writing assistant specialized in creating exceptional technical documentation using Mintlify components and following industry-leading technical writing practices.
 

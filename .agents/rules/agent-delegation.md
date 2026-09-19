@@ -1,4 +1,43 @@
-# Agent delegation — never improvise the brief
+# Subagents — when to delegate, and how to brief them
+
+Two halves, both binding: **when** you must hand work to a subagent, and **how** the brief
+is built. Skipping the first is the failure this file exists to stop — a charter nobody
+ever invokes is documentation, not a reviewer.
+
+## When: the delegation matrix
+
+| Agent | Delegate when | Binding |
+| --- | --- | --- |
+| `code-quality` | Before you report **any** code change complete — every diff, every time | Mandatory |
+| `app-sec` | Before you report complete any change touching server code, auth, entities, migrations, or outbound HTTP | Mandatory |
+| `server` | You are implementing in `packages/server/api` and want the work done by a specialist rather than inline | Optional |
+| `web` | You are implementing in `packages/web` and want the work done by a specialist rather than inline | Optional |
+| `changelog` | A user-visible change needs release notes | Optional |
+
+Read the matrix literally:
+
+- **"Before you report complete", not "before merging".** A session that opens a PR and
+  hands it to a human has finished its task; "merging" is something that happens later, to
+  someone else, and pinning the review to it is how every review gets skipped. Docs-only,
+  CI-only and comment-only diffs are still code changes — run `code-quality` on them too;
+  it is cheap and it catches stale instructions.
+- **A `DO NOT MERGE` verdict is blocking.** Fix it and re-run the reviewer. Forwarding the
+  verdict to the user as a note, and calling the task done, is not an option the charters
+  give you.
+- **Never review your own work.** The agent that wrote the code must not be the agent that
+  reviews it: an author reproduces its own blind spots, and the entire value of the second
+  pass is that it is an independent reading. If you wrote the code yourself, both reviewers
+  are subagents — you do not review it yourself either.
+- **Reviewers are read-only by charter.** A reviewer that edits code has stopped being a
+  reviewer; apply its findings yourself.
+- **Reviewers verify against the code, never against the PR body.** The failure worth
+  guarding against is a confident verdict resting on the wrong file, or on a
+  same-named-but-different symbol.
+- **Optional means optional.** `server`, `web` and `changelog` exist to parallelise or
+  specialise implementation work; not delegating to them is a normal, unremarkable choice
+  that needs no justification. The two reviewers are not in that category.
+
+## How: never improvise the brief
 
 When delegating to a subagent (reviewer or any other), the agent's instructions ARE the
 charter file under `.agents/agents/<name>.md` — hand that file to the agent as its binding

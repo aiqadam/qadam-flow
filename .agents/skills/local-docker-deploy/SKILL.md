@@ -1,3 +1,8 @@
+---
+name: local-docker-deploy
+description: Runs the Qadam Flow stack locally in Docker via run.sh or docker compose. Use when you need the app running on localhost:8080 to verify a change by hand, when you are touching run.sh, docker-compose.yml, the Dockerfile or docker-entrypoint.sh, or when debugging a container, migration or environment-variable problem in a local deployment.
+---
+
 # Local Docker Deploy
 
 ## Quick Start

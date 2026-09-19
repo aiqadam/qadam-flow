@@ -1,6 +1,6 @@
 ---
 name: web
-description: Frontend agent for the Qadam Flow web application (packages/web). Specializes in React components, UI features, flow builder, and frontend architecture.
+description: Frontend specialist for the Qadam Flow web app (packages/web): React components, the flow builder, routing and forms. Use when implementing or changing frontend code and you want the work done by a specialist rather than inline. Optional — the reviewers are not.
 model: sonnet
 tools:
   - Read

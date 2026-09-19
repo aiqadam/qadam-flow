@@ -6,6 +6,21 @@ allowed-tools: Bash(npx agent-browser:*), Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
+## Driving Qadam Flow locally
+
+The local stack answers on `http://localhost:8080` (start it with the `local-docker-deploy`
+skill). Three gotchas cost a session each if you meet them cold:
+
+- `wait --load networkidle` **hangs** on Qadam Flow pages — the builder holds open
+  websockets and the runs view polls, so the network never goes idle. Use a plain `sleep`,
+  or wait on a selector.
+- Refs (`@e1`) are invalidated by navigation. Re-snapshot after every page change.
+- If the browser wedges, `npx agent-browser close` and start over.
+
+For a scripted end-to-end spec, this skill is the wrong tool: use `playwright-e2e-testing`
+and put the spec in `packages/tests-e2e`. Use this skill for exploratory driving of a
+running app — checking that a change actually works, capturing a screenshot for a PR.
+
 ## Core Workflow
 
 Every browser automation follows this pattern:
