@@ -194,10 +194,14 @@ async function readStatus(runId: string): Promise<FlowRunStatus> {
     return row.status
 }
 
+// 10s was too tight under CI load: bulk retry enqueues each retried run as a BullMQ job rather
+// than creating it inline, so the count this polls for only appears once the worker has actually
+// drained the queue. 25s gives that headroom without materially slowing a passing run, since the
+// loop still returns as soon as the count matches.
 async function waitForCount({
     read,
     expected,
-    timeoutMs = 10_000,
+    timeoutMs = 25_000,
 }: {
     read: () => Promise<number>
     expected: number
