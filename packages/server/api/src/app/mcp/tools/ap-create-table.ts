@@ -69,10 +69,10 @@ export const apCreateTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 let keyLine = ''
                 if (!isNil(keyFields) && keyFields.length > 0) {
                     const keyFieldIds = keyFields.map((keyField) => createdFields.find((field) => field.name === keyField)?.id).filter((id): id is string => !isNil(id))
-                    // Declaring a partial key because a name failed to resolve would be
-                    // worse than failing: the table would silently enforce uniqueness on
-                    // fewer columns than the caller asked for. The name check above makes
-                    // this unreachable unless two fields share a name.
+                    // Unreachable as written — the name check above already proves every
+                    // entry resolves — and kept anyway because the failure it guards is
+                    // silent: a partial key enforces uniqueness on fewer columns than the
+                    // caller asked for, and nothing downstream would say so.
                     if (keyFieldIds.length !== keyFields.length) {
                         return { content: [{ type: 'text', text: `❌ Table "${name}" was created (id: ${table.id}) but its key was not declared: field names in \`keyFields\` must each match exactly one field. Declare it with ap_manage_fields DECLARE_KEY.` }] }
                     }

@@ -49,6 +49,10 @@ const tablePieceName = '@aiqadam/qadam-tables'
 // mirrors record.service.ts's own cap on the same message.
 const MAX_REPORTED_FIELD_IDS = 10
 
+// Matches record.service.ts's MAX_REPORTED_KEY_LENGTH: the count cap alone leaves each id
+// unbounded, and ten unbounded ids are still an unbounded message.
+const MAX_REPORTED_MESSAGE_LENGTH = 120
+
 // Sized like record.service.ts's MAX_BATCH_SIZE is: large enough that a full
 // MAX_RECORDS_PER_TABLE backfill is tens of round-trips rather than thousands, small
 // enough that one statement's parameter arrays stay well inside the wire protocol's
@@ -374,18 +378,20 @@ export const tableService = {
             // does, landing a row with `keyValue` NULL that the backfill never sees and
             // the partial index never covers. It also serialises two concurrent
             // declareKey calls, which would otherwise both pass their own scan.
-            await entityManager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [tableKey.lockName({ projectId, tableId: id })])
+            await entityManager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [tableKey.lockName({ projectId, tableId: id })])
             await this.getOneOrThrow({ projectId, id, entityManager })
 
             const fields = await fieldService.getAll({ projectId, tableId: id, entityManager })
             const fieldIds = new Set(fields.map((field) => field.id))
             const unknownFieldIds = uniqueKeyFieldIds.filter((fieldId) => !fieldIds.has(fieldId))
             if (unknownFieldIds.length > 0) {
-                // Bounded the way record.service.ts bounds the same list: the ids are
-                // caller-supplied and this message rides on Error.message into the server
-                // logs, so the whole array must never be echoed back.
+                // Bounded the way record.service.ts bounds the same list, by COUNT and by
+                // LENGTH: the ids are caller-supplied and this message rides on
+                // Error.message into the server logs, so neither how many arrive nor how
+                // long each one is may decide how big that string gets.
                 const message = formErrors.tableKeyColumnsNotInTable
-                throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Key column(s) not present in table ${id}: ${unknownFieldIds.slice(0, MAX_REPORTED_FIELD_IDS).join(', ')}`)
+                const reported = unknownFieldIds.slice(0, MAX_REPORTED_FIELD_IDS).join(', ').slice(0, MAX_REPORTED_MESSAGE_LENGTH)
+                throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Key column(s) not present in table ${id}: ${reported}`)
             }
 
             const records = await recordRepo(entityManager).find({ where: { projectId, tableId: id }, select: ['id'] })
@@ -452,7 +458,7 @@ export const tableService = {
             // a create() that already read the key can commit after these values are
             // nulled, leaving one stale entry in the index behind a table that no longer
             // has a key.
-            await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [tableKey.lockName({ projectId, tableId: id })])
+            await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [tableKey.lockName({ projectId, tableId: id })])
             await manager.getRepository(TableEntity).update({ id, projectId }, { keyFieldIds: null })
             await clearKeyValues({ entityManager: manager, projectId, tableId: id })
             return this.getOneOrThrow({ projectId, id, entityManager: manager })

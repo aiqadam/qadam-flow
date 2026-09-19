@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { Nullable } from '../../../core/common'
 import { OptionalArrayFromQuery } from '../../../core/common/base-model'
+import { ApId } from '../../../core/common/id-generator'
 import { formErrors } from '../../../form-errors'
 import { FieldState } from '../../project-release/project-state'
 import { TableAutomationStatus, TableAutomationTrigger } from '../table'
@@ -72,9 +73,12 @@ export type CountTablesRequest = z.infer<typeof CountTablesRequest>
 // `.min(1)` here — an empty array is the "clear the key" request, not an invalid one.
 // Capped, though: `declareKey` dedupes this array with the quadratic `unique()` before any
 // database work, so an uncapped array blocks the whole single-threaded API process. See
-// MAX_KEY_FIELDS.
+// MAX_KEY_FIELDS. `ApId`, not `z.string()`: the cap bounds how MANY ids arrive, and
+// that alone leaves each one unbounded — 200 x 125 KB fits inside the 25 MB body limit and
+// costs `unique()` about 13 seconds of blocked event loop. A field id is an apId, so
+// bounding its shape bounds the whole request.
 export const DeclareTableKeyRequest = z.object({
-    keyFieldIds: z.array(z.string()).max(MAX_KEY_FIELDS),
+    keyFieldIds: z.array(ApId).max(MAX_KEY_FIELDS),
 })
 
 export type DeclareTableKeyRequest = z.infer<typeof DeclareTableKeyRequest>

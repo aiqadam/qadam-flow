@@ -3,6 +3,7 @@ import { EntityManager, In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { tableKey } from '../record/key-reader'
 import { TableEntity } from '../table/table.entity'
 import { FieldEntity } from './field.entity'
 
@@ -138,6 +139,16 @@ export const fieldService = {
     async delete({ id, projectId, entityManager }: DeleteParams): Promise<void> {
         const field = await fieldRepo(entityManager).findOne({ where: { id, projectId } })
         if (!isNil(field)) {
+            // Under the same shared table-key lock every record write takes, and for the
+            // same reason: read without it, the guard below can see `keyFieldIds: null`
+            // while a declareKey that is about to commit is already holding the exclusive
+            // side. The key would then name a field this call has deleted, and every later
+            // key derivation would read that column as permanently empty — a key quietly
+            // narrower than the one the table declared. Only meaningful when there is a
+            // transaction to scope the lock to; the import path passes one.
+            if (!isNil(entityManager)) {
+                await entityManager.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))', [tableKey.lockName({ projectId, tableId: field.tableId })])
+            }
             await assertFieldNotInDeclaredKey({ field, projectId, entityManager })
         }
         await fieldRepo(entityManager).delete({
@@ -190,7 +201,7 @@ function assertValidJsonFieldSchema(schema: string | undefined): void {
 
 // A field that is part of a table's declared key (#409) cannot be deleted — doing so
 // would leave `table.keyFieldIds` naming a field that no longer exists, and every
-// future write's keyValue derivation (buildKeyReader in record.service.ts) would
+// future write's keyValue derivation (tableKey.buildValueReader in record/key-reader.ts) would
 // silently treat the missing column as always-empty, collapsing every row's key to
 // the same value the moment a second such field was also removed.
 async function assertFieldNotInDeclaredKey({ field, projectId, entityManager }: { field: Field, projectId: string, entityManager?: EntityManager }): Promise<void> {

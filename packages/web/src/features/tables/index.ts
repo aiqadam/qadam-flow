@@ -7,7 +7,6 @@ export {
   ApTableStateProvider,
 } from './components/ap-table-state-provider';
 export { ImportTableDialog } from './components/import-table-dialog';
-export { ManageTableKeyDialog } from './components/manage-table-key-dialog';
 export { mapRecordsToRows, useTableColumns } from './components/table-columns';
 export { tableHooks } from './hooks/table-hooks';
 export { createApTableStore } from './stores/store/ap-tables-client-state';

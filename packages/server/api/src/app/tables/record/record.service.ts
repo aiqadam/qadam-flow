@@ -29,7 +29,7 @@ import { WebhookFlowVersionToRun, webhookService } from '../../webhooks/webhook.
 import { FieldEntity } from '../field/field.entity'
 import { fieldService } from '../field/field.service'
 import { tableService } from '../table/table.service'
-import { assertValidCellValues } from './cell-validation'
+import { cellValidation } from './cell-validation'
 import { CellEntity } from './cell.entity'
 import { duplicateKeyError } from './duplicate-key-error'
 import { KeyReader, KeyValueReader, tableKey } from './key-reader'
@@ -64,7 +64,7 @@ export const recordService = {
                 existingFields.some((field) => field.id === cellData.fieldId),
             ),
         )
-        validRecords.forEach((cells) => assertValidCellValues({ cells, fieldsById }))
+        validRecords.forEach((cells) => cellValidation.assertValues({ cells, fieldsById }))
 
         const insertedRecordIds = await duplicateKeyError.map(async () => transaction(async (entityManager: EntityManager) => {
             // Taken before the table row is read, and taken SHARED so concurrent writers
@@ -258,7 +258,7 @@ export const recordService = {
             assertNoRepeatedColumn({ records: validRecords })
             assertNoRepeatedKey({ records: validRecords, keyOf })
             const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
-            validRecords.forEach((cells) => assertValidCellValues({ cells, fieldsById }))
+            validRecords.forEach((cells) => cellValidation.assertValues({ cells, fieldsById }))
 
             const outcomes: { action: UpsertAction, recordId: string }[] = []
             const toInsert: { cells: { fieldId: string, value: string | null }[], index: number }[] = []
@@ -377,7 +377,7 @@ export const recordService = {
 
             const validCellsByRecordId = new Map(records.map((record) => [record.id, record.cells.filter((cellData) => fieldIds.has(cellData.fieldId))]))
             for (const cells of validCellsByRecordId.values()) {
-                assertValidCellValues({ cells, fieldsById })
+                cellValidation.assertValues({ cells, fieldsById })
             }
 
             const cellsToUpsert = [...validCellsByRecordId.entries()].flatMap(([recordId, cells]) =>
@@ -409,6 +409,19 @@ export const recordService = {
             const table = await tableService.getOneOrThrow({ projectId, id: tableId, entityManager })
             const keyFieldIds = table.keyFieldIds
             if (!isNil(keyFieldIds) && keyFieldIds.length > 0) {
+                const keyFieldIdSet = new Set(keyFieldIds)
+                const touchedRecordIds = [...validCellsByRecordId.entries()]
+                    .filter(([, cells]) => cells.some((cell) => keyFieldIdSet.has(cell.fieldId)))
+                    .map(([recordId]) => recordId)
+                // Cleared first, for the reason declareKey's backfill clears first: the
+                // index is not deferrable, so writing the new values one row at a time
+                // violates it in an INTERMEDIATE state whenever the batch permutes key
+                // values two of its own rows already hold — a 409 on a batch whose final
+                // state is perfectly valid. A genuine duplicate is still caught, by the
+                // recompute below.
+                if (touchedRecordIds.length > 0) {
+                    await entityManager.getRepository(RecordEntity).update({ id: In(touchedRecordIds), projectId, tableId }, { keyValue: null })
+                }
                 for (const [recordId, cells] of validCellsByRecordId.entries()) {
                     await recomputeKeyValueIfTouched({ entityManager, projectId, tableId, recordId, keyFieldIds, writtenCells: cells })
                 }
@@ -496,7 +509,7 @@ export const recordService = {
                 const validCells = request.cells.filter((cellData) =>
                     existingFields.some((field) => field.id === cellData.fieldId),
                 )
-                assertValidCellValues({ cells: validCells, fieldsById })
+                cellValidation.assertValues({ cells: validCells, fieldsById })
 
                 // Prepare cells for upsert
                 const cellsToUpsert = validCells.map((cellData) => {
@@ -806,7 +819,7 @@ function buildKeyValueReaderFor({ keyFieldIds }: { keyFieldIds: string[] | null 
 // path is one round-trip, and what it buys is that `table.keyFieldIds` cannot change
 // between a writer reading it and that writer committing.
 async function lockTableKeyShared({ entityManager, projectId, tableId }: { entityManager: EntityManager, projectId: string, tableId: string }): Promise<void> {
-    await entityManager.query('SELECT pg_advisory_xact_lock_shared(hashtext($1))', [tableKey.lockName({ projectId, tableId })])
+    await entityManager.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))', [tableKey.lockName({ projectId, tableId })])
 }
 
 function prepareCellInsertions(
@@ -1032,7 +1045,7 @@ async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFie
     const keyOf = tableKey.buildReader({ keyFieldIds })
     assertNoRepeatedKey({ records: validRecords, keyOf })
     const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
-    validRecords.forEach((cells) => assertValidCellValues({ cells, fieldsById }))
+    validRecords.forEach((cells) => cellValidation.assertValues({ cells, fieldsById }))
 
     // The STORED key value, which is null when every key column of a record is empty.
     // ON CONFLICT cannot arbitrate a null — two such rows would both insert — so an
@@ -1066,13 +1079,25 @@ async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFie
     }
 
     const now = new Date()
-    const insertions: RecordInsertion[] = validRecords.map((_cells, index) => ({
-        id: apId(),
-        tableId,
-        projectId,
-        keyValue: derivedKeyValues[index],
-        created: new Date(now.getTime() + index).toISOString(),
-    }))
+    // Sorted by key value, NOT left in caller order. ON CONFLICT DO UPDATE takes a row
+    // lock on each conflicting row in VALUES order, and this path deliberately has neither
+    // the advisory lock nor the ordered re-lock the legacy path leans on — so two
+    // concurrent batches carrying the same two keys in opposite orders take those two row
+    // locks in opposite orders and cycle into a 40P01. That is not a 23505, so
+    // duplicateKeyError.map rethrows it and the caller gets an unmapped 500 — on exactly
+    // the concurrent idempotent upsert this feature exists to serve. Each row keeps its own
+    // `created`, so the caller's ordering still decides row order; only the lock order
+    // changes, and `insertions` is not read again after the insert loop (the winning ids
+    // are re-resolved from the database by keyValue below).
+    const insertions: RecordInsertion[] = validRecords
+        .map((_cells, index) => ({
+            id: apId(),
+            tableId,
+            projectId,
+            keyValue: derivedKeyValues[index],
+            created: new Date(now.getTime() + index).toISOString(),
+        }))
+        .sort((left, right) => left.keyValue.localeCompare(right.keyValue))
 
     for (const batch of chunk(insertions, MAX_BATCH_SIZE)) {
         await entityManager.createQueryBuilder()
@@ -1093,6 +1118,25 @@ async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFie
     })
     const recordIdByKeyValue = new Map(winningRecords.map((record) => [record.keyValue, record.id]))
 
+    // The same lock the legacy path takes before writing cells, for the same reason, and
+    // it is NOT made redundant by the unique index. The index arbitrates which RECORD wins
+    // a key; it says nothing about the cell writes that follow. Without this, nothing on
+    // this path conflicts with the FOR NO KEY UPDATE that update() holds — a cell insert
+    // takes only FOR KEY SHARE for the FK — so a conditional update's precondition check
+    // and its write stay interleavable by this batch, and the compare-and-set returns 200
+    // "I claimed it" over a value this upsert has already replaced. Declaring a key must
+    // not quietly weaken update()'s CAS. Ordered by Postgres, ascending id, exactly as
+    // the legacy path and updateMany() order theirs, so the three cannot cycle.
+    const matchedRecordIds = [...recordIdByKeyValue.values()]
+    if (matchedRecordIds.length > 0) {
+        await entityManager.getRepository(RecordEntity).find({
+            where: { id: In(matchedRecordIds), projectId, tableId },
+            select: ['id'],
+            order: { id: 'ASC' },
+            lock: { mode: 'for_no_key_update' },
+        })
+    }
+
     const cellsToUpsert = validRecords.flatMap((cells, index) => {
         const recordId = recordIdByKeyValue.get(derivedKeyValues[index])
         return isNil(recordId) ? [] : cells.map((cellData) => ({
@@ -1108,7 +1152,7 @@ async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFie
     }
 
     const stored = await entityManager.getRepository(RecordEntity).find({
-        where: { id: In([...recordIdByKeyValue.values()]), projectId, tableId },
+        where: { id: In(matchedRecordIds), projectId, tableId },
         relations: ['cells'],
     })
     const populated = formatRecords({ records: stored, fields: existingFields })

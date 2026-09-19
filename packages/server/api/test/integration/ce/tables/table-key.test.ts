@@ -1,4 +1,4 @@
-import { FieldType, MAX_KEY_FIELDS } from '@aiqadam/shared'
+import { apId, FieldType, MAX_KEY_FIELDS } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { db } from '../../../helpers/db'
@@ -60,13 +60,28 @@ describe('Table key declaration (#409)', () => {
             expect(reread?.json().keyFieldIds).toBeNull()
         })
 
+        // A well-formed id that names no column of this table: rejected by declareKey's own
+        // membership check, not by the schema. `apId()` rather than a literal like
+        // 'nonexistent-field', which the ApId schema now rejects at parse time — that would
+        // pass for the wrong reason and stop covering the service at all.
         it('rejects a key field that does not belong to the table', async () => {
             const ctx = await setup()
             const { table } = await createTableWithField(ctx)
 
-            const response = await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: ['nonexistent-field'] })
+            const response = await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [apId()] })
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        // The shape bound, which is what keeps the quadratic dedupe cheap: the count cap
+        // alone leaves each id unbounded.
+        it('rejects a key field id that is not a well-formed id', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+
+            const response = await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: ['x'.repeat(5000)] })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
         it('clears a key when keyFieldIds is empty', async () => {
@@ -334,6 +349,28 @@ describe('Table key declaration (#409)', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+        // The index is not deferrable, so writing the new key values one row at a time
+        // violates it in an INTERMEDIATE state whenever the batch permutes values its own
+        // rows still hold — a 409 on a batch whose final state is collision-free.
+        it('swaps two records\' key values inside one batch', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+            const first = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'a' }]] })
+            const second = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'b' }]] })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [
+                    { id: first?.json()[0].id, cells: [{ fieldId: field.id, value: 'b' }] },
+                    { id: second?.json()[0].id, cells: [{ fieldId: field.id, value: 'a' }] },
+                ],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const records = await db.find<{ keyValue: string | null }>('record', { tableId: table.id })
+            expect(new Set(records.map((record) => record.keyValue)).size).toBe(2)
         })
     })
 

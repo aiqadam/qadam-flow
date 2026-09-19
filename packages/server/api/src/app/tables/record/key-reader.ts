@@ -35,9 +35,14 @@ export const tableKey = {
     },
 
     // The advisory-lock name both halves of the table-key lock agree on: writers take it
-    // shared (record.service.ts), tableService.declareKey takes it exclusive. Namespaced
-    // apart from `tables-upsert:` so the two locks stay independent, and always acquired
-    // before it so there is one global order.
+    // shared (record.service.ts), tableService.declareKey/clearKey take it exclusive.
+    // Namespaced apart from `tables-upsert:` so the two locks stay independent, and always
+    // acquired before it so there is one global order. Callers hash it with
+    // `hashtextextended(name, 0)` rather than `hashtext(name)`: hashtext is int4, so two
+    // unrelated (project, table) pairs collide once an install has tens of thousands of
+    // tables — harmless for the upsert lock, less so here, where the exclusive side is held
+    // across a whole-table backfill and a collision would stall an unrelated tenant's
+    // writes for the duration.
     lockName({ projectId, tableId }: { projectId: string, tableId: string }): string {
         return `tables-key:${projectId}:${tableId}`
     },

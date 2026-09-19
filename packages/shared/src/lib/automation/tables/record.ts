@@ -6,11 +6,17 @@ export const Record = z.object({
     ...BaseModelSchema,
     tableId: z.string(),
     projectId: z.string(),
-    // The materialised business-key value (#409) — derived from the table's declared
-    // `keyFieldIds` the same way `buildKeyReader` derives it in record.service.ts, kept in
-    // sync on every write that touches a key-field cell. `null` when the table has no
-    // declared key, or before the record's key fields have ever been written. Enforced by
-    // a partial unique index on `(projectId, tableId, keyValue)`, not by this schema.
+    // The materialised business-key value (#409), kept in sync on every write that touches
+    // a key-field cell and enforced by a partial unique index on
+    // `(projectId, tableId, keyValue)` rather than by this schema. `null` when the table
+    // has no declared key, and also when the record's own key columns are all empty — such
+    // a record has no key and deliberately sits outside the index.
+    //
+    // Treat it as OPAQUE. It is a sha256 digest of the key columns' values (see
+    // `tableKey.buildValueReader` in the server's `tables/record/key-reader.ts`), not a
+    // readable tuple: a btree index entry cannot exceed 2704 bytes and a cell value is
+    // unbounded. Two records share a key iff they share this value; nothing else about it
+    // is contractual.
     keyValue: Nullable(z.string()),
 })
 
