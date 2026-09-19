@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Textarea } from '@/components/ui/textarea';
 import { useTableState } from '@/features/tables/components/ap-table-state-provider';
 import { tablesUtils } from '@/features/tables/utils/utils';
 import { cn } from '@/lib/utils';
@@ -34,7 +35,18 @@ type NewFieldFormData =
     }
   | {
       name: string;
-      type: FieldType.DATE | FieldType.NUMBER | FieldType.TEXT;
+      type: FieldType.JSON;
+      data: {
+        schema: string;
+      } | null;
+    }
+  | {
+      name: string;
+      type:
+        | FieldType.DATE
+        | FieldType.NUMBER
+        | FieldType.TEXT
+        | FieldType.BOOLEAN;
       data: null;
     };
 
@@ -43,6 +55,8 @@ const FIELD_TYPE_FRIENDLY_NAME: Record<FieldType, string> = {
   [FieldType.NUMBER]: 'Number',
   [FieldType.DATE]: 'Date',
   [FieldType.STATIC_DROPDOWN]: 'Dropdown',
+  [FieldType.BOOLEAN]: 'Yes/No',
+  [FieldType.JSON]: 'JSON',
 };
 
 export function NewFieldPopup({ children }: NewFieldDialogProps) {
@@ -85,6 +99,18 @@ export function NewFieldPopup({ children }: NewFieldDialogProps) {
           },
         };
       }
+      if (data.type === FieldType.JSON && data.data?.schema?.trim()) {
+        try {
+          JSON.parse(data.data.schema);
+        } catch {
+          errors['data'] = {
+            schema: {
+              message: t('Invalid JSON'),
+              type: 'invalid',
+            },
+          };
+        }
+      }
       return {
         values: Object.keys(errors).length === 0 ? data : {},
         errors,
@@ -120,6 +146,14 @@ export function NewFieldPopup({ children }: NewFieldDialogProps) {
                         value: option,
                       })),
                   },
+                });
+              } else if (data.type === FieldType.JSON) {
+                const schema = data.data?.schema?.trim();
+                createField({
+                  uuid: nanoid(),
+                  name: data.name,
+                  type: data.type,
+                  data: schema ? { schema } : undefined,
                 });
               } else {
                 createField({
@@ -157,6 +191,8 @@ export function NewFieldPopup({ children }: NewFieldDialogProps) {
                             form.setValue('data', {
                               options: [''],
                             });
+                          } else if (value === FieldType.JSON) {
+                            form.setValue('data', { schema: '' });
                           } else {
                             form.setValue('data', null);
                           }
@@ -205,6 +241,31 @@ export function NewFieldPopup({ children }: NewFieldDialogProps) {
                         disabled={false}
                         required={true}
                         thinInputs={true}
+                      />
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {form.watch('type') === FieldType.JSON && (
+                <FormField
+                  control={form.control}
+                  name="data.schema"
+                  render={({ field }) => (
+                    <FormItem className="grid space-y-3">
+                      <Label htmlFor="data.schema">
+                        {t('JSON Schema (optional)')}
+                      </Label>
+                      <Textarea
+                        {...field}
+                        value={field.value ?? ''}
+                        id="data.schema"
+                        placeholder={t(
+                          'Optional — validates type, required, properties, items',
+                        )}
+                        className="text-sm"
+                        minRows={3}
+                        maxRows={6}
                       />
                       <FormMessage />
                     </FormItem>

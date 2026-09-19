@@ -9,9 +9,11 @@ import { ClientField } from '../stores/store/ap-tables-client-state';
 import { Row } from '../types/types';
 
 import { useTableState } from './ap-table-state-provider';
+import { BooleanEditor } from './boolean-editor';
 import { CellProvider } from './cell-context';
 import { DateEditor } from './date-editor';
 import { DropdownEditor } from './dropdown-editor';
+import { JsonCellEditor } from './json-cell-editor';
 import { NumberEditor } from './number-editor';
 import { TextEditor } from './text-editor';
 
@@ -34,6 +36,10 @@ const EditorSelector = ({ fieldType }: { fieldType: FieldType }) => {
       return <NumberEditor />;
     case FieldType.STATIC_DROPDOWN:
       return <DropdownEditor></DropdownEditor>;
+    case FieldType.BOOLEAN:
+      return <BooleanEditor />;
+    case FieldType.JSON:
+      return <JsonCellEditor />;
     default:
       return <TextEditor />;
   }
@@ -114,7 +120,12 @@ export function EditableCell({
       }
     }
   };
-  const isDropdown = field.type === FieldType.STATIC_DROPDOWN;
+  // These editors control their own padding/centering rather than relying on the
+  // wrapper's default text padding — a dropdown control needs to fill its trigger, and a
+  // checkbox needs to be centered rather than left-padded like text.
+  const isSelfPadded =
+    field.type === FieldType.STATIC_DROPDOWN ||
+    field.type === FieldType.BOOLEAN;
   return (
     <div
       ref={containerRef}
@@ -127,7 +138,7 @@ export function EditableCell({
               'group cursor-pointer border',
               isSelected && !locked ? 'border-primary' : 'border-transparent',
               locked && 'locked-row',
-              !isDropdown && 'pl-2 py-2',
+              !isSelfPadded && 'pl-2 py-2',
             )
       }
       tabIndex={0}

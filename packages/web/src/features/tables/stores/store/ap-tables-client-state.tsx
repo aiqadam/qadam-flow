@@ -26,12 +26,22 @@ export type ClientField = {
   name: string;
 } & (
   | {
-      type: FieldType.DATE | FieldType.NUMBER | FieldType.TEXT;
+      type:
+        | FieldType.DATE
+        | FieldType.NUMBER
+        | FieldType.TEXT
+        | FieldType.BOOLEAN;
     }
   | {
       type: FieldType.STATIC_DROPDOWN;
       data: {
         options: { value: string }[];
+      };
+    }
+  | {
+      type: FieldType.JSON;
+      data?: {
+        schema?: string;
       };
     }
 );
@@ -75,6 +85,7 @@ export type TableState = {
   deleteField: (fieldIndex: number) => void;
   renameTable: (newName: string) => void;
   renameField: (fieldIndex: number, newName: string) => void;
+  setTableKeyFieldIds: (keyFieldIds: Table['keyFieldIds']) => void;
   setRecords: (records: PopulatedRecord[]) => void;
   setAgentRunId: (recordId: string, agentRunId: string | null) => void;
   toggleStatus: () => void;
@@ -131,6 +142,14 @@ export const createApTableStore = (
       ) => set({ selectedCell }),
       fields: fields.map((field) => {
         if (field.type === FieldType.STATIC_DROPDOWN) {
+          return {
+            uuid: field.id,
+            name: field.name,
+            type: field.type,
+            data: field.data,
+          };
+        }
+        if (field.type === FieldType.JSON) {
           return {
             uuid: field.id,
             name: field.name,
@@ -217,6 +236,17 @@ export const createApTableStore = (
           };
         });
       },
+      // The mutation itself is fired directly against `tablesApi.declareKey` from the
+      // dialog (its own useMutation, so a duplicate-key rejection can be surfaced through
+      // `root.serverError` instead of the queued/fire-and-forget `serverState` writes below).
+      // This action only syncs the already-confirmed result into local state.
+      setTableKeyFieldIds: (keyFieldIds: Table['keyFieldIds']) =>
+        set((state) => ({
+          table: {
+            ...state.table,
+            keyFieldIds,
+          },
+        })),
       setRecords: (records: PopulatedRecord[]) => {
         serverState.setRecords(records);
         return set(() => {

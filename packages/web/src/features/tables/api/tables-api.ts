@@ -1,6 +1,7 @@
 import {
   CountTablesRequest,
   CreateTableRequest,
+  DeclareTableKeyRequest,
   ExportTableResponse,
   ListTablesRequest,
   SeekPage,
@@ -46,5 +47,9 @@ export const tablesApi = {
 
   count(request: CountTablesRequest): Promise<number> {
     return api.get<number>('/v1/tables/count', request);
+  },
+
+  declareKey(id: string, request: DeclareTableKeyRequest): Promise<Table> {
+    return api.post<Table>(`/v1/tables/${id}/key`, request);
   },
 };
