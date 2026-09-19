@@ -6,12 +6,14 @@ import {
     ErrorCode,
     Field,
     Filter,
+    formErrors,
     isNil,
     PopulatedRecord,
     QadamFlowError,
     SeekPage,
     TableWebhook,
     TableWebhookEventType,
+    tryCatch,
     unique,
     UpdateRecordRequest,
     UpdateRecordsRequest,
@@ -28,7 +30,9 @@ import { WebhookFlowVersionToRun, webhookService } from '../../webhooks/webhook.
 import { FieldEntity } from '../field/field.entity'
 import { fieldService } from '../field/field.service'
 import { tableService } from '../table/table.service'
+import { assertValidCellValues } from './cell-validation'
 import { CellEntity } from './cell.entity'
+import { buildKeyReader, KeyReader } from './key-reader'
 import { recordFilter } from './record-filter'
 import { recordQuery } from './record-query'
 import { RecordEntity, RecordSchema } from './record.entity'
@@ -38,6 +42,12 @@ const MAX_BATCH_SIZE = 50
 const MAX_REPORTED_FIELD_IDS = 10
 
 const MAX_REPORTED_KEY_LENGTH = 120
+
+// The unique index name from migration AddTableKeyDeclaration1789832775045 — matched
+// against a Postgres 23505 error's `constraint` to translate it into a
+// RECORD_DUPLICATE_KEY QadamFlowError rather than a raw 500. Record has no other
+// unique index, so any 23505 raised by a write to this table is this one.
+const KEY_VALUE_UNIQUE_INDEX_NAME = 'idx_record_project_id_table_id_key_value_unique'
 
 const recordRepo = repoFactory(RecordEntity)
 const cellsRepo = repoFactory(CellEntity)
@@ -53,22 +63,32 @@ export const recordService = {
             tableId: request.tableId,
             projectId,
         })
+        const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
 
         const validRecords = request.records.map((recordData) =>
             recordData.filter((cellData) =>
                 existingFields.some((field) => field.id === cellData.fieldId),
             ),
         )
+        validRecords.forEach((cells) => assertValidCellValues({ cells, fieldsById }))
+
+        // Read once, outside the transaction — declaring or clearing a table's key
+        // (#409) is a rare admin operation, and every write path here already reads
+        // its schema (existingFields) the same way. A key declared concurrently with
+        // this call simply does not cover these rows; tableService.declareKey's own
+        // backfill is what closes that gap for existing rows, not this read.
+        const table = await tableService.getOneOrThrow({ projectId, id: request.tableId })
+        const keyReader = isNil(table.keyFieldIds) || table.keyFieldIds.length === 0 ? null : buildKeyReader({ keyFieldIds: table.keyFieldIds })
 
         let insertedRecordIds: string[] = []
-        insertedRecordIds = await transaction(async (entityManager: EntityManager) => {
+        insertedRecordIds = await withDuplicateKeyMapping(async () => transaction(async (entityManager: EntityManager) => {
             const batches = chunk(validRecords, MAX_BATCH_SIZE)
             const records: RecordSchema[] = []
             const insertedRecordIds: string[] = []
 
             for (const batch of batches) {
                 const now = new Date(new Date().getTime() + records.length)
-                const recordInsertions = prepareRecordInsertions(batch, request.tableId, projectId, now)
+                const recordInsertions = prepareRecordInsertions(batch, request.tableId, projectId, now, keyReader)
                 await entityManager.getRepository(RecordEntity).insert(recordInsertions)
 
                 const cellInsertions = prepareCellInsertions(batch, recordInsertions, projectId)
@@ -78,7 +98,7 @@ export const recordService = {
             }
 
             return insertedRecordIds
-        })
+        }))
 
         const insertedRecords = await recordRepo().find({
             where: { id: In(insertedRecordIds), tableId: request.tableId, projectId },
@@ -198,6 +218,19 @@ export const recordService = {
         // one event-loop thread for seconds.
         const keyFieldIds = unique(request.keyFieldIds)
 
+        // #409's behaviour split. A table WITH a declared key gets a real
+        // INSERT ... ON CONFLICT DO UPDATE keyed on the partial unique index and skips
+        // the advisory lock entirely — real per-row concurrency, arbitrated by
+        // Postgres rather than this process. A table WITHOUT one keeps today's
+        // behaviour verbatim, below, unmodified.
+        const table = await tableService.getOneOrThrow({ projectId, id: tableId })
+        if (!isNil(table.keyFieldIds) && table.keyFieldIds.length > 0) {
+            const declaredKeyFieldIds = table.keyFieldIds
+            assertRequestKeyMatchesDeclaredKey({ requestKeyFieldIds: keyFieldIds, declaredKeyFieldIds })
+            return withDuplicateKeyMapping(() => transaction((entityManager: EntityManager) =>
+                upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFieldIds: declaredKeyFieldIds, records })))
+        }
+
         return transaction(async (entityManager: EntityManager) => {
             // A Postgres transaction-scoped lock, not the Redis distributedLock.
             // ai-provider-service.ts's custom-provider cap records the first reason:
@@ -219,6 +252,8 @@ export const recordService = {
             assertEveryRecordCarriesTheKey({ records: validRecords, keyFieldIds })
             assertNoRepeatedColumn({ records: validRecords })
             assertNoRepeatedKey({ records: validRecords, keyOf })
+            const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
+            validRecords.forEach((cells) => assertValidCellValues({ cells, fieldsById }))
 
             const outcomes: { action: UpsertAction, recordId: string }[] = []
             const toInsert: { cells: { fieldId: string, value: string | null }[], index: number }[] = []
@@ -241,7 +276,7 @@ export const recordService = {
             // unlike create(), which charges the whole request against the cap.
             if (toInsert.length > 0) {
                 await this.validateCount({ projectId, tableId, entityManager }, toInsert.length)
-                const insertions = prepareRecordInsertions(toInsert.map((row) => row.cells), tableId, projectId, new Date())
+                const insertions = prepareRecordInsertions(toInsert.map((row) => row.cells), tableId, projectId, new Date(), null)
                 const cellInsertions = prepareCellInsertions(toInsert.map((row) => row.cells), insertions, projectId)
                 // Chunked, as create() is. One statement carrying every row of a
                 // 1000-record batch exceeds the wire protocol's parameter limit and
@@ -317,12 +352,13 @@ export const recordService = {
         assertNoRepeatedTarget({ records })
 
         let batchFields: Field[] = []
-        const updatedRecordIds = await transaction(async (entityManager: EntityManager) => {
+        const updatedRecordIds = await withDuplicateKeyMapping(() => transaction(async (entityManager: EntityManager) => {
             const existingFields = await entityManager.getRepository(FieldEntity).find({
                 where: { projectId, tableId },
             })
             batchFields = existingFields
             const fieldIds = new Set(existingFields.map((field) => field.id))
+            const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
 
             // Locked, not merely read. Writing a cell without holding its record row
             // leaves update()'s precondition check and its write interleavable by this
@@ -331,16 +367,19 @@ export const recordService = {
             // claimed.
             await lockExistingRecordIds({ entityManager, ids: records.map((record) => record.id), projectId, tableId })
 
-            const cellsToUpsert = records.flatMap((record) =>
-                record.cells
-                    .filter((cellData) => fieldIds.has(cellData.fieldId))
-                    .map((cellData) => ({
-                        recordId: record.id,
-                        fieldId: cellData.fieldId,
-                        projectId,
-                        value: cellData.value ?? '',
-                        id: apId(),
-                    })),
+            const validCellsByRecordId = new Map(records.map((record) => [record.id, record.cells.filter((cellData) => fieldIds.has(cellData.fieldId))]))
+            for (const cells of validCellsByRecordId.values()) {
+                assertValidCellValues({ cells, fieldsById })
+            }
+
+            const cellsToUpsert = [...validCellsByRecordId.entries()].flatMap(([recordId, cells]) =>
+                cells.map((cellData) => ({
+                    recordId,
+                    fieldId: cellData.fieldId,
+                    projectId,
+                    value: cellData.value ?? '',
+                    id: apId(),
+                })),
             )
 
             // Sorted so every batch takes cell row locks in the same order. This is no
@@ -354,8 +393,21 @@ export const recordService = {
                 await entityManager.getRepository(CellEntity).upsert(batch, ['projectId', 'fieldId', 'recordId'])
             }
 
+            // #409: same "only if a key field was touched" rule as update(), one record
+            // at a time — the batch is capped at MAX_RECORDS_PER_BATCH (1000), and a
+            // per-record UPDATE keeps this correct without a bespoke bulk-update
+            // statement built on a VALUES join. Simple over fast: this is a place a
+            // future optimisation can land without changing behaviour.
+            const table = await tableService.getOneOrThrow({ projectId, id: tableId, entityManager })
+            if (!isNil(table.keyFieldIds) && table.keyFieldIds.length > 0) {
+                const keyFieldIds = table.keyFieldIds
+                for (const [recordId, cells] of validCellsByRecordId.entries()) {
+                    await recomputeKeyValueIfTouched({ entityManager, projectId, tableId, recordId, keyFieldIds, writtenCells: cells })
+                }
+            }
+
             return records.map((record) => record.id)
-        })
+        }))
 
         const updatedRecords = await recordRepo().find({
             where: { id: In(updatedRecordIds), projectId, tableId },
@@ -426,12 +478,14 @@ export const recordService = {
                     // order from create, for the same table.
                     order: { created: 'ASC' },
                 })
+            const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
 
             if (request.cells && request.cells.length > 0) {
                 // Filter out cells with non-existing fields
                 const validCells = request.cells.filter((cellData) =>
                     existingFields.some((field) => field.id === cellData.fieldId),
                 )
+                assertValidCellValues({ cells: validCells, fieldsById })
 
                 // Prepare cells for upsert
                 const cellsToUpsert = validCells.map((cellData) => {
@@ -449,6 +503,15 @@ export const recordService = {
                     await entityManager
                         .getRepository(CellEntity)
                         .upsert(cellsToUpsert, ['projectId', 'fieldId', 'recordId'])
+                }
+
+                // #409: recompute keyValue only when this write touches a declared key
+                // field, and only for a table that declared one — tables.entity's
+                // default of `null` means every other write here is a no-op change,
+                // matching "unmodified" behaviour exactly.
+                const table = await tableService.getOneOrThrow({ projectId, id: tableId, entityManager })
+                if (!isNil(table.keyFieldIds) && table.keyFieldIds.length > 0) {
+                    await withDuplicateKeyMapping(() => recomputeKeyValueIfTouched({ entityManager, projectId, tableId, recordId: id, keyFieldIds: table.keyFieldIds as string[], writtenCells: validCells }))
                 }
             }
 
@@ -653,8 +716,6 @@ type UpsertParams = {
     projectId: string
 }
 
-type KeyReader = (cells: { fieldId: string, value: unknown }[]) => string
-
 export type UpsertResult = {
     action: UpsertAction
     record: PopulatedRecord
@@ -693,6 +754,7 @@ type RecordInsertion = {
     tableId: string
     projectId: string
     created: string
+    keyValue: string | null
 }
 
 type CellInsertion = {
@@ -703,19 +765,24 @@ type CellInsertion = {
     value: string
 }
 
+// `keyReader` is the same KeyReader upsert() already built from `buildKeyReader` — one
+// definition of "key" shared between the legacy upsert path and create() (#409). `null`
+// for a table with no declared key, matching today's behaviour exactly.
 function prepareRecordInsertions(
     records: Array<Array<{ fieldId: string, value: string | null }>>,
     tableId: string,
     projectId: string,
     baseDate: Date,
+    keyReader: KeyReader | null,
 ): RecordInsertion[] {
-    return records.map((_, index) => {
+    return records.map((cells, index) => {
         const created = new Date(baseDate.getTime() + index).toISOString()
         return {
             tableId,
             projectId,
             created,
             id: apId(),
+            keyValue: isNil(keyReader) ? null : keyReader(cells),
         }
     })
 }
@@ -842,17 +909,6 @@ function truncateKeyForMessage(key: string): string {
     return key.length <= MAX_REPORTED_KEY_LENGTH ? key : `${key.slice(0, MAX_REPORTED_KEY_LENGTH)}…`
 }
 
-// An absent cell and an empty cell are the same "empty", and both shapes really
-// exist: the qadam actions strip empty values before posting, so a record with no
-// value has no cell row at all, while the web grid (ap-tables-server-state.ts sends
-// String(value)) and any raw API or MCP caller store a literal ''. Matching has to
-// treat the two as equal, or an upsert inserts the duplicate it exists to prevent.
-function buildKeyReader({ keyFieldIds }: { keyFieldIds: string[] }): KeyReader {
-    return (cells) => JSON.stringify(keyFieldIds.map((fieldId) => {
-        const value = cells.find((cellData) => cellData.fieldId === fieldId)?.value
-        return isNil(value) ? '' : String(value)
-    }))
-}
 
 // One query for the key columns of the whole table, then matched in memory — rather
 // than a correlated subquery per input row, which is N round-trips for a batch.
@@ -886,6 +942,177 @@ async function indexExistingRecordsByKey({ entityManager, projectId, tableId, ke
         }
     }
     return byKey
+}
+
+// Recomputes and persists `record.keyValue` for a single record, but only when this
+// write actually touches a declared key-field cell (#409) — a write to any other
+// column leaves the row's key unchanged, and re-deriving it every time would cost a
+// query per write for no reason. The merge (existing key-field cells overlaid by the
+// ones this write is setting) uses the exact same `buildKeyReader` the legacy upsert
+// path already uses, so there is one definition of "key" across both.
+async function recomputeKeyValueIfTouched({ entityManager, projectId, tableId, recordId, keyFieldIds, writtenCells }: { entityManager: EntityManager, projectId: string, tableId: string, recordId: string, keyFieldIds: string[], writtenCells: { fieldId: string, value: string | null }[] }): Promise<void> {
+    const keyFieldIdSet = new Set(keyFieldIds)
+    const touchesKeyField = writtenCells.some((cell) => keyFieldIdSet.has(cell.fieldId))
+    if (!touchesKeyField) {
+        return
+    }
+    const keyValue = await computeKeyValueForRecord({ entityManager, projectId, recordId, keyFieldIds, writtenCells })
+    await entityManager.getRepository(RecordEntity).update({ id: recordId, projectId, tableId }, { keyValue })
+}
+
+async function computeKeyValueForRecord({ entityManager, projectId, recordId, keyFieldIds, writtenCells }: { entityManager: EntityManager, projectId: string, recordId: string, keyFieldIds: string[], writtenCells: { fieldId: string, value: unknown }[] }): Promise<string> {
+    const existingKeyCells = await entityManager.getRepository(CellEntity).find({
+        where: { projectId, recordId, fieldId: In(keyFieldIds) },
+    })
+    const valueByFieldId = new Map<string, unknown>(existingKeyCells.map((cell) => [cell.fieldId, cell.value]))
+    for (const cell of writtenCells) {
+        if (keyFieldIds.includes(cell.fieldId)) {
+            valueByFieldId.set(cell.fieldId, cell.value)
+        }
+    }
+    const mergedCells = keyFieldIds.map((fieldId) => ({ fieldId, value: valueByFieldId.get(fieldId) }))
+    return buildKeyReader({ keyFieldIds })(mergedCells)
+}
+
+// A table can only be upserted on the key it actually enforces once one is declared
+// (#409) — accepting a different `keyFieldIds` from the caller would silently upsert
+// on a key the partial unique index does not arbitrate, reintroducing the race the
+// declared key exists to close. Order-independent: the caller may list the same
+// columns in any order.
+function assertRequestKeyMatchesDeclaredKey({ requestKeyFieldIds, declaredKeyFieldIds }: { requestKeyFieldIds: string[], declaredKeyFieldIds: string[] }): void {
+    const requested = new Set(requestKeyFieldIds)
+    const declared = new Set(declaredKeyFieldIds)
+    const matches = requested.size === declared.size && declaredKeyFieldIds.every((fieldId) => requested.has(fieldId))
+    if (matches) {
+        return
+    }
+    const message = 'This table has a declared key. keyFieldIds must match it exactly — clear the table\'s key declaration first to upsert on a different key.'
+    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+}
+
+// The declared-key upsert path (#409): a real `INSERT ... ON CONFLICT (projectId,
+// tableId, keyValue) WHERE keyValue IS NOT NULL DO UPDATE`, arbitrated by the partial
+// unique index rather than this process's advisory lock — real per-row concurrency,
+// where two overlapping requests racing on the same key resolve at the database
+// instead of one blocking behind the other's table-wide lock.
+async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFieldIds, records }: { entityManager: EntityManager, projectId: string, tableId: string, keyFieldIds: string[], records: { fieldId: string, value: string | null }[][] }): Promise<UpsertResult[]> {
+    const existingFields = await entityManager.getRepository(FieldEntity).find({ where: { projectId, tableId } })
+    const fieldIds = new Set(existingFields.map((field) => field.id))
+    assertKeyFieldsBelongToTable({ keyFieldIds, fieldIds, tableId })
+
+    const validRecords = records.map((cells) => cells.filter((cellData) => fieldIds.has(cellData.fieldId)))
+    assertEveryRecordCarriesTheKey({ records: validRecords, keyFieldIds })
+    assertNoRepeatedColumn({ records: validRecords })
+    const keyOf = buildKeyReader({ keyFieldIds })
+    assertNoRepeatedKey({ records: validRecords, keyOf })
+    const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
+    validRecords.forEach((cells) => assertValidCellValues({ cells, fieldsById }))
+
+    const derivedKeyValues = validRecords.map(keyOf)
+    const existingRecords = await entityManager.getRepository(RecordEntity).find({
+        where: { projectId, tableId, keyValue: In(unique(derivedKeyValues)) },
+        select: ['id', 'keyValue'],
+    })
+    const existingKeyValues = new Set(existingRecords.map((record) => record.keyValue))
+
+    // Counted with only the rows this batch is actually about to insert, same as the
+    // legacy path — a row whose key already exists is an update, not a new row against
+    // the cap. Best-effort against a fully concurrent second batch inserting under the
+    // same keys: without the advisory lock, two overlapping requests can each pass this
+    // check and together land slightly over MAX_RECORDS_PER_TABLE. That is the trade
+    // the declared key makes for real per-row concurrency — the ON CONFLICT below is
+    // still race-free for correctness, only the cap becomes best-effort under a race.
+    const newRowCount = derivedKeyValues.filter((keyValue) => !existingKeyValues.has(keyValue)).length
+    if (newRowCount > 0) {
+        await recordService.validateCount({ projectId, tableId, entityManager }, newRowCount)
+    }
+
+    const now = new Date()
+    const insertions: RecordInsertion[] = validRecords.map((_cells, index) => ({
+        id: apId(),
+        tableId,
+        projectId,
+        keyValue: derivedKeyValues[index],
+        created: new Date(now.getTime() + index).toISOString(),
+    }))
+
+    for (const batch of chunk(insertions, MAX_BATCH_SIZE)) {
+        await entityManager.createQueryBuilder()
+            .insert()
+            .into(RecordEntity)
+            .values(batch)
+            .onConflict('("projectId", "tableId", "keyValue") WHERE "keyValue" IS NOT NULL DO UPDATE SET "updated" = now()')
+            .execute()
+    }
+
+    // Re-resolved by keyValue rather than trusted from `insertions[index].id`: under a
+    // race, ON CONFLICT keeps the WINNING row's original id, which is not the id this
+    // process generated for its own (losing) insert attempt. Writing cells against the
+    // generated id in that case would attach them to a record that does not exist.
+    const winningRecords = await entityManager.getRepository(RecordEntity).find({
+        where: { projectId, tableId, keyValue: In(unique(derivedKeyValues)) },
+        select: ['id', 'keyValue'],
+    })
+    const recordIdByKeyValue = new Map(winningRecords.map((record) => [record.keyValue, record.id]))
+
+    const cellsToUpsert = validRecords.flatMap((cells, index) => {
+        const recordId = recordIdByKeyValue.get(derivedKeyValues[index])
+        return isNil(recordId) ? [] : cells.map((cellData) => ({
+            recordId,
+            fieldId: cellData.fieldId,
+            projectId,
+            value: cellData.value ?? '',
+            id: apId(),
+        }))
+    })
+    for (const batch of chunk(cellsToUpsert, MAX_BATCH_SIZE)) {
+        await entityManager.getRepository(CellEntity).upsert(batch, ['projectId', 'fieldId', 'recordId'])
+    }
+
+    const stored = await entityManager.getRepository(RecordEntity).find({
+        where: { id: In([...recordIdByKeyValue.values()]), projectId, tableId },
+        relations: ['cells'],
+    })
+    const populated = formatRecords({ records: stored, fields: existingFields })
+    const populatedById = new Map(populated.map((record) => [record.id, record]))
+
+    // In input order, matching the legacy path's contract.
+    return derivedKeyValues.map((keyValue) => {
+        const recordId = recordIdByKeyValue.get(keyValue)
+        const record = isNil(recordId) ? undefined : populatedById.get(recordId)
+        return isNil(record) ? null : {
+            action: existingKeyValues.has(keyValue) ? UpsertAction.UPDATED : UpsertAction.CREATED,
+            record,
+        }
+    }).filter((result): result is UpsertResult => !isNil(result))
+}
+
+// Maps a Postgres unique-violation on the keyValue index to a client-facing
+// RECORD_DUPLICATE_KEY error, i18n-keyed via formErrors.duplicateKeyValue. Only
+// create()/update()/updateMany() can reach this — upsertWithDeclaredKey resolves the
+// same collision through ON CONFLICT DO UPDATE instead of raising.
+async function withDuplicateKeyMapping<T>(run: () => Promise<T>): Promise<T> {
+    // Read off `result` directly rather than destructured into `{ data, error }`: once
+    // destructured, TypeScript loses the correlation between the two fields that makes
+    // `Result<T, E>` a discriminated union, and narrowing `error` no longer narrows
+    // `data` from `T | null` down to `T`.
+    const result = await tryCatch(run)
+    if (result.error === null) {
+        return result.data
+    }
+    if (isKeyValueUniqueViolation(result.error)) {
+        const message = formErrors.duplicateKeyValue
+        throw new QadamFlowError({ code: ErrorCode.RECORD_DUPLICATE_KEY, params: { message } }, 'A record with this key value already exists in this table.')
+    }
+    throw result.error
+}
+
+function isKeyValueUniqueViolation(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false
+    }
+    const driverError = (error as Error & { driverError?: { code?: string, constraint?: string } }).driverError
+    return driverError?.code === '23505' && driverError.constraint === KEY_VALUE_UNIQUE_INDEX_NAME
 }
 
 // Postgres raises "ON CONFLICT DO UPDATE command cannot affect row a second time"

@@ -1,15 +1,23 @@
-import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, isNil, QadamFlowError, spreadIfDefined, UpdateFieldRequest } from '@aiqadam/shared'
+import { apId, assertNotNullOrUndefined, CreateFieldRequest, ErrorCode, Field, FieldState, FieldType, formErrors, isNil, QadamFlowError, spreadIfDefined, tryCatchSync, UpdateFieldRequest } from '@aiqadam/shared'
 import { EntityManager, In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { TableEntity } from '../table/table.entity'
 import { FieldEntity } from './field.entity'
 
 const fieldRepo = repoFactory<Field>(FieldEntity)
+// TableEntity directly, not tableService — table.service.ts already imports
+// fieldService, so importing tableService here would be a circular module
+// dependency. The entity has none of that baggage.
+const tableRepoForKeyGuard = repoFactory(TableEntity)
 
 export const fieldService = {
     async create({ request, projectId, entityManager, created }: CreateParams): Promise<Field> {
         await this.validateCount({ projectId, tableId: request.tableId, entityManager })
+        if (request.type === FieldType.JSON) {
+            assertValidJsonFieldSchema(request.data?.schema)
+        }
         // `created` is accepted so a caller building a whole table's columns at once can make their
         // order reproducible. Left to the column default it is `now()`, which inside a transaction
         // is the *transaction* timestamp and therefore identical for every field of that batch —
@@ -28,7 +36,7 @@ export const fieldService = {
     async createFromState({ projectId, field, tableId, entityManager, created }: CreateFromStateParams): Promise<Field> {
         switch (field.type) {
             case FieldType.STATIC_DROPDOWN: {
-                assertNotNullOrUndefined(field.data, 'Data is required for static dropdown field')
+                assertNotNullOrUndefined(field.data?.options, 'Data is required for static dropdown field')
                 return this.create({
                     projectId,
                     entityManager,
@@ -37,13 +45,28 @@ export const fieldService = {
                         name: field.name,
                         type: field.type,
                         tableId,
-                        data: field.data,
+                        data: { options: field.data.options },
                         externalId: field.externalId,
+                    },
+                })
+            }
+            case FieldType.JSON: {
+                return this.create({
+                    projectId,
+                    entityManager,
+                    created,
+                    request: {
+                        name: field.name,
+                        type: field.type,
+                        tableId,
+                        externalId: field.externalId,
+                        ...spreadIfDefined('data', isNil(field.data?.schema) ? undefined : { schema: field.data.schema }),
                     },
                 })
             }
             case FieldType.DATE:
             case FieldType.NUMBER:
+            case FieldType.BOOLEAN:
             case FieldType.TEXT: {
                 return this.create({
                     projectId,
@@ -113,6 +136,10 @@ export const fieldService = {
     },
 
     async delete({ id, projectId, entityManager }: DeleteParams): Promise<void> {
+        const field = await fieldRepo(entityManager).findOne({ where: { id, projectId } })
+        if (!isNil(field)) {
+            await assertFieldNotInDeclaredKey({ field, projectId, entityManager })
+        }
         await fieldRepo(entityManager).delete({
             id,
             projectId,
@@ -144,6 +171,35 @@ export const fieldService = {
             })
         }
     },
+}
+
+// A JSON field's optional `data.schema` is a JSON-Schema-shaped string, not raw JSON —
+// stored and validated as text the same way every other field-level shape (e.g.
+// STATIC_DROPDOWN's `options`) already is. Checked once, at field-creation time,
+// against real cell values checked in cell-validation.ts on every write.
+function assertValidJsonFieldSchema(schema: string | undefined): void {
+    if (isNil(schema)) {
+        return
+    }
+    const { data, error } = tryCatchSync<unknown>(() => JSON.parse(schema))
+    if (error !== null || isNil(data) || typeof data !== 'object' || Array.isArray(data)) {
+        const message = formErrors.invalidJsonValue
+        throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field data.schema must be a JSON object (a JSON Schema-shaped string), got "${schema.length > 100 ? `${schema.slice(0, 100)}…` : schema}".`)
+    }
+}
+
+// A field that is part of a table's declared key (#409) cannot be deleted — doing so
+// would leave `table.keyFieldIds` naming a field that no longer exists, and every
+// future write's keyValue derivation (buildKeyReader in record.service.ts) would
+// silently treat the missing column as always-empty, collapsing every row's key to
+// the same value the moment a second such field was also removed.
+async function assertFieldNotInDeclaredKey({ field, projectId, entityManager }: { field: Field, projectId: string, entityManager?: EntityManager }): Promise<void> {
+    const table = await tableRepoForKeyGuard(entityManager).findOne({ where: { id: field.tableId, projectId } })
+    if (isNil(table) || isNil(table.keyFieldIds) || !table.keyFieldIds.includes(field.id)) {
+        return
+    }
+    const message = formErrors.keyFieldInUse
+    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, `Field "${field.name}" is part of table "${table.name}"'s declared key. Clear the table's key declaration first.`)
 }
 
 type CreateParams = {

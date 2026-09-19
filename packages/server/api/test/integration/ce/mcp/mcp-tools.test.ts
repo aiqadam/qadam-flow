@@ -3705,7 +3705,7 @@ describe('MCP Tools integration', () => {
                 type: 'SHARED', status: 'PUBLISHED',
                 tables: [{
                     id: apId(), name: 'Malformed', externalId: apId(), status: 'ENABLED',
-                    fields: [{ id: apId(), name: 'Bad', type: 'BOOLEAN', externalId: apId() }],
+                    fields: [{ id: apId(), name: 'Bad', type: 'NOT_A_REAL_TYPE', externalId: apId() }],
                     data: { type: 'CSV', rows: [] },
                 }],
             }

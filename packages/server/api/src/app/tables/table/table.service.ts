@@ -4,6 +4,7 @@ import {
     CreateTableWebhookRequest,
     ErrorCode,
     ExportTableResponse,
+    formErrors,
     isNil,
     PopulatedTable,
     QadamFlowError,
@@ -19,16 +20,20 @@ import {
     TemplateStatus,
     TemplateType,
     UncategorizedFolderId,
+    unique,
     UpdateTableRequest,
     UserWithMetaInformation,
 } from '@aiqadam/shared'
 import { ArrayContains, EntityManager, ILike, In, IsNull } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
+import { transaction } from '../../core/db/transaction'
 import { getFolderIdFromRequest } from '../../flows/flow/flow.service'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
 import { system } from '../../helper/system/system'
 import { fieldService } from '../field/field.service'
+import { CellEntity } from '../record/cell.entity'
+import { buildKeyReader } from '../record/key-reader'
 import { RecordEntity } from '../record/record.entity'
 import { TableWebhookEntity } from './table-webhook.entity'
 import { TableEntity } from './table.entity'
@@ -336,6 +341,82 @@ export const tableService = {
         return tableRepo().count({ where })
     },
 
+    // Declares (non-empty `keyFieldIds`) or clears (empty) a table's business key
+    // (#409). Runs inside one transaction: computes `keyValue` for every existing
+    // record under the proposed key via the exact same `buildKeyReader` record.service.ts
+    // uses for every other write, rejects — without listing which records collide, a
+    // deliberate scope simplification — if any two would share a value, and otherwise
+    // backfills every row and persists `table.keyFieldIds`. Bounded by
+    // MAX_RECORDS_PER_TABLE / MAX_FIELDS_PER_TABLE, which already cap how expensive
+    // this one-time scan can be, so no additional pagination/batching.
+    async declareKey({ projectId, id, keyFieldIds }: DeclareKeyParams): Promise<Table> {
+        const uniqueKeyFieldIds = unique(keyFieldIds)
+        if (uniqueKeyFieldIds.length === 0) {
+            return this.clearKey({ projectId, id })
+        }
+
+        return transaction(async (entityManager: EntityManager) => {
+            await this.getOneOrThrow({ projectId, id, entityManager })
+
+            const fields = await fieldService.getAll({ projectId, tableId: id, entityManager })
+            const fieldIds = new Set(fields.map((field) => field.id))
+            const unknownFieldIds = uniqueKeyFieldIds.filter((fieldId) => !fieldIds.has(fieldId))
+            if (unknownFieldIds.length > 0) {
+                const message = `Key column(s) not present in table ${id}: ${unknownFieldIds.join(', ')}`
+                throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+            }
+
+            const records = await recordRepo(entityManager).find({ where: { projectId, tableId: id }, select: ['id'] })
+            const keyCells = records.length === 0 ? [] : await entityManager.getRepository(CellEntity).find({
+                where: { projectId, fieldId: In(uniqueKeyFieldIds), recordId: In(records.map((record) => record.id)) },
+            })
+            const cellsByRecordId = new Map<string, { fieldId: string, value: unknown }[]>()
+            for (const cell of keyCells) {
+                const group = cellsByRecordId.get(cell.recordId)
+                if (group) {
+                    group.push(cell)
+                }
+                else {
+                    cellsByRecordId.set(cell.recordId, [cell])
+                }
+            }
+
+            const keyOf = buildKeyReader({ keyFieldIds: uniqueKeyFieldIds })
+            const seenKeyValues = new Set<string>()
+            const recordKeyValues: { id: string, keyValue: string }[] = []
+            for (const record of records) {
+                const keyValue = keyOf(cellsByRecordId.get(record.id) ?? [])
+                if (seenKeyValues.has(keyValue)) {
+                    const message = formErrors.tableHasDuplicateKeys
+                    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, 'This table has records that share the same key value(s). Resolve the duplicates before declaring this key.')
+                }
+                seenKeyValues.add(keyValue)
+                recordKeyValues.push({ id: record.id, keyValue })
+            }
+
+            // Sequential, not Promise.all: every query here shares the transaction's one
+            // connection, and issuing them concurrently on it is not something a single
+            // Postgres connection can do.
+            for (const row of recordKeyValues) {
+                await entityManager.getRepository(RecordEntity).update({ id: row.id, projectId, tableId: id }, { keyValue: row.keyValue })
+            }
+
+            await entityManager.getRepository(TableEntity).update({ id, projectId }, { keyFieldIds: uniqueKeyFieldIds })
+            return this.getOneOrThrow({ projectId, id, entityManager })
+        })
+    },
+
+    // Unconditional: clearing never violates the partial unique index (a null keyValue
+    // matches nothing), so no backfill or collision check is needed. `record.keyValue`
+    // is deliberately left as-is rather than nulled out — it becomes dead data once the
+    // key is cleared, and wiping MAX_RECORDS_PER_TABLE rows of it would cost a full
+    // table scan for no behavioural difference (a table with `keyFieldIds: null` is
+    // never a target of the index, regardless of what `keyValue` still holds).
+    async clearKey({ projectId, id, entityManager }: ClearKeyParams): Promise<Table> {
+        await tableRepo(entityManager).update({ id, projectId }, { keyFieldIds: null })
+        return this.getOneOrThrow({ projectId, id, entityManager })
+    },
+
 }
 
 type CreateParams = {
@@ -411,4 +492,16 @@ type GetTemplateParams = {
     projectId: string
     includeRecords?: boolean
     maxRecords?: number
+}
+
+type DeclareKeyParams = {
+    projectId: string
+    id: string
+    keyFieldIds: string[]
+}
+
+type ClearKeyParams = {
+    projectId: string
+    id: string
+    entityManager?: EntityManager
 }

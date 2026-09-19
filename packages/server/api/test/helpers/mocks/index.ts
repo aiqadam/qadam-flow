@@ -450,6 +450,7 @@ export const createMockTable = ({ projectId }: { projectId: string }): Table => 
         projectId,
         externalId: apId(),
         name: faker.lorem.word(),
+        keyFieldIds: null,
     }
 }
 

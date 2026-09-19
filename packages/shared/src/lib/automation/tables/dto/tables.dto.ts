@@ -63,3 +63,14 @@ export const CountTablesRequest = z.object({
 })
 
 export type CountTablesRequest = z.infer<typeof CountTablesRequest>
+
+// Declares (non-empty `keyFieldIds`) or clears (empty `keyFieldIds`) a table's business
+// key (#409). Declaring runs a one-time collision scan over every existing record and
+// backfills `record.keyValue`; from then on the partial unique index
+// `record(projectId, tableId, keyValue) WHERE keyValue IS NOT NULL` enforces it. No
+// `.min(1)` here — an empty array is the "clear the key" request, not an invalid one.
+export const DeclareTableKeyRequest = z.object({
+    keyFieldIds: z.array(z.string()),
+})
+
+export type DeclareTableKeyRequest = z.infer<typeof DeclareTableKeyRequest>

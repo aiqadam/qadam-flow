@@ -11,7 +11,8 @@ import qs from 'qs';
 const FILTERS_DESCRIPTION = [
   'Filter conditions to apply. All conditions are combined with AND.',
   'Shape: {"filters":[{"field":"<column name or id>","operator":"eq","value":"..."}]}.',
-  'Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists.',
+  'Operators: eq, neq, gt, gte, lt, lte, co, in, not_in, exists, not_exists, json_path_eq.',
+  'json_path_eq (JSON columns only) also takes a "path" (dot-separated, e.g. "address.city"): {"field":"...","operator":"json_path_eq","path":"address.city","value":"..."}.',
   'A filters value that cannot be read raises an error — it is never ignored, because ignoring it would return every row in the table.',
 ].join(' ');
 
@@ -109,8 +110,14 @@ export const findRecords = createAction({
                     { label: 'Not In', value: FilterOperator.NOT_IN },
                     { label: 'Exists', value: FilterOperator.EXISTS },
                     { label: 'Does not exist', value: FilterOperator.NOT_EXISTS },
+                    { label: 'JSON Path Equals', value: FilterOperator.JSON_PATH_EQ },
                   ],
                 },
+              }),
+              path: Property.ShortText({
+                displayName: 'JSON Path',
+                description: 'Only used with "JSON Path Equals", on a JSON column. Dot-separated, e.g. "address.city".',
+                required: false,
               }),
               value: Property.ShortText({
                 displayName: 'Value',

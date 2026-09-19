@@ -169,6 +169,17 @@ function toWireFilter({ entry, index, fields }: { entry: unknown; index: number;
       assertValueMatchesFieldType({ field, value, position });
       return { fieldId: field.id, operator, value };
     }
+    case FilterOperator.JSON_PATH_EQ: {
+      if (field.type !== FieldType.JSON) {
+        throw new Error(`${position}: "json_path_eq" needs a JSON column, but field "${field.name}" is of type ${field.type}.`);
+      }
+      const path = toScalarValue({ raw: entry['path'], field, operator, position });
+      if (path.trim().length === 0) {
+        throw new Error(`${position}: "json_path_eq" on field "${field.name}" requires a non-empty "path" (dot-separated, e.g. "address.city").`);
+      }
+      const value = toScalarValue({ raw: entry['value'], field, operator, position });
+      return { fieldId: field.id, operator, path, value };
+    }
   }
 }
 
@@ -235,8 +246,18 @@ function assertValueMatchesFieldType({ field, value, position }: { field: Field;
       }
       return;
     }
+    case FieldType.BOOLEAN: {
+      if (value !== 'true' && value !== 'false') {
+        throw new Error(`${position}: "${truncate(value)}" is not a boolean, but field "${name}" is a Boolean column. Use "true" or "false".`);
+      }
+      return;
+    }
     case FieldType.TEXT:
     case FieldType.STATIC_DROPDOWN:
+    // A JSON column's eq/neq compares the raw stored text, same as TEXT — no shape
+    // requirement on the filter value itself. json_path_eq (#390) is a distinct
+    // operator built via toWireFilter's own branch, not through this function.
+    case FieldType.JSON:
       return;
     default: {
       // A new FieldType must not silently skip validation here. Reports the type
@@ -296,7 +317,7 @@ const NESTED_KEY = 'filters';
 
 const FIELD_KEYS = ['field', 'fieldId', 'field_id', 'fieldName', 'field_name'] as const;
 
-const ENTRY_KEYS: readonly string[] = [...FIELD_KEYS, 'operator', 'value'];
+const ENTRY_KEYS: readonly string[] = [...FIELD_KEYS, 'operator', 'value', 'path'];
 
 const ALL_OPERATORS: readonly FilterOperator[] = Object.values(FilterOperator);
 

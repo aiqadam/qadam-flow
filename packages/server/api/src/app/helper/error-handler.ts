@@ -26,6 +26,7 @@ export const errorHandler = async (
             [ErrorCode.EXISTING_USER]: StatusCodes.CONFLICT,
             [ErrorCode.EXISTING_ALERT_CHANNEL]: StatusCodes.CONFLICT,
             [ErrorCode.RECORD_PRECONDITION_FAILED]: StatusCodes.CONFLICT,
+            [ErrorCode.RECORD_DUPLICATE_KEY]: StatusCodes.CONFLICT,
             [ErrorCode.EXISTING_AI_PROVIDER]: StatusCodes.CONFLICT,
             [ErrorCode.FLOW_OPERATION_IN_PROGRESS]: StatusCodes.CONFLICT,
             [ErrorCode.AUTHORIZATION]: StatusCodes.FORBIDDEN,

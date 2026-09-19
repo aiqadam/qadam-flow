@@ -69,6 +69,8 @@ export const FIELD_TYPE_VALUES = [
     FieldType.NUMBER,
     FieldType.DATE,
     FieldType.STATIC_DROPDOWN,
+    FieldType.BOOLEAN,
+    FieldType.JSON,
 ] as const
 
 export const fieldTypeSchema = z.enum(FIELD_TYPE_VALUES)

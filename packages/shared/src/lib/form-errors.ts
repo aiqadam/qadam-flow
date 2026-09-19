@@ -12,4 +12,10 @@ export const formErrors = {
     invalidAzureResourceName: 'invalidAzureResourceName',
     invalidAwsRegion: 'invalidAwsRegion',
     valueNotInOptions: 'valueNotInOptions',
+    invalidBooleanValue: 'invalidBooleanValue',
+    invalidJsonValue: 'invalidJsonValue',
+    jsonSchemaMismatch: 'jsonSchemaMismatch',
+    tableHasDuplicateKeys: 'tableHasDuplicateKeys',
+    keyFieldInUse: 'keyFieldInUse',
+    duplicateKeyValue: 'duplicateKeyValue',
 } as const

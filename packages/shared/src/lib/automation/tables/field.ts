@@ -6,7 +6,20 @@ export enum FieldType {
     NUMBER = 'NUMBER',
     DATE = 'DATE',
     STATIC_DROPDOWN = 'STATIC_DROPDOWN',
+    BOOLEAN = 'BOOLEAN',
+    JSON = 'JSON',
 }
+
+// Optional structural hint for a JSON field, mirroring STATIC_DROPDOWN's `data.options`
+// pattern. Deliberately minimal — a JSON Schema-shaped string rather than a full JSON
+// Schema validation engine: `type`/`properties`/`required`/`items` are checked, nothing
+// deeper (see cell-validation.ts on the server). Left unset, a JSON field accepts any
+// value that JSON.parse succeeds on.
+export const JsonFieldData = z.object({
+    schema: z.string().optional(),
+})
+
+export type JsonFieldData = z.infer<typeof JsonFieldData>
 
 export const Field = z.union([z.object({
     ...BaseModelSchema,
@@ -24,7 +37,15 @@ export const Field = z.union([z.object({
     ...BaseModelSchema,
     name: z.string(),
     externalId: z.string(),
-    type: z.union([z.literal(FieldType.TEXT), z.literal(FieldType.NUMBER), z.literal(FieldType.DATE)]),
+    type: z.literal(FieldType.JSON),
+    tableId: z.string(),
+    projectId: z.string(),
+    data: JsonFieldData.optional(),
+}), z.object({
+    ...BaseModelSchema,
+    name: z.string(),
+    externalId: z.string(),
+    type: z.union([z.literal(FieldType.TEXT), z.literal(FieldType.NUMBER), z.literal(FieldType.DATE), z.literal(FieldType.BOOLEAN)]),
     tableId: z.string(),
     projectId: z.string(),
 })])

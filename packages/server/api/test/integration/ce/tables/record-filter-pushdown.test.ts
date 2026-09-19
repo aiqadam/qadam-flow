@@ -146,6 +146,126 @@ describe('Record filter pushdown', () => {
     })
 })
 
+// JSON_PATH_EQ (#390) pushdown: string leaves are pushed to SQL exactly, other leaf
+// shapes are deliberately left to the JS pass — see the comment beside
+// buildJsonPathEqCondition in record-query.ts for why. These values are chosen to
+// probe every leaf shape the two passes could disagree on, including the case that
+// makes an unrestricted pushdown unsafe: Postgres's jsonb text output for a number
+// preserves the literal's original formatting ("1.0" stays "1.0") while
+// JSON.parse + String() on the JS side does not (it becomes "1").
+//
+// Deliberately all valid JSON (or empty) — cell-validation.ts guarantees that for every
+// write this API accepts, so it is what the pushdown's `::jsonb` cast is entitled to
+// assume (see that function's comment). Malformed JSON reaching a cell at all is a
+// different, DB-bypassing scenario covered separately below, in pure JS with no SQL
+// involved.
+const JSON_CELL_VALUES = [
+    '{"status":"active"}',
+    '{"status":"inactive"}',
+    '{"status":""}',
+    '{"count":1.0}',
+    '{"count":1}',
+    '{"nested":{"status":"active"}}',
+    '{"list":["active","x"]}',
+    '{"flag":true}',
+    '{"flag":false}',
+    '{"value":null}',
+    '{}',
+    '',
+]
+
+describe('Record filter pushdown — JSON_PATH_EQ (#390)', () => {
+    describeWithAuth('GET /v1/records (json_path_eq evaluated in SQL where safe)', () => app!, (setup) => {
+        it.each([
+            { label: 'string leaf match', path: 'status', value: 'active' },
+            { label: 'string leaf no match', path: 'status', value: 'nonexistent' },
+            { label: 'empty string leaf', path: 'status', value: '' },
+            { label: 'number leaf as "1.0" (the unsafe-pushdown case)', path: 'count', value: '1.0' },
+            { label: 'number leaf as "1"', path: 'count', value: '1' },
+            { label: 'nested path', path: 'nested.status', value: 'active' },
+            { label: 'array index path', path: 'list.0', value: 'active' },
+            { label: 'boolean leaf', path: 'flag', value: 'true' },
+            { label: 'null leaf', path: 'value', value: 'null' },
+            { label: 'path not present', path: 'missing', value: 'x' },
+        ])('agrees with the JS matcher for $label', async ({ path, value }) => {
+            const ctx = await setup()
+            const { table, field } = await seedJsonTable(ctx)
+            const filters: Filter[] = [{ fieldId: field.id, operator: FilterOperator.JSON_PATH_EQ, path, value }]
+
+            const returnedIds = await listRecordIds({ ctx, tableId: table.id, filters })
+            const expectedIds = await matchedInJs({ tableId: table.id, projectId: ctx.project.id, fields: [field], filters })
+
+            expect(returnedIds.slice().sort()).toEqual(expectedIds.slice().sort())
+        })
+
+        it('pushes a string-leaf comparison down to SQL', async () => {
+            const ctx = await setup()
+            const { table, field } = await seedJsonTable(ctx)
+
+            const query = recordQuery.build({
+                projectId: ctx.project.id,
+                tableId: table.id,
+                recordIds: undefined,
+                compiledFilters: recordFilter.compile({ filters: [{ fieldId: field.id, operator: FilterOperator.JSON_PATH_EQ, path: 'status', value: 'active' }], fields: [field], tableId: table.id }),
+                limit: 10,
+            }).getQuery()
+
+            expect(query).toContain('jsonb_extract_path_text')
+        })
+
+        it('rejects json_path_eq on a non-JSON column', async () => {
+            const ctx = await setup()
+            const table = createMockTable({ projectId: ctx.project.id })
+            await db.save('table', table)
+            const field = createMockField({ tableId: table.id, projectId: ctx.project.id })
+            field.type = FieldType.TEXT
+            await db.save('field', field)
+
+            expect(() => recordFilter.compile({
+                filters: [{ fieldId: field.id, operator: FilterOperator.JSON_PATH_EQ, path: 'a', value: 'b' }],
+                fields: [field],
+                tableId: table.id,
+            })).toThrow()
+        })
+
+        // Only reachable by writing straight to the `cell` table, bypassing cell-validation.ts —
+        // this API never lets malformed JSON into a JSON-typed cell. Pure JS, no SQL, because the
+        // pushdown's `::jsonb` cast is documented to assume this cannot happen (record-query.ts)
+        // and would error on it rather than silently mismatch; the JS matcher, being the
+        // authority for every operator, still has to degrade to "no match" instead of throwing —
+        // one bad legacy row must not fail the whole query.
+        it('the JS matcher (authority) treats malformed JSON as no match, not an error', () => {
+            const field: Field = { id: 'f1', type: FieldType.JSON, name: 'f', externalId: 'e', tableId: 't', projectId: 'p', created: '', updated: '' }
+            const compiled = recordFilter.compile({
+                filters: [{ fieldId: field.id, operator: FilterOperator.JSON_PATH_EQ, path: 'status', value: 'active' }],
+                fields: [field],
+                tableId: 't',
+            })
+
+            expect(recordFilter.matchesAll({ cells: [{ fieldId: field.id, value: 'not json' }], compiledFilters: compiled })).toBe(false)
+        })
+    })
+})
+
+async function seedJsonTable(ctx: TestContext) {
+    const table = createMockTable({ projectId: ctx.project.id })
+    await db.save('table', table)
+    const field = createMockField({ tableId: table.id, projectId: ctx.project.id })
+    field.type = FieldType.JSON
+    await db.save('field', field)
+
+    for (const value of JSON_CELL_VALUES) {
+        const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+        await db.save('record', record)
+        const cell = createMockCell({ recordId: record.id, fieldId: field.id, projectId: ctx.project.id })
+        cell.value = value
+        await db.save('cell', cell)
+    }
+    await db.save('record', createMockRecord({ tableId: table.id, projectId: ctx.project.id }))
+
+    return { table, field }
+}
+
 async function seedTable(ctx: TestContext) {
     const table = createMockTable({ projectId: ctx.project.id })
     await db.save('table', table)

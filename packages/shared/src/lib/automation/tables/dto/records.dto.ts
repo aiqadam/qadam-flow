@@ -66,6 +66,11 @@ export enum FilterOperator {
     NOT_IN = 'not_in',
     EXISTS = 'exists',
     NOT_EXISTS = 'not_exists',
+    // A JSON column only (#390): matches when the value at `path` (dot-separated, e.g.
+    // "address.city") inside the cell's parsed JSON equals `value`. See record-filter.ts
+    // for the exact equality rule and why the SQL pushdown in record-query.ts is scoped to
+    // string-typed leaves only.
+    JSON_PATH_EQ = 'json_path_eq',
 }
 
 const coerceToStringArray = z.preprocess(
@@ -94,6 +99,13 @@ const existenceFilter = <T extends FilterOperator>(op: T) => z.object({
     operator: z.literal(op),
 })
 
+const jsonPathFilter = <T extends FilterOperator>(op: T) => z.object({
+    fieldId: z.string(),
+    operator: z.literal(op),
+    path: z.string().min(1, formErrors.required),
+    value: z.string(),
+})
+
 export const Filter = z.discriminatedUnion('operator', [
     valueFilter(FilterOperator.EQ),
     valueFilter(FilterOperator.NEQ),
@@ -106,6 +118,7 @@ export const Filter = z.discriminatedUnion('operator', [
     listFilter(FilterOperator.NOT_IN),
     existenceFilter(FilterOperator.EXISTS),
     existenceFilter(FilterOperator.NOT_EXISTS),
+    jsonPathFilter(FilterOperator.JSON_PATH_EQ),
 ])
 
 export type Filter = z.infer<typeof Filter>

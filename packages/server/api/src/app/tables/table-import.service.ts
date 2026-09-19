@@ -84,6 +84,11 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
     // through (createFromState's own assertion, or any other DB error mid-sequence) rolls back
     // the deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
     await transaction(async (entityManager: EntityManager) => {
+        // Cleared before the old fields are deleted: a declared key (#409) names
+        // field ids that are about to stop existing, and fieldService.delete rejects
+        // deleting a field that is still part of one. The whole schema is being
+        // replaced here, so there is nothing left to declare a key over anyway.
+        await tableService.clearKey({ projectId, id: existingTable.id, entityManager })
         await recordService.deleteAll({ tableId: existingTable.id, projectId, entityManager, returnDeleted: false })
         const existingFields = await fieldService.getAll({ projectId, tableId: existingTable.id, entityManager })
         await Promise.all(existingFields.map((field) => fieldService.delete({ id: field.id, projectId, entityManager })))
@@ -160,7 +165,7 @@ function assertImportableTable(tableTemplate: NonNullable<SharedTemplate['tables
                 params: { message: `Field "${field.name}" externalId "${field.externalId}" is not a safe identifier.` },
             })
         }
-        if (field.type === FieldType.STATIC_DROPDOWN && (isNil(field.data) || field.data.options.length === 0)) {
+        if (field.type === FieldType.STATIC_DROPDOWN && (isNil(field.data) || isNil(field.data.options) || field.data.options.length === 0)) {
             throw new QadamFlowError({
                 code: ErrorCode.VALIDATION,
                 params: { message: `Field "${field.name}" is STATIC_DROPDOWN but has no dropdown options.` },
