@@ -36,12 +36,12 @@ export const tableImportService = {
         const targetName = name ?? tableTemplate.name
 
         const created = mode === 'into-existing'
-            ? { table: await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }), externalIdReplaced: false }
-            : await createTableFromTemplate({ projectId, targetName, tableTemplate })
+            ? await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate })
+            : { ...await createTableFromTemplate({ projectId, targetName, tableTemplate }), keyCleared: false }
 
         const { importedCount, truncated } = await importRows({ projectId, tableId: created.table.id, data: tableTemplate.data, cap: maxRecords, log })
 
-        return { table: created.table, importedCount, truncated, cap: maxRecords, externalIdReplaced: created.externalIdReplaced }
+        return { table: created.table, importedCount, truncated, cap: maxRecords, externalIdReplaced: created.externalIdReplaced, keyCleared: created.keyCleared }
     },
 }
 
@@ -70,7 +70,7 @@ async function createTableFromTemplate({ projectId, targetName, tableTemplate }:
     return { table, externalIdReplaced }
 }
 
-async function importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }: ImportIntoExistingTableParams): Promise<Table> {
+async function importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }: ImportIntoExistingTableParams): Promise<{ table: Table, externalIdReplaced: boolean, keyCleared: boolean }> {
     if (isNil(existingTableId)) {
         throw new QadamFlowError({
             code: ErrorCode.VALIDATION,
@@ -83,6 +83,10 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
     // The whole clear-and-recreate-schema sequence runs as one transaction: a failure partway
     // through (createFromState's own assertion, or any other DB error mid-sequence) rolls back
     // the deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
+    // Reported back to the caller rather than done quietly: a template carries no key
+    // declaration, so an import silently un-enforces a uniqueness guarantee the table had.
+    const keyCleared = !isNil(existingTable.keyFieldIds) && existingTable.keyFieldIds.length > 0
+
     await transaction(async (entityManager: EntityManager) => {
         // Cleared before the old fields are deleted: a declared key (#409) names
         // field ids that are about to stop existing, and fieldService.delete rejects
@@ -101,7 +105,7 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
         await Promise.all(tableTemplate.fields.map((field, index) => fieldService.createFromState({ projectId, field, tableId: existingTable.id, entityManager, created: new Date(createdAt + index) })))
     })
 
-    return tableService.getOneOrThrow({ projectId, id: existingTable.id })
+    return { table: await tableService.getOneOrThrow({ projectId, id: existingTable.id }), externalIdReplaced: false, keyCleared }
 }
 
 async function importRows({ projectId, tableId, data, cap, log }: ImportRowsParams): Promise<{ importedCount: number, truncated: boolean }> {
@@ -192,6 +196,7 @@ type ImportTemplateResult = {
     truncated: boolean
     cap: number
     externalIdReplaced: boolean
+    keyCleared: boolean
 }
 
 type CreatedTable = {

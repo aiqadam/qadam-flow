@@ -171,6 +171,10 @@ const JSON_CELL_VALUES = [
     '{"flag":false}',
     '{"value":null}',
     '{}',
+    // An empty-string JSON key, so a path carrying an empty segment has something to
+    // resolve to on the SQL side but not on the JS side — see the empty-segment cases in
+    // the differential table below.
+    '{"a":{"":"x"},"b":"y"}',
     '',
 ]
 
@@ -187,6 +191,17 @@ describe('Record filter pushdown — JSON_PATH_EQ (#390)', () => {
             { label: 'boolean leaf', path: 'flag', value: 'true' },
             { label: 'null leaf', path: 'value', value: 'null' },
             { label: 'path not present', path: 'missing', value: 'x' },
+            // string_to_array keeps empty segments where the JS matcher's own
+            // `.filter(length > 0)` drops them. Without array_remove the two disagree and
+            // SQL excludes a row the JS pass would have kept — the one direction the
+            // pushdown invariant forbids.
+            { label: 'trailing empty path segment', path: 'a.', value: '{"":"x"}' },
+            { label: 'double-dot path segment', path: 'a..', value: '{"":"x"}' },
+            { label: 'leading empty path segment', path: '.b', value: 'y' },
+            // A path segment naming a prototype key must resolve to nothing, not walk onto
+            // Object.prototype and match every object-valued cell in the table.
+            { label: 'prototype path segment', path: '__proto__', value: '{}' },
+            { label: 'constructor path segment', path: 'constructor', value: '{}' },
         ])('agrees with the JS matcher for $label', async ({ path, value }) => {
             const ctx = await setup()
             const { table, field } = await seedJsonTable(ctx)

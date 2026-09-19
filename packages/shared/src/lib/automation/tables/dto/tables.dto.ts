@@ -5,6 +5,7 @@ import { formErrors } from '../../../form-errors'
 import { FieldState } from '../../project-release/project-state'
 import { TableAutomationStatus, TableAutomationTrigger } from '../table'
 import { TableWebhookEventType } from '../table-webhook'
+import { MAX_KEY_FIELDS } from './records.dto'
 
 export const SAFE_EXTERNAL_ID_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/
 
@@ -69,8 +70,11 @@ export type CountTablesRequest = z.infer<typeof CountTablesRequest>
 // backfills `record.keyValue`; from then on the partial unique index
 // `record(projectId, tableId, keyValue) WHERE keyValue IS NOT NULL` enforces it. No
 // `.min(1)` here — an empty array is the "clear the key" request, not an invalid one.
+// Capped, though: `declareKey` dedupes this array with the quadratic `unique()` before any
+// database work, so an uncapped array blocks the whole single-threaded API process. See
+// MAX_KEY_FIELDS.
 export const DeclareTableKeyRequest = z.object({
-    keyFieldIds: z.array(z.string()),
+    keyFieldIds: z.array(z.string()).max(MAX_KEY_FIELDS),
 })
 
 export type DeclareTableKeyRequest = z.infer<typeof DeclareTableKeyRequest>

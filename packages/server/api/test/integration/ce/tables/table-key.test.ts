@@ -1,4 +1,4 @@
-import { FieldType } from '@aiqadam/shared'
+import { FieldType, MAX_KEY_FIELDS } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { db } from '../../../helpers/db'
@@ -119,6 +119,105 @@ describe('Table key declaration (#409)', () => {
         })
     })
 
+    describeWithAuth('records with no key value at all', () => app!, (setup) => {
+        // The grid's "+" button posts a record with zero cells. Deriving a real key value
+        // from that (the all-empty tuple) puts the row INSIDE the partial index, so the
+        // second blank row on a keyed table collides and the web write queue drops it
+        // without telling anyone. A record whose key columns were never written has no key.
+        it('lets more than one record exist with every key column empty', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+
+            const first = await ctx.post('/v1/records', { tableId: table.id, records: [[]] })
+            const second = await ctx.post('/v1/records', { tableId: table.id, records: [[]] })
+
+            expect(first?.statusCode).toBe(StatusCodes.CREATED)
+            expect(second?.statusCode).toBe(StatusCodes.CREATED)
+            const records = await db.find<{ keyValue: string | null }>('record', { tableId: table.id })
+            expect(records.map((record) => record.keyValue)).toEqual([null, null])
+        })
+
+        it('treats an explicitly empty key cell the same as an absent one', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+
+            const first = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: '' }]] })
+            const second = await ctx.post('/v1/records', { tableId: table.id, records: [[]] })
+
+            expect(first?.statusCode).toBe(StatusCodes.CREATED)
+            expect(second?.statusCode).toBe(StatusCodes.CREATED)
+        })
+
+        it('puts a record back outside the index when its key cell is cleared', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+            const created = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'k' }]] })
+            const recordId = created?.json()[0].id
+
+            const response = await ctx.post(`/v1/records/${recordId}`, { tableId: table.id, cells: [{ fieldId: field.id, value: '' }] })
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+
+            const after = await db.findOneBy<{ keyValue: string | null }>('record', { id: recordId })
+            expect(after?.keyValue).toBeNull()
+        })
+
+        // A btree index entry cannot exceed 2704 bytes, and a cell value is unbounded. An
+        // over-long key used to raise Postgres 54000 — which is not 23505, so nothing
+        // mapped it and it surfaced as a 500.
+        it('accepts a key value far larger than a btree index entry', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+
+            const longValue = 'x'.repeat(8000)
+            const first = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: longValue }]] })
+            const duplicate = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: longValue }]] })
+
+            expect(first?.statusCode).toBe(StatusCodes.CREATED)
+            expect(duplicate?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+    })
+
+    describeWithAuth('clearing and re-declaring a key', () => app!, (setup) => {
+        // clearKey used to leave record.keyValue populated. The index is partial on
+        // `WHERE keyValue IS NOT NULL` and does NOT consult table.keyFieldIds, so those
+        // stale entries stayed live: edit the rows while unkeyed, re-declare, and the
+        // row-at-a-time backfill walks into a 23505 the pre-scan had just approved — a
+        // raw 500 on a legitimate operation.
+        it('clears every record.keyValue along with the declaration', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+            await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'a' }]] })
+
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [] })
+
+            const records = await db.find<{ keyValue: string | null }>('record', { tableId: table.id })
+            expect(records.map((record) => record.keyValue)).toEqual([null])
+        })
+
+        it('re-declares a key after the values were swapped while the table was unkeyed', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+            const first = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'a' }]] })
+            const second = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'b' }]] })
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [] })
+
+            await ctx.post(`/v1/records/${first?.json()[0].id}`, { tableId: table.id, cells: [{ fieldId: field.id, value: 'b' }] })
+            await ctx.post(`/v1/records/${second?.json()[0].id}`, { tableId: table.id, cells: [{ fieldId: field.id, value: 'a' }] })
+
+            const response = await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const records = await db.find<{ keyValue: string | null }>('record', { tableId: table.id })
+            expect(new Set(records.map((record) => record.keyValue)).size).toBe(2)
+        })
+    })
+
     describeWithAuth('POST /v1/records/:id — unique enforcement on update', () => app!, (setup) => {
         it('rejects an update that would collide with another record\'s key', async () => {
             const ctx = await setup()
@@ -202,6 +301,55 @@ describe('Table key declaration (#409)', () => {
             })
 
             expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        // ON CONFLICT cannot arbitrate a null conflict target, so two such rows would both
+        // insert. assertEveryRecordCarriesTheKey only proves the COLUMNS were sent.
+        it('rejects an upsert whose key columns are all empty', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [field.id],
+                records: [[{ fieldId: field.id, value: '' }]],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+    })
+
+    describeWithAuth('POST /v1/records/batch — unique enforcement on batch update', () => app!, (setup) => {
+        it('rejects a batch update that would collide with another record\'s key', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+            await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [field.id] })
+            await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'a' }]] })
+            const second = await ctx.post('/v1/records', { tableId: table.id, records: [[{ fieldId: field.id, value: 'b' }]] })
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [{ id: second?.json()[0].id, cells: [{ fieldId: field.id, value: 'a' }] }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+    })
+
+    describeWithAuth('POST /v1/tables/:id/key — request bounds', () => app!, (setup) => {
+        // declareKey dedupes this array with the quadratic `unique()` as its very first
+        // statement, before any database work — so an uncapped array blocks the whole
+        // single-threaded API process rather than merely failing validation.
+        it('rejects more key columns than MAX_KEY_FIELDS', async () => {
+            const ctx = await setup()
+            const { table, field } = await createTableWithField(ctx)
+
+            const response = await ctx.post(`/v1/tables/${table.id}/key`, {
+                keyFieldIds: Array.from({ length: MAX_KEY_FIELDS + 1 }, () => field.id),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
     })
 

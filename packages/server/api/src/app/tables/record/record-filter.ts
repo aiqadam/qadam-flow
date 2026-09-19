@@ -144,7 +144,15 @@ function matchesJsonPath({ value, path, expected }: { value: unknown, path: stri
         if (isNil(current) || typeof current !== 'object') {
             return false
         }
-        current = (current as Record<string, unknown>)[segment]
+        // Read through a property descriptor rather than an `as` cast. Besides being the
+        // no-cast form, it confines the lookup to the document's OWN keys: a "__proto__"
+        // or "constructor" segment then resolves to nothing instead of walking onto
+        // Object.prototype and matching every object-valued cell in the table.
+        const descriptor = Object.getOwnPropertyDescriptor(current, segment)
+        if (isNil(descriptor)) {
+            return false
+        }
+        current = descriptor.value
     }
     if (current === undefined) {
         return false

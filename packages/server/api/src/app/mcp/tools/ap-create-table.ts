@@ -1,4 +1,4 @@
-import { apId, FieldType, isNil, McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { apId, FieldType, isNil, MAX_KEY_FIELDS, McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { fieldService } from '../../tables/field/field.service'
@@ -16,7 +16,7 @@ const createTableInput = z.object({
     // #409. Field NAMES, not ids — the ids do not exist yet at this point in the call.
     // Declaring a key on brand-new fields never collides (there are no records yet),
     // so this always succeeds if the names resolve.
-    keyFields: z.array(z.string()).optional().describe('Field names (from `fields` above) that together form this table\'s unique business key. Optional — omit for no key.'),
+    keyFields: z.array(z.string()).max(MAX_KEY_FIELDS).optional().describe('Field names (from `fields` above) that together form this table\'s unique business key. Optional — omit for no key.'),
 })
 
 export const apCreateTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -68,7 +68,14 @@ export const apCreateTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
 
                 let keyLine = ''
                 if (!isNil(keyFields) && keyFields.length > 0) {
-                    const keyFieldIds = keyFields.map((keyField) => createdFields.find((field) => field.name === keyField)?.id).filter((id): id is string => id !== undefined)
+                    const keyFieldIds = keyFields.map((keyField) => createdFields.find((field) => field.name === keyField)?.id).filter((id): id is string => !isNil(id))
+                    // Declaring a partial key because a name failed to resolve would be
+                    // worse than failing: the table would silently enforce uniqueness on
+                    // fewer columns than the caller asked for. The name check above makes
+                    // this unreachable unless two fields share a name.
+                    if (keyFieldIds.length !== keyFields.length) {
+                        return { content: [{ type: 'text', text: `❌ Table "${name}" was created (id: ${table.id}) but its key was not declared: field names in \`keyFields\` must each match exactly one field. Declare it with ap_manage_fields DECLARE_KEY.` }] }
+                    }
                     await tableService.declareKey({ projectId: mcp.projectId, id: table.id, keyFieldIds })
                     keyLine = `\nKey: ${keyFields.join(', ')}`
                 }

@@ -1,4 +1,4 @@
-import { apId, FieldType, FilterOperator, MAX_KEY_FIELDS_PER_UPSERT } from '@aiqadam/shared'
+import { apId, FieldType, FilterOperator, MAX_KEY_FIELDS } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import qs from 'qs'
@@ -1079,7 +1079,7 @@ describe('Record API', () => {
 
             const response = await ctx.post('/v1/records/upsert', {
                 tableId: table.id,
-                keyFieldIds: Array.from({ length: MAX_KEY_FIELDS_PER_UPSERT + 1 }, () => field.id),
+                keyFieldIds: Array.from({ length: MAX_KEY_FIELDS + 1 }, () => field.id),
                 records: [[{ fieldId: field.id, value: 'k' }]],
             })
 

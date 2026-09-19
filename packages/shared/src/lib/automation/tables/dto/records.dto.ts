@@ -33,11 +33,16 @@ export const MAX_RECORDS_PER_BATCH = 1000
 // is paid by a request that is about to be rejected anyway. 200 costs roughly 1.5 ms
 // against 100 ms for 1000.
 //
+// Bounds POST /v1/tables/:id/key (DeclareTableKeyRequest) for the same reason, which is
+// why the name is not upsert-specific: tableService.declareKey runs the same `unique()`
+// on the same caller-supplied array as its very first statement, before it touches the
+// database at all.
+//
 // The basis is that no composite business key is 200 columns wide — NOT any relation to
 // MAX_FIELDS_PER_TABLE. That is an AppSystemProp read in the api package, which shared
 // structurally cannot see, so this constant can never track it: do not raise this
 // because an operator raised that.
-export const MAX_KEY_FIELDS_PER_UPSERT = 200
+export const MAX_KEY_FIELDS = 200
 
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
@@ -144,9 +149,9 @@ export const UpsertRecordsRequest = z.object({
     // The business key to match on. Without it an upsert is just a create, so it is
     // required rather than defaulted to something. Capped because the service dedupes
     // this array before any validation runs and that dedupe is quadratic — see
-    // MAX_KEY_FIELDS_PER_UPSERT. The bound that keeps the matching loop cheap is the
+    // MAX_KEY_FIELDS. The bound that keeps the matching loop cheap is the
     // dedupe itself, which leaves at most as many ids as the table has columns.
-    keyFieldIds: z.array(z.string()).min(1, formErrors.required).max(MAX_KEY_FIELDS_PER_UPSERT),
+    keyFieldIds: z.array(z.string()).min(1, formErrors.required).max(MAX_KEY_FIELDS),
     records: z.array(z.array(z.object({
         fieldId: z.string(),
         value: coerceToString,

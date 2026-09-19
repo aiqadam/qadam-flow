@@ -18,4 +18,7 @@ export const formErrors = {
     tableHasDuplicateKeys: 'tableHasDuplicateKeys',
     keyFieldInUse: 'keyFieldInUse',
     duplicateKeyValue: 'duplicateKeyValue',
+    tableKeyColumnsNotInTable: 'tableKeyColumnsNotInTable',
+    upsertKeyMustMatchDeclaredKey: 'upsertKeyMustMatchDeclaredKey',
+    upsertKeyValuesAreEmpty: 'upsertKeyValuesAreEmpty',
 } as const

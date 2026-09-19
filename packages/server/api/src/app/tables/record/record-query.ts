@@ -102,11 +102,17 @@ function buildCellCondition({ predicate, alias }: { predicate: CellPredicate, al
 // there is no portable, extension-free safe-cast for text→jsonb before Postgres 16's
 // `IS JSON` predicate, and this repo runs pg14. Accepted as a documented limitation
 // rather than adding a database function for it.
+// `array_remove(..., '')` matches the JS matcher's own
+// `.split('.').filter((segment) => segment.length > 0)` exactly. Without it the two
+// disagree on a path carrying an empty segment ("a." or "a..b"): SQL would resolve
+// `a` -> `''` where JS stops at `a`, and on a document with an empty-string key
+// (`{"a":{"":"x"}}`) SQL sees a provable string mismatch and drops a row JS would have
+// kept — the one direction the invariant above forbids.
 function buildJsonPathEqCondition({ predicate, alias }: { predicate: Extract<CellPredicate, { kind: 'jsonPathEq' }>, alias: string }): { condition: string, params: Record<string, unknown> } {
-    const extractedPath = `jsonb_extract_path(NULLIF("${alias}"."value", '')::jsonb, VARIADIC string_to_array(:${alias}_path, '.'))`
+    const extractedPath = `jsonb_extract_path(NULLIF("${alias}"."value", '')::jsonb, VARIADIC array_remove(string_to_array(:${alias}_path, '.'), ''))`
     const condition = ` AND "${alias}"."value" IS NOT NULL AND "${alias}"."value" <> '' AND (` +
         `jsonb_typeof(${extractedPath}) IS DISTINCT FROM 'string' OR ` +
-        `jsonb_extract_path_text(NULLIF("${alias}"."value", '')::jsonb, VARIADIC string_to_array(:${alias}_path, '.')) = :${alias}_value)`
+        `jsonb_extract_path_text(NULLIF("${alias}"."value", '')::jsonb, VARIADIC array_remove(string_to_array(:${alias}_path, '.'), '')) = :${alias}_value)`
     return {
         condition,
         params: {

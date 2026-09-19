@@ -1,4 +1,4 @@
-import { FieldType, isNil, McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { FieldType, isNil, MAX_KEY_FIELDS, McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { fieldService } from '../../tables/field/field.service'
@@ -13,7 +13,7 @@ const manageFieldsInput = z.object({
     name: z.string().optional().describe('Field name (required for ADD and UPDATE)'),
     type: fieldTypeSchema.optional().describe('Field type (required for ADD only)'),
     options: z.array(z.string()).optional().describe('Dropdown options (required for ADD with STATIC_DROPDOWN type)'),
-    keyFieldIds: z.array(z.string()).optional().describe('Field IDs that together form the table\'s unique business key (required for DECLARE_KEY). A field that is part of the current key cannot be deleted until CLEAR_KEY runs first.'),
+    keyFieldIds: z.array(z.string()).max(MAX_KEY_FIELDS).optional().describe('Field IDs that together form the table\'s unique business key (required for DECLARE_KEY). A field that is part of the current key cannot be deleted until CLEAR_KEY runs first.'),
 })
 
 export const apManageFieldsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
