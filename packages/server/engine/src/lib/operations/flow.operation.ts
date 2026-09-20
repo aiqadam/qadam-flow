@@ -178,7 +178,7 @@ async function insertSuccessStepsOrPausedRecursively({ stepOutput, isWaitpointRe
             for (const [step, output] of Object.entries(iteration)) {
                 const newOutput = await insertSuccessStepsOrPausedRecursively({ stepOutput: output, isWaitpointResume })
                 if (!isNil(newOutput)) {
-                    executionJournal.setOwnStep(newSteps, step, newOutput)
+                    executionJournal.setOwnStep({ target: newSteps, stepName: step, value: newOutput })
                 }
             }
             newIterations.push(newSteps)

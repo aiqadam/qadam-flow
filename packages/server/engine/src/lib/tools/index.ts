@@ -180,7 +180,7 @@ async function execute(operation: ExecuteToolOperationWithModel): Promise<Execut
         // bare index: a bare read for an action name that never produced a step resolves those
         // names off `Object.prototype` instead of `undefined`, which would report `SUCCESS` with
         // an `undefined` output for an action that never ran.
-        const stepResult = executionJournal.getOwnStep(output.steps, operation.actionName)
+        const stepResult = executionJournal.getOwnStep({ target: output.steps, stepName: operation.actionName })
         if (isNil(stepResult)) {
             throw new Error(`No step output found for action "${operation.actionName}"`)
         }

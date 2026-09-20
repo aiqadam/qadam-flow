@@ -14,7 +14,7 @@ export const executionJournal = {
     // every place that reads a step out of a `Record<string, StepOutput>` — inside this file, in
     // the engine's `FlowExecutorContext`, and in `flow.operation.ts`'s RESUME rebuild — shares the
     // one implementation instead of growing a fourth copy.
-    getOwnStep<T>(target: Record<string, T>, stepName: string): T | undefined {
+    getOwnStep<T>({ target, stepName }: { target: Record<string, T>, stepName: string }): T | undefined {
         return Object.hasOwn(target, stepName) ? target[stepName] : undefined
     },
 
@@ -25,25 +25,25 @@ export const executionJournal = {
     // `Object.keys`/`Object.entries`/`JSON.stringify` (i.e. the persisted run log) even though a
     // direct read of that literal key still resolves it, which is how the step's result can
     // silently vanish from the log while still being live in memory.
-    setOwnStep<T>(target: Record<string, T>, stepName: string, value: T): void {
+    setOwnStep<T>({ target, stepName, value }: { target: Record<string, T>, stepName: string, value: T }): void {
         Object.defineProperty(target, stepName, { value, writable: true, enumerable: true, configurable: true })
     },
 
     upsertStep({ stepName, stepOutput, path, steps, createLoopIterationIfNotExists }: UpsertStepParams): Record<string, StepOutput> {
         const target: Record<string, BaseStepOutput> = createLoopIterationIfNotExists ? this.getOrCreateStateAtPath({ path, steps }) : this.getStateAtPath({ path, steps })
-        this.setOwnStep(target, stepName, stepOutput)
+        this.setOwnStep({ target, stepName, value: stepOutput })
         return steps
     },
 
     getStep({ stepName, path, steps }: GetStepParams): StepOutput | undefined {
-        return this.getOwnStep(this.getStateAtPath({ path, steps }), stepName)
+        return this.getOwnStep({ target: this.getStateAtPath({ path, steps }), stepName })
     },
 
     getStateAtPath({ path, steps }: GetStateAtPathParams): Record<string, StepOutput> {
         let target = steps
 
         for (const [parentStepName, iteration] of path) {
-            const step = this.getOwnStep(target, parentStepName)
+            const step = this.getOwnStep({ target, stepName: parentStepName })
             if (!step) {
                 throw new Error(`Step ${parentStepName} not found in path ${path}`)
             }
@@ -68,7 +68,7 @@ export const executionJournal = {
         let target = steps
 
         for (const [parentStepName, iteration] of path) {
-            let step = this.getOwnStep(target, parentStepName)
+            let step = this.getOwnStep({ target, stepName: parentStepName })
             if (!step ) {
                 step = LoopStepOutput.init({ input: null })
             }
@@ -81,7 +81,7 @@ export const executionJournal = {
                 loopStepOutput = loopStepOutput.setItemAndIndex({ item: undefined, index: iteration }).addIteration()
                 iterationOutput = loopStepOutput.output?.iterations[iteration] ?? {}
             }
-            this.setOwnStep(target, parentStepName, loopStepOutput)
+            this.setOwnStep({ target, stepName: parentStepName, value: loopStepOutput })
             target = iterationOutput
         }
         return target
@@ -122,7 +122,7 @@ export const executionJournal = {
                     }
                 }, {} as Record<string, LoopStepOutput>)
                 if (isNil(iterationsResult)) {
-                    this.setOwnStep(result, stepName, step as LoopStepOutput)
+                    this.setOwnStep({ target: result, stepName, value: step as LoopStepOutput })
                     return
                 }
                 result = {

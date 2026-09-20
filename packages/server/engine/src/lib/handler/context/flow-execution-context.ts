@@ -77,7 +77,7 @@ export class FlowExecutorContext {
     public getLoopStepOutput({ stepName }: { stepName: string }): LoopStepOutput | undefined {
         const stateAtPath = executionJournal.getStateAtPath({ path: this.currentPath.path, steps: this.steps })
 
-        const stepOutput = executionJournal.getOwnStep(stateAtPath, stepName)
+        const stepOutput = executionJournal.getOwnStep({ target: stateAtPath, stepName })
         if (isNil(stepOutput)) {
             return undefined
         }
@@ -87,7 +87,7 @@ export class FlowExecutorContext {
 
     public isCompleted({ stepName }: { stepName: string }): boolean {
         const stateAtPath = executionJournal.getStateAtPath({ path: this.currentPath.path, steps: this.steps })
-        const stepOutput = executionJournal.getOwnStep(stateAtPath, stepName)
+        const stepOutput = executionJournal.getOwnStep({ target: stateAtPath, stepName })
         if (isNil(stepOutput)) {
             return false
         }
@@ -96,7 +96,7 @@ export class FlowExecutorContext {
 
     public isPaused({ stepName }: { stepName: string }): boolean {
         const stateAtPath = executionJournal.getStateAtPath({ path: this.currentPath.path, steps: this.steps })
-        const stepOutput = executionJournal.getOwnStep(stateAtPath, stepName)
+        const stepOutput = executionJournal.getOwnStep({ target: stateAtPath, stepName })
         if (isNil(stepOutput)) {
             return false
         }
@@ -201,8 +201,8 @@ export class FlowExecutorContext {
     public async currentState(referencedStepNames?: string[]): Promise<Record<string, unknown>> {
         const referencedSteps = referencedStepNames
             ? referencedStepNames.reduce((acc, stepName) => {
-                const step = executionJournal.getOwnStep(this.steps, stepName)
-                if (!isNil(step)) executionJournal.setOwnStep(acc, stepName, step)
+                const step = executionJournal.getOwnStep({ target: this.steps, stepName })
+                if (!isNil(step)) executionJournal.setOwnStep({ target: acc, stepName, value: step })
                 return acc
             }, {} as Record<string, StepOutput>)
             : this.steps
@@ -211,7 +211,7 @@ export class FlowExecutorContext {
         let targetMap = this.steps
 
         for (const [stepName, iteration] of this.currentPath.path) {
-            const stepOutput = executionJournal.getOwnStep(targetMap, stepName)
+            const stepOutput = executionJournal.getOwnStep({ target: targetMap, stepName })
             if (isNil(stepOutput) || !stepOutput.output || stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
                 throw new EngineGenericError('NotInstanceOfLoopOnItemsStepOutputError', '[ExecutionState#getTargetMap] Not instance of Loop On Items step output')
             }
@@ -232,7 +232,7 @@ async function extractStepView(steps: Record<string, StepOutput>, engineApi: Eng
         const error = step.status === StepOutputStatus.FAILED && step.errorMessage !== undefined
             ? { message: step.errorMessage }
             : undefined
-        executionJournal.setOwnStep(result, stepName, { output, error })
+        executionJournal.setOwnStep({ target: result, stepName, value: { output, error } })
     }
     return result
 }
