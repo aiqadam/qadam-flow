@@ -41,6 +41,7 @@
     "workers": "npx ts-node -r tsconfig-paths/register --project packages/cli/tsconfig.json packages/cli/src/index.ts workers",
     "check-i18n": "node tools/ci/check-i18n.mjs",
     "check-dropdown-defaults": "node tools/ci/check-dropdown-defaults.mjs",
+    "check-required-prop-defaults": "node tools/ci/check-required-prop-defaults.mjs",
     "check-agent-docs": "node tools/ci/check-agent-docs.mjs",
     "bump-translated-qadams": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/qadams/bump-translated-qadams.ts",
     "bump-all-qadams-patch-version": "npx ts-node --project tools/tsconfig.tools.json tools/scripts/qadams/bump-all-qadams-patch-version.ts"

@@ -56,3 +56,4 @@ Three types: `QadamAuth.SecretText()` with validate callback, `QadamAuth.OAuth2(
 - Use `httpClient` from `@aiqadam/qadams-common` for HTTP requests
 - Always provide `sampleData` for triggers
 - i18n: `src/i18n/translation.json` with identity-mapped English keys
+- A prop added to an action/trigger that has already shipped must be **optional**, or **required with a `defaultValue` that reproduces the old behavior** — a required prop with no default orphans every flow authored before it existed (#479). See "Adding a prop to an action/trigger that has already shipped" in the `qadam-builder` skill for the full rule; `npm run check-required-prop-defaults` enforces the mechanical half of it in CI.
