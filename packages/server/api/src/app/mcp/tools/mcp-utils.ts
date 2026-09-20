@@ -452,6 +452,28 @@ function readFlowToolReference(tool: unknown): string | null {
     return typeof externalFlowId === 'string' && externalFlowId.length > 0 ? externalFlowId : null
 }
 
+// Single source of the wording for a qadam pin's resolvability, shared by `ap_validate_flow` and
+// `ap_flow_structure` so the two tools cannot tell an agent contradictory things about the same
+// fact. `qadamPinUtil.resolvePins` is tri-state; `false` is a confirmed miss, and only there is the
+// destructive remedy (delete-and-re-add) warranted. `undefined` means the check itself failed —
+// this must never claim the pin definitely does not exist, and must never advise destroying the
+// step's sample data based on a reading that was never actually verified (#474).
+function qadamPinIssue({ pin, resolvable }: { pin: string, resolvable: boolean | undefined }): QadamPinIssue | null {
+    if (resolvable === true) {
+        return null
+    }
+    if (resolvable === false) {
+        return {
+            severity: 'unavailable',
+            message: `is pinned to ${pin}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+        }
+    }
+    return {
+        severity: 'unverified',
+        message: `is pinned to ${pin}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
+    }
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -489,12 +511,13 @@ export const mcpUtils = {
     rewriteAgentFlowToolIds,
     normalizeAgentFlowToolIds,
     extractOptionsArray,
+    qadamPinIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary }
+export type { PropSummary, QadamPinIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -557,3 +580,8 @@ type ResolveRouterStepResult =
 type ResolveLatestQadamVersionResult =
     | { qadamVersion: string, normalizedPieceName: string, error?: never }
     | { error: McpToolResult, qadamVersion?: never, normalizedPieceName?: never }
+
+type QadamPinIssue = {
+    severity: 'unavailable' | 'unverified'
+    message: string
+}

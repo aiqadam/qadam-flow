@@ -170,13 +170,18 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
 
     return qadamSteps.flatMap((step) => {
         const pin = qadamPinUtil.pinOf({ step })
-        if (resolutions.get(pin) === true) {
+        // Shared with `ap_flow_structure` via `mcpUtils.qadamPinIssue`, so the two tools cannot
+        // give an agent contradictory accounts of the same pin — a confirmed miss (`false`) gets
+        // the assertive wording and the delete-and-re-add remedy; a lookup that merely errored
+        // (`undefined`) must not (#474).
+        const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
+        if (isNil(issue)) {
             return []
         }
         return [{
             category: 'qadam_version' as const,
             stepName: step.name,
-            message: `"${step.displayName}" is pinned to ${pin}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point the step at an available version — delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+            message: `"${step.displayName}" ${issue.message}`,
         }]
     })
 }

@@ -74,30 +74,31 @@ function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions
     if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
         return {}
     }
-    const pin = `${step.settings.qadamName}@${step.settings.qadamVersion}`
+    // `pinOf` rather than re-deriving `name@version` inline: this was the one place left where a
+    // future change to `pinOf`'s format could silently desync the lookup key from the map's keys
+    // (which come from `collectDistinctPins` → `pinOf`) — precisely the duplication `qadamPinUtil`
+    // exists to end.
+    const pin = qadamPinUtil.pinOf({ step })
     return { qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
 }
 
-// Mirrors `ap_validate_flow`'s `qadam_version` category message: name the exact pin, state the
-// consequence (every run and every trigger provisioning attempt fails), and name the fix. A bare
-// warning glyph would tell an agent something is wrong without telling it what to do about it.
-//
-// `qadamVersionResolvable` is `undefined` in two different situations, and this function must NOT
-// treat them the same: the step carries no pin at all (filtered by `isNil(step.qadamPin)` below —
-// nothing to say), or a pin's lookup errored — the platform couldn't be determined at all
-// (`resolveQadamPinAvailability` then never even calls `resolvePins`) or one specific pin's lookup
-// threw. Only a confirmed `=== false` justifies the assertive "does not exist" wording and its
-// destructive remedy (delete-and-re-add, which the MCP server's own instructions elsewhere warn
-// loses sample data) — an unverified reading must say exactly that, and must not tell an agent to
-// destroy a step based on data this tool could not actually confirm.
+// Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
+// give an agent contradictory accounts of the same pin. `qadamVersionResolvable` is `undefined` in
+// two different situations here, and only one of them reaches `qadamPinIssue` at all: the step
+// carries no pin (filtered by `isNil(step.qadamPin)` below — nothing to say), versus a pin whose
+// lookup errored — the platform couldn't be determined at all (`resolveQadamPinAvailability` then
+// never even calls `resolvePins`) or one specific pin's lookup threw. `qadamPinIssue` is the one
+// place that decides the destructive-remedy wording is only warranted for a confirmed `false`.
 function qadamPinWarning(step: StepInfo): string {
-    if (isNil(step.qadamPin) || step.qadamVersionResolvable === true) {
+    if (isNil(step.qadamPin)) {
         return ''
     }
-    if (step.qadamVersionResolvable === false) {
-        return ` ⚠️ PINNED VERSION UNAVAILABLE: "${step.qadamPin}" does not exist on this installation — every run and every trigger provisioning attempt fails on it. Re-point this step at an available version: delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`
+    const issue = mcpUtils.qadamPinIssue({ pin: step.qadamPin, resolvable: step.qadamVersionResolvable })
+    if (isNil(issue)) {
+        return ''
     }
-    return ` ⚠️ PINNED VERSION UNVERIFIED: could not confirm right now whether "${step.qadamPin}" is available on this installation (the check failed transiently). Re-run ap_flow_structure before acting on this — do not delete or re-add this step based on an unverified reading, since that loses its sample data.`
+    const label = issue.severity === 'unavailable' ? 'PINNED VERSION UNAVAILABLE' : 'PINNED VERSION UNVERIFIED'
+    return ` ⚠️ ${label}: this step ${issue.message}`
 }
 
 // A pin-availability signal is a decoration on top of the structure this tool exists to return —
