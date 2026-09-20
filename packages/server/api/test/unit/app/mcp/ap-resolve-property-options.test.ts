@@ -1,3 +1,4 @@
+import { PropertyType } from '@aiqadam/qadams-framework'
 import { McpToolResult, ProjectScopedMcpServer } from '@aiqadam/shared'
 import type { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,7 +24,7 @@ vi.mock('../../../../src/app/mcp/tools/mcp-utils', async (importOriginal) => {
             resolvePlatformId: async (): Promise<string> => 'platform-id',
             lookupQadamComponent: async () => ({
                 qadam: { version: '1.0.0' },
-                component: { props: { channel: { type: 'DROPDOWN', required: true } } },
+                component: { props: { channel: { type: PropertyType.DROPDOWN, required: true } } },
                 qadamName: '@aiqadam/qadam-example',
             }),
         },

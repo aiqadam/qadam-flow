@@ -77,8 +77,8 @@ describe('ap_import_flow — the imported/overwritten flow name cannot forge fak
         const result = await apImportFlowTool({ mcp, userId: 'user-1' }, log).execute({ template })
         const rendered = text(result)
 
+        expect(rendered.split('\n').some(line => line.startsWith('✅ Flow Secrets'))).toBe(false)
         expect(rendered).toContain(`✅ Flow "⟦${injected.replace('\n', ' ')}⟧" (id: flow-1) created from template.`)
-        expect(rendered.split('\n')[0]).not.toContain('\n')
     })
 
     it('wraps the flow name on overwrite-by-flowId and collapses a planted newline', async () => {
