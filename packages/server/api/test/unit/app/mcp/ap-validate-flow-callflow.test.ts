@@ -336,8 +336,13 @@ describe('ap_validate_flow — callFlow checks', () => {
 
         const text = await validate()
 
-        expect(text).toContain('Grandchild')
-        expect(text).toContain('pauses at')
+        // Pins the adjacency the original (#480 pre-wrap) assertion checked — that "Grandchild",
+        // not "Child", is the flow identified as pausing, immediately before "pauses at" — so a
+        // regression that swaps in the wrong flow at that position still fails this test. The
+        // pause reason ("a Wait for Approval") lands after the paused step's own `stepDisplayName`
+        // in this message, not adjacent to the flow name, so it is asserted separately rather than
+        // folded into the same string.
+        expect(text).toContain('⟦Grandchild⟧ pauses at')
         expect(text).toContain('Wait for Approval')
     })
 

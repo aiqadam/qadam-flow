@@ -267,18 +267,45 @@ function truncate(str: string, max: number): string {
 // the model reads as the tool's own voice (#480): a name need only fail to resolve to guarantee the
 // surrounding sentence fires, and nothing stops that name from reading as an instruction itself.
 //
-// This does not reject or alter the value — a name that fails to resolve is exactly the normal case
-// this output exists to report — it only marks where the tool's prose ends and quoted, untrusted
-// data begins, with a delimiter no legitimate flow-authored string collides with. Newlines are
-// collapsed to spaces first so one value cannot masquerade as several lines of trusted output; any
-// literal occurrence of the delimiter itself is stripped so the value cannot forge its own closing
-// bracket and "escape" back into prose early.
+// This does not reject the value — a name that fails to resolve is exactly the normal case this
+// output exists to report — but it is not a lossless passthrough either: it marks where the tool's
+// prose ends and quoted, untrusted data begins with a delimiter no legitimate flow-authored string
+// is allowed to collide with, and that guarantee costs the value any literal occurrence of the
+// delimiter itself (and of a short list of characters that merely *look* like it — see
+// `CONFUSABLE_DELIMITERS`), which are stripped rather than escaped. Every ECMAScript line-terminator
+// (not just `\r`/`\n` — `\u2028`/`\u2029` render as breaks in many consumers, and `\u0085`/`\v`/`\f`
+// are the remaining vertical-whitespace forms) is collapsed to a space first, so one value cannot
+// masquerade as several lines of trusted output — collapsing is the control the whole design rests
+// on, since a fabricated line is what lets injected text imitate one of this tool's own section
+// headers or list items. `wrapFlowValue` is intentionally total: it accepts whatever a jsonb-backed
+// field actually holds at runtime (including `null`/`undefined`, despite a type that promises
+// `string`) rather than trusting the type and throwing on the gap.
 const FLOW_VALUE_OPEN = '⟦'
 const FLOW_VALUE_CLOSE = '⟧'
-function wrapFlowValue(value: string): string {
-    const collapsed = value.replace(/[\r\n]+/g, ' ')
-    const sanitized = collapsed.split(FLOW_VALUE_OPEN).join('').split(FLOW_VALUE_CLOSE).join('')
+// Characters that read as "the same kind of bracket" as the real delimiter to a casual glance, or
+// to a model matching loosely on shape rather than codepoint — none of these is FLOW_VALUE_OPEN or
+// FLOW_VALUE_CLOSE, so a naive strip would miss them, and a value built to visually spoof the
+// delimiter's boundary needs to lose them the same way it loses a literal ⟦/⟧ (#480 F5).
+const CONFUSABLE_DELIMITERS = ['〚', '〛', '〖', '〗', '⦋', '⦌', '[[', ']]']
+const LINE_BREAK_PATTERN = /[\r\n\u2028\u2029\u0085\v\f]+/g
+
+function wrapFlowValue(value: unknown): string {
+    const str = typeof value === 'string' ? value : String(value ?? '')
+    const collapsed = str.replace(LINE_BREAK_PATTERN, ' ')
+    const sanitized = [FLOW_VALUE_OPEN, FLOW_VALUE_CLOSE, ...CONFUSABLE_DELIMITERS]
+        .reduce((acc, token) => acc.split(token).join(''), collapsed)
     return `${FLOW_VALUE_OPEN}${sanitized}${FLOW_VALUE_CLOSE}`
+}
+
+// The truncation marker is deliberately appended *after* wrapping, not baked into the content that
+// gets wrapped: appending it inside the delimiter would let a long enough value truncate the marker
+// itself away, and computing it before wrapping would let the value forge it. Wrapping the raw,
+// possibly-truncated content last is what stops the closing bracket from being truncated away in
+// the first place — this keeps that property and adds the same guarantee for the marker text.
+function wrapTruncatedFlowValue(value: string, max: number): string {
+    const isTruncated = value.length > max
+    const content = isTruncated ? value.slice(0, max) : value
+    return `${wrapFlowValue(content)}${isTruncated ? '... (truncated)' : ''}`
 }
 
 function resolveRouterStep({ stepName, trigger }: { stepName: string, trigger: Step }): ResolveRouterStepResult {
@@ -515,6 +542,7 @@ export const mcpUtils = {
     mcpToolError,
     truncate,
     wrapFlowValue,
+    wrapTruncatedFlowValue,
     resolveRouterStep,
     routerInvalidWarning,
     publishedFlowWarning,

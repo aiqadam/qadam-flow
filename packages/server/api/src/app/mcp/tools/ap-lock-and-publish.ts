@@ -41,6 +41,9 @@ export const apLockAndPublishTool = (mcp: ProjectScopedMcpServer, log: FastifyBa
             const allSteps = flowStructureUtil.getAllSteps(flow.version.trigger)
             const invalidSteps = allSteps.filter(s => !s.valid && !(s as { skip?: boolean }).skip)
             if (invalidSteps.length > 0) {
+                // `s.name` is left bare deliberately, not an oversight: it is constrained by
+                // `STEP_NAME_REGEX` (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) at the schema level, so it can
+                // never carry a space, punctuation or a newline — only `displayName` is free text.
                 const stepList = invalidSteps.map(s => `"${s.name}" (${mcpUtils.wrapFlowValue(s.displayName)})`).join(', ')
                 return {
                     content: [{

@@ -1431,8 +1431,9 @@ describe('MCP Tools integration', () => {
         const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         const output = text(result)
 
-        expect(output).toContain('loopItems:')
-        expect(output).toContain('{{trigger[\'output\'].items}}')
+        // One combined assertion, not two separate `toContain`s: keeps both the rewrite check
+        // (bracket-notation step reference) and the label-to-value placement check together.
+        expect(output).toContain('loopItems: ⟦{{trigger[\'output\'].items}}⟧')
     })
 
     it('52. ap_flow_structure — shows router branch conditions', async () => {
@@ -1621,7 +1622,8 @@ describe('MCP Tools integration', () => {
         expect(dupOutput).toContain('✅')
         expect(dupOutput).toContain('Copy of Original Flow')
 
-        const copyFlowId = dupOutput.match(/Copy: ".*?" \(id: (\S+?)\)/)?.[1]
+        const rawCopyFlowId = dupResult.structuredContent?.flowId
+        const copyFlowId = typeof rawCopyFlowId === 'string' ? rawCopyFlowId : undefined
         expect(copyFlowId).toBeDefined()
 
         const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId: copyFlowId! })
@@ -1713,7 +1715,8 @@ describe('MCP Tools integration', () => {
         })
 
         const dupResult = await apDuplicateFlowTool({ mcp }, mockLog).execute({ flowId })
-        const copyFlowId = text(dupResult).match(/Copy: ".*?" \(id: (\S+?)\)/)?.[1]
+        const rawCopyFlowId = dupResult.structuredContent?.flowId
+        const copyFlowId = typeof rawCopyFlowId === 'string' ? rawCopyFlowId : undefined
         expect(copyFlowId).toBeDefined()
 
         const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId: copyFlowId! })
@@ -2727,7 +2730,8 @@ describe('MCP Tools integration', () => {
         const sourceId = text(sourceResult).match(/\(id: (\S+?)\)/)?.[1]
 
         const dupResult = await apDuplicateFlowTool(context, mockLog).execute({ flowId: sourceId!, name: 'Dup Copy' })
-        const copyId = text(dupResult).match(/Copy: ".*?" \(id: (\S+?)\)/)?.[1]
+        const rawCopyId = dupResult.structuredContent?.flowId
+        const copyId = typeof rawCopyId === 'string' ? rawCopyId : undefined
         const copy = await flowService(mockLog).getOnePopulatedOrThrow({ id: copyId!, projectId: ctx.project.id })
 
         expect(copy.createdBy).toEqual({ type: FlowCreatorType.MCP, id: mcp.id })

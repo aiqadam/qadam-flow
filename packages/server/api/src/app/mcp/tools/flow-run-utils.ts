@@ -1,4 +1,4 @@
-import { apId, FlowActionType, FlowOperationType, FlowRun, FlowRunStatus, flowStructureUtil, FlowTriggerType, isFlowRunStateTerminal, isNil, McpToolResult, RunEnvironment, SampleDataFileType, StepLocationRelativeToParent, StepOutputStatus, tryCatch, UpdateActionRequest } from '@aiqadam/shared'
+import { apId, FailedStep, FlowActionType, FlowOperationType, FlowRun, FlowRunStatus, flowStructureUtil, FlowTriggerType, isFlowRunStateTerminal, isNil, McpToolResult, RunEnvironment, SampleDataFileType, StepLocationRelativeToParent, StepOutputStatus, tryCatch, UpdateActionRequest } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flowService } from '../../flows/flow/flow.service'
 import { flowRunService, isOutsideRetentionWindow } from '../../flows/flow-run/flow-run-service'
@@ -338,7 +338,7 @@ export function formatRunResult(run: FlowRun): string {
     lines.push(`  Flow: ${run.flowId} | Environment: ${run.environment}`)
 
     if (run.failedStep) {
-        lines.push(`  Failed at: ${run.failedStep.displayName ? mcpUtils.wrapFlowValue(run.failedStep.displayName) : run.failedStep.name}`)
+        lines.push(`  Failed at: ${failedStepLabel(run.failedStep)}`)
     }
 
     const steps = run.steps
@@ -362,11 +362,20 @@ export function formatRunResult(run: FlowRun): string {
 
 export function formatRunSummary(run: FlowRun): string {
     const env = run.environment === RunEnvironment.TESTING ? ' [TEST]' : ''
-    const failed = run.failedStep ? ` | Failed: ${run.failedStep.displayName ? mcpUtils.wrapFlowValue(run.failedStep.displayName) : run.failedStep.name}` : ''
+    const failed = run.failedStep ? ` | Failed: ${failedStepLabel(run.failedStep)}` : ''
     const dur = formatDuration(run.startTime, run.finishTime)
     const durStr = dur !== 'N/A' ? ` | ${dur}` : ''
     const expired = isStepDataExpired(run) ? ' | step data expired' : ''
     return `${statusIcon(run.status)} ${run.id} — ${run.status}${env}${durStr}${failed}${expired} | ${run.created}`
+}
+
+// `displayName` is flow-authored and free text; `name` is the step's schema-constrained identifier
+// (`STEP_NAME_REGEX`) and always safe to print bare. Deliberate decision, not an oversight: an
+// empty-string `displayName` is treated the same as a missing one and falls back to `name`, rather
+// than rendering `⟦⟧` — a step with nothing meaningful to show is exactly the "not set" case, and
+// this is the one behaviour the wrap introduced beyond delimiting (#480 code-quality review).
+function failedStepLabel(failedStep: FailedStep): string {
+    return failedStep.displayName ? mcpUtils.wrapFlowValue(failedStep.displayName) : failedStep.name
 }
 
 function statusIcon(status: FlowRunStatus): string {

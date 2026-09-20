@@ -138,21 +138,26 @@ function formatStepSettings(step: Step, includeInput: boolean): string[] {
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${mcpUtils.wrapFlowValue(includeInput ? formatted : mcpUtils.truncate(formatted, 500))}`)
+            lines.push(`  input: ${mcpUtils.wrapTruncatedFlowValue(formatted, includeInput ? Infinity : 500)}`)
         }
     }
     else if (step.type === FlowActionType.CODE) {
+        // `wrapTruncatedFlowValue` collapses embedded newlines, so a multi-line CODE step's preview
+        // now renders on one line here — a readability cost accepted deliberately: this is a
+        // truncated overview, `ap_read_step_code` is still the untruncated, multi-line fidelity
+        // path for this same source, and `structuredContent.steps[].input` still carries the raw
+        // (unwrapped) value when `includeInput` is set.
         const sourceCode = settings.sourceCode as { code?: string, packageJson?: string } | undefined
         if (sourceCode?.code) {
-            lines.push(`  sourceCode: ${mcpUtils.wrapFlowValue(mcpUtils.truncate(sourceCode.code, 300))}`)
+            lines.push(`  sourceCode: ${mcpUtils.wrapTruncatedFlowValue(sourceCode.code, 300)}`)
         }
         if (sourceCode?.packageJson && sourceCode.packageJson !== '{}') {
-            lines.push(`  packageJson: ${mcpUtils.wrapFlowValue(mcpUtils.truncate(sourceCode.packageJson, 200))}`)
+            lines.push(`  packageJson: ${mcpUtils.wrapTruncatedFlowValue(sourceCode.packageJson, 200)}`)
         }
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${mcpUtils.wrapFlowValue(includeInput ? formatted : mcpUtils.truncate(formatted, 300))}`)
+            lines.push(`  input: ${mcpUtils.wrapTruncatedFlowValue(formatted, includeInput ? Infinity : 300)}`)
         }
     }
     else if (step.type === FlowActionType.LOOP_ON_ITEMS) {
@@ -295,7 +300,12 @@ function formatFlowStructure(
 
         if (step.relationship === 'trigger') {
             let triggerDetail = ''
-            if (fullStep && fullStep.type === FlowTriggerType.PIECE) {
+            // Guarded the same way the PIECE-action branch below guards `s?.qadamName`: `qadamName`
+            // is typed `string` on `QadamTrigger`, but this reads a jsonb column, and a malformed or
+            // legacy row is not guaranteed to satisfy that type at runtime. `wrapFlowValue` is total
+            // and would not throw on a missing value, but printing `(qadam: ⟦⟧, trigger: not set)`
+            // for a trigger with nothing configured is worse than printing nothing.
+            if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapFlowValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapFlowValue(fullStep.settings.triggerName) : 'not set'})`
             }
             lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapFlowValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
@@ -323,12 +333,13 @@ function formatFlowStructure(
             const branches = (fullStep.settings as { branches?: { branchName?: string, branchType?: string, conditions?: BranchCondition[][] }[] })?.branches ?? []
             branches.forEach((b, i) => {
                 const btype = b.branchType === BranchExecutionType.FALLBACK ? 'fallback' : 'condition'
+                const branchLabel = b.branchName ? mcpUtils.wrapFlowValue(b.branchName) : '(unnamed)'
                 if (btype === 'condition' && b.conditions && b.conditions.length > 0) {
                     const condStr = formatBranchConditions(b.conditions)
-                    lines.push(`  branch[${i}]: ${mcpUtils.wrapFlowValue(b.branchName ?? '')} (${btype}) | conditions: ${condStr}`)
+                    lines.push(`  branch[${i}]: ${branchLabel} (${btype}) | conditions: ${condStr}`)
                 }
                 else {
-                    lines.push(`  branch[${i}]: ${mcpUtils.wrapFlowValue(b.branchName ?? '')} (${btype})`)
+                    lines.push(`  branch[${i}]: ${branchLabel} (${btype})`)
                 }
             })
         }
@@ -339,6 +350,11 @@ function formatFlowStructure(
     lines.push('Use parentStepName + stepLocationRelativeToParent (and branchIndex when INSIDE_BRANCH).')
     lines.push('')
 
+    // Every `step.name` below is left bare deliberately: `STEP_NAME_REGEX`
+    // (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) constrains it at the schema level, so unlike `displayName` it
+    // can never carry a space, punctuation or a newline — there is nothing here for
+    // `mcpUtils.wrapFlowValue` to guard against, and these values are also copy-pasted verbatim
+    // into a `parentStepName="..."` call argument, where a delimiter would be actively wrong.
     const triggerStep = structure[0]
     if (triggerStep) {
         lines.push(`- After trigger: parentStepName="${triggerStep.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.AFTER}"`)

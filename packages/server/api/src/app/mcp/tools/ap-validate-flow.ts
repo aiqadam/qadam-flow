@@ -135,8 +135,12 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
             const branches = settings.branches ?? []
             for (let i = 0; i < children.length; i++) {
                 if (isNil(children[i])) {
-                    const branchName = branches[i]?.branchName ?? `Branch ${i}`
-                    issues.push({ category: 'empty_branch', stepName: step.name, message: `${mcpUtils.wrapFlowValue(step.displayName)} has empty branch: ${mcpUtils.wrapFlowValue(branchName)}.` })
+                    // Only a set `branchName` is flow-authored; `Branch ${i}` is this tool's own
+                    // fallback label for an unnamed branch and must not be wrapped as if it were
+                    // untrusted data.
+                    const branchName = branches[i]?.branchName
+                    const branchLabel = branchName ? mcpUtils.wrapFlowValue(branchName) : `Branch ${i}`
+                    issues.push({ category: 'empty_branch', stepName: step.name, message: `${mcpUtils.wrapFlowValue(step.displayName)} has empty branch: ${branchLabel}.` })
                 }
             }
         }
@@ -181,7 +185,7 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
         return [{
             category: 'qadam_version' as const,
             stepName: step.name,
-            message: `"${step.displayName}" ${issue.message}`,
+            message: `${mcpUtils.wrapFlowValue(step.displayName)} ${issue.message}`,
         }]
     })
 }

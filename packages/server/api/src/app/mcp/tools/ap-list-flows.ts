@@ -65,6 +65,9 @@ export const apListFlowsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLog
 
 export function formatFlowLine(flow: PopulatedFlow): string {
     const trigger = flow.version.trigger
+    // Deliberate: an empty-string `qadamName` is treated the same as a genuinely unconfigured
+    // trigger and falls back to the same label, rather than rendering an empty `⟦⟧` (#480
+    // code-quality review).
     const triggerLabel = trigger.type === FlowTriggerType.PIECE
         ? (trigger.settings.qadamName ? mcpUtils.wrapFlowValue(trigger.settings.qadamName) : 'qadam (unconfigured)')
         : 'no trigger'
