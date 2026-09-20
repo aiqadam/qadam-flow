@@ -31,6 +31,18 @@ export const migrateV31HealUnresolvableQadamPins: Migration = {
     migrate: async (flowVersion: FlowVersion): Promise<FlowVersion> => {
         const log = system.globalLogger()
         const logContext = { flowVersionId: flowVersion.id, flowId: flowVersion.flowId }
+
+        // Checked before resolving a platform: every flow version in the fleet passes through this
+        // migration exactly once (the `LATEST_FLOW_SCHEMA_VERSION` bump), and most have no pinned
+        // qadam step at all — there is nothing to spend a `getOneById` + `getPlatformId` round trip
+        // on for those, and this runs over the entire installed base at once, right after an image
+        // upgrade, which is exactly when DB pressure is least welcome.
+        const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
+        if (qadamSteps.length === 0) {
+            log.debug({ ...logContext, reason: 'no_qadam_steps' }, '[migrateV31HealUnresolvableQadamPins] no pinned qadam steps in this flow version — nothing to heal')
+            return { ...flowVersion, schemaVersion: '32' }
+        }
+
         const platformId = await resolvePlatformId({ flowId: flowVersion.flowId, log })
         // `migrateFlowVersionTemplate` calls the chain with no context and, on the template-import
         // path, a `flowId` that may not exist in the database at all — there is nothing to derive a
@@ -42,12 +54,6 @@ export const migrateV31HealUnresolvableQadamPins: Migration = {
         // without ever having been checked. `log.warn` is the only trace of that left anywhere.
         if (isNil(platformId)) {
             log.warn({ ...logContext, reason: 'platform_undetermined' }, '[migrateV31HealUnresolvableQadamPins] could not resolve a platform for this flow version — leaving every qadam pin untouched')
-            return { ...flowVersion, schemaVersion: '32' }
-        }
-
-        const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
-        if (qadamSteps.length === 0) {
-            log.debug({ ...logContext, reason: 'no_qadam_steps' }, '[migrateV31HealUnresolvableQadamPins] no pinned qadam steps in this flow version — nothing to heal')
             return { ...flowVersion, schemaVersion: '32' }
         }
 
@@ -77,13 +83,20 @@ export const migrateV31HealUnresolvableQadamPins: Migration = {
             return { ...flowVersion, schemaVersion: '32' }
         }
 
-        const stepNameToReplacementVersion: Record<string, string> = {}
+        // A `Map`, not a `Record`: `transferFlow` below calls its callback for EVERY step, not only
+        // the rewritten ones, and a step name is only checked against `STEP_NAME_REGEX`
+        // (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`), which admits `constructor`, `toString`, `hasOwnProperty`,
+        // `__proto__` — names that survive `ap_import_flow` verbatim. A bare `Record` index on one
+        // of those reaches `Object.prototype` and would hand back a function (or, for `__proto__`,
+        // an object) as the "replacement" version, which `isNil` happily lets through. Same idiom
+        // as the `hasOwn`, not a bare index guard in `ap-validate-flow.ts`'s delay-unit lookup.
+        const stepNameToReplacementVersion = new Map<string, string>()
         const rewrites: { stepName: string, qadamName: string, oldVersion: string, newVersion: string }[] = []
         for (const step of qadamSteps) {
             const isUnresolved = resolutions.get(qadamPinUtil.pinOf({ step })) === false
             const replacement = replacementByName.get(step.settings.qadamName)
             if (isUnresolved && !isNil(replacement)) {
-                stepNameToReplacementVersion[step.name] = replacement
+                stepNameToReplacementVersion.set(step.name, replacement)
                 rewrites.push({ stepName: step.name, qadamName: step.settings.qadamName, oldVersion: step.settings.qadamVersion, newVersion: replacement })
             }
         }
@@ -95,7 +108,7 @@ export const migrateV31HealUnresolvableQadamPins: Migration = {
         log.info({ ...logContext, rewrites }, '[migrateV31HealUnresolvableQadamPins] repointed unresolvable qadam pins to a version the registry currently serves')
 
         const newFlowVersion = flowStructureUtil.transferFlow(flowVersion, (step) => {
-            const replacement = stepNameToReplacementVersion[step.name]
+            const replacement = stepNameToReplacementVersion.get(step.name)
             if (isNil(replacement)) {
                 return step
             }

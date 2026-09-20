@@ -147,6 +147,24 @@ describe('ap_flow_structure — pinned qadam version visibility (#474)', () => {
         expect(mockGet).not.toHaveBeenCalled()
     })
 
+    // The wording must not assert something this tool could not actually confirm, and must not
+    // advise a destructive edit (delete-and-re-add) off the back of an unverified reading.
+    it('reports "unverified", not "unavailable", when the platform lookup fails — and still renders the structure', async () => {
+        mockGetPlatformId.mockRejectedValue(new Error('Platform ID for project project-1 is undefined in webhook.'))
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[TRIGGER]')
+        expect(text).toContain('step_1')
+        expect(text).toContain('PINNED VERSION UNVERIFIED')
+        expect(text).not.toContain('PINNED VERSION UNAVAILABLE')
+        expect(text).not.toContain('does not exist on this installation')
+        expect(text).not.toContain('delete and re-add')
+        expect(mockGet).not.toHaveBeenCalled()
+    })
+
     it('resolves each distinct pin once, not once per step', async () => {
         const firstAction = pieceStep({
             name: 'step_1',

@@ -82,17 +82,22 @@ function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions
 // consequence (every run and every trigger provisioning attempt fails), and name the fix. A bare
 // warning glyph would tell an agent something is wrong without telling it what to do about it.
 //
-// Fires on anything that isn't a confirmed `true`, not just a strict `false`: `qadamVersionResolvable`
-// is `undefined` both when the step carries no pin at all (filtered by `isNil(step.qadamPin)` below)
-// and when a pin's lookup errored rather than definitively missing. For a read-only report, an
-// unresolvable-right-now pin and an unresolvable-because-the-lookup-broke pin are the same actionable
-// fact to a reader; the heal migration (`migrate-v31`) is the caller that must NOT make this
-// collapse, because it persists the answer instead of just displaying it.
+// `qadamVersionResolvable` is `undefined` in two different situations, and this function must NOT
+// treat them the same: the step carries no pin at all (filtered by `isNil(step.qadamPin)` below —
+// nothing to say), or a pin's lookup errored — the platform couldn't be determined at all
+// (`resolveQadamPinAvailability` then never even calls `resolvePins`) or one specific pin's lookup
+// threw. Only a confirmed `=== false` justifies the assertive "does not exist" wording and its
+// destructive remedy (delete-and-re-add, which the MCP server's own instructions elsewhere warn
+// loses sample data) — an unverified reading must say exactly that, and must not tell an agent to
+// destroy a step based on data this tool could not actually confirm.
 function qadamPinWarning(step: StepInfo): string {
     if (isNil(step.qadamPin) || step.qadamVersionResolvable === true) {
         return ''
     }
-    return ` ⚠️ PINNED VERSION UNAVAILABLE: "${step.qadamPin}" does not exist on this installation — every run and every trigger provisioning attempt fails on it. Re-point this step at an available version: delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`
+    if (step.qadamVersionResolvable === false) {
+        return ` ⚠️ PINNED VERSION UNAVAILABLE: "${step.qadamPin}" does not exist on this installation — every run and every trigger provisioning attempt fails on it. Re-point this step at an available version: delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`
+    }
+    return ` ⚠️ PINNED VERSION UNVERIFIED: could not confirm right now whether "${step.qadamPin}" is available on this installation (the check failed transiently). Re-run ap_flow_structure before acting on this — do not delete or re-add this step based on an unverified reading, since that loses its sample data.`
 }
 
 // A pin-availability signal is a decoration on top of the structure this tool exists to return —

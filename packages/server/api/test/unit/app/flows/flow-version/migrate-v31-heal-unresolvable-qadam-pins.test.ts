@@ -149,6 +149,68 @@ function readTwoBrokenPins(version: FlowVersion): { replaceable: string, unrepla
     }
 }
 
+// A healable broken pin on `step_1`, plus a second, perfectly healthy step literally named
+// `constructor` — `STEP_NAME_REGEX` (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) admits it, and it survives
+// `ap_import_flow` verbatim. `transferFlow` invokes its callback for every step, not only the
+// healed one, so a bare `Record` index for the replacement lookup would reach `Object.prototype`
+// for this step and hand back the `Object` constructor as its "replacement" version.
+function flowVersionWithHealableBrokenPinAndPrototypeNamedStep(): FlowVersion {
+    return {
+        id: 'fv-3',
+        created: '2026-01-01T00:00:00.000Z',
+        updated: '2026-01-01T00:00:00.000Z',
+        flowId: 'flow-1',
+        displayName: 'prototype pollution guard flow',
+        valid: true,
+        schemaVersion: '31',
+        state: 'DRAFT',
+        trigger: {
+            name: 'trigger',
+            type: 'EMPTY',
+            valid: true,
+            displayName: 'Select Trigger',
+            settings: {},
+            nextAction: {
+                name: 'step_1',
+                type: FlowActionType.PIECE,
+                valid: true,
+                displayName: 'Broken Step',
+                settings: {
+                    qadamName: BROKEN_QADAM_NAME,
+                    qadamVersion: BROKEN_OLD_VERSION,
+                    actionName: 'doThing',
+                    input: {},
+                    inputUiInfo: {},
+                },
+                nextAction: {
+                    name: 'constructor',
+                    type: FlowActionType.PIECE,
+                    valid: true,
+                    displayName: 'Prototype-Named Step',
+                    settings: {
+                        qadamName: HEALTHY_QADAM_NAME,
+                        qadamVersion: HEALTHY_VERSION,
+                        actionName: 'send_channel_message',
+                        input: {},
+                        inputUiInfo: {},
+                    },
+                },
+            },
+        },
+    } as unknown as FlowVersion
+}
+
+function readPrototypeNamedStepPins(version: FlowVersion): { healed: string, prototypeNamedStepName: string, prototypeNamedStepVersion: unknown } {
+    const chain = version.trigger as unknown as {
+        nextAction: { settings: { qadamVersion: string }, nextAction: { name: string, settings: { qadamVersion: unknown } } }
+    }
+    return {
+        healed: chain.nextAction.settings.qadamVersion,
+        prototypeNamedStepName: chain.nextAction.nextAction.name,
+        prototypeNamedStepVersion: chain.nextAction.nextAction.settings.qadamVersion,
+    }
+}
+
 describe('migrateV31HealUnresolvableQadamPins', () => {
     beforeEach(() => {
         vi.clearAllMocks()
@@ -278,6 +340,20 @@ describe('migrateV31HealUnresolvableQadamPins', () => {
         const pins = readTwoBrokenPins(migrated)
         expect(pins.replaceable).toBe(BROKEN_REPLACEMENT_VERSION)
         expect(pins.unreplaceable).toBe(UNREPLACEABLE_VERSION)
+    })
+
+    // Blocking finding: a bare `Record` index hits `Object.prototype` for a step literally named
+    // `constructor`. This must fail on a `Record`-based implementation (the "replacement" for the
+    // prototype-named step resolves to the `Object` constructor function, not `undefined`, so
+    // `isNil` lets it through and `qadamVersion` gets set to it) and pass with a `Map`.
+    it('does not corrupt a step literally named "constructor" while healing another step in the same flow version', async () => {
+        const migrated = await migrateV31HealUnresolvableQadamPins.migrate(flowVersionWithHealableBrokenPinAndPrototypeNamedStep())
+
+        const pins = readPrototypeNamedStepPins(migrated)
+        expect(pins.healed).toBe(BROKEN_REPLACEMENT_VERSION)
+        expect(pins.prototypeNamedStepName).toBe('constructor')
+        expect(pins.prototypeNamedStepVersion).toBe(HEALTHY_VERSION)
+        expect(typeof pins.prototypeNamedStepVersion).toBe('string')
     })
 
     it('changes nothing on a second pass, once the pin resolves', async () => {
