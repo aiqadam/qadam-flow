@@ -59,8 +59,9 @@ function getCustomPiecesPath(platformId: string): string {
 
 async function installQadams(rootWorkspace: string, pieces: QadamPackage[], includeFilters: boolean, log: Logger, apiClient: WorkerToApiContract): Promise<void> {
     const devQadams = workerSettings.getSettings().DEV_QADAMS
+    const officialQadamsInstallEnabled = workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED
     const nonDevQadams = pieces.filter(piece => !devQadams.includes(getQadamNameFromAlias(piece.qadamName)))
-    const installableQadams = nonDevQadams.filter(needsInstalling)
+    const installableQadams = nonDevQadams.filter(piece => needsInstalling({ piece, officialQadamsInstallEnabled }))
     const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, installableQadams)
 
     if (isEmpty(qadamsToInstall)) {
@@ -157,20 +158,34 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
 // Official qadams are compiled into the image (`Dockerfile`: "Qadams must be pre-compiled because
 // the runtime loader scans <qadam>/dist/ in standalone mode (no cloud registry)") and the engine's
-// loader falls back to `packages/qadams/**/dist` for exactly that reason. They are published to no
-// registry — `npm view @aiqadam/qadam-subflows` is a 404, and `.npmrc` maps no `@aiqadam` scope —
-// so asking bun to install one does not resolve:
+// loader falls back to `packages/qadams/**/dist` for exactly that reason. Today (`OFFICIAL_QADAMS_INSTALL_ENABLED`
+// off, the default) they are published to no registry — `npm view @aiqadam/qadam-subflows` is a
+// 404, and `.npmrc` maps no `@aiqadam` scope — so asking bun to install one does not resolve:
 //
 //   error: GET https://registry.npmjs.org/@aiqadam%2fqadam-subflows - 404
 //   error: @aiqadam/qadam-subflows@0.4.14 failed to resolve
 //
 // That was invisible only because the workspaces glob matched nothing and bun exited 0 without
 // looking. With the glob fixed it becomes a failed install, a rollback, and a failed job — for a
-// qadam the engine would have loaded from `dist` anyway. A custom qadam is the opposite case: an
-// ARCHIVE resolves from a tarball on disk, and a CUSTOM registry package names something that
-// really is published, so both have to be installed for the engine to find them at all.
-function needsInstalling(piece: QadamPackage): boolean {
-    return piece.packageType === PackageType.ARCHIVE || piece.qadamType === QadamType.CUSTOM
+// qadam the engine would have loaded from `dist` anyway.
+//
+// #433/#477 decided that official qadams become real published packages so a version pin survives
+// an image upgrade instead of resolving to whatever happens to be built. Once #475/#476 publish
+// them, flipping `OFFICIAL_QADAMS_INSTALL_ENABLED` on routes OFFICIAL qadams through this same
+// install path a CUSTOM qadam already takes — `qadam-cache.ts`'s `name@version` shadowing has to
+// flip with it, or the DB history this unlocks is discarded before it can be used. Landing this
+// flip before the packages are actually published breaks every existing flow's install with a 404,
+// which is why the flag defaults to off. A custom qadam is installed either way: an ARCHIVE
+// resolves from a tarball on disk, and a CUSTOM registry package names something that really is
+// published, so both have to be installed for the engine to find them at all.
+function needsInstalling({ piece, officialQadamsInstallEnabled }: {
+    piece: QadamPackage
+    officialQadamsInstallEnabled: boolean
+}): boolean {
+    if (piece.packageType === PackageType.ARCHIVE || piece.qadamType === QadamType.CUSTOM) {
+        return true
+    }
+    return officialQadamsInstallEnabled && piece.qadamType === QadamType.OFFICIAL
 }
 
 async function rollbackInstallation(rootWorkspace: string, pieces: QadamPackage[]): Promise<void> {

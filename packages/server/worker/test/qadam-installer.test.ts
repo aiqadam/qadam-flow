@@ -10,6 +10,9 @@ import { qadamInstaller } from '../src/lib/cache/qadams/qadam-installer'
 
 // Module-level variable updated per test so the vi.mock factory can reference it
 let testWorkspace = ''
+// Off by default, matching the real settings default — a test that needs the flag on
+// overrides this before calling installer.install().
+let officialQadamsInstallEnabled = false
 
 const mockInstall = vi.fn()
 
@@ -24,6 +27,7 @@ vi.mock('../src/lib/config/worker-settings', () => ({
         getSettings: () => ({
             EXECUTION_MODE: 'UNSANDBOXED',
             DEV_QADAMS: [],
+            OFFICIAL_QADAMS_INSTALL_ENABLED: officialQadamsInstallEnabled,
         }),
     },
 }))
@@ -116,6 +120,7 @@ const fakeApiClient = {} as never
 beforeEach(async () => {
     testWorkspace = join(tmpdir(), `qadam-installer-test-${randomUUID()}`)
     await mkdir(testWorkspace, { recursive: true })
+    officialQadamsInstallEnabled = false
     vi.clearAllMocks()
     mockInstall.mockReset()
 })
@@ -251,6 +256,40 @@ describe('qadamInstaller', () => {
         })
         expect(await pathExists(readyFilePath(custom))).toBe(true)
         expect(await pathExists(qadamDirPath(official))).toBe(false)
+    })
+
+    // OFFICIAL_QADAMS_INSTALL_ENABLED on: an official qadam is installed through the same
+    // registry path a custom qadam already takes (#477). Off is the default and is covered by
+    // the two tests directly above, which must keep passing byte for byte.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — an official qadam is selected for installation', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [official], includeFilters: true })
+
+        expect(mockInstall).toHaveBeenCalledOnce()
+        expect(mockInstall.mock.calls[0]?.[0]).toMatchObject({
+            filtersPath: [expect.stringContaining(`${official.qadamName}-${official.qadamVersion}`)],
+        })
+        expect(await pathExists(readyFilePath(official))).toBe(true)
+    })
+
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — installs both the official and custom qadams in a mixed set', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [official, custom], includeFilters: true })
+
+        expect(mockInstall).toHaveBeenCalledOnce()
+        expect(await pathExists(readyFilePath(official))).toBe(true)
+        expect(await pathExists(readyFilePath(custom))).toBe(true)
     })
 
     it('the workspaces glob matches the directory qadams are written to', async () => {

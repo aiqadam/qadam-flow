@@ -57,6 +57,7 @@ function buildWorkerSettingsResponse(overrides?: Partial<WorkerSettingsResponse>
         SANDBOX_MEMORY_LIMIT: '1024',
         SANDBOX_PROPAGATED_ENV_VARS: [],
         DEV_QADAMS: [],
+        OFFICIAL_QADAMS_INSTALL_ENABLED: false,
         OTEL_ENABLED: false,
         FILE_STORAGE_LOCATION: '/tmp',
         S3_USE_SIGNED_URLS: 'false',

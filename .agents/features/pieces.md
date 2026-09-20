@@ -21,7 +21,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 
 ## Domain Terms
 - **Qadam** — a named integration (e.g. `@aiqadam/qadam-gmail`) providing actions and triggers
-- **QadamType** — `OFFICIAL` (bundled) or `CUSTOM` (platform-installed)
+- **QadamType** — `OFFICIAL` or `CUSTOM` (platform-installed). Off the `OFFICIAL_QADAMS_INSTALL_ENABLED` flag (default, until #475/#476 publish official qadams to a registry), an `OFFICIAL` qadam is bundled: compiled into the image, loaded in-memory from `dist/package.json` (`loadBundledQadams`), never installed as a package, and shadows any persisted row of the same name regardless of version (`qadam-cache.ts`). With the flag on, `OFFICIAL` qadams are also installed through the same registry path a `CUSTOM` qadam already takes (`needsInstalling()` in `qadam-installer.ts`), and shadowing keys on `name@version` instead of `name` so a persisted official version can sit side by side with a differently-versioned bundled one.
 - **PackageType** — `REGISTRY` (NPM) or `ARCHIVE` (uploaded tarball)
 - **qadamCache** — an in-memory map of piece metadata keyed by name+version+platformId, rebuilt from DB
 - **QadamCategory** — enum grouping pieces (AI, CORE, COMMUNICATION, etc.)

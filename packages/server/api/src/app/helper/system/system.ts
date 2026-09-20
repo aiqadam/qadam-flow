@@ -64,6 +64,10 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.POSTGRES_IDLE_TIMEOUT_MS]: '300000',
     [AppSystemProp.SCIM_DEFAULT_PROJECT_ROLE]: DefaultProjectRole.EDITOR,
     [AppSystemProp.NETWORK_MODE]: NetworkMode.UNRESTRICTED,
+    // Reproduces today's behaviour exactly until #475/#476 publish official qadams to a
+    // registry: `false` keeps `needsInstalling()` excluding OFFICIAL qadams and keeps
+    // `qadamCache` shadowing persisted rows by name alone. See #477.
+    [AppSystemProp.OFFICIAL_QADAMS_INSTALL_ENABLED]: 'false',
 }
 
 let globalLogger: FastifyBaseLogger
