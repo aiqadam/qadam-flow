@@ -13,11 +13,24 @@
 #   - a workspace:* dependency resolves to the DEPENDENCY'S OWN live package.json version;
 #   - the SOURCE tree is never written to, including when resolution fails partway through;
 #   - an artifact still carrying an unresolved workspace: dependency, or a non-exact semver
-#     range, is refused rather than published.
+#     range, is refused rather than published;
+#   - a caret/tilde range on a REAL (non-workspace:) dependency is refused even when workspace:*
+#     entries are present beside it — assertNoSemverRanges has to tolerate workspace:* to be
+#     usable on a SOURCE manifest at all (every one of these three always has some), but must
+#     not let that tolerance swallow an actual range.
 #
-# Needs ts-node and the transform's own dependencies (axios, via package-pre-publish-checks.ts)
-# from node_modules, so — like the migration-metadata and required-prop-defaults suites next to
-# it — this sits after install in _verify.yml rather than with the pure-shell suites above it.
+# Needs the repo's own pinned ts-node (10.9.1) present in node_modules/.bin, so — like the
+# migration-metadata and required-prop-defaults suites next to it — this sits after install in
+# _verify.yml rather than with the pure-shell suites above it. Invoked by its absolute
+# node_modules/.bin path, never `npx ts-node`: the harness runs with its cwd set to a synthetic
+# fixture directory that has its own package.json and no node_modules, so `npx` resolves `npm
+# prefix` to the fixture, finds no local ts-node there, and silently fetches an uncontrolled
+# `ts-node@^10.9.2` (+ typescript) from the registry instead of using this repo's pinned
+# 10.9.1/5.5.4 — reproduced with `npx --no-install`, which fails with "canceled due to missing
+# packages". Axios (a transitive dependency of the transform this harness imports) is not
+# affected by any of this: Node resolves it from the importing file's own directory regardless
+# of cwd, which is why axios-needing code elsewhere in tools/ is fine invoked as `npx ts-node`
+# from the repo root — only `npx`'s OWN bin resolution is cwd-sensitive.
 #
 #   tools/ci/test-publish-workspace-invariants.sh
 
@@ -27,6 +40,12 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../.." && pwd)"
 harness="$here/publish-workspace-invariants-harness.ts"
 ts_project="$repo_root/tools/tsconfig.tools.json"
+ts_node_bin="$repo_root/node_modules/.bin/ts-node"
+
+if [ ! -x "$ts_node_bin" ]; then
+  echo "publish workspace-rewrite invariant tests FAILED: $ts_node_bin not found — run bun install first." >&2
+  exit 1
+fi
 
 pass=0
 fail=0
@@ -63,7 +82,7 @@ new_workspace_fixture() {
 
 run_harness() {
   # $1 = mode, $2 = arg
-  out="$(cd "$root" && npx ts-node --project "$ts_project" "$harness" "$1" "$2" 2>&1)"
+  out="$(cd "$root" && "$ts_node_bin" --project "$ts_project" "$harness" "$1" "$2" 2>&1)"
   status=$?
 }
 
@@ -165,6 +184,27 @@ write_json "$root/dist-package.json" '{
 }'
 run_harness assert-no-semver-ranges "$root/dist-package.json"
 expect_status 0 "an exact version passes"
+
+echo "== assertNoSemverRanges tolerates workspace:* (a different, later-resolved concern) but still catches a real caret/tilde range beside it =="
+
+new_workspace_fixture
+write_json "$root/source-package.json" '{
+  "name": "pkg-b",
+  "version": "1.0.0",
+  "dependencies": { "pkg-a": "workspace:*", "some-lib": "1.2.3" }
+}'
+run_harness assert-no-semver-ranges "$root/source-package.json"
+expect_status 0 "workspace:* alongside exact versions is not flagged as a range"
+
+new_workspace_fixture
+write_json "$root/source-package.json" '{
+  "name": "pkg-b",
+  "version": "1.0.0",
+  "dependencies": { "pkg-a": "workspace:*", "some-lib": "^1.2.3" }
+}'
+run_harness assert-no-semver-ranges "$root/source-package.json"
+expect_status 1 "a caret range on a real dependency is still refused even with workspace:* present"
+expect_contains "some-lib" "the error names the offending dependency, not the tolerated workspace:* one"
 
 echo
 echo "passed: ${pass}   failed: ${fail}"

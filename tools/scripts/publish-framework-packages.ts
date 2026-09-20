@@ -1,4 +1,3 @@
-import { argv, env } from 'node:process'
 import { publishNpmPackage } from './utils/publish-npm-package'
 
 // Every qadam depends on these three through the bun workspace protocol
@@ -16,11 +15,12 @@ const FRAMEWORK_PACKAGE_PATHS = [
 ]
 
 const main = async (): Promise<void> => {
-  const dryRun = argv.includes('--dry-run')
-  // Set by release.yml from `github.ref_name` — `next` for a prerelease tag (`v2.1.0-rc.1`),
-  // `latest` otherwise — never inferred from these packages' own version numbers, which
-  // version independently of the release tag and carry no prerelease marker today.
-  const npmDistTag = env['NPM_DIST_TAG']
+  const dryRun = process.argv.includes('--dry-run')
+  // release.yml no longer sets this: the job is skipped entirely for a prerelease ref (see its
+  // header comment), so every real run here is a stable tag and always publishes to `latest`.
+  // Left overridable for manual/local use — `publishNpmPackage` normalizes an unset or empty
+  // value to `latest` on its own.
+  const npmDistTag = process.env['NPM_DIST_TAG']
 
   for (const path of FRAMEWORK_PACKAGE_PATHS) {
     await publishNpmPackage({ path, dryRun, npmDistTag })
