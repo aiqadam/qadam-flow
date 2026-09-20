@@ -1,4 +1,4 @@
-import { argv } from 'node:process'
+import { argv, env } from 'node:process'
 import { publishNpmPackage } from './utils/publish-npm-package'
 
 // Every qadam depends on these three through the bun workspace protocol
@@ -9,7 +9,7 @@ import { publishNpmPackage } from './utils/publish-npm-package'
 // whatever version each package.json declares without resolving it), but it means a
 // registry client racing the tail of this job never observes a dependent published ahead
 // of what it depends on.
-export const FRAMEWORK_PACKAGE_PATHS = [
+const FRAMEWORK_PACKAGE_PATHS = [
   'packages/shared',
   'packages/qadams/framework',
   'packages/qadams/common',
@@ -17,12 +17,19 @@ export const FRAMEWORK_PACKAGE_PATHS = [
 
 const main = async (): Promise<void> => {
   const dryRun = argv.includes('--dry-run')
+  // Set by release.yml from `github.ref_name` — `next` for a prerelease tag (`v2.1.0-rc.1`),
+  // `latest` otherwise — never inferred from these packages' own version numbers, which
+  // version independently of the release tag and carry no prerelease marker today.
+  const npmDistTag = env['NPM_DIST_TAG']
 
   for (const path of FRAMEWORK_PACKAGE_PATHS) {
-    await publishNpmPackage({ path, dryRun })
+    await publishNpmPackage({ path, dryRun, npmDistTag })
   }
 }
 
 if (require.main === module) {
-  main()
+  main().catch((err: unknown) => {
+    console.error(err)
+    process.exitCode = 1
+  })
 }

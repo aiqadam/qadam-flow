@@ -1,13 +1,15 @@
 import assert from 'node:assert'
 import { argv } from 'node:process'
 import { execSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { readPackageJson } from './files'
 import { packagePrePublishChecks } from './package-pre-publish-checks'
 import { prepareQadamDistForPublish } from '../../../packages/cli/src/lib/utils/prepare-qadam-utils'
 import { isExactVersion } from '../../../packages/cli/src/lib/utils/workspace-utils'
 
-function assertNoSemverRanges(packageJsonPath: string): void {
+export function assertNoSemverRanges(packageJsonPath: string): void {
   const json = JSON.parse(readFileSync(packageJsonPath).toString())
   const depFields = ['dependencies', 'devDependencies', 'peerDependencies'] as const
   const ranged: string[] = []
@@ -31,7 +33,7 @@ function assertNoSemverRanges(packageJsonPath: string): void {
   }
 }
 
-function assertNoUnresolvedWorkspaceDeps(packageJsonPath: string): void {
+export function assertNoUnresolvedWorkspaceDeps(packageJsonPath: string): void {
   const json = JSON.parse(readFileSync(packageJsonPath).toString())
   const depFields = ['dependencies', 'devDependencies', 'peerDependencies'] as const
   const unresolved: string[] = []
@@ -55,15 +57,18 @@ function assertNoUnresolvedWorkspaceDeps(packageJsonPath: string): void {
   }
 }
 
-export const publishNpmPackage = async ({ path, dryRun = false }: PublishNpmPackageParams): Promise<void> => {
-  console.info(`[publishPackage] path=${path}, dryRun=${dryRun}`)
+export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag = 'latest' }: PublishNpmPackageParams): Promise<void> => {
+  console.info(`[publishPackage] path=${path}, dryRun=${dryRun}, npmDistTag=${npmDistTag}`)
   assert(path, '[publishPackage] parameter "path" is required')
 
   const outputPath = `${path}/dist`
 
+  // A missing build output used to be a silent skip (console.info + return 0). Now that a CI job
+  // depends on this succeeding for a specific, known set of packages, a build-output path that
+  // moved (a turbo config change, a renamed `dist`) must fail loudly rather than report the job
+  // green while publishing nothing.
   if (!existsSync(`${outputPath}/package.json`)) {
-    console.info(`[publishPackage] skipping, no build output at ${outputPath}`)
-    return
+    throw new Error(`[publishPackage] no build output at ${outputPath} for ${path} — refusing to silently skip`)
   }
 
   const packageAlreadyPublished = await packagePrePublishChecks(path);
@@ -93,20 +98,33 @@ export const publishNpmPackage = async ({ path, dryRun = false }: PublishNpmPack
   assertNoSemverRanges(`${outputPath}/package.json`)
 
   if (dryRun) {
-    execSync(`npm pack`, { cwd: outputPath, stdio: 'inherit' })
-    console.info(`[publishPackage] dry run, packed only, path=${path}, version=${version}`)
+    // A destination OUTSIDE outputPath: `npm pack` with no `--pack-destination` writes the
+    // tarball into its own cwd, and npm's default ignore rules do not exclude `.tgz` — a
+    // second run (or the real publish that follows in the same job) would then pack the
+    // previous run's own tarball into the new one. Verified by reproducing it: a bare
+    // `npm pack` run twice from `outputPath` embeds the first tarball inside the second.
+    const packDestination = mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
+    execSync(`npm pack --pack-destination ${packDestination}`, { cwd: outputPath, stdio: 'inherit' })
+    console.info(`[publishPackage] dry run, packed only, path=${path}, version=${version}, destination=${packDestination}`)
     return
   }
 
-  execSync(`npm publish --access public --tag latest`, { cwd: outputPath, stdio: 'inherit' })
+  // --provenance needs `permissions: { id-token: write }` on the calling job (for the OIDC
+  // token npm exchanges for the signed attestation) and a `repository` field on the
+  // package.json being published, which npm records in that attestation. Without either,
+  // a hand-published tarball from an exfiltrated token is indistinguishable from a real
+  // release build — `npm audit signatures` has nothing to check.
+  execSync(`npm publish --access public --tag ${npmDistTag} --provenance`, { cwd: outputPath, stdio: 'inherit' })
 
-  console.info(`[publishProject] success, path=${path}, version=${version}`)
+  console.info(`[publishProject] success, path=${path}, version=${version}, npmDistTag=${npmDistTag}`)
 }
 
 const main = async (): Promise<void> => {
   const path = argv[2]
   const dryRun = argv.includes('--dry-run')
-  await publishNpmPackage({ path, dryRun })
+  const npmDistTagArg = argv.find((arg) => arg.startsWith('--npm-tag='))
+  const npmDistTag = npmDistTagArg?.split('=')[1]
+  await publishNpmPackage({ path, dryRun, npmDistTag })
 }
 
 /*
@@ -114,10 +132,14 @@ const main = async (): Promise<void> => {
  * see https://nodejs.org/api/modules.html#modules_accessing_the_main_module
  */
 if (require.main === module) {
-  main()
+  main().catch((err: unknown) => {
+    console.error(err)
+    process.exitCode = 1
+  })
 }
 
 type PublishNpmPackageParams = {
   path: string
   dryRun?: boolean
+  npmDistTag?: string
 }

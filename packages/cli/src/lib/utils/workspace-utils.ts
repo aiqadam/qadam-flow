@@ -60,6 +60,13 @@ export function isExactVersion(version: string): boolean {
   return /^\d+(\.\d+){0,2}(-[\w.]+)?$/.test(version)
 }
 
+// Strips a leading `^`/`~` and publishes the RANGE'S FLOOR, not the version actually resolved
+// and tested against (bun.lock's resolution, or `node_modules`). `"ai": "^6.0.0"` becomes exact
+// `"ai": "6.0.0"` here even when the tree that was built and tested resolved `ai@6.0.170` —
+// installable either way, but a silent 170-patch downgrade for consumers, pinned exactly so
+// nothing downstream can move it back. A caret/tilde range reaching this function is therefore
+// a defect in the SOURCE manifest, not something this function should paper over: pin the
+// source dependency to the exact version actually resolved instead of relying on this to do it.
 export function stripSemverRanges(
   deps: Record<string, string> | undefined,
 ): Record<string, string> | undefined {

@@ -1,6 +1,13 @@
 {
   "name": "@aiqadam/shared",
   "version": "0.135.0",
+  "description": "Shared types, DTOs, Zod schemas and utilities for Qadam Flow and its qadams.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aiqadam/qadam-flow.git",
+    "directory": "packages/shared"
+  },
   "type": "commonjs",
   "sideEffects": false,
   "main": "./dist/src/index.js",

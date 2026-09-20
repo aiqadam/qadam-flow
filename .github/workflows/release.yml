@@ -173,31 +173,108 @@ jobs:
   # packages/cli/src/lib/utils/{workspace,prepare-qadam}-utils.ts, which reads each
   # workspace package's live source package.json directly and rewrites only the staged
   # `dist/package.json` copy that gets published — the source tree keeps `workspace:*`.
+  # tools/ci/test-publish-workspace-invariants.sh pins this against a synthetic workspace so
+  # a regression here fails a PR instead of a real publish.
   #
   # WHY NOT GATING `build`/`publish` ON THIS. The Docker image and the npm packages are
   # independent artifacts for independent consumers (self-hosted operators vs. qadam SDK
   # authors); a flaky or rate-limited npm publish should not hold back the image tag users
   # actually install from. tools/scripts/publish-framework-packages.ts is idempotent per
   # package (packagePrePublishChecks skips anything already published at its current
-  # version), so a re-run of this job after a transient failure is safe.
+  # version), so a re-run of this job after a transient failure is safe. The asymmetry this
+  # trades away: `npm publish` cannot be undone the way a GHCR tag can be re-pushed — a
+  # 72-hour unpublish window that closes the moment anything depends on the version, versus
+  # a Docker tag that is simply overwritten by the next attempt. A run where this job
+  # succeeds and `build`/`publish` then fails leaves a real, permanent npm release for a
+  # Docker image that never shipped. That is the accepted cost of not gating; it is not a
+  # reason to gate `build` on this job instead, since the reverse order (npm waiting on a
+  # 2-platform Docker build) would block every framework-only patch on image build time for
+  # no correctness reason of its own.
+  #
+  # WHAT THIS JOB DOES NOT CATCH. It has no opinion on whether these three packages should
+  # be republished for a given tag at all — `packagePrePublishChecks` makes a no-op publish
+  # safe, but nothing here asserts any of the three was actually bumped for this release.
+  # The three version independently of the release tag (`vX.Y.Z` on the Docker image says
+  # nothing about `packages/shared/package.json`'s own version), so "we published nothing
+  # this release" and "we published all three" are both a green job with identical logs
+  # apart from the per-package skip lines — read those lines, not the job conclusion, to
+  # know what actually shipped.
+  #
+  # HOW TO PROCEED IF THIS JOB FAILS PARTWAY. It publishes shared, then framework, then
+  # common, sequentially, and is safe to just re-run: packagePrePublishChecks skips anything
+  # already at its published version, so a re-run after e.g. shared succeeded and framework
+  # hit a registry timeout only retries framework and common.
   publish-framework-packages:
     name: Publish framework packages to npm
     needs: [verify, breaking-change-gate, version-tag-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Requires a GitHub Environment named `npm-publish` to exist (Settings → Environments)
+    # with required reviewers configured. `needs:` above constrains the tagged tree's
+    # QUALITY, not its PROVENANCE — none of verify/breaking-change-gate/version-tag-gate
+    # assert the tagged commit was ever merged to main or reviewed, breaking-change-gate is
+    # deliberately tagger-overridable by design (see its own header), and `on: push: tags`
+    # runs whatever release.yml says at the tagged commit regardless of who pushed the tag.
+    # Anyone with `contents: write` — a collaborator, a leaked PAT, a compromised Action —
+    # could otherwise push a tag at a commit that never touched `main` and publish
+    # `@aiqadam/shared`, the transitive root of every qadam, to public npm at `latest` with
+    # no human in the loop. A required-reviewers environment is the one control in Actions
+    # that interposes a human between "a tag exists" and "the publish secret is readable".
+    # The ancestry check below is a second, automatic layer underneath it, not a
+    # replacement for it.
+    environment: npm-publish
+    permissions:
+      contents: read
+      # For --provenance below: npm exchanges this job's OIDC token for a signed
+      # attestation tying the published tarball to this workflow run and commit.
+      id-token: write
     steps:
-      # fetch-depth: 0, same reasoning as breaking-change-gate above: packagePrePublishChecks
-      # diffs against `origin/main` to tell "already published, nothing changed" apart from
-      # "version not bumped after a real change", and a depth-1 checkout has no `origin/main`
-      # to diff against.
+      # fetch-depth: 0 (+ fetch-tags), same reasoning as breaking-change-gate above:
+      # packagePrePublishChecks diffs against `origin/main` to tell "already published,
+      # nothing changed" apart from "version not bumped after a real change", and the
+      # ancestry check below needs the full history of `origin/main` to walk. A depth-1
+      # checkout has neither.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          fetch-tags: true
+
+      # The automatic half of the human gate above: refuses to publish from a tag whose
+      # commit is not reachable by walking backward from `origin/main`'s current tip — i.e.
+      # a commit that was never actually merged into main, regardless of who pushed the tag
+      # or what it's named. Deliberately `--is-ancestor HEAD origin/main`, not the reverse:
+      # checking "is origin/main an ancestor of HEAD" would pass for a tag built by stacking
+      # extra, unreviewed commits on top of a legitimate main commit (HEAD would still
+      # descend from main), which is exactly the case this exists to catch.
+      - name: Refuse to publish a tag that was never merged into main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::${GITHUB_REF_NAME} (${GITHUB_SHA}) is not reachable from origin/main — refusing to publish framework packages from a commit that was never merged."
+            exit 1
+          fi
+
+      # `next` for a prerelease tag (`v2.1.0-rc.1`), `latest` otherwise — mirrors the
+      # Docker `publish` job's own `enable=${{ !contains(github.ref_name, '-') }}` guard
+      # below, so an RC of Qadam Flow itself cannot push these three to the npm `latest`
+      # dist-tag that every qadam install will resolve through once #476 lands. Keyed off
+      # the release tag, not these packages' own version numbers: they version
+      # independently of the tag (see the job header) and carry no prerelease marker today,
+      # so there is nothing on the package side to key off instead.
+      - name: Compute npm dist-tag
+        id: npm_dist_tag
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v6
         id: node
         with:
           node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@aiqadam'
 
       - uses: oven-sh/setup-bun@v2
         id: bun
@@ -222,14 +299,23 @@ jobs:
       - name: Build shared, qadams-framework, qadams-common
         run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
 
-      # NPM_TOKEN is an npmjs "Automation" token for the @aiqadam org, published-package
-      # scope, stored as a repo (or org) secret of that exact name. .npmrc's
-      # `//registry.npmjs.org/:_authToken=${NPM_TOKEN}` line already covers any scope that
-      # falls through to the default registry, which `@aiqadam` does — no further .npmrc
-      # change is needed for this job.
+      # NODE_AUTH_TOKEN, not a bare NPM_TOKEN env var and not the root .npmrc: publishNpmPackage
+      # runs `npm publish` with `cwd: <pkg>/dist`, and npm resolves its project config from
+      # `localPrefix` — the nearest ancestor containing a `package.json` OR a `node_modules`.
+      # `dist/` has both (the staged manifest, and the `node_modules` symlink
+      # prepareQadamDistForPublish creates), so `localPrefix` is `dist/` and the repo-root
+      # `.npmrc` is never consulted from there — measured directly: `npm config get save-exact`
+      # is `true` from the repo root and `false` from `packages/shared/dist`. `registry-url` +
+      # `scope` on setup-node above write an npmrc to `$RUNNER_TEMP` and export
+      # `NPM_CONFIG_USERCONFIG` for the rest of the job, which npm honours from ANY cwd; that
+      # generated npmrc's auth line is `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`,
+      # so the env var has to be named exactly that for npm to find it. NPM_TOKEN is the
+      # secret name (see Settings → Environments → npm-publish, or Settings → Secrets);
+      # NODE_AUTH_TOKEN is the name npm's own generated config expects it under.
       - name: Publish shared, qadams-framework, qadams-common to npm
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_DIST_TAG: ${{ steps.npm_dist_tag.outputs.tag }}
         run: npx ts-node --project tools/tsconfig.tools.json tools/scripts/publish-framework-packages.ts
 
   build:

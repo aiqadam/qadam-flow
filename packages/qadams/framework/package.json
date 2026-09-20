@@ -1,6 +1,13 @@
 {
   "name": "@aiqadam/qadams-framework",
-  "version": "0.32.0",
+  "version": "0.32.1",
+  "description": "SDK for building Qadam Flow qadams — actions, triggers, properties and auth.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aiqadam/qadam-flow.git",
+    "directory": "packages/qadams/framework"
+  },
   "type": "commonjs",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -12,7 +19,7 @@
   "dependencies": {
     "@aiqadam/shared": "workspace:*",
     "zod": "4.3.6",
-    "ai": "^6.0.0",
+    "ai": "6.0.170",
     "semver": "7.6.0",
     "tslib": "2.6.2"
   },

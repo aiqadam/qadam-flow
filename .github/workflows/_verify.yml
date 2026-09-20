@@ -344,6 +344,14 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-required-prop-defaults
 
+      # release.yml's `publish-framework-packages` job trusts a custom workspace:* rewrite
+      # instead of bun's own (see that job's header for why). Needs ts-node and the
+      # transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
+      # node_modules, so it sits down here with the other post-install tooling suites
+      # rather than with the pure-shell suite above.
+      - name: Test the publish-time workspace:* rewrite invariants
+        run: tools/ci/test-publish-workspace-invariants.sh
+
       # Unfiltered, deliberately. The enumerated `lint-core` / `lint-qadams`
       # scripts silently missed every package they did not name — `@aiqadam/cli`,
       # `tests-e2e`, and, because the glob was `qadam-*` while the packages are
