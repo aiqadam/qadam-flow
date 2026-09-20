@@ -23,6 +23,10 @@ Mintlify is a documentation platform that transforms MDX files into documentatio
 
 Full schema at [mintlify.com/docs.json](https://mintlify.com/docs.json).
 
+**Writing craft — voice, structure, and the full component reference — is in
+[`writing-style.md`](./writing-style.md) beside this file. Read it before writing prose,
+not after.**
+
 ## Before you write
 
 ### Understand the project

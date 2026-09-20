@@ -2,6 +2,19 @@
 
 You are working in the Qadam Flow web application (`packages/web`).
 
+## Skills and agents for this package
+
+Mandatory when the trigger matches — full registry in [`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md):
+
+| Doing | Read first |
+| --- | --- |
+| Any user-visible surface: colour, logo, spacing, naming | `design` skill |
+| Work spanning shared + server + web | `add-feature` skill |
+| Driving the running app in a browser by hand | `agent-browser` skill |
+
+Implementation can be delegated to the `web` agent; the `code-quality` agent's review is
+mandatory before you report the change complete — see [`.agents/rules/agent-delegation.md`](../../.agents/rules/agent-delegation.md).
+
 ## Tech Stack
 
 - **Framework**: React 19 with React Router v6
@@ -68,7 +81,6 @@ You are working in the Qadam Flow web application (`packages/web`).
 - **Server errors go to `root.serverError`** — Set API errors with `form.setError('root.serverError', { type: 'manual', message: '...' })`. Clear it at the top of `handleSubmit` with `form.clearErrors('root.serverError')`. Render it below the fields, outside `<ScrollArea>`.
 - **Wrap the `<form>` element in `<Form {...form}>`** — Always spread the form instance onto the Shadcn `<Form>` wrapper, and use `form.handleSubmit(handleSubmit)` on the native `<form>`. The submit button must be inside the `<form>` with `type="submit"`. Cancel buttons must always have `type="button"` to prevent accidental form submission.
 
-
 ## React Patterns
 
 ### `useEffect`
@@ -91,6 +103,7 @@ You are working in the Qadam Flow web application (`packages/web`).
 ## F-Pattern Layout
 
 All user-facing layouts — pages, dialogs, cards, email templates — follow the **F-pattern reading model**. Content is left-aligned so users scan left-to-right then down the left edge. Avoid centering text blocks, headings, or body copy. CTAs (buttons) may be full-width but should not cause surrounding text to be centered.
+
 ## i18n / Translation Strings
 
 This project uses **ICU MessageFormat** via `i18next-icu` (configured in `src/i18n.ts`). All translation strings in `packages/web/public/locales/en/translation.json` must follow ICU syntax, **not** default i18next syntax.

@@ -45,18 +45,36 @@ the whole session.
 
 ## Agent knowledge map — single source: `.agents/`
 
-All agent-facing knowledge lives under `.agents/`. `.claude/` and `.cursor/`
-mirror parts of it via git symlinks so each harness's auto-discovery keeps
-working — never edit a mirror; add content under `.agents/` only.
+All agent-facing knowledge lives under `.agents/`. `.claude/{skills,agents,rules}` and
+`.cursor/{skills,rules}` are git symlinks into it, so each harness's auto-discovery keeps
+working — never edit a mirror, and never replace one with a real directory; add content
+under `.agents/` only. `npm run check-agent-docs` fails on either.
 
 | Path | Size | When | What |
 | --- | --- | --- | --- |
 | `AGENTS.md` (this file) + per-package `AGENTS.md` | — | Every session | Rules every task needs |
 | `.agents/features/*.md` | 35–221 lines each | Before modifying a module | Entity schemas, services, data flows |
-| `.agents/rules/*.md` | 2–15 lines each (the mintlify writing rule is ~400) | Every session | Critical safety checks (entity registration, data isolation, edition safety, safe HTTP, environment) |
-| `.agents/skills/*/SKILL.md` | 12–1100 lines each | When invoked | Step-by-step workflows (`add-feature`, `add-entity`, `add-endpoint`, `db-migration`, `qadam-builder`) |
-| `.agents/agents/*.md` | 25–65 lines each | When delegating | Subagent charters (`server`, `web`, `changelog`, `code-quality`, `app-sec`) |
+| `.agents/rules/*.md` | 2–90 lines each | Every session — all of them, always | Non-negotiable invariants and process gates (full index below) |
+| `.agents/skills/*/SKILL.md` | 12–1100 lines each | **Before the first line of code**, whenever the task matches a skill's trigger | 13 step-by-step workflows. Trigger registry: [`skill-usage.md`](.agents/rules/skill-usage.md) |
+| `.agents/agents/*.md` | 25–80 lines each | **Before you report a code change complete** | 5 subagent charters. Delegation matrix: [`agent-delegation.md`](.agents/rules/agent-delegation.md) |
 | `.agents/docs/*.md` | deep dives | On trigger (see [Verification](#verification)) | Verification pitfalls, CI node_modules cache |
+
+### Every rule, and what it stops you doing
+
+Nothing under `.agents/` is optional reading that happens to be filed there. Every rule below
+is in force in every session:
+
+| Rule | What it stops you doing |
+| --- | --- |
+| [`agent-delegation.md`](.agents/rules/agent-delegation.md) | Shipping code no second agent read, or briefing a subagent from memory |
+| [`bun-install.md`](.agents/rules/bun-install.md) | Running `npm install` |
+| [`data-isolation.md`](.agents/rules/data-isolation.md) | A query that does not filter by `projectId` / `platformId` |
+| [`edition-safety.md`](.agents/rules/edition-safety.md) | Edition gating, and copying upstream EE-licensed source |
+| [`entity-registration.md`](.agents/rules/entity-registration.md) | Shipping an entity TypeORM never discovers |
+| [`environment.md`](.agents/rules/environment.md) | `AP_ENVIRONMENT=TESTING`, which silently disables every test branch |
+| [`read-the-ticket.md`](.agents/rules/read-the-ticket.md) | Writing code against an issue body you did not finish reading |
+| [`safe-http.md`](.agents/rules/safe-http.md) | An unfiltered outbound request (SSRF) |
+| [`skill-usage.md`](.agents/rules/skill-usage.md) | Re-deriving a workflow a skill already encodes |
 
 ## Architecture (Non-Obvious Rules)
 
@@ -137,6 +155,7 @@ npm start                                       # Setup dev + start all
 npm run dev                                     # Frontend + backend
 npm run lint-dev                                # Lint with auto-fix (ALWAYS before done)
 npm run review                                  # Advisory AI review against .opencodereview/rule.json
+npm run check-agent-docs                        # Agent docs wiring gate (run after touching .agents/)
 npx turbo run lint --filter=<package>           # Lint a single package, e.g. --filter=web
 npx turbo run serve --filter=web -- --mode=cloud # Run local frontend against the cloud backend
 ```
@@ -193,11 +212,15 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 
 ## Database Migrations
 
-- Before creating or modifying a database migration, **always read `.agents/skills/db-migration/SKILL.md`** first. Follow its instructions for generating and structuring migrations.
+- Before creating or modifying a database migration, **always read [`.agents/skills/db-migration/SKILL.md`](.agents/skills/db-migration/SKILL.md)** first, and follow it. This is the loudest instance of the general rule in [`skill-usage.md`](.agents/rules/skill-usage.md), not an exception to it.
 
 ## Verification
 
 - Always run `npm run lint-dev` as part of any verification step before considering a task complete.
+- Touched anything under `.agents/`, `.claude/`, `.cursor/` or any `AGENTS.md`? Run `npm run check-agent-docs` —
+  it fails on a skill missing from the trigger registry, a charter missing from the delegation matrix, a rule
+  missing from the rules index, a `SKILL.md` without usable frontmatter, an `AGENTS.md` routing to a skill or
+  charter that no longer exists, or a mirror symlink someone replaced with a real directory.
 - After touching anything under `packages/web`, also run `npm run typecheck` — `vite build` does not
   type-check, so a type error there surfaces nowhere else until CI.
 - **Before trusting any verification output** — especially a command that returned clean — read
@@ -206,40 +229,39 @@ When running in `--mode=cloud`, do not use OAuth2 connections — the OAuth prov
 - Touching CI install or caching (`bun.lock`, turbo `inputs`, `tools/ci/install-deps.sh`, the
   `refresh-cache` label)? Read [`node-modules-cache.md`](.agents/docs/node-modules-cache.md) first.
 
-## Review Agents
+## Skills and Subagents — Mandatory, Not Optional
 
-Two read-only reviewer subagents live in `.agents/agents/`. Their charters are the source of truth —
-read the file, don't paraphrase it from here.
+This repo ships 13 skills (`.agents/skills/`) and 5 subagent charters (`.agents/agents/`).
+They are not slash commands idling until a user types them; they are how work is done here,
+and an agent that ignores them is not being efficient, it is re-deriving — badly — an answer
+the repo already paid for.
 
-- **Delegate with the charter, never an improvised brief.** Hand the subagent its
-  `.agents/agents/<name>.md` charter file as binding instructions. Never re-type or paraphrase a
-  charter from memory, and never invent a new agent or edit a charter without asking the user.
-  See `.agents/rules/agent-delegation.md`.
-- **Run the review pass first.** Before spawning a `code-quality` reviewer, run `npm run review`
-  and attach its artifact to the brief alongside the feature description — see
-  `.agents/rules/agent-delegation.md` for the `--emit-prompts` fallback when no backend exists.
-
-| Agent | Use it for |
-| --- | --- |
-| `code-quality` | Correctness, project-convention violations, dead code left by a removal, missing test coverage, and PR-body claims the diff does not support |
-| `app-sec` | Tenant isolation, authz, SSRF, injection, secret handling, migration hazards on existing deployments, edition/licensing safety |
-
-- **Review before merging anything that touches server code, auth, migrations, or outbound HTTP** —
-  run both, and treat a `DO NOT MERGE` verdict as blocking.
-- **Use a different agent than the one that wrote the code.** An author reviewing its own work
-  reproduces its own blind spots; the point of the second pass is an independent reading.
-- Both are read-only by charter. A reviewer that edits code stops being a reviewer.
-- Reviewers must verify claims against the code, not against the PR description. The failure mode
-  worth guarding against is a confident assertion resting on the wrong file or a same-named-but-
-  different symbol — that is how wrong work gets approved.
+- **Task matches a skill's trigger → open that `SKILL.md` before writing code.** The full
+  trigger registry, and what to do when a skill is wrong, is
+  [`.agents/rules/skill-usage.md`](.agents/rules/skill-usage.md).
+- **Run the `code-quality` agent on every code change, and the `app-sec` agent on anything
+  touching server code, auth, entities, migrations or outbound HTTP — before you report the task complete,
+  not before some later merge.** The matrix, the brief format and the read-only rules are
+  [`.agents/rules/agent-delegation.md`](.agents/rules/agent-delegation.md). A `DO NOT MERGE`
+  verdict is blocking.
+- **Skipping either is a decision you state out loud** — in your reply and in the PR body,
+  with a reason. Silently skipping is the one option these docs do not give you.
+- **Never invent a skill or an agent, and never edit a charter, without asking the user.**
+  Never review your own work: the agent that wrote the code is the worst reader of it.
+- **`npm run check-agent-docs` enforces the wiring** — frontmatter, registry parity, the
+  skills and agents each per-package `AGENTS.md` routes to, and the `.claude/` / `.cursor/`
+  mirrors. It runs in CI. It cannot check that you actually used a skill; that part is on you.
 
 ## White-Labeling & Edition Paths
 
+- **The `design` skill is the authority on every user-visible surface** — colours, logos, spacing, naming. Read [`.agents/skills/design/SKILL.md`](.agents/skills/design/SKILL.md) before changing one, including in `docs/`.
 - **All customer-facing UI must be white-labeled.** Sign-in/signup pages, email templates, logos, and any user-visible branding must use the platform's configured appearance (name, colors, logos) — never hardcode "Activepieces" in user-facing surfaces.
 - **Never copy upstream EE source — clean-room reimplement instead.** Upstream `packages/ee/` (and `packages/server/api/src/app/ee`) is under the proprietary Activepieces Enterprise License, not MIT; this repo is MIT-only. When restoring a feature that lived under upstream `ee/` (API keys, SSO, RBAC, audit logs, git sync), NEVER copy the EE source verbatim (no `git show <upstream-sha>:packages/ee/...`, no pasting bodies/structure) — that infringes the Enterprise License. Reimplement from behavior only (HTTP contract, schema-as-idea, auth flow); copyright protects the specific source, not the functionality or API. Code already in the MIT core is safe to reuse. See `.agents/rules/edition-safety.md`.
 
 ## Useful Links
 
+- [Skill trigger registry](.agents/rules/skill-usage.md) — which skill is mandatory when
+- [Subagent delegation matrix](.agents/rules/agent-delegation.md) — which reviewer is mandatory when
 - [Database Migrations Playbook](.agents/skills/db-migration/SKILL.md)
 - [Verification Pitfalls](.agents/docs/verification-pitfalls.md)
 - [CI node_modules Cache](.agents/docs/node-modules-cache.md)

@@ -1,5 +1,11 @@
 # Engine
 
+No skill owns this package specifically, but the repo-wide rules still apply: check the
+trigger registry in [`.agents/rules/skill-usage.md`](../../../.agents/rules/skill-usage.md)
+before you start, and get the `code-quality` agent plus the `app-sec` agent on the diff
+before you report it
+complete ([`.agents/rules/agent-delegation.md`](../../../.agents/rules/agent-delegation.md)).
+
 ## Error Handling
 
 - **Always throw `ExecutionError` subclasses** (from `@aiqadam/shared`) instead of plain `Error`. The engine uses `tryCatchAndThrowOnEngineError` which only propagates errors of type `ExecutionErrorType.ENGINE` — plain `Error` instances are silently swallowed and treated as user-level failures.

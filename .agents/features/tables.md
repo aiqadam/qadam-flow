@@ -1,7 +1,7 @@
 # Tables Module
 
 ## Summary
-A built-in relational database feature that lets users store structured data directly within Activepieces, without needing an external database. Tables support typed fields, cell-level storage, per-row webhooks that fire flow automations, and a rich spreadsheet-like editor in the UI. They are tightly integrated with the flow engine through the Tables piece, which provides trigger and action steps for reacting to and manipulating table data.
+A built-in relational database feature that lets users store structured data directly within Qadam Flow, without needing an external database. Tables support typed fields, cell-level storage, per-row webhooks that fire flow automations, and a rich spreadsheet-like editor in the UI. They are tightly integrated with the flow engine through the Tables piece, which provides trigger and action steps for reacting to and manipulating table data.
 
 ## Key Files
 - `packages/server/api/src/app/tables/table/table.service.ts` — table CRUD, export, webhook management

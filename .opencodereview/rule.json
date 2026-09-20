@@ -66,6 +66,16 @@
       "merge_system_rule": true
     },
     {
+      "path": ".agents/**/*.md",
+      "rule": ".opencodereview/rules/70-agent-docs.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/AGENTS.md",
+      "rule": ".opencodereview/rules/70-agent-docs.md",
+      "merge_system_rule": true
+    },
+    {
       "path": "**/*.{ts,tsx,js,jsx,mjs,cjs}",
       "rule": ".opencodereview/rules/90-typescript.md",
       "merge_system_rule": true

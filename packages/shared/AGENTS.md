@@ -2,6 +2,12 @@
 
 Types, DTOs, Zod schemas, utilities. Version bump required on ANY change (patch for fixes, minor for new exports).
 
+## Skills for this package
+
+A change here is almost always step 1 of a larger change: read the `add-feature` skill before
+adding a schema or export. Full registry:
+[`.agents/rules/skill-usage.md`](../../.agents/rules/skill-usage.md).
+
 ## Model Pattern
 
 Zod schema + `z.infer` dual export. Use `BaseModelSchema` (id, created, updated), `Nullable()`, `NullableEnum()`. See any file in `src/lib/automation/` for examples.
