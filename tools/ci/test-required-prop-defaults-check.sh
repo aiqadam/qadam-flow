@@ -10,11 +10,25 @@
 # commit — nothing about the diff or `git show` is stubbed, because the checker's whole job is
 # reading those.
 #
-# A code-quality review of an earlier version of this suite found it stayed green under four
-# separate mutations (dropping the `headProp.resolvable`/`baseProp.resolvable`/`NOT_STATIC` guards,
-# and dropping `--diff-filter=M`), and that three of its cases passed for the wrong reason. Every
-# case below exists to make one specific guard load-bearing — if you touch the checker, re-run
-# this file AND deliberately break the guard the case names in its comment to confirm it goes red.
+# A code-quality review of an earlier version of this suite ran a mutation-testing pass and found
+# it stayed green under several guard removals, and that three of its cases passed for the wrong
+# reason. Most cases below exist to make one specific guard load-bearing — if you touch the
+# checker, re-run this file AND deliberately break the guard the case names in its comment to
+# confirm it goes red. That is true for every case EXCEPT the two guards named below, which the
+# same review confirmed are genuinely, provably redundant given this script's own invariants —
+# breaking them on purpose is expected to leave the suite green, not a sign a fixture is missing:
+#
+# - `headProp.resolvable` in `isNewlyRequiredWithoutDefault` (check-required-prop-defaults.mjs) —
+#   readPropShape always pairs `resolvable: false` with `required: false`, so `!headProp.required`
+#   alone already excludes every unresolvable head-side prop. No case here targets it.
+# - `--diff-filter=M` in `changedFiles` — every non-M git status guarantees the file is missing at
+#   one end, which `checkFile`'s `readText === null` guard (exercised separately, by corrupting a
+#   git object below) already handles. The "brand-new Added file" case below exists to pin the
+#   file-level *scope* decision (an Added file's props are out of scope), not this specific flag —
+#   it stays green with the flag removed, and that is correct, not a gap.
+#
+# Both are documented at length in check-required-prop-defaults.mjs's own "MUTATIONS THAT SURVIVE
+# ON PURPOSE" section — keep the two headers in agreement if either changes.
 #
 #   tools/ci/test-required-prop-defaults-check.sh
 
@@ -139,6 +153,23 @@ commit_all() {
   local dir="$1" msg="$2"
   git -C "$dir" add -A
   git -C "$dir" commit -q --no-gpg-sign -m "$msg"
+}
+
+# corrupt_blob_at <dir> <sha> <path> — overwrites a loose git object's on-disk bytes with garbage,
+# without touching the tree/commit objects that name it. `git diff --name-only` (which only reads
+# tree objects) still reports the path as Modified; `git show <sha>:<path>` (which decompresses the
+# blob) fails with "loose object ... is corrupt". This is what makes checkFile's own
+# `headText === null || baseText === null` guard reachable in a fixture: --diff-filter=M genuinely
+# cannot distinguish this from a normal, readable Modified file, so only that guard protects
+# against it. Requires the object to still be loose (true for a repo this small — no `git gc` has
+# run) — asserted explicitly so a future git default silently packing objects fails loudly here
+# rather than turning this into a silent no-op.
+corrupt_blob_at() {
+  local dir="$1" sha="$2" path="$3" oid objpath
+  oid="$(git -C "$dir" rev-parse "${sha}:${path}")"
+  objpath="${dir}/.git/objects/${oid:0:2}/${oid:2}"
+  [ -f "$objpath" ] || { echo "corrupt_blob_at: expected a loose object at ${objpath}, found none" >&2; return 1; }
+  printf 'not a valid zlib stream' > "$objpath"
 }
 
 # build_case <name> <root> <base-version> <base-props> <head-version> <head-props> [factory]
@@ -275,6 +306,26 @@ read -r dir base head <<< "$(build_case reject-default-null community 0.1.0 \
     execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: null }),")"
 run_check "$dir" "$base" "$head"
 expect_status 1 "defaultValue: null is not a real default -> FAIL"
+
+echo "== a defaultValue of literally void 0 does NOT count as a default (F6/finding 9) =="
+
+read -r dir base head <<< "$(build_case reject-default-void community 0.1.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+0.1.1 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: void 0 }),")"
+run_check "$dir" "$base" "$head"
+expect_status 1 "defaultValue: void 0 is not a real default -> FAIL"
+
+echo "== a defaultValue of an empty string does NOT count as a default (finding 9) =="
+
+read -r dir base head <<< "$(build_case reject-default-empty-string community 0.1.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false })," \
+0.1.1 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true, defaultValue: '' }),")"
+run_check "$dir" "$base" "$head"
+expect_status 1 "defaultValue: '' is as unconfigured as no default at all -> FAIL, for consistency with AGENTS.md's dropdown-defaults empty-string sentinel"
 
 echo "== a defaultValue removed from an already-required prop is caught =="
 
@@ -516,7 +567,176 @@ EOF
 commit_all "$dir" 'feat: add a second action in a new file'
 head="$(git -C "$dir" rev-parse HEAD)"
 run_check "$dir" "$base" "$head"
-expect_status 0 "a required-no-default prop in a brand-new (Added) file is not this check's concern — mutation: dropping --diff-filter=M makes this FAIL"
+# Documents SCOPE, not a specific guard: this case stays green whether it is
+# --diff-filter=M or checkFile's readText===null guard doing the work (both agree here, since the
+# file is missing at BASE either way) — see this suite's own header for why that overlap is
+# expected, not a gap. The null-guard is pinned on its own, independently, by the corrupted-object
+# case further down.
+expect_status 0 "a required-no-default prop in a brand-new (Added) file is not this check's concern"
+
+echo "== (M17) a corrupted blob at one end is 'cannot compare', not a crash or a false clean run =="
+
+dir="$(new_repo corrupted-blob)"
+write_qadam "$dir" community demo-qadam 0.1.0 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),"
+commit_all "$dir" 'feat: baseline'
+base="$(git -C "$dir" rev-parse HEAD)"
+write_qadam "$dir" community demo-qadam 0.1.1 \
+"    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),"
+commit_all "$dir" 'feat: add a required prop with no default'
+head="$(git -C "$dir" rev-parse HEAD)"
+corrupt_blob_at "$dir" "$base" "packages/qadams/community/demo-qadam/src/lib/actions/demo.ts" || fail_case "corrupt_blob_at setup" "could not corrupt the BASE blob — fixture infrastructure broken, not the checker"
+run_check "$dir" "$base" "$head"
+expect_status 0 "a git object that fails to decompress at one end must be treated the same as 'unreadable', not crash the process and not silently report a clean diff — mutation: dropping the headText/baseText null guard makes this either FAIL loudly with a raw stack trace or, worse, misclassify"
+
+echo "== (M15) a template-literal 'name' falls back to the enclosing declaration's identifier =="
+
+dir="$(new_repo enclosing-declaration-fallback)"
+mkdir -p "${dir}/packages/qadams/community/demo-qadam/src/lib/triggers"
+cat > "${dir}/packages/qadams/community/demo-qadam/package.json" <<'EOF'
+{ "name": "@aiqadam/qadam-demo-qadam", "version": "0.1.0" }
+EOF
+cat > "${dir}/packages/qadams/community/demo-qadam/src/lib/triggers/register-trigger.ts" <<'EOF'
+import { createTrigger } from '@aiqadam/qadams-framework';
+import { Property } from '@aiqadam/qadams-framework';
+
+export const demoRegisterTrigger = ({ name }: { name: string }) =>
+  createTrigger({
+    name: `demo_trigger_${name}`,
+    displayName: 'Demo Trigger',
+    description: 'fixture',
+    type: 'POLLING',
+    sampleData: {},
+    props: {
+      mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    },
+    async run(context) {
+      return [context.propsValue];
+    },
+  });
+EOF
+commit_all "$dir" 'feat: baseline'
+base="$(git -C "$dir" rev-parse HEAD)"
+cat > "${dir}/packages/qadams/community/demo-qadam/src/lib/triggers/register-trigger.ts" <<'EOF'
+import { createTrigger } from '@aiqadam/qadams-framework';
+import { Property } from '@aiqadam/qadams-framework';
+
+export const demoRegisterTrigger = ({ name }: { name: string }) =>
+  createTrigger({
+    name: `demo_trigger_${name}`,
+    displayName: 'Demo Trigger',
+    description: 'fixture',
+    type: 'POLLING',
+    sampleData: {},
+    props: {
+      mode: Property.ShortText({ displayName: 'Mode', required: false }),
+      execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),
+    },
+    async run(context) {
+      return [context.propsValue];
+    },
+  });
+EOF
+commit_all "$dir" 'feat: add a required prop with no default to the shared trigger factory'
+head="$(git -C "$dir" rev-parse HEAD)"
+run_check "$dir" "$base" "$head"
+expect_status 1 "no literal 'name:' (it's a template literal), but the enclosing const identifier pairs base and head correctly — mutation: skipping every unnamed factory instead of falling back makes this FAIL (silently, exit 0) on real code shaped like community/clickup's register-trigger.ts"
+expect_contains "decl:demoRegisterTrigger" "the violation is keyed by the enclosing declaration, namespaced apart from literal names"
+
+echo "== a spread at the props: level hides what it carries, but not its explicit siblings =="
+
+dir="$(new_repo props-level-spread)"
+mkdir -p "${dir}/packages/qadams/community/demo-qadam/src/lib/actions"
+cat > "${dir}/packages/qadams/community/demo-qadam/package.json" <<'EOF'
+{ "name": "@aiqadam/qadam-demo-qadam", "version": "0.1.0" }
+EOF
+cat > "${dir}/packages/qadams/community/demo-qadam/src/lib/actions/demo.ts" <<'EOF'
+import { createAction, Property } from '@aiqadam/qadams-framework';
+
+export const demoAction = createAction({
+  name: 'demo_action',
+  displayName: 'Demo Action',
+  description: 'fixture',
+  props: {
+    ...commonProps,
+    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+  },
+  async run(context) {
+    return context.propsValue;
+  },
+});
+EOF
+commit_all "$dir" 'feat: baseline'
+base="$(git -C "$dir" rev-parse HEAD)"
+cat > "${dir}/packages/qadams/community/demo-qadam/package.json" <<'EOF'
+{ "name": "@aiqadam/qadam-demo-qadam", "version": "0.1.1" }
+EOF
+cat > "${dir}/packages/qadams/community/demo-qadam/src/lib/actions/demo.ts" <<'EOF'
+import { createAction, Property } from '@aiqadam/qadams-framework';
+
+export const demoAction = createAction({
+  name: 'demo_action',
+  displayName: 'Demo Action',
+  description: 'fixture',
+  props: {
+    ...commonProps,
+    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),
+  },
+  async run(context) {
+    return context.propsValue;
+  },
+});
+EOF
+commit_all "$dir" 'feat: add an explicit sibling prop next to the spread'
+head="$(git -C "$dir" rev-parse HEAD)"
+run_check "$dir" "$base" "$head"
+expect_status 1 "the spread hides whatever it carries, but an explicit sibling key added next to it is still checked normally"
+expect_contains "execution_mode" "the explicit sibling is the one flagged"
+
+echo "== a non-literal props: value at BASE cannot become a false positive when HEAD inlines it =="
+
+dir="$(new_repo non-literal-props-no-false-positive)"
+mkdir -p "${dir}/packages/qadams/community/demo-qadam/src/lib/actions"
+cat > "${dir}/packages/qadams/community/demo-qadam/package.json" <<'EOF'
+{ "name": "@aiqadam/qadam-demo-qadam", "version": "0.1.0" }
+EOF
+cat > "${dir}/packages/qadams/community/demo-qadam/src/lib/actions/demo.ts" <<'EOF'
+import { createAction, Property } from '@aiqadam/qadams-framework';
+
+export const demoAction = createAction({
+  name: 'demo_action',
+  displayName: 'Demo Action',
+  description: 'fixture',
+  props: getDemoActionProps(),
+  async run(context) {
+    return context.propsValue;
+  },
+});
+EOF
+commit_all "$dir" 'feat: baseline with props built by a helper function'
+base="$(git -C "$dir" rev-parse HEAD)"
+cat > "${dir}/packages/qadams/community/demo-qadam/src/lib/actions/demo.ts" <<'EOF'
+import { createAction, Property } from '@aiqadam/qadams-framework';
+
+export const demoAction = createAction({
+  name: 'demo_action',
+  displayName: 'Demo Action',
+  description: 'fixture',
+  props: {
+    mode: Property.ShortText({ displayName: 'Mode', required: false }),
+    execution_mode: Property.ShortText({ displayName: 'Execution Mode', required: true }),
+  },
+  async run(context) {
+    return context.propsValue;
+  },
+});
+EOF
+commit_all "$dir" 'feat: inline the same props as a literal object, no behaviour change intended'
+head="$(git -C "$dir" rev-parse HEAD)"
+run_check "$dir" "$base" "$head"
+expect_status 0 "BASE's non-literal props: value makes the WHOLE action unresolvable, so inlining it as a literal at HEAD must not make every key in it look brand-new — mutation: treating a non-literal props: as zero props (instead of skipping the whole action) makes this FAIL, flagging both 'mode' and 'execution_mode' as false positives"
 
 echo "== (F1) packages/qadams/common is out of scope, even for a real violation shape =="
 
@@ -532,8 +752,18 @@ commit_all "$dir" 'feat: add a required prop to the shared custom-api-call helpe
 head="$(git -C "$dir" rev-parse HEAD)"
 run_check "$dir" "$base" "$head"
 expect_status 0 "common is not scanned at all (documented blind spot), so even a real violation there is silent, and — the actual regression — the checker must not crash or misfire trying to read packages/qadams/common/src/package.json"
+# readFileAt() swallows every git error into `null`, so this can never actually fail — kept only
+# as a crash-canary (a thrown, uncaught error would abort the whole script before this line ran),
+# not as a discriminating assertion on its own.
 expect_not_contains "ENOENT" "no crash trying to resolve a package.json path that cannot exist"
-expect_not_contains "package.json" "common is excluded entirely, so no package.json path for it is even considered"
+# Discriminates independently of the decoy fixture `write_common_helper` plants: if `common` were
+# mistakenly back in QADAM_ROOTS, `changedFiles` would report 1 matched file, not 0, and the
+# success message would read "checked 1 modified file(s)..." instead of this one.
+expect_contains "no modified qadam action/trigger files" "common must never even be counted as a scanned file, decoy or no decoy"
+# With the decoy in place, re-adding `common` to QADAM_ROOTS makes the checker successfully read
+# the decoy's stable, never-majored version and print a violation naming its packageJsonPath — so
+# this string's absence is a real assertion here, not vacuous.
+expect_not_contains "package.json" "no packageJsonPath is ever printed, because no violation is ever found for a file that was never scanned"
 
 echo "== an unresolvable package.json version at either end is skipped, not flagged as a violation =="
 
