@@ -7,6 +7,11 @@ function failedStepOutput(errorMessage: string): GenericStepOutput<FlowActionTyp
         .setErrorMessage(errorMessage)
 }
 
+function succeededStepOutput(output: string): GenericStepOutput<FlowActionType.PIECE, unknown> {
+    return GenericStepOutput.create<FlowActionType.PIECE, unknown>({ input: {}, type: FlowActionType.PIECE, status: StepOutputStatus.SUCCEEDED })
+        .setOutput(output)
+}
+
 function baseRun(overrides: Partial<FlowRun> = {}): FlowRun {
     return {
         id: 'run-1',
@@ -93,8 +98,10 @@ describe('flow-run-utils — a step\'s third-party errorMessage cannot forge a f
         expect(fabricatedAsOwnLine).toBe(false)
     })
 
-    it('truncates and delimits an oversized errorMessage rather than letting it flow unbounded into the report', () => {
-        const huge = 'x'.repeat(10_000)
+    // Pins the exact cap rather than just "some truncation happened" — either constant could be
+    // changed to any value >= 1 and the previous assertions alone would still pass (#485 review).
+    it('truncates an oversized errorMessage at exactly 2000 chars, not merely "some" amount', () => {
+        const huge = 'x'.repeat(2500)
         const run = baseRun({
             status: FlowRunStatus.FAILED,
             steps: {
@@ -103,7 +110,21 @@ describe('flow-run-utils — a step\'s third-party errorMessage cannot forge a f
         })
 
         const text = formatRunResult(run)
-        expect(text).toContain('... (truncated)')
-        expect(text).not.toContain(huge)
+        expect(text).toContain(`Error: ⟦${'x'.repeat(2000)}⟧... (truncated)`)
+        expect(text).not.toContain('x'.repeat(2001))
+    })
+
+    it('truncates an oversized successful output at exactly 5000 chars — only the error branch was covered before', () => {
+        const huge = 'y'.repeat(6000)
+        const run = baseRun({
+            status: FlowRunStatus.SUCCEEDED,
+            steps: {
+                step_1: succeededStepOutput(huge),
+            },
+        })
+
+        const text = formatRunResult(run)
+        expect(text).toContain(`Output: ⟦${'y'.repeat(5000)}⟧... (truncated)`)
+        expect(text).not.toContain('y'.repeat(5001))
     })
 })

@@ -282,7 +282,7 @@ export async function executeAdhocAction({
             content: [{ type: 'text', text: formatAdhocActionResult(completedRun, stepName, mcpUtils.wrapUntrustedValue(action.displayName)) }],
             // Raw, unwrapped step output/errorMessage for a caller that needs the value
             // byte-for-byte rather than the wrapped, newline-collapsed prose preview above (#485).
-            structuredContent: buildAdhocActionStructuredContent(completedRun, stepName),
+            structuredContent: buildAdhocActionStructuredContent({ run: completedRun, stepName }),
         }
     }
     catch (err) {
@@ -323,13 +323,18 @@ export function buildRunStructuredContent(run: FlowRun): Record<string, unknown>
     }
 }
 
-function buildAdhocActionStructuredContent(run: FlowRun, stepName: string): Record<string, unknown> {
+function buildAdhocActionStructuredContent({ run, stepName }: { run: FlowRun, stepName: string }): Record<string, unknown> {
     const steps = run.steps
     const step = !isNil(steps) && typeof steps === 'object' ? (steps as Record<string, unknown>)[stepName] : undefined
     const stepRecord = !isNil(step) && typeof step === 'object' ? step as Record<string, unknown> : undefined
     return {
         runId: run.id,
-        status: stepRecord?.status ?? run.status,
+        // Two different enums under one name is how `ap_run_action`'s own structured shape would
+        // have disagreed with `buildRunStructuredContent`'s: `runStatus` is always a `FlowRunStatus`,
+        // `stepStatus` is a `StepOutputStatus` and only present when the step record resolved (#485
+        // review).
+        runStatus: run.status,
+        stepStatus: stepRecord?.status ?? null,
         output: stepRecord?.output ?? null,
         errorMessage: stepRecord?.errorMessage ?? null,
     }

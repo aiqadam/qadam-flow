@@ -39,7 +39,14 @@ export function resolveFieldNameToId(
             errors.push(`Duplicate field name "${name}". Rename one of them using ap_manage_fields before proceeding.`)
         }
         else if (!nameToField.has(lower)) {
-            errors.push(`Field "${name}" not found. Available fields: ${fields.map(f => mcpUtils.wrapUntrustedValue(f.name)).join(', ')}`)
+            // Left bare deliberately, unlike `formatFieldInfo`'s listing prose: a field name is
+            // free text (`z.string()`, no `STEP_NAME_REGEX`-style constraint), but this specific
+            // string is the one an agent reads in order to retry with a corrected `fieldName` —
+            // the same "copied verbatim into a call argument" carve-out documented at
+            // `ap-flow-structure.ts:353-357` and `ap-lock-and-publish.ts:44-46`, just reached by
+            // usage rather than by schema constraint. Wrapping it would hand back `⟦Email⟧`; a
+            // retry with the brackets copied in fails the same way and reprints the same hint (#485 review).
+            errors.push(`Field "${name}" not found. Available fields: ${fields.map(f => f.name).join(', ')}`)
         }
         else {
             fieldMap.set(name, nameToField.get(lower)!.id)

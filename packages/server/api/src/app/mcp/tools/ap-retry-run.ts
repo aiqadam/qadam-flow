@@ -3,7 +3,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { flowRunService } from '../../flows/flow-run/flow-run-service'
-import { formatRunResult, pollForRunCompletion } from './flow-run-utils'
+import { buildRunStructuredContent, formatRunResult, pollForRunCompletion } from './flow-run-utils'
 import { mcpUtils } from './mcp-utils'
 
 const retryStrategyValues = Object.values(FlowRetryStrategy) as [FlowRetryStrategy, ...FlowRetryStrategy[]]
@@ -58,7 +58,13 @@ export const apRetryRunTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
                     }
                 }
 
-                return { content: [{ type: 'text', text: formatRunResult(completedRun) }] }
+                return {
+                    content: [{ type: 'text', text: formatRunResult(completedRun) }],
+                    // Same raw, unwrapped shape as `ap_get_run` — otherwise this is the one
+                    // `formatRunResult` caller a step's output over the preview cap becomes
+                    // unrecoverable from (#485 review).
+                    structuredContent: buildRunStructuredContent(completedRun),
+                }
             }
             catch (err) {
                 log.error({ err, projectId: mcp.projectId }, 'ap_retry_run failed')

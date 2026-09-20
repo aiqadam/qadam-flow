@@ -49,6 +49,12 @@ export const apListVariablesTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
 // The owner's email is deliberately not printed. This tool is ungated for the chat agent, and no
 // other ungated tool emits a project member's email — printing it would put one into a third-party
 // model provider's context on an unconfirmed call, for information the model has no use for.
+//
+// `variable.name` is left bare deliberately, like `step.name`: `VARIABLE_NAME_REGEX`
+// (`/^[a-zA-Z0-9_]+$/`) constrains it on its only write path, so it can never carry a space,
+// punctuation or a newline — there is nothing here for `mcpUtils.wrapUntrustedValue` to guard
+// against. It is also copied verbatim into the `{{variables['...']}}` reference on the same line,
+// where a delimiter would be noise on a value the agent has to reuse (#485 review).
 function formatVariableLine(variable: VariableWithoutSensitiveData): string {
-    return `- ${mcpUtils.wrapUntrustedValue(variable.name)} (id: ${variable.id}) — reference: {{variables['${variable.name}']}}, created: ${variable.created}, updated: ${variable.updated}`
+    return `- ${variable.name} (id: ${variable.id}) — reference: {{variables['${variable.name}']}}, created: ${variable.created}, updated: ${variable.updated}`
 }

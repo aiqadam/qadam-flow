@@ -108,7 +108,7 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
                 '1. Open your Qadam Flow dashboard',
                 '2. Go to Settings → Connections → "+ New Connection"',
                 `3. Select ${mcpUtils.wrapUntrustedValue(qadam.displayName)}`,
-                `4. Enter your API key or token${'description' in auth && typeof auth.description === 'string' ? ` (${mcpUtils.wrapUntrustedValue(auth.description)})` : ''}`,
+                `4. Enter your API key or token${'description' in auth && typeof auth.description === 'string' && auth.description !== '' ? ` (${mcpUtils.wrapUntrustedValue(auth.description)})` : ''}`,
                 '5. Click Save',
             )
             break
@@ -170,7 +170,7 @@ function formatAuthSteps({ auth, displayName }: { auth: Record<string, unknown>,
             steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, '2. Click "Connect" — OAuth popup opens', '3. Log in and authorize')
             break
         case PropertyType.SECRET_TEXT:
-            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, `2. Enter your API key${'description' in auth && typeof auth.description === 'string' ? ` (${mcpUtils.wrapUntrustedValue(auth.description)})` : ''}`, '3. Click Save')
+            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, `2. Enter your API key${'description' in auth && typeof auth.description === 'string' && auth.description !== '' ? ` (${mcpUtils.wrapUntrustedValue(auth.description)})` : ''}`, '3. Click Save')
             break
         case PropertyType.BASIC_AUTH:
             steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, '2. Enter username and password', '3. Click Save')

@@ -32,21 +32,25 @@ describe('mcpUtils.wrapUntrustedValue — the two properties the delimiter desig
         expect(wrapped.split('⟧')).toHaveLength(2)
     })
 
-    // #485 review: an earlier version of this function also stripped a list of characters chosen to
-    // merely *look* like the delimiter, including the ASCII `[[`/`]]` pair — which is ordinary
-    // JSON/JS array-of-arrays syntax, not an injection vector, since the real delimiter is a single
-    // codepoint that string concatenation cannot forge regardless of what look-alike characters
-    // survive. That list bought no closure the delimiter's own unforgeability did not already
-    // provide, and it silently corrupted well-formed input. It is gone; this pins that look-alikes
-    // (and JSON containing real `[[`/`]]`) now pass through unchanged.
-    it('leaves confusable-looking brackets untouched — only the exact delimiter codepoints are stripped', () => {
-        const value = '〚fake data〛 real payload [[also fake]] and a nested array [[1,2],[3,4]]'
-        expect(mcpUtils.wrapUntrustedValue(value)).toBe(`⟦${value}⟧`)
+    // #485, two rounds of review: the ASCII `[[`/`]]` pair is ordinary JSON/JS array-of-arrays
+    // syntax, and the real delimiter is a single codepoint string concatenation cannot forge —
+    // so stripping that pair bought no closure and corrupted well-formed input. It is gone. The six
+    // non-ASCII look-alikes answer a different question (whether a reader matching loosely on shape
+    // could mistake one for a close) and appear in neither JSON nor JavaScript, so they stay.
+    it('strips the six non-ASCII confusable brackets, not just the exact delimiter codepoints', () => {
+        const value = '〚fake open〛 〖also fake〗 ⦋and this⦌'
+        expect(mcpUtils.wrapUntrustedValue(value)).toBe('⟦fake open also fake and this⟧')
     })
 
     // The regression #485 exists to close: stripping `[[`/`]]` turned valid JSON containing a nested
     // array into a string that no longer parses. This fails against the pre-fix implementation
-    // (`JSON.parse` throws on the mangled output) and passes now that the strip is delimiter-only.
+    // (`JSON.parse` throws on the mangled output) and passes now that only the real delimiter and
+    // the six non-ASCII look-alikes above are stripped.
+    it('leaves ASCII brackets — including a real JSON nested array — untouched', () => {
+        const value = 'real payload [[also legit]] and a nested array [1,2],[3,4]'
+        expect(mcpUtils.wrapUntrustedValue(value)).toBe(`⟦${value}⟧`)
+    })
+
     it('round-trips JSON.stringify output containing a nested array, so a preview built from it stays valid JSON (#485)', () => {
         const original = { matrix: [[1, 2], [3, 4]], name: 'x' }
         const json = JSON.stringify(original)
@@ -58,6 +62,17 @@ describe('mcpUtils.wrapUntrustedValue — the two properties the delimiter desig
     it('is total: does not throw on null or undefined from an untyped jsonb column', () => {
         expect(mcpUtils.wrapUntrustedValue(null)).toBe('⟦⟧')
         expect(mcpUtils.wrapUntrustedValue(undefined)).toBe('⟦⟧')
+    })
+
+    // The type signature promises `string | null | undefined`, but a jsonb-backed column typed
+    // `string` can legally hold something else at runtime — a number or boolean reaching here
+    // (however that happens) must not throw on `.replace` (#485 review: totality was dropped when
+    // the body was simplified to `(value ?? '').replace(...)`, which throws on a non-string).
+    it('is total at runtime too: coerces a non-string value instead of throwing', () => {
+        const numeric = 42 as unknown as string
+        const boolean = true as unknown as string
+        expect(mcpUtils.wrapUntrustedValue(numeric)).toBe('⟦42⟧')
+        expect(mcpUtils.wrapUntrustedValue(boolean)).toBe('⟦true⟧')
     })
 })
 

@@ -95,7 +95,7 @@ function diagnoseQadamProps({ props, input, qadamAuth, requireAuth, componentTyp
             const value = input[propName]
             if (value === undefined || value === null || value === '') {
                 if (RESOLVABLE_PROP_TYPES.has(prop.type)) {
-                    uiRequired.push(`${propName} (${prop.displayName})`)
+                    uiRequired.push(`${propName} (${wrapUntrustedValue(prop.displayName)})`)
                 }
                 else {
                     const hint = (prop.type === PropertyType.STATIC_DROPDOWN || prop.type === PropertyType.STATIC_MULTI_SELECT_DROPDOWN)
@@ -115,9 +115,13 @@ function diagnoseQadamProps({ props, input, qadamAuth, requireAuth, componentTyp
     }
     const parts: string[] = []
     if (unknownKeys.length > 0) {
+        // `prop.description`/`prop.displayName` are free text from whoever published or installed
+        // the qadam, and these entries are joined with `\n` into a multi-line block — an
+        // unwrapped newline inside one entry would forge an extra list item or a fake header
+        // (#485 review, same source as the `auth.description` wrapped in `ap-setup-guide.ts`).
         const validPropDescriptions = Object.entries(props)
             .filter(([, prop]) => !NON_INPUT_PROP_TYPES.has(prop.type))
-            .map(([name, prop]) => `- ${name} (${prop.type}): ${prop.description ?? prop.displayName}`)
+            .map(([name, prop]) => `- ${name} (${prop.type}): ${wrapUntrustedValue(prop.description ?? prop.displayName)}`)
             .join('\n')
         parts.push(`Unknown properties: ${unknownKeys.map((k) => `'${k}'`).join(', ')}. Valid properties for this action are:\n${validPropDescriptions}\nPlease retry with correct property names.`)
     }
@@ -270,36 +274,48 @@ const BRANCH_CONDITIONS_INPUT_SCHEMA = z.array(
 //
 // This does not reject the value — a name that fails to resolve, or a call that failed, is exactly
 // the normal case this output exists to report — but it is not a lossless passthrough either: it
-// marks where the tool's prose ends and quoted, untrusted data begins with a delimiter, and the only
-// thing the value loses is a literal occurrence of that exact delimiter — stripped rather than
-// escaped, so the closing bracket cannot be forged from inside the value, and nothing the value
-// contains can synthesise the delimiter's own codepoint by concatenation. An earlier version of this
-// also stripped a list of characters chosen to merely *look* like the delimiter, including the ASCII
-// `[[`/`]]` pair; that pair is ordinary JSON/JS array-of-arrays syntax, so the strip silently
-// corrupted well-formed input (`[[1,2],[3,4]]` became `1,2],[3,4`) for no closure the real delimiter
-// did not already provide on its own — a single codepoint that cannot be produced by concatenating
-// other characters cannot be spoofed by something that merely looks similar, so the list bought
-// nothing and cost data fidelity (#485 review). It is gone; only the two real delimiter codepoints
-// are stripped. Every ECMAScript line-terminator (not just `\r`/`\n` — `\u2028`/`\u2029` render as
-// breaks in many consumers, and `\u0085`/`\v`/`\f` are the remaining vertical-whitespace forms) is
-// still collapsed to a space first, so one value cannot masquerade as several lines of trusted output
-// — collapsing is the control the whole design rests on, since a fabricated line is what lets
-// injected text imitate one of this tool's own section headers or list items. The result is quoted,
-// not verbatim: line breaks are flattened and the delimiter itself cannot survive inside it, so a
-// caller must not treat a wrapped span as a byte-for-byte copy of the stored value.
-// `wrapUntrustedValue` takes `string | null | undefined`, not `unknown`: the only gap it exists to
-// cover is a jsonb-backed column typed `string` that can legally hold `null`/`undefined` at runtime,
-// and widening past that would let an object or array reach it and silently print `[object Object]`
-// instead of failing to compile.
-const FLOW_VALUE_OPEN = '⟦'
-const FLOW_VALUE_CLOSE = '⟧'
+// marks where the tool's prose ends and quoted, untrusted data begins with a delimiter no legitimate
+// value handled this way is allowed to collide with, and that guarantee costs the value any literal
+// occurrence of the delimiter itself (and of a short list of characters that merely *look* like it —
+// see `CONFUSABLE_DELIMITERS`), which are stripped rather than escaped. Two rounds of review landed
+// on different lists here, and the second is the one that stands: the real delimiter is a single
+// codepoint no input can forge by concatenation, so stripping the ASCII `[[`/`]]` pair bought no
+// closure that guarantee didn't already provide — and it corrupted ordinary JSON/JS
+// array-of-arrays syntax (`[[1,2],[3,4]]` became `1,2],[3,4`), so that pair is gone for good. The six
+// non-ASCII look-alikes (`〚〛〖〗⦋⦌`) answer a different question — not whether the
+// delimiter can be forged, but whether a reader matching loosely on shape rather than codepoint could
+// still mistake one for a close — and none of them appears in JSON or JavaScript syntax, so keeping
+// them costs no fidelity the ASCII pair's removal was paying for. Every ECMAScript line-terminator
+// (not just `\r`/`\n` — `\u2028`/`\u2029` render as breaks in many consumers, and `\u0085`/`\v`/`\f`
+// are the remaining vertical-whitespace forms) is collapsed to a space first, so one value cannot
+// masquerade as several lines of trusted output — collapsing is the control the whole design rests
+// on, since a fabricated line is what lets injected text imitate one of this tool's own section
+// headers or list items. The result is quoted, not verbatim: line breaks are flattened and the
+// delimiter (and its look-alikes) cannot survive inside it, so a caller must not treat a wrapped span
+// as a byte-for-byte copy of the stored value. `wrapUntrustedValue` takes `string | null | undefined`,
+// not `unknown`, so an object or array is a compile-time error rather than silently printing
+// `[object Object]` — but the body still runs every value through `String(...)` before replacing,
+// because the narrowed type is a compile-time promise, not a runtime guarantee: a jsonb-backed column
+// typed `string` can legally hold a number, a boolean, or `null`/`undefined` at runtime, and only the
+// last two were still handled once the `typeof value === 'string' ? value : String(value ?? '')` line
+// was simplified away — a number or boolean reaching this function's runtime, however that happens,
+// must not throw on `.replace`.
+const UNTRUSTED_VALUE_OPEN = '⟦'
+const UNTRUSTED_VALUE_CLOSE = '⟧'
+// Characters that read as "the same kind of bracket" as the real delimiter to a casual glance, or to
+// a model matching loosely on shape rather than codepoint — none of these is
+// `UNTRUSTED_VALUE_OPEN`/`UNTRUSTED_VALUE_CLOSE`, so a naive strip would miss them, and none of them
+// appears in JSON or JavaScript syntax (unlike the ASCII `[[`/`]]` pair this list used to carry, which
+// corrupted array-of-arrays JSON for no benefit — removed, see the comment above).
+const CONFUSABLE_DELIMITERS = ['〚', '〛', '〖', '〗', '⦋', '⦌']
 const LINE_BREAK_PATTERN = /[\r\n\u2028\u2029\u0085\v\f]+/g
 
 function wrapUntrustedValue(value: string | null | undefined): string {
-    const collapsed = (value ?? '').replace(LINE_BREAK_PATTERN, ' ')
-    const sanitized = [FLOW_VALUE_OPEN, FLOW_VALUE_CLOSE]
+    const str = typeof value === 'string' ? value : String(value ?? '')
+    const collapsed = str.replace(LINE_BREAK_PATTERN, ' ')
+    const sanitized = [UNTRUSTED_VALUE_OPEN, UNTRUSTED_VALUE_CLOSE, ...CONFUSABLE_DELIMITERS]
         .reduce((acc, token) => acc.split(token).join(''), collapsed)
-    return `${FLOW_VALUE_OPEN}${sanitized}${FLOW_VALUE_CLOSE}`
+    return `${UNTRUSTED_VALUE_OPEN}${sanitized}${UNTRUSTED_VALUE_CLOSE}`
 }
 
 // The truncation marker is deliberately appended *after* wrapping, not baked into the content that
