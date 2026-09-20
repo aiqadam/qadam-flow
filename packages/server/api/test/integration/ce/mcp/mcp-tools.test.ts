@@ -1431,7 +1431,8 @@ describe('MCP Tools integration', () => {
         const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         const output = text(result)
 
-        expect(output).toContain('loopItems: {{trigger[\'output\'].items}}')
+        expect(output).toContain('loopItems:')
+        expect(output).toContain('{{trigger[\'output\'].items}}')
     })
 
     it('52. ap_flow_structure — shows router branch conditions', async () => {

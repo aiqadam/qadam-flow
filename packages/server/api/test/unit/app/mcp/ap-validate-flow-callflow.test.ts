@@ -336,7 +336,8 @@ describe('ap_validate_flow — callFlow checks', () => {
 
         const text = await validate()
 
-        expect(text).toContain('"Grandchild" pauses')
+        expect(text).toContain('Grandchild')
+        expect(text).toContain('pauses at')
         expect(text).toContain('Wait for Approval')
     })
 

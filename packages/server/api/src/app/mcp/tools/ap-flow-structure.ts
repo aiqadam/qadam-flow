@@ -138,27 +138,27 @@ function formatStepSettings(step: Step, includeInput: boolean): string[] {
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${includeInput ? formatted : mcpUtils.truncate(formatted, 500)}`)
+            lines.push(`  input: ${mcpUtils.wrapFlowValue(includeInput ? formatted : mcpUtils.truncate(formatted, 500))}`)
         }
     }
     else if (step.type === FlowActionType.CODE) {
         const sourceCode = settings.sourceCode as { code?: string, packageJson?: string } | undefined
         if (sourceCode?.code) {
-            lines.push(`  sourceCode: ${mcpUtils.truncate(sourceCode.code, 300)}`)
+            lines.push(`  sourceCode: ${mcpUtils.wrapFlowValue(mcpUtils.truncate(sourceCode.code, 300))}`)
         }
         if (sourceCode?.packageJson && sourceCode.packageJson !== '{}') {
-            lines.push(`  packageJson: ${mcpUtils.truncate(sourceCode.packageJson, 200)}`)
+            lines.push(`  packageJson: ${mcpUtils.wrapFlowValue(mcpUtils.truncate(sourceCode.packageJson, 200))}`)
         }
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${includeInput ? formatted : mcpUtils.truncate(formatted, 300)}`)
+            lines.push(`  input: ${mcpUtils.wrapFlowValue(includeInput ? formatted : mcpUtils.truncate(formatted, 300))}`)
         }
     }
     else if (step.type === FlowActionType.LOOP_ON_ITEMS) {
         const items = settings.items as string | undefined
         if (items) {
-            lines.push(`  loopItems: ${items}`)
+            lines.push(`  loopItems: ${mcpUtils.wrapFlowValue(items)}`)
         }
     }
     return lines
@@ -177,7 +177,7 @@ function formatRelationshipLabel(step: StepInfo): string {
         case 'on_failure_branch':
             return 'on_failure_branch'
         case 'branch':
-            return `branch ${step.branchIndex}${step.branchName ? ` "${step.branchName}"` : ''}`
+            return `branch ${step.branchIndex}${step.branchName ? ` ${mcpUtils.wrapFlowValue(step.branchName)}` : ''}`
     }
 }
 
@@ -187,8 +187,8 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
             const op = c.operator ?? '?'
             const caseSensitive = 'caseSensitive' in c && c.caseSensitive ? ' [case-sensitive]' : ''
             return 'secondValue' in c
-                ? `${c.firstValue} ${op} ${c.secondValue}${caseSensitive}`
-                : `${c.firstValue} ${op}${caseSensitive}`
+                ? `${mcpUtils.wrapFlowValue(c.firstValue)} ${op} ${mcpUtils.wrapFlowValue(c.secondValue)}${caseSensitive}`
+                : `${mcpUtils.wrapFlowValue(c.firstValue)} ${op}${caseSensitive}`
         })
         return parts.join(' AND ')
     })
@@ -280,7 +280,7 @@ function formatFlowStructure(
     includeInput: boolean,
 ): string {
     const lines: string[] = []
-    lines.push(`# Flow: ${flowDisplayName} (id: ${flowId})`)
+    lines.push(`# Flow: ${mcpUtils.wrapFlowValue(flowDisplayName)} (id: ${flowId})`)
     lines.push('')
     lines.push('## Steps (DFS order: trigger first, then each step with parent and relationship)')
     lines.push('Format: name | type | displayName | parent | relationship | configStatus | canvas')
@@ -296,9 +296,9 @@ function formatFlowStructure(
         if (step.relationship === 'trigger') {
             let triggerDetail = ''
             if (fullStep && fullStep.type === FlowTriggerType.PIECE) {
-                triggerDetail = ` (qadam: ${fullStep.settings.qadamName}, trigger: ${fullStep.settings.triggerName ?? 'not set'})`
+                triggerDetail = ` (qadam: ${mcpUtils.wrapFlowValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapFlowValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | "${step.displayName}"${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapFlowValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -310,10 +310,10 @@ function formatFlowStructure(
         let stepDetail = ''
         if (step.type === FlowActionType.PIECE) {
             const s = fullStep?.settings as { qadamName?: string, actionName?: string } | undefined
-            if (s?.qadamName) stepDetail = ` (qadam: ${s.qadamName}, action: ${s.actionName ?? 'not set'})`
+            if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapFlowValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapFlowValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | "${step.displayName}"${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapFlowValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -325,10 +325,10 @@ function formatFlowStructure(
                 const btype = b.branchType === BranchExecutionType.FALLBACK ? 'fallback' : 'condition'
                 if (btype === 'condition' && b.conditions && b.conditions.length > 0) {
                     const condStr = formatBranchConditions(b.conditions)
-                    lines.push(`  branch[${i}]: "${b.branchName ?? ''}" (${btype}) | conditions: ${condStr}`)
+                    lines.push(`  branch[${i}]: ${mcpUtils.wrapFlowValue(b.branchName ?? '')} (${btype}) | conditions: ${condStr}`)
                 }
                 else {
-                    lines.push(`  branch[${i}]: "${b.branchName ?? ''}" (${btype})`)
+                    lines.push(`  branch[${i}]: ${mcpUtils.wrapFlowValue(b.branchName ?? '')} (${btype})`)
                 }
             })
         }
@@ -354,7 +354,7 @@ function formatFlowStructure(
             const routerStep = stepByName.get(step.name)
             const branches = (routerStep?.settings as { branches?: { branchName?: string }[] } | undefined)?.branches ?? []
             branches.forEach((b, i) => {
-                lines.push(`  Branch ${i} of "${step.name}"${b.branchName ? ` ("${b.branchName}")` : ''}: parentStepName="${step.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.INSIDE_BRANCH}", branchIndex=${i}`)
+                lines.push(`  Branch ${i} of "${step.name}"${b.branchName ? ` (${mcpUtils.wrapFlowValue(b.branchName)})` : ''}: parentStepName="${step.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.INSIDE_BRANCH}", branchIndex=${i}`)
             })
         }
         if (step.type === FlowActionType.CODE || step.type === FlowActionType.PIECE) {
@@ -383,7 +383,7 @@ function formatFlowStructure(
     else {
         for (const note of notes) {
             const content = note.content.replace(/<[^>]*>/g, '').slice(0, 80)
-            lines.push(`- id: ${note.id} | "${content}" | color: ${note.color} | pos: (${Math.round(note.position.x)}, ${Math.round(note.position.y)}) | size: ${note.size.width}×${note.size.height}`)
+            lines.push(`- id: ${note.id} | ${mcpUtils.wrapFlowValue(content)} | color: ${note.color} | pos: (${Math.round(note.position.x)}, ${Math.round(note.position.y)}) | size: ${note.size.width}×${note.size.height}`)
         }
     }
 

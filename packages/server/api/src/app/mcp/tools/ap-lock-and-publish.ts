@@ -41,7 +41,7 @@ export const apLockAndPublishTool = (mcp: ProjectScopedMcpServer, log: FastifyBa
             const allSteps = flowStructureUtil.getAllSteps(flow.version.trigger)
             const invalidSteps = allSteps.filter(s => !s.valid && !(s as { skip?: boolean }).skip)
             if (invalidSteps.length > 0) {
-                const stepList = invalidSteps.map(s => `"${s.name}" (${s.displayName})`).join(', ')
+                const stepList = invalidSteps.map(s => `"${s.name}" (${mcpUtils.wrapFlowValue(s.displayName)})`).join(', ')
                 return {
                     content: [{
                         type: 'text',
@@ -64,7 +64,7 @@ export const apLockAndPublishTool = (mcp: ProjectScopedMcpServer, log: FastifyBa
                     operation,
                 })
                 return {
-                    content: [{ type: 'text', text: `✅ Flow "${flow.version.displayName}" published and enabled successfully.` }],
+                    content: [{ type: 'text', text: `✅ Flow ${mcpUtils.wrapFlowValue(flow.version.displayName)} published and enabled successfully.` }],
                 }
             }
             catch (err) {

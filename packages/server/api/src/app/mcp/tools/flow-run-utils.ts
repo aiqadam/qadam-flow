@@ -38,7 +38,7 @@ export async function executeFlowTest({ flowId, projectId, stepName, triggerTest
     else {
         const invalidSteps = flowStructureUtil.getAllSteps(flow.version.trigger)
             .filter(s => !s.valid && !flowStructureUtil.isTrigger(s.type))
-            .map(s => s.displayName)
+            .map(s => mcpUtils.wrapFlowValue(s.displayName))
         if (invalidSteps.length > 0) {
             warning = `⚠️ These steps are not fully configured: ${invalidSteps.join(', ')}. Results may be incomplete.\n\n`
         }
@@ -338,7 +338,7 @@ export function formatRunResult(run: FlowRun): string {
     lines.push(`  Flow: ${run.flowId} | Environment: ${run.environment}`)
 
     if (run.failedStep) {
-        lines.push(`  Failed at: ${run.failedStep.displayName ?? run.failedStep.name}`)
+        lines.push(`  Failed at: ${run.failedStep.displayName ? mcpUtils.wrapFlowValue(run.failedStep.displayName) : run.failedStep.name}`)
     }
 
     const steps = run.steps
@@ -362,7 +362,7 @@ export function formatRunResult(run: FlowRun): string {
 
 export function formatRunSummary(run: FlowRun): string {
     const env = run.environment === RunEnvironment.TESTING ? ' [TEST]' : ''
-    const failed = run.failedStep ? ` | Failed: ${run.failedStep.displayName ?? run.failedStep.name}` : ''
+    const failed = run.failedStep ? ` | Failed: ${run.failedStep.displayName ? mcpUtils.wrapFlowValue(run.failedStep.displayName) : run.failedStep.name}` : ''
     const dur = formatDuration(run.startTime, run.finishTime)
     const durStr = dur !== 'N/A' ? ` | ${dur}` : ''
     const expired = isStepDataExpired(run) ? ' | step data expired' : ''

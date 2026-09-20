@@ -66,8 +66,8 @@ export const apListFlowsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLog
 export function formatFlowLine(flow: PopulatedFlow): string {
     const trigger = flow.version.trigger
     const triggerLabel = trigger.type === FlowTriggerType.PIECE
-        ? (trigger.settings.qadamName ?? 'qadam (unconfigured)')
+        ? (trigger.settings.qadamName ? mcpUtils.wrapFlowValue(trigger.settings.qadamName) : 'qadam (unconfigured)')
         : 'no trigger'
     const published = !isNil(flow.publishedVersionId) ? 'published' : 'draft'
-    return `- ${flow.version.displayName} (${flow.id}) | ${flow.status} | ${published} | trigger: ${triggerLabel}`
+    return `- ${mcpUtils.wrapFlowValue(flow.version.displayName)} (${flow.id}) | ${flow.status} | ${published} | trigger: ${triggerLabel}`
 }

@@ -259,6 +259,28 @@ function truncate(str: string, max: number): string {
     return str.length <= max ? str : str.slice(0, max) + '... (truncated)'
 }
 
+// Any string an MCP tool got from the flow definition rather than from this call's own arguments —
+// a step's displayName, a qadam/action/trigger name, a branch name, a branch condition value, a
+// pinned qadam version, a truncated sourceCode/input preview — was written by whoever last edited
+// that flow, who is not necessarily the principal running this tool call. Interpolating it bare
+// into a warning or summary line hands that other author a reliable, agent-chosen slot inside text
+// the model reads as the tool's own voice (#480): a name need only fail to resolve to guarantee the
+// surrounding sentence fires, and nothing stops that name from reading as an instruction itself.
+//
+// This does not reject or alter the value — a name that fails to resolve is exactly the normal case
+// this output exists to report — it only marks where the tool's prose ends and quoted, untrusted
+// data begins, with a delimiter no legitimate flow-authored string collides with. Newlines are
+// collapsed to spaces first so one value cannot masquerade as several lines of trusted output; any
+// literal occurrence of the delimiter itself is stripped so the value cannot forge its own closing
+// bracket and "escape" back into prose early.
+const FLOW_VALUE_OPEN = '⟦'
+const FLOW_VALUE_CLOSE = '⟧'
+function wrapFlowValue(value: string): string {
+    const collapsed = value.replace(/[\r\n]+/g, ' ')
+    const sanitized = collapsed.split(FLOW_VALUE_OPEN).join('').split(FLOW_VALUE_CLOSE).join('')
+    return `${FLOW_VALUE_OPEN}${sanitized}${FLOW_VALUE_CLOSE}`
+}
+
 function resolveRouterStep({ stepName, trigger }: { stepName: string, trigger: Step }): ResolveRouterStepResult {
     const step = flowStructureUtil.getStep(stepName, trigger)
     if (isNil(step) || step.type !== FlowActionType.ROUTER) {
@@ -465,12 +487,12 @@ function qadamPinIssue({ pin, resolvable }: { pin: string, resolvable: boolean |
     if (resolvable === false) {
         return {
             severity: 'unavailable',
-            message: `is pinned to ${pin}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+            message: `is pinned to ${wrapFlowValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
         }
     }
     return {
         severity: 'unverified',
-        message: `is pinned to ${pin}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
+        message: `is pinned to ${wrapFlowValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
     }
 }
 
@@ -492,6 +514,7 @@ const RESOLVE_TIMEOUT_MS = 30_000
 export const mcpUtils = {
     mcpToolError,
     truncate,
+    wrapFlowValue,
     resolveRouterStep,
     routerInvalidWarning,
     publishedFlowWarning,

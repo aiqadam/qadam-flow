@@ -43,7 +43,7 @@ export const apChangeFlowStatusTool = (mcp: ProjectScopedMcpServer, log: Fastify
                 return {
                     content: [{
                         type: 'text',
-                        text: `❌ Flow "${flow.version.displayName}" has no published version. Use ap_lock_and_publish first.`,
+                        text: `❌ Flow ${mcpUtils.wrapFlowValue(flow.version.displayName)} has no published version. Use ap_lock_and_publish first.`,
                     }],
                 }
             }
@@ -52,7 +52,7 @@ export const apChangeFlowStatusTool = (mcp: ProjectScopedMcpServer, log: Fastify
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Flow "${flow.version.displayName}" is already disabled.`,
+                        text: `✅ Flow ${mcpUtils.wrapFlowValue(flow.version.displayName)} is already disabled.`,
                     }],
                 }
             }
@@ -72,7 +72,7 @@ export const apChangeFlowStatusTool = (mcp: ProjectScopedMcpServer, log: Fastify
                 })
                 const action = status === FlowStatus.ENABLED ? 'enabled' : 'disabled'
                 return {
-                    content: [{ type: 'text', text: `✅ Flow "${flow.version.displayName}" ${action} successfully.` }],
+                    content: [{ type: 'text', text: `✅ Flow ${mcpUtils.wrapFlowValue(flow.version.displayName)} ${action} successfully.` }],
                 }
             }
             catch (err) {
