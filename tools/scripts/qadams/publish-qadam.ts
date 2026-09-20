@@ -21,7 +21,7 @@ export const publishQadam = async (name: string): Promise<void> => {
   const { name: packageName, version } = await readPackageJson(directory)
   await exec(`turbo run build --filter=${packageName}`)
 
-  await publishNpmPackage(directory)
+  await publishNpmPackage({ path: directory })
 
   console.info(chalk.green.bold(`[publishQadam] success, name=${name}, version=${version}`))
 }

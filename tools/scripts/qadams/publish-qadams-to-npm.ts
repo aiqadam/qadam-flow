@@ -19,7 +19,7 @@ const main = async () => {
   const qadamsSourceChunks = chunk(qadamsSource, 30)
 
   for (const c of qadamsSourceChunks) {
-    await Promise.all(c.map((path) => publishNpmPackage(path)))
+    await Promise.all(c.map((path) => publishNpmPackage({ path })))
     await new Promise(resolve => setTimeout(resolve, 5000))
   }
 }

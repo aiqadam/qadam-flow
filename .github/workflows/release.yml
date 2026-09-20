@@ -154,6 +154,84 @@ jobs:
       - name: List migrations tagged for this release
         run: npm run check-release-migrations -- "${GITHUB_REF_NAME#v}"
 
+  # Step 1a of the version-model decision in #433 (#475): publish the three framework
+  # packages every qadam depends on through the bun workspace protocol —
+  # `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` — to npmjs
+  # under the `@aiqadam` scope. #476 (step 1b, publishing the 238 qadams themselves) is
+  # blocked on this landing first and is NOT wired here.
+  #
+  # WHY NOT bun's OWN `workspace:*` rewrite. `bun publish` / `bun pm pack` do rewrite a
+  # `workspace:*` dependency to a real version, but they read that version from bun.lock's
+  # per-workspace `version` field, not from the dependency's own package.json. That field
+  # does not reliably refresh: on this repo, bumping `packages/shared/package.json` alone
+  # (no dependency change) left `bun.lock` quoting the prior version through both a plain
+  # `bun install` and `bun install --force` — only deleting and fully regenerating the
+  # lockfile picked up the new version. A publish pipeline that trusted the native rewrite
+  # would have silently packed a dependent against a `shared` version that was never
+  # published (or, worse, one that later stops existing). tools/scripts/utils/publish-npm-
+  # package.ts therefore uses the transform already written in
+  # packages/cli/src/lib/utils/{workspace,prepare-qadam}-utils.ts, which reads each
+  # workspace package's live source package.json directly and rewrites only the staged
+  # `dist/package.json` copy that gets published — the source tree keeps `workspace:*`.
+  #
+  # WHY NOT GATING `build`/`publish` ON THIS. The Docker image and the npm packages are
+  # independent artifacts for independent consumers (self-hosted operators vs. qadam SDK
+  # authors); a flaky or rate-limited npm publish should not hold back the image tag users
+  # actually install from. tools/scripts/publish-framework-packages.ts is idempotent per
+  # package (packagePrePublishChecks skips anything already published at its current
+  # version), so a re-run of this job after a transient failure is safe.
+  publish-framework-packages:
+    name: Publish framework packages to npm
+    needs: [verify, breaking-change-gate, version-tag-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # fetch-depth: 0, same reasoning as breaking-change-gate above: packagePrePublishChecks
+      # diffs against `origin/main` to tell "already published, nothing changed" apart from
+      # "version not bumped after a real change", and a depth-1 checkout has no `origin/main`
+      # to diff against.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        id: bun
+        with:
+          bun-version: 1.3.3
+
+      # Restore-only, same key `_verify.yml`'s `verify` job writes — see release-migrations
+      # above for what each key component is for.
+      - name: Restore built node_modules
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      - name: Build shared, qadams-framework, qadams-common
+        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
+
+      # NPM_TOKEN is an npmjs "Automation" token for the @aiqadam org, published-package
+      # scope, stored as a repo (or org) secret of that exact name. .npmrc's
+      # `//registry.npmjs.org/:_authToken=${NPM_TOKEN}` line already covers any scope that
+      # falls through to the default registry, which `@aiqadam` does — no further .npmrc
+      # change is needed for this job.
+      - name: Publish shared, qadams-framework, qadams-common to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npx ts-node --project tools/tsconfig.tools.json tools/scripts/publish-framework-packages.ts
+
   build:
     name: Build ${{ matrix.platform }}
     needs: [verify, breaking-change-gate, version-tag-gate]

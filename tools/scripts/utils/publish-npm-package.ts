@@ -55,8 +55,8 @@ function assertNoUnresolvedWorkspaceDeps(packageJsonPath: string): void {
   }
 }
 
-export const publishNpmPackage = async (path: string): Promise<void> => {
-  console.info(`[publishPackage] path=${path}`)
+export const publishNpmPackage = async ({ path, dryRun = false }: PublishNpmPackageParams): Promise<void> => {
+  console.info(`[publishPackage] path=${path}, dryRun=${dryRun}`)
   assert(path, '[publishPackage] parameter "path" is required')
 
   const outputPath = `${path}/dist`
@@ -72,9 +72,15 @@ export const publishNpmPackage = async (path: string): Promise<void> => {
   }
   const { version } = await readPackageJson(path)
 
-  // Pins all dependency versions (including transitive) from bun.lock.
-  // For qadams built via CLI or prepare-qadams-for-publish, this already ran during build — calling it
-  // again is idempotent. For shared/common/framework, this is the only place it runs before publish.
+  // Rewrites every "workspace:*" dependency (direct, not transitive) to the exact version
+  // read from that dependency's own source package.json — never from bun.lock, whose
+  // recorded version for a workspace package can go stale on an ordinary `bun install`
+  // when only the package's own version field changed (observed on this repo: a shared
+  // version bump with no dependency changes left bun.lock quoting the prior version after
+  // both `bun install` and `bun install --force`). Operates on the staged `dist/package.json`
+  // copy only; the source tree keeps `workspace:*`. For qadams built via CLI or
+  // prepare-qadams-for-publish, this already ran during build — calling it again is
+  // idempotent. For shared/common/framework, this is the only place it runs before publish.
   prepareQadamDistForPublish(path)
 
   const json = JSON.parse(readFileSync(`${outputPath}/package.json`).toString())
@@ -86,6 +92,12 @@ export const publishNpmPackage = async (path: string): Promise<void> => {
   assertNoUnresolvedWorkspaceDeps(`${outputPath}/package.json`)
   assertNoSemverRanges(`${outputPath}/package.json`)
 
+  if (dryRun) {
+    execSync(`npm pack`, { cwd: outputPath, stdio: 'inherit' })
+    console.info(`[publishPackage] dry run, packed only, path=${path}, version=${version}`)
+    return
+  }
+
   execSync(`npm publish --access public --tag latest`, { cwd: outputPath, stdio: 'inherit' })
 
   console.info(`[publishProject] success, path=${path}, version=${version}`)
@@ -93,7 +105,8 @@ export const publishNpmPackage = async (path: string): Promise<void> => {
 
 const main = async (): Promise<void> => {
   const path = argv[2]
-  await publishNpmPackage(path)
+  const dryRun = argv.includes('--dry-run')
+  await publishNpmPackage({ path, dryRun })
 }
 
 /*
@@ -102,4 +115,9 @@ const main = async (): Promise<void> => {
  */
 if (require.main === module) {
   main()
+}
+
+type PublishNpmPackageParams = {
+  path: string
+  dryRun?: boolean
 }
