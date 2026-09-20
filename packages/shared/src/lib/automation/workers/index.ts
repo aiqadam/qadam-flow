@@ -112,6 +112,10 @@ export const WorkerSettingsResponse = z.object({
     SANDBOX_MEMORY_LIMIT: z.string(),
     SANDBOX_PROPAGATED_ENV_VARS: z.array(z.string()),
     DEV_QADAMS: z.array(z.string()),
+    // Off by default: official qadams are not published to any registry yet (#475/#476), so
+    // asking bun to install one 404s. See the comment on `needsInstalling` in
+    // `qadam-installer.ts` for what flips when this turns on.
+    OFFICIAL_QADAMS_INSTALL_ENABLED: z.boolean(),
     SENTRY_DSN: z.string().optional(),
     LOKI_PASSWORD: z.string().optional(),
     LOKI_URL: z.string().optional(),

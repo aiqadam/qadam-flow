@@ -59,18 +59,30 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                                 displayName: p.name,
                                 models: capped.map(m => ({ id: m.id, name: m.name })),
                             })
+                            // `m.name` and `m.id` are both outside this server's control, by one of two
+                            // routes. Six providers (openai, openrouter, anthropic, azure, google, mistral)
+                            // fetch them live from the vendor's own `/models` endpoint. CUSTOM and
+                            // CLOUDFLARE_GATEWAY make no network call at all — `listModels` is
+                            // `config.models.map(...)`, so the values are admin-typed strings on the
+                            // provider row. Admin config is inside this branch's perimeter either way,
+                            // which is why `p.name` is wrapped too. All three are `\n`-joined into this
+                            // nested list, so any of them can forge a fake provider/model entry (#485), and
+                            // `m.id` is `z.string()` with no constraint (`AIProviderModel`) — wrapping only
+                            // the name would leave the same channel open one field to the right.
+                            // `p.id`/`p.provider` are an apId and an enum. The raw ids stay in
+                            // `structuredContent` above for the model to copy back.
                             const modelLines = capped.length > 0
-                                ? capped.map(m => `    - ${m.name} (id: ${m.id})`).join('\n')
+                                ? capped.map(m => `    - ${mcpUtils.wrapUntrustedValue(m.name)} (id: ${mcpUtils.wrapUntrustedValue(m.id)})`).join('\n')
                                 : '    (no text models available)'
                             const overflow = textModels.length > MAX_MODELS_PER_PROVIDER
                                 ? `\n    ... and ${textModels.length - MAX_MODELS_PER_PROVIDER} more${filterProvider ? '' : ` (use provider="${p.provider}" to see all)`}`
                                 : ''
-                            return `- ${p.name} (${p.provider}, id: ${p.id}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
+                            return `- ${mcpUtils.wrapUntrustedValue(p.name)} (${p.provider}, id: ${p.id}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
                         }
                         catch (err) {
                             log.warn({ err, provider: p.provider }, 'ap_list_ai_models: failed to fetch models for provider')
                             structuredProviders.push({ id: p.id, provider: p.provider, displayName: p.name, models: [] })
-                            return `- ${p.name} (${p.provider}, id: ${p.id})\n  (failed to fetch models)`
+                            return `- ${mcpUtils.wrapUntrustedValue(p.name)} (${p.provider}, id: ${p.id})\n  (failed to fetch models)`
                         }
                     }),
                 )

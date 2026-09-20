@@ -112,9 +112,10 @@ export const apResolvePropertyOptionsTool = (mcp: ProjectScopedMcpServer, log: F
                 }
             }
             catch (err) {
+                // `message` may carry a caught third-party API error string (#485).
                 const message = err instanceof Error ? err.message : String(err)
                 return {
-                    content: [{ type: 'text', text: `⚠️ Options resolution timed out for "${(args as Record<string, unknown>).propertyName ?? 'unknown'}": ${message}. You may use the user-provided value directly — it often works at runtime. The dropdown in the flow editor may appear unset; mention this to the user.` }],
+                    content: [{ type: 'text', text: `⚠️ Options resolution timed out for "${(args as Record<string, unknown>).propertyName ?? 'unknown'}": ${mcpUtils.wrapUntrustedValue(message)}. You may use the user-provided value directly — it often works at runtime. The dropdown in the flow editor may appear unset; mention this to the user.` }],
                 }
             }
         },

@@ -1,6 +1,13 @@
 {
   "name": "@aiqadam/qadams-common",
-  "version": "0.14.0",
+  "version": "0.14.1",
+  "description": "Shared HTTP and auth helpers for Qadam Flow qadams built on @aiqadam/qadams-framework.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aiqadam/qadam-flow.git",
+    "directory": "packages/qadams/common"
+  },
   "type": "commonjs",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",

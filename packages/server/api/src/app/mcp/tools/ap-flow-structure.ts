@@ -12,11 +12,14 @@ import {
     Permission,
     ProjectScopedMcpServer,
     StepLocationRelativeToParent,
+    tryCatch,
 } from '@aiqadam/shared'
 import type { Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
+import { projectService } from '../../project/project-service'
+import { QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
@@ -31,6 +34,8 @@ type StepInfo = {
     skip?: boolean
     configStatus: string
     input: Record<string, unknown> | null
+    qadamPin?: string
+    qadamVersionResolvable?: boolean
 }
 
 function getStepInput(step: Step): Record<string, unknown> | null {
@@ -61,6 +66,62 @@ function getConfigStatus(step: Step): string {
     }
 }
 
+// `qadamPinUtil.resolvePins` is tri-state (`true` resolved / `false` a definite miss / `undefined`
+// the lookup errored) precisely so a caller that must not conflate the last two — the heal
+// migration — can tell them apart. This is a read-only report, not a persister, so it passes the
+// raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
+function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions: Map<string, boolean | undefined> }): { qadamPin?: string, qadamVersionResolvable?: boolean } {
+    if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
+        return {}
+    }
+    // `pinOf` rather than re-deriving `name@version` inline: this was the one place left where a
+    // future change to `pinOf`'s format could silently desync the lookup key from the map's keys
+    // (which come from `collectDistinctPins` → `pinOf`) — precisely the duplication `qadamPinUtil`
+    // exists to end.
+    const pin = qadamPinUtil.pinOf({ step })
+    return { qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
+}
+
+// Wording is shared with `ap_validate_flow` via `mcpUtils.qadamPinIssue`, so the two tools cannot
+// give an agent contradictory accounts of the same pin. `qadamVersionResolvable` is `undefined` in
+// two different situations here, and only one of them reaches `qadamPinIssue` at all: the step
+// carries no pin (filtered by `isNil(step.qadamPin)` below — nothing to say), versus a pin whose
+// lookup errored — the platform couldn't be determined at all (`resolveQadamPinAvailability` then
+// never even calls `resolvePins`) or one specific pin's lookup threw. `qadamPinIssue` is the one
+// place that decides the destructive-remedy wording is only warranted for a confirmed `false`.
+function qadamPinWarning(step: StepInfo): string {
+    if (isNil(step.qadamPin)) {
+        return ''
+    }
+    const issue = mcpUtils.qadamPinIssue({ pin: step.qadamPin, resolvable: step.qadamVersionResolvable })
+    if (isNil(issue)) {
+        return ''
+    }
+    const label = issue.severity === 'unavailable' ? 'PINNED VERSION UNAVAILABLE' : 'PINNED VERSION UNVERIFIED'
+    return ` ⚠️ ${label}: this step ${issue.message}`
+}
+
+// A pin-availability signal is a decoration on top of the structure this tool exists to return —
+// before this feature, `ap_flow_structure` needed only the flow row. `getPlatformId` throws when
+// the project row carries no platform, and this tool is called constantly for navigation, so a
+// platform-lookup failure must degrade to "no pin info" rather than fail the whole response the
+// way `ap_validate_flow`'s equivalent unwrapped call is allowed to for a one-shot pre-publish gate.
+async function resolveQadamPinAvailability({ qadamSteps, projectId, log }: {
+    qadamSteps: QadamPinnedStep[]
+    projectId: string
+    log: FastifyBaseLogger
+}): Promise<Map<string, boolean | undefined>> {
+    const { data: platformId } = await tryCatch(() => projectService(log).getPlatformId(projectId))
+    if (isNil(platformId)) {
+        return new Map()
+    }
+    return qadamPinUtil.resolvePins({
+        pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
+        platformId,
+        log,
+    })
+}
+
 function hasSampleData(step: Step): boolean {
     if (!('sampleData' in step.settings)) {
         return false
@@ -77,27 +138,32 @@ function formatStepSettings(step: Step, includeInput: boolean): string[] {
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${includeInput ? formatted : mcpUtils.truncate(formatted, 500)}`)
+            lines.push(`  input: ${mcpUtils.wrapTruncatedUntrustedValue({ value: formatted, max: includeInput ? Infinity : 500 })}`)
         }
     }
     else if (step.type === FlowActionType.CODE) {
+        // `wrapTruncatedUntrustedValue` collapses embedded newlines, so a multi-line CODE step's preview
+        // now renders on one line here — a readability cost accepted deliberately: this is a
+        // truncated overview, `ap_read_step_code` is still the untruncated, multi-line fidelity
+        // path for this same source, and `structuredContent.steps[].input` still carries the raw
+        // (unwrapped) value when `includeInput` is set.
         const sourceCode = settings.sourceCode as { code?: string, packageJson?: string } | undefined
         if (sourceCode?.code) {
-            lines.push(`  sourceCode: ${mcpUtils.truncate(sourceCode.code, 300)}`)
+            lines.push(`  sourceCode: ${mcpUtils.wrapTruncatedUntrustedValue({ value: sourceCode.code, max: 300 })}`)
         }
         if (sourceCode?.packageJson && sourceCode.packageJson !== '{}') {
-            lines.push(`  packageJson: ${mcpUtils.truncate(sourceCode.packageJson, 200)}`)
+            lines.push(`  packageJson: ${mcpUtils.wrapTruncatedUntrustedValue({ value: sourceCode.packageJson, max: 200 })}`)
         }
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${includeInput ? formatted : mcpUtils.truncate(formatted, 300)}`)
+            lines.push(`  input: ${mcpUtils.wrapTruncatedUntrustedValue({ value: formatted, max: includeInput ? Infinity : 300 })}`)
         }
     }
     else if (step.type === FlowActionType.LOOP_ON_ITEMS) {
         const items = settings.items as string | undefined
         if (items) {
-            lines.push(`  loopItems: ${items}`)
+            lines.push(`  loopItems: ${mcpUtils.wrapUntrustedValue(items)}`)
         }
     }
     return lines
@@ -116,7 +182,7 @@ function formatRelationshipLabel(step: StepInfo): string {
         case 'on_failure_branch':
             return 'on_failure_branch'
         case 'branch':
-            return `branch ${step.branchIndex}${step.branchName ? ` "${step.branchName}"` : ''}`
+            return `branch ${step.branchIndex}${step.branchName ? ` ${mcpUtils.wrapUntrustedValue(step.branchName)}` : ''}`
     }
 }
 
@@ -126,15 +192,15 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
             const op = c.operator ?? '?'
             const caseSensitive = 'caseSensitive' in c && c.caseSensitive ? ' [case-sensitive]' : ''
             return 'secondValue' in c
-                ? `${c.firstValue} ${op} ${c.secondValue}${caseSensitive}`
-                : `${c.firstValue} ${op}${caseSensitive}`
+                ? `${mcpUtils.wrapUntrustedValue(c.firstValue)} ${op} ${mcpUtils.wrapUntrustedValue(c.secondValue)}${caseSensitive}`
+                : `${mcpUtils.wrapUntrustedValue(c.firstValue)} ${op}${caseSensitive}`
         })
         return parts.join(' AND ')
     })
     return groups.join(' OR ')
 }
 
-function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName: Map<string, Step> } {
+function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qadamResolutions: Map<string, boolean | undefined> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
     const allSteps = flowStructureUtil.getAllSteps(trigger)
     const stepByName = new Map(allSteps.map(s => [s.name, s]))
     const structure = allSteps.map((step): StepInfo => {
@@ -149,6 +215,7 @@ function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName:
                 skip: (step as { skip?: boolean }).skip,
                 configStatus: getConfigStatus(step),
                 input: getStepInput(step),
+                ...qadamPinInfo({ step, qadamResolutions }),
             }
         }
         let parentName: string | null = null
@@ -202,6 +269,7 @@ function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName:
             skip: (step as { skip?: boolean }).skip,
             configStatus: getConfigStatus(step),
             input: getStepInput(step),
+            ...qadamPinInfo({ step, qadamResolutions }),
         }
     })
     return { structure, stepByName }
@@ -217,7 +285,7 @@ function formatFlowStructure(
     includeInput: boolean,
 ): string {
     const lines: string[] = []
-    lines.push(`# Flow: ${flowDisplayName} (id: ${flowId})`)
+    lines.push(`# Flow: ${mcpUtils.wrapUntrustedValue(flowDisplayName)} (id: ${flowId})`)
     lines.push('')
     lines.push('## Steps (DFS order: trigger first, then each step with parent and relationship)')
     lines.push('Format: name | type | displayName | parent | relationship | configStatus | canvas')
@@ -232,10 +300,15 @@ function formatFlowStructure(
 
         if (step.relationship === 'trigger') {
             let triggerDetail = ''
-            if (fullStep && fullStep.type === FlowTriggerType.PIECE) {
-                triggerDetail = ` (qadam: ${fullStep.settings.qadamName}, trigger: ${fullStep.settings.triggerName ?? 'not set'})`
+            // Guarded the same way the PIECE-action branch below guards `s?.qadamName`: `qadamName`
+            // is typed `string` on `QadamTrigger`, but this reads a jsonb column, and a malformed or
+            // legacy row is not guaranteed to satisfy that type at runtime. `wrapUntrustedValue` is total
+            // and would not throw on a missing value, but printing `(qadam: ⟦⟧, trigger: not set)`
+            // for a trigger with nothing configured is worse than printing nothing.
+            if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
+                triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | "${step.displayName}"${triggerDetail} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -247,10 +320,10 @@ function formatFlowStructure(
         let stepDetail = ''
         if (step.type === FlowActionType.PIECE) {
             const s = fullStep?.settings as { qadamName?: string, actionName?: string } | undefined
-            if (s?.qadamName) stepDetail = ` (qadam: ${s.qadamName}, action: ${s.actionName ?? 'not set'})`
+            if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | "${step.displayName}"${stepDetail} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -260,12 +333,13 @@ function formatFlowStructure(
             const branches = (fullStep.settings as { branches?: { branchName?: string, branchType?: string, conditions?: BranchCondition[][] }[] })?.branches ?? []
             branches.forEach((b, i) => {
                 const btype = b.branchType === BranchExecutionType.FALLBACK ? 'fallback' : 'condition'
+                const branchLabel = b.branchName ? mcpUtils.wrapUntrustedValue(b.branchName) : '(unnamed)'
                 if (btype === 'condition' && b.conditions && b.conditions.length > 0) {
                     const condStr = formatBranchConditions(b.conditions)
-                    lines.push(`  branch[${i}]: "${b.branchName ?? ''}" (${btype}) | conditions: ${condStr}`)
+                    lines.push(`  branch[${i}]: ${branchLabel} (${btype}) | conditions: ${condStr}`)
                 }
                 else {
-                    lines.push(`  branch[${i}]: "${b.branchName ?? ''}" (${btype})`)
+                    lines.push(`  branch[${i}]: ${branchLabel} (${btype})`)
                 }
             })
         }
@@ -276,6 +350,11 @@ function formatFlowStructure(
     lines.push('Use parentStepName + stepLocationRelativeToParent (and branchIndex when INSIDE_BRANCH).')
     lines.push('')
 
+    // Every `step.name` below is left bare deliberately: `STEP_NAME_REGEX`
+    // (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) constrains it at the schema level, so unlike `displayName` it
+    // can never carry a space, punctuation or a newline — there is nothing here for
+    // `mcpUtils.wrapUntrustedValue` to guard against, and these values are also copy-pasted verbatim
+    // into a `parentStepName="..."` call argument, where a delimiter would be actively wrong.
     const triggerStep = structure[0]
     if (triggerStep) {
         lines.push(`- After trigger: parentStepName="${triggerStep.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.AFTER}"`)
@@ -291,7 +370,7 @@ function formatFlowStructure(
             const routerStep = stepByName.get(step.name)
             const branches = (routerStep?.settings as { branches?: { branchName?: string }[] } | undefined)?.branches ?? []
             branches.forEach((b, i) => {
-                lines.push(`  Branch ${i} of "${step.name}"${b.branchName ? ` ("${b.branchName}")` : ''}: parentStepName="${step.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.INSIDE_BRANCH}", branchIndex=${i}`)
+                lines.push(`  Branch ${i} of "${step.name}"${b.branchName ? ` (${mcpUtils.wrapUntrustedValue(b.branchName)})` : ''}: parentStepName="${step.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.INSIDE_BRANCH}", branchIndex=${i}`)
             })
         }
         if (step.type === FlowActionType.CODE || step.type === FlowActionType.PIECE) {
@@ -320,7 +399,7 @@ function formatFlowStructure(
     else {
         for (const note of notes) {
             const content = note.content.replace(/<[^>]*>/g, '').slice(0, 80)
-            lines.push(`- id: ${note.id} | "${content}" | color: ${note.color} | pos: (${Math.round(note.position.x)}, ${Math.round(note.position.y)}) | size: ${note.size.width}×${note.size.height}`)
+            lines.push(`- id: ${note.id} | ${mcpUtils.wrapUntrustedValue(content)} | color: ${note.color} | pos: (${Math.round(note.position.x)}, ${Math.round(note.position.y)}) | size: ${note.size.width}×${note.size.height}`)
         }
     }
 
@@ -331,7 +410,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), and valid insert locations for ap_add_step. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, and whether each step\'s pinned qadam version is still available on this installation. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -346,7 +425,23 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 if (isNil(flow)) {
                     return { content: [{ type: 'text', text: '❌ Flow not found' }] }
                 }
-                const { structure, stepByName } = buildFlowStructure(flow.version.trigger)
+                // `getQadamSteps` does not filter by `skip`, matching `ap_validate_flow`'s
+                // `validatePinnedQadamVersions`: the worker provisions every PIECE step in the
+                // version regardless of `skip`, so a dead pin on a skipped step still fails
+                // provisioning on every trigger tick — hiding it here would be misleading.
+                //
+                // Distinct-pin dedupe keeps the added cost to one platform lookup plus one
+                // resolution per *distinct* pin, not per step — a flow with twelve steps on one
+                // qadam pin still costs one resolution. `qadamMetadataService.get()` itself is not
+                // fully cached though: the name/version registry list is, but resolving a pin to
+                // its full metadata still does a DB read per distinct pin unless the qadam is
+                // bundled (#474) — worth knowing before calling this tool in a hot loop over many
+                // distinct pins, though no worse than `ap_validate_flow` already accepts.
+                const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
+                const qadamResolutions = qadamSteps.length > 0
+                    ? await resolveQadamPinAvailability({ qadamSteps, projectId: mcp.projectId, log })
+                    : new Map<string, boolean | undefined>()
+                const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const text = formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [], !!includeInput)
                 return {
@@ -365,6 +460,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             valid: s.valid,
                             configStatus: s.configStatus,
                             ...(includeInput && s.input !== null ? { input: s.input } : {}),
+                            ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),
                         })),
                         stepCount: structure.length,
                     },

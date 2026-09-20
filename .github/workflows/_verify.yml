@@ -329,6 +329,29 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-migration-metadata
 
+      # #479: a required prop with no `defaultValue` added to an already-shipped action/trigger
+      # invalidates every flow authored before the prop existed. Same PR_BASE_SHA/PR_HEAD_SHA
+      # shape as the migration-metadata gate immediately above, for the same reason — see the
+      # checker's own header comment for why this has to be a diff, not a check-dropdown-defaults-
+      # style full-tree scan, and for what it still cannot see.
+      - name: Test the required-prop-defaults checker
+        run: tools/ci/test-required-prop-defaults-check.sh
+
+      - name: Check newly-required qadam props carry a default or a major bump
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run check-required-prop-defaults
+
+      # release.yml's `publish-framework-packages` job trusts a custom workspace:* rewrite
+      # instead of bun's own (see that job's header for why). Needs ts-node and the
+      # transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
+      # node_modules, so it sits down here with the other post-install tooling suites
+      # rather than with the pure-shell suite above.
+      - name: Test the publish-time workspace:* rewrite invariants
+        run: tools/ci/test-publish-workspace-invariants.sh
+
       # Unfiltered, deliberately. The enumerated `lint-core` / `lint-qadams`
       # scripts silently missed every package they did not name — `@aiqadam/cli`,
       # `tests-e2e`, and, because the glob was `qadam-*` while the packages are

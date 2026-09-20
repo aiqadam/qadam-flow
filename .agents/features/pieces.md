@@ -6,11 +6,11 @@ The qadams feature manages the metadata catalog of automation integrations (call
 ## Key Files
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-controller.ts` — all piece routes registered under `/v1/qadams`
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-service.ts` — list, get, create, delete piece metadata; manages cache interactions and piece tag enrichment
+- `packages/server/api/src/app/qadams/metadata/qadam-pin-util.ts` — the canonical "does this flow-version step's pinned qadam version still resolve" predicate (#474). Wraps `qadamMetadataService.get()`/`.registry()` with a tri-state result (`true` resolved / `false` a definite miss / `undefined` the lookup errored — see the file's own comments for why the distinction matters to a caller that persists a rewrite). Used by `ap_validate_flow`, `ap_flow_structure`, `migrate-v19-strip-piece-version-wildcards.ts`, and the heal migration `migrate-v31-heal-unresolvable-qadam-pins.ts`; any new "is this pin resolvable" check should go through here rather than re-deriving it against `qadamMetadataService` directly.
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` — `qadam_metadata` TypeORM entity
 - `packages/server/api/src/app/qadams/metadata/qadam-cache.ts` — Redis/memory cache with pub/sub invalidation
-- `packages/server/api/src/app/qadams/community-piece-module.ts` — POST `/v1/qadams` for installing custom pieces
-- `packages/server/api/src/app/qadams/qadam-install-service.ts` — saves archive, calls engine to extract metadata, stores result
-- `packages/server/api/src/app/qadams/qadam-sync-service.ts` — syncs canonical piece registry from NPM/bundled artifacts into DB
+- `packages/server/api/src/app/qadams/community-qadam-module.ts` — POST `/v1/qadams` for installing custom qadams (`qadamInstallService`, always persisted as `CUSTOM`)
+- `packages/server/api/src/app/qadams/qadam-install-service.ts` — saves archive, calls engine to extract metadata, stores result. The only writer to `qadam_metadata` — nothing syncs bundled/official qadams into the DB; those are read live off disk every call by `loadBundledQadams()` (`qadams/metadata/utils/qadam-cache-utils.ts`) and never persisted
 - `packages/server/api/src/app/qadams/tags/` — tag entity, tag service, tag-module for organizing pieces into groups
 - `packages/web/src/features/qadams/api/pieces-api.ts` — frontend HTTP client
 - `packages/web/src/features/qadams/hooks/pieces-hooks.ts` — React Query hooks for piece listing, piece model, piece options
@@ -20,7 +20,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 
 ## Domain Terms
 - **Qadam** — a named integration (e.g. `@aiqadam/qadam-gmail`) providing actions and triggers
-- **QadamType** — `OFFICIAL` (bundled) or `CUSTOM` (platform-installed)
+- **QadamType** — `OFFICIAL` or `CUSTOM` (platform-installed). Off the `OFFICIAL_QADAMS_INSTALL_ENABLED` flag (default, until #475/#476 publish official qadams to a registry), an `OFFICIAL` qadam is bundled: compiled into the image, loaded in-memory from `dist/package.json` (`loadBundledQadams`), never installed as a package, and shadows any persisted row of the same name regardless of version (`qadam-cache.ts`). With the flag on, `OFFICIAL` qadams are also installed through the same registry path a `CUSTOM` qadam already takes (`needsInstalling()` in `qadam-installer.ts`), and shadowing keys on `name@version` instead of `name` so a persisted official version can sit side by side with a differently-versioned bundled one.
 - **PackageType** — `REGISTRY` (NPM) or `ARCHIVE` (uploaded tarball)
 - **qadamCache** — an in-memory map of piece metadata keyed by name+version+platformId, rebuilt from DB
 - **QadamCategory** — enum grouping pieces (AI, CORE, COMMUNICATION, etc.)
@@ -79,7 +79,4 @@ Unique index on `(name, version, platformId)`.
 - `registry({ release? })` — returns lightweight name+version list for all pieces
 
 ### `pieceInstallService`
-- `installPiece(platformId, params)` — saves archive file if needed, dispatches `EXECUTE_METADATA` engine job to extract piece metadata from the package, then stores via `pieceMetadataService.create`
-
-### `pieceSyncService`
-- `sync({ publishCacheRefresh })` — reads bundled piece registry file, upserts official piece metadata records, optionally publishes cache refresh event
+- `installPiece(platformId, params)` — saves archive file if needed, dispatches `EXECUTE_METADATA` engine job to extract piece metadata from the package, then stores via `pieceMetadataService.create` (always as `CUSTOM` — there is no service that persists an `OFFICIAL` row; see `qadamCache`/`loadBundledQadams` below)

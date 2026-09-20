@@ -59,8 +59,9 @@ function getCustomPiecesPath(platformId: string): string {
 
 async function installQadams(rootWorkspace: string, pieces: QadamPackage[], includeFilters: boolean, log: Logger, apiClient: WorkerToApiContract): Promise<void> {
     const devQadams = workerSettings.getSettings().DEV_QADAMS
+    const officialQadamsInstallEnabled = workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED
     const nonDevQadams = pieces.filter(piece => !devQadams.includes(getQadamNameFromAlias(piece.qadamName)))
-    const installableQadams = nonDevQadams.filter(needsInstalling)
+    const installableQadams = nonDevQadams.filter(piece => needsInstalling({ piece, officialQadamsInstallEnabled }))
     const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, installableQadams)
 
     if (isEmpty(qadamsToInstall)) {
@@ -157,20 +158,48 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
 // Official qadams are compiled into the image (`Dockerfile`: "Qadams must be pre-compiled because
 // the runtime loader scans <qadam>/dist/ in standalone mode (no cloud registry)") and the engine's
-// loader falls back to `packages/qadams/**/dist` for exactly that reason. They are published to no
-// registry — `npm view @aiqadam/qadam-subflows` is a 404, and `.npmrc` maps no `@aiqadam` scope —
-// so asking bun to install one does not resolve:
+// loader falls back to `packages/qadams/**/dist` for exactly that reason.
 //
-//   error: GET https://registry.npmjs.org/@aiqadam%2fqadam-subflows - 404
-//   error: @aiqadam/qadam-subflows@0.4.14 failed to resolve
+// DO NOT flip `OFFICIAL_QADAMS_INSTALL_ENABLED` on in any environment, including staging, until
+// #482 is closed. The `@aiqadam` npm scope is UNCLAIMED — `.npmrc` maps only `@activepieces`, so
+// every `@aiqadam/*` name resolves against public npm today, and nobody has registered it yet.
+// That is not a stable "it 404s" state, it is a dependency-confusion target sitting open: the
+// moment anyone squats the scope and publishes any of these names, this predicate starts routing
+// the ENTIRE official catalogue through `bun install` against a package chosen by an attacker, not
+// an administrator. `createQadamPackageJson` writes it straight into a package.json dependency and
+// `bunRunner.install` fetches it. It lands in the SHARED workspace (`getGlobalCacheCommonPath()`,
+// not a per-platform path — see `groupQadamsByPackagePath`), the engine prefers an installed
+// directory over the bundled `dist` build, and the substituted code then runs for every tenant on
+// that worker. Two mitigations that look like they'd cover this and do not, so nobody re-derives
+// and re-rejects them: `bun install --ignore-scripts` (`bun-runner.ts`) blocks `postinstall`, but
+// the qadam is `require`d by the engine rather than run via a lifecycle script, so that is not the
+// vector; and the repo-root `bunfig.toml`'s `minimumReleaseAge` quarantine is not in force here,
+// because bun reads `bunfig.toml` from the install cwd and `$HOME` and does not walk up the tree,
+// and the install cwd (`cache/v12/common`) has none. See #482 for what has to land first (claiming
+// the org, pinning `@aiqadam:registry` explicitly, carrying the quarantine into the install cwd).
 //
-// That was invisible only because the workspaces glob matched nothing and bun exited 0 without
-// looking. With the glob fixed it becomes a failed install, a rollback, and a failed job — for a
-// qadam the engine would have loaded from `dist` anyway. A custom qadam is the opposite case: an
-// ARCHIVE resolves from a tarball on disk, and a CUSTOM registry package names something that
-// really is published, so both have to be installed for the engine to find them at all.
-function needsInstalling(piece: QadamPackage): boolean {
-    return piece.packageType === PackageType.ARCHIVE || piece.qadamType === QadamType.CUSTOM
+// #433/#477 decided that official qadams become real published packages so a version pin survives
+// an image upgrade instead of resolving to whatever happens to be built. Once #475/#476 publish
+// them AND #482's preconditions are met, flipping this flag routes OFFICIAL qadams through this
+// same install path a CUSTOM qadam already takes — `qadam-cache.ts`'s `name@version` shadowing has
+// to flip with it, or the DB history this unlocks is discarded before it can be used. Landing this
+// flip before the packages are actually published breaks every existing flow's install (today,
+// harmlessly, with a 404); after the scope is squatted it would not be harmless — which is why the
+// flag defaults to off regardless. A custom qadam is installed either way: an ARCHIVE resolves
+// from a tarball on disk, and a CUSTOM registry package names something an administrator chose and
+// that really is published, so both have to be installed for the engine to find them at all.
+function needsInstalling({ piece, officialQadamsInstallEnabled }: {
+    piece: QadamPackage
+    officialQadamsInstallEnabled: boolean
+}): boolean {
+    if (piece.packageType === PackageType.ARCHIVE || piece.qadamType === QadamType.CUSTOM) {
+        return true
+    }
+    // `piece.qadamType === QadamType.OFFICIAL` is always true once the CUSTOM branch above has
+    // already returned — `QadamType` has exactly two members. Kept explicit rather than
+    // `return officialQadamsInstallEnabled` so the predicate still reads correctly if a third
+    // `QadamType` is ever added; it is deliberate belt-and-braces, not dead code.
+    return officialQadamsInstallEnabled && piece.qadamType === QadamType.OFFICIAL
 }
 
 async function rollbackInstallation(rootWorkspace: string, pieces: QadamPackage[]): Promise<void> {

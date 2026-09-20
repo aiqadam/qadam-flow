@@ -71,8 +71,17 @@ export const apDuplicateFlowTool = ({ mcp, userId }: McpToolContext, log: Fastif
                     return {
                         content: [{
                             type: 'text',
-                            text: `✅ Flow duplicated successfully.\n  Original: "${sourceFlow.version.displayName}" (id: ${sourceFlow.id})\n  Copy: "${updatedFlow.version.displayName}" (id: ${updatedFlow.id})\n\nNote: Connections are not copied — use ap_flow_structure on the new flow to check configuration status and re-configure steps as needed.`,
+                            text: `✅ Flow duplicated successfully.\n  Original: ${mcpUtils.wrapUntrustedValue(sourceFlow.version.displayName)} (id: ${sourceFlow.id})\n  Copy: ${mcpUtils.wrapUntrustedValue(updatedFlow.version.displayName)} (id: ${updatedFlow.id})\n\nNote: Connections are not copied — use ap_flow_structure on the new flow to check configuration status and re-configure steps as needed.`,
                         }],
+                        // Structured, not scraped from the prose above: `displayName` on both flows
+                        // is flow-authored (the copy's own name defaults to `Copy of <source name>`,
+                        // carrying the source's name forward), and prose is exactly the channel #480
+                        // says a caller must not have to parse an id out of.
+                        structuredContent: {
+                            flowId: updatedFlow.id,
+                            sourceFlowId: sourceFlow.id,
+                            displayName: updatedFlow.version.displayName,
+                        },
                     }
                 }
                 catch (importErr) {

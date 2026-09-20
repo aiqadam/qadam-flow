@@ -39,7 +39,7 @@ export class FlowExecutorContext {
     engineApi?: EngineApiConfig
     resolvedStepOutputCache: Map<string, Promise<unknown>>
     slicingEnabled: boolean
-    stepLogPolicy: Record<string, StepLogPolicy>
+    stepLogPolicy: Map<string, StepLogPolicy>
 
     /**
      * Execution time in milliseconds
@@ -57,7 +57,7 @@ export class FlowExecutorContext {
         this.engineApi = copyFrom?.engineApi
         this.resolvedStepOutputCache  = copyFrom?.resolvedStepOutputCache  ?? new Map()
         this.slicingEnabled = copyFrom?.slicingEnabled ?? true
-        this.stepLogPolicy = copyFrom?.stepLogPolicy ?? {}
+        this.stepLogPolicy = copyFrom?.stepLogPolicy ?? new Map()
     }
 
     static empty(params?: FlowExecutorContextInit): FlowExecutorContext {
@@ -77,7 +77,7 @@ export class FlowExecutorContext {
     public getLoopStepOutput({ stepName }: { stepName: string }): LoopStepOutput | undefined {
         const stateAtPath = executionJournal.getStateAtPath({ path: this.currentPath.path, steps: this.steps })
 
-        const stepOutput = stateAtPath[stepName]
+        const stepOutput = executionJournal.getOwnStep({ target: stateAtPath, stepName })
         if (isNil(stepOutput)) {
             return undefined
         }
@@ -87,7 +87,7 @@ export class FlowExecutorContext {
 
     public isCompleted({ stepName }: { stepName: string }): boolean {
         const stateAtPath = executionJournal.getStateAtPath({ path: this.currentPath.path, steps: this.steps })
-        const stepOutput = stateAtPath[stepName]
+        const stepOutput = executionJournal.getOwnStep({ target: stateAtPath, stepName })
         if (isNil(stepOutput)) {
             return false
         }
@@ -96,7 +96,7 @@ export class FlowExecutorContext {
 
     public isPaused({ stepName }: { stepName: string }): boolean {
         const stateAtPath = executionJournal.getStateAtPath({ path: this.currentPath.path, steps: this.steps })
-        const stepOutput = stateAtPath[stepName]
+        const stepOutput = executionJournal.getOwnStep({ target: stateAtPath, stepName })
         if (isNil(stepOutput)) {
             return false
         }
@@ -121,7 +121,7 @@ export class FlowExecutorContext {
     }
 
     public async upsertStep(stepName: string, stepOutput: BaseStepOutput): Promise<FlowExecutorContext> {
-        const stepLogPolicy = this.stepLogPolicy[stepName]
+        const stepLogPolicy = this.stepLogPolicy.get(stepName)
         const truncated = logRedaction.withRedactedInput(withTruncatedInput(stepOutput), stepLogPolicy)
         let finalized: BaseStepOutput
         if (truncated.type === FlowActionType.LOOP_ON_ITEMS) {
@@ -201,7 +201,8 @@ export class FlowExecutorContext {
     public async currentState(referencedStepNames?: string[]): Promise<Record<string, unknown>> {
         const referencedSteps = referencedStepNames
             ? referencedStepNames.reduce((acc, stepName) => {
-                if (this.steps[stepName]) acc[stepName] = this.steps[stepName]
+                const step = executionJournal.getOwnStep({ target: this.steps, stepName })
+                if (!isNil(step)) executionJournal.setOwnStep({ target: acc, stepName, value: step })
                 return acc
             }, {} as Record<string, StepOutput>)
             : this.steps
@@ -210,8 +211,8 @@ export class FlowExecutorContext {
         let targetMap = this.steps
 
         for (const [stepName, iteration] of this.currentPath.path) {
-            const stepOutput = targetMap[stepName]
-            if (!stepOutput.output || stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
+            const stepOutput = executionJournal.getOwnStep({ target: targetMap, stepName })
+            if (isNil(stepOutput) || !stepOutput.output || stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
                 throw new EngineGenericError('NotInstanceOfLoopOnItemsStepOutputError', '[ExecutionState#getTargetMap] Not instance of Loop On Items step output')
             }
             targetMap = stepOutput.output.iterations[iteration]
@@ -231,7 +232,7 @@ async function extractStepView(steps: Record<string, StepOutput>, engineApi: Eng
         const error = step.status === StepOutputStatus.FAILED && step.errorMessage !== undefined
             ? { message: step.errorMessage }
             : undefined
-        result[stepName] = { output, error }
+        executionJournal.setOwnStep({ target: result, stepName, value: { output, error } })
     }
     return result
 }
@@ -306,5 +307,5 @@ export type EngineApiConfig = {
 export type FlowExecutorContextInit = {
     engineApi?: EngineApiConfig
     slicingEnabled?: boolean
-    stepLogPolicy?: Record<string, StepLogPolicy>
+    stepLogPolicy?: Map<string, StepLogPolicy>
 }

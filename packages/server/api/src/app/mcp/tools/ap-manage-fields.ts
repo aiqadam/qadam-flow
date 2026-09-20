@@ -33,11 +33,11 @@ export const apManageFieldsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                             return { content: [{ type: 'text', text: '❌ keyFieldIds is required for DECLARE_KEY operation' }] }
                         }
                         const table = await tableService.declareKey({ projectId: mcp.projectId, id: tableId, keyFieldIds })
-                        return { content: [{ type: 'text', text: `✅ Key declared on table "${table.name}": ${table.keyFieldIds?.join(', ')}` }] }
+                        return { content: [{ type: 'text', text: `✅ Key declared on table ${mcpUtils.wrapUntrustedValue(table.name)}: ${table.keyFieldIds?.join(', ')}` }] }
                     }
                     case 'CLEAR_KEY': {
                         const table = await tableService.clearKey({ projectId: mcp.projectId, id: tableId })
-                        return { content: [{ type: 'text', text: `✅ Key cleared on table "${table.name}"` }] }
+                        return { content: [{ type: 'text', text: `✅ Key cleared on table ${mcpUtils.wrapUntrustedValue(table.name)}` }] }
                     }
                     case 'ADD': {
                         if (isNil(name)) {
@@ -90,7 +90,7 @@ export const apManageFieldsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                             id: fieldId,
                             projectId: mcp.projectId,
                         })
-                        return { content: [{ type: 'text', text: `✅ Field "${toDelete.name}" deleted successfully.` }] }
+                        return { content: [{ type: 'text', text: `✅ Field ${mcpUtils.wrapUntrustedValue(toDelete.name)} deleted successfully.` }] }
                     }
                 }
             }

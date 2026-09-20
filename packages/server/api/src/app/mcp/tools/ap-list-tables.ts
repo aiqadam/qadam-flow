@@ -41,7 +41,7 @@ export const apListTablesTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                     const fields = fieldsByTable.get(table.id) ?? []
                     const rowCount = table.rowCount ?? 0
                     const fieldLines = fields.map(f => `    - ${formatFieldInfo(f)}`).join('\n')
-                    return `- ${table.name} (id: ${table.id}) — ${rowCount} records\n  Fields:\n${fieldLines}`
+                    return `- ${mcpUtils.wrapUntrustedValue(table.name)} (id: ${table.id}) — ${rowCount} records\n  Fields:\n${fieldLines}`
                 })
 
                 const structured = {

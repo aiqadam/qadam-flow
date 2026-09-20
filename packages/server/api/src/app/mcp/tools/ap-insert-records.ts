@@ -22,7 +22,7 @@ export const apInsertRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 const { tableId, records } = insertRecordsInput.parse(args)
 
                 const allFieldNames = [...new Set(records.flatMap(r => Object.keys(r)))]
-                const { fields, fieldMap, errors } = await resolveFieldNamesForTable(mcp.projectId, tableId, allFieldNames)
+                const { fields, fieldMap, errors } = await resolveFieldNamesForTable({ projectId: mcp.projectId, tableId, fieldNames: allFieldNames })
                 if (errors.length > 0) {
                     return { content: [{ type: 'text', text: `❌ Field resolution error:\n${errors.join('\n')}` }] }
                 }

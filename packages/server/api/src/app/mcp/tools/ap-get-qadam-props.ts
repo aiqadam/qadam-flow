@@ -100,7 +100,10 @@ export const apGetPiecePropsTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                     props,
                 }
 
-                const descLine = component.description ? `\nDescription: ${component.description}\n` : ''
+                // `component.description` is the qadam's own registration metadata — free text from
+                // whoever published or installed it — rendered straight into this tool's own prose
+                // ahead of the JSON blob, so an embedded newline could forge a fake header here (#485).
+                const descLine = component.description ? `\nDescription: ${mcpUtils.wrapUntrustedValue(component.description)}\n` : ''
                 return {
                     content: [{ type: 'text', text: `✅ ${label} schema for "${normalized}/${actionOrTriggerName}":${descLine}\n${JSON.stringify(textResult, null, 2)}` }],
                     structuredContent: structured,

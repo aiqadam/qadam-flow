@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest'
 import {
     ConnectionNotFoundError,
     EngineGenericError,
@@ -9,11 +8,12 @@ import {
     FlowTriggerType,
     FlowVersionState,
     ResumeReason,
-    StreamStepProgress,
     RunEnvironment,
     StepOutputStatus,
+    StreamStepProgress,
 } from '@aiqadam/shared'
 import type { BeginExecuteFlowOperation, FlowAction, FlowVersion, ResumeExecuteFlowOperation } from '@aiqadam/shared'
+import { describe, expect, it, vi } from 'vitest'
 
 const { mockSendUpdate, mockBackup } = vi.hoisted(() => ({
     mockSendUpdate: vi.fn().mockResolvedValue(undefined),
@@ -452,6 +452,78 @@ describe('flow operation invariants', () => {
             await flowOperation.execute(operation)
 
             expect(mockCreateWaitpoint).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('RESUME loop-iteration restoration', () => {
+        // Blocking finding: `insertSuccessStepsOrPausedRecursively`'s nested-loop rebuild wrote
+        // `newSteps[step] = newOutput` — a bracket assignment on a plain object built fresh per
+        // iteration. `STEP_NAME_REGEX` admits `__proto__`, and it survives `ap_import_flow`
+        // verbatim, so a LOOP step can legitimately contain a child named `__proto__`. Assigning to
+        // that literal key does not create an own property — it invokes the inherited
+        // `Object.prototype.__proto__` setter and reassigns the rebuilt iteration's own prototype
+        // instead of storing the child's restored output, dropping it from
+        // `Object.keys`/`Object.entries`/`JSON.stringify` on the next resume or log write. The
+        // top-level restore (`getFlowExecutionState`'s `flowContext.upsertStep(step, newOutput)`)
+        // already went through the fixed `upsertStep` before this change; only the nested rebuild
+        // one level inside a loop was unguarded. Must fail (missing key, dropped by
+        // `JSON.stringify`) on a bracket assignment and pass with `executionJournal.setOwnStep`.
+        it('restores a paused loop iteration containing a step literally named "__proto__" as a real, JSON-visible key', async () => {
+            mockDownload.mockReset()
+            mockCreateWaitpoint.mockReset()
+            mockSendUpdate.mockClear()
+            mockBackup.mockClear()
+
+            const prototypeNamedStep = {
+                type: FlowActionType.PIECE,
+                status: StepOutputStatus.SUCCEEDED,
+                input: {},
+                output: { secret: 'value' },
+            }
+            // Computed key, not a literal `{ '__proto__': ... }` — object-literal syntax special-cases
+            // the literal `__proto__` property name into a prototype assignment (per spec), which
+            // would corrupt this *test fixture* before `JSON.stringify` ever ran and prove nothing.
+            // A computed key goes through `CreateDataPropertyOrThrow`, giving the iteration record a
+            // genuine own `"__proto__"` key — exactly what `JSON.parse` on a real persisted log
+            // would also produce.
+            const iterationRecord = { ['__proto__']: prototypeNamedStep }
+
+            mockDownload.mockResolvedValue(
+                new TextEncoder().encode(JSON.stringify({
+                    executionState: {
+                        steps: {
+                            trigger_1: {
+                                type: FlowTriggerType.EMPTY,
+                                status: StepOutputStatus.SUCCEEDED,
+                                input: {},
+                                output: {},
+                            },
+                            loop_1: {
+                                type: FlowActionType.LOOP_ON_ITEMS,
+                                status: StepOutputStatus.SUCCEEDED,
+                                input: {},
+                                output: {
+                                    item: 'x',
+                                    index: 0,
+                                    iterations: [iterationRecord],
+                                },
+                            },
+                        },
+                        tags: [],
+                    },
+                })),
+            )
+
+            const operation = makeResumeOperation()
+
+            await flowOperation.execute(operation)
+
+            const finalSendUpdate = mockSendUpdate.mock.calls[mockSendUpdate.mock.calls.length - 1][0]
+            const restoredIteration = finalSendUpdate.flowExecutorContext.steps.loop_1.output.iterations[0]
+
+            expect(Object.keys(restoredIteration)).toContain('__proto__')
+            expect(JSON.parse(JSON.stringify(restoredIteration))).toHaveProperty('__proto__')
+            expect(Object.getPrototypeOf(restoredIteration)).toBe(Object.prototype)
         })
     })
 

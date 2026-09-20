@@ -25,6 +25,7 @@ import { migrateV28AiQadamVersionRedo3 } from './migrate-v28-ai-qadam-version-re
 import { migrateV29AgentToolMetadataQadamRebrand } from './migrate-v29-agent-tool-metadata-qadam-rebrand'
 import { migrateAgentPieceV3 } from './migrate-v3-agent-piece'
 import { migrateV30AiQadamVersionRedo4 } from './migrate-v30-ai-qadam-version-redo-4'
+import { migrateV31HealUnresolvableQadamPins } from './migrate-v31-heal-unresolvable-qadam-pins'
 import { migrateAgentPieceV4 } from './migrate-v4-agent-piece'
 import { migrateHttpToWebhookV5 } from './migrate-v5-http-to-webhook'
 import { migratePropertySettingsV6 } from './migrate-v6-property-settings'
@@ -74,6 +75,7 @@ const migrations: Migration[] = [
     migrateV28AiQadamVersionRedo3,
     migrateV29AgentToolMetadataQadamRebrand,
     migrateV30AiQadamVersionRedo4,
+    migrateV31HealUnresolvableQadamPins,
 ] as const
 
 export const flowMigrations = {

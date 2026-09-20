@@ -77,6 +77,7 @@ const systemPropValidators: {
 
     [AppSystemProp.BETTERSTACK_TOKEN]: stringValidator,
     [AppSystemProp.BETTERSTACK_HOST]: stringValidator,
+    [AppSystemProp.OFFICIAL_QADAMS_INSTALL_ENABLED]: booleanValidator,
     [AppSystemProp.OTEL_ENABLED]: booleanValidator,
     [AppSystemProp.HYPERDX_TOKEN]: stringValidator,
     [AppSystemProp.FRONTEND_URL]: urlValidator,

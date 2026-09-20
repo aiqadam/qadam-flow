@@ -150,15 +150,18 @@ export const apResolvePropertyChainTool = (mcp: ProjectScopedMcpServer, log: Fas
                     break
                 }
 
+                // `rp.error` carries a caught third-party API error message and `rp.selectedValue`
+                // is an option value fetched from the third-party account — both `\n`-joined
+                // across every resolved property in the chain, so either is wrapped (#485 review).
                 const summary = resolvedProperties.map((rp) => {
                     if (rp.error) {
-                        return `⚠️ ${rp.propertyName}: ${rp.error}`
+                        return `⚠️ ${rp.propertyName}: ${mcpUtils.wrapUntrustedValue(rp.error)}`
                     }
                     if (rp.dynamicFields) {
                         return `✅ ${rp.propertyName}: ${rp.dynamicFields.length} dynamic fields resolved`
                     }
                     if (rp.resolved) {
-                        return `✅ ${rp.propertyName}: selected "${String(rp.selectedValue)}" (${rp.optionCount ?? 0} options available)`
+                        return `✅ ${rp.propertyName}: selected ${mcpUtils.wrapUntrustedValue(String(rp.selectedValue))} (${rp.optionCount ?? 0} options available)`
                     }
                     return `⏸ ${rp.propertyName}: ${rp.options?.length ?? 0} options available — select a value to continue. IMPORTANT: Use the "value" field (the ID), NOT the "label".`
                 }).join('\n')

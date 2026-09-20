@@ -95,7 +95,7 @@ function diagnoseQadamProps({ props, input, qadamAuth, requireAuth, componentTyp
             const value = input[propName]
             if (value === undefined || value === null || value === '') {
                 if (RESOLVABLE_PROP_TYPES.has(prop.type)) {
-                    uiRequired.push(`${propName} (${prop.displayName})`)
+                    uiRequired.push(`${propName} (${wrapUntrustedValue(prop.displayName)})`)
                 }
                 else {
                     const hint = (prop.type === PropertyType.STATIC_DROPDOWN || prop.type === PropertyType.STATIC_MULTI_SELECT_DROPDOWN)
@@ -115,9 +115,13 @@ function diagnoseQadamProps({ props, input, qadamAuth, requireAuth, componentTyp
     }
     const parts: string[] = []
     if (unknownKeys.length > 0) {
+        // `prop.description`/`prop.displayName` are free text from whoever published or installed
+        // the qadam, and these entries are joined with `\n` into a multi-line block — an
+        // unwrapped newline inside one entry would forge an extra list item or a fake header
+        // (#485 review, same source as the `auth.description` wrapped in `ap-setup-guide.ts`).
         const validPropDescriptions = Object.entries(props)
             .filter(([, prop]) => !NON_INPUT_PROP_TYPES.has(prop.type))
-            .map(([name, prop]) => `- ${name} (${prop.type}): ${prop.description ?? prop.displayName}`)
+            .map(([name, prop]) => `- ${name} (${prop.type}): ${wrapUntrustedValue(prop.description ?? prop.displayName)}`)
             .join('\n')
         parts.push(`Unknown properties: ${unknownKeys.map((k) => `'${k}'`).join(', ')}. Valid properties for this action are:\n${validPropDescriptions}\nPlease retry with correct property names.`)
     }
@@ -207,10 +211,13 @@ async function lookupQadamComponent({ qadamName, componentName, componentType, p
     const label = componentType === 'action' ? 'Action' : 'Trigger'
     const component = componentMap[componentName]
     if (isNil(component)) {
+        // Action/trigger names are qadam-registration metadata — set by whoever published or
+        // installed the qadam, with no naming regex behind them — so both the suggestion and the
+        // full list are wrapped (#485).
         const available = Object.keys(componentMap)
         const suggestion = available.find((name) => name.includes(componentName))
-        const hint = suggestion ? ` Did you mean "${suggestion}"?` : ''
-        return { error: { content: [{ type: 'text', text: `❌ ${label} "${componentName}" not found in "${normalized}".${hint} Available: ${available.join(', ')}` }] } }
+        const hint = suggestion ? ` Did you mean ${wrapUntrustedValue(suggestion)}?` : ''
+        return { error: { content: [{ type: 'text', text: `❌ ${label} "${componentName}" not found in "${normalized}".${hint} Available: ${available.map((name) => wrapUntrustedValue(name)).join(', ')}` }] } }
     }
     return { qadam, component, qadamName: normalized }
 }
@@ -255,8 +262,91 @@ const BRANCH_CONDITIONS_INPUT_SCHEMA = z.array(
     ),
 )
 
-function truncate(str: string, max: number): string {
-    return str.length <= max ? str : str.slice(0, max) + '... (truncated)'
+// Any string an MCP tool renders that did not originate from this call's own arguments — a
+// step's displayName, a qadam/action/trigger/branch name, a pinned qadam version, a truncated
+// sourceCode/input preview, a connection/table/field/variable/project display name, a qadam's own
+// registration metadata (displayName, auth description, prop labels — set by whoever published or
+// installed that qadam), or a third-party API's response body / error string surfaced through a
+// run's output or errorMessage — was written by a principal other than whoever is running this tool
+// call (#480, widened by #485 past the original flow-definition-only perimeter: a flow calling an
+// attacker-controlled URL reaches this content with no project-write access needed at all).
+// Interpolating it bare into a warning or summary line hands that other author a reliable,
+// agent-chosen slot inside text the model reads as the tool's own voice: a name need only fail to
+// resolve, or a request need only fail, to guarantee the surrounding sentence fires, and nothing
+// stops the value from reading as an instruction itself.
+//
+// This does not reject the value — a name that fails to resolve, or a call that failed, is exactly
+// the normal case this output exists to report — but it is not a lossless passthrough either: it
+// marks where the tool's prose ends and quoted, untrusted data begins with a delimiter no legitimate
+// value handled this way is allowed to collide with, and that guarantee costs the value any literal
+// occurrence of the delimiter itself (and of a short list of characters that merely *look* like it —
+// see `CONFUSABLE_DELIMITERS`), which are stripped rather than escaped. Two rounds of review landed
+// on different lists here, and the second is the one that stands: the real delimiter is a single
+// codepoint no input can forge by concatenation, so stripping the ASCII `[[`/`]]` pair bought no
+// closure that guarantee didn't already provide — and it corrupted ordinary JSON/JS
+// array-of-arrays syntax (`[[1,2],[3,4]]` became `1,2],[3,4`), so that pair is gone for good. The six
+// non-ASCII look-alikes (`〚〛〖〗⦋⦌`) answer a different question — not whether the
+// delimiter can be forged, but whether a reader matching loosely on shape rather than codepoint could
+// still mistake one for a close. None of them appears in JSON or JavaScript syntax, so keeping them
+// costs no *syntax* fidelity — but that is not the same as costing nothing: U+3016/U+3017 (`〖〗`)
+// and U+301A/U+301B (`〚〛`) are ordinary Chinese/Japanese typographic brackets, so a legitimate CJK
+// value like `〖重要〗` silently renders as `⟦重要⟧`, indistinguishable from this wrapper's own
+// delimiter. That cost is accepted knowingly, not overlooked: this list has been revised twice on
+// review input and made worse both times, so it is deliberately staying as-is here; the raw,
+// unmodified value remains available to a caller that needs it exact via `structuredContent` on
+// every tool that surfaces one. Every ECMAScript line-terminator
+// (not just `\r`/`\n` — `\u2028`/`\u2029` render as breaks in many consumers, and `\u0085`/`\v`/`\f`
+// are the remaining vertical-whitespace forms) is collapsed to a space first, so one value cannot
+// masquerade as several lines of trusted output — collapsing is the control the whole design rests
+// on, since a fabricated line is what lets injected text imitate one of this tool's own section
+// headers or list items. The result is quoted, not verbatim: line breaks are flattened and the
+// delimiter (and its look-alikes) cannot survive inside it, so a caller must not treat a wrapped span
+// as a byte-for-byte copy of the stored value. `wrapUntrustedValue` takes `string | null | undefined`,
+// not `unknown`, so an object or array is a compile-time error rather than silently printing
+// `[object Object]` — but the body still runs every value through `String(...)` before replacing,
+// because the narrowed type is a compile-time promise, not a runtime guarantee: a jsonb-backed column
+// typed `string` can legally hold a number, a boolean, or `null`/`undefined` at runtime, and only the
+// last two were still handled once the `typeof value === 'string' ? value : String(value ?? '')` line
+// was simplified away — a number or boolean reaching this function's runtime, however that happens,
+// must not throw on `.replace`.
+const UNTRUSTED_VALUE_OPEN = '⟦'
+const UNTRUSTED_VALUE_CLOSE = '⟧'
+// Characters that read as "the same kind of bracket" as the real delimiter to a casual glance, or to
+// a model matching loosely on shape rather than codepoint — none of these is
+// `UNTRUSTED_VALUE_OPEN`/`UNTRUSTED_VALUE_CLOSE`, so a naive strip would miss them, and none of them
+// appears in JSON or JavaScript syntax (unlike the ASCII `[[`/`]]` pair this list used to carry, which
+// corrupted array-of-arrays JSON for no benefit — removed, see the comment above).
+const CONFUSABLE_DELIMITERS = ['〚', '〛', '〖', '〗', '⦋', '⦌']
+const LINE_BREAK_PATTERN = /[\r\n\u2028\u2029\u0085\v\f]+/g
+// A bidi embedding/override (U+202A-U+202E) or isolate (U+2066-U+2069) is not terminated by the
+// closing delimiter -- only by its own matching pop character (U+202C, U+2069) or a paragraph
+// break -- so an unpaired opener surviving inside a wrapped value reorders the rendering of
+// everything the client prints after the closing bracket, including this tool's own trusted prose
+// in the web chat UI (#485 review). Appending one U+202C/U+2069 after wrapping does not reliably
+// close this either: UAX#9 allows up to 125 levels of embedding, so ten openers need ten matching
+// terminators, not one. Only removing the codepoints closes the gap. The cost is the same class of
+// accepted lossiness as the line-terminator collapse above: a value that legitimately used bidi
+// formatting loses it, and the raw value stays available via `structuredContent` for a caller that
+// needs it exact.
+const BIDI_CONTROL_PATTERN = /[\u202a-\u202e\u2066-\u2069]/g
+
+function wrapUntrustedValue(value: string | null | undefined): string {
+    const str = typeof value === 'string' ? value : String(value ?? '')
+    const collapsed = str.replace(LINE_BREAK_PATTERN, ' ').replace(BIDI_CONTROL_PATTERN, '')
+    const sanitized = [UNTRUSTED_VALUE_OPEN, UNTRUSTED_VALUE_CLOSE, ...CONFUSABLE_DELIMITERS]
+        .reduce((acc, token) => acc.split(token).join(''), collapsed)
+    return `${UNTRUSTED_VALUE_OPEN}${sanitized}${UNTRUSTED_VALUE_CLOSE}`
+}
+
+// The truncation marker is deliberately appended *after* wrapping, not baked into the content that
+// gets wrapped: appending it inside the delimiter would let a long enough value truncate the marker
+// itself away, and computing it before wrapping would let the value forge it. Wrapping the raw,
+// possibly-truncated content last is what stops the closing bracket from being truncated away in
+// the first place — this keeps that property and adds the same guarantee for the marker text.
+function wrapTruncatedUntrustedValue({ value, max }: { value: string, max: number }): string {
+    const isTruncated = value.length > max
+    const content = isTruncated ? value.slice(0, max) : value
+    return `${wrapUntrustedValue(content)}${isTruncated ? '... (truncated)' : ''}`
 }
 
 function resolveRouterStep({ stepName, trigger }: { stepName: string, trigger: Step }): ResolveRouterStepResult {
@@ -288,8 +378,16 @@ function publishedFlowWarning(publishedVersionId: string | null | undefined): st
     return '\n⚠️ This flow is published. Changes apply to the draft only — use ap_lock_and_publish to push them live.'
 }
 
+// `ap_list_connections` now renders `externalId: ⟦my-gmail⟧` and tells the model that's the value
+// for the `auth` param — so the delimiters themselves must fail this check, not just the ASCII
+// brackets/quotes the flow-templating syntax cares about. Without this, a model that copies the
+// bracketed form in verbatim passes validation here, `ap-add-step.ts` bakes
+// `{{connections['⟦my-gmail⟧']}}` into the flow, and it fails at RUN time on a value that looks
+// identical to the correct one (#485 review).
+const AUTH_INVALID_CHARS = /['{}[\]⟦⟧]/
+
 function validateAuth(auth: string | undefined): { content: [{ type: 'text', text: string }] } | null {
-    if (auth !== undefined && /['{}\[\]]/.test(auth)) {
+    if (auth !== undefined && AUTH_INVALID_CHARS.test(auth)) {
         return { content: [{ type: 'text', text: '❌ auth must be a plain externalId with no special characters. Use the exact value from ap_list_connections.' }] }
     }
     return null
@@ -452,6 +550,28 @@ function readFlowToolReference(tool: unknown): string | null {
     return typeof externalFlowId === 'string' && externalFlowId.length > 0 ? externalFlowId : null
 }
 
+// Single source of the wording for a qadam pin's resolvability, shared by `ap_validate_flow` and
+// `ap_flow_structure` so the two tools cannot tell an agent contradictory things about the same
+// fact. `qadamPinUtil.resolvePins` is tri-state; `false` is a confirmed miss, and only there is the
+// destructive remedy (delete-and-re-add) warranted. `undefined` means the check itself failed —
+// this must never claim the pin definitely does not exist, and must never advise destroying the
+// step's sample data based on a reading that was never actually verified (#474).
+function qadamPinIssue({ pin, resolvable }: { pin: string, resolvable: boolean | undefined }): QadamPinIssue | null {
+    if (resolvable === true) {
+        return null
+    }
+    if (resolvable === false) {
+        return {
+            severity: 'unavailable',
+            message: `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+        }
+    }
+    return {
+        severity: 'unverified',
+        message: `is pinned to ${wrapUntrustedValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
+    }
+}
+
 function extractOptionsArray(options: unknown): Array<{ label: string, value: unknown }> | null {
     if (Array.isArray(options)) return options
 
@@ -469,7 +589,8 @@ const RESOLVE_TIMEOUT_MS = 30_000
 
 export const mcpUtils = {
     mcpToolError,
-    truncate,
+    wrapUntrustedValue,
+    wrapTruncatedUntrustedValue,
     resolveRouterStep,
     routerInvalidWarning,
     publishedFlowWarning,
@@ -489,12 +610,13 @@ export const mcpUtils = {
     rewriteAgentFlowToolIds,
     normalizeAgentFlowToolIds,
     extractOptionsArray,
+    qadamPinIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 
-export type { PropSummary }
+export type { PropSummary, QadamPinIssue }
 
 type ExtractQadamFlowErrorDetailParams = {
     err: unknown
@@ -557,3 +679,8 @@ type ResolveRouterStepResult =
 type ResolveLatestQadamVersionResult =
     | { qadamVersion: string, normalizedPieceName: string, error?: never }
     | { error: McpToolResult, qadamVersion?: never, normalizedPieceName?: never }
+
+type QadamPinIssue = {
+    severity: 'unavailable' | 'unverified'
+    message: string
+}

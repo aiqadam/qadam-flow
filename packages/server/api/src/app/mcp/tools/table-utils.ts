@@ -1,21 +1,15 @@
-import { Field, FieldType, PopulatedRecord } from '@aiqadam/shared'
+import { Field, FieldType, PopulatedRecord, tryCatchSync } from '@aiqadam/shared'
 import { z } from 'zod'
 import { fieldService } from '../../tables/field/field.service'
+import { mcpUtils } from './mcp-utils'
 
-export async function resolveFieldNamesForTable(
-    projectId: string,
-    tableId: string,
-    fieldNames: string[],
-): Promise<{ fields: Field[], fieldMap: Map<string, string>, errors: string[] }> {
+export async function resolveFieldNamesForTable({ projectId, tableId, fieldNames }: ResolveFieldNamesForTableParams): Promise<{ fields: Field[], fieldMap: Map<string, string>, errors: string[] }> {
     const fields = await fieldService.getAll({ projectId, tableId })
-    const { fieldMap, errors } = resolveFieldNameToId(fields, fieldNames)
+    const { fieldMap, errors } = resolveFieldNameToId({ fields, fieldNames })
     return { fields, fieldMap, errors }
 }
 
-export function resolveFieldNameToId(
-    fields: Field[],
-    fieldNames: string[],
-): { fieldMap: Map<string, string>, errors: string[] } {
+export function resolveFieldNameToId({ fields, fieldNames }: ResolveFieldNameToIdParams): { fieldMap: Map<string, string>, errors: string[] } {
     const nameToField = new Map<string, Field>()
     const duplicates = new Set<string>()
 
@@ -35,10 +29,27 @@ export function resolveFieldNameToId(
     for (const name of fieldNames) {
         const lower = name.toLowerCase()
         if (duplicates.has(lower)) {
+            // `name` here is an element of this call's own `fieldNames` argument — the caller's
+            // own input, not a stored field/table value someone else wrote — so it sits outside
+            // the #485 perimeter and stays bare, unlike the fetched `fields` list wrapped below.
             errors.push(`Duplicate field name "${name}". Rename one of them using ap_manage_fields before proceeding.`)
         }
         else if (!nameToField.has(lower)) {
-            errors.push(`Field "${name}" not found. Available fields: ${fields.map(f => f.name).join(', ')}`)
+            // Restored after #485 review: `field.name` is `z.string()` with no `STEP_NAME_REGEX`-
+            // or `VARIABLE_NAME_REGEX`-style constraint on any write path (`CreateFieldRequest` /
+            // `UpdateFieldRequest` in `fields.dto.ts`), so — unlike the step-name and variable-name
+            // carve-outs this comment used to lean on — a newline is not merely possible here, it is
+            // accepted by the schema. This list is also `\n`-joined with every other error in the
+            // same batch (`ap-insert-records.ts`, `ap-update-record.ts`, `ap-find-records.ts`), so
+            // one poisoned field name reaches the model on every failed lookup for the whole table.
+            // The "must stay bare so a copied name still resolves" rationale doesn't survive either:
+            // `ap-list-connections.ts` wraps `externalId` — a value with the exact same copy-back
+            // shape — and both `mcp-server-builder.ts`'s server instructions and rule 28 of
+            // `chat-system-prompt.md` now tell the model to strip `⟦`/`⟧` before reusing a wrapped
+            // value as a tool argument, naming `fieldName` explicitly. A retry that skips that step
+            // fails once, with a message the model was told to expect — a materially cheaper cost
+            // than the header-forgery this list existed to prevent.
+            errors.push(`Field "${name}" not found. Available fields: ${fields.map(f => mcpUtils.wrapUntrustedValue(f.name)).join(', ')}`)
         }
         else {
             fieldMap.set(name, nameToField.get(lower)!.id)
@@ -48,20 +59,42 @@ export function resolveFieldNameToId(
     return { fieldMap, errors }
 }
 
+// A wrapped span is lossy by construction (newlines collapsed, delimiters and confusables
+// stripped), so the byte-exact value has to be reachable some other way. Both `ap_find_records`
+// and `ap_update_record` build a `structuredContent` from `toStructuredRecord` below, carrying the
+// unmodified `cell.value` — that is where a caller doing write-then-verify gets an exact copy,
+// never this preview. Any future tool that renders `formatPopulatedRecord`/`formatCellValue`
+// without also returning `toStructuredRecord` reopens that gap.
+const CELL_VALUE_PREVIEW_MAX = 2000
+
 export function formatPopulatedRecord(record: PopulatedRecord): string {
     const lines = [`  Record ID: ${record.id}`]
     for (const cell of Object.values(record.cells)) {
-        lines.push(`    ${cell.fieldName}: ${cell.value ?? '(empty)'}`)
+        lines.push(`    ${mcpUtils.wrapUntrustedValue(cell.fieldName)}: ${formatCellValue(cell.value)}`)
     }
     return lines.join('\n')
 }
 
+// The byte-exact counterpart to `formatPopulatedRecord`'s lossy prose (see the
+// `CELL_VALUE_PREVIEW_MAX` comment above): raw, unwrapped `cell.value`s keyed by field name, meant
+// to travel only in `structuredContent`, never interpolated into text a model reads as prose.
+// Shared by `ap_find_records` and `ap_update_record` so both tools expose the same shape for the
+// same data instead of drifting.
+export function toStructuredRecord(record: PopulatedRecord): StructuredRecord {
+    return {
+        id: record.id,
+        cells: Object.fromEntries(
+            Object.entries(record.cells).map(([fieldId, cell]) => [cell.fieldName ?? fieldId, cell.value]),
+        ),
+    }
+}
+
 export function formatFieldInfo(field: Field): string {
     if (field.type === FieldType.STATIC_DROPDOWN) {
-        const options = field.data.options.map(o => o.value).join(', ')
-        return `${field.name} (id: ${field.id}, type: ${field.type}, options: ${options})`
+        const options = field.data.options.map(o => mcpUtils.wrapUntrustedValue(o.value)).join(', ')
+        return `${mcpUtils.wrapUntrustedValue(field.name)} (id: ${field.id}, type: ${field.type}, options: ${options})`
     }
-    return `${field.name} (id: ${field.id}, type: ${field.type})`
+    return `${mcpUtils.wrapUntrustedValue(field.name)} (id: ${field.id}, type: ${field.type})`
 }
 
 export const FIELD_TYPE_VALUES = [
@@ -74,3 +107,43 @@ export const FIELD_TYPE_VALUES = [
 ] as const
 
 export const fieldTypeSchema = z.enum(FIELD_TYPE_VALUES)
+
+// `cell.value` is `z.unknown()` (jsonb-backed, `record.ts`'s own comment calls it unbounded) and
+// can legally be a string, a number, a boolean, or an arbitrary JSON object/array written by a
+// flow that wrote a webhook body or HTTP response into a table — reachable with no project-write
+// access at all (#485). `JSON.stringify` already escapes an embedded newline into the two-char
+// `\n` sequence, the same fidelity trade `ap-get-qadam-props.ts` accepts for the same reason, but
+// it does nothing about a literal `⟦`/`⟧` or a confusable sitting inside a string value, so the
+// wrap still runs on top of it — the two guard different things and neither subsumes the other.
+// `JSON.stringify` can also throw (a `bigint`, though nothing on this path is expected to produce
+// one) — `tryCatchSync` keeps that from throwing out of this function for one cell. The
+// `String(value)` fallback is not itself guaranteed safe (a null-prototype object or a value with
+// a throwing `toString` would still throw), but jsonb's own decoder never hands this function
+// anything but plain object/array/string/number/boolean/null, so that residual case is unreachable
+// on this path, not merely untested.
+function formatCellValue(value: unknown): string {
+    if (value === null || value === undefined) {
+        return '(empty)'
+    }
+    if (typeof value === 'string') {
+        return mcpUtils.wrapTruncatedUntrustedValue({ value, max: CELL_VALUE_PREVIEW_MAX })
+    }
+    const { data: json } = tryCatchSync(() => JSON.stringify(value))
+    return mcpUtils.wrapTruncatedUntrustedValue({ value: json ?? String(value), max: CELL_VALUE_PREVIEW_MAX })
+}
+
+type ResolveFieldNamesForTableParams = {
+    projectId: string
+    tableId: string
+    fieldNames: string[]
+}
+
+type ResolveFieldNameToIdParams = {
+    fields: Field[]
+    fieldNames: string[]
+}
+
+type StructuredRecord = {
+    id: string
+    cells: Record<string, unknown>
+}

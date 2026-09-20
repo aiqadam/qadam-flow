@@ -25,7 +25,7 @@ import semVer from 'semver'
 import { EntityManager, In, IsNull } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { qadamTagService } from '../tags/qadams/qadam-tag.service'
-import { qadamCache, QadamRegistryEntry } from './qadam-cache'
+import { isOfficialQadamsInstallEnabled, qadamCache, QadamRegistryEntry, shadowKey } from './qadam-cache'
 import { QadamMetadataEntity, QadamMetadataSchema } from './qadam-metadata-entity'
 import { filterQadamBasedOnType, isNewerVersion, isSupportedRelease, lastVersionOfEachQadam, loadBundledQadams, qadamListUtils } from './utils'
 
@@ -406,8 +406,22 @@ async function fetchLatestQadams({ platformId, locale = LocalesEnum.ENGLISH, log
         qadamTranslation.translatePiece<QadamMetadataSchema>({ piece: qadam, locale, mutate: true }),
     )
 
-    const bundledNames = new Set(translatedBundled.map((p) => p.name))
-    const merged = [...translatedQadams.filter((p) => !bundledNames.has(p.name)), ...translatedBundled]
+    // Must key the same way `qadamCache.loadRegistry()` does, or a row shadowed there stays
+    // resolvable (and executable) through `get()`/`registry()` while disappearing from this
+    // catalogue — invisible-but-active, which is worse than either position consistently.
+    //
+    // The agreement is on the shadow key only, not end to end: `lastVersionOfEachQadam` below
+    // collapses to one row per name, which `loadRegistry()` does not, so with the flag on a
+    // persisted version BELOW the bundled one is still resolvable while absent from this
+    // catalogue. That residual is narrower than the state before this keying was aligned (where
+    // every differing version was invisible-but-active, not just lower ones) and it is confined
+    // to the installing platform, but it is not zero.
+    const officialQadamsInstallEnabled = isOfficialQadamsInstallEnabled()
+    const bundledShadowKeys = new Set(translatedBundled.map((p) => shadowKey({ name: p.name, version: p.version, officialQadamsInstallEnabled })))
+    const merged = [
+        ...translatedQadams.filter((p) => !bundledShadowKeys.has(shadowKey({ name: p.name, version: p.version, officialQadamsInstallEnabled }))),
+        ...translatedBundled,
+    ]
         .filter((qadam) => filterQadamBasedOnType(platformId, qadam))
         .filter((qadam) => isSupportedRelease(currentRelease, qadam))
     return lastVersionOfEachQadam(merged)

@@ -30,8 +30,9 @@ export const qadamCache = (log: FastifyBaseLogger) => {
         async loadRegistry(): Promise<QadamRegistryEntry[]> {
             const persistedRegistry = await loadPersistedRegistry()
             const bundledQadams = (await loadBundledQadams(log)).map(toRegistryEntry)
-            const bundledNames = new Set(bundledQadams.map((q) => q.name))
-            const persistedWithoutBundled = persistedRegistry.filter((q) => !bundledNames.has(q.name))
+            const officialQadamsInstallEnabled = isOfficialQadamsInstallEnabled()
+            const bundledShadowKeys = new Set(bundledQadams.map((q) => shadowKey({ name: q.name, version: q.version, officialQadamsInstallEnabled })))
+            const persistedWithoutBundled = persistedRegistry.filter((q) => !bundledShadowKeys.has(shadowKey({ name: q.name, version: q.version, officialQadamsInstallEnabled })))
             return [...persistedWithoutBundled, ...bundledQadams]
         },
 
@@ -43,6 +44,32 @@ export const qadamCache = (log: FastifyBaseLogger) => {
             }
         },
     }
+}
+
+// Exported so every site that shadows a persisted row by a bundled qadam's name agrees on the
+// key — `fetchLatestQadams` in `qadam-metadata-service.ts` used to key on name alone independently
+// of this file, which meant a lookalike row could be hidden from `GET /v1/qadams` while remaining
+// resolvable (and executable) through `get()`/`registry()`. Tied to the same flag as
+// `needsInstalling()` in the worker (`qadam-installer.ts`), not gated independently: `false` (the
+// default, until #475/#476 publish official qadams AND #482's dependency-confusion preconditions
+// are met — see the comment on `needsInstalling` for why that second precondition matters) keeps
+// shadowing by name alone, which is today's exact behavior and also masks the one persisted row
+// that can already collide with a bundled name — a platform installing a CUSTOM qadam under a name
+// a bundled qadam also uses. `true` keys by `name@version` instead, the switch #477 needs so a
+// persisted official version survives next to a bundled one at a different version.
+export function shadowKey({ name, version, officialQadamsInstallEnabled }: {
+    name: string
+    version: string
+    officialQadamsInstallEnabled: boolean
+}): string {
+    return officialQadamsInstallEnabled ? `${name}@${version}` : name
+}
+
+export function isOfficialQadamsInstallEnabled(): boolean {
+    // `?? false` is unreachable given `systemPropDefaultValues` already defaults this prop to
+    // `'false'` (`system.ts`) — kept as deliberate belt-and-braces against that default ever being
+    // removed, not dead code.
+    return system.getBoolean(AppSystemProp.OFFICIAL_QADAMS_INSTALL_ENABLED) ?? false
 }
 
 async function loadPersistedRegistry(): Promise<QadamRegistryEntry[]> {

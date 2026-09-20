@@ -52,7 +52,7 @@ Flows are the core automation primitive in Qadam Flow. Each flow is a versioned 
 
 **Flow**: id, projectId, folderId (nullable), status (ENABLED/DISABLED), externalId, publishedVersionId (nullable, unique FK), metadata (JSONB), operationStatus (NONE/DELETING/ENABLING/DISABLING), timeSavedPerRun, ownerId, templateId, createdBy (nullable JSONB — `FlowCreator`). Relations: project, folder, owner, publishedVersion (one-to-one), versions (one-to-many), runs, events, tableWebhooks.
 
-**FlowVersion**: id, flowId, displayName, schemaVersion (current latest: `'28'`), trigger (JSONB — full flow graph), connectionIds[], agentIds[], updatedBy, valid, state (DRAFT/LOCKED), backupFiles (JSONB), notes[] (JSONB). Relations: flow, updatedByUser.
+**FlowVersion**: id, flowId, displayName, schemaVersion (current latest: `LATEST_FLOW_SCHEMA_VERSION`, `'32'` as of #474 — check `packages/shared/src/lib/automation/flows/flow-version.ts` rather than trusting a hardcoded number here, since this line has drifted behind it before), trigger (JSONB — full flow graph), connectionIds[], agentIds[], updatedBy, valid, state (DRAFT/LOCKED), backupFiles (JSONB), notes[] (JSONB). Relations: flow, updatedByUser.
 
 **Folder**: id, projectId, displayName. Used to organize flows and tables. Case-insensitive uniqueness.
 

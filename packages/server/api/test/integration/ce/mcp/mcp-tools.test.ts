@@ -1431,7 +1431,9 @@ describe('MCP Tools integration', () => {
         const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         const output = text(result)
 
-        expect(output).toContain('loopItems: {{trigger[\'output\'].items}}')
+        // One combined assertion, not two separate `toContain`s: keeps both the rewrite check
+        // (bracket-notation step reference) and the label-to-value placement check together.
+        expect(output).toContain('loopItems: ⟦{{trigger[\'output\'].items}}⟧')
     })
 
     it('52. ap_flow_structure — shows router branch conditions', async () => {
@@ -1620,7 +1622,8 @@ describe('MCP Tools integration', () => {
         expect(dupOutput).toContain('✅')
         expect(dupOutput).toContain('Copy of Original Flow')
 
-        const copyFlowId = dupOutput.match(/Copy: ".*?" \(id: (\S+?)\)/)?.[1]
+        const rawCopyFlowId = dupResult.structuredContent?.flowId
+        const copyFlowId = typeof rawCopyFlowId === 'string' ? rawCopyFlowId : undefined
         expect(copyFlowId).toBeDefined()
 
         const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId: copyFlowId! })
@@ -1712,7 +1715,8 @@ describe('MCP Tools integration', () => {
         })
 
         const dupResult = await apDuplicateFlowTool({ mcp }, mockLog).execute({ flowId })
-        const copyFlowId = text(dupResult).match(/Copy: ".*?" \(id: (\S+?)\)/)?.[1]
+        const rawCopyFlowId = dupResult.structuredContent?.flowId
+        const copyFlowId = typeof rawCopyFlowId === 'string' ? rawCopyFlowId : undefined
         expect(copyFlowId).toBeDefined()
 
         const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId: copyFlowId! })
@@ -2726,7 +2730,8 @@ describe('MCP Tools integration', () => {
         const sourceId = text(sourceResult).match(/\(id: (\S+?)\)/)?.[1]
 
         const dupResult = await apDuplicateFlowTool(context, mockLog).execute({ flowId: sourceId!, name: 'Dup Copy' })
-        const copyId = text(dupResult).match(/Copy: ".*?" \(id: (\S+?)\)/)?.[1]
+        const rawCopyId = dupResult.structuredContent?.flowId
+        const copyId = typeof rawCopyId === 'string' ? rawCopyId : undefined
         const copy = await flowService(mockLog).getOnePopulatedOrThrow({ id: copyId!, projectId: ctx.project.id })
 
         expect(copy.createdBy).toEqual({ type: FlowCreatorType.MCP, id: mcp.id })
@@ -3138,6 +3143,85 @@ describe('MCP Tools integration', () => {
             const result = await apValidateFlowTool(mcp, mockLog).execute({ flowId })
 
             expect(text(result)).not.toContain('Unavailable Qadam Versions')
+        })
+    })
+
+    // #474: `ap_flow_structure` had no visibility into a pinned qadam version this installation
+    // cannot resolve at all — an agent browsing the structure would see a normal-looking step with
+    // no indication it fails on every run.
+    describe('ap_flow_structure — pinned qadam version no longer available', () => {
+        it('flags a trigger pinned to a version this installation does not have', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Structure Stale Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.settings.qadamVersion = '0.0.1-gone'
+            await db.save('flow_version', flowVersion)
+
+            const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('PINNED VERSION UNAVAILABLE')
+            expect(text(result)).toContain('@aiqadam/qadam-test-email@0.0.1-gone')
+            expect(JSON.stringify(result.structuredContent?.steps)).toContain('"qadamVersionResolvable":false')
+            expect(JSON.stringify(result.structuredContent?.steps)).toContain('@aiqadam/qadam-test-email@0.0.1-gone')
+        })
+
+        // The worker provisions every PIECE step in the version regardless of `skip`, so this must
+        // be flagged the same as an un-skipped step — matching `ap_validate_flow`'s own reasoning.
+        it('flags a dead pin that sits on a skipped step', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Structure Skipped Stale Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+            await apAddStepTool(mcp, mockLog).execute({
+                flowId,
+                parentStepName: 'trigger',
+                stepLocationRelativeToParent: StepLocationRelativeToParent.AFTER,
+                stepType: FlowActionType.PIECE,
+                qadamName: '@aiqadam/qadam-test-email',
+                actionName: 'send_email',
+                displayName: 'Send Email',
+                input: { receiver: ['a@b.com'], subject: 's', body: 'b' },
+            })
+
+            const flowVersion = await db.findOneByOrFail<{ id: string, trigger: Record<string, any> }>('flow_version', { flowId })
+            flowVersion.trigger.nextAction.skip = true
+            flowVersion.trigger.nextAction.settings.qadamVersion = '0.0.1-gone'
+            await db.save('flow_version', flowVersion)
+
+            const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).toContain('PINNED VERSION UNAVAILABLE')
+            expect(text(result)).toContain('step_1')
+        })
+
+        it('says nothing about a step whose pinned version resolves', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const flowId = await createFlowAndGetId(mcp, 'Structure Healthy Pin Flow')
+
+            await apUpdateTriggerTool(mcp, mockLog).execute({
+                flowId,
+                qadamName: '@aiqadam/qadam-test-email',
+                triggerName: 'new_email',
+            })
+
+            const result = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+
+            expect(text(result)).not.toContain('PINNED VERSION UNAVAILABLE')
+            expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('"qadamVersionResolvable":false')
         })
     })
 

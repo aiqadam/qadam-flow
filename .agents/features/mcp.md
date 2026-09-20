@@ -40,11 +40,17 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
 
 **Locked tools** (always enabled if MCP is on):
 - `ap_list_flows` — list all flows in project
-- `ap_flow_structure` — get flow definition and structure; `includeInput=true` adds each step's full untruncated `input` to `structuredContent` and lifts text truncation
+- `ap_flow_structure` — get flow definition and structure; `includeInput=true` adds each step's full
+  untruncated `input` to `structuredContent` and lifts text truncation. Since #474, each PIECE/
+  TRIGGER step also carries `qadamPin`/`qadamVersionResolvable` (both in the rendered text and in
+  `structuredContent.steps[]`) — a step whose pinned qadam version no longer resolves is flagged
+  with the same actionable message `ap_validate_flow`'s `qadam_version` category uses, via the
+  shared `qadamPinUtil` (`packages/server/api/src/app/qadams/metadata/qadam-pin-util.ts`).
 - `ap_read_step_code` — read full source code of a CODE step
-- `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports
-  five issue categories: `step_validity`, `template_reference`, `empty_branch`, and — since #391 —
-  `subflow_payload` (a `callFlow` step calling a child with no arguments) and `inline_pause` (an
+- `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports six
+  issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
+  cannot resolve, #432), `template_reference`, `empty_branch`, and — since #391 — `subflow_payload`
+  (a `callFlow` step calling a child with no arguments) and `inline_pause` (an
   `executionMode: "inline"` step whose callee can pause, found by walking the call graph).
 - `ap_research_pieces`, `ap_get_piece_props` — piece discovery and schema
 - `ap_resolve_property_options`, `ap_resolve_property_chain` — dropdown/property resolution

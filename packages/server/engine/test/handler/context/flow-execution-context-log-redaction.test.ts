@@ -13,7 +13,7 @@ vi.mock('../../../src/lib/engine-file-api', () => ({
 }))
 
 import { FlowExecutorContext } from '../../../src/lib/handler/context/flow-execution-context'
-import { REDACTED_VALUE, logRedaction } from '../../../src/lib/helper/log-redaction'
+import { logRedaction, REDACTED_VALUE } from '../../../src/lib/helper/log-redaction'
 
 const engineApi = { engineToken: 'engine-token', internalApiUrl: 'http://127.0.0.1:1/' }
 const bigOutput = { data: 'x'.repeat(40 * 1024) }
@@ -26,7 +26,7 @@ describe('FlowExecutorContext step log redaction', () => {
     it('does not slice an output that is not logged, and redacts it in the logged copy', async () => {
         const ctx = FlowExecutorContext.empty({
             engineApi,
-            stepLogPolicy: { big: { logInput: true, logOutput: false } },
+            stepLogPolicy: new Map([['big', { logInput: true, logOutput: false }]]),
         })
         const next = await ctx.upsertStep('big', GenericStepOutput.create({
             type: FlowActionType.CODE,
@@ -57,7 +57,7 @@ describe('FlowExecutorContext step log redaction', () => {
 
     it('redacts the input at write time, leaving the executed input untouched', async () => {
         const ctx = FlowExecutorContext.empty({
-            stepLogPolicy: { step: { logInput: false, logOutput: true } },
+            stepLogPolicy: new Map([['step', { logInput: false, logOutput: true }]]),
         })
         const next = await ctx.upsertStep('step', GenericStepOutput.create({
             type: FlowActionType.CODE,
@@ -72,7 +72,7 @@ describe('FlowExecutorContext step log redaction', () => {
 
     it('keeps outputs raw while the run is paused so RESUME can hydrate them', async () => {
         const ctx = FlowExecutorContext.empty({
-            stepLogPolicy: { step: { logInput: true, logOutput: false } },
+            stepLogPolicy: new Map([['step', { logInput: true, logOutput: false }]]),
         })
         const withStep = await ctx.upsertStep('step', GenericStepOutput.create({
             type: FlowActionType.CODE,

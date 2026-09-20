@@ -33,7 +33,7 @@ export const apDeleteTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Table "${table.name}" deleted successfully.`,
+                        text: `✅ Table ${mcpUtils.wrapUntrustedValue(table.name)} deleted successfully.`,
                     }],
                 }
             }

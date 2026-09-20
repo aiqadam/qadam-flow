@@ -60,7 +60,15 @@ export const apListConnectionsTool = (mcp: ProjectScopedMcpServer, log: FastifyB
                     limit: 200,
                     externalIds: undefined,
                 })
-                const lines = connections.data.map(c => `- externalId: ${c.externalId} | displayName: "${c.displayName}" | qadam: ${c.qadamName} | status: ${c.status} | scope: ${c.scope}`)
+                // `externalId` and `qadamName` are `z.string()` with no format constraint — set by
+                // whoever creates the connection (the UI's own externalId field is free text) — so a
+                // newline plus a fabricated `- externalId: ...` line would forge a complete extra
+                // list entry, the exact attack this wrap exists to stop, on the very line that lists
+                // connections (#485 review). Wrapping both here is safe for the copy-back use this
+                // tool's own description promises ("Returns externalId needed for the auth
+                // parameter"): `structuredContent.connections[]` below carries both raw and
+                // unwrapped, so an agent that needs the exact value for `auth` reads it from there.
+                const lines = connections.data.map(c => `- externalId: ${mcpUtils.wrapUntrustedValue(c.externalId)} | displayName: ${mcpUtils.wrapUntrustedValue(c.displayName)} | qadam: ${mcpUtils.wrapUntrustedValue(c.qadamName)} | status: ${c.status} | scope: ${c.scope}`)
                 const structured = {
                     connections: connections.data.map(c => ({
                         externalId: c.externalId,

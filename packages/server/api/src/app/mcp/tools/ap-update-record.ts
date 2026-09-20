@@ -3,7 +3,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { recordService } from '../../tables/record/record.service'
 import { mcpUtils } from './mcp-utils'
-import { formatPopulatedRecord, resolveFieldNamesForTable } from './table-utils'
+import { formatPopulatedRecord, resolveFieldNamesForTable, toStructuredRecord } from './table-utils'
 
 const updateRecordInput = z.object({
     tableId: z.string().describe('The table ID'),
@@ -27,7 +27,7 @@ export const apUpdateRecordTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                     return { content: [{ type: 'text', text: '❌ No fields provided to update.' }] }
                 }
 
-                const { fieldMap, errors } = await resolveFieldNamesForTable(mcp.projectId, tableId, fieldNames)
+                const { fieldMap, errors } = await resolveFieldNamesForTable({ projectId: mcp.projectId, tableId, fieldNames })
                 if (errors.length > 0) {
                     return { content: [{ type: 'text', text: `❌ Field resolution error:\n${errors.join('\n')}` }] }
                 }
@@ -48,6 +48,7 @@ export const apUpdateRecordTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         type: 'text',
                         text: `✅ Record updated:\n${formatPopulatedRecord(updated)}`,
                     }],
+                    structuredContent: { record: toStructuredRecord(updated) },
                 }
             }
             catch (err) {

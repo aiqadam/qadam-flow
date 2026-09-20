@@ -8,14 +8,13 @@ import {
     ProjectScopedMcpServer,
     RouterActionSettingsWithValidation,
     Step,
-    tryCatch,
     unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
-import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -104,7 +103,7 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
                 const fixHint = step.type === FlowActionType.ROUTER
                     ? 'every non-fallback branch needs at least one condition — use ap_update_branch to configure it, or ap_delete_branch to drop it'
                     : 'use ap_update_step to fix'
-                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is invalid (${fixHint}).` })
+                issues.push({ category: 'step_validity', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} is invalid (${fixHint}).` })
             }
         }
 
@@ -116,10 +115,10 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
                 if (seenRefs.has(ref)) continue
                 seenRefs.add(ref)
                 if (!allStepNames.has(ref)) {
-                    issues.push({ category: 'template_reference', stepName: step.name, message: `"${step.displayName}" references "{{${ref}...}}" which does not exist in the flow.` })
+                    issues.push({ category: 'template_reference', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references "{{${ref}...}}" which does not exist in the flow.` })
                 }
                 else if (!seenSteps.has(ref)) {
-                    issues.push({ category: 'template_reference', stepName: step.name, message: `"${step.displayName}" references "{{${ref}...}}" which comes AFTER it in execution order.` })
+                    issues.push({ category: 'template_reference', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references "{{${ref}...}}" which comes AFTER it in execution order.` })
                 }
             }
         }
@@ -131,13 +130,17 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
             // routers that silently changed which branch they take on upgrade — the whole affected
             // population — have no detection path at all.
             if (step.valid && !RouterActionSettingsWithValidation.safeParse(settings).success) {
-                issues.push({ category: 'step_validity', stepName: step.name, message: `"${step.displayName}" is stored as valid but no longer satisfies router validation. The usual cause is a non-fallback branch with no conditions: such a branch can never match, so its steps never run — inspect it with ap_flow_structure, then configure it with ap_update_branch or drop it with ap_delete_branch and republish.` })
+                issues.push({ category: 'step_validity', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} is stored as valid but no longer satisfies router validation. The usual cause is a non-fallback branch with no conditions: such a branch can never match, so its steps never run — inspect it with ap_flow_structure, then configure it with ap_update_branch or drop it with ap_delete_branch and republish.` })
             }
             const branches = settings.branches ?? []
             for (let i = 0; i < children.length; i++) {
                 if (isNil(children[i])) {
-                    const branchName = branches[i]?.branchName ?? `Branch ${i}`
-                    issues.push({ category: 'empty_branch', stepName: step.name, message: `"${step.displayName}" has empty branch: "${branchName}".` })
+                    // Only a set `branchName` is flow-authored; `Branch ${i}` is this tool's own
+                    // fallback label for an unnamed branch and must not be wrapped as if it were
+                    // untrusted data.
+                    const branchName = branches[i]?.branchName
+                    const branchLabel = branchName ? mcpUtils.wrapUntrustedValue(branchName) : `Branch ${i}`
+                    issues.push({ category: 'empty_branch', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} has empty branch: ${branchLabel}.` })
                 }
             }
         }
@@ -162,32 +165,27 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     // provisions every PIECE step in the version regardless of `skip`, so a dead pin on a skipped
     // step still fails provisioning on every trigger tick and every run. Excluding it would report
     // exactly the flow this category exists to catch as ready to publish.
-    const qadamSteps = flowStructureUtil.getAllSteps(trigger)
-        .filter((step): step is Extract<Step, { settings: { qadamName: string, qadamVersion: string } }> =>
-            (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
-            && !isNil(step.settings.qadamName)
-            && !isNil(step.settings.qadamVersion))
+    const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
 
     // Distinct (name, version) pairs only: a flow with twelve tables steps on one pin should cost
     // one resolution, not twelve, and the answer cannot differ between them.
-    const pins = unique(qadamSteps.map(step => `${step.settings.qadamName}@${step.settings.qadamVersion}`))
-    const resolutions = new Map<string, boolean>(await Promise.all(pins.map(async (pin): Promise<[string, boolean]> => {
-        const separator = pin.lastIndexOf('@')
-        const name = pin.slice(0, separator)
-        const version = pin.slice(separator + 1)
-        const { data: metadata } = await tryCatch(() => qadamMetadataService(log).get({ platformId, name, version }))
-        return [pin, !isNil(metadata)]
-    })))
+    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
+    const resolutions = await qadamPinUtil.resolvePins({ pins, platformId, log })
 
     return qadamSteps.flatMap((step) => {
-        const pin = `${step.settings.qadamName}@${step.settings.qadamVersion}`
-        if (resolutions.get(pin) === true) {
+        const pin = qadamPinUtil.pinOf({ step })
+        // Shared with `ap_flow_structure` via `mcpUtils.qadamPinIssue`, so the two tools cannot
+        // give an agent contradictory accounts of the same pin — a confirmed miss (`false`) gets
+        // the assertive wording and the delete-and-re-add remedy; a lookup that merely errored
+        // (`undefined`) must not (#474).
+        const issue = mcpUtils.qadamPinIssue({ pin, resolvable: resolutions.get(pin) })
+        if (isNil(issue)) {
             return []
         }
         return [{
             category: 'qadam_version' as const,
             stepName: step.name,
-            message: `"${step.displayName}" is pinned to ${pin}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point the step at an available version — delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} ${issue.message}`,
         }]
     })
 }
@@ -234,7 +232,7 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
         return [{
             category: 'subflow_payload' as const,
             stepName: step.name,
-            message: `"${step.displayName}" calls a subflow with an empty payload, but that subflow declares arguments — the child will run with none. Set flowProps.payload with ap_update_step.`,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} calls a subflow with an empty payload, but that subflow declares arguments — the child will run with none. Set flowProps.payload with ap_update_step.`,
         }]
     })
 
@@ -248,7 +246,7 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
         return [{
             category: 'inline_pause' as const,
             stepName: step.name,
-            message: `"${step.displayName}" runs its subflow inline, but "${pausingStep.flowName}" pauses at "${pausingStep.stepDisplayName}" (${pausingStep.reason}). An inline child has no queue job to resume from — switch this step to Queue execution mode.`,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} runs its subflow inline, but ${mcpUtils.wrapUntrustedValue(pausingStep.flowName)} pauses at ${mcpUtils.wrapUntrustedValue(pausingStep.stepDisplayName)} (${pausingStep.reason}). An inline child has no queue job to resume from — switch this step to Queue execution mode.`,
         }]
     })
 
@@ -547,11 +545,11 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
 function formatValidationResult({ result, flowDisplayName }: { result: ValidationResult, flowDisplayName: string }): string {
     if (result.issues.length === 0 && result.validSteps > 0) {
         const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
-        return `✅ Flow "${flowDisplayName}" is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}).`
+        return `✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}).`
     }
 
     if (result.issues.length === 0 && result.validSteps === 0) {
-        return `⚠️ Flow "${flowDisplayName}" has no valid steps (${result.totalSteps} total). Configure the trigger and actions before publishing.`
+        return `⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has no valid steps (${result.totalSteps} total). Configure the trigger and actions before publishing.`
     }
 
     const grouped = new Map<ValidationIssue['category'], ValidationIssue[]>()
@@ -562,7 +560,7 @@ function formatValidationResult({ result, flowDisplayName }: { result: Validatio
     }
 
     const lines: string[] = []
-    lines.push(`⚠️ Flow "${flowDisplayName}" has ${result.issues.length} issue(s):`)
+    lines.push(`⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has ${result.issues.length} issue(s):`)
     lines.push('')
 
     for (const category of CATEGORY_ORDER) {
