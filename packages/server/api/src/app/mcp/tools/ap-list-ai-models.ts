@@ -59,12 +59,16 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                                 displayName: p.name,
                                 models: capped.map(m => ({ id: m.id, name: m.name })),
                             })
-                            // `m.name` comes from a live call to the provider's own `/models` endpoint —
-                            // for a CUSTOM provider, an operator-supplied base URL — and `p.name` is the
-                            // admin-configured display name for the provider row; both are `\n`-joined
-                            // into this nested list, so either can forge a fake provider/model entry (#485).
+                            // `m.name` AND `m.id` both come from a live call to the provider's own
+                            // `/models` endpoint — for a CUSTOM provider, an operator-supplied base URL —
+                            // and `p.name` is the admin-configured display name for the provider row. All
+                            // three are `\n`-joined into this nested list, so any of them can forge a fake
+                            // provider/model entry (#485). `m.id` is `z.string()` with no constraint
+                            // (`AIProviderModel`), so wrapping only the name would leave the same channel
+                            // open one field to the right. `p.id`/`p.provider` are an apId and an enum.
+                            // The raw ids stay in `structuredContent` above for the model to copy back.
                             const modelLines = capped.length > 0
-                                ? capped.map(m => `    - ${mcpUtils.wrapUntrustedValue(m.name)} (id: ${m.id})`).join('\n')
+                                ? capped.map(m => `    - ${mcpUtils.wrapUntrustedValue(m.name)} (id: ${mcpUtils.wrapUntrustedValue(m.id)})`).join('\n')
                                 : '    (no text models available)'
                             const overflow = textModels.length > MAX_MODELS_PER_PROVIDER
                                 ? `\n    ... and ${textModels.length - MAX_MODELS_PER_PROVIDER} more${filterProvider ? '' : ` (use provider="${p.provider}" to see all)`}`
