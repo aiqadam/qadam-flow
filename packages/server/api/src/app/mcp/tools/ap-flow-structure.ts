@@ -19,7 +19,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
-import { qadamPinUtil, QadamPinnedStep } from '../../qadams/metadata/qadam-pin-util'
+import { QadamPinnedStep, qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
