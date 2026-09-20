@@ -175,10 +175,10 @@ Every change to an existing piece needs a version bump in its `package.json`. Wi
 
 | Bump | When |
 |---|---|
-| **MAJOR** | Remove an action/trigger/prop; add a **required** prop to an existing action/trigger; change existing behavior |
-| **PATCH** | Add a new action or trigger; add an **optional** prop; add an output attribute; fix a bug |
+| **MAJOR** | Remove an action/trigger/prop; add a **required prop with no `defaultValue`** to an existing action/trigger (see below — give it a default instead if the old behavior can be preserved); change existing behavior |
+| **PATCH** | Add a new action or trigger; add an **optional** prop; add a **required prop that carries a `defaultValue`** reproducing the old behavior; add an output attribute; fix a bug |
 
-Rule of thumb: **any removal is breaking, any new required prop is breaking, everything else is PATCH.** When in doubt, prefer MAJOR.
+Rule of thumb: **any removal is breaking; a new required prop is breaking unless it carries a `defaultValue` that preserves prior behavior; everything else is PATCH.** When in doubt, prefer MAJOR.
 
 ### Adding a prop to an action/trigger that has already shipped (#479)
 
@@ -187,7 +187,7 @@ A flow built against the old schema stores its configuration once, at authoring 
 So a new prop on an already-shipped action or trigger must be one of:
 
 - **Optional** (`required: false` or the key omitted) — the safe default for almost every new prop.
-- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in #363 (`defaultValue: 'queue'`, matching the only behavior that existed before) — the pattern to copy.
+- **Required, with a `defaultValue` that reproduces the exact behavior a flow authored before the prop existed already had.** This is what `executionMode` on `callFlow` did when it was added in PR #365 (addressing #363): `defaultValue: 'queue'`, matching the only behavior that existed before — the `defaultValue` pattern is worth copying. (That PR did not itself bump `qadam-subflows`'s version, which is a pre-existing gap in that PR's process, not something to copy — see the MAJOR/PATCH table above and bump yours.)
 
 A required prop with **no** default is a breaking change to the piece, not an oversight to catch in review after the fact — bump **MAJOR**, per the table above, in the *same* commit/PR that adds the prop. `npm run check-required-prop-defaults` (`tools/ci/check-required-prop-defaults.mjs`) enforces the mechanical half of this in CI: it diffs the pull request's own base and head, and fails if a prop becomes required with no default on a file that already existed before the PR, unless the qadam's own `package.json` major version increased in the same diff. Its header comment documents exactly what it can and cannot see — most importantly, it cannot audit props that already shipped this way before the check existed, and it cannot see a change that never went through a pull request.
 
