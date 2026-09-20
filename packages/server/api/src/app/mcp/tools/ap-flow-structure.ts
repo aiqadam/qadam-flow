@@ -138,32 +138,32 @@ function formatStepSettings(step: Step, includeInput: boolean): string[] {
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${mcpUtils.wrapTruncatedFlowValue(formatted, includeInput ? Infinity : 500)}`)
+            lines.push(`  input: ${mcpUtils.wrapTruncatedUntrustedValue({ value: formatted, max: includeInput ? Infinity : 500 })}`)
         }
     }
     else if (step.type === FlowActionType.CODE) {
-        // `wrapTruncatedFlowValue` collapses embedded newlines, so a multi-line CODE step's preview
+        // `wrapTruncatedUntrustedValue` collapses embedded newlines, so a multi-line CODE step's preview
         // now renders on one line here — a readability cost accepted deliberately: this is a
         // truncated overview, `ap_read_step_code` is still the untruncated, multi-line fidelity
         // path for this same source, and `structuredContent.steps[].input` still carries the raw
         // (unwrapped) value when `includeInput` is set.
         const sourceCode = settings.sourceCode as { code?: string, packageJson?: string } | undefined
         if (sourceCode?.code) {
-            lines.push(`  sourceCode: ${mcpUtils.wrapTruncatedFlowValue(sourceCode.code, 300)}`)
+            lines.push(`  sourceCode: ${mcpUtils.wrapTruncatedUntrustedValue({ value: sourceCode.code, max: 300 })}`)
         }
         if (sourceCode?.packageJson && sourceCode.packageJson !== '{}') {
-            lines.push(`  packageJson: ${mcpUtils.wrapTruncatedFlowValue(sourceCode.packageJson, 200)}`)
+            lines.push(`  packageJson: ${mcpUtils.wrapTruncatedUntrustedValue({ value: sourceCode.packageJson, max: 200 })}`)
         }
         const input = settings.input as Record<string, unknown> | undefined
         if (input && Object.keys(input).length > 0) {
             const formatted = JSON.stringify(input)
-            lines.push(`  input: ${mcpUtils.wrapTruncatedFlowValue(formatted, includeInput ? Infinity : 300)}`)
+            lines.push(`  input: ${mcpUtils.wrapTruncatedUntrustedValue({ value: formatted, max: includeInput ? Infinity : 300 })}`)
         }
     }
     else if (step.type === FlowActionType.LOOP_ON_ITEMS) {
         const items = settings.items as string | undefined
         if (items) {
-            lines.push(`  loopItems: ${mcpUtils.wrapFlowValue(items)}`)
+            lines.push(`  loopItems: ${mcpUtils.wrapUntrustedValue(items)}`)
         }
     }
     return lines
@@ -182,7 +182,7 @@ function formatRelationshipLabel(step: StepInfo): string {
         case 'on_failure_branch':
             return 'on_failure_branch'
         case 'branch':
-            return `branch ${step.branchIndex}${step.branchName ? ` ${mcpUtils.wrapFlowValue(step.branchName)}` : ''}`
+            return `branch ${step.branchIndex}${step.branchName ? ` ${mcpUtils.wrapUntrustedValue(step.branchName)}` : ''}`
     }
 }
 
@@ -192,8 +192,8 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
             const op = c.operator ?? '?'
             const caseSensitive = 'caseSensitive' in c && c.caseSensitive ? ' [case-sensitive]' : ''
             return 'secondValue' in c
-                ? `${mcpUtils.wrapFlowValue(c.firstValue)} ${op} ${mcpUtils.wrapFlowValue(c.secondValue)}${caseSensitive}`
-                : `${mcpUtils.wrapFlowValue(c.firstValue)} ${op}${caseSensitive}`
+                ? `${mcpUtils.wrapUntrustedValue(c.firstValue)} ${op} ${mcpUtils.wrapUntrustedValue(c.secondValue)}${caseSensitive}`
+                : `${mcpUtils.wrapUntrustedValue(c.firstValue)} ${op}${caseSensitive}`
         })
         return parts.join(' AND ')
     })
@@ -285,7 +285,7 @@ function formatFlowStructure(
     includeInput: boolean,
 ): string {
     const lines: string[] = []
-    lines.push(`# Flow: ${mcpUtils.wrapFlowValue(flowDisplayName)} (id: ${flowId})`)
+    lines.push(`# Flow: ${mcpUtils.wrapUntrustedValue(flowDisplayName)} (id: ${flowId})`)
     lines.push('')
     lines.push('## Steps (DFS order: trigger first, then each step with parent and relationship)')
     lines.push('Format: name | type | displayName | parent | relationship | configStatus | canvas')
@@ -302,13 +302,13 @@ function formatFlowStructure(
             let triggerDetail = ''
             // Guarded the same way the PIECE-action branch below guards `s?.qadamName`: `qadamName`
             // is typed `string` on `QadamTrigger`, but this reads a jsonb column, and a malformed or
-            // legacy row is not guaranteed to satisfy that type at runtime. `wrapFlowValue` is total
+            // legacy row is not guaranteed to satisfy that type at runtime. `wrapUntrustedValue` is total
             // and would not throw on a missing value, but printing `(qadam: ⟦⟧, trigger: not set)`
             // for a trigger with nothing configured is worse than printing nothing.
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
-                triggerDetail = ` (qadam: ${mcpUtils.wrapFlowValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapFlowValue(fullStep.settings.triggerName) : 'not set'})`
+                triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapFlowValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -320,10 +320,10 @@ function formatFlowStructure(
         let stepDetail = ''
         if (step.type === FlowActionType.PIECE) {
             const s = fullStep?.settings as { qadamName?: string, actionName?: string } | undefined
-            if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapFlowValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapFlowValue(s.actionName) : 'not set'})`
+            if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapFlowValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -333,7 +333,7 @@ function formatFlowStructure(
             const branches = (fullStep.settings as { branches?: { branchName?: string, branchType?: string, conditions?: BranchCondition[][] }[] })?.branches ?? []
             branches.forEach((b, i) => {
                 const btype = b.branchType === BranchExecutionType.FALLBACK ? 'fallback' : 'condition'
-                const branchLabel = b.branchName ? mcpUtils.wrapFlowValue(b.branchName) : '(unnamed)'
+                const branchLabel = b.branchName ? mcpUtils.wrapUntrustedValue(b.branchName) : '(unnamed)'
                 if (btype === 'condition' && b.conditions && b.conditions.length > 0) {
                     const condStr = formatBranchConditions(b.conditions)
                     lines.push(`  branch[${i}]: ${branchLabel} (${btype}) | conditions: ${condStr}`)
@@ -353,7 +353,7 @@ function formatFlowStructure(
     // Every `step.name` below is left bare deliberately: `STEP_NAME_REGEX`
     // (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`) constrains it at the schema level, so unlike `displayName` it
     // can never carry a space, punctuation or a newline — there is nothing here for
-    // `mcpUtils.wrapFlowValue` to guard against, and these values are also copy-pasted verbatim
+    // `mcpUtils.wrapUntrustedValue` to guard against, and these values are also copy-pasted verbatim
     // into a `parentStepName="..."` call argument, where a delimiter would be actively wrong.
     const triggerStep = structure[0]
     if (triggerStep) {
@@ -370,7 +370,7 @@ function formatFlowStructure(
             const routerStep = stepByName.get(step.name)
             const branches = (routerStep?.settings as { branches?: { branchName?: string }[] } | undefined)?.branches ?? []
             branches.forEach((b, i) => {
-                lines.push(`  Branch ${i} of "${step.name}"${b.branchName ? ` (${mcpUtils.wrapFlowValue(b.branchName)})` : ''}: parentStepName="${step.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.INSIDE_BRANCH}", branchIndex=${i}`)
+                lines.push(`  Branch ${i} of "${step.name}"${b.branchName ? ` (${mcpUtils.wrapUntrustedValue(b.branchName)})` : ''}: parentStepName="${step.name}", stepLocationRelativeToParent="${StepLocationRelativeToParent.INSIDE_BRANCH}", branchIndex=${i}`)
             })
         }
         if (step.type === FlowActionType.CODE || step.type === FlowActionType.PIECE) {
@@ -399,7 +399,7 @@ function formatFlowStructure(
     else {
         for (const note of notes) {
             const content = note.content.replace(/<[^>]*>/g, '').slice(0, 80)
-            lines.push(`- id: ${note.id} | ${mcpUtils.wrapFlowValue(content)} | color: ${note.color} | pos: (${Math.round(note.position.x)}, ${Math.round(note.position.y)}) | size: ${note.size.width}×${note.size.height}`)
+            lines.push(`- id: ${note.id} | ${mcpUtils.wrapUntrustedValue(content)} | color: ${note.color} | pos: (${Math.round(note.position.x)}, ${Math.round(note.position.y)}) | size: ${note.size.width}×${note.size.height}`)
         }
     }
 

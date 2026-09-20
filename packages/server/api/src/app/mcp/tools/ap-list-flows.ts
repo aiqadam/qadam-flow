@@ -69,8 +69,8 @@ export function formatFlowLine(flow: PopulatedFlow): string {
     // trigger and falls back to the same label, rather than rendering an empty `⟦⟧` (#480
     // code-quality review).
     const triggerLabel = trigger.type === FlowTriggerType.PIECE
-        ? (trigger.settings.qadamName ? mcpUtils.wrapFlowValue(trigger.settings.qadamName) : 'qadam (unconfigured)')
+        ? (trigger.settings.qadamName ? mcpUtils.wrapUntrustedValue(trigger.settings.qadamName) : 'qadam (unconfigured)')
         : 'no trigger'
     const published = !isNil(flow.publishedVersionId) ? 'published' : 'draft'
-    return `- ${mcpUtils.wrapFlowValue(flow.version.displayName)} (${flow.id}) | ${flow.status} | ${published} | trigger: ${triggerLabel}`
+    return `- ${mcpUtils.wrapUntrustedValue(flow.version.displayName)} (${flow.id}) | ${flow.status} | ${published} | trigger: ${triggerLabel}`
 }

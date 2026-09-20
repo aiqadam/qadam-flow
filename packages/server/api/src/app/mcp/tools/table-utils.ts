@@ -1,6 +1,7 @@
 import { Field, FieldType, PopulatedRecord } from '@aiqadam/shared'
 import { z } from 'zod'
 import { fieldService } from '../../tables/field/field.service'
+import { mcpUtils } from './mcp-utils'
 
 export async function resolveFieldNamesForTable(
     projectId: string,
@@ -38,7 +39,7 @@ export function resolveFieldNameToId(
             errors.push(`Duplicate field name "${name}". Rename one of them using ap_manage_fields before proceeding.`)
         }
         else if (!nameToField.has(lower)) {
-            errors.push(`Field "${name}" not found. Available fields: ${fields.map(f => f.name).join(', ')}`)
+            errors.push(`Field "${name}" not found. Available fields: ${fields.map(f => mcpUtils.wrapUntrustedValue(f.name)).join(', ')}`)
         }
         else {
             fieldMap.set(name, nameToField.get(lower)!.id)
@@ -58,10 +59,10 @@ export function formatPopulatedRecord(record: PopulatedRecord): string {
 
 export function formatFieldInfo(field: Field): string {
     if (field.type === FieldType.STATIC_DROPDOWN) {
-        const options = field.data.options.map(o => o.value).join(', ')
-        return `${field.name} (id: ${field.id}, type: ${field.type}, options: ${options})`
+        const options = field.data.options.map(o => mcpUtils.wrapUntrustedValue(o.value)).join(', ')
+        return `${mcpUtils.wrapUntrustedValue(field.name)} (id: ${field.id}, type: ${field.type}, options: ${options})`
     }
-    return `${field.name} (id: ${field.id}, type: ${field.type})`
+    return `${mcpUtils.wrapUntrustedValue(field.name)} (id: ${field.id}, type: ${field.type})`
 }
 
 export const FIELD_TYPE_VALUES = [

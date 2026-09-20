@@ -73,13 +73,13 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
 
     const rawAuth = qadam.auth
     if (isNil(rawAuth)) {
-        return { content: [{ type: 'text', text: `✅ "${qadam.displayName}" does not require authentication. No connection setup needed.` }] }
+        return { content: [{ type: 'text', text: `✅ ${mcpUtils.wrapUntrustedValue(qadam.displayName)} does not require authentication. No connection setup needed.` }] }
     }
 
     const authOptions = Array.isArray(rawAuth) ? rawAuth : [rawAuth]
 
     if (authOptions.length > 1) {
-        const lines: string[] = [`How to connect "${qadam.displayName}" (${authOptions.length} methods available):`, '']
+        const lines: string[] = [`How to connect ${mcpUtils.wrapUntrustedValue(qadam.displayName)} (${authOptions.length} methods available):`, '']
         for (let i = 0; i < authOptions.length; i++) {
             lines.push(`**Option ${i + 1}: ${formatAuthTypeName(authOptions[i].type)}**`)
             lines.push(...formatAuthSteps({ auth: authOptions[i], displayName: qadam.displayName }))
@@ -90,14 +90,14 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
 
     const auth = authOptions[0]
     const authType = auth.type
-    const lines: string[] = [`How to connect "${qadam.displayName}":`, '']
+    const lines: string[] = [`How to connect ${mcpUtils.wrapUntrustedValue(qadam.displayName)}:`, '']
 
     switch (authType) {
         case PropertyType.OAUTH2:
             lines.push(
                 '1. Open your Qadam Flow dashboard',
                 '2. Go to Settings → Connections → "+ New Connection"',
-                `3. Select "${qadam.displayName}"`,
+                `3. Select ${mcpUtils.wrapUntrustedValue(qadam.displayName)}`,
                 '4. Click "Connect" — an OAuth popup will open',
                 '5. Log in and authorize access',
                 '6. The connection will be saved automatically',
@@ -107,8 +107,8 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
             lines.push(
                 '1. Open your Qadam Flow dashboard',
                 '2. Go to Settings → Connections → "+ New Connection"',
-                `3. Select "${qadam.displayName}"`,
-                `4. Enter your API key or token${'description' in auth && auth.description ? ` (${auth.description})` : ''}`,
+                `3. Select ${mcpUtils.wrapUntrustedValue(qadam.displayName)}`,
+                `4. Enter your API key or token${'description' in auth && typeof auth.description === 'string' ? ` (${mcpUtils.wrapUntrustedValue(auth.description)})` : ''}`,
                 '5. Click Save',
             )
             break
@@ -116,7 +116,7 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
             lines.push(
                 '1. Open your Qadam Flow dashboard',
                 '2. Go to Settings → Connections → "+ New Connection"',
-                `3. Select "${qadam.displayName}"`,
+                `3. Select ${mcpUtils.wrapUntrustedValue(qadam.displayName)}`,
                 '4. Enter your username and password',
                 '5. Click Save',
             )
@@ -126,12 +126,12 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
             const fieldNames = Object.entries(props).map(([key, prop]) => {
                 const p = prop as { displayName?: string, required?: boolean }
                 const req = p.required !== false ? ' (required)' : ' (optional)'
-                return `  - ${p.displayName ?? key}${req}`
+                return `  - ${mcpUtils.wrapUntrustedValue(p.displayName ?? key)}${req}`
             })
             lines.push(
                 '1. Open your Qadam Flow dashboard',
                 '2. Go to Settings → Connections → "+ New Connection"',
-                `3. Select "${qadam.displayName}"`,
+                `3. Select ${mcpUtils.wrapUntrustedValue(qadam.displayName)}`,
                 '4. Fill in the following fields:',
                 ...fieldNames,
                 '5. Click Save',
@@ -142,7 +142,7 @@ async function connectionGuide(mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
             lines.push(
                 '1. Open your Qadam Flow dashboard',
                 '2. Go to Settings → Connections → "+ New Connection"',
-                `3. Select "${qadam.displayName}"`,
+                `3. Select ${mcpUtils.wrapUntrustedValue(qadam.displayName)}`,
                 '4. Follow the prompts to complete the setup',
                 '5. Click Save',
             )
@@ -167,22 +167,22 @@ function formatAuthSteps({ auth, displayName }: { auth: Record<string, unknown>,
     const steps: string[] = []
     switch (auth.type) {
         case PropertyType.OAUTH2:
-            steps.push(`1. Go to Settings → Connections → "+ New Connection" → "${displayName}"`, '2. Click "Connect" — OAuth popup opens', '3. Log in and authorize')
+            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, '2. Click "Connect" — OAuth popup opens', '3. Log in and authorize')
             break
         case PropertyType.SECRET_TEXT:
-            steps.push(`1. Go to Settings → Connections → "+ New Connection" → "${displayName}"`, `2. Enter your API key${'description' in auth && auth.description ? ` (${auth.description})` : ''}`, '3. Click Save')
+            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, `2. Enter your API key${'description' in auth && typeof auth.description === 'string' ? ` (${mcpUtils.wrapUntrustedValue(auth.description)})` : ''}`, '3. Click Save')
             break
         case PropertyType.BASIC_AUTH:
-            steps.push(`1. Go to Settings → Connections → "+ New Connection" → "${displayName}"`, '2. Enter username and password', '3. Click Save')
+            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, '2. Enter username and password', '3. Click Save')
             break
         case PropertyType.CUSTOM_AUTH: {
             const props = (auth.props ?? {}) as Record<string, { displayName?: string, required?: boolean }>
-            const fields = Object.entries(props).map(([key, p]) => `  - ${p.displayName ?? key}${p.required !== false ? ' (required)' : ' (optional)'}`)
-            steps.push(`1. Go to Settings → Connections → "+ New Connection" → "${displayName}"`, '2. Fill in:', ...fields, '3. Click Save')
+            const fields = Object.entries(props).map(([key, p]) => `  - ${mcpUtils.wrapUntrustedValue(p.displayName ?? key)}${p.required !== false ? ' (required)' : ' (optional)'}`)
+            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, '2. Fill in:', ...fields, '3. Click Save')
             break
         }
         default:
-            steps.push(`1. Go to Settings → Connections → "+ New Connection" → "${displayName}"`, '2. Follow the on-screen instructions')
+            steps.push(`1. Go to Settings → Connections → "+ New Connection" → ${mcpUtils.wrapUntrustedValue(displayName)}`, '2. Follow the on-screen instructions')
     }
     return steps
 }

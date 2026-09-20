@@ -71,7 +71,7 @@ export const apDuplicateFlowTool = ({ mcp, userId }: McpToolContext, log: Fastif
                     return {
                         content: [{
                             type: 'text',
-                            text: `✅ Flow duplicated successfully.\n  Original: ${mcpUtils.wrapFlowValue(sourceFlow.version.displayName)} (id: ${sourceFlow.id})\n  Copy: ${mcpUtils.wrapFlowValue(updatedFlow.version.displayName)} (id: ${updatedFlow.id})\n\nNote: Connections are not copied — use ap_flow_structure on the new flow to check configuration status and re-configure steps as needed.`,
+                            text: `✅ Flow duplicated successfully.\n  Original: ${mcpUtils.wrapUntrustedValue(sourceFlow.version.displayName)} (id: ${sourceFlow.id})\n  Copy: ${mcpUtils.wrapUntrustedValue(updatedFlow.version.displayName)} (id: ${updatedFlow.id})\n\nNote: Connections are not copied — use ap_flow_structure on the new flow to check configuration status and re-configure steps as needed.`,
                         }],
                         // Structured, not scraped from the prose above: `displayName` on both flows
                         // is flow-authored (the copy's own name defaults to `Copy of <source name>`,

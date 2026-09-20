@@ -255,44 +255,49 @@ const BRANCH_CONDITIONS_INPUT_SCHEMA = z.array(
     ),
 )
 
-function truncate(str: string, max: number): string {
-    return str.length <= max ? str : str.slice(0, max) + '... (truncated)'
-}
-
-// Any string an MCP tool got from the flow definition rather than from this call's own arguments —
-// a step's displayName, a qadam/action/trigger name, a branch name, a branch condition value, a
-// pinned qadam version, a truncated sourceCode/input preview — was written by whoever last edited
-// that flow, who is not necessarily the principal running this tool call. Interpolating it bare
-// into a warning or summary line hands that other author a reliable, agent-chosen slot inside text
-// the model reads as the tool's own voice (#480): a name need only fail to resolve to guarantee the
-// surrounding sentence fires, and nothing stops that name from reading as an instruction itself.
+// Any string an MCP tool renders that did not originate from this call's own arguments — a
+// step's displayName, a qadam/action/trigger/branch name, a pinned qadam version, a truncated
+// sourceCode/input preview, a connection/table/field/variable/project display name, a qadam's own
+// registration metadata (displayName, auth description, prop labels — set by whoever published or
+// installed that qadam), or a third-party API's response body / error string surfaced through a
+// run's output or errorMessage — was written by a principal other than whoever is running this tool
+// call (#480, widened by #485 past the original flow-definition-only perimeter: a flow calling an
+// attacker-controlled URL reaches this content with no project-write access needed at all).
+// Interpolating it bare into a warning or summary line hands that other author a reliable,
+// agent-chosen slot inside text the model reads as the tool's own voice: a name need only fail to
+// resolve, or a request need only fail, to guarantee the surrounding sentence fires, and nothing
+// stops the value from reading as an instruction itself.
 //
-// This does not reject the value — a name that fails to resolve is exactly the normal case this
-// output exists to report — but it is not a lossless passthrough either: it marks where the tool's
-// prose ends and quoted, untrusted data begins with a delimiter no legitimate flow-authored string
-// is allowed to collide with, and that guarantee costs the value any literal occurrence of the
-// delimiter itself (and of a short list of characters that merely *look* like it — see
-// `CONFUSABLE_DELIMITERS`), which are stripped rather than escaped. Every ECMAScript line-terminator
-// (not just `\r`/`\n` — `\u2028`/`\u2029` render as breaks in many consumers, and `\u0085`/`\v`/`\f`
-// are the remaining vertical-whitespace forms) is collapsed to a space first, so one value cannot
-// masquerade as several lines of trusted output — collapsing is the control the whole design rests
-// on, since a fabricated line is what lets injected text imitate one of this tool's own section
-// headers or list items. `wrapFlowValue` is intentionally total: it accepts whatever a jsonb-backed
-// field actually holds at runtime (including `null`/`undefined`, despite a type that promises
-// `string`) rather than trusting the type and throwing on the gap.
+// This does not reject the value — a name that fails to resolve, or a call that failed, is exactly
+// the normal case this output exists to report — but it is not a lossless passthrough either: it
+// marks where the tool's prose ends and quoted, untrusted data begins with a delimiter, and the only
+// thing the value loses is a literal occurrence of that exact delimiter — stripped rather than
+// escaped, so the closing bracket cannot be forged from inside the value, and nothing the value
+// contains can synthesise the delimiter's own codepoint by concatenation. An earlier version of this
+// also stripped a list of characters chosen to merely *look* like the delimiter, including the ASCII
+// `[[`/`]]` pair; that pair is ordinary JSON/JS array-of-arrays syntax, so the strip silently
+// corrupted well-formed input (`[[1,2],[3,4]]` became `1,2],[3,4`) for no closure the real delimiter
+// did not already provide on its own — a single codepoint that cannot be produced by concatenating
+// other characters cannot be spoofed by something that merely looks similar, so the list bought
+// nothing and cost data fidelity (#485 review). It is gone; only the two real delimiter codepoints
+// are stripped. Every ECMAScript line-terminator (not just `\r`/`\n` — `\u2028`/`\u2029` render as
+// breaks in many consumers, and `\u0085`/`\v`/`\f` are the remaining vertical-whitespace forms) is
+// still collapsed to a space first, so one value cannot masquerade as several lines of trusted output
+// — collapsing is the control the whole design rests on, since a fabricated line is what lets
+// injected text imitate one of this tool's own section headers or list items. The result is quoted,
+// not verbatim: line breaks are flattened and the delimiter itself cannot survive inside it, so a
+// caller must not treat a wrapped span as a byte-for-byte copy of the stored value.
+// `wrapUntrustedValue` takes `string | null | undefined`, not `unknown`: the only gap it exists to
+// cover is a jsonb-backed column typed `string` that can legally hold `null`/`undefined` at runtime,
+// and widening past that would let an object or array reach it and silently print `[object Object]`
+// instead of failing to compile.
 const FLOW_VALUE_OPEN = '⟦'
 const FLOW_VALUE_CLOSE = '⟧'
-// Characters that read as "the same kind of bracket" as the real delimiter to a casual glance, or
-// to a model matching loosely on shape rather than codepoint — none of these is FLOW_VALUE_OPEN or
-// FLOW_VALUE_CLOSE, so a naive strip would miss them, and a value built to visually spoof the
-// delimiter's boundary needs to lose them the same way it loses a literal ⟦/⟧ (#480 F5).
-const CONFUSABLE_DELIMITERS = ['〚', '〛', '〖', '〗', '⦋', '⦌', '[[', ']]']
 const LINE_BREAK_PATTERN = /[\r\n\u2028\u2029\u0085\v\f]+/g
 
-function wrapFlowValue(value: unknown): string {
-    const str = typeof value === 'string' ? value : String(value ?? '')
-    const collapsed = str.replace(LINE_BREAK_PATTERN, ' ')
-    const sanitized = [FLOW_VALUE_OPEN, FLOW_VALUE_CLOSE, ...CONFUSABLE_DELIMITERS]
+function wrapUntrustedValue(value: string | null | undefined): string {
+    const collapsed = (value ?? '').replace(LINE_BREAK_PATTERN, ' ')
+    const sanitized = [FLOW_VALUE_OPEN, FLOW_VALUE_CLOSE]
         .reduce((acc, token) => acc.split(token).join(''), collapsed)
     return `${FLOW_VALUE_OPEN}${sanitized}${FLOW_VALUE_CLOSE}`
 }
@@ -302,10 +307,10 @@ function wrapFlowValue(value: unknown): string {
 // itself away, and computing it before wrapping would let the value forge it. Wrapping the raw,
 // possibly-truncated content last is what stops the closing bracket from being truncated away in
 // the first place — this keeps that property and adds the same guarantee for the marker text.
-function wrapTruncatedFlowValue(value: string, max: number): string {
+function wrapTruncatedUntrustedValue({ value, max }: { value: string, max: number }): string {
     const isTruncated = value.length > max
     const content = isTruncated ? value.slice(0, max) : value
-    return `${wrapFlowValue(content)}${isTruncated ? '... (truncated)' : ''}`
+    return `${wrapUntrustedValue(content)}${isTruncated ? '... (truncated)' : ''}`
 }
 
 function resolveRouterStep({ stepName, trigger }: { stepName: string, trigger: Step }): ResolveRouterStepResult {
@@ -514,12 +519,12 @@ function qadamPinIssue({ pin, resolvable }: { pin: string, resolvable: boolean |
     if (resolvable === false) {
         return {
             severity: 'unavailable',
-            message: `is pinned to ${wrapFlowValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
+            message: `is pinned to ${wrapUntrustedValue(pin)}, which this installation does not have. Every run and every trigger provisioning attempt fails on it. Re-point it at an available version — delete and re-add the step with ap_add_step, or re-create the trigger with ap_update_trigger.`,
         }
     }
     return {
         severity: 'unverified',
-        message: `is pinned to ${wrapFlowValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
+        message: `is pinned to ${wrapUntrustedValue(pin)}, and this installation could not confirm right now whether that version is available (the check failed transiently). Re-run before acting on this — do not delete or re-add the step based on an unverified reading, since that loses its sample data.`,
     }
 }
 
@@ -540,9 +545,8 @@ const RESOLVE_TIMEOUT_MS = 30_000
 
 export const mcpUtils = {
     mcpToolError,
-    truncate,
-    wrapFlowValue,
-    wrapTruncatedFlowValue,
+    wrapUntrustedValue,
+    wrapTruncatedUntrustedValue,
     resolveRouterStep,
     routerInvalidWarning,
     publishedFlowWarning,

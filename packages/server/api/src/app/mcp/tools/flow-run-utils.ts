@@ -10,6 +10,16 @@ import { mcpUtils } from './mcp-utils'
 
 const POLL_INTERVAL_MS = 2000
 const MAX_WAIT_MS = 120_000
+// A step's `output`/`errorMessage` is not flow-authored — it is whatever the piece's own
+// action/trigger code produced, which for an HTTP-calling piece is a third-party API's response
+// body or error string verbatim (#485). It reaches this prose with no project-write access
+// needed at all: a flow only has to call a URL the caller controls. `structuredContent` on
+// `ap_get_run`/`ap_test_flow`/`ap_test_step`/`ap_run_action` carries the value raw and untruncated
+// for a caller that needs to act on it programmatically; these previews are the narrated-prose
+// copy, which is exactly the channel the model reads as this tool's own voice, so they are wrapped
+// and capped here rather than left bare.
+const STEP_OUTPUT_PREVIEW_MAX = 5000
+const STEP_ERROR_PREVIEW_MAX = 2000
 
 export async function executeFlowTest({ flowId, projectId, stepName, triggerTestData, log }: {
     flowId: string
@@ -38,7 +48,7 @@ export async function executeFlowTest({ flowId, projectId, stepName, triggerTest
     else {
         const invalidSteps = flowStructureUtil.getAllSteps(flow.version.trigger)
             .filter(s => !s.valid && !flowStructureUtil.isTrigger(s.type))
-            .map(s => mcpUtils.wrapFlowValue(s.displayName))
+            .map(s => mcpUtils.wrapUntrustedValue(s.displayName))
         if (invalidSteps.length > 0) {
             warning = `⚠️ These steps are not fully configured: ${invalidSteps.join(', ')}. Results may be incomplete.\n\n`
         }
@@ -92,7 +102,13 @@ export async function executeFlowTest({ flowId, projectId, stepName, triggerTest
         }
     }
 
-    return { content: [{ type: 'text', text: warning + formatRunResult(completedRun) }] }
+    return {
+        content: [{ type: 'text', text: warning + formatRunResult(completedRun) }],
+        // Raw, unwrapped output/errorMessage — the same shape `ap_get_run` returns — so a caller
+        // that needs the value byte-for-byte does not have to reconstruct it from the wrapped,
+        // newline-collapsed prose preview above (#485).
+        structuredContent: buildRunStructuredContent(completedRun),
+    }
 }
 
 export async function executeAdhocAction({
@@ -257,12 +273,17 @@ export async function executeAdhocAction({
             return {
                 content: [{
                     type: 'text',
-                    text: `❌ ${action.displayName} failed with INTERNAL_ERROR (no step data) — the engine crashed while loading or executing the piece. Run ID: ${completedRun.id}.`,
+                    text: `❌ ${mcpUtils.wrapUntrustedValue(action.displayName)} failed with INTERNAL_ERROR (no step data) — the engine crashed while loading or executing the piece. Run ID: ${completedRun.id}.`,
                 }],
             }
         }
 
-        return { content: [{ type: 'text', text: formatAdhocActionResult(completedRun, stepName, action.displayName) }] }
+        return {
+            content: [{ type: 'text', text: formatAdhocActionResult(completedRun, stepName, mcpUtils.wrapUntrustedValue(action.displayName)) }],
+            // Raw, unwrapped step output/errorMessage for a caller that needs the value
+            // byte-for-byte rather than the wrapped, newline-collapsed prose preview above (#485).
+            structuredContent: buildAdhocActionStructuredContent(completedRun, stepName),
+        }
     }
     catch (err) {
         log.error({ err, projectId, flowId: flow.id }, 'executeAdhocAction failed')
@@ -272,6 +293,45 @@ export async function executeAdhocAction({
         flowService(log).delete({ id: flow.id, projectId }).catch(err => {
             log.warn({ err, flowId: flow.id }, 'adhoc flow cleanup failed')
         })
+    }
+}
+
+// Shared with `ap_get_run` so the two tools describe the same run identically: raw, unwrapped
+// `output`/`errorMessage` belong in the structured channel a caller reads programmatically, never
+// in the prose one the model narrates from (#485).
+export function buildRunStructuredContent(run: FlowRun): Record<string, unknown> {
+    const stepEntries = !isNil(run.steps) && typeof run.steps === 'object'
+        ? Object.entries(run.steps as Record<string, Record<string, unknown>>)
+        : []
+    return {
+        id: run.id,
+        flowId: run.flowId,
+        status: run.status,
+        environment: run.environment,
+        created: run.created,
+        duration: run.startTime && run.finishTime
+            ? `${((new Date(run.finishTime).getTime() - new Date(run.startTime).getTime()) / 1000).toFixed(1)}s`
+            : null,
+        failedStepName: run.failedStep?.name ?? null,
+        steps: stepEntries.map(([name, step]) => ({
+            name,
+            status: String(step.status ?? 'UNKNOWN'),
+            duration: typeof step.duration === 'number' ? step.duration : null,
+            output: step.output ?? null,
+            errorMessage: step.errorMessage ?? null,
+        })),
+    }
+}
+
+function buildAdhocActionStructuredContent(run: FlowRun, stepName: string): Record<string, unknown> {
+    const steps = run.steps
+    const step = !isNil(steps) && typeof steps === 'object' ? (steps as Record<string, unknown>)[stepName] : undefined
+    const stepRecord = !isNil(step) && typeof step === 'object' ? step as Record<string, unknown> : undefined
+    return {
+        runId: run.id,
+        status: stepRecord?.status ?? run.status,
+        output: stepRecord?.output ?? null,
+        errorMessage: stepRecord?.errorMessage ?? null,
     }
 }
 
@@ -291,6 +351,9 @@ function looksEmpty(output: unknown): boolean {
     return false
 }
 
+// `displayName` arrives already wrapped by the caller (it is the qadam's own registered action
+// name, set by whoever published the piece — not this call's own argument), so it is interpolated
+// bare here rather than wrapped a second time.
 function formatAdhocActionResult(run: FlowRun, stepName: string, displayName: string): string {
     const steps = run.steps
     if (isNil(steps) || typeof steps !== 'object') {
@@ -307,7 +370,10 @@ function formatAdhocActionResult(run: FlowRun, stepName: string, displayName: st
     if (status === StepOutputStatus.SUCCEEDED) {
         const outStr = output === undefined
             ? '(no output)'
-            : typeof output === 'string' ? output : JSON.stringify(output)
+            : mcpUtils.wrapTruncatedUntrustedValue({
+                value: typeof output === 'string' ? output : JSON.stringify(output),
+                max: STEP_OUTPUT_PREVIEW_MAX,
+            })
         const base = `✅ ${displayName} completed (run ${run.id}).\n\n${outStr}`
         if (looksEmpty(output)) {
             return `${base}\n\nNote: No results matched. If the user expected data, try broader parameters (e.g., wider date range, fewer filters).`
@@ -316,7 +382,10 @@ function formatAdhocActionResult(run: FlowRun, stepName: string, displayName: st
     }
     const errStr = errorMessage === undefined
         ? `status: ${String(status)}`
-        : typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage)
+        : mcpUtils.wrapTruncatedUntrustedValue({
+            value: typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage),
+            max: STEP_ERROR_PREVIEW_MAX,
+        })
     return `❌ ${displayName} failed (run ${run.id}): ${errStr}\n\nRetry suggestion: Check the error above. If it mentions missing criteria, try adding a broad filter (e.g., after_date with a recent date, or a common search term). If it mentions auth, verify the connection.`
 }
 
@@ -375,7 +444,7 @@ export function formatRunSummary(run: FlowRun): string {
 // than rendering `⟦⟧` — a step with nothing meaningful to show is exactly the "not set" case, and
 // this is the one behaviour the wrap introduced beyond delimiting (#480 code-quality review).
 function failedStepLabel(failedStep: FailedStep): string {
-    return failedStep.displayName ? mcpUtils.wrapFlowValue(failedStep.displayName) : failedStep.name
+    return failedStep.displayName ? mcpUtils.wrapUntrustedValue(failedStep.displayName) : failedStep.name
 }
 
 function statusIcon(status: FlowRunStatus): string {
@@ -405,11 +474,11 @@ function formatStepOutput(name: string, step: unknown): string {
 
     if (status === StepOutputStatus.FAILED && errorMessage !== undefined) {
         const errStr = typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage)
-        parts.push(`    Error: ${errStr}`)
+        parts.push(`    Error: ${mcpUtils.wrapTruncatedUntrustedValue({ value: errStr, max: STEP_ERROR_PREVIEW_MAX })}`)
     }
     else if (output !== undefined) {
         const outStr = typeof output === 'string' ? output : JSON.stringify(output)
-        parts.push(`    Output: ${outStr}`)
+        parts.push(`    Output: ${mcpUtils.wrapTruncatedUntrustedValue({ value: outStr, max: STEP_OUTPUT_PREVIEW_MAX })}`)
     }
 
     return parts.join('\n')

@@ -109,7 +109,7 @@ describe('ap_validate_flow — qadam pin resolution wording (#474)', () => {
     })
 
     // #480 F1: the `qadam_version` message prefixes `issue.message` (already wrapped by
-    // `qadamPinIssue` via `mcpUtils.wrapFlowValue`) with the step's own `displayName` — the one
+    // `qadamPinIssue` via `mcpUtils.wrapUntrustedValue`) with the step's own `displayName` — the one
     // sibling issue builder in this file that skipped the same wrap. A step name is `z.string()`,
     // unbounded and newline-permitting, and a bogus pinned version is guaranteed to fire this
     // category (any name that does not exist is unresolvable by construction). A displayName that

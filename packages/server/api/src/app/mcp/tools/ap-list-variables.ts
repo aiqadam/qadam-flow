@@ -50,5 +50,5 @@ export const apListVariablesTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
 // other ungated tool emits a project member's email — printing it would put one into a third-party
 // model provider's context on an unconfirmed call, for information the model has no use for.
 function formatVariableLine(variable: VariableWithoutSensitiveData): string {
-    return `- ${variable.name} (id: ${variable.id}) — reference: {{variables['${variable.name}']}}, created: ${variable.created}, updated: ${variable.updated}`
+    return `- ${mcpUtils.wrapUntrustedValue(variable.name)} (id: ${variable.id}) — reference: {{variables['${variable.name}']}}, created: ${variable.created}, updated: ${variable.updated}`
 }

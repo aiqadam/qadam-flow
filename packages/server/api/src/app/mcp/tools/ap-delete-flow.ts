@@ -25,7 +25,7 @@ export const apDeleteFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Flow ${mcpUtils.wrapFlowValue(displayName)} has been permanently deleted.`,
+                        text: `✅ Flow ${mcpUtils.wrapUntrustedValue(displayName)} has been permanently deleted.`,
                     }],
                     structuredContent: { flowId, deleted: true },
                 }

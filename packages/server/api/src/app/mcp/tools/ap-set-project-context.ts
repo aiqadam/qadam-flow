@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { projectService } from '../../project/project-service'
 import { userService } from '../../user/user-service'
 import { mcpProjectSelection, ProjectSelectionScope } from '../mcp-project-selection'
+import { mcpUtils } from './mcp-utils'
 
 export const apSetProjectContextTool = ({ platformId, userId, selectionScope, log }: {
     platformId: string
@@ -33,7 +34,7 @@ export const apSetProjectContextTool = ({ platformId, userId, selectionScope, lo
         if (!isNil(projectId) && projectId !== '') {
             const targetProject = projects.find(p => p.id === projectId)
             if (!targetProject) {
-                const projectList = projects.map(p => `- ${p.displayName} (${p.id})`).join('\n')
+                const projectList = projects.map(p => `- ${mcpUtils.wrapUntrustedValue(p.displayName)} (${p.id})`).join('\n')
                 return {
                     content: [{
                         type: 'text' as const,
@@ -44,18 +45,18 @@ export const apSetProjectContextTool = ({ platformId, userId, selectionScope, lo
             await mcpProjectSelection.set({ scope: selectionScope, projectId })
             const projectList = projects.map(p => {
                 const marker = p.id === projectId ? '>' : ' '
-                return `${marker} ${p.displayName} (${p.id})`
+                return `${marker} ${mcpUtils.wrapUntrustedValue(p.displayName)} (${p.id})`
             }).join('\n')
             return {
                 content: [{
                     type: 'text' as const,
-                    text: `Project context set to "${targetProject.displayName}".\n\nAll tools will now operate on this project. Use ap_set_project_context without a projectId to clear the selection.\n\nAvailable projects:\n${projectList}`,
+                    text: `Project context set to ${mcpUtils.wrapUntrustedValue(targetProject.displayName)}.\n\nAll tools will now operate on this project. Use ap_set_project_context without a projectId to clear the selection.\n\nAvailable projects:\n${projectList}`,
                 }],
             }
         }
 
         await mcpProjectSelection.clear(selectionScope)
-        const projectList = projects.map(p => `- ${p.displayName} (${p.id})`).join('\n')
+        const projectList = projects.map(p => `- ${mcpUtils.wrapUntrustedValue(p.displayName)} (${p.id})`).join('\n')
         return {
             content: [{
                 type: 'text' as const,

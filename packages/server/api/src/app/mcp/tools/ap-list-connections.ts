@@ -60,7 +60,7 @@ export const apListConnectionsTool = (mcp: ProjectScopedMcpServer, log: FastifyB
                     limit: 200,
                     externalIds: undefined,
                 })
-                const lines = connections.data.map(c => `- externalId: ${c.externalId} | displayName: "${c.displayName}" | qadam: ${c.qadamName} | status: ${c.status} | scope: ${c.scope}`)
+                const lines = connections.data.map(c => `- externalId: ${c.externalId} | displayName: ${mcpUtils.wrapUntrustedValue(c.displayName)} | qadam: ${c.qadamName} | status: ${c.status} | scope: ${c.scope}`)
                 const structured = {
                     connections: connections.data.map(c => ({
                         externalId: c.externalId,

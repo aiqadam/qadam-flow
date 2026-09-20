@@ -224,3 +224,40 @@ describe('ap_flow_structure — flow-authored values cannot masquerade as tool i
         expect(text).toContain(`⟦${injectedDisplayName}⟧`)
     })
 })
+
+// #485 review: `wrapTruncatedUntrustedValue` used to strip the ASCII `[[`/`]]` pair as a
+// "confusable delimiter", which corrupts any JSON.stringify output containing a nested array —
+// exactly what a step's `input:` preview is built from. This fails against that implementation
+// (the extracted preview is not valid JSON) and passes now that only the real delimiter is stripped.
+describe('ap_flow_structure — a step input preview containing a nested array stays valid JSON (#485)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: HEALTHY_VERSION })
+    })
+
+    it('round-trips a nested-array input through the wrapped preview unchanged', async () => {
+        const input = { matrix: [[1, 2], [3, 4]], name: 'x' }
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            firstAction: {
+                ...pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }),
+                settings: {
+                    qadamName: '@aiqadam/qadam-test-email',
+                    qadamVersion: HEALTHY_VERSION,
+                    actionName: 'send_email',
+                    input,
+                },
+            },
+        }))
+
+        const result = await callTool()
+        const text = (result.content?.[0] as { text: string }).text
+        const inputLine = text.split('\n').find(line => line.trim().startsWith('input:'))
+        expect(inputLine).toBeDefined()
+
+        const wrapped = inputLine!.trim().slice('input: '.length)
+        expect(wrapped.startsWith('⟦')).toBe(true)
+        const inner = wrapped.slice(1, wrapped.lastIndexOf('⟧'))
+        expect(JSON.parse(inner)).toEqual(input)
+    })
+})
