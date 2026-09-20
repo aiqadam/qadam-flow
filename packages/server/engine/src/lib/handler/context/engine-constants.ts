@@ -30,7 +30,7 @@ type EngineConstantsParams = {
     timeoutInSeconds: number
     platformId: PlatformId
     stepNames: string[]
-    stepLogPolicy?: Record<string, StepLogPolicy>
+    stepLogPolicy?: Map<string, StepLogPolicy>
     isInlineChild?: boolean
     inlineDepth?: number
 }
@@ -68,7 +68,7 @@ export class EngineConstants {
     public readonly stepNameToTest?: string
     public readonly logsFileId?: string
     public readonly stepNames: string[] = []
-    public readonly stepLogPolicy: Record<string, StepLogPolicy>
+    public readonly stepLogPolicy: Map<string, StepLogPolicy>
     public readonly isInlineChild: boolean
     public readonly inlineDepth: number
     private project: Project | null = null
@@ -117,7 +117,7 @@ export class EngineConstants {
         this.platformId = params.platformId
         this.timeoutInSeconds = params.timeoutInSeconds
         this.stepNames = params.stepNames
-        this.stepLogPolicy = params.stepLogPolicy ?? {}
+        this.stepLogPolicy = params.stepLogPolicy ?? new Map()
         this.isInlineChild = params.isInlineChild ?? false
         this.inlineDepth = params.inlineDepth ?? 0
     }
@@ -193,7 +193,7 @@ export class EngineConstants {
             timeoutInSeconds: input.timeoutInSeconds,
             platformId: input.platformId,
             stepNames: input.flowVersion?.trigger ? flowStructureUtil.getAllSteps(input.flowVersion.trigger).map((step) => step.name) : [],
-            stepLogPolicy: input.flowVersion?.trigger ? logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }) : {},
+            stepLogPolicy: input.flowVersion?.trigger ? logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }) : new Map(),
         })
     }
 

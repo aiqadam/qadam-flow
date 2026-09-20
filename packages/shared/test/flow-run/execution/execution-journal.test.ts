@@ -160,6 +160,37 @@ describe('executionJournal.upsertStep and getStep', () => {
         expect(retrieved).toBe(stepOutput)
     })
 
+    // Blocking finding: `STEP_NAME_REGEX` admits `__proto__`, and it survives `ap_import_flow`
+    // verbatim. On a bracket assignment (`target[stepName] = stepOutput`), that literal key does
+    // not create an own property at all — it invokes the inherited `Object.prototype.__proto__`
+    // setter and silently reassigns the target's own prototype instead. `Object.keys`/
+    // `Object.entries`/`JSON.stringify` (i.e. the persisted run log) then can't see the step's own
+    // output, even though a direct read of the literal key still resolves it — the step's result
+    // silently vanishes from the log while still being live in memory. This must fail on a bracket
+    // assignment (no own key, so `Object.keys` comes back empty and the value is dropped by
+    // `JSON.stringify`) and pass with `Object.defineProperty`.
+    it('stores a step literally named "__proto__" as a real, visible entry', () => {
+        const steps: Record<string, StepOutput> = {}
+        const stepOutput = createCodeStep()
+
+        executionJournal.upsertStep({ stepName: '__proto__', stepOutput, path: [], steps })
+
+        expect(Object.keys(steps)).toContain('__proto__')
+        expect(JSON.parse(JSON.stringify(steps))).toHaveProperty('__proto__')
+        expect(executionJournal.getStep({ stepName: '__proto__', path: [], steps })).toBe(stepOutput)
+        expect(Object.getPrototypeOf(steps)).toBe(Object.prototype)
+    })
+
+    // Blocking finding: a bare index read for a step that never ran resolves `constructor` off
+    // `Object.prototype` (a function) instead of `undefined`. This must fail on a bare index (the
+    // lookup returns the `Object` constructor rather than `undefined`) and pass with
+    // `Object.hasOwn`.
+    it('reports a step literally named "constructor" as not found when it never ran', () => {
+        const steps: Record<string, StepOutput> = {}
+        const retrieved = executionJournal.getStep({ stepName: 'constructor', path: [], steps })
+        expect(retrieved).toBeUndefined()
+    })
+
     it('should overwrite an existing step', () => {
         const steps: Record<string, StepOutput> = { myStep: createCodeStep() }
         const newOutput = createCodeStep(StepOutputStatus.FAILED)

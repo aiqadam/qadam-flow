@@ -3,8 +3,16 @@ import { BaseStepOutput, FlowAction, FlowActionType, FlowRunStatus, flowStructur
 export const REDACTED_VALUE = '**REDACTED**'
 
 export const logRedaction = {
-    buildStepLogPolicy({ trigger }: BuildStepLogPolicyParams): Record<string, StepLogPolicy> {
-        const policy: Record<string, StepLogPolicy> = {}
+    // A `Map`, not a `Record`: `step.name` comes straight from flow content, and
+    // `STEP_NAME_REGEX` admits `__proto__` — which survives `ap_import_flow` verbatim. A bare
+    // bracket assignment (`policy[step.name] = ...`) for that key does not create an own property
+    // at all; it invokes the inherited `Object.prototype.__proto__` setter and silently changes
+    // the returned object's own prototype instead. `Object.keys()` (`hasPolicy`, below) then can't
+    // see the entry, so a step legitimately named `__proto__` that opts out of logging its output
+    // has that opt-out silently defeated wherever nothing else in the flow also has a policy entry
+    // — its sensitive output/input still lands in the persisted run log.
+    buildStepLogPolicy({ trigger }: BuildStepLogPolicyParams): Map<string, StepLogPolicy> {
+        const policy = new Map<string, StepLogPolicy>()
         for (const step of flowStructureUtil.getAllSteps(trigger)) {
             if (!isActionStep(step)) {
                 continue
@@ -12,10 +20,10 @@ export const logRedaction = {
             if (isNil(step.logInput) && isNil(step.logOutput)) {
                 continue
             }
-            policy[step.name] = {
+            policy.set(step.name, {
                 logInput: step.logInput ?? true,
                 logOutput: step.logOutput ?? true,
-            }
+            })
         }
         return policy
     },
@@ -43,8 +51,8 @@ export const logRedaction = {
     isOutputRedactionEnabled({ status }: { status: FlowRunStatus }): boolean {
         return status !== FlowRunStatus.PAUSED
     },
-    hasPolicy({ stepLogPolicy }: { stepLogPolicy: Record<string, StepLogPolicy> }): boolean {
-        return Object.keys(stepLogPolicy).length > 0
+    hasPolicy({ stepLogPolicy }: { stepLogPolicy: Map<string, StepLogPolicy> }): boolean {
+        return stepLogPolicy.size > 0
     },
 }
 
@@ -53,7 +61,7 @@ function isActionStep(step: Step): step is FlowAction {
 }
 
 function redactStepForLog({ stepName, step, stepLogPolicy }: RedactStepParams): StepOutput {
-    const policy = stepLogPolicy[stepName]
+    const policy = stepLogPolicy.get(stepName)
     if (policy?.logOutput === false) {
         return Object.assign(
             Object.create(Object.getPrototypeOf(step)),
@@ -85,10 +93,10 @@ type BuildStepLogPolicyParams = {
 type RedactStepParams = {
     stepName: string
     step: StepOutput
-    stepLogPolicy: Record<string, StepLogPolicy>
+    stepLogPolicy: Map<string, StepLogPolicy>
 }
 
 type RedactStepsParams = {
     steps: Record<string, StepOutput>
-    stepLogPolicy: Record<string, StepLogPolicy>
+    stepLogPolicy: Map<string, StepLogPolicy>
 }

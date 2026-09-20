@@ -39,10 +39,31 @@ describe('logRedaction.buildStepLogPolicy', () => {
             }),
         })
 
-        expect(policy).toEqual({
-            flagged: { logInput: true, logOutput: false },
-            nested: { logInput: false, logOutput: true },
+        expect(policy).toEqual(new Map([
+            ['flagged', { logInput: true, logOutput: false }],
+            ['nested', { logInput: false, logOutput: true }],
+        ]))
+    })
+
+    // Blocking finding: a step literally named `__proto__` (admitted by `STEP_NAME_REGEX`, and
+    // surviving `ap_import_flow` verbatim) that opts out of logging its output must still show up
+    // as an entry `hasPolicy` can see. On a bare `Record` with a bracket assignment, `policy['__proto__']
+    // = {...}` never creates an own property — it silently reassigns the object's own prototype via
+    // the inherited setter, so `Object.keys(policy)` (the old `hasPolicy` implementation) comes back
+    // empty and the whole flow's log redaction is skipped, unredacting exactly the step that asked
+    // to be hidden. This must fail on a `Record`-based implementation (`hasPolicy` reports `false`
+    // even though a policy was set) and pass with a `Map`.
+    it('makes a step literally named "__proto__" visible to hasPolicy, so its own opt-out is not silently defeated', () => {
+        const flagged = {
+            ...buildQadamAction({ name: '__proto__', qadamName: 'qadam', actionName: 'action', input: {} }),
+            logOutput: false,
+        }
+
+        const policy = logRedaction.buildStepLogPolicy({
+            trigger: buildTrigger({ nextAction: flagged }),
         })
+
+        expect(logRedaction.hasPolicy({ stepLogPolicy: policy })).toBe(true)
     })
 })
 
@@ -53,7 +74,7 @@ describe('logRedaction.redactStepsForLog', () => {
 
         const redacted = logRedaction.redactStepsForLog({
             steps: { flagged: live, other },
-            stepLogPolicy: { flagged: { logInput: true, logOutput: false } },
+            stepLogPolicy: new Map([['flagged', { logInput: true, logOutput: false }]]),
         })
 
         expect(redacted.flagged.output).toBe(REDACTED_VALUE)
@@ -70,7 +91,7 @@ describe('logRedaction.redactStepsForLog', () => {
 
         const redacted = logRedaction.redactStepsForLog({
             steps: { loop },
-            stepLogPolicy: { secret: { logInput: true, logOutput: false } },
+            stepLogPolicy: new Map([['secret', { logInput: true, logOutput: false }]]),
         })
 
         const redactedLoop = redacted.loop
@@ -89,7 +110,7 @@ describe('logRedaction.redactStepsForLog', () => {
 
         const redacted = logRedaction.redactStepsForLog({
             steps: { loop },
-            stepLogPolicy: { loop: { logInput: true, logOutput: false } },
+            stepLogPolicy: new Map([['loop', { logInput: true, logOutput: false }]]),
         })
 
         expect(redacted.loop.output).toBe(REDACTED_VALUE)

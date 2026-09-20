@@ -39,7 +39,7 @@ export class FlowExecutorContext {
     engineApi?: EngineApiConfig
     resolvedStepOutputCache: Map<string, Promise<unknown>>
     slicingEnabled: boolean
-    stepLogPolicy: Record<string, StepLogPolicy>
+    stepLogPolicy: Map<string, StepLogPolicy>
 
     /**
      * Execution time in milliseconds
@@ -57,7 +57,7 @@ export class FlowExecutorContext {
         this.engineApi = copyFrom?.engineApi
         this.resolvedStepOutputCache  = copyFrom?.resolvedStepOutputCache  ?? new Map()
         this.slicingEnabled = copyFrom?.slicingEnabled ?? true
-        this.stepLogPolicy = copyFrom?.stepLogPolicy ?? {}
+        this.stepLogPolicy = copyFrom?.stepLogPolicy ?? new Map()
     }
 
     static empty(params?: FlowExecutorContextInit): FlowExecutorContext {
@@ -121,7 +121,7 @@ export class FlowExecutorContext {
     }
 
     public async upsertStep(stepName: string, stepOutput: BaseStepOutput): Promise<FlowExecutorContext> {
-        const stepLogPolicy = this.stepLogPolicy[stepName]
+        const stepLogPolicy = this.stepLogPolicy.get(stepName)
         const truncated = logRedaction.withRedactedInput(withTruncatedInput(stepOutput), stepLogPolicy)
         let finalized: BaseStepOutput
         if (truncated.type === FlowActionType.LOOP_ON_ITEMS) {
@@ -201,7 +201,8 @@ export class FlowExecutorContext {
     public async currentState(referencedStepNames?: string[]): Promise<Record<string, unknown>> {
         const referencedSteps = referencedStepNames
             ? referencedStepNames.reduce((acc, stepName) => {
-                if (this.steps[stepName]) acc[stepName] = this.steps[stepName]
+                const step = getOwnStep(this.steps, stepName)
+                if (!isNil(step)) setOwnStep(acc, stepName, step)
                 return acc
             }, {} as Record<string, StepOutput>)
             : this.steps
@@ -210,8 +211,8 @@ export class FlowExecutorContext {
         let targetMap = this.steps
 
         for (const [stepName, iteration] of this.currentPath.path) {
-            const stepOutput = targetMap[stepName]
-            if (!stepOutput.output || stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
+            const stepOutput = getOwnStep(targetMap, stepName)
+            if (isNil(stepOutput) || !stepOutput.output || stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
                 throw new EngineGenericError('NotInstanceOfLoopOnItemsStepOutputError', '[ExecutionState#getTargetMap] Not instance of Loop On Items step output')
             }
             targetMap = stepOutput.output.iterations[iteration]
@@ -231,9 +232,28 @@ async function extractStepView(steps: Record<string, StepOutput>, engineApi: Eng
         const error = step.status === StepOutputStatus.FAILED && step.errorMessage !== undefined
             ? { message: step.errorMessage }
             : undefined
-        result[stepName] = { output, error }
+        setOwnStep(result, stepName, { output, error })
     }
     return result
+}
+
+// `stepName` comes straight from flow content (`STEP_NAME_REGEX` admits `constructor`,
+// `toString`, `valueOf`, `hasOwnProperty` and `__proto__`, and they survive `ap_import_flow`
+// verbatim), and `this.steps` here must stay a plain, JSON-serializable `Record` — it is
+// `FlowRun.steps`, persisted as-is. `Object.hasOwn`, not a bare index: a bare read for a step that
+// has never run resolves those names off `Object.prototype` (a function, or — for `__proto__` —
+// the object's own current prototype) instead of `undefined`.
+function getOwnStep<T>(target: Record<string, T>, stepName: string): T | undefined {
+    return Object.hasOwn(target, stepName) ? target[stepName] : undefined
+}
+
+// `Object.defineProperty`, not a bracket assignment: assigning to the literal key `__proto__` does
+// not create an own property — it invokes the inherited `Object.prototype.__proto__` setter and
+// silently reassigns the target's own prototype instead, so the step's own entry becomes invisible
+// to `Object.keys`/`Object.entries`/`JSON.stringify` even though a direct read of that literal key
+// still resolves it.
+function setOwnStep<T>(target: Record<string, T>, stepName: string, value: T): void {
+    Object.defineProperty(target, stepName, { value, writable: true, enumerable: true, configurable: true })
 }
 
 async function maybeSliceOutput(value: unknown, engineApi?: EngineApiConfig): Promise<{ ref: LogSliceRef } | undefined> {
@@ -306,5 +326,5 @@ export type EngineApiConfig = {
 export type FlowExecutorContextInit = {
     engineApi?: EngineApiConfig
     slicingEnabled?: boolean
-    stepLogPolicy?: Record<string, StepLogPolicy>
+    stepLogPolicy?: Map<string, StepLogPolicy>
 }

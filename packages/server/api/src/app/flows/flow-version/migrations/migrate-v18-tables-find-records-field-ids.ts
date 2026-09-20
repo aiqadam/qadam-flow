@@ -3,6 +3,7 @@ import {
     FlowActionType,
     flowStructureUtil,
     FlowVersion,
+    isNil,
     Step,
 } from '@aiqadam/shared'
 import { In } from 'typeorm'
@@ -59,9 +60,18 @@ export const migrateV18TablesFieldIds: Migration = {
             where: { id: In([...new Set(fieldIds)]) },
         })
 
-        const fieldIdToExternalId: Record<string, string> = {}
+        // A `Map`, not a `Record`: `filter.field.id` comes straight from
+        // `step.settings.input.filters.filters[].field.id`, i.e. flow JSON that is never
+        // constrained to an actual field id — `QadamActionSettings.input` is `z.record(z.string(),
+        // z.unknown())` and `ap_import_flow`/IMPORT_FLOW does not validate a PIECE step's `input`
+        // shape. A crafted `field.id: "constructor"` on a bare `Record` reaches `Object.prototype`
+        // and hands back the `Object` constructor, which passes the truthiness check below and
+        // gets written into the filter's field reference — dropped silently on JSONB
+        // serialisation. Same idiom as the `hasOwn`, not a bare index guard in
+        // `ap-validate-flow.ts`'s delay-unit lookup.
+        const fieldIdToExternalId = new Map<string, string>()
         for (const field of fields) {
-            fieldIdToExternalId[field.id] = field.externalId
+            fieldIdToExternalId.set(field.id, field.externalId)
         }
 
         const newVersion = flowStructureUtil.transferFlow(flowVersion, (step: Step) => {
@@ -93,14 +103,15 @@ export const migrateV18TablesFieldIds: Migration = {
             }
 
             const migratedFilters = filtersArray.map((filter) => {
-                if (!filter.field?.id || !fieldIdToExternalId[filter.field.id]) {
+                const externalId = isNil(filter.field?.id) ? undefined : fieldIdToExternalId.get(filter.field.id)
+                if (isNil(externalId)) {
                     return filter
                 }
                 return {
                     ...filter,
                     field: {
                         ...filter.field,
-                        id: fieldIdToExternalId[filter.field.id],
+                        id: externalId,
                     },
                 }
             })

@@ -9,7 +9,7 @@ describe('step log redaction across a run', () => {
     it('keeps the live output readable by the next step while the logged copy is redacted', async () => {
         const constants = generateMockEngineConstants({
             stepNames: ['step_1', 'step_2'],
-            stepLogPolicy: { step_1: { logInput: true, logOutput: false } },
+            stepLogPolicy: new Map([['step_1', { logInput: true, logOutput: false }]]),
         })
         let state = FlowExecutorContext.empty({ stepLogPolicy: constants.stepLogPolicy })
 
