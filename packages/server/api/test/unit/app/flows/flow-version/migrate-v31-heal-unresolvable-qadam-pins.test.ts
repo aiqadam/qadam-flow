@@ -86,6 +86,69 @@ function readPins(version: FlowVersion): { broken: string, healthy: string } {
     }
 }
 
+// Two independently-dead qadam names in the same flow version — one the registry can replace, one
+// it cannot — to prove a name with no replacement never borrows another name's fix and does not
+// stop the one that does have a replacement from being healed.
+function flowVersionWithTwoBrokenQadams({ replaceableVersion, unreplaceableName, unreplaceableVersion }: {
+    replaceableVersion: string
+    unreplaceableName: string
+    unreplaceableVersion: string
+}): FlowVersion {
+    return {
+        id: 'fv-2',
+        created: '2026-01-01T00:00:00.000Z',
+        updated: '2026-01-01T00:00:00.000Z',
+        flowId: 'flow-1',
+        displayName: 'two broken qadams flow',
+        valid: true,
+        schemaVersion: '31',
+        state: 'DRAFT',
+        trigger: {
+            name: 'trigger',
+            type: 'EMPTY',
+            valid: true,
+            displayName: 'Select Trigger',
+            settings: {},
+            nextAction: {
+                name: 'step_1',
+                type: FlowActionType.PIECE,
+                valid: true,
+                displayName: 'Broken With Replacement',
+                settings: {
+                    qadamName: BROKEN_QADAM_NAME,
+                    qadamVersion: replaceableVersion,
+                    actionName: 'doThing',
+                    input: {},
+                    inputUiInfo: {},
+                },
+                nextAction: {
+                    name: 'step_2',
+                    type: FlowActionType.PIECE,
+                    valid: true,
+                    displayName: 'Broken Without Replacement',
+                    settings: {
+                        qadamName: unreplaceableName,
+                        qadamVersion: unreplaceableVersion,
+                        actionName: 'doOtherThing',
+                        input: {},
+                        inputUiInfo: {},
+                    },
+                },
+            },
+        },
+    } as unknown as FlowVersion
+}
+
+function readTwoBrokenPins(version: FlowVersion): { replaceable: string, unreplaceable: string } {
+    const chain = version.trigger as unknown as {
+        nextAction: { settings: { qadamVersion: string }, nextAction: { settings: { qadamVersion: string } } }
+    }
+    return {
+        replaceable: chain.nextAction.settings.qadamVersion,
+        unreplaceable: chain.nextAction.nextAction.settings.qadamVersion,
+    }
+}
+
 describe('migrateV31HealUnresolvableQadamPins', () => {
     beforeEach(() => {
         vi.clearAllMocks()
@@ -155,6 +218,66 @@ describe('migrateV31HealUnresolvableQadamPins', () => {
 
         expect(readPins(migrated).broken).toBe(BROKEN_OLD_VERSION)
         expect(migrated.schemaVersion).toBe('32')
+    })
+
+    // Blocking finding: `fetchRegistryFromDB` runs no `ORDER BY` and `registry()` never dedupes, so
+    // picking the first match rather than the highest would return whatever order Postgres happens
+    // to hand back — in practice the oldest. This must fail on the pre-fix `.find()` and pass after.
+    it('picks the highest available version when the registry lists several for the same qadam, not just the first entry', async () => {
+        mockRegistry.mockResolvedValue([
+            { name: BROKEN_QADAM_NAME, version: '0.1.0' },
+            { name: BROKEN_QADAM_NAME, version: BROKEN_REPLACEMENT_VERSION },
+            { name: BROKEN_QADAM_NAME, version: '0.2.0' },
+            { name: HEALTHY_QADAM_NAME, version: HEALTHY_VERSION },
+        ])
+
+        const migrated = await migrateV31HealUnresolvableQadamPins.migrate(flowVersionWithSteps({ schemaVersion: '31' }))
+
+        expect(readPins(migrated).broken).toBe(BROKEN_REPLACEMENT_VERSION)
+    })
+
+    // Blocking finding: `tryCatch` collapses "genuinely missing" and "the lookup errored" into the
+    // same `data: null`, and this migration persists its rewrite — a transient error must never be
+    // read as "definitely dead", or a healthy LOCKED flow gets its pin silently changed during
+    // exactly the DB-pressure window (an image upgrade) this migration is most likely to run in.
+    it('leaves a pin untouched when its resolution lookup throws, rather than treating a transient error as a definite miss', async () => {
+        mockGet.mockImplementation(async ({ name, version }: { name: string, version: string }) => {
+            if (name === HEALTHY_QADAM_NAME && version === HEALTHY_VERSION) {
+                return { name, version }
+            }
+            if (name === BROKEN_QADAM_NAME && version === BROKEN_OLD_VERSION) {
+                throw new Error('ECONNRESET')
+            }
+            return undefined
+        })
+
+        const migrated = await migrateV31HealUnresolvableQadamPins.migrate(flowVersionWithSteps({ schemaVersion: '31' }))
+
+        expect(readPins(migrated).broken).toBe(BROKEN_OLD_VERSION)
+        expect(migrated.schemaVersion).toBe('32')
+        expect(mockRegistry).not.toHaveBeenCalled()
+    })
+
+    it('heals the dead pin that has a registry replacement while leaving a dead pin with none untouched, in the same flow version', async () => {
+        const UNREPLACEABLE_NAME = '@aiqadam/qadam-unreplaceable'
+        const UNREPLACEABLE_VERSION = '0.9.9'
+        mockGet.mockImplementation(async ({ name, version }: { name: string, version: string }) => {
+            if (name === BROKEN_QADAM_NAME && version === BROKEN_REPLACEMENT_VERSION) {
+                return { name, version }
+            }
+            return undefined
+        })
+        mockRegistry.mockResolvedValue([{ name: BROKEN_QADAM_NAME, version: BROKEN_REPLACEMENT_VERSION }])
+
+        const migrated = await migrateV31HealUnresolvableQadamPins.migrate(flowVersionWithTwoBrokenQadams({
+            replaceableVersion: BROKEN_OLD_VERSION,
+            unreplaceableName: UNREPLACEABLE_NAME,
+            unreplaceableVersion: UNREPLACEABLE_VERSION,
+        }))
+
+        const pins = readTwoBrokenPins(migrated)
+        expect(pins.replaceable).toBe(BROKEN_REPLACEMENT_VERSION)
+        expect(pins.unreplaceable).toBe(UNREPLACEABLE_VERSION)
     })
 
     it('changes nothing on a second pass, once the pin resolves', async () => {

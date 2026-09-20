@@ -12,13 +12,14 @@ import {
     Permission,
     ProjectScopedMcpServer,
     StepLocationRelativeToParent,
+    tryCatch,
 } from '@aiqadam/shared'
 import type { Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
-import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
+import { qadamPinUtil, QadamPinnedStep } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
@@ -65,9 +66,11 @@ function getConfigStatus(step: Step): string {
     }
 }
 
-// `qadamResolutions` is keyed by `qadamPinUtil.pinOf`'s `name@version` — every distinct pin in the
-// flow was already resolved once by the caller, so this is a map lookup, not a fresh check.
-function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions: Map<string, boolean> }): { qadamPin?: string, qadamVersionResolvable?: boolean } {
+// `qadamPinUtil.resolvePins` is tri-state (`true` resolved / `false` a definite miss / `undefined`
+// the lookup errored) precisely so a caller that must not conflate the last two — the heal
+// migration — can tell them apart. This is a read-only report, not a persister, so it passes the
+// raw tri-state value straight through; `qadamPinWarning` below is where the collapse happens.
+function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions: Map<string, boolean | undefined> }): { qadamPin?: string, qadamVersionResolvable?: boolean } {
     if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
         return {}
     }
@@ -78,11 +81,39 @@ function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions
 // Mirrors `ap_validate_flow`'s `qadam_version` category message: name the exact pin, state the
 // consequence (every run and every trigger provisioning attempt fails), and name the fix. A bare
 // warning glyph would tell an agent something is wrong without telling it what to do about it.
+//
+// Fires on anything that isn't a confirmed `true`, not just a strict `false`: `qadamVersionResolvable`
+// is `undefined` both when the step carries no pin at all (filtered by `isNil(step.qadamPin)` below)
+// and when a pin's lookup errored rather than definitively missing. For a read-only report, an
+// unresolvable-right-now pin and an unresolvable-because-the-lookup-broke pin are the same actionable
+// fact to a reader; the heal migration (`migrate-v31`) is the caller that must NOT make this
+// collapse, because it persists the answer instead of just displaying it.
 function qadamPinWarning(step: StepInfo): string {
-    if (step.qadamVersionResolvable !== false || isNil(step.qadamPin)) {
+    if (isNil(step.qadamPin) || step.qadamVersionResolvable === true) {
         return ''
     }
     return ` ⚠️ PINNED VERSION UNAVAILABLE: "${step.qadamPin}" does not exist on this installation — every run and every trigger provisioning attempt fails on it. Re-point this step at an available version: delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`
+}
+
+// A pin-availability signal is a decoration on top of the structure this tool exists to return —
+// before this feature, `ap_flow_structure` needed only the flow row. `getPlatformId` throws when
+// the project row carries no platform, and this tool is called constantly for navigation, so a
+// platform-lookup failure must degrade to "no pin info" rather than fail the whole response the
+// way `ap_validate_flow`'s equivalent unwrapped call is allowed to for a one-shot pre-publish gate.
+async function resolveQadamPinAvailability({ qadamSteps, projectId, log }: {
+    qadamSteps: QadamPinnedStep[]
+    projectId: string
+    log: FastifyBaseLogger
+}): Promise<Map<string, boolean | undefined>> {
+    const { data: platformId } = await tryCatch(() => projectService(log).getPlatformId(projectId))
+    if (isNil(platformId)) {
+        return new Map()
+    }
+    return qadamPinUtil.resolvePins({
+        pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
+        platformId,
+        log,
+    })
 }
 
 function hasSampleData(step: Step): boolean {
@@ -158,7 +189,7 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
     return groups.join(' OR ')
 }
 
-function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qadamResolutions: Map<string, boolean> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
+function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qadamResolutions: Map<string, boolean | undefined> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
     const allSteps = flowStructureUtil.getAllSteps(trigger)
     const stepByName = new Map(allSteps.map(s => [s.name, s]))
     const structure = allSteps.map((step): StepInfo => {
@@ -386,12 +417,8 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 // distinct pins, though no worse than `ap_validate_flow` already accepts.
                 const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
                 const qadamResolutions = qadamSteps.length > 0
-                    ? await qadamPinUtil.resolvePins({
-                        pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
-                        platformId: await projectService(log).getPlatformId(mcp.projectId),
-                        log,
-                    })
-                    : new Map<string, boolean>()
+                    ? await resolveQadamPinAvailability({ qadamSteps, projectId: mcp.projectId, log })
+                    : new Map<string, boolean | undefined>()
                 const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const text = formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [], !!includeInput)

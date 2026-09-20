@@ -30,43 +30,69 @@ export const migrateV31HealUnresolvableQadamPins: Migration = {
     targetSchemaVersion: '31',
     migrate: async (flowVersion: FlowVersion): Promise<FlowVersion> => {
         const log = system.globalLogger()
+        const logContext = { flowVersionId: flowVersion.id, flowId: flowVersion.flowId }
         const platformId = await resolvePlatformId({ flowId: flowVersion.flowId, log })
         // `migrateFlowVersionTemplate` calls the chain with no context and, on the template-import
         // path, a `flowId` that may not exist in the database at all — there is nothing to derive a
         // platform from, and guessing would risk filtering a platform's own custom qadams out of
         // the registry lookup below. Leaving every pin untouched is the only safe move here.
+        //
+        // This is a genuine degrade, not a no-op: the chain only re-enters a migration whose
+        // `targetSchemaVersion` matches, so this flow version is now permanently stamped '32'
+        // without ever having been checked. `log.warn` is the only trace of that left anywhere.
         if (isNil(platformId)) {
+            log.warn({ ...logContext, reason: 'platform_undetermined' }, '[migrateV31HealUnresolvableQadamPins] could not resolve a platform for this flow version — leaving every qadam pin untouched')
             return { ...flowVersion, schemaVersion: '32' }
         }
 
         const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
         if (qadamSteps.length === 0) {
+            log.debug({ ...logContext, reason: 'no_qadam_steps' }, '[migrateV31HealUnresolvableQadamPins] no pinned qadam steps in this flow version — nothing to heal')
             return { ...flowVersion, schemaVersion: '32' }
         }
 
         const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
         const resolutions = await qadamPinUtil.resolvePins({ pins, platformId, log })
 
+        // Strict `=== false`, not merely "not true": `resolvePins` is tri-state, and `undefined`
+        // means the lookup errored rather than definitively missing. Treating an error the same as
+        // a miss here would persist a rewrite to a step whose pin was actually fine — the one
+        // failure mode this migration exists to avoid. This equality check is the safety property
+        // the whole migration rests on; a pin that still resolves, or whose resolution merely
+        // failed transiently, is left untouched, byte for byte.
         const unresolvedNames = unique(qadamSteps
             .filter(step => resolutions.get(qadamPinUtil.pinOf({ step })) === false)
             .map(step => step.settings.qadamName))
         if (unresolvedNames.length === 0) {
+            // Not necessarily "every pin resolved" — a pin whose lookup merely errored also fails
+            // this `=== false` filter, and is deliberately reported the same as a clean resolution
+            // here: this path never heals anything, so there is nothing to get wrong either way.
+            log.debug({ ...logContext, reason: 'no_definite_miss' }, '[migrateV31HealUnresolvableQadamPins] no pinned qadam version was confirmed unresolvable — nothing to heal')
             return { ...flowVersion, schemaVersion: '32' }
         }
 
         const replacementByName = await resolveReplacements({ names: unresolvedNames, platformId, log })
         if (replacementByName.size === 0) {
+            log.warn({ ...logContext, reason: 'no_replacement_found', unresolvedNames }, '[migrateV31HealUnresolvableQadamPins] found unresolvable qadam pins but the registry has no replacement version for any of them — these pins remain broken')
             return { ...flowVersion, schemaVersion: '32' }
         }
 
         const stepNameToReplacementVersion: Record<string, string> = {}
+        const rewrites: { stepName: string, qadamName: string, oldVersion: string, newVersion: string }[] = []
         for (const step of qadamSteps) {
             const isUnresolved = resolutions.get(qadamPinUtil.pinOf({ step })) === false
             const replacement = replacementByName.get(step.settings.qadamName)
             if (isUnresolved && !isNil(replacement)) {
                 stepNameToReplacementVersion[step.name] = replacement
+                rewrites.push({ stepName: step.name, qadamName: step.settings.qadamName, oldVersion: step.settings.qadamVersion, newVersion: replacement })
             }
         }
+
+        if (rewrites.length === 0) {
+            log.warn({ ...logContext, reason: 'no_replacement_found', unresolvedNames }, '[migrateV31HealUnresolvableQadamPins] found unresolvable qadam pins but no replacement matched any of their steps — these pins remain broken')
+            return { ...flowVersion, schemaVersion: '32' }
+        }
+        log.info({ ...logContext, rewrites }, '[migrateV31HealUnresolvableQadamPins] repointed unresolvable qadam pins to a version the registry currently serves')
 
         const newFlowVersion = flowStructureUtil.transferFlow(flowVersion, (step) => {
             const replacement = stepNameToReplacementVersion[step.name]

@@ -2,6 +2,7 @@ import {
     FlowActionType,
     FlowTriggerType,
     McpServerType,
+    McpToolResult,
     ProjectScopedMcpServer,
 } from '@aiqadam/shared'
 import type { FastifyBaseLogger } from 'fastify'
@@ -41,7 +42,7 @@ function pieceStep({ name, qadamVersion, skip, nextAction }: {
     qadamVersion: string
     skip?: boolean
     nextAction?: unknown
-}) {
+}): Record<string, unknown> {
     return {
         name,
         displayName: 'Send Email',
@@ -58,7 +59,7 @@ function pieceStep({ name, qadamVersion, skip, nextAction }: {
     }
 }
 
-function flowWith({ firstAction }: { firstAction?: unknown }) {
+function flowWith({ firstAction }: { firstAction?: unknown }): Record<string, unknown> {
     return {
         id: 'flow-1',
         version: {
@@ -76,7 +77,7 @@ function flowWith({ firstAction }: { firstAction?: unknown }) {
     }
 }
 
-function emptyTriggerFlow() {
+function emptyTriggerFlow(): Record<string, unknown> {
     return {
         id: 'flow-1',
         version: {
@@ -93,7 +94,7 @@ function emptyTriggerFlow() {
     }
 }
 
-async function callTool() {
+async function callTool(): Promise<McpToolResult> {
     return apFlowStructureTool(mcp, log).execute({ flowId: 'flow-1' })
 }
 

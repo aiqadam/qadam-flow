@@ -10,6 +10,7 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { qadamMetadataService } from './qadam-metadata-service'
+import { isNewerVersion } from './utils'
 
 // A step keeps the exact qadam version it was configured with, and three call sites each needed
 // their own copy of "walk the steps, find the pinned ones, ask qadamMetadataService whether the
@@ -32,8 +33,14 @@ export const qadamPinUtil = {
     },
 
     // Scoped names carry their own `@`, so the pin is split on the LAST `@` rather than the first.
+    // Every caller today feeds this `pinOf`'s own output, which always contains one, but this is an
+    // exported util — a pin with no `@` at all must not silently drop its last character into
+    // `name` (`lastIndexOf` returning `-1` would otherwise do exactly that via `slice(0, -1)`).
     splitPin({ pin }: { pin: string }): { name: string, version: string } {
         const separator = pin.lastIndexOf('@')
+        if (separator === -1) {
+            return { name: pin, version: '' }
+        }
         return { name: pin.slice(0, separator), version: pin.slice(separator + 1) }
     },
 
@@ -58,18 +65,27 @@ export const qadamPinUtil = {
         return metadata?.version
     },
 
-    // Batch form for a validation/reporting caller: resolves every distinct pin once and treats a
-    // resolution failure the same as a miss (`false`) rather than aborting the whole batch — the
-    // shape both `ap_validate_flow` and `ap_flow_structure` want, and what the heal migration reads
-    // to decide which pins are candidates for replacement.
+    // Tri-state, deliberately: `true` is resolved, `false` is a definite miss (the lookup
+    // completed and found nothing), `undefined` is "the lookup errored" — a statement timeout,
+    // pool exhaustion, a failover, an `ECONNRESET`. Collapsing the last two into one `false` is
+    // safe for the two read-only reporting callers (`ap_validate_flow`, `ap_flow_structure`
+    // already treat "anything but `true`" as "flag it", so a report reads an error the same as a
+    // miss, which is the right default for a human/agent-facing report). It is NOT safe for the
+    // heal migration, which uses a `false` to *persist a rewrite* — a transient error must never
+    // read as "definitely dead" there, or a healthy LOCKED flow gets its pin silently changed
+    // during exactly the DB-pressure window (an image upgrade) this migration is most likely to
+    // run in. Callers that must not conflate the two check `=== false` explicitly.
     async resolvePins({ pins, platformId, log }: {
         pins: string[]
         platformId: string | undefined
         log: FastifyBaseLogger
-    }): Promise<Map<string, boolean>> {
-        return new Map(await Promise.all(pins.map(async (pin): Promise<[string, boolean]> => {
+    }): Promise<Map<string, boolean | undefined>> {
+        return new Map(await Promise.all(pins.map(async (pin): Promise<[string, boolean | undefined]> => {
             const { name, version } = qadamPinUtil.splitPin({ pin })
-            const { data: resolvedVersion } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
+            const { data: resolvedVersion, error } = await tryCatch(() => qadamPinUtil.resolvePinVersion({ name, version, platformId, log }))
+            if (!isNil(error)) {
+                return [pin, undefined]
+            }
             return [pin, !isNil(resolvedVersion)]
         })))
     },
@@ -78,6 +94,18 @@ export const qadamPinUtil = {
     // of that same qadam the registry can currently serve — mirrors what `migrate-v30`'s
     // `findPublishedAiQadamVersion` does for one hardcoded name, generalized to any name. A
     // registry failure degrades to "no replacement found" rather than throwing.
+    //
+    // Picks the single HIGHEST version among the candidates, not the first match: `registry()`
+    // (unlike `list()`) never runs its result through `lastVersionOfEachQadam` — it returns every
+    // matching row `filterRegistry` lets through, undeduped and in whatever order
+    // `fetchRegistryFromDB`'s `ORDER BY`-less `SELECT` happens to hand back (in practice, insertion
+    // order — the oldest first). That was invisible for the one bundled name v30 hardcoded, because
+    // a bundled qadam only ever has one registry row. A CUSTOM platform qadam accumulates one row
+    // per installed version, so an unsorted `.find()` could silently downgrade a step to an older
+    // release the moment its previously-pinned version is deleted. "Highest available" is the same
+    // direction every hand-written `migrate-v24`..`migrate-v30` file already moves a dead pin — this
+    // generalizes that convention rather than picking the version nearest the dead pin, which would
+    // need its own justification for stopping short of the latest available fix.
     async findResolvableVersion({ name, platformId, log }: {
         name: string
         platformId: string | undefined
@@ -87,7 +115,11 @@ export const qadamPinUtil = {
             release: apVersionUtil.getCurrentRelease(),
             platformId,
         }))
-        return registry?.find(entry => entry.name === name)?.version
+        const candidates = (registry ?? []).filter(entry => entry.name === name)
+        return candidates.reduce<string | undefined>(
+            (best, entry) => (isNil(best) || isNewerVersion(entry.version, best) ? entry.version : best),
+            undefined,
+        )
     },
 }
 

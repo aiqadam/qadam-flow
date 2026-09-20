@@ -6,6 +6,7 @@ The qadams feature manages the metadata catalog of automation integrations (call
 ## Key Files
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-controller.ts` — all piece routes registered under `/v1/qadams`
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-service.ts` — list, get, create, delete piece metadata; manages cache interactions and piece tag enrichment
+- `packages/server/api/src/app/qadams/metadata/qadam-pin-util.ts` — the canonical "does this flow-version step's pinned qadam version still resolve" predicate (#474). Wraps `qadamMetadataService.get()`/`.registry()` with a tri-state result (`true` resolved / `false` a definite miss / `undefined` the lookup errored — see the file's own comments for why the distinction matters to a caller that persists a rewrite). Used by `ap_validate_flow`, `ap_flow_structure`, `migrate-v19-strip-piece-version-wildcards.ts`, and the heal migration `migrate-v31-heal-unresolvable-qadam-pins.ts`; any new "is this pin resolvable" check should go through here rather than re-deriving it against `qadamMetadataService` directly.
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` — `qadam_metadata` TypeORM entity
 - `packages/server/api/src/app/qadams/metadata/qadam-cache.ts` — Redis/memory cache with pub/sub invalidation
 - `packages/server/api/src/app/qadams/community-piece-module.ts` — POST `/v1/qadams` for installing custom pieces
