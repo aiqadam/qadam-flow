@@ -169,7 +169,16 @@ corrupt_blob_at() {
   oid="$(git -C "$dir" rev-parse "${sha}:${path}")"
   objpath="${dir}/.git/objects/${oid:0:2}/${oid:2}"
   [ -f "$objpath" ] || { echo "corrupt_blob_at: expected a loose object at ${objpath}, found none" >&2; return 1; }
-  printf 'not a valid zlib stream' > "$objpath"
+  # git writes loose objects read-only (0444), so a bare `> "$objpath"` is EACCES for every user
+  # except root. This harness passed locally and failed on the CI runner for exactly that reason:
+  # root ignores the mode bits, the runner's unprivileged user does not. Unlink and recreate rather
+  # than chmod-ing — the directory is ours, the object is disposable, and this needs no mode
+  # juggling to restore.
+  rm -f "$objpath"
+  printf 'not a valid zlib stream' > "$objpath" || {
+    echo "corrupt_blob_at: could not write ${objpath}" >&2
+    return 1
+  }
 }
 
 # build_case <name> <root> <base-version> <base-props> <head-version> <head-props> [factory]
