@@ -3,7 +3,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { recordService } from '../../tables/record/record.service'
 import { mcpUtils } from './mcp-utils'
-import { formatPopulatedRecord, resolveFieldNamesForTable } from './table-utils'
+import { formatPopulatedRecord, resolveFieldNamesForTable, toStructuredRecord } from './table-utils'
 
 const OPERATOR_VALUES = [
     FilterOperator.EQ,
@@ -117,12 +117,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
 
                 const formatted = result.data.map(r => formatPopulatedRecord(r)).join('\n\n')
                 const structured = {
-                    records: result.data.map(r => ({
-                        id: r.id,
-                        cells: Object.fromEntries(
-                            Object.entries(r.cells).map(([fieldId, c]) => [c.fieldName ?? fieldId, c.value]),
-                        ),
-                    })),
+                    records: result.data.map(r => toStructuredRecord(r)),
                     count: result.data.length,
                 }
                 return {

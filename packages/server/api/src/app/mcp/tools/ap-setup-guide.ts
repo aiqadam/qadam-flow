@@ -159,10 +159,11 @@ function formatAuthTypeName(type: string): string {
         case PropertyType.SECRET_TEXT: return 'API Key'
         case PropertyType.BASIC_AUTH: return 'Basic Auth (username/password)'
         case PropertyType.CUSTOM_AUTH: return 'Custom Auth'
-        // Every known `PropertyType` is a named case above; reaching here means `type` came from a
-        // qadam's own registered auth metadata with a value this switch doesn't recognize — the
-        // same "set by whoever published or installed the qadam" class as every other span in this
-        // file, all of which are wrapped (#485).
+        // Every known auth `PropertyType` (the handful a qadam's `auth` can actually declare) is a
+        // named case above; reaching here means `type` came from a qadam's own registered auth
+        // metadata with a value this switch doesn't recognize — the same "set by whoever published
+        // or installed the qadam" class as every other span in this file, all of which are wrapped
+        // (#485).
         default: return mcpUtils.wrapUntrustedValue(type)
     }
 }

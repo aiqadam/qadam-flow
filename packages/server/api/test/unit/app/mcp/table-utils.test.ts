@@ -26,7 +26,7 @@ function baseRecord(overrides: Partial<PopulatedRecord> = {}): PopulatedRecord {
         keyValue: null,
         cells: {},
         ...overrides,
-    } as PopulatedRecord
+    }
 }
 
 // #485 review: nothing failed if every `mcpUtils.wrapUntrustedValue` call in `formatFieldInfo` was
@@ -59,8 +59,8 @@ describe('formatFieldInfo — a field name is free text and gets delimited in li
 // error in the same batch call, and `ap-list-connections.ts` already wraps `externalId`, a value
 // with the identical copy-back shape. This inverts the round-2 test that pinned the absence of the
 // wrap. Single-guard revert: delete the `mcpUtils.wrapUntrustedValue` call around `f.name` in
-// `resolveFieldNameToId` and this test fails on the `toContain('⟦')` assertion with the available
-// list rendered as plain `Email, Phone` — confirmed below.
+// `resolveFieldNameToId` and the first test below fails on its `toBe` assertion, with the available
+// list rendered as plain `Email, Phone` instead of `⟦Email⟧, ⟦Phone⟧` — confirmed below.
 describe('resolveFieldNameToId — the available-fields list is untrusted qadam/table data and gets wrapped (#485 review, round 3)', () => {
     it('wraps every entry in the available-fields list of the not-found error', () => {
         const fields = [baseField({ name: 'Email' }), baseField({ id: 'field-2', name: 'Phone' })]
@@ -131,10 +131,12 @@ describe('formatPopulatedRecord — a table cell is third-party data and gets wr
         const record = baseRecord({
             cells: {
                 'field-1': { created: '2024-01-01T00:00:00.000Z', updated: '2024-01-01T00:00:00.000Z', fieldName: 'Notes', value: null },
+                'field-2': { created: '2024-01-01T00:00:00.000Z', updated: '2024-01-01T00:00:00.000Z', fieldName: 'Comment', value: undefined },
             },
         })
         const text = formatPopulatedRecord(record)
         expect(text).toContain('Notes⟧: (empty)')
+        expect(text).toContain('Comment⟧: (empty)')
     })
 
     it('truncates an unbounded cell value rather than flooding the context', () => {

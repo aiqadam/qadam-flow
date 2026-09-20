@@ -59,6 +59,12 @@ export function resolveFieldNameToId({ fields, fieldNames }: ResolveFieldNameToI
     return { fieldMap, errors }
 }
 
+// A wrapped span is lossy by construction (newlines collapsed, delimiters and confusables
+// stripped), so the byte-exact value has to be reachable some other way. Both `ap_find_records`
+// and `ap_update_record` build a `structuredContent` from `toStructuredRecord` below, carrying the
+// unmodified `cell.value` — that is where a caller doing write-then-verify gets an exact copy,
+// never this preview. Any future tool that renders `formatPopulatedRecord`/`formatCellValue`
+// without also returning `toStructuredRecord` reopens that gap.
 const CELL_VALUE_PREVIEW_MAX = 2000
 
 export function formatPopulatedRecord(record: PopulatedRecord): string {
@@ -67,6 +73,20 @@ export function formatPopulatedRecord(record: PopulatedRecord): string {
         lines.push(`    ${mcpUtils.wrapUntrustedValue(cell.fieldName)}: ${formatCellValue(cell.value)}`)
     }
     return lines.join('\n')
+}
+
+// The byte-exact counterpart to `formatPopulatedRecord`'s lossy prose (see the
+// `CELL_VALUE_PREVIEW_MAX` comment above): raw, unwrapped `cell.value`s keyed by field name, meant
+// to travel only in `structuredContent`, never interpolated into text a model reads as prose.
+// Shared by `ap_find_records` and `ap_update_record` so both tools expose the same shape for the
+// same data instead of drifting.
+export function toStructuredRecord(record: PopulatedRecord): StructuredRecord {
+    return {
+        id: record.id,
+        cells: Object.fromEntries(
+            Object.entries(record.cells).map(([fieldId, cell]) => [cell.fieldName ?? fieldId, cell.value]),
+        ),
+    }
 }
 
 export function formatFieldInfo(field: Field): string {
@@ -96,7 +116,11 @@ export const fieldTypeSchema = z.enum(FIELD_TYPE_VALUES)
 // it does nothing about a literal `⟦`/`⟧` or a confusable sitting inside a string value, so the
 // wrap still runs on top of it — the two guard different things and neither subsumes the other.
 // `JSON.stringify` can also throw (a `bigint`, though nothing on this path is expected to produce
-// one) — `tryCatchSync` keeps that from taking the whole record listing down over one cell.
+// one) — `tryCatchSync` keeps that from throwing out of this function for one cell. The
+// `String(value)` fallback is not itself guaranteed safe (a null-prototype object or a value with
+// a throwing `toString` would still throw), but jsonb's own decoder never hands this function
+// anything but plain object/array/string/number/boolean/null, so that residual case is unreachable
+// on this path, not merely untested.
 function formatCellValue(value: unknown): string {
     if (value === null || value === undefined) {
         return '(empty)'
@@ -117,4 +141,9 @@ type ResolveFieldNamesForTableParams = {
 type ResolveFieldNameToIdParams = {
     fields: Field[]
     fieldNames: string[]
+}
+
+type StructuredRecord = {
+    id: string
+    cells: Record<string, unknown>
 }

@@ -64,7 +64,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     return {
                         content: [{
                             type: 'text',
-                            text: `✅ Flow "${updatedFlow.version.displayName}" (id: ${updatedFlow.id}) overwritten from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.`,
+                            text: `✅ Flow "${mcpUtils.wrapUntrustedValue(updatedFlow.version.displayName)}" (id: ${updatedFlow.id}) overwritten from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.`,
                         }],
                     }
                 }
@@ -90,7 +90,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                     return {
                         content: [{
                             type: 'text',
-                            text: `✅ Flow "${importedFlow.version.displayName}" (id: ${importedFlow.id}) created from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.`,
+                            text: `✅ Flow "${mcpUtils.wrapUntrustedValue(importedFlow.version.displayName)}" (id: ${importedFlow.id}) created from template.\n\nNote: Connections are not restored — step auth inputs are cleared by export, so use ap_flow_structure to check configuration status and re-configure steps as needed.`,
                         }],
                     }
                 }
