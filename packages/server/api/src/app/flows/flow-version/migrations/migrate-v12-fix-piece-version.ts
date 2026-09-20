@@ -31,7 +31,16 @@ export const migrateV12FixPieceVersion: Migration = {
             }
         }
         const platformId = await projectService(system.globalLogger()).getPlatformId(flow.projectId)
-        const stepNameToPieceVersion: Record<string, string> = {}
+        // A `Map`, not a `Record`: `transferFlow` below calls its callback for EVERY step, not only
+        // the rewritten ones, and a step name is only checked against `STEP_NAME_REGEX`
+        // (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`), which admits `constructor`, `toString`, `hasOwnProperty`,
+        // `__proto__` — names that survive `ap_import_flow` verbatim. A bare `Record` index on one
+        // of those reaches `Object.prototype` and would hand back a function (or, for `__proto__`,
+        // an object) as the "piece version" — a bare `Record` index was also read with a truthiness
+        // check rather than `isNil`, which would have let a truthy function through the same way.
+        // Same idiom as the `hasOwn`, not a bare index guard in `ap-validate-flow.ts`'s delay-unit
+        // lookup.
+        const stepNameToPieceVersion = new Map<string, string>()
         const steps = flowStructureUtil.getAllSteps(flowVersion.trigger)
         for (const step of steps) {
             if (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE) {
@@ -42,17 +51,18 @@ export const migrateV12FixPieceVersion: Migration = {
                 }),
                 )
                 if (!isNil(qadamMetadata)) {
-                    stepNameToPieceVersion[step.name] = qadamMetadata.version
+                    stepNameToPieceVersion.set(step.name, qadamMetadata.version)
                 }
             }
         }
         const newFlowVersion = flowStructureUtil.transferFlow(flowVersion, (step) => {
-            if (stepNameToPieceVersion[step.name]) {
+            const pieceVersion = stepNameToPieceVersion.get(step.name)
+            if (!isNil(pieceVersion)) {
                 return {
                     ...step,
                     settings: {
                         ...step.settings,
-                        qadamVersion: stepNameToPieceVersion[step.name],
+                        qadamVersion: pieceVersion,
                     },
                 }
             }

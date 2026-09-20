@@ -19,7 +19,14 @@ export const migrateV19StripPieceVersionWildcards: Migration = {
             ? undefined
             : await projectService(log).getPlatformId(flow.projectId)
 
-        const stepNameToExactVersion: Record<string, string> = {}
+        // A `Map`, not a `Record`: `transferFlow` below calls its callback for EVERY step, not only
+        // the rewritten ones, and a step name is only checked against `STEP_NAME_REGEX`
+        // (`/^[a-zA-Z_][a-zA-Z0-9_]*$/`), which admits `constructor`, `toString`, `hasOwnProperty`,
+        // `__proto__` — names that survive `ap_import_flow` verbatim. A bare `Record` index on one
+        // of those reaches `Object.prototype` and would hand back a function (or, for `__proto__`,
+        // an object) as the "exact version", which `isNil` happily lets through. Same idiom as the
+        // `hasOwn`, not a bare index guard in `ap-validate-flow.ts`'s delay-unit lookup.
+        const stepNameToExactVersion = new Map<string, string>()
         const wildcardSteps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
             .filter(step => step.settings.qadamVersion.startsWith('~') || step.settings.qadamVersion.startsWith('^'))
 
@@ -30,11 +37,11 @@ export const migrateV19StripPieceVersionWildcards: Migration = {
                 version: step.settings.qadamVersion,
                 log,
             })
-            stepNameToExactVersion[step.name] = resolvedVersion ?? flowQadamUtil.getExactVersion(step.settings.qadamVersion)
+            stepNameToExactVersion.set(step.name, resolvedVersion ?? flowQadamUtil.getExactVersion(step.settings.qadamVersion))
         }
 
         const newFlowVersion = flowStructureUtil.transferFlow(flowVersion, (step) => {
-            const exactVersion = stepNameToExactVersion[step.name]
+            const exactVersion = stepNameToExactVersion.get(step.name)
             if (isNil(exactVersion)) {
                 return step
             }
