@@ -26,6 +26,12 @@ const { getRawMany, loadBundledQadams, systemGet, systemGetBoolean } = vi.hoiste
 // so `loadPersistedRegistry` re-fetches from the (mocked) DB on every call instead of going
 // through the module-level `cachedRegistry` memoisation — exactly what lets each test below set
 // its own persisted-row fixture without leaking state into the next one.
+//
+// Deliberately minimal: only `get`/`getBoolean` are stubbed, because those are the only two
+// `system` methods anything reachable from `qadamCache` calls today. If a future change makes
+// `qadam-cache.ts` (or anything it imports) call `getOrThrow`/`getNumber`/etc. at import time, this
+// mock will make it fail with a plain "is not a function" rather than a message that points here —
+// add the missing method to this mock rather than chasing that error somewhere else.
 vi.mock('../../../../src/app/helper/system/system', () => ({
     system: {
         get: (...args: unknown[]) => systemGet(...args),

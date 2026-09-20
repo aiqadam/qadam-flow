@@ -40,6 +40,9 @@ async function buildSettingsResponse(_log: FastifyBaseLogger): Promise<WorkerSet
         SANDBOX_MEMORY_LIMIT: system.getOrThrow(AppSystemProp.SANDBOX_MEMORY_LIMIT),
         SANDBOX_PROPAGATED_ENV_VARS: system.get(AppSystemProp.SANDBOX_PROPAGATED_ENV_VARS)?.split(',').map(f => f.trim()) ?? [],
         DEV_QADAMS: system.get(AppSystemProp.DEV_QADAMS)?.split(',') ?? [],
+        // `=== 'true'`, not `system.getBoolean(...)`, matching this same function's own
+        // `OTEL_ENABLED` line below — `booleanValidator` restricts the underlying value to
+        // `'true'`/`'false'`, so the two forms are behaviourally identical here.
         OFFICIAL_QADAMS_INSTALL_ENABLED: system.get(AppSystemProp.OFFICIAL_QADAMS_INSTALL_ENABLED) === 'true',
         SENTRY_DSN: system.get(AppSystemProp.SENTRY_DSN),
         LOKI_PASSWORD: system.get(AppSystemProp.LOKI_PASSWORD),
