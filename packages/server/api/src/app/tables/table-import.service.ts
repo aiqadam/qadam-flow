@@ -5,6 +5,7 @@ import { transaction } from '../core/db/transaction'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
 import { fieldService } from './field/field.service'
+import { cellValidation } from './record/cell-validation'
 import { recordService } from './record/record.service'
 import { tableService } from './table/table.service'
 
@@ -33,15 +34,23 @@ export const tableImportService = {
         }
         const tableTemplate = tables[0]
         assertImportableTable(tableTemplate)
+        // Before anything destructive runs. importRows() happens AFTER
+        // importIntoExistingTable has already committed its clear-and-recreate transaction
+        // and cannot join it (recordService.create opens its own), so a row that fails
+        // write-time validation there would surface as a 400 with the target table's
+        // records and schema already gone. #390 made that reachable: before it there was
+        // no cell validation at all, and a template exported before it can legitimately
+        // carry a dropdown value that is no longer one of the column's options.
+        assertImportableRows(tableTemplate)
         const targetName = name ?? tableTemplate.name
 
         const created = mode === 'into-existing'
-            ? { table: await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }), externalIdReplaced: false }
-            : await createTableFromTemplate({ projectId, targetName, tableTemplate })
+            ? await importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate })
+            : { ...await createTableFromTemplate({ projectId, targetName, tableTemplate }), keyCleared: false }
 
         const { importedCount, truncated } = await importRows({ projectId, tableId: created.table.id, data: tableTemplate.data, cap: maxRecords, log })
 
-        return { table: created.table, importedCount, truncated, cap: maxRecords, externalIdReplaced: created.externalIdReplaced }
+        return { table: created.table, importedCount, truncated, cap: maxRecords, externalIdReplaced: created.externalIdReplaced, keyCleared: created.keyCleared }
     },
 }
 
@@ -70,7 +79,7 @@ async function createTableFromTemplate({ projectId, targetName, tableTemplate }:
     return { table, externalIdReplaced }
 }
 
-async function importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }: ImportIntoExistingTableParams): Promise<Table> {
+async function importIntoExistingTable({ projectId, existingTableId, targetName, tableTemplate }: ImportIntoExistingTableParams): Promise<{ table: Table, externalIdReplaced: boolean, keyCleared: boolean }> {
     if (isNil(existingTableId)) {
         throw new QadamFlowError({
             code: ErrorCode.VALIDATION,
@@ -83,7 +92,16 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
     // The whole clear-and-recreate-schema sequence runs as one transaction: a failure partway
     // through (createFromState's own assertion, or any other DB error mid-sequence) rolls back
     // the deletes instead of leaving the table wiped, fieldless, and renamed with no way back.
+    // Reported back to the caller rather than done quietly: a template carries no key
+    // declaration, so an import silently un-enforces a uniqueness guarantee the table had.
+    const keyCleared = !isNil(existingTable.keyFieldIds) && existingTable.keyFieldIds.length > 0
+
     await transaction(async (entityManager: EntityManager) => {
+        // Cleared before the old fields are deleted: a declared key (#409) names
+        // field ids that are about to stop existing, and fieldService.delete rejects
+        // deleting a field that is still part of one. The whole schema is being
+        // replaced here, so there is nothing left to declare a key over anyway.
+        await tableService.clearKey({ projectId, id: existingTable.id, entityManager })
         await recordService.deleteAll({ tableId: existingTable.id, projectId, entityManager, returnDeleted: false })
         const existingFields = await fieldService.getAll({ projectId, tableId: existingTable.id, entityManager })
         await Promise.all(existingFields.map((field) => fieldService.delete({ id: field.id, projectId, entityManager })))
@@ -96,7 +114,7 @@ async function importIntoExistingTable({ projectId, existingTableId, targetName,
         await Promise.all(tableTemplate.fields.map((field, index) => fieldService.createFromState({ projectId, field, tableId: existingTable.id, entityManager, created: new Date(createdAt + index) })))
     })
 
-    return tableService.getOneOrThrow({ projectId, id: existingTable.id })
+    return { table: await tableService.getOneOrThrow({ projectId, id: existingTable.id }), externalIdReplaced: false, keyCleared }
 }
 
 async function importRows({ projectId, tableId, data, cap, log }: ImportRowsParams): Promise<{ importedCount: number, truncated: boolean }> {
@@ -130,7 +148,50 @@ function mapRowToRecord({ row, externalIdToFieldId }: MapRowToRecordParams): Arr
         .filter((cell): cell is { fieldId: string, value: string } => cell !== null)
 }
 
-function assertImportableTable(tableTemplate: NonNullable<SharedTemplate['tables']>[number]): void {
+// Runs every template row through the same cell validation the write path applies, using
+// the template's own field definitions — the columns do not exist yet, so there is no
+// persisted `Field` to look up.
+function assertImportableRows(tableTemplate: TableTemplateShape): void {
+    const rows = tableTemplate.data?.rows ?? []
+    if (rows.length === 0) {
+        return
+    }
+    const fieldByExternalId = new Map(tableTemplate.fields.map((field) => [field.externalId, field]))
+    for (const row of rows) {
+        for (const cell of row) {
+            const field = fieldByExternalId.get(cell.fieldId)
+            if (isNil(field)) {
+                continue
+            }
+            const validatable = toValidatableField(field)
+            if (isNil(validatable)) {
+                continue
+            }
+            cellValidation.assertValue({ field: validatable, value: cell.value })
+        }
+    }
+}
+
+// `type` is a bare string on the template wire format; assertImportableTable has already
+// rejected anything that is not a FieldType by the time this runs, so the null return is
+// unreachable rather than a silent skip.
+function toValidatableField(field: TableTemplateShape['fields'][number]): ValidatableTemplateField | null {
+    switch (field.type) {
+        case FieldType.STATIC_DROPDOWN:
+            return { name: field.name, type: FieldType.STATIC_DROPDOWN, data: field.data }
+        case FieldType.JSON:
+            return { name: field.name, type: FieldType.JSON, data: field.data }
+        case FieldType.TEXT:
+        case FieldType.NUMBER:
+        case FieldType.DATE:
+        case FieldType.BOOLEAN:
+            return { name: field.name, type: field.type }
+        default:
+            return null
+    }
+}
+
+function assertImportableTable(tableTemplate: TableTemplateShape): void {
     if (!SAFE_EXTERNAL_ID_PATTERN.test(tableTemplate.externalId)) {
         throw new QadamFlowError({
             code: ErrorCode.VALIDATION,
@@ -160,7 +221,7 @@ function assertImportableTable(tableTemplate: NonNullable<SharedTemplate['tables
                 params: { message: `Field "${field.name}" externalId "${field.externalId}" is not a safe identifier.` },
             })
         }
-        if (field.type === FieldType.STATIC_DROPDOWN && (isNil(field.data) || field.data.options.length === 0)) {
+        if (field.type === FieldType.STATIC_DROPDOWN && (isNil(field.data) || isNil(field.data.options) || field.data.options.length === 0)) {
             throw new QadamFlowError({
                 code: ErrorCode.VALIDATION,
                 params: { message: `Field "${field.name}" is STATIC_DROPDOWN but has no dropdown options.` },
@@ -187,6 +248,7 @@ type ImportTemplateResult = {
     truncated: boolean
     cap: number
     externalIdReplaced: boolean
+    keyCleared: boolean
 }
 
 type CreatedTable = {
@@ -219,3 +281,10 @@ type MapRowToRecordParams = {
     row: TableDataState['rows'][number]
     externalIdToFieldId: Map<string, string>
 }
+
+type TableTemplateShape = NonNullable<SharedTemplate['tables']>[number]
+
+type ValidatableTemplateField =
+    | { name: string, type: FieldType.STATIC_DROPDOWN, data?: { options?: { value: string }[] } | null }
+    | { name: string, type: FieldType.JSON, data?: { schema?: string } | null }
+    | { name: string, type: FieldType.TEXT | FieldType.NUMBER | FieldType.DATE | FieldType.BOOLEAN }

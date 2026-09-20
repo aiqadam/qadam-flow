@@ -20,6 +20,10 @@ export const RecordEntity = new EntitySchema<RecordSchema>({
             ...ApIdSchema,
             nullable: false,
         },
+        keyValue: {
+            type: String,
+            nullable: true,
+        },
     },
     indices: [
         {
@@ -29,6 +33,15 @@ export const RecordEntity = new EntitySchema<RecordSchema>({
         {
             name: 'idx_record_table_id_project_id_record_id',
             columns: ['tableId', 'projectId', 'id'],
+        },
+        // Partial: `keyValue` is null for every record of a table without a declared key
+        // (#409), so this enforces nothing until `table.keyFieldIds` is set and the
+        // backfill in table.service.ts populates it.
+        {
+            name: 'idx_record_project_id_table_id_key_value_unique',
+            columns: ['projectId', 'tableId', 'keyValue'],
+            where: '"keyValue" IS NOT NULL',
+            unique: true,
         },
     ],
     relations: {

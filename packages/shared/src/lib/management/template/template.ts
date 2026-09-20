@@ -59,10 +59,13 @@ export const TableTemplate = z.object({
     fields: z.array(z.object({
         name: z.string(),
         type: z.string(),
+        // `options` (STATIC_DROPDOWN) and `schema` (JSON, #390) — see FieldState for
+        // why one shape covers both rather than a field-type-keyed union.
         data: z.object({
             options: z.array(z.object({
                 value: z.string(),
-            })),
+            })).optional(),
+            schema: z.string().optional(),
         }).nullable().optional(),
         externalId: z.string(),
     })),

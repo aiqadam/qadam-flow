@@ -36,6 +36,15 @@ export const TableEntity = new EntitySchema<TableSchema>({
             ...ApIdSchema,
             nullable: false,
         },
+        // The declared business key (#409). `null` (the default) means "no key
+        // declared" — record.keyValue is never populated and the partial unique index
+        // enforces nothing. Set only via tableService.declareKey, which backfills
+        // record.keyValue for every existing row in the same transaction.
+        keyFieldIds: {
+            type: String,
+            array: true,
+            nullable: true,
+        },
     },
     indices: [  
         {

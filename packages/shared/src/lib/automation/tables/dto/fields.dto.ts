@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { FieldType } from '../field'
+import { FieldType, JsonFieldData } from '../field'
 
 
 const StaticDropdownData = z.object({
@@ -16,7 +16,13 @@ export const CreateFieldRequest = z.union([z.object({
     externalId: z.string().optional(),
 }), z.object({
     name: z.string(),
-    type: z.union([z.literal(FieldType.TEXT), z.literal(FieldType.NUMBER), z.literal(FieldType.DATE)]),
+    type: z.literal(FieldType.JSON),
+    tableId: z.string(),
+    data: JsonFieldData.optional(),
+    externalId: z.string().optional(),
+}), z.object({
+    name: z.string(),
+    type: z.union([z.literal(FieldType.TEXT), z.literal(FieldType.NUMBER), z.literal(FieldType.DATE), z.literal(FieldType.BOOLEAN)]),
     tableId: z.string(),
     externalId: z.string().optional(),
 })])

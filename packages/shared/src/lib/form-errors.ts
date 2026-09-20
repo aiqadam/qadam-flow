@@ -12,4 +12,13 @@ export const formErrors = {
     invalidAzureResourceName: 'invalidAzureResourceName',
     invalidAwsRegion: 'invalidAwsRegion',
     valueNotInOptions: 'valueNotInOptions',
+    invalidBooleanValue: 'invalidBooleanValue',
+    invalidJsonValue: 'invalidJsonValue',
+    jsonSchemaMismatch: 'jsonSchemaMismatch',
+    tableHasDuplicateKeys: 'tableHasDuplicateKeys',
+    keyFieldInUse: 'keyFieldInUse',
+    duplicateKeyValue: 'duplicateKeyValue',
+    tableKeyColumnsNotInTable: 'tableKeyColumnsNotInTable',
+    upsertKeyMustMatchDeclaredKey: 'upsertKeyMustMatchDeclaredKey',
+    upsertKeyValuesAreEmpty: 'upsertKeyValuesAreEmpty',
 } as const

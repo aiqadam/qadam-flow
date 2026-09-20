@@ -38,6 +38,11 @@ function previouslyMatched({ cellValue, filter }: { cellValue: unknown, filter: 
         case FilterOperator.CO: return typeof cellValue === 'string' && cellValue.toLowerCase().includes(filter.value.toLowerCase())
         case FilterOperator.IN: return typeof cellValue === 'string' && filter.value.includes(cellValue)
         case FilterOperator.NOT_IN: return typeof cellValue !== 'string' || !filter.value.includes(cellValue)
+        // Postdates the 6b4d5a08 snapshot this function is a verbatim copy of — the
+        // matrix below never builds a JSON_PATH_EQ filter (it is not in VALUE_OPERATORS/
+        // LIST_OPERATORS/EXISTENCE_OPERATORS), so this arm exists only to satisfy the
+        // exhaustiveness check, not to assert anything about it.
+        case FilterOperator.JSON_PATH_EQ: return false
     }
 }
 

@@ -36,8 +36,13 @@ export const recordQuery = {
         })
 
         // LIMIT can only move into SQL once the JS pass has nothing left to remove, otherwise it
-        // would cut rows before they are filtered and return short pages.
-        if (pushedDownFilters.length === compiledFilters.length) {
+        // would cut rows before they are filtered and return short pages. `jsonPathEq` is pushed
+        // down for its EXISTS-subquery filtering benefit but is deliberately NOT exact (see
+        // buildJsonPathEqCondition) — it over-includes non-string leaves rather than risk a false
+        // negative, so the JS pass can still reject rows out of a SQL result carrying it, and a
+        // LIMIT taken before that would silently return a short page.
+        const everyFilterIsExact = compiledFilters.every((filter) => !isNil(filter.sql) && filter.sql.kind !== 'jsonPathEq')
+        if (everyFilterIsExact) {
             query.take(limit)
         }
 
@@ -72,6 +77,48 @@ function buildCellCondition({ predicate, alias }: { predicate: CellPredicate, al
                 return { condition: '', params: {} }
             }
             return { condition: ` AND ("${alias}"."value" IS NULL OR "${alias}"."value" NOT IN (:...${alias}_values))`, params: { [`${alias}_values`]: predicate.values } }
+        case 'jsonPathEq':
+            return buildJsonPathEqCondition({ predicate, alias })
+    }
+}
+
+// Only ever excludes a row when the extracted leaf is provably a JSON string — the one
+// case where Postgres's `jsonb_extract_path_text` output and the JS matcher's decoded
+// string are guaranteed to agree character-for-character. For every other leaf shape
+// (number, boolean, null, object, array, or the path not resolving at all) the OR branch
+// makes the predicate TRUE, i.e. it excludes nothing and leaves the row for the JS pass
+// in record.service.ts to decide — because Postgres's jsonb text output preserves a
+// number literal's original formatting ("1.0" stays "1.0") while
+// `JSON.parse` + `String()` on the JS side does not (it becomes "1"), so comparing
+// numbers as text here could make SQL reject a row the JS matcher would have kept. That
+// is the one direction #413's invariant forbids — the column belongs to a JSON field by
+// construction (record-filter.ts only ever compiles this predicate for one).
+//
+// The `::jsonb` cast itself assumes every non-empty cell of a JSON field is valid JSON,
+// which cell-validation.ts guarantees for every write this API accepts — create, update,
+// updateMany, upsert and the CSV importer all funnel through it (#390). A cell that
+// reached the table by direct DB manipulation, bypassing the API, is the one way to
+// violate that and make this cast raise a Postgres error instead of a JS "no match" —
+// there is no portable, extension-free safe-cast for text→jsonb before Postgres 16's
+// `IS JSON` predicate, and this repo runs pg14. Accepted as a documented limitation
+// rather than adding a database function for it.
+// `array_remove(..., '')` matches the JS matcher's own
+// `.split('.').filter((segment) => segment.length > 0)` exactly. Without it the two
+// disagree on a path carrying an empty segment ("a." or "a..b"): SQL would resolve
+// `a` -> `''` where JS stops at `a`, and on a document with an empty-string key
+// (`{"a":{"":"x"}}`) SQL sees a provable string mismatch and drops a row JS would have
+// kept — the one direction the invariant above forbids.
+function buildJsonPathEqCondition({ predicate, alias }: { predicate: Extract<CellPredicate, { kind: 'jsonPathEq' }>, alias: string }): { condition: string, params: Record<string, unknown> } {
+    const extractedPath = `jsonb_extract_path(NULLIF("${alias}"."value", '')::jsonb, VARIADIC array_remove(string_to_array(:${alias}_path, '.'), ''))`
+    const condition = ` AND "${alias}"."value" IS NOT NULL AND "${alias}"."value" <> '' AND (` +
+        `jsonb_typeof(${extractedPath}) IS DISTINCT FROM 'string' OR ` +
+        `jsonb_extract_path_text(NULLIF("${alias}"."value", '')::jsonb, VARIADIC array_remove(string_to_array(:${alias}_path, '.'), '')) = :${alias}_value)`
+    return {
+        condition,
+        params: {
+            [`${alias}_path`]: predicate.path,
+            [`${alias}_value`]: predicate.value,
+        },
     }
 }
 

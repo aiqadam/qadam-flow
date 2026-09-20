@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { OptionalArrayFromQuery } from '../../../core/common/base-model'
+import { ApId } from '../../../core/common/id-generator'
 import { Cursor } from '../../../core/common/seek-page'
 import { formErrors } from '../../../form-errors'
 
@@ -27,17 +28,24 @@ export const MAX_RECORDS_PER_BATCH = 1000
 // Same "declared here, not at the end" exception as above, but a much lower number,
 // and not for the reason the batch cap has. `unique()` is O(n²) with a JSON.stringify
 // per comparison, and the service dedupes this array before any validation runs — so
-// this constant sizes a quadratic loop on the request path, not just a parse. Note the
+// this constant sizes a quadratic loop on the request path, not just a parse. It bounds
+// the COUNT only — bounding each element's shape is what `ApId` does at the two call sites,
+// and both bounds are needed. Note the
 // inversion that makes the tempting "generous cap" wrong: one id repeated is the CHEAP
 // case (findIndex returns immediately); all-distinct is the expensive one, so the cost
 // is paid by a request that is about to be rejected anyway. 200 costs roughly 1.5 ms
 // against 100 ms for 1000.
 //
+// Bounds POST /v1/tables/:id/key (DeclareTableKeyRequest) for the same reason, which is
+// why the name is not upsert-specific: tableService.declareKey runs the same `unique()`
+// on the same caller-supplied array as its very first statement, before it touches the
+// database at all.
+//
 // The basis is that no composite business key is 200 columns wide — NOT any relation to
 // MAX_FIELDS_PER_TABLE. That is an AppSystemProp read in the api package, which shared
 // structurally cannot see, so this constant can never track it: do not raise this
 // because an operator raised that.
-export const MAX_KEY_FIELDS_PER_UPSERT = 200
+export const MAX_KEY_FIELDS = 200
 
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
@@ -66,6 +74,11 @@ export enum FilterOperator {
     NOT_IN = 'not_in',
     EXISTS = 'exists',
     NOT_EXISTS = 'not_exists',
+    // A JSON column only (#390): matches when the value at `path` (dot-separated, e.g.
+    // "address.city") inside the cell's parsed JSON equals `value`. See record-filter.ts
+    // for the exact equality rule and why the SQL pushdown in record-query.ts is scoped to
+    // string-typed leaves only.
+    JSON_PATH_EQ = 'json_path_eq',
 }
 
 const coerceToStringArray = z.preprocess(
@@ -94,6 +107,13 @@ const existenceFilter = <T extends FilterOperator>(op: T) => z.object({
     operator: z.literal(op),
 })
 
+const jsonPathFilter = <T extends FilterOperator>(op: T) => z.object({
+    fieldId: z.string(),
+    operator: z.literal(op),
+    path: z.string().min(1, formErrors.required),
+    value: z.string(),
+})
+
 export const Filter = z.discriminatedUnion('operator', [
     valueFilter(FilterOperator.EQ),
     valueFilter(FilterOperator.NEQ),
@@ -106,6 +126,7 @@ export const Filter = z.discriminatedUnion('operator', [
     listFilter(FilterOperator.NOT_IN),
     existenceFilter(FilterOperator.EXISTS),
     existenceFilter(FilterOperator.NOT_EXISTS),
+    jsonPathFilter(FilterOperator.JSON_PATH_EQ),
 ])
 
 export type Filter = z.infer<typeof Filter>
@@ -131,9 +152,9 @@ export const UpsertRecordsRequest = z.object({
     // The business key to match on. Without it an upsert is just a create, so it is
     // required rather than defaulted to something. Capped because the service dedupes
     // this array before any validation runs and that dedupe is quadratic — see
-    // MAX_KEY_FIELDS_PER_UPSERT. The bound that keeps the matching loop cheap is the
+    // MAX_KEY_FIELDS. The bound that keeps the matching loop cheap is the
     // dedupe itself, which leaves at most as many ids as the table has columns.
-    keyFieldIds: z.array(z.string()).min(1, formErrors.required).max(MAX_KEY_FIELDS_PER_UPSERT),
+    keyFieldIds: z.array(ApId).min(1, formErrors.required).max(MAX_KEY_FIELDS),
     records: z.array(z.array(z.object({
         fieldId: z.string(),
         value: coerceToString,

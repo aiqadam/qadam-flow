@@ -30,6 +30,7 @@ export type ApErrorParams =
     | EntityNotFoundErrorParams
     | ExistingUserErrorParams
     | RecordPreconditionFailedErrorParams
+    | RecordDuplicateKeyErrorParams
     | FlowOperationErrorParams
     | FlowOperationInProgressErrorParams
     | FlowRunRetryOutsideRetentionErrorParams
@@ -413,6 +414,16 @@ ErrorCode.RECORD_PRECONDITION_FAILED,
     recordId: string
 }>
 
+// Raised when a table with a declared key (table.keyFieldIds, #409) rejects a write
+// because it would collide with another record's key value — mapped from the
+// partial unique index's Postgres 23505, or from the key-declaration backfill scan
+// finding a collision up front.
+export type RecordDuplicateKeyErrorParams = BaseErrorParams<
+ErrorCode.RECORD_DUPLICATE_KEY,
+{
+    message: string
+}>
+
 export type ExistingAlertChannelErrorParams = BaseErrorParams<
 ErrorCode.EXISTING_ALERT_CHANNEL,
 {
@@ -548,6 +559,7 @@ export enum ErrorCode {
     EXISTING_USER = 'EXISTING_USER',
     EXISTING_ALERT_CHANNEL = 'EXISTING_ALERT_CHANNEL',
     RECORD_PRECONDITION_FAILED = 'RECORD_PRECONDITION_FAILED',
+    RECORD_DUPLICATE_KEY = 'RECORD_DUPLICATE_KEY',
     EXISTING_AI_PROVIDER = 'EXISTING_AI_PROVIDER',
     PROJECT_EXTERNAL_ID_ALREADY_EXISTS = 'PROJECT_EXTERNAL_ID_ALREADY_EXISTS',
     FLOW_OPERATION_INVALID = 'FLOW_OPERATION_INVALID',

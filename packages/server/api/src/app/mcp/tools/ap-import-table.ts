@@ -52,10 +52,18 @@ export const apImportTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                     ? `\n⚠️ this project already has a table with the template's externalId, so a new one (${result.table.externalId}) was assigned — references to the original externalId will not resolve to this table.`
                     : ''
 
+                // A template carries no key declaration (#409), so importing over a keyed
+                // table drops a uniqueness guarantee it was relying on. Saying so is the
+                // difference between a caller re-declaring the key and one discovering the
+                // duplicates later.
+                const keyClearedNote = result.keyCleared
+                    ? '\n⚠️ the target table had a declared unique key — it was cleared with the rest of its schema. Re-declare it with ap_manage_fields DECLARE_KEY.'
+                    : ''
+
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Table "${result.table.name}" (id: ${result.table.id}) imported. ${result.importedCount} row(s) inserted.${truncationNote}${externalIdNote}`,
+                        text: `✅ Table "${result.table.name}" (id: ${result.table.id}) imported. ${result.importedCount} row(s) inserted.${truncationNote}${externalIdNote}${keyClearedNote}`,
                     }],
                 }
             }

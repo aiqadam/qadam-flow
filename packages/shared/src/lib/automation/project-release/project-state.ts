@@ -32,10 +32,14 @@ export type ConnectionState = z.infer<typeof ConnectionState>
 export const FieldState = z.object({
     name: z.string(),
     type: z.string(),
+    // `options` (STATIC_DROPDOWN) and `schema` (JSON, #390) are each optional and
+    // mutually exclusive in practice — one object shape covers both so a table's
+    // state/template round-trip does not need a field-type-keyed union here.
     data: Nullable(z.object({
         options: z.array(z.object({
             value: z.string(),
-        })),
+        })).optional(),
+        schema: z.string().optional(),
     })),
     externalId: z.string(),
 })

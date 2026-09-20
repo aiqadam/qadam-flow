@@ -157,10 +157,12 @@ Query records from a table with optional filtering.
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|
 | `tableId` | string | Yes | The table ID |
-| `filters` | array | No | Filter conditions (fieldName, operator, value) |
+| `filters` | array | No | Filter conditions (fieldName, operator, value, path) |
 | `limit` | number | No | Max records (default 50, max 500) |
 
-**Filter operators:** `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `co` (contains), `exists`, `not_exists`
+**Filter operators:** `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `co` (contains), `exists`, `not_exists`, `json_path_eq`
+
+`json_path_eq` applies to a `JSON` column only and takes an extra `path` on the filter — a dot-separated path into the cell's parsed JSON, e.g. `{"fieldName": "Profile", "operator": "json_path_eq", "path": "address.city", "value": "Tashkent"}`. `gt`/`gte`/`lt`/`lte` are rejected on `BOOLEAN` and `JSON` columns, and `co` is rejected on `BOOLEAN`, because neither column type has a meaningful ordering.
 
 ### ap_list_runs
 
@@ -424,6 +426,8 @@ Add, update, or delete canvas notes on a flow.
 
 Full CRUD operations for the built-in Tables feature. Use field names (not IDs) when inserting or updating records.
 
+Cell values are strings on the wire for every column type. A `BOOLEAN` cell accepts `"true"`, `"false"`, or an empty string for unset — nothing else. A `JSON` cell accepts a serialised JSON document (`"{\"city\":\"Tashkent\"}"`), not a raw object; anything that does not parse is rejected at write time rather than stored and discovered later.
+
 ### ap_create_table
 
 Create a new table with an initial set of fields.
@@ -432,8 +436,11 @@ Create a new table with an initial set of fields.
 |-------|------|----------|-------------|
 | `name` | string | Yes | Table name |
 | `fields` | array | Yes | Fields: `{name, type, options?}` |
+| `keyFields` | array | No | Field **names** (from `fields`) that together form the table's unique business key |
 
-**Field types:** `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN` (requires `options` array)
+**Field types:** `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN` (requires `options` array), `BOOLEAN`, `JSON`
+
+`keyFields` names columns, not ids — the field ids do not exist yet when the table is created. Declaring a key on a brand-new table always succeeds, because there are no records to collide.
 
 ### ap_delete_table
 
@@ -451,11 +458,14 @@ Add, rename, or delete fields on a table.
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|
 | `tableId` | string | Yes | The table ID |
-| `operation` | string | Yes | `ADD`, `UPDATE`, or `DELETE` |
+| `operation` | string | Yes | `ADD`, `UPDATE`, `DELETE`, `DECLARE_KEY`, or `CLEAR_KEY` |
 | `fieldId` | string | No | Required for UPDATE/DELETE |
 | `name` | string | No | Required for ADD/UPDATE |
 | `type` | string | No | Required for ADD |
 | `options` | array | No | For STATIC_DROPDOWN |
+| `keyFieldIds` | array | No | Field **ids**, required for DECLARE_KEY |
+
+`DECLARE_KEY` is rejected if the table already holds records that share the proposed key — clean up the duplicates first (`ap_find_records` / `ap_update_record` / `ap_delete_records`) and retry. A field that is part of the current key cannot be deleted until `CLEAR_KEY` runs.
 
 ### ap_insert_records
 
