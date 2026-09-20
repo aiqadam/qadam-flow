@@ -27,7 +27,7 @@ export const apUpdateRecordTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                     return { content: [{ type: 'text', text: '❌ No fields provided to update.' }] }
                 }
 
-                const { fieldMap, errors } = await resolveFieldNamesForTable(mcp.projectId, tableId, fieldNames)
+                const { fieldMap, errors } = await resolveFieldNamesForTable({ projectId: mcp.projectId, tableId, fieldNames })
                 if (errors.length > 0) {
                     return { content: [{ type: 'text', text: `❌ Field resolution error:\n${errors.join('\n')}` }] }
                 }

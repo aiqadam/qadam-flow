@@ -59,18 +59,22 @@ export const apListAiModelsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                                 displayName: p.name,
                                 models: capped.map(m => ({ id: m.id, name: m.name })),
                             })
+                            // `m.name` comes from a live call to the provider's own `/models` endpoint —
+                            // for a CUSTOM provider, an operator-supplied base URL — and `p.name` is the
+                            // admin-configured display name for the provider row; both are `\n`-joined
+                            // into this nested list, so either can forge a fake provider/model entry (#485).
                             const modelLines = capped.length > 0
-                                ? capped.map(m => `    - ${m.name} (id: ${m.id})`).join('\n')
+                                ? capped.map(m => `    - ${mcpUtils.wrapUntrustedValue(m.name)} (id: ${m.id})`).join('\n')
                                 : '    (no text models available)'
                             const overflow = textModels.length > MAX_MODELS_PER_PROVIDER
                                 ? `\n    ... and ${textModels.length - MAX_MODELS_PER_PROVIDER} more${filterProvider ? '' : ` (use provider="${p.provider}" to see all)`}`
                                 : ''
-                            return `- ${p.name} (${p.provider}, id: ${p.id}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
+                            return `- ${mcpUtils.wrapUntrustedValue(p.name)} (${p.provider}, id: ${p.id}) — ${textModels.length} text model(s)\n  Models:\n${modelLines}${overflow}`
                         }
                         catch (err) {
                             log.warn({ err, provider: p.provider }, 'ap_list_ai_models: failed to fetch models for provider')
                             structuredProviders.push({ id: p.id, provider: p.provider, displayName: p.name, models: [] })
-                            return `- ${p.name} (${p.provider}, id: ${p.id})\n  (failed to fetch models)`
+                            return `- ${mcpUtils.wrapUntrustedValue(p.name)} (${p.provider}, id: ${p.id})\n  (failed to fetch models)`
                         }
                     }),
                 )

@@ -211,10 +211,13 @@ async function lookupQadamComponent({ qadamName, componentName, componentType, p
     const label = componentType === 'action' ? 'Action' : 'Trigger'
     const component = componentMap[componentName]
     if (isNil(component)) {
+        // Action/trigger names are qadam-registration metadata — set by whoever published or
+        // installed the qadam, with no naming regex behind them — so both the suggestion and the
+        // full list are wrapped (#485).
         const available = Object.keys(componentMap)
         const suggestion = available.find((name) => name.includes(componentName))
-        const hint = suggestion ? ` Did you mean "${suggestion}"?` : ''
-        return { error: { content: [{ type: 'text', text: `❌ ${label} "${componentName}" not found in "${normalized}".${hint} Available: ${available.join(', ')}` }] } }
+        const hint = suggestion ? ` Did you mean ${wrapUntrustedValue(suggestion)}?` : ''
+        return { error: { content: [{ type: 'text', text: `❌ ${label} "${componentName}" not found in "${normalized}".${hint} Available: ${available.map((name) => wrapUntrustedValue(name)).join(', ')}` }] } }
     }
     return { qadam, component, qadamName: normalized }
 }
@@ -284,8 +287,14 @@ const BRANCH_CONDITIONS_INPUT_SCHEMA = z.array(
 // array-of-arrays syntax (`[[1,2],[3,4]]` became `1,2],[3,4`), so that pair is gone for good. The six
 // non-ASCII look-alikes (`〚〛〖〗⦋⦌`) answer a different question — not whether the
 // delimiter can be forged, but whether a reader matching loosely on shape rather than codepoint could
-// still mistake one for a close — and none of them appears in JSON or JavaScript syntax, so keeping
-// them costs no fidelity the ASCII pair's removal was paying for. Every ECMAScript line-terminator
+// still mistake one for a close. None of them appears in JSON or JavaScript syntax, so keeping them
+// costs no *syntax* fidelity — but that is not the same as costing nothing: U+3016/U+3017 (`〖〗`)
+// and U+301A/U+301B (`〚〛`) are ordinary Chinese/Japanese typographic brackets, so a legitimate CJK
+// value like `〖重要〗` silently renders as `⟦重要⟧`, indistinguishable from this wrapper's own
+// delimiter. That cost is accepted knowingly, not overlooked: this list has been revised twice on
+// review input and made worse both times, so it is deliberately staying as-is here; the raw,
+// unmodified value remains available to a caller that needs it exact via `structuredContent` on
+// every tool that surfaces one. Every ECMAScript line-terminator
 // (not just `\r`/`\n` — `\u2028`/`\u2029` render as breaks in many consumers, and `\u0085`/`\v`/`\f`
 // are the remaining vertical-whitespace forms) is collapsed to a space first, so one value cannot
 // masquerade as several lines of trusted output — collapsing is the control the whole design rests
@@ -309,10 +318,21 @@ const UNTRUSTED_VALUE_CLOSE = '⟧'
 // corrupted array-of-arrays JSON for no benefit — removed, see the comment above).
 const CONFUSABLE_DELIMITERS = ['〚', '〛', '〖', '〗', '⦋', '⦌']
 const LINE_BREAK_PATTERN = /[\r\n\u2028\u2029\u0085\v\f]+/g
+// A bidi embedding/override (U+202A-U+202E) or isolate (U+2066-U+2069) is not terminated by the
+// closing delimiter -- only by its own matching pop character (U+202C, U+2069) or a paragraph
+// break -- so an unpaired opener surviving inside a wrapped value reorders the rendering of
+// everything the client prints after the closing bracket, including this tool's own trusted prose
+// in the web chat UI (#485 review). Appending one U+202C/U+2069 after wrapping does not reliably
+// close this either: UAX#9 allows up to 125 levels of embedding, so ten openers need ten matching
+// terminators, not one. Only removing the codepoints closes the gap. The cost is the same class of
+// accepted lossiness as the line-terminator collapse above: a value that legitimately used bidi
+// formatting loses it, and the raw value stays available via `structuredContent` for a caller that
+// needs it exact.
+const BIDI_CONTROL_PATTERN = /[\u202a-\u202e\u2066-\u2069]/g
 
 function wrapUntrustedValue(value: string | null | undefined): string {
     const str = typeof value === 'string' ? value : String(value ?? '')
-    const collapsed = str.replace(LINE_BREAK_PATTERN, ' ')
+    const collapsed = str.replace(LINE_BREAK_PATTERN, ' ').replace(BIDI_CONTROL_PATTERN, '')
     const sanitized = [UNTRUSTED_VALUE_OPEN, UNTRUSTED_VALUE_CLOSE, ...CONFUSABLE_DELIMITERS]
         .reduce((acc, token) => acc.split(token).join(''), collapsed)
     return `${UNTRUSTED_VALUE_OPEN}${sanitized}${UNTRUSTED_VALUE_CLOSE}`
@@ -358,8 +378,16 @@ function publishedFlowWarning(publishedVersionId: string | null | undefined): st
     return '\n⚠️ This flow is published. Changes apply to the draft only — use ap_lock_and_publish to push them live.'
 }
 
+// `ap_list_connections` now renders `externalId: ⟦my-gmail⟧` and tells the model that's the value
+// for the `auth` param — so the delimiters themselves must fail this check, not just the ASCII
+// brackets/quotes the flow-templating syntax cares about. Without this, a model that copies the
+// bracketed form in verbatim passes validation here, `ap-add-step.ts` bakes
+// `{{connections['⟦my-gmail⟧']}}` into the flow, and it fails at RUN time on a value that looks
+// identical to the correct one (#485 review).
+const AUTH_INVALID_CHARS = /['{}[\]⟦⟧]/
+
 function validateAuth(auth: string | undefined): { content: [{ type: 'text', text: string }] } | null {
-    if (auth !== undefined && /['{}\[\]]/.test(auth)) {
+    if (auth !== undefined && AUTH_INVALID_CHARS.test(auth)) {
         return { content: [{ type: 'text', text: '❌ auth must be a plain externalId with no special characters. Use the exact value from ap_list_connections.' }] }
     }
     return null

@@ -47,7 +47,7 @@ export const apRetryRunTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogg
                     strategy,
                 })
 
-                const completedRun = await pollForRunCompletion(log, retriedRun.id, mcp.projectId)
+                const completedRun = await pollForRunCompletion({ log, runId: retriedRun.id, projectId: mcp.projectId })
 
                 if (!isFlowRunStateTerminal({ status: completedRun.status, ignoreInternalError: false })) {
                     return {

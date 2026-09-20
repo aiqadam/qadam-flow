@@ -63,7 +63,7 @@ export const apImportTableTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 return {
                     content: [{
                         type: 'text',
-                        text: `✅ Table "${result.table.name}" (id: ${result.table.id}) imported. ${result.importedCount} row(s) inserted.${truncationNote}${externalIdNote}${keyClearedNote}`,
+                        text: `✅ Table ${mcpUtils.wrapUntrustedValue(result.table.name)} (id: ${result.table.id}) imported. ${result.importedCount} row(s) inserted.${truncationNote}${externalIdNote}${keyClearedNote}`,
                     }],
                 }
             }

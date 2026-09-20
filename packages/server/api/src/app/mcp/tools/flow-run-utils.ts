@@ -82,7 +82,7 @@ export async function executeFlowTest({ flowId, projectId, stepName, triggerTest
         stepNameToTest: stepName,
     })
 
-    const completedRun = await pollForRunCompletion(log, flowRun.id, projectId)
+    const completedRun = await pollForRunCompletion({ log, runId: flowRun.id, projectId })
 
     if (!isFlowRunStateTerminal({ status: completedRun.status, ignoreInternalError: false })) {
         return {
@@ -258,7 +258,7 @@ export async function executeAdhocAction({
             stepNameToTest: stepName,
         })
 
-        const completedRun = await pollForRunCompletion(log, flowRun.id, projectId)
+        const completedRun = await pollForRunCompletion({ log, runId: flowRun.id, projectId })
 
         if (!isFlowRunStateTerminal({ status: completedRun.status, ignoreInternalError: false })) {
             return {
@@ -279,7 +279,7 @@ export async function executeAdhocAction({
         }
 
         return {
-            content: [{ type: 'text', text: formatAdhocActionResult(completedRun, stepName, mcpUtils.wrapUntrustedValue(action.displayName)) }],
+            content: [{ type: 'text', text: formatAdhocActionResult({ run: completedRun, stepName, displayName: mcpUtils.wrapUntrustedValue(action.displayName) }) }],
             // Raw, unwrapped step output/errorMessage for a caller that needs the value
             // byte-for-byte rather than the wrapped, newline-collapsed prose preview above (#485).
             structuredContent: buildAdhocActionStructuredContent({ run: completedRun, stepName }),
@@ -331,8 +331,8 @@ function buildAdhocActionStructuredContent({ run, stepName }: { run: FlowRun, st
         runId: run.id,
         // Two different enums under one name is how `ap_run_action`'s own structured shape would
         // have disagreed with `buildRunStructuredContent`'s: `runStatus` is always a `FlowRunStatus`,
-        // `stepStatus` is a `StepOutputStatus` and only present when the step record resolved (#485
-        // review).
+        // `stepStatus` is always present but is a `StepOutputStatus`, `null` when the step record
+        // did not resolve (#485 review).
         runStatus: run.status,
         stepStatus: stepRecord?.status ?? null,
         output: stepRecord?.output ?? null,
@@ -359,7 +359,7 @@ function looksEmpty(output: unknown): boolean {
 // `displayName` arrives already wrapped by the caller (it is the qadam's own registered action
 // name, set by whoever published the piece — not this call's own argument), so it is interpolated
 // bare here rather than wrapped a second time.
-function formatAdhocActionResult(run: FlowRun, stepName: string, displayName: string): string {
+function formatAdhocActionResult({ run, stepName, displayName }: FormatAdhocActionResultParams): string {
     const steps = run.steps
     if (isNil(steps) || typeof steps !== 'object') {
         return `❌ ${displayName} — run ${run.id} completed with no step output (status: ${run.status}).`
@@ -394,7 +394,7 @@ function formatAdhocActionResult(run: FlowRun, stepName: string, displayName: st
     return `❌ ${displayName} failed (run ${run.id}): ${errStr}\n\nRetry suggestion: Check the error above. If it mentions missing criteria, try adding a broad filter (e.g., after_date with a recent date, or a common search term). If it mentions auth, verify the connection.`
 }
 
-export async function pollForRunCompletion(log: FastifyBaseLogger, runId: string, projectId: string): Promise<FlowRun> {
+export async function pollForRunCompletion({ log, runId, projectId }: PollForRunCompletionParams): Promise<FlowRun> {
     const start = Date.now()
     while (Date.now() - start < MAX_WAIT_MS) {
         const run = await flowRunService(log).getOnePopulatedOrThrow({ id: runId, projectId })
@@ -506,5 +506,17 @@ function isStepDataExpired(run: FlowRun): boolean {
     }
     const retentionDays = system.getNumberOrThrow(AppSystemProp.EXECUTION_DATA_RETENTION_DAYS)
     return isOutsideRetentionWindow(run.created, retentionDays)
+}
+
+type PollForRunCompletionParams = {
+    log: FastifyBaseLogger
+    runId: string
+    projectId: string
+}
+
+type FormatAdhocActionResultParams = {
+    run: FlowRun
+    stepName: string
+    displayName: string
 }
 

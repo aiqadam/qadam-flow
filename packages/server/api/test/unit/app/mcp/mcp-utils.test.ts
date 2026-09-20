@@ -74,6 +74,44 @@ describe('mcpUtils.wrapUntrustedValue — the two properties the delimiter desig
         expect(mcpUtils.wrapUntrustedValue(numeric)).toBe('⟦42⟧')
         expect(mcpUtils.wrapUntrustedValue(boolean)).toBe('⟦true⟧')
     })
+
+    // #485 review, round 3: a bidi embedding/override/isolate is closed only by its own matching
+    // pop character or a paragraph break, never by `⟧` — so an unpaired opener reorders the
+    // rendering of everything the client prints afterwards, including this tool's own trusted
+    // prose. Single-guard revert: delete `.replace(BIDI_CONTROL_PATTERN, '')` from
+    // `wrapUntrustedValue` and this test fails because the wrapped result still contains U+202E —
+    // confirmed below.
+    it('strips bidi control characters instead of leaving them to leak past the closing bracket', () => {
+        const rtlOverride = 'safe text ‮attack payload'
+        const wrapped = mcpUtils.wrapUntrustedValue(rtlOverride)
+        expect(wrapped).not.toContain('‮')
+        expect(wrapped).toBe('⟦safe text attack payload⟧')
+    })
+
+    it('strips every bidi embedding/override/isolate control in the range, not just RLO', () => {
+        const allControls = '‪‫‬‭‮⁦⁧⁨⁩'
+        expect(mcpUtils.wrapUntrustedValue(`a${allControls}b`)).toBe('⟦ab⟧')
+    })
+})
+
+describe('mcpUtils.validateAuth — the delimiter itself must fail, not just the flow-templating characters (#485 review, round 3)', () => {
+    it('still rejects the pre-existing ASCII special characters', () => {
+        expect(mcpUtils.validateAuth('my\'gmail')).not.toBeNull()
+        expect(mcpUtils.validateAuth('my{gmail}')).not.toBeNull()
+        expect(mcpUtils.validateAuth('my[gmail]')).not.toBeNull()
+    })
+
+    it('accepts a plain externalId with no special characters', () => {
+        expect(mcpUtils.validateAuth('my-gmail-connection')).toBeNull()
+    })
+
+    // Single-guard revert: drop `⟦⟧` from `AUTH_INVALID_CHARS` in `validateAuth` and this test
+    // fails because the bracketed externalId `ap_list_connections` renders (`⟦my-gmail⟧`) passes
+    // validation, letting `ap-add-step.ts` bake `{{connections['⟦my-gmail⟧']}}` into the flow —
+    // a value that looks identical to the correct one but fails at run time. Confirmed below.
+    it('rejects an externalId copied verbatim with the wrap delimiters still attached', () => {
+        expect(mcpUtils.validateAuth('⟦my-gmail⟧')).not.toBeNull()
+    })
 })
 
 describe('mcpUtils.wrapTruncatedUntrustedValue — the truncation marker must stay outside the delimiter', () => {

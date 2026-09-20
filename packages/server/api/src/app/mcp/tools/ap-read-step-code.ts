@@ -50,6 +50,15 @@ export const apReadStepCodeTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 const packageJson = settings.sourceCode?.packageJson ?? '{}'
                 const input = settings.input ?? {}
 
+                // `code`/`packageJson` are flow-authored and go out inside a triple-backtick fence
+                // unwrapped — a deliberate decision, not an oversight (#485 review). This tool's
+                // stated purpose is "returns untruncated content", i.e. a byte-exact copy an agent
+                // can act on (edit and write back via ap_update_step); `wrapUntrustedValue` would
+                // collapse newlines and strip any `⟦`/`⟧`/confusable the source legitimately
+                // contains, corrupting the very thing this tool exists to return faithfully. The
+                // known cost: an embedded ``` inside `code` closes the fence early and the rest of
+                // this message renders as prose in the client — accepted because the alternative
+                // (mangling the code itself) is strictly worse for this tool's one job.
                 return {
                     content: [{
                         type: 'text',

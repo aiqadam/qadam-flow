@@ -56,7 +56,7 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                 let fields = undefined
                 if ((filters && filters.length > 0) || (columns && columns.length > 0)) {
                     const fieldNames = [...(filters ?? []).map(f => f.fieldName), ...(columns ?? [])]
-                    const resolved = await resolveFieldNamesForTable(mcp.projectId, tableId, fieldNames)
+                    const resolved = await resolveFieldNamesForTable({ projectId: mcp.projectId, tableId, fieldNames })
                     fields = resolved.fields
 
                     for (const filter of filters ?? []) {

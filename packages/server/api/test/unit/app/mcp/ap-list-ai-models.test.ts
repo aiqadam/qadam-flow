@@ -12,12 +12,16 @@ vi.mock('../../../../src/app/ai/ai-provider-service', () => ({
     aiProviderService: (): MockedAiProviderService => ({ listProviders, listModels }),
 }))
 
-vi.mock('../../../../src/app/mcp/tools/mcp-utils', () => ({
-    mcpUtils: {
-        resolvePlatformId: async (): Promise<string> => 'platform-id',
-        mcpToolError: (message: string): MockedToolError => ({ content: [{ type: 'text', text: message }], isError: true }),
-    },
-}))
+vi.mock('../../../../src/app/mcp/tools/mcp-utils', async (importOriginal) => {
+    const actual = await importOriginal<{ mcpUtils: Record<string, unknown> }>()
+    return {
+        mcpUtils: {
+            ...actual.mcpUtils,
+            resolvePlatformId: async (): Promise<string> => 'platform-id',
+            mcpToolError: (message: string): MockedToolError => ({ content: [{ type: 'text', text: message }], isError: true }),
+        },
+    }
+})
 
 import { apListAiModelsTool } from '../../../../src/app/mcp/tools/ap-list-ai-models'
 
