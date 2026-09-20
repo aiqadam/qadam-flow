@@ -1,5 +1,5 @@
 import { Action, DropdownOption, ExecutePropsResult, PropertyType, QadamProperty } from '@aiqadam/qadams-framework'
-import { AgentQadamTool, ExecuteToolOperation, ExecuteToolResponse, ExecutionToolStatus, FieldControlMode, FlowActionType, isNil, PropertyExecutionType, QadamAction, StepOutputStatus } from '@aiqadam/shared'
+import { AgentQadamTool, ExecuteToolOperation, ExecuteToolResponse, executionJournal, ExecutionToolStatus, FieldControlMode, FlowActionType, isNil, PropertyExecutionType, QadamAction, StepOutputStatus } from '@aiqadam/shared'
 import { generateText, JSONParseError, LanguageModel, NoObjectGeneratedError, Output, Tool, zodSchema } from 'ai'
 import dayjs from 'dayjs'
 import { z } from 'zod'
@@ -175,8 +175,17 @@ async function execute(operation: ExecuteToolOperationWithModel): Promise<Execut
             executionState: FlowExecutorContext.empty(),
             constants: EngineConstants.fromExecuteActionInput(operation),
         })
-        const { output: stepOutput, errorMessage, status } = output.steps[operation.actionName]
-        
+        // `operation.actionName` is qadam-author-controlled, and `STEP_NAME_REGEX` admits
+        // `constructor`/`toString`/`valueOf`/`hasOwnProperty`/`__proto__`. `Object.hasOwn`, not a
+        // bare index: a bare read for an action name that never produced a step resolves those
+        // names off `Object.prototype` instead of `undefined`, which would report `SUCCESS` with
+        // an `undefined` output for an action that never ran.
+        const stepResult = executionJournal.getOwnStep(output.steps, operation.actionName)
+        if (isNil(stepResult)) {
+            throw new Error(`No step output found for action "${operation.actionName}"`)
+        }
+        const { output: stepOutput, errorMessage, status } = stepResult
+
         return {
             status: status === StepOutputStatus.FAILED ? ExecutionToolStatus.FAILED : ExecutionToolStatus.SUCCESS,
             output: stepOutput,

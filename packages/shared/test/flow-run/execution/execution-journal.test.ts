@@ -14,6 +14,18 @@ function createLoopWithIterations(iterations: Record<string, StepOutput>[]): Loo
     return LoopStepOutput.init({ input: null }).setIterations(iterations)
 }
 
+// No `output` at all (rather than `LoopStepOutput.init`'s default `{ iterations: [] }`) — this is
+// what a loop step restored from a log written before it ever ran looks like, and it is the only
+// shape that makes `getLoopSteps`'s `step.output?.iterations.reduce(...)` short-circuit via
+// optional chaining into the `isNil(iterationsResult)` branch that writes with a bare index.
+function createLoopStepWithoutOutput(): StepOutput {
+    return {
+        type: FlowActionType.LOOP_ON_ITEMS,
+        status: StepOutputStatus.SUCCEEDED,
+        input: {},
+    } as unknown as StepOutput
+}
+
 describe('executionJournal.getPathToStep', () => {
     it('should return correct paths for each step in the flow', () => {
         const steps: Record<string, StepOutput> = {
@@ -117,6 +129,17 @@ describe('executionJournal.getStateAtPath', () => {
         expect(() => executionJournal.getStateAtPath({ path: [['missing', 0]], steps })).toThrow('Step missing not found')
     })
 
+    // Blocking finding: a bare index read for a path segment that never ran resolves `constructor`
+    // off `Object.prototype` (a function, truthy) instead of `undefined`. On a bare index this
+    // throws the wrong error ("is not a loop on items step", because the inherited `Object`
+    // function's `.type` is `undefined`) instead of the correct "not found" — a caller branching on
+    // the error message would misdiagnose a step that never ran as one with the wrong shape. This
+    // must fail with the wrong message on a bare index and pass with `Object.hasOwn`.
+    it('reports a path segment literally named "constructor" as not found, not as the wrong step type', () => {
+        const steps: Record<string, StepOutput> = {}
+        expect(() => executionJournal.getStateAtPath({ path: [['constructor', 0]], steps })).toThrow('Step constructor not found')
+    })
+
     it('should throw when step is not a loop', () => {
         const steps: Record<string, StepOutput> = { step1: createCodeStep() }
         expect(() => executionJournal.getStateAtPath({ path: [['step1', 0]], steps })).toThrow('is not a loop on items step')
@@ -148,6 +171,43 @@ describe('executionJournal.getOrCreateStateAtPath', () => {
     it('should throw for non-loop type mismatch', () => {
         const steps: Record<string, StepOutput> = { step1: createCodeStep() }
         expect(() => executionJournal.getOrCreateStateAtPath({ path: [['step1', 0]], steps })).toThrow('is not a loop on items step')
+    })
+
+    // Blocking finding: a bare index read for a path segment that never ran resolves `constructor`
+    // off `Object.prototype` (a function, truthy), so the "missing — auto-create" branch never
+    // triggers and the call throws "is not a loop on items step" instead of silently creating the
+    // loop, matching every other missing-path segment. Must fail with a throw on a bare index and
+    // pass (auto-creating the loop) with `Object.hasOwn`.
+    it('auto-creates a missing loop step literally named "constructor" instead of throwing', () => {
+        const steps: Record<string, StepOutput> = {}
+        expect(() => executionJournal.getOrCreateStateAtPath({ path: [['constructor', 0]], steps })).not.toThrow()
+        expect(steps['constructor']).toBeDefined()
+        expect(steps['constructor'].type).toBe(FlowActionType.LOOP_ON_ITEMS)
+    })
+
+    // Blocking finding: `target[parentStepName] = loopStepOutput` on a plain object is a bracket
+    // assignment. `STEP_NAME_REGEX` admits `__proto__`, and assigning to that literal key does not
+    // create an own property — it invokes the inherited `Object.prototype.__proto__` setter and
+    // silently reassigns the target's own prototype instead. A loop step literally named `__proto__`
+    // then becomes invisible to `Object.keys`/`Object.entries`/`JSON.stringify` — i.e. the persisted
+    // run log — one level deeper than the top-level `upsertStep` write. Must fail (empty `Object.keys`,
+    // dropped by `JSON.stringify`) on a bracket assignment and pass with `Object.defineProperty`.
+    it('creates a loop step literally named "__proto__" as a real, JSON-visible own key', () => {
+        const steps: Record<string, StepOutput> = {}
+        const innerOutput = createCodeStep()
+
+        executionJournal.upsertStep({
+            stepName: 'inner',
+            stepOutput: innerOutput,
+            path: [['__proto__', 0]],
+            steps,
+            createLoopIterationIfNotExists: true,
+        })
+
+        expect(Object.keys(steps)).toContain('__proto__')
+        expect(JSON.parse(JSON.stringify(steps))).toHaveProperty('__proto__')
+        expect(Object.getPrototypeOf(steps)).toBe(Object.prototype)
+        expect(executionJournal.getStep({ stepName: 'inner', path: [['__proto__', 0]], steps })).toBe(innerOutput)
     })
 })
 
@@ -267,6 +327,18 @@ describe('executionJournal.getLoopSteps', () => {
         const result = executionJournal.getLoopSteps(steps)
         expect(Object.keys(result)).toContain('outerLoop')
         expect(Object.keys(result)).toContain('innerLoop')
+    })
+
+    // Blocking finding: `result[stepName] = step` on a plain object is a bracket assignment.
+    // `STEP_NAME_REGEX` admits `__proto__`, and assigning to that literal key does not create an
+    // own property — it invokes the inherited `Object.prototype.__proto__` setter and reassigns
+    // the target's own prototype instead, so a loop step literally named `__proto__` (with no
+    // output to recurse into) becomes invisible to `Object.keys`. Must fail (empty `Object.keys`)
+    // on a bracket assignment and pass with `Object.defineProperty`.
+    it('extracts a top-level loop step literally named "__proto__" that has no output yet', () => {
+        const steps: Record<string, StepOutput> = { ['__proto__']: createLoopStepWithoutOutput() }
+        const result = executionJournal.getLoopSteps(steps)
+        expect(Object.keys(result)).toContain('__proto__')
     })
 
     it('should return empty object when no loops exist', () => {

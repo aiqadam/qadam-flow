@@ -6,6 +6,7 @@ import {
     ExecuteTriggerResponse,
     ExecutionError,
     ExecutionErrorType,
+    executionJournal,
     ExecutionState,
     ExecutionType,
     FlowActionType,
@@ -177,7 +178,7 @@ async function insertSuccessStepsOrPausedRecursively({ stepOutput, isWaitpointRe
             for (const [step, output] of Object.entries(iteration)) {
                 const newOutput = await insertSuccessStepsOrPausedRecursively({ stepOutput: output, isWaitpointResume })
                 if (!isNil(newOutput)) {
-                    newSteps[step] = newOutput
+                    executionJournal.setOwnStep(newSteps, step, newOutput)
                 }
             }
             newIterations.push(newSteps)
