@@ -17,6 +17,8 @@ import type { Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
+import { projectService } from '../../project/project-service'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 type StepInfo = {
@@ -31,6 +33,8 @@ type StepInfo = {
     skip?: boolean
     configStatus: string
     input: Record<string, unknown> | null
+    qadamPin?: string
+    qadamVersionResolvable?: boolean
 }
 
 function getStepInput(step: Step): Record<string, unknown> | null {
@@ -59,6 +63,26 @@ function getConfigStatus(step: Step): string {
         default:
             return 'invalid'
     }
+}
+
+// `qadamResolutions` is keyed by `qadamPinUtil.pinOf`'s `name@version` — every distinct pin in the
+// flow was already resolved once by the caller, so this is a map lookup, not a fresh check.
+function qadamPinInfo({ step, qadamResolutions }: { step: Step, qadamResolutions: Map<string, boolean> }): { qadamPin?: string, qadamVersionResolvable?: boolean } {
+    if ((step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) || isNil(step.settings.qadamName) || isNil(step.settings.qadamVersion)) {
+        return {}
+    }
+    const pin = `${step.settings.qadamName}@${step.settings.qadamVersion}`
+    return { qadamPin: pin, qadamVersionResolvable: qadamResolutions.get(pin) }
+}
+
+// Mirrors `ap_validate_flow`'s `qadam_version` category message: name the exact pin, state the
+// consequence (every run and every trigger provisioning attempt fails), and name the fix. A bare
+// warning glyph would tell an agent something is wrong without telling it what to do about it.
+function qadamPinWarning(step: StepInfo): string {
+    if (step.qadamVersionResolvable !== false || isNil(step.qadamPin)) {
+        return ''
+    }
+    return ` ⚠️ PINNED VERSION UNAVAILABLE: "${step.qadamPin}" does not exist on this installation — every run and every trigger provisioning attempt fails on it. Re-point this step at an available version: delete and re-add it with ap_add_step, or re-create the trigger with ap_update_trigger.`
 }
 
 function hasSampleData(step: Step): boolean {
@@ -134,7 +158,7 @@ function formatBranchConditions(conditions: BranchCondition[][]): string {
     return groups.join(' OR ')
 }
 
-function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName: Map<string, Step> } {
+function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qadamResolutions: Map<string, boolean> }): { structure: StepInfo[], stepByName: Map<string, Step> } {
     const allSteps = flowStructureUtil.getAllSteps(trigger)
     const stepByName = new Map(allSteps.map(s => [s.name, s]))
     const structure = allSteps.map((step): StepInfo => {
@@ -149,6 +173,7 @@ function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName:
                 skip: (step as { skip?: boolean }).skip,
                 configStatus: getConfigStatus(step),
                 input: getStepInput(step),
+                ...qadamPinInfo({ step, qadamResolutions }),
             }
         }
         let parentName: string | null = null
@@ -202,6 +227,7 @@ function buildFlowStructure(trigger: Step): { structure: StepInfo[], stepByName:
             skip: (step as { skip?: boolean }).skip,
             configStatus: getConfigStatus(step),
             input: getStepInput(step),
+            ...qadamPinInfo({ step, qadamResolutions }),
         }
     })
     return { structure, stepByName }
@@ -235,7 +261,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE) {
                 triggerDetail = ` (qadam: ${fullStep.settings.qadamName}, trigger: ${fullStep.settings.triggerName ?? 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | "${step.displayName}"${triggerDetail} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | "${step.displayName}"${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -250,7 +276,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${s.qadamName}, action: ${s.actionName ?? 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | "${step.displayName}"${stepDetail} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | "${step.displayName}"${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -331,7 +357,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), and valid insert locations for ap_add_step. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, and whether each step\'s pinned qadam version is still available on this installation. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -346,7 +372,27 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 if (isNil(flow)) {
                     return { content: [{ type: 'text', text: '❌ Flow not found' }] }
                 }
-                const { structure, stepByName } = buildFlowStructure(flow.version.trigger)
+                // `getQadamSteps` does not filter by `skip`, matching `ap_validate_flow`'s
+                // `validatePinnedQadamVersions`: the worker provisions every PIECE step in the
+                // version regardless of `skip`, so a dead pin on a skipped step still fails
+                // provisioning on every trigger tick — hiding it here would be misleading.
+                //
+                // Distinct-pin dedupe keeps the added cost to one platform lookup plus one
+                // resolution per *distinct* pin, not per step — a flow with twelve steps on one
+                // qadam pin still costs one resolution. `qadamMetadataService.get()` itself is not
+                // fully cached though: the name/version registry list is, but resolving a pin to
+                // its full metadata still does a DB read per distinct pin unless the qadam is
+                // bundled (#474) — worth knowing before calling this tool in a hot loop over many
+                // distinct pins, though no worse than `ap_validate_flow` already accepts.
+                const qadamSteps = qadamPinUtil.getQadamSteps({ trigger: flow.version.trigger })
+                const qadamResolutions = qadamSteps.length > 0
+                    ? await qadamPinUtil.resolvePins({
+                        pins: qadamPinUtil.collectDistinctPins({ steps: qadamSteps }),
+                        platformId: await projectService(log).getPlatformId(mcp.projectId),
+                        log,
+                    })
+                    : new Map<string, boolean>()
+                const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
                 const text = formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [], !!includeInput)
                 return {
@@ -365,6 +411,7 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             valid: s.valid,
                             configStatus: s.configStatus,
                             ...(includeInput && s.input !== null ? { input: s.input } : {}),
+                            ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),
                         })),
                         stepCount: structure.length,
                     },

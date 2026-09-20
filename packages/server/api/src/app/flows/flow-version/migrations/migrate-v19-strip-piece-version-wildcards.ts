@@ -1,14 +1,12 @@
 import {
-    FlowActionType,
     flowQadamUtil,
     flowStructureUtil,
-    FlowTriggerType,
     FlowVersion,
     isNil,
 } from '@aiqadam/shared'
 import { system } from '../../../helper/system/system'
 import { projectService } from '../../../project/project-service'
-import { qadamMetadataService } from '../../../qadams/metadata/qadam-metadata-service'
+import { qadamPinUtil } from '../../../qadams/metadata/qadam-pin-util'
 import { flowService } from '../../flow/flow.service'
 import { Migration } from '.'
 
@@ -22,24 +20,17 @@ export const migrateV19StripPieceVersionWildcards: Migration = {
             : await projectService(log).getPlatformId(flow.projectId)
 
         const stepNameToExactVersion: Record<string, string> = {}
-        const steps = flowStructureUtil.getAllSteps(flowVersion.trigger)
+        const wildcardSteps = qadamPinUtil.getQadamSteps({ trigger: flowVersion.trigger })
+            .filter(step => step.settings.qadamVersion.startsWith('~') || step.settings.qadamVersion.startsWith('^'))
 
-        for (const step of steps) {
-            if (step.type !== FlowActionType.PIECE && step.type !== FlowTriggerType.PIECE) {
-                continue
-            }
-            const version: string = step.settings.qadamVersion
-            if (!version.startsWith('~') && !version.startsWith('^')) {
-                continue
-            }
-            const qadamMetadata = await qadamMetadataService(log).get({
+        for (const step of wildcardSteps) {
+            const resolvedVersion = await qadamPinUtil.resolvePinVersion({
                 platformId,
                 name: step.settings.qadamName,
-                version,
+                version: step.settings.qadamVersion,
+                log,
             })
-            stepNameToExactVersion[step.name] = isNil(qadamMetadata)
-                ? flowQadamUtil.getExactVersion(version)
-                : qadamMetadata.version
+            stepNameToExactVersion[step.name] = resolvedVersion ?? flowQadamUtil.getExactVersion(step.settings.qadamVersion)
         }
 
         const newFlowVersion = flowStructureUtil.transferFlow(flowVersion, (step) => {

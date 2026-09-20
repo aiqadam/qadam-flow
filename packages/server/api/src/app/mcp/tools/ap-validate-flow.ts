@@ -8,14 +8,13 @@ import {
     ProjectScopedMcpServer,
     RouterActionSettingsWithValidation,
     Step,
-    tryCatch,
     unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
-import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
+import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
 export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -162,25 +161,15 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
     // provisions every PIECE step in the version regardless of `skip`, so a dead pin on a skipped
     // step still fails provisioning on every trigger tick and every run. Excluding it would report
     // exactly the flow this category exists to catch as ready to publish.
-    const qadamSteps = flowStructureUtil.getAllSteps(trigger)
-        .filter((step): step is Extract<Step, { settings: { qadamName: string, qadamVersion: string } }> =>
-            (step.type === FlowActionType.PIECE || step.type === FlowTriggerType.PIECE)
-            && !isNil(step.settings.qadamName)
-            && !isNil(step.settings.qadamVersion))
+    const qadamSteps = qadamPinUtil.getQadamSteps({ trigger })
 
     // Distinct (name, version) pairs only: a flow with twelve tables steps on one pin should cost
     // one resolution, not twelve, and the answer cannot differ between them.
-    const pins = unique(qadamSteps.map(step => `${step.settings.qadamName}@${step.settings.qadamVersion}`))
-    const resolutions = new Map<string, boolean>(await Promise.all(pins.map(async (pin): Promise<[string, boolean]> => {
-        const separator = pin.lastIndexOf('@')
-        const name = pin.slice(0, separator)
-        const version = pin.slice(separator + 1)
-        const { data: metadata } = await tryCatch(() => qadamMetadataService(log).get({ platformId, name, version }))
-        return [pin, !isNil(metadata)]
-    })))
+    const pins = qadamPinUtil.collectDistinctPins({ steps: qadamSteps })
+    const resolutions = await qadamPinUtil.resolvePins({ pins, platformId, log })
 
     return qadamSteps.flatMap((step) => {
-        const pin = `${step.settings.qadamName}@${step.settings.qadamVersion}`
+        const pin = qadamPinUtil.pinOf({ step })
         if (resolutions.get(pin) === true) {
             return []
         }
