@@ -1,4 +1,4 @@
-import { ApId, CountTablesRequest, CreateTableRequest, CreateTableWebhookRequest, ExportTableResponse, ListTablesRequest, Permission, PrincipalType, SeekPage, SERVICE_KEY_SECURITY_OPENAPI, SharedTemplate, Table, UpdateTableRequest } from '@aiqadam/shared'
+import { ApId, CountTablesRequest, CreateTableRequest, CreateTableWebhookRequest, DeclareTableKeyRequest, ExportTableResponse, ListTablesRequest, Permission, PrincipalType, SeekPage, SERVICE_KEY_SECURITY_OPENAPI, SharedTemplate, Table, UpdateTableRequest } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
@@ -93,6 +93,14 @@ export const tablesController: FastifyPluginAsyncZod = async (fastify) => {
             projectId: request.projectId,
             id: request.params.id,
             webhookId: request.params.webhookId,
+        })
+    })
+
+    fastify.post('/:id/key', DeclareTableKeyRequestOptions, async (request) => {
+        return tableService.declareKey({
+            projectId: request.projectId,
+            id: request.params.id,
+            keyFieldIds: request.body.keyFieldIds,
         })
     })
 
@@ -272,6 +280,27 @@ const UpdateRequest = {
             id: z.string(),
         }),
         body: UpdateTableRequest,
+    },
+}
+
+const DeclareTableKeyRequestOptions = {
+    config: {
+        security: securityAccess.project([PrincipalType.USER, PrincipalType.ENGINE, PrincipalType.SERVICE], Permission.WRITE_TABLE, {
+            type: ProjectResourceType.TABLE,
+            tableName: TableEntity,
+        }),
+    },
+    schema: {
+        tags: ['tables'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        description: 'Declare (non-empty keyFieldIds) or clear (empty keyFieldIds) a table\'s business key',
+        params: z.object({
+            id: ApId,
+        }),
+        body: DeclareTableKeyRequest,
+        response: {
+            [StatusCodes.OK]: Table,
+        },
     },
 }
 

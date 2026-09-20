@@ -31,6 +31,25 @@ export const tableMutations = {
       onSuccess,
     });
   },
+  useDeclareTableKey: ({
+    onSuccess,
+    onError,
+  }: {
+    onSuccess: (table: Table) => void;
+    onError: (error: unknown) => void;
+  }) => {
+    return useMutation({
+      mutationFn: async ({
+        tableId,
+        keyFieldIds,
+      }: {
+        tableId: string;
+        keyFieldIds: string[];
+      }) => tablesApi.declareKey(tableId, { keyFieldIds }),
+      onSuccess,
+      onError,
+    });
+  },
 };
 
 export const tableHooks = {

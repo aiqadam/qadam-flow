@@ -17,6 +17,7 @@ const OPERATOR_VALUES = [
     FilterOperator.NOT_IN,
     FilterOperator.EXISTS,
     FilterOperator.NOT_EXISTS,
+    FilterOperator.JSON_PATH_EQ,
 ] as const
 
 const operatorSchema = z.enum(OPERATOR_VALUES)
@@ -32,6 +33,7 @@ const findRecordsInput = z.object({
         fieldName: z.string().describe('The field name to filter on'),
         operator: operatorSchema.describe('Filter operator'),
         value: z.string().optional().describe('Filter value (required for all operators except exists/not_exists). For in/not_in, pass a comma-separated list. gt/gte/lt/lte compare by column type: NUMBER numerically, DATE by parsed timestamp (ISO, not epoch milliseconds), TEXT and STATIC_DROPDOWN alphabetically ignoring case. A DATE value with no time names the whole UTC day, so `lte 2026-09-11` includes rows dated the 11th.'),
+        path: z.string().optional().describe('Required (and only used) with json_path_eq, on a JSON column: a dot-separated path into the cell\'s JSON, e.g. "address.city".'),
     })).optional().describe('Optional filters. All filters are combined with AND logic.'),
     columns: z.array(z.string()).min(1).optional().describe('Optional column names to return. Omit to return every column. Naming a column the table does not have is an error, not a silent widening back to every column.'),
     limit: z.number().min(1).max(500).optional().describe('Max records to return (default 50, max 500)'),
@@ -60,11 +62,15 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                     for (const filter of filters ?? []) {
                         const isListOp = filter.operator === FilterOperator.IN || filter.operator === FilterOperator.NOT_IN
                         const isExistenceOp = filter.operator === FilterOperator.EXISTS || filter.operator === FilterOperator.NOT_EXISTS
+                        const isJsonPathOp = filter.operator === FilterOperator.JSON_PATH_EQ
                         if (!isExistenceOp && filter.value === undefined) {
                             resolved.errors.push(`Filter on "${filter.fieldName}" with operator "${filter.operator}" requires a value.`)
                         }
                         else if (isListOp && filter.value !== undefined && splitListValue(filter.value).length === 0) {
                             resolved.errors.push(`Filter on "${filter.fieldName}" with operator "${filter.operator}" requires at least one value.`)
+                        }
+                        if (isJsonPathOp && (filter.path === undefined || filter.path.trim().length === 0)) {
+                            resolved.errors.push(`Filter on "${filter.fieldName}" with operator "json_path_eq" requires a "path" (dot-separated, e.g. "address.city").`)
                         }
                     }
 
@@ -84,6 +90,9 @@ export const apFindRecordsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseL
                         }
                         if (f.operator === FilterOperator.IN || f.operator === FilterOperator.NOT_IN) {
                             return { fieldId, operator: f.operator, value: splitListValue(f.value!) }
+                        }
+                        if (f.operator === FilterOperator.JSON_PATH_EQ) {
+                            return { fieldId, operator: f.operator, path: f.path!, value: f.value ?? '' }
                         }
                         return { fieldId, operator: f.operator, value: f.value! }
                     })

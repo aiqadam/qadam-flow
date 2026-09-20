@@ -45,28 +45,42 @@ A built-in relational database feature that lets users store structured data dir
 
 ## Domain Terms
 - **Table** — a named collection of typed columns (fields) and rows (records), scoped to a project
-- **Field** — a typed column definition; types: `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN`
+- **Field** — a typed column definition; types: `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN`, `BOOLEAN`, `JSON`
 - **Record** — a single row in a table; stored as a row entity with associated cells
 - **Cell** — one value at the intersection of a record and a field (stored as VARCHAR)
 - **TableWebhook** — a link between a table event and a flow; fires the flow when the event occurs
 - **Table events** — `RECORD_CREATED`, `RECORD_UPDATED`, `RECORD_DELETED`
 - **externalId** — a stable external identifier for tables and fields, used by the flow integration layer
 - **Tables piece** — `packages/qadams/core/tables/`; provides trigger and action steps that interact with tables via the internal API
+- **Declared key** — an opt-in business key on a table (#409): `table.keyFieldIds` names the columns, `record.keyValue` materialises the derived value, and a partial unique index enforces it. A table with no declaration behaves exactly as before.
 
 ## Data Model
 
-**Table**: id, projectId, name, folderId (nullable), externalId, trigger (nullable), status (nullable). Relations: project, folder, fields[], records[], tableWebhooks[].
+**Table**: id, projectId, name, folderId (nullable), externalId, trigger (nullable), status (nullable), keyFieldIds (nullable string array — the declared key, #409). Relations: project, folder, fields[], records[], tableWebhooks[].
 
-**Field**: id, tableId, projectId, name, type, externalId, data (JSONB — e.g., `{ options: [{ value }] }` for STATIC_DROPDOWN).
-- **FieldType**: `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN`
+**Field**: id, tableId, projectId, name, type, externalId, data (JSONB — `{ options: [{ value }] }` for STATIC_DROPDOWN, `{ schema }` for JSON).
+- **FieldType**: `TEXT`, `NUMBER`, `DATE`, `STATIC_DROPDOWN`, `BOOLEAN`, `JSON`
+- Every type is validated at write time by `record/cell-validation.ts`, which every write path funnels through. BOOLEAN is tri-state (`'true'` / `'false'` / empty); JSON must parse and satisfy its optional `data.schema`; STATIC_DROPDOWN must be one of its declared options (that last check did not exist before #390 — a CSV import carrying an off-list dropdown value used to succeed and now fails).
+- Cell values are strings on the wire for **every** type, BOOLEAN and JSON included. A JSON cell holds the serialised document, not an object.
 - System limit: `AP_MAX_FIELDS_PER_TABLE` (default 100)
 
-**Record**: id, tableId, projectId. Relations: table, cells[].
+**Record**: id, tableId, projectId, keyValue (nullable — see "Declared key" below). Relations: table, cells[].
 
 **Cell**: id, recordId, fieldId, projectId, value (VARCHAR). Unique constraint: (projectId, fieldId, recordId).
 
 **TableWebhook**: id, projectId, tableId, flowId, events[] (string array).
 - **Events**: `RECORD_CREATED`, `RECORD_UPDATED`, `RECORD_DELETED`
+
+## Declared key (#409)
+
+Opt-in per table. Nothing changes for a table that has not declared one.
+
+- **Where it lives.** `table.keyFieldIds` (the declaration) and `record.keyValue` (the materialised value), enforced by `CREATE UNIQUE INDEX ... ON record("projectId","tableId","keyValue") WHERE "keyValue" IS NOT NULL`. The index is partial on `keyValue` alone — it does **not** know about `keyFieldIds`, which is why every path that stops enforcing a key has to null the values out rather than just clearing the declaration.
+- **One derivation.** `record/key-reader.ts` is the only definition of "key". `tableKey.buildReader` gives the readable tuple used for in-memory matching and error messages; `tableKey.buildValueReader` gives what is **stored**, and differs in two ways that matter:
+  - It returns `null` when every key column of the record is empty, so a row whose key was never written sits outside the index. Without this, the grid's "add blank row" button materialises the all-empty tuple and the *second* blank row on a keyed table collides.
+  - It is a sha256 digest, not the tuple. A btree entry cannot exceed 2704 bytes and a cell value is unbounded, so storing the tuple made a ~3 KB paste into a keyed TEXT column raise Postgres `54000` — which is not `23505`, so nothing mapped it and it surfaced as a 500. Treat `record.keyValue` as opaque.
+- **Lock protocol.** `tables-key:<projectId>:<tableId>` is taken **shared** by `create()` / `update()` / `updateMany()` / `upsert()` before they read `table.keyFieldIds`, and **exclusive** by `declareKey`. Shared acquisitions do not conflict, so writers never block each other. Without it, a writer that read `keyFieldIds: null` can still commit *after* declareKey's backfill, landing a row with `keyValue` NULL — permanently outside the index and invisible to the declared-key upsert's keyValue lookup, so the next upsert on that business key inserts a second row. Always acquired before `tables-upsert:<...>`, so there is one global lock order. Two paths deliberately sit outside it: `record.delete()` / `deleteAll()` take record row locks without it, so a delete batch running against a `declareKey` can still be picked as a deadlock victim (`40P01`) — rare, non-corrupting, and retryable, since `declareKey` is a one-off admin action.
+- **Known limitation.** A declared key does **not** survive export / import / project release / git sync: `TableState` and `TableTemplate` carry no key, so a round-tripped table comes back unkeyed. `ap_import_table` says so in its result when it clears one; nothing else does.
 
 ## Key Service Methods
 
@@ -81,7 +95,8 @@ A built-in relational database feature that lets users store structured data dir
 - `record.list()` / `record.getById()` — optional `fieldIds` projection. The cell query covers projected **∪ filtered** columns, never just the projection: a filter whose column was not fetched finds no cell, which the missing-cell guard reads as a match for NOT_EXISTS — the whole table. A `fieldIds` entry that is not a column of the table is rejected (`ErrorCode.VALIDATION`), never dropped.
 - `record.list()` — EQ, NEQ, IN, NOT_IN, EXISTS and NOT_EXISTS are evaluated by Postgres as `EXISTS (SELECT 1 FROM cell …)` sub-queries (`record-query.ts`), so a keyed lookup no longer loads every record and cell of the table. CO and the four ordering operators are **not** pushed down — `toLowerCase`/`Intl.Collator` and the database's collation disagree — and the JS matcher in `record-filter.ts` still runs over whatever comes back and remains the authority on what matches; SQL only ever removes rows it would have rejected. `LIMIT` moves into SQL only when every filter was pushed down, otherwise the JS pass would be handed a short page. Guarded by a differential test (`test/integration/ce/tables/record-filter-pushdown.test.ts`) that compares each operator's endpoint result against the JS-only result over adversarial values.
 - `record.list()` — optional `recordIds` pushes an id restriction into SQL (served by `idx_record_table_id_project_id_record_id`) instead of materialising the table; the controller defaults `limit` to the id count so a lookup is not truncated to `DEFAULT_PAGE_SIZE`
-- `record.upsert()` — `POST /v1/records/upsert`. Matches on a declared key column set and inserts or updates, reporting which happened per row. Serialised by `pg_advisory_xact_lock` keyed on the table, taken **inside** the transaction — a Postgres transaction-scoped lock rather than the Redis `distributedLock`, because it cannot expire before the insert it guards commits, and under `REDIS_TYPE=MEMORY` the Redis one is per-process. There is no declared unique index to arbitrate on yet (#409). An absent cell and an empty cell are the same key value.
+- `record.upsert()` — `POST /v1/records/upsert`. Matches on a key column set and inserts or updates, reporting which happened per row. On a table with **no** declared key it is serialised by `pg_advisory_xact_lock` keyed on the table, taken **inside** the transaction — a Postgres transaction-scoped lock rather than the Redis `distributedLock`, because it cannot expire before the insert it guards commits, and under `REDIS_TYPE=MEMORY` the Redis one is per-process. On a table **with** a declared key it becomes `INSERT ... ON CONFLICT DO UPDATE` against the partial unique index and skips that lock entirely, and `keyFieldIds` must match the declaration exactly. An absent cell and an empty cell are the same key value; a record whose key columns are *all* empty is rejected, because a null conflict target arbitrates nothing.
+- `table.declareKey()` / `table.clearKey()` — `POST /v1/tables/:id/key` (#409). Non-empty `keyFieldIds` declares, empty clears. Declaring scans every record under the proposed key inside one transaction and **rejects** the declaration outright if any two collide; there is no going-forward-only mode. Both clear every `record.keyValue` for the table first: the unique index is partial on `WHERE "keyValue" IS NOT NULL` and does **not** consult `table.keyFieldIds`, so a stale value left behind stays a live index entry and the next declaration walks into a 23505 its own pre-scan just approved. `fieldService.delete` refuses to delete a field that is part of a declared key.
 - `record.update()` — update cells (empty fields unchanged). Optional `precondition` (an array of `Filter`) makes it compare-and-set: evaluated under a `pessimistic_write` row lock inside the same transaction as the write, raising `RECORD_PRECONDITION_FAILED` (409) rather than silently writing nothing. The row lock is taken unconditionally, so a plain concurrent update cannot clobber between a conditional update's check and its write.
 - `record.updateMany()` — `POST /v1/records/batch`. One transaction, one field lookup and one cell upsert per chunk for the whole batch. Every id is checked against the requested `tableId`; a miss rolls the batch back. A repeated record id, or the same column twice in one record, is rejected before the upsert — Postgres would otherwise raise "cannot affect row a second time" as a 500. Does **not** call `validateCount`: an update creates no rows.
 - `record.delete()` / `record.deleteAll()` — bulk delete. `record.delete()` deletes from the `tableId` the caller named — the same one the route's `securityAccess` resolved — and checks **every** id against it in one transaction, under `FOR NO KEY UPDATE` locks taken in ascending id order (as `update()`/`updateMany()`/`upsert()` do). A record that is unknown or lives in another table rejects the whole batch with 404 and deletes nothing, uniformly across ids; a partly-stale batch is never a partial success. Undeclared in the schema until #406: an empty `ids` array reached the lookup as `id: undefined` (TypeORM read it as "no constraint"), making the deletion target an arbitrary record's table, and the table was otherwise derived from `ids[0]` — the route authorized against the body's `tableId` and the service ignored it. `DeleteRecordsRequest.ids` now carries `.min(1, formErrors.required)`, and `ap_delete_records` requires a `tableId`. `deleteAll` accepts `returnDeleted` (default `true`); passing `false` skips loading the `cells` relation and the `PopulatedRecord[]` formatting entirely, for callers that discard the result. The formatting path forwards its `entityManager`: without that it asks the pool for a second connection while the caller's transaction holds the first, which hangs rather than deadlocks — pinned by test 106d in `mcp/mcp-tools.test.ts`.
@@ -91,7 +106,7 @@ A built-in relational database feature that lets users store structured data dir
 All table / field / record routes use `securityAccess.project([...], <permission>, <resource>)`. The required permission per resource:
 
 - **Read** (`GET /v1/tables`, `GET /v1/tables/:id`, `GET /v1/fields`, `GET /v1/fields/:id`, `GET /v1/records`, `GET /v1/records/:id`): `READ_TABLE`
-- **Write** (`POST /v1/records/batch`, `POST /v1/records/upsert`, `POST /v1/tables`, `POST /v1/tables/:id`, `DELETE /v1/tables/:id`, `POST /v1/fields`, `POST /v1/fields/:id`, `DELETE /v1/fields/:id`, `POST /v1/records`, `POST /v1/records/:id`, `DELETE /v1/records`): `WRITE_TABLE`
+- **Write** (`POST /v1/records/batch`, `POST /v1/records/upsert`, `POST /v1/tables`, `POST /v1/tables/:id`, `POST /v1/tables/:id/key`, `DELETE /v1/tables/:id`, `POST /v1/fields`, `POST /v1/fields/:id`, `DELETE /v1/fields/:id`, `POST /v1/records`, `POST /v1/records/:id`, `DELETE /v1/records`): `WRITE_TABLE`
 
 Default project roles: `ADMIN` and `EDITOR` have both; `VIEWER` has only `READ_TABLE`. Custom roles inherit whatever permissions are configured.
 

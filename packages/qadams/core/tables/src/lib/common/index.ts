@@ -36,6 +36,10 @@ const getFieldTypeText = (fieldType: FieldType) => {
       return 'Number';
     case FieldType.TEXT:
       return 'Text';
+    case FieldType.BOOLEAN:
+      return 'Boolean';
+    case FieldType.JSON:
+      return 'JSON';
   }
 }
 export const tablesCommon = {
@@ -125,6 +129,27 @@ export const tablesCommon = {
             return date;
           })]).optional();
           break;
+        case FieldType.BOOLEAN:
+          // Tri-state, matching the server (cell-validation.ts): 'true'/'false'/empty.
+          // Boolean and empty-string are both accepted from the builder's checkbox
+          // (unset renders as '') and coerced to the wire's canonical 'true'/'false'.
+          fieldValidations[field.externalId] = z.union([
+            z.boolean().transform(val => String(val)),
+            z.literal('').transform(() => undefined),
+            z.enum(['true', 'false']),
+          ]).optional();
+          break;
+        case FieldType.JSON:
+          fieldValidations[field.externalId] = z.string().optional().refine(val => {
+            if (val === undefined || val.trim().length === 0) return true;
+            try {
+              JSON.parse(val);
+              return true;
+            } catch {
+              return false;
+            }
+          }, { message: `Invalid JSON for field "${field.name}"` });
+          break;
         default:
           fieldValidations[field.externalId] = z.string().optional();
       }
@@ -172,6 +197,30 @@ export const tablesCommon = {
               options: {
                 options:[StaticDropdownEmptyOption,...field.data.options.map(option => ({ label: option.value, value: option.value }))],
               },
+            });
+            break;
+          case FieldType.BOOLEAN:
+            // Boolean-valued, not a string — but `String(true)`/`String(false)` are
+            // exactly the wire's 'true'/'false', so create-records.ts and friends need
+            // no special-casing to send it: the existing `String(value)` coercion on
+            // the server (coerceToString in records.dto.ts) does the right thing.
+            fields[field.externalId] = Property.Checkbox({
+              displayName: field.name,
+              description,
+              required: false,
+            });
+            break;
+          case FieldType.JSON:
+            // LongText (string-valued), not Property.Json (object-valued): the wire
+            // format is the JSON-stringified string, string in / string out like every
+            // other field type — see cell-validation.ts on the server. Property.Json
+            // would need every action that builds a record's cells to JSON.stringify
+            // it first, which is exactly the "raw object on the wire" #390 was
+            // explicit about not doing.
+            fields[field.externalId] = Property.LongText({
+              displayName: field.name,
+              description: `${description} — must be valid JSON, or left empty.`,
+              required: false,
             });
             break;
           default:

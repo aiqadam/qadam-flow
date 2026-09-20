@@ -3619,6 +3619,54 @@ describe('MCP Tools integration', () => {
             expect(fields.map(f => f.name)).toEqual(['NewFieldA', 'NewFieldB', 'NewFieldC'])
         })
 
+        // importRows() runs after importIntoExistingTable has already committed its
+        // clear-and-recreate transaction and cannot join it, so a row the new write-time
+        // validation (#390) rejects would otherwise surface as a 400 with the target
+        // table's records and schema already destroyed. A template exported before #390
+        // can legitimately carry a dropdown value that is no longer a declared option.
+        it('105b. ap_import_table — "into-existing" rejects an unwritable row without touching the target table', async () => {
+            const ctx = await createTestContext(app)
+            const mcp = makeMcp(ctx.project.id)
+            const existingTable = await tableService.create({
+                projectId: ctx.project.id,
+                request: { projectId: ctx.project.id, name: 'Must Survive' },
+            })
+            const existingField = await fieldService.create({
+                projectId: ctx.project.id,
+                request: { name: 'Keep', type: FieldType.TEXT, tableId: existingTable.id },
+            })
+            await recordService.create({
+                request: { tableId: existingTable.id, records: [[{ fieldId: existingField.id, value: 'precious' }]] },
+                projectId: ctx.project.id,
+                logger: mockLog,
+            })
+
+            const template = {
+                tables: [{
+                    name: 'Incoming',
+                    externalId: 'incoming_table',
+                    status: null,
+                    trigger: null,
+                    fields: [{ name: 'Choice', type: FieldType.STATIC_DROPDOWN, externalId: 'choice_field', data: { options: [{ value: 'a' }, { value: 'b' }] } }],
+                    data: { rows: [[{ fieldId: 'choice_field', value: 'not-an-option' }]] },
+                }],
+            }
+
+            const result = await apImportTableTool(mcp, mockLog).execute({ template, mode: 'into-existing', existingTableId: existingTable.id })
+
+            expect(text(result)).toContain('❌')
+            const fields = await fieldService.getAll({ projectId: ctx.project.id, tableId: existingTable.id })
+            expect(fields.map(f => f.name)).toEqual(['Keep'])
+            const records = await recordService.list({
+                tableId: existingTable.id,
+                projectId: ctx.project.id,
+                cursorRequest: null,
+                limit: 10,
+                filters: null,
+            })
+            expect(records.data.length).toBe(1)
+        })
+
         it('105a. ap_import_table — "into-existing" preserves the template\'s column order across enough fields to rule out luck', async () => {
             const ctx = await createTestContext(app)
             const mcp = makeMcp(ctx.project.id)
@@ -3705,7 +3753,7 @@ describe('MCP Tools integration', () => {
                 type: 'SHARED', status: 'PUBLISHED',
                 tables: [{
                     id: apId(), name: 'Malformed', externalId: apId(), status: 'ENABLED',
-                    fields: [{ id: apId(), name: 'Bad', type: 'BOOLEAN', externalId: apId() }],
+                    fields: [{ id: apId(), name: 'Bad', type: 'NOT_A_REAL_TYPE', externalId: apId() }],
                     data: { type: 'CSV', rows: [] },
                 }],
             }

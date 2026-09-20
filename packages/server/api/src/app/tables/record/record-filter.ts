@@ -7,6 +7,7 @@ import {
     FilterOperator,
     isNil,
     QadamFlowError,
+    tryCatchSync,
     unique,
 } from '@aiqadam/shared'
 
@@ -62,6 +63,13 @@ function compileFilter({ filter, field }: { filter: Filter, field: Field }): Com
         case FilterOperator.NEQ:
             return { fieldId: filter.fieldId, matchesMissingCell: false, matchesCell: (value) => value !== filter.value, sql: { kind: 'neq', value: filter.value } }
         case FilterOperator.CO:
+            // BOOLEAN is fail-closed here for the same reason the ordering operators are
+            // (PR #413's posture): "contains" on true/false is never what an author meant,
+            // and returning zero rows instead of raising would look identical to "no match"
+            // for a filter that could not be interpreted at all.
+            if (field.type === FieldType.BOOLEAN) {
+                throw uninterpretableOperand({ field, operator: filter.operator, value: filter.value, expected: 'eq or neq — "contains" does not apply to a BOOLEAN column' })
+            }
             // No `sql`: `toLowerCase` folds by Unicode's own rules, `lower()` by the
             // database's collation, and the two disagree (ß, Turkish dotted I, …). A
             // pre-filter that drops a row this matcher would keep is a wrong result,
@@ -98,7 +106,61 @@ function compileFilter({ filter, field }: { filter: Filter, field: Field }): Com
                 matchesMissingCell: false,
                 matchesCell: buildOrderingMatcher({ field, operator: filter.operator, value: filter.value }),
             }
+        case FilterOperator.JSON_PATH_EQ: {
+            if (field.type !== FieldType.JSON) {
+                const message = `Filter "json_path_eq" on column "${truncate(field.name)}" needs a JSON column, but column is of type ${field.type}.`
+                throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+            }
+            return {
+                fieldId: filter.fieldId,
+                matchesMissingCell: false,
+                matchesCell: (value) => matchesJsonPath({ value, path: filter.path, expected: filter.value }),
+                sql: { kind: 'jsonPathEq', path: filter.path, value: filter.value },
+            }
+        }
     }
+}
+
+// The authority: SQL pushdown (record-query.ts) is a pure optimization scoped to the
+// subset of this rule it can reproduce exactly (string leaves) — see the comment there
+// for why numbers and other leaf types cannot be pushed down without risking a false
+// negative in SQL (Postgres's jsonb text output preserves the literal's original
+// formatting, e.g. "1.0", where JSON.parse + String() does not).
+//
+// A JSON path segment indexes both objects (`{"a": 1}`, segment "a") and arrays
+// (`["x","y"]`, segment "0" — JS coerces the string key to the numeric index), which is
+// exactly the shape `jsonb_extract_path` in Postgres accepts too.
+function matchesJsonPath({ value, path, expected }: { value: unknown, path: string, expected: string }): boolean {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+        return false
+    }
+    const { data, error } = tryCatchSync<unknown>(() => JSON.parse(value))
+    if (error !== null) {
+        return false
+    }
+    const segments = path.split('.').filter((segment) => segment.length > 0)
+    let current: unknown = data
+    for (const segment of segments) {
+        if (isNil(current) || typeof current !== 'object') {
+            return false
+        }
+        // Read through a property descriptor rather than an `as` cast. Besides being the
+        // no-cast form, it confines the lookup to the document's OWN keys: a "__proto__"
+        // or "constructor" segment then resolves to nothing instead of walking onto
+        // Object.prototype and matching every object-valued cell in the table.
+        const descriptor = Object.getOwnPropertyDescriptor(current, segment)
+        if (isNil(descriptor)) {
+            return false
+        }
+        current = descriptor.value
+    }
+    if (current === undefined) {
+        return false
+    }
+    if (typeof current === 'string') {
+        return current === expected
+    }
+    return JSON.stringify(current) === expected
 }
 
 // The operand is parsed once, here, so an uninterpretable filter value raises.
@@ -145,6 +207,15 @@ function buildOrderingMatcher({ field, operator, value }: { field: Field, operat
                 return isNil(cell) ? false : matchesOrdering({ operator, comparison: compareText({ left: cell, right: operand }) })
             }
         }
+        // Fail-closed, same posture as CO above: "greater than true" has no meaning, and a
+        // silent empty result would look exactly like "matched nothing" instead of "this
+        // filter cannot be evaluated".
+        case FieldType.BOOLEAN:
+            throw uninterpretableOperand({ field, operator, value, expected: 'eq or neq — ordering does not apply to a BOOLEAN column' })
+        // Ordering a JSON cell's raw text has no defined meaning either — JSON_PATH_EQ is
+        // the only comparison this type supports beyond eq/neq/exists/not_exists.
+        case FieldType.JSON:
+            throw uninterpretableOperand({ field, operator, value, expected: 'eq, neq or json_path_eq — ordering does not apply to a JSON column' })
     }
 }
 
@@ -236,7 +307,7 @@ function isEmptyCell(value: unknown): boolean {
     return isNil(value) || value === ''
 }
 
-function uninterpretableOperand({ field, operator, value, expected }: { field: Field, operator: OrderingOperator, value: string, expected: string }): QadamFlowError {
+function uninterpretableOperand({ field, operator, value, expected }: { field: Field, operator: OrderingOperator | FilterOperator.CO, value: string, expected: string }): QadamFlowError {
     const name = truncate(field.name)
     const message = `Filter "${operator}" on column "${name}" needs ${expected}, but got "${truncate(value)}". Column "${name}" is of type ${field.type}.`
     return new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
@@ -279,6 +350,10 @@ export type CellPredicate =
     | { kind: 'notIn', values: string[] }
     | { kind: 'exists' }
     | { kind: 'notExists' }
+    // Restricted to a JSON column by construction (compileFilter only assigns this to a
+    // JSON_PATH_EQ filter on a FieldType.JSON field). record-query.ts scopes its pushdown
+    // further still, to string-typed leaves only — see the comment there.
+    | { kind: 'jsonPathEq', path: string, value: string }
 
 export type CompiledFilter = {
     fieldId: string

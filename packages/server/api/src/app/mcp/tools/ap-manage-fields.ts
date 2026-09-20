@@ -1,17 +1,19 @@
-import { FieldType, isNil, McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
+import { FieldType, isNil, MAX_KEY_FIELDS, McpToolDefinition, Permission, ProjectScopedMcpServer } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { fieldService } from '../../tables/field/field.service'
+import { tableService } from '../../tables/table/table.service'
 import { mcpUtils } from './mcp-utils'
 import { fieldTypeSchema, formatFieldInfo } from './table-utils'
 
 const manageFieldsInput = z.object({
     tableId: z.string().describe('The table ID'),
-    operation: z.enum(['ADD', 'UPDATE', 'DELETE']).describe('ADD a new field, UPDATE (rename) an existing field, or DELETE a field'),
+    operation: z.enum(['ADD', 'UPDATE', 'DELETE', 'DECLARE_KEY', 'CLEAR_KEY']).describe('ADD a new field, UPDATE (rename) an existing field, DELETE a field, DECLARE_KEY to set the table\'s unique business key (#409), or CLEAR_KEY to remove it'),
     fieldId: z.string().optional().describe('The field ID (required for UPDATE and DELETE). Use ap_list_tables to find it.'),
     name: z.string().optional().describe('Field name (required for ADD and UPDATE)'),
     type: fieldTypeSchema.optional().describe('Field type (required for ADD only)'),
     options: z.array(z.string()).optional().describe('Dropdown options (required for ADD with STATIC_DROPDOWN type)'),
+    keyFieldIds: z.array(z.string()).max(MAX_KEY_FIELDS).optional().describe('Field IDs that together form the table\'s unique business key (required for DECLARE_KEY). A field that is part of the current key cannot be deleted until CLEAR_KEY runs first.'),
 })
 
 export const apManageFieldsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -23,9 +25,20 @@ export const apManageFieldsTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
         annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {
             try {
-                const { tableId, operation, fieldId, name, type, options } = manageFieldsInput.parse(args)
+                const { tableId, operation, fieldId, name, type, options, keyFieldIds } = manageFieldsInput.parse(args)
 
                 switch (operation) {
+                    case 'DECLARE_KEY': {
+                        if (isNil(keyFieldIds) || keyFieldIds.length === 0) {
+                            return { content: [{ type: 'text', text: '❌ keyFieldIds is required for DECLARE_KEY operation' }] }
+                        }
+                        const table = await tableService.declareKey({ projectId: mcp.projectId, id: tableId, keyFieldIds })
+                        return { content: [{ type: 'text', text: `✅ Key declared on table "${table.name}": ${table.keyFieldIds?.join(', ')}` }] }
+                    }
+                    case 'CLEAR_KEY': {
+                        const table = await tableService.clearKey({ projectId: mcp.projectId, id: tableId })
+                        return { content: [{ type: 'text', text: `✅ Key cleared on table "${table.name}"` }] }
+                    }
                     case 'ADD': {
                         if (isNil(name)) {
                             return { content: [{ type: 'text', text: '❌ name is required for ADD operation' }] }

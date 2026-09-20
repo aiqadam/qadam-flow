@@ -20,6 +20,10 @@ export const Table = z.object({
     externalId: z.string(),
     status: NullableEnum(TableAutomationStatus),
     trigger: NullableEnum(TableAutomationTrigger),
+    // The declared business key (#409) — a field-id set whose materialised `record.keyValue`
+    // is enforced by a partial unique index (`record(projectId, tableId, keyValue) WHERE
+    // keyValue IS NOT NULL`). `null` until a table opts in via `POST /v1/tables/:id/key`.
+    keyFieldIds: Nullable(z.array(z.string())),
 })
 
 export type Table = z.infer<typeof Table>

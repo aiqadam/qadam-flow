@@ -8,6 +8,7 @@ import {
   Edit2,
   Import,
   FileJson,
+  KeyRound,
   Lock,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -45,6 +46,7 @@ import { tablesUtils } from '../utils/utils';
 
 import { useTableState } from './ap-table-state-provider';
 import { ImportTableDialog } from './import-table-dialog';
+import { ManageTableKeyDialog } from './manage-table-key-dialog';
 
 interface ApTableHeaderProps {
   onBack: () => void;
@@ -75,6 +77,7 @@ export function ApTableHeader({
     state.deleteRecords,
   ]);
   const [isImportTableDialogOpen, setIsImportTableDialogOpen] = useState(false);
+  const [isManageKeyDialogOpen, setIsManageKeyDialogOpen] = useState(false);
   const [isEditingTableName, setIsEditingTableName] = useState(false);
   const { project } = projectCollectionUtils.useCurrentProject();
   const lockedByOtherUser = useTableState((state) => state.lockedByOtherUser);
@@ -155,6 +158,13 @@ export function ApTableHeader({
                   <DropdownMenuItem onSelect={downloadCsv}>
                     <Download className="mr-2 h-4 w-4" />
                     {t('Download Data')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => setIsManageKeyDialogOpen(true)}
+                    disabled={!canEdit}
+                  >
+                    <KeyRound className="mr-2 h-4 w-4" />
+                    {t('Unique Key')}
                   </DropdownMenuItem>
                   <PermissionNeededTooltip hasPermission={canEdit}>
                     <ConfirmationDeleteDialog
@@ -264,6 +274,10 @@ export function ApTableHeader({
           onImportSuccess={() => window.location.reload()}
         />
       </div>
+      <ManageTableKeyDialog
+        open={isManageKeyDialogOpen}
+        onOpenChange={setIsManageKeyDialogOpen}
+      />
     </>
   );
 }
