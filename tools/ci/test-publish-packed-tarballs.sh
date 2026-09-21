@@ -259,6 +259,15 @@ else
     check "release.yml and publish-packages.yml carry the same publishing job" "identical" "they differ"
 fi
 
+# The loop below names its two files, so a THIRD copy of the publishing job would be pinned by
+# nothing at all — and #498's deliberate duplication is exactly what makes a third one
+# plausible: whoever needs a hotfix publish path will copy the job again. Demonstrated: a
+# `hotfix-publish.yml` carrying the job plus a step curling the token out passed all 45
+# assertions. This is the list, so adding a caller means adding it here too.
+check "no third copy of the publishing job exists" "publish-packages.yml release.yml" \
+    "$(cd "$REPO_ROOT/.github/workflows" && grep -l '^  publish-framework-packages:' ./*.yml \
+        | sed 's#^\./##' | sort | tr '\n' ' ' | sed 's/ $//')"
+
 # Equality alone is only a drift detector: an edit applied IDENTICALLY to both copies passes
 # it. The properties below are the ones #486 bought, asserted positively on each copy so that
 # symmetric damage is caught too. Review's phrasing, worth keeping: the difference between a
@@ -313,11 +322,12 @@ for wf in release.yml publish-packages.yml; do
     #
     # Counted from `steps:` rather than over the whole job, because `needs:` sits at the same
     # depth and rewriting it from flow to block style is a semantically identical reformat that
-    # would otherwise read as a sixth step. And it bounds how many steps there are, not what
+    # would otherwise read as a sixth step. The anchor is a prefix, not an exact match: a
+    # trailing comment or a trailing space on the `steps:` line would otherwise read as zero. And it bounds how many steps there are, not what
     # they do: editing the BODY of a step that legitimately exists is invisible here, as it is
     # to the other assertions. Pinning bodies is a different and much heavier tool.
     check "$wf's publishing job has exactly the five expected steps" "5" \
-        "$(printf '%s\n' "$job" | sed -n '/^    steps:$/,$p' | grep -cE '^      - ' || true)"
+        "$(printf '%s\n' "$job" | sed -n '/^    steps:/,$p' | grep -cE '^      - ' || true)"
 
     # #486: the job holding the token installs nothing and resolves no binary out of
     # node_modules/.bin. A build step appearing here is the regression that split bought.
