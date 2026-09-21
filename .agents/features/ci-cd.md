@@ -17,10 +17,23 @@ any of their versions.
 
 Publishing them is **decoupled from the release tag** (#496): a `v*` tag publishes whatever is
 current as a side effect of releasing the engine, and `publish-packages.yml` publishes without
-a release. Both call the same reusable workflow, so they cannot drift. The publishing half sits
-behind the `npm-publish` GitHub Environment and its required reviewers, and reads `NPM_TOKEN`
-as an **environment** secret on that environment — a repository secret of the same name would
-not resolve into a reusable workflow.
+a release. Both call the same reusable workflow for **packing**, so the expensive half cannot
+drift. The **publishing** half is duplicated in each of them on purpose (#498): environment
+secrets do not resolve inside a reusable workflow — measured, and reported against
+actions/runner since 2021 — so a shared publishing job reads `NPM_TOKEN` as an empty string.
+
+`NPM_TOKEN` therefore belongs on the `npm-publish` GitHub Environment and **nowhere else**.
+Do not move it to repository scope to "fix" an empty-token failure: every workflow in the repo
+can read a repository secret, including the ones that install and build the third-party
+dependency graph on a pull request, and the environment's required reviewers would then gate
+the timing of the publish rather than the credential. `tools/ci/test-publish-packed-tarballs.sh`
+pins the two copies of the publishing job equal, and pins on each copy the properties #486
+bought: the `npm-publish` environment, the shared publisher script as the job's last step, a
+credential-less checkout, `id-token: write`, and an allowlist of the three actions the job may
+use. The step count is pinned too, so adding a step to this job is a deliberate edit rather
+than a drive-by, and so is adding a third copy of the job to a third workflow. It also greps
+the job for install and package-runner invocations — that one is a denylist, so read it as
+"no install we know how to spell", and read the regex in the file before relying on it.
 
 ## Key Files
 - `Dockerfile` — single source of truth for the production image (multi-stage: `base → build → run`)
@@ -28,8 +41,10 @@ not resolve into a reusable workflow.
 - `.github/workflows/release.yml` — tagged release builds (`v*`): Docker image, `:latest`, GitHub Release
 - `.github/workflows/publish-packages.yml` — manual (`workflow_dispatch`) npm publish, no release (#496)
 - `.github/workflows/_verify.yml` — reusable lint + typecheck + unit-test gate, called by the three above
-- `.github/workflows/_publish-framework-packages.yml` — reusable pack-then-publish for the three
-  `@aiqadam` framework packages, called by `release.yml` and `publish-packages.yml`
+- `.github/workflows/_pack-framework-packages.yml` — reusable build-and-pack for the three
+  `@aiqadam` framework packages, called by `release.yml` and `publish-packages.yml`. The
+  publishing job is deliberately NOT shared: environment secrets do not resolve inside a
+  reusable workflow, so each caller carries its own (#498)
 - `.github/workflows/pr-title.yml` — semantic PR-title enforcement
 - `.github/workflows/cleanup.yml` — scheduled cleanup of old workflow runs
 

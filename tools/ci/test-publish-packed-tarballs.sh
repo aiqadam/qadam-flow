@@ -196,12 +196,12 @@ check "the marker fixture above uses the name the producer actually writes" "PAC
 # DOWNLOAD step carries too — the looser range swept in a third, unrelated `path:` and the
 # check failed on its own extraction rather than on the property.
 #
-# The file moved in #496: both jobs now live in the reusable workflow that release.yml and
-# publish-packages.yml call, so pinning release.yml would pin a file that no longer contains
-# an upload step at all — and `sed` over a file with no match prints nothing, which is the
-# failure mode this suite's own docs warn about. The emptiness check below is what turns that
-# into a red test rather than a vacuous pass.
-WORKFLOW="$REPO_ROOT/.github/workflows/_publish-framework-packages.yml"
+# The file has moved twice: out of release.yml in #496, then again in #498 when the PUBLISHING
+# job went back into each caller and only packing stayed reusable. Pinning the wrong file would
+# pin one with no upload step in it — and `sed` over a file with no match prints nothing, which
+# is the failure mode this suite's own docs warn about. The existence check and the
+# exactly-one-line check below are what turn that into a red test rather than a vacuous pass.
+WORKFLOW="$REPO_ROOT/.github/workflows/_pack-framework-packages.yml"
 [ -f "$WORKFLOW" ] || { echo "FAIL: $WORKFLOW does not exist"; exit 1; }
 upload_block="$(sed -n '/- name: Upload the packed tarballs/,/retention-days/p' "$WORKFLOW")"
 upload_path="$(printf '%s\n' "$upload_block" | sed -n 's/^ *path: //p')"
@@ -216,6 +216,179 @@ esac
 sh_name="$(sed -n 's/^PUBLISH_ORDER_FILENAME="\(.*\)"$/\1/p' "$REPO_ROOT/tools/ci/publish-packed-tarballs.sh")"
 check "the producer and the consumer agree on the manifest filename" "$ts_name" "$sh_name"
 check "and that name is not empty (so the check above is not vacuous)" "publish-order.txt" "$ts_name"
+
+# The publishing job is duplicated in release.yml and publish-packages.yml on purpose (#498):
+# `environment:` only resolves its secrets in a job that lives in the workflow the event
+# triggered, so it cannot move into the reusable packing workflow, and passing the token down
+# instead would force it to repository scope where every workflow can read it. Duplication
+# chosen deliberately still drifts, and the half that drifts silently is the one nobody runs
+# until a release — so the two copies are pinned equal here, comments excluded because each
+# carries its own lead paragraph.
+# Both halves of the terminator were found by review, each by executing an attack rather than
+# by reading:
+#
+#   /^[^[:space:]]/      a COLUMN-0 key. Without it nothing stopped the scan at a top-level
+#                        block, so appending one after the last job in publish-packages.yml
+#                        (where this job is last and awk otherwise runs to EOF) made the two
+#                        extractions differ while the jobs were identical — a failure on the
+#                        wrong property, the same self-inflicted class the upload-path check
+#                        above already suffered once.
+#   /^  [^[:space:]#]/   the next JOB key, and deliberately not a two-space COMMENT. With a
+#                        bare `[^ ]` the scan stopped at the first such comment inside the job
+#                        body: one comment line added to both files, plus an exfiltrating
+#                        `run:` below it in both, and every assertion here stayed green.
+#
+# The trailing greps drop comments and blanks, so over-capturing the comment block that
+# precedes the next job key costs nothing.
+extract_publish_job() {
+    awk '
+        /^  publish-framework-packages:$/                  { inside = 1; print; next }
+        inside && (/^[^[:space:]]/ || /^  [^[:space:]#]/)  { inside = 0 }
+        inside                                             { print }
+    ' "$1" | grep -vE '^[[:space:]]*#' | grep -vE '^[[:space:]]*$'
+}
+release_job="$(extract_publish_job "$REPO_ROOT/.github/workflows/release.yml")"
+dispatch_job="$(extract_publish_job "$REPO_ROOT/.github/workflows/publish-packages.yml")"
+release_job_lines="$(printf '%s\n' "$release_job" | grep -c . || true)"
+check "the publishing job was actually found in release.yml (guards a vacuous compare below)" \
+    "yes" "$([ "$release_job_lines" -gt 20 ] && echo yes || echo "no: only $release_job_lines lines")"
+if [ "$release_job" = "$dispatch_job" ]; then
+    check "release.yml and publish-packages.yml carry the same publishing job" "identical" "identical"
+else
+    printf 'publishing job drift:\n%s\n' "$(diff <(printf '%s\n' "$release_job") <(printf '%s\n' "$dispatch_job") || true)"
+    check "release.yml and publish-packages.yml carry the same publishing job" "identical" "they differ"
+fi
+
+# The loop below names its two files, so a THIRD copy of the publishing job would be pinned by
+# nothing at all — and #498's deliberate duplication is exactly what makes a third one
+# plausible: whoever needs a hotfix publish path will copy the job again. Demonstrated: a
+# `hotfix-publish.yml` carrying the job plus a step curling the token out passed all 45
+# assertions. This is the list, so adding a caller means adding it here too.
+#
+# Both extensions: Actions reads `.yaml` as well, and the first spelling of this guard globbed
+# only `./*.yml`, so the same copy named `hotfix-publish.yaml` walked straight past the check
+# added to catch it. It keys on the job NAME, so a renamed or quoted key still evades — that is
+# the limit of a text grep and the reason the real control is the environment's policy.
+check "the publishing job appears only in release.yml and publish-packages.yml" \
+    "publish-packages.yml release.yml" \
+    "$(cd "$REPO_ROOT/.github/workflows" \
+        && grep -l '^  publish-framework-packages:' ./*.yml ./*.yaml 2>/dev/null \
+        | sed 's#^\./##' | sort | tr '\n' ' ' | sed 's/ $//')"
+
+# Equality alone is only a drift detector: an edit applied IDENTICALLY to both copies passes
+# it. The properties below are the ones #486 bought, asserted positively on each copy so that
+# symmetric damage is caught too. Review's phrasing, worth keeping: the difference between a
+# drift detector and a control.
+for wf in release.yml publish-packages.yml; do
+    job="$(extract_publish_job "$REPO_ROOT/.github/workflows/$wf")"
+
+    # The environment is what makes the secret resolve at all and what summons the required
+    # reviewer. Deleting it is the single edit that would silently turn the publish into an
+    # unreviewed one.
+    check "$wf's publishing job still declares the npm-publish environment" "npm-publish" \
+        "$(printf '%s\n' "$job" | sed -n 's/^    environment: //p')"
+
+    # The anchor: without it, a copy whose final step was replaced in BOTH files still looks
+    # identical and still has an environment.
+    check "$wf's publishing job still runs the shared publisher script" "yes" \
+        "$(printf '%s\n' "$job" | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
+
+    # `contains` alone would pass a token-reading step APPENDED after the publish, so the
+    # publisher must also be the LAST step. Two spellings of that were tried and both were
+    # wrong. `tail -1` pinned the job's last text line, so `run:` written before `env:` — an
+    # equally common key order — reddened every PR in the repo (this suite gates _verify.yml,
+    # which ci.yml, release.yml and publish-packages.yml all call). Counting
+    # `^      - (name|uses):` headers after the publisher then missed every other first key a
+    # step may carry: `- run:`, `- id:`, `- if:` and `- env:` all appended cleanly, and
+    # anchoring the range on the FIRST mention of the script path meant merely naming that path
+    # in the credential check's error text moved the anchor and reddened the suite.
+    #
+    # So: find the last step header and the last occurrence of the invocation, and require the
+    # invocation to fall inside that final step. Any first key works, prose mentioning the path
+    # earlier is harmless, and multi-line `run: |` bodies are fine.
+    #
+    # `last > 0` is the whole assertion, not a detail. Step headers are matched at a literal
+    # six spaces, so re-indenting the `steps:` sequence to the zero-indent block style — legal
+    # YAML, and what yamlfmt and prettier emit by default — leaves `last` at 0, and without
+    # this clause `hit >= 0` would then be unconditionally true and the check silently
+    # permanent-green. A reformat now reddens it loudly instead, which is the trade this file
+    # already makes at the `path:` and job-found guards above.
+    check "$wf's publishing job runs the shared publisher script as its last step" "yes" \
+        "$(printf '%s\n' "$job" | awk -v needle='tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' '
+            /^      - /        { last = NR }
+            index($0, needle)  { hit = NR }
+            END                { print (hit > 0 && last > 0 && hit >= last) ? "yes" : "no" }
+        ')"
+
+    # The last-step check above still passes if the appended step's own body happens to repeat
+    # the invocation — an exfiltrating `run:` with it in a trailing comment does, and so does an
+    # ordinary job-summary step echoing the command it ran. Pinning the count closes that, and
+    # every other appended-step shape, without caring about first keys or bodies at all.
+    # Bumping this number when a step is legitimately added is the point: a new step in the one
+    # job that holds the publish credential should cost a line of review.
+    #
+    # Counted from `steps:` rather than over the whole job, because `needs:` sits at the same
+    # depth and rewriting it from flow to block style is a semantically identical reformat that
+    # would otherwise read as a sixth step. The anchor is a prefix, not an exact match: a
+    # trailing comment or a trailing space on the `steps:` line would otherwise read as zero.
+    #
+    # And it bounds how many steps there are, not what they do: editing the BODY of a step that
+    # legitimately exists is invisible here, as it is to the other assertions. Pinning bodies is
+    # a different and much heavier tool.
+    check "$wf's publishing job has exactly the five expected steps" "5" \
+        "$(printf '%s\n' "$job" | sed -n '/^    steps:/,$p' | grep -cE '^      - ' || true)"
+
+    # #486: the job holding the token installs nothing and resolves no binary out of
+    # node_modules/.bin. A build step appearing here is the regression that split bought.
+    # Spell the package managers out as a matrix rather than listing the two or three
+    # invocations that happen to be on the mind of whoever last edited this: an earlier
+    # version named `bun install`, `npm ci` and `bunx` but not `npm install` or `bun x`, which
+    # is the plainest spelling of the very property the assertion is named for. Anything
+    # FLAG-SHAPED between the manager and the verb is allowed for, so `npm -g install` and
+    # `npm --prefix /tmp install` are caught alongside the `npm install -g` that was once the
+    # only spelling caught — but a gap of arbitrary words is not, because that made a step
+    # renamed "Publish to npm and add the dist-tag" red. The one-letter verbs `i` and `x` stay
+    # adjacent-only: nobody writes `npm --prefix /tmp i`, and a gap before a single letter
+    # matches far too much prose. Every package-manager branch carries a left boundary — the
+    # three literal alternatives do not need one — and it is `[^[:alnum:]_]` rather than
+    # whitespace: whitespace alone dropped `bash -c "npm install evil"`, `cd /tmp;npm install`
+    # and `echo $(npm install evil)`, which are ordinary shell, while still excluding the
+    # alphanumeric predecessor that made `apt` match inside "ad*apt*".
+    #
+    # It stays a denylist, and a denylist is never complete — a piped `curl | sh`, or an
+    # `npm \` continuation with the verb on the next line, are in reach of anyone who wants
+    # them. It is a regression detector for the accident, not a barrier against the adversary;
+    # the barrier is the environment's deployment-branch and reviewer policy. It scans the
+    # job's whole text, so the words `no npm install here` in a step NAME or a `run:` body
+    # redden it; a full-line YAML comment does not, because the extractor strips those.
+    check "$wf's publishing job installs nothing and runs no npx" "clean" \
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(^|[^[:alnum:]_])(npm|pnpm|yarn|bun)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|ci|add|exec|dlx)([[:space:]]|$)|(^|[^[:alnum:]_])(npm|pnpm|yarn|bun)[[:space:]]+(i|x)([[:space:]]|$)|(^|[^[:alnum:]_])yarn[[:space:]]*$|(^|[^[:alnum:]_])(npx|bunx|turbo)([[:space:]]|$)|(^|[^[:alnum:]_])(pipx|pip3?|gem|brew|apt(-get)?|apk)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
+
+    # A text scan over `run:` cannot see an install that arrives as a composite action, so the
+    # set of actions is an allowlist rather than a denylist. A check that silently DROPS what
+    # it is meant to catch is worse than no check, and this one managed that twice: first by
+    # requiring `<name>@<ref>`, which skipped a version-less local action, then by requiring
+    # `uses:` to be the dash key, which skipped the `- name:` / `uses:` form that 28 of this
+    # repo's own steps are written in. So match `uses:` at any indent with or without the dash,
+    # then strip quotes, trailing comments and the version separately — a routine
+    # actions/checkout bump must not redden this, a fourth action must. Deliberately wide: a
+    # `uses:` line inside a `with:` value or a heredoc is counted too and shows up as a loud,
+    # diffable mismatch. Narrowing the pattern is what produced the two silent drops above.
+    check "$wf's publishing job uses only the three expected actions" \
+        "actions/checkout actions/download-artifact actions/setup-node" \
+        "$(printf '%s\n' "$job" \
+            | sed -nE 's/^[[:space:]]+(- )?uses:[[:space:]]+//p' \
+            | sed -E 's/["'"'"']//g; s/[[:space:]]*#.*//; s/@.*//; s/[[:space:]]+$//' \
+            | sort -u | tr '\n' ' ' | sed 's/ $//')"
+
+    # A job holding an npm publish token has no business also holding a git one.
+    check "$wf's publishing job checks out without git credentials" "yes" \
+        "$(printf '%s\n' "$job" | grep -qF 'persist-credentials: false' && echo yes || echo no)"
+
+    # --provenance cannot mint an attestation without it.
+    check "$wf's publishing job still requests the OIDC token for --provenance" "yes" \
+        "$(printf '%s\n' "$job" | grep -qE '^      id-token: write$' && echo yes || echo no)"
+done
 
 echo ""
 echo "=== Results ==="

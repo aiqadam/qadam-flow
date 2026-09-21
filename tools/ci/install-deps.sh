@@ -6,7 +6,7 @@
 #
 # Every installing job (`_verify.yml`'s `verify`; `ci.yml`'s `integration-run`,
 # `e2e` and `pack-smoke`; `release.yml`'s `release-migrations`;
-# `_publish-framework-packages.yml`'s `pack-framework-packages`) calls this so
+# `_pack-framework-packages.yml`'s `pack-framework-packages`) calls this so
 # the retry semantics cannot drift
 # between them. It runs AFTER `actions/cache/restore`, and it always runs
 # `bun install --frozen-lockfile` even on a cache hit.

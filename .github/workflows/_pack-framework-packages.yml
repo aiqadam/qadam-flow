@@ -1,61 +1,64 @@
-name: Publish framework packages
+name: Pack framework packages
 
-# Reusable pack-then-publish for the three framework packages every qadam depends on
-# through the bun workspace protocol. Extracted from release.yml for the same reason
-# _verify.yml was (#64): two callers that must not drift.
+# Reusable build-and-pack for the three framework packages every qadam depends on through
+# the bun workspace protocol. Produces tarballs and a publish-order manifest as an artifact;
+# publishing them is the caller's job, literally. Extracted for the same reason _verify.yml
+# was (#64): two callers that must not drift.
 #
-# WHO CALLS THIS, AND WHY THERE ARE TWO (#496). Until this extraction the only way any
-# of the three reached npm was `on: push: tags: ['v*']` in release.yml — and in this
-# repo that tag is not a neutral "a release happened" signal, it IS the engine release:
-# it moves the Docker `:latest` tag every `run.sh` install resolves to, and cuts a
-# GitHub Release. #475 originally specified exactly that ("rather than inventing a
-# second release trigger") and the instruction was wrong: it made publishing a
-# `0.135.0` library require declaring a `2.0.0` product release, because
-# `version-tag-gate` pins the tag to the root package.json version while the three
-# packages version independently of it. The callers now are:
+# WHO CALLS THIS: release.yml on a `v*` tag, and publish-packages.yml on workflow_dispatch.
+# See release.yml for why the tag path is gated the way it is, and publish-packages.yml for
+# why a manual publish exists at all (#496).
 #
-#   * release.yml, on a `v*` tag — unchanged behaviour, still behind verify /
-#     breaking-change-gate / version-tag-gate, still skipped for a prerelease tag.
-#     Cutting a release still publishes whatever is current.
-#   * publish-packages.yml, on workflow_dispatch — publishing without a release.
+# WHY PACKING IS REUSABLE AND PUBLISHING IS NOT (#498). This is the half worth sharing: ten
+# steps, a node_modules cache restore, an install, a build and every pre-publish check. The
+# publishing half is four steps of plumbing around tools/ci/publish-packed-tarballs.sh, and
+# it is copied into each caller instead, for a reason that is not stylistic.
 #
-# WHAT A CALLER MUST PROVIDE, because none of it can be recovered here:
+# Environment secrets do not resolve inside a called workflow. Measured twice on this repo:
+# `NPM_TOKEN` stored on the `npm-publish` environment, that environment's required-reviewers
+# gate firing correctly (so the environment IS bound), and `${{ secrets.NPM_TOKEN }}` still
+# interpolating to the empty string — blank in the runner's env dump, not the `***` a real
+# secret is masked to. Reported against actions/runner since 2021 (#1490, #3206, #4453), never
+# answered by GitHub. The docs sentence that seems to promise otherwise ("If you include
+# `environment` in the reusable workflow at the job level, the environment secret will be
+# used, and not the secret passed from the caller workflow") is a PRECEDENCE rule for when the
+# caller passes a same-named secret; it never promised resolution when the caller passes none.
+# That misreading is what put the publishing job in here in the first place.
 #
-#   * `permissions: { contents: read, id-token: write }` on the calling job.
-#     `--provenance` needs the OIDC token, and permissions can be narrowed but never
-#     widened on the way down the chain, so a caller that omits id-token leaves the
-#     publishing job unable to mint an attestation. The per-job blocks below narrow
-#     from there: the packing job takes `contents: read` only.
-#   * Whatever preconditions that trigger implies. This workflow gates on nothing by
-#     itself — the ancestry check below is its only inherent refusal, and it establishes
-#     "this commit was merged into main", NOT "this is main's tip". A caller whose trigger
-#     can name an arbitrary ref has to pin freshness itself or it can publish an old
-#     version over a newer `latest`; see publish-packages.yml's `default-branch-gate` for
-#     the argument in full. release.yml does not need one: version-tag-gate already pins
-#     the tag to the root package.json version.
+# The way out is not to pass the secret down. A caller's `uses:` job cannot declare
+# `environment:` — it is absent from the documented keyword list — so the caller could only
+# resolve `NPM_TOKEN` from REPOSITORY or ORGANIZATION scope, which makes it readable by every
+# workflow in the repository. The required-reviewers gate would then protect the timing of the
+# publish and nothing about the token itself. Keeping the publishing job in the caller keeps
+# the token environment-scoped, which is what makes #486's split worth anything — the split
+# itself is about the job holding the credential not installing or building, and a token every
+# workflow can read would leave that split guarding a credential already available elsewhere.
 #
-# WHAT IT DOES NOT NEED: `secrets: inherit`. `NPM_TOKEN` is an **environment** secret
-# on `npm-publish`, and GitHub resolves environment secrets from the called workflow's
-# own job-level `environment:` key — the docs are explicit that they "cannot be passed
-# from the caller workflow as `on.workflow_call` does not support the `environment`
-# keyword". So the caller passes no secrets at all, and the packing job stays in a
-# scope where there is no credential to inherit. The flip side is that a repository
-# secret of the same name would NOT resolve here; the publishing job asserts the token
-# is non-empty before it touches the registry rather than letting that surface as an
-# npm 401 after a human already approved the deployment.
+# WHAT A CALLER MUST PROVIDE:
 #
-# NO `concurrency` GROUP HERE, and that is a decision about the TAG path. Two runs racing
-# to publish the same version is not a corruption risk — packagePrePublishChecks skips
-# anything already published at its current version, and the loser gets a 403 on a version
-# that genuinely exists — and a group declared in this file would be shared by both callers,
+#   * `permissions: { contents: read }` on the calling job. This half needs nothing else, and
+#     deliberately holds no credential: it is where `bun install` and `npx turbo` run.
+#   * Whatever preconditions its trigger implies. This workflow gates on nothing by itself —
+#     the ancestry check below is its only inherent refusal, and it establishes "this commit
+#     was merged into main", NOT "this is main's tip". A caller whose trigger can name an
+#     arbitrary ref has to pin freshness itself or it can publish an old version over a newer
+#     `latest`; see publish-packages.yml's `default-branch-gate` for the argument in full.
+#     release.yml does not need one: version-tag-gate already pins the tag to the root
+#     package.json version.
+#   * A publishing job downstream of this one. `tools/ci/publish-packed-tarballs.sh` and the
+#     `npm-framework-packages` artifact name are the contract between the two halves;
+#     tools/ci/test-publish-packed-tarballs.sh pins the artifact's shape against this file.
+#
+# NO `concurrency` GROUP HERE, and that is a decision about the TAG path. Two runs racing to
+# publish the same version is not a corruption risk — packagePrePublishChecks skips anything
+# already published at its current version, and the loser gets a 403 on a version that
+# genuinely exists — and a group declared in this file would be shared by both callers,
 # letting a run parked on the `npm-publish` approval gate block the queue behind it, with
-# GitHub cancelling the older pending run when a third arrives. A `v*` tag is rare, visible
-# and expensive to create, so that trade is wrong for release.yml.
-#
-# It is the right trade for a dispatch, which anyone with write can fire in a loop, so
-# publish-packages.yml declares its own group on its calling job. Keeping it there rather
-# than here is what lets the two paths differ; a future caller should make the same choice
-# explicitly rather than inherit either default.
+# GitHub cancelling the older pending run when a third arrives. A `v*` tag is rare, visible and
+# expensive to create, so that trade is wrong for release.yml. It is the right trade for a
+# dispatch, which anyone with write can fire in a loop, so publish-packages.yml declares its
+# own group at WORKFLOW level — not on a job, which would leave a second run's packing free to
+# interleave between this run's packing and publishing.
 on:
   workflow_call:
 
@@ -103,9 +106,12 @@ jobs:
   # finds the version already on the registry and skips. Two that overlap are a different case
   # and are not prevented — see the concurrency paragraph above for why that is left alone.
   #
-  # WHY TWO JOBS (#486). The npm packages are minted once and cannot be re-pushed the way a
-  # GHCR tag can, so the step that holds the publish token does not get to also install
-  # dependencies, run a build, or resolve a binary out of `node_modules/.bin`. `pack-…`
+  # WHY PACKING AND PUBLISHING ARE SEPARATE JOBS (#486). The npm packages are minted once and
+  # cannot be re-pushed the way a GHCR tag can, so the job that holds the publish token does
+  # not get to also install dependencies, run a build, or resolve a binary out of
+  # `node_modules/.bin`. The publishing job is not in this file — #498 moved it into each
+  # caller, where `environment:` resolves its secrets — but the split is the same one and the
+  # reasoning below is why it exists. `pack-…`
   # restores the node_modules cache, installs, builds and runs every pre-publish check, then
   # stops at `npm pack` and uploads the tarballs; `publish-…` downloads exactly those bytes
   # and uploads them. Two properties follow that the single-job shape could not have:
@@ -118,7 +124,8 @@ jobs:
   #   * The exact bytes that went to npm are downloadable and diffable by a human from the
   #     run's artifacts. Nobody could do that when pack and publish were one step.
   #
-  # The publishing job deliberately does NOT install: `tools/ci/publish-packed-tarballs.sh`
+  # The publishing job in each caller deliberately does NOT install:
+  # `tools/ci/publish-packed-tarballs.sh`
   # needs nothing but `npm` itself, so no `npx` ever prepends `node_modules/.bin` to PATH in
   # the one step where a long-lived publish token is readable. It also publishes from the
   # artifact directory under RUNNER_TEMP rather than from the checkout, because npm's project
@@ -170,7 +177,7 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
-      # The automatic half of the human gate on the publishing job below, and the only thing
+      # The automatic half of the human gate on the publishing job in each caller, and the only thing
       # this workflow refuses by itself: it stops on any ref whose commit is not reachable by
       # walking backward from `origin/main`'s current tip — i.e. a commit that was never
       # actually merged into main, regardless of who pushed the tag or dispatched the run, or
@@ -264,98 +271,3 @@ jobs:
           # The bytes that went to npm, kept as long as Actions allows, so "what exactly did
           # we publish for v2.1.0" is answerable without unpacking it back off the registry.
           retention-days: 90
-
-  publish-framework-packages:
-    name: Publish framework packages to npm
-    # No `if:` here. It carried `result == 'success'` — not `success()`, which stays true for
-    # a SKIPPED `needs:` and would have started this job with no artifact to download — back
-    # when the prerelease skip sat on `pack-framework-packages` itself. That skip is the
-    # caller's now and `pack-framework-packages` has no condition of its own, so within this
-    # workflow it cannot be skipped: a caller that skips the call skips both jobs together,
-    # and the guard has nothing left to catch.
-    needs: [pack-framework-packages]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Requires a GitHub Environment named `npm-publish` to exist (Settings → Environments)
-    # with required reviewers configured, and `NPM_TOKEN` stored as an ENVIRONMENT secret on
-    # it — see this file's header for why a repository secret of the same name resolves to
-    # the empty string here instead.
-    #
-    # Whatever a caller gates on constrains the tree's QUALITY, not its PROVENANCE, and that
-    # is true of both callers. On the tag path none of verify/breaking-change-gate/
-    # version-tag-gate assert the tagged commit was ever reviewed, breaking-change-gate is
-    # deliberately tagger-overridable by design (see its own header), and `on: push: tags`
-    # runs whatever release.yml says at the tagged commit regardless of who pushed the tag.
-    # Anyone with `contents: write` — a collaborator, a leaked PAT, a compromised Action —
-    # could otherwise push a tag at a commit that never touched `main` and publish
-    # `@aiqadam/shared`, the transitive root of every qadam, to public npm at `latest` with
-    # no human in the loop. The dispatch path replaces "can push a tag" with "can start a
-    # workflow_dispatch run", which is the same set of credentials, so it needs the same
-    # control for the same reason — and it clears two of the three gates, which makes the
-    # human the load-bearing one rather than a formality.
-    #
-    # A required-reviewers environment is the one control in Actions that interposes a human
-    # between "a run started" and "the publish secret is readable". The ancestry check in the
-    # packing job is a second, automatic layer underneath it, not a replacement for it.
-    environment: npm-publish
-    permissions:
-      contents: read
-      # For --provenance: npm exchanges this job's OIDC token for a signed attestation tying
-      # the published tarball to this workflow run and commit. libnpmpublish builds that
-      # attestation from the Actions environment (GITHUB_REPOSITORY / GITHUB_SHA /
-      # GITHUB_REF / GITHUB_WORKFLOW_REF) and the tarball's own digest, never from a working
-      # tree — which is why it still works with nothing installed here.
-      id-token: write
-    steps:
-      # Shallow and credential-less, for one file: tools/ci/publish-packed-tarballs.sh. No
-      # install runs here and nothing is built, so there is no node_modules for an `npx` to
-      # resolve a shimmed `npm` out of. `persist-credentials: false` because a job holding an
-      # npm publish token has no business also holding a git one.
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-
-      # `registry-url` + `scope` write an npmrc to $RUNNER_TEMP and export NPM_CONFIG_USERCONFIG
-      # for the rest of the job, which npm honours from any cwd. That generated npmrc's auth
-      # line is `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, so the secret has to be
-      # exported under exactly that name below — NPM_TOKEN is what the secret is called in
-      # Settings → Environments → npm-publish; NODE_AUTH_TOKEN is what npm's own generated
-      # config reads.
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: 'https://registry.npmjs.org'
-          scope: '@aiqadam'
-
-      # Into RUNNER_TEMP, deliberately OUTSIDE the checkout: npm resolves its project config
-      # from the nearest ancestor holding a package.json or a node_modules, and project config
-      # outranks the userconfig setup-node just wrote. Downloading these into the workspace
-      # would put the repo-root .npmrc — whose auth line names NPM_TOKEN, not NODE_AUTH_TOKEN —
-      # in front of the one that carries the credential. The script asserts this rather than
-      # trusting it.
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-framework-packages
-          path: ${{ runner.temp }}/npm-packages
-
-      # `secrets.NPM_TOKEN` interpolates to the empty string rather than failing when the
-      # secret is not readable, and the first thing that would notice is npm answering 401 —
-      # after a human has already approved the deployment, in the one job whose failures are
-      # most expensive to diagnose from logs. The realistic way to get there is storing
-      # NPM_TOKEN as a repository secret instead of an environment secret on `npm-publish`:
-      # a called workflow receives no repository secrets unless the caller passes them, and
-      # neither caller does (see this file's header for why not). Cheap to assert, so assert
-      # it — and name the fix in the message rather than leaving a 401 to be interpreted.
-      - name: Check the publish credential is readable
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo '::error::NPM_TOKEN resolved to an empty string. It must be an ENVIRONMENT secret on the npm-publish environment (Settings -> Environments -> npm-publish -> Secrets), not a repository secret: this is a reusable workflow, and repository secrets are not passed to one unless the caller opts in.'
-            exit 1
-          fi
-
-      - name: Publish the packed tarballs to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
