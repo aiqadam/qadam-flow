@@ -21,6 +21,11 @@ export const workerSuiteTeardown = {
      * budget it can fit in. Note vitest's own `hookTimeout` is 60s (vitest.config.ts), so this is a
      * tightening, not a relaxation — raising it past 60s would do nothing.
      *
+     * The floor is not the 12-30ms, though: `worker.stop()` waits up to POLL_LOOP_SHUTDOWN_GRACE_MS
+     * (5s) for a poll loop that is mid-job, so the worst case this code can produce is ~5s plus
+     * `app.close()`. 15s is ~3x that, not ~500x — which is the number to reason from if anyone
+     * lowers this further.
+     *
      * If this starts failing, measure which phase grew before touching the number. #464 raised
      * 15s to 30s without measuring and the same failure returned within one suite's worth of
      * growth.

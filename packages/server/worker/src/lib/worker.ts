@@ -1,4 +1,5 @@
 import { createServer } from 'http'
+import { setMaxListeners } from 'node:events'
 import os from 'os'
 import { apVersionUtil, systemUsage } from '@aiqadam/server-utils'
 import {
@@ -20,7 +21,7 @@ import {
 } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { nanoid } from 'nanoid'
-import { Logger } from 'pino'
+import type { Logger } from 'pino'
 import { io, Socket } from 'socket.io-client'
 import { qadamInstaller } from './cache/qadams/qadam-installer'
 import { getApiUrl, system, WorkerSystemProp } from './config/configs'
@@ -97,6 +98,9 @@ let pollingWorkers: Promise<void> | null = null
  * `longPollingHost.stop()` in the API.
  */
 const POLL_LOOP_SHUTDOWN_GRACE_MS = 5_000
+
+/** Node's own default; kept as headroom so a genuine listener leak still trips the warning. */
+const DEFAULT_MAX_LISTENERS = 10
 
 export const worker = {
     async start({ apiUrl, socketUrl, workerToken, withHealthServer = false }: WorkerStartParams): Promise<void> {
@@ -213,10 +217,21 @@ async function awaitPollLoops(): Promise<void> {
     }
     const loops = pollingWorkers
     pollingWorkers = null
-    await Promise.race([
-        loops.catch(() => undefined),
-        sleep(POLL_LOOP_SHUTDOWN_GRACE_MS),
-    ])
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
+    try {
+        await Promise.race([
+            loops.catch(() => undefined),
+            // Cleared below and unref'd meanwhile: a grace that loses the race must not keep the
+            // event loop alive for its remaining 5s, which in the CE suites outlives the hook.
+            new Promise<void>((resolve) => {
+                graceTimer = setTimeout(resolve, POLL_LOOP_SHUTDOWN_GRACE_MS)
+                graceTimer.unref()
+            }),
+        ])
+    }
+    finally {
+        clearTimeout(graceTimer)
+    }
 }
 
 /**
@@ -271,7 +286,9 @@ function scheduleReconnect(): void {
 }
 
 async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void> {
-    if (polling) return
+    // A `connect` that lands after `stop()` would otherwise start loops against an aborted
+    // controller, where every poll returns instantly and the loop spins on the CPU.
+    if (stopped || polling) return
     polling = true
 
     const generation = connectionGeneration
@@ -289,6 +306,10 @@ async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void
     }
     const proxyPort = egressStack?.proxyPort ?? null
     sandboxManagers = Array.from({ length: concurrency }, (_, i) => createSandboxManager({ boxId: i + 1, proxyPort }))
+
+    // One `abort` listener per loop lives on the shared signal at a time. Node warns past 10, so
+    // size the budget to the loops actually running rather than disabling the leak check outright.
+    setMaxListeners(concurrency + DEFAULT_MAX_LISTENERS, stopController.signal)
 
     logger.info({ concurrency }, 'Starting polling workers')
 

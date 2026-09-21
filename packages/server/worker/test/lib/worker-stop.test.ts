@@ -104,6 +104,8 @@ describe('worker.stop() — #500', () => {
     afterEach(async () => {
         await worker.stop()
         delete process.env['AP_WORKER_CONCURRENCY']
+        delete process.env['AP_FRONTEND_URL']
+        delete process.env['AP_CONTAINER_TYPE']
         await new Promise<void>((resolve) => {
             ioServer.close(() => resolve())
         })
