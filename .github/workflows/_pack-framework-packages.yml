@@ -1,9 +1,14 @@
 name: Pack framework packages
 
-# Reusable build-and-pack for the three framework packages every qadam depends on through
-# the bun workspace protocol. Produces tarballs and a publish-order manifest as an artifact;
+# Reusable build-and-pack for everything this repo publishes to npm: the three framework
+# packages every qadam depends on through the bun workspace protocol, and — since #476 — the 238
+# official qadams themselves. Produces tarballs and a publish-order manifest as an artifact;
 # publishing them is the caller's job, literally. Extracted for the same reason _verify.yml
 # was (#64): two callers that must not drift.
+#
+# The file, the job and the artifact are all still named for the three. Renaming them would be a
+# lockstep edit across both callers and the assertions that pin those two copies equal, for no
+# behavioural gain on the one path in this repo that cannot be undone; see the upload step.
 #
 # WHO CALLS THIS: release.yml on a `v*` tag, and publish-packages.yml on workflow_dispatch.
 # See release.yml for why the tag path is gated the way it is, and publish-packages.yml for
