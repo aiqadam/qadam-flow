@@ -20,6 +20,7 @@ import {
 } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { nanoid } from 'nanoid'
+import { Logger } from 'pino'
 import { io, Socket } from 'socket.io-client'
 import { qadamInstaller } from './cache/qadams/qadam-installer'
 import { getApiUrl, system, WorkerSystemProp } from './config/configs'
@@ -631,5 +632,5 @@ type RunPollLoopParams = {
     sbManager: SandboxManager
     workerIndex: number
     generation: number
-    workerLog: ReturnType<typeof logger.child>
+    workerLog: Logger
 }

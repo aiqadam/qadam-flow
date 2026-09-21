@@ -93,28 +93,13 @@ jobs:
           --filter=@aiqadam/qadam-delay
           --filter=@aiqadam/qadam-subflows
 
-      # First and cheap: the three suites with nothing else in the run. Establishes the floor cost
-      # of each teardown phase, unloaded. Runs before the full suite so a `--bail 1` stop in the
-      # full suite cannot cost us this baseline.
-      - name: Measure the three worker suites in isolation
-        working-directory: packages/server/api
-        run: |
-          set -uo pipefail
-          export $(cat .env.tests | xargs)
-          for i in 1 2 3; do
-            echo "::group::isolated iteration $i"
-            npx vitest run \
-              test/integration/ce/flows/flow-run/golden-path.test.ts \
-              test/integration/ce/flows/flow-run/execute-flow-e2e.test.ts \
-              test/integration/ce/qadams/qadam-options-e2e.test.ts \
-              --no-file-parallelism --passWithNoTests=false || echo "ITERATION $i FAILED"
-            echo "::endgroup::"
-          done
-
-      # Then the real thing: the full 71-file suite, serial against one Postgres, which is the load
+      # The full 71-file suite, serial against one Postgres, which is the load
       # that produced the timeouts in the issue. The failure is roughly one run in three, so one
       # pass is a coin toss — repeat until a run stalls and the watchdog dumps what it was holding.
       # Never fails the step: the stalled iteration is the datum, not an error.
+      #
+      # The isolated three-suite iterations are gone: three rounds of them never once stalled, so
+      # they cost 3 minutes a run to re-confirm that an unloaded teardown is fast.
       #
       # `vitest` directly rather than `turbo run test-ce`, for one reason: `test-ce` passes
       # `--bail 1`, and an unrelated flake in `tables/record.test.ts` (it asserts a whole JSON body

@@ -19,6 +19,9 @@ import { WaitpointStatus } from './waitpoint/waitpoint-types'
 
 let runsMetadataWorker: Worker<RunsMetadataJobData> | undefined = undefined
 
+/** TEMPORARY (#500 measurement): whether a job is in flight when close() is called. */
+let activeRunsMetadataJobs = 0
+
 const queue = runsMetadataQueueFactory({ createRedisConnection: redisConnections.create, distributedStore })
 
 export const runsMetadataQueue = (log: FastifyBaseLogger) => ({
@@ -35,38 +38,16 @@ export const runsMetadataQueue = (log: FastifyBaseLogger) => ({
         runsMetadataWorker = new Worker<RunsMetadataJobData>(
             queueName,
             async (job) => {
-                log.info({
-                    jobId: job.id,
-                    runId: job.data.runId,
-                }, '[runsMetadataQueue#worker] Saving runs metadata')
-                const key = redisMetadataKey(job.data.runId)
-                await distributedLock(log).runExclusive({
-                    key: `runs_metadata_${job.data.runId}`,
-                    timeoutInSeconds: 30,
-                    fn: async () => {
-                        try {
-                            await drainRunsMetadataUpdates({ log, job, key })
-                            // Released only after the updates are durably stored: uploads that
-                            // merged into the hash while this job was active are picked up by
-                            // the drain loop instead of fanning out into duplicate jobs.
-                            // (BullMQ also clears the key on finalization; this covers the
-                            // success path explicitly. It is deliberately not cleared on
-                            // failure, so uploads during the retry backoff coalesce into the
-                            // pending retry, which re-reads the hash.)
-                            await runsMetadataQueue(log).get().removeDeduplicationKey(job.data.runId)
-                            await reenqueueWhenUpdatesArrivedLate({ log, job, key })
-                        }
-                        catch (error) {
-                            log.error({
-                                error,
-                                data: job.data,
-                            }, '[runsMetadataQueue#worker] Error saving runs metadata')
-                            exceptionHandler.handle(error, log)
-                            throw error
-                        }
-                    },
-                })
-
+                activeRunsMetadataJobs++
+                process.stdout.write(`[teardown-timing] runsMetadataQueue/job START runId=${job.data.runId} active=${activeRunsMetadataJobs}\n`)
+                const jobStartedAt = Date.now()
+                try {
+                    await runRunsMetadataJob({ log, job })
+                }
+                finally {
+                    activeRunsMetadataJobs--
+                    process.stdout.write(`[teardown-timing] runsMetadataQueue/job ${Date.now() - jobStartedAt}ms runId=${job.data.runId} active=${activeRunsMetadataJobs}\n`)
+                }
             },
             {
                 connection: await redisConnections.create(),
@@ -92,15 +73,56 @@ export const runsMetadataQueue = (log: FastifyBaseLogger) => ({
     },
     async close(): Promise<void> {
         if (queue.get()) {
+            process.stdout.write(`[teardown-timing] runsMetadataQueue/queue.close START (activeJobs=${activeRunsMetadataJobs})\n`)
+            const queueStartedAt = Date.now()
             await queue.get().close()
+            process.stdout.write(`[teardown-timing] runsMetadataQueue/queue.close ${Date.now() - queueStartedAt}ms\n`)
         }
 
         if (runsMetadataWorker) {
+            process.stdout.write(`[teardown-timing] runsMetadataQueue/worker.close START (activeJobs=${activeRunsMetadataJobs})\n`)
+            const workerStartedAt = Date.now()
             await runsMetadataWorker.close()
+            process.stdout.write(`[teardown-timing] runsMetadataQueue/worker.close ${Date.now() - workerStartedAt}ms (activeJobs=${activeRunsMetadataJobs})\n`)
         }
     },
 
 })
+
+async function runRunsMetadataJob({ log, job }: RunRunsMetadataJobParams): Promise<void> {
+    log.info({
+        jobId: job.id,
+        runId: job.data.runId,
+    }, '[runsMetadataQueue#worker] Saving runs metadata')
+    const key = redisMetadataKey(job.data.runId)
+    await distributedLock(log).runExclusive({
+        key: `runs_metadata_${job.data.runId}`,
+        timeoutInSeconds: 30,
+        fn: async () => {
+            try {
+                await drainRunsMetadataUpdates({ log, job, key })
+                // Released only after the updates are durably stored: uploads that
+                // merged into the hash while this job was active are picked up by
+                // the drain loop instead of fanning out into duplicate jobs.
+                // (BullMQ also clears the key on finalization; this covers the
+                // success path explicitly. It is deliberately not cleared on
+                // failure, so uploads during the retry backoff coalesce into the
+                // pending retry, which re-reads the hash.)
+                await runsMetadataQueue(log).get().removeDeduplicationKey(job.data.runId)
+                await reenqueueWhenUpdatesArrivedLate({ log, job, key })
+            }
+            catch (error) {
+                log.error({
+                    error,
+                    data: job.data,
+                }, '[runsMetadataQueue#worker] Error saving runs metadata')
+                exceptionHandler.handle(error, log)
+                throw error
+            }
+        },
+    })
+
+}
 
 const MAX_DRAIN_ITERATIONS = 10
 
@@ -340,6 +362,11 @@ type MarkParentRunAsFailedParams = {
     childRunId: string
     projectId: string
     log: FastifyBaseLogger
+}
+
+type RunRunsMetadataJobParams = {
+    log: FastifyBaseLogger
+    job: Job<RunsMetadataJobData>
 }
 
 type DrainRunsMetadataParams = {
