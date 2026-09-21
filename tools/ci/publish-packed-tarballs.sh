@@ -5,10 +5,10 @@
 #
 #   tools/ci/publish-packed-tarballs.sh <directory>
 #
-# This is the second half of the split #486 asked for. The first half
-# (release.yml's `pack-framework-packages`) installs, builds, runs every pre-publish check
-# and produces the tarballs; this half runs in the job that holds the publish token and does
-# nothing but upload bytes it did not produce. Three properties come out of that separation,
+# This is the second half of the split #486 asked for. The first half —
+# `pack-framework-packages`, in .github/workflows/_publish-framework-packages.yml — installs,
+# builds, runs every pre-publish check and produces the tarballs; this half runs in the job
+# that holds the publish token and does nothing but upload bytes it did not produce. Three properties come out of that separation,
 # and each is asserted here rather than left to the job's shape:
 #
 #   ORDER. `pack-framework-packages` emits shared, then framework, then common — the

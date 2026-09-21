@@ -106,7 +106,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   // The first guard, here, stops this call from publishing. Note what it does NOT stop, and why
   // the second one below exists: `packDestination` no longer means "this run stops short of the
   // registry". Since the split it means "this is the PACK HALF of a publish", so satisfying this
-  // guard is exactly what adding the flag to release.yml's pack step would do. That would put
+  // guard is exactly what adding the flag to the real pack step would do. That would put
   // all three tarballs in the manifest regardless of publish state, and a re-run after a partial
   // publish — the case packagePrePublishChecks exists for — would 403 on the first already-
   // published package and abort before the ones that still needed publishing.
@@ -176,7 +176,7 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
 
   // Pack and dry run are the same operation with a different destination: stage `dist`, run
   // every check above, produce the tarball, stop short of the registry. They share this branch
-  // deliberately — release.yml's `pack-framework-packages` job hands its tarball to a separate
+  // deliberately — the `pack-framework-packages` job hands its tarball to a separate
   // publishing job (#486), and if that artifact were produced by a code path `--dry-run` does
   // not exercise, a local dry run would stop being evidence about the release.
   //
@@ -207,13 +207,14 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     // unpublishable by convention. tools/ci/publish-packed-tarballs.sh refuses any directory
     // entry its manifest does not declare, so this marker aborts it before it publishes anything
     // out of a directory packed with the guards off — including across the artifact upload and
-    // download between release.yml's two jobs, which is why the name is not a dotfile.
+    // download between the two jobs of _publish-framework-packages.yml, which is why the name is
+    // not a dotfile.
     // ci.yml's `pack-smoke` reads only the manifest and is unaffected.
     //
     // What this is: a stop on maintainer error and on this flag drifting from ci.yml's smoke job
-    // into release.yml. What it is not: a control against anyone who can edit release.yml, who
-    // could equally delete this write or widen the sweep. The required-reviewers `npm-publish`
-    // environment remains the actual provenance control.
+    // into the real pack step. What it is not: a control against anyone who can edit that
+    // workflow, who could equally delete this write or widen the sweep. The required-reviewers
+    // `npm-publish` environment remains the actual provenance control.
     if (skipRegistryCheck) {
       writeFileSync(
         join(destination, SKIP_REGISTRY_CHECK_MARKER),

@@ -189,17 +189,25 @@ ts_name="$(sed -n "s/^const PUBLISH_ORDER_FILENAME = '\\(.*\\)'.*/\\1/p" "$REPO_
 ts_marker="$(sed -n "s/^const SKIP_REGISTRY_CHECK_MARKER = '\\(.*\\)'.*/\\1/p" "$REPO_ROOT/tools/scripts/utils/publish-npm-package.ts")"
 check "the marker fixture above uses the name the producer actually writes" "PACKED-WITH-SKIP-REGISTRY-CHECK" "$ts_marker"
 
-# The marker only reaches the publishing job because release.yml uploads the pack directory
-# whole. An enumerated `path:` would drop it and silently undo the protection above, with this
-# suite still green — so the shape of that one line is pinned here rather than left to a comment.
-# Anchored on the step name, not on `name: npm-framework-packages`, which the DOWNLOAD step
-# carries too — the looser range swept in a third, unrelated `path:` and the check failed on
-# its own extraction rather than on the property.
-upload_block="$(sed -n '/- name: Upload the packed tarballs/,/retention-days/p' "$REPO_ROOT/.github/workflows/release.yml")"
+# The marker only reaches the publishing job because the packing job uploads the pack
+# directory whole. An enumerated `path:` would drop it and silently undo the protection above,
+# with this suite still green — so the shape of that one line is pinned here rather than left
+# to a comment. Anchored on the step name, not on `name: npm-framework-packages`, which the
+# DOWNLOAD step carries too — the looser range swept in a third, unrelated `path:` and the
+# check failed on its own extraction rather than on the property.
+#
+# The file moved in #496: both jobs now live in the reusable workflow that release.yml and
+# publish-packages.yml call, so pinning release.yml would pin a file that no longer contains
+# an upload step at all — and `sed` over a file with no match prints nothing, which is the
+# failure mode this suite's own docs warn about. The emptiness check below is what turns that
+# into a red test rather than a vacuous pass.
+WORKFLOW="$REPO_ROOT/.github/workflows/_publish-framework-packages.yml"
+[ -f "$WORKFLOW" ] || { echo "FAIL: $WORKFLOW does not exist"; exit 1; }
+upload_block="$(sed -n '/- name: Upload the packed tarballs/,/retention-days/p' "$WORKFLOW")"
 upload_path="$(printf '%s\n' "$upload_block" | sed -n 's/^ *path: //p')"
 upload_path_count="$(printf '%s\n' "$upload_path" | grep -c . || true)"
 check "exactly one path: line was read out of the upload step" "1" "$upload_path_count"
-check "release.yml uploads the pack directory whole, so the marker is in the artifact" \
+check "the packing job uploads the pack directory whole, so the marker is in the artifact" \
     "\${{ runner.temp }}/npm-packages" "$upload_path"
 case "$ts_marker" in
   .*) check "the marker is not a dotfile (upload-artifact drops those)" "not-a-dotfile" "dotfile" ;;

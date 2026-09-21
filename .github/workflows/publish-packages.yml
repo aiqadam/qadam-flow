@@ -1,0 +1,58 @@
+name: Publish packages
+
+# Publishing the framework packages WITHOUT cutting a release (#496).
+#
+# WHY THIS FILE EXISTS. release.yml runs on `on: push: tags: ['v*']`, and in this repo that
+# tag is the engine release: `build` -> `publish` pushes the Docker manifest, moves `:latest`
+# (the tag every `run.sh` install resolves to) and cuts a GitHub Release. Hanging the npm
+# publish off the same event — which is what #475 originally specified — made the two
+# inseparable, so `@aiqadam/shared` could not reach the registry without shipping a product
+# release nobody asked for. `version-tag-gate` sharpens it: it pins the tag to the root
+# package.json version, currently `2.0.0`, while the three packages version independently
+# (`shared` 0.135.0, `qadams-framework` 0.32.1, `qadams-common` 0.14.1) — so publishing a
+# 0.135.0 library would have meant declaring a 2.0.0 product release. release.yml's own
+# header already called the image and the packages "independent artifacts for independent
+# consumers"; that had been applied to the failure direction only, never to the trigger.
+#
+# WHAT THIS IS NOT. Not a second copy of the pipeline: both entry points call the same
+# _publish-framework-packages.yml, for the same reason _verify.yml exists (#64). Not a way
+# around the human gate either — the called workflow's publishing job sits behind the
+# `npm-publish` environment and its required reviewers, same as on the tag path.
+#
+# WHY NO breaking-change-gate AND NO version-tag-gate, the two release.yml gates missing
+# here. Both are statements about a tag. version-tag-gate compares `github.ref_name` to the
+# root package.json version, and there is no tag on a dispatch. breaking-change-gate reads
+# commit subjects since the previous tag and demands an entry in
+# docs/install/configuration/breaking-changes.mdx, which is about the ENGINE release a tag
+# performs — it says nothing about whether `@aiqadam/shared` changed compatibly, and running
+# it here would fail dispatches for breaking changes to a Docker image this run does not
+# touch. What is left is `verify` (the tarball is built from this tree, so this tree has to
+# lint, typecheck and pass unit tests) plus the two controls that actually bound a publish:
+# the called workflow's `origin/main` ancestry check, and the environment reviewers.
+#
+# A BREAKING CHANGE TO THE PACKAGES is therefore on the person dispatching, as it is on the
+# person tagging. The check that would make it automatic does not exist yet; #475's third
+# deliverable (the version-bump policy now that these numbers are public) is where it belongs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Not gated on a path filter and not skippable: this is the only thing standing between a
+  # manual dispatch and a permanent npm release, and it is cheap next to an unretractable
+  # publish. ci.yml has already run it on the merge commit, but a dispatch can name any ref
+  # the ancestry check accepts, which is not necessarily one ci.yml saw green.
+  verify:
+    uses: ./.github/workflows/_verify.yml
+
+  framework-packages:
+    needs: [verify]
+    # Same ceiling as release.yml's call: `id-token: write` has to be granted here because
+    # permissions narrow but never widen down the chain, and `--provenance` needs the OIDC
+    # token. See _publish-framework-packages.yml for why no `secrets:` are passed.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/_publish-framework-packages.yml

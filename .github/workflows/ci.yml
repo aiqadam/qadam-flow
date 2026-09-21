@@ -220,6 +220,12 @@ jobs:
           # `tools/` whole rather than tools/scripts/ + tools/ci/, because tsconfig.tools.json is
           # in neither and the script runs under it.
           #
+          # The two publish workflows joined the list when #496 split the pack and publish jobs
+          # out of release.yml into _publish-framework-packages.yml: that file is what
+          # tools/ci/test-publish-packed-tarballs.sh reads the upload `path:` shape out of, and
+          # publish-packages.yml is the second caller whose wiring can break independently of
+          # release.yml's.
+          #
           # Deliberately NOT here: bun.lock, bunfig.toml, .npmrc. The first two only change what
           # the install produces, and `verify` installs on every non-docs PR, so a break is
           # already caught there. `.npmrc` is release-path-relevant for another reason entirely —
@@ -227,7 +233,7 @@ jobs:
           # is about — but `pack-smoke` never publishes and never reads it in that role, and the
           # suite that does pin it runs in `verify`, unconditionally.
           if printf '%s\n' "$changed" \
-            | grep -qE '^(\.github/workflows/(ci|release)\.yml$|tools/|packages/cli/src/lib/utils/|package\.json$|turbo\.json$|tsconfig\.base\.json$|packages/shared/package\.json$|packages/qadams/(framework|common)/package\.json$)'; then
+            | grep -qE '^(\.github/workflows/(ci|release|publish-packages|_publish-framework-packages)\.yml$|tools/|packages/cli/src/lib/utils/|package\.json$|turbo\.json$|tsconfig\.base\.json$|packages/shared/package\.json$|packages/qadams/(framework|common)/package\.json$)'; then
             emit true
           fi
 
