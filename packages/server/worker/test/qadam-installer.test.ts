@@ -16,6 +16,7 @@ let officialQadamsInstallEnabled = false
 
 const mockInstall = vi.fn()
 const mockVerifyOfficialQadams = vi.fn()
+const mockReadRefusedLockfileKeys = vi.fn()
 
 vi.mock('../src/lib/cache/code/bun-runner', () => ({
     bunRunner: () => ({
@@ -32,6 +33,7 @@ vi.mock('../src/lib/cache/code/bun-runner', () => ({
 vi.mock('../src/lib/cache/qadams/qadam-integrity', () => ({
     qadamIntegrity: () => ({
         verifyOfficialQadams: mockVerifyOfficialQadams,
+        readRefusedLockfileKeys: mockReadRefusedLockfileKeys,
     }),
 }))
 
@@ -138,6 +140,10 @@ beforeEach(async () => {
     mockInstall.mockReset()
     mockVerifyOfficialQadams.mockReset()
     mockVerifyOfficialQadams.mockResolvedValue(undefined)
+    mockReadRefusedLockfileKeys.mockReset()
+    // A non-empty set by default, so a test asserting the hand-off cannot pass on an installer
+    // that quietly makes its own empty one.
+    mockReadRefusedLockfileKeys.mockResolvedValue(new Set(['@aiqadam/already-broken']))
 })
 
 afterEach(async () => {
@@ -454,6 +460,7 @@ describe('qadamInstaller', () => {
         expect(mockVerifyOfficialQadams).toHaveBeenCalledWith({
             rootWorkspace: testWorkspace,
             installed: [official],
+            refusedBeforeInstall: new Set(['@aiqadam/already-broken']),
         })
         expect(readyExistedDuringVerification).toBe(false)
         expect(await pathExists(readyFilePath(official))).toBe(true)
@@ -509,5 +516,42 @@ describe('qadamInstaller', () => {
 
         expect(mockVerifyOfficialQadams).not.toHaveBeenCalled()
         expect(await pathExists(readyFilePath(custom))).toBe(true)
+    })
+
+    // The pre-install reading is the only thing that can tell an entry THIS install wrote from one
+    // that was already in the shared workspace, and the two get different answers — so it has to
+    // happen before `bun install`, not after. Read it afterwards and every refusal looks
+    // pre-existing, which is the fail-open the batch rule it replaced already had.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — reads the refused keys before bun install runs', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        const order: string[] = []
+        mockReadRefusedLockfileKeys.mockImplementation(async () => {
+            order.push('read')
+            return new Set<string>()
+        })
+        mockInstall.mockImplementation(async (params: { path: string, filtersPath: string[] }) => {
+            order.push('install')
+            return simulateBunInstall(params)
+        })
+
+        await installer.install({ pieces: [official], includeFilters: true })
+
+        expect(order).toEqual(['read', 'install'])
+    })
+
+    // Off the flag as well as the verification itself. With the flag off nothing verifies, so the
+    // read would be a file stat and a JSONC parse bought for nothing on every custom install.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED off — does not read the lockfile either', async () => {
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [custom], includeFilters: true })
+
+        expect(mockReadRefusedLockfileKeys).not.toHaveBeenCalled()
     })
 })

@@ -95,8 +95,13 @@ function packumentFor(signatures: { sig: string, keyid: string }[]): { data: unk
 // `installed` defaults to empty — most cases are about what the guard reads out of the lockfile,
 // and an empty batch is the honest way to say "nothing here is what this install is introducing".
 // The cases that turn on the batch pass it explicitly.
-async function verify(workspace: string, installed: QadamPackage[] = []): Promise<void> {
-    return qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace, installed })
+//
+// `refusedBeforeInstall` defaults to empty, which says "the lockfile carried no unverifiable entry
+// before this install ran" — so anything unverifiable the guard now finds was introduced here.
+// That is the conservative default, and the cases about a pre-existing squatter say otherwise
+// explicitly rather than getting it by omission.
+async function verify(workspace: string, installed: QadamPackage[] = [], refusedBeforeInstall = new Set<string>()): Promise<void> {
+    return qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace, installed, refusedBeforeInstall })
 }
 
 function officialQadam(name: string, version = '1.0.0'): QadamPackage {
@@ -358,7 +363,11 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             ].join('\n'))
             mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-            await expect(verify(workspace, [officialQadam(SHARED.name, SHARED.version)])).resolves.toBeUndefined()
+            await expect(verify(
+                workspace,
+                [officialQadam(SHARED.name, SHARED.version)],
+                new Set(['@aiqadam/qadam-slack']),
+            )).resolves.toBeUndefined()
         })
 
         it('still names the squatter, and says what to do about it', async () => {
@@ -366,12 +375,48 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
                 '    "@aiqadam/qadam-slack": ["@aiqadam/qadam-slack@/tmp/squatter.tgz", {}, "sha512-whatever"],',
             )
 
-            await verify(workspace)
+            await verify(workspace, [], new Set(['@aiqadam/qadam-slack']))
 
             expect(log.error).toHaveBeenCalledWith(
                 expect.objectContaining({ qadam: '@aiqadam/qadam-slack' }),
                 expect.stringContaining('Rename it'),
             )
+        })
+
+        // "Already there" is read off the pre-install lockfile, not inferred from the batch's
+        // names — and this is the case that separates the two. An official-scope alias arriving as
+        // a TRANSITIVE dependency of a qadam being installed right now carries a name no batch
+        // member has, so a batch-name rule calls it pre-existing and logs it. This install wrote
+        // it, and it fails closed.
+        it('fails an install over an entry it introduced under a name no batch member has', async () => {
+            const workspace = await writeLockfile(
+                '    "@aiqadam/qadam-slack/@aiqadam/shared": ["not-ours@1.0.0", "", {}, "sha512-whatever"],',
+            )
+
+            await expect(verify(workspace, [officialQadam('@aiqadam/qadam-slack')]))
+                .rejects.toThrow(/refusing to install: @aiqadam\/shared \(it is an alias for not-ours/)
+        })
+
+        // The mirror image, and the reason the pre-install read is keyed on the lockfile KEY
+        // rather than on the name: the very same nested entry, already present before this
+        // install, is somebody else's problem to rename and must not fail this batch.
+        it('tolerates that same nested entry when it was already in the lockfile', async () => {
+            const workspace = await writeLockfile(
+                '    "@aiqadam/qadam-slack/@aiqadam/shared": ["not-ours@1.0.0", "", {}, "sha512-whatever"],',
+            )
+
+            await expect(verify(workspace, [], new Set(['@aiqadam/qadam-slack/@aiqadam/shared'])))
+                .resolves.toBeUndefined()
+        })
+
+        // Anything that is not an array is not a shape bun is documented to write. Under an
+        // official-scope key it is refused rather than skipped, for the same reason every other
+        // uninterpretable shape is: "cannot say" must not read as "fine".
+        it('refuses an official-scope key whose entry is not an array at all', async () => {
+            const workspace = await writeLockfile('    "@aiqadam/shared": "not-an-array",')
+
+            await expect(verify(workspace))
+                .rejects.toThrow(/is not an array, so it is not a shape this can verify/)
         })
 
         // ...but a cryptographic refusal is never softened this way. A bad signature is evidence
@@ -394,6 +439,22 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
 
             await expect(verify(workspace, [officialQadam('@aiqadam/qadam-tables', '0.4.0')]))
                 .rejects.toThrow(/refusing to mark @aiqadam\/qadam-tables@0\.4\.0 usable/)
+        })
+
+        // Coverage counts only entries sitting at their own name in the tree. `classifyEntry`
+        // deliberately admits the reverse alias — an out-of-scope KEY with an official-scope SPEC —
+        // so those bytes still get signature-checked, but such an entry says nothing about the
+        // path the loader reads for that official name. Counting it would let any declared
+        // dependency anywhere in the graph satisfy the assertion on a batch member's behalf, which
+        // is the guarantee the assertion exists to make hard.
+        it('does not let a reverse-aliased entry stand in as coverage for a batch member', async () => {
+            const workspace = await writeLockfile(
+                `    "decoy": ["${SHARED.name}@${SHARED.version}", "", {}, "${SHARED.integrity}"],`,
+            )
+            mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+            await expect(verify(workspace, [officialQadam(SHARED.name, SHARED.version)]))
+                .rejects.toThrow(/refusing to mark @aiqadam\/shared@0\.135\.1 usable/)
         })
 
         // A CUSTOM qadam is not this guard's business — it resolves a name an administrator typed,
@@ -454,5 +515,55 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         await verify(honest)
         await expect(verify(substituted)).rejects.toThrow()
         expect(mockGet).toHaveBeenCalledTimes(2)
+    })
+})
+
+// The pre-install half of the same reading. It answers one question — which lockfile keys were
+// ALREADY unverifiable — and the installer asks it before `bun install`, inside the same lock.
+describe('qadamIntegrity.readRefusedLockfileKeys', () => {
+    beforeEach(async () => {
+        vi.clearAllMocks()
+        mockGet.mockReset()
+        vi.resetModules()
+        ;({ qadamIntegrity } = await import('../../../../src/lib/cache/qadams/qadam-integrity'))
+    })
+
+    it('returns the keys of entries that are already unverifiable, and nothing else', async () => {
+        const workspace = await writeLockfile([
+            '    "@aiqadam/qadam-slack": ["@aiqadam/qadam-slack@/tmp/squatter.tgz", {}, "sha512-whatever"],',
+            '    "some-dep/@aiqadam/shared": ["not-ours@1.0.0", "", {}, "sha512-whatever"],',
+            registryEntry(SHARED),
+            registryEntry({ name: 'lodash', version: '4.17.21', integrity: 'sha512-unsigned' }),
+        ].join('\n'))
+
+        const keys = await qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace })
+
+        expect(keys).toEqual(new Set(['@aiqadam/qadam-slack', 'some-dep/@aiqadam/shared']))
+    })
+
+    // It reads the lockfile BEFORE an install, where absence is the ordinary first-install case
+    // rather than the anomaly it is afterwards. Returning empty is the conservative answer: every
+    // refusal the post-install pass then finds counts as introduced, and fails the install.
+    it('returns nothing rather than throwing when there is no lockfile yet', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
+
+        await expect(qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace }))
+            .resolves.toEqual(new Set())
+    })
+
+    it('returns nothing rather than throwing when the lockfile does not parse', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
+        await writeFile(join(workspace, 'bun.lock'), '{ not json at all')
+
+        await expect(qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace }))
+            .resolves.toEqual(new Set())
+    })
+
+    it('never reaches the registry', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+
+        await qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace })
+
+        expect(mockGet).not.toHaveBeenCalled()
     })
 })

@@ -136,6 +136,8 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 qadamPackage: piece,
             })))
 
+            const refusedBeforeInstall = await readRefusalsBeforeInstall({ rootWorkspace, log })
+
             await tracer.startActiveSpan('qadamInstaller.bunInstall', async (span) => {
                 try {
                     span.setAttribute('qadams.count', qadamsToInstall.length)
@@ -147,7 +149,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     }))
 
                     if (isNil(batchError)) {
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, refusedBeforeInstall, span, log })
                         log.info({
                             rootWorkspace,
                             qadamsCount: qadamsToInstall.length,
@@ -182,7 +184,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     // offender, and does it once.
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, refusedBeforeInstall, span, log })
                     }
 
                     if (failedQadams.length > 0) {
@@ -313,15 +315,31 @@ async function tryInstallQadamsIndividually(
 // a plain custom install too, and verifying them fail-closed would turn a brief registry outage
 // into a failed install where today there is none. The flag is also the documented escape hatch
 // for an npmjs key rotation, which only means anything if it gates this.
-async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, span, log }: {
+// Read immediately before `bun install` and inside the same file lock, so the post-install pass
+// can tell an unverifiable lockfile entry THIS install wrote from one that was already in the
+// shared workspace — the two need different answers, and only the first may fail the install. Off
+// the flag as well as the verification itself: with the flag off nothing verifies, so the read
+// would be a file stat and a JSONC parse bought for nothing on every custom-qadam install.
+async function readRefusalsBeforeInstall({ rootWorkspace, log }: {
+    rootWorkspace: string
+    log: Logger
+}): Promise<Set<string>> {
+    if (!workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
+        return new Set()
+    }
+    return qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace })
+}
+
+async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, refusedBeforeInstall, span, log }: {
     rootWorkspace: string
     installed: QadamPackage[]
+    refusedBeforeInstall: Set<string>
     span: Span
     log: Logger
 }): Promise<void> {
     if (workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
         const { error } = await tryCatch(async () =>
-            qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace, installed }),
+            qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace, installed, refusedBeforeInstall }),
         )
         if (!isNil(error)) {
             span.recordException(error instanceof Error ? error : new Error(String(error)))
