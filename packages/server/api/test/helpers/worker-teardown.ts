@@ -1,76 +1,38 @@
 import { FastifyInstance } from 'fastify'
 import { worker } from '../../../worker/src/lib/worker'
 
-/** Comfortably inside the 30s budget, so the dump lands before vitest kills the hook. */
-const WATCHDOG_AT_MS = 22_000
-
-let inFlightPhase: string | null = null
-
 /**
  * Shared teardown for the three CE suites that start a real worker
  * (golden-path, execute-flow-e2e, qadam-options-e2e).
  *
  * One place, not three literals: #464 raised the budget in two of the three files and #500 then
- * caught the third, so a per-file number is a guess that goes stale silently. The budget here is
- * a policy, and the timings this file prints are what justifies it.
+ * caught the third, so a per-file number is three guesses that drift apart silently.
  */
 export const workerSuiteTeardown = {
-    /** Hook budget for the shared `afterAll` below. Justified by the timings this file prints. */
-    timeoutMs: 30_000,
+    /**
+     * Measured, not guessed. With the runs-metadata re-enqueue loop fixed (#500), the whole
+     * teardown costs 12-30ms across 12 samples under the full 71-file serial suite — the worst
+     * single step, `runsMetadataWorker.close()`, is 0-2ms. Before that fix the same step ranged to
+     * 29476ms against the 30000ms this replaces, which is why the suites failed about one run in
+     * three while every test in them passed.
+     *
+     * 15s is therefore ~500x the measured cost and still small enough to fail fast: a regression of
+     * the class #500 was, where one close stalls for 20s+, trips this instead of hiding inside a
+     * budget it can fit in. Note vitest's own `hookTimeout` is 60s (vitest.config.ts), so this is a
+     * tightening, not a relaxation — raising it past 60s would do nothing.
+     *
+     * If this starts failing, measure which phase grew before touching the number. #464 raised
+     * 15s to 30s without measuring and the same failure returned within one suite's worth of
+     * growth.
+     */
+    timeoutMs: 15_000,
 
     async run({ app }: RunParams): Promise<void> {
-        const watchdog = startWatchdog()
-        try {
-            await timePhase({ phase: 'worker.stop', run: () => worker.stop() })
-            await timePhase({ phase: 'app.close', run: () => app.close() })
-        }
-        finally {
-            clearTimeout(watchdog)
-        }
+        await worker.stop()
+        await app.close()
     },
-}
-
-/**
- * TEMPORARY (#500 measurement). Deliberately `process.stdout.write` rather than the app logger:
- * the suite runs with the API logger quiet, and this has to survive a hook that is about to be
- * killed at the budget, so each phase is flushed as it starts and again as it completes rather
- * than summarised at the end.
- */
-async function timePhase({ phase, run }: TimePhaseParams): Promise<void> {
-    process.stdout.write(`[teardown-timing] ${phase} START\n`)
-    inFlightPhase = phase
-    const startedAt = Date.now()
-    await run()
-    inFlightPhase = null
-    process.stdout.write(`[teardown-timing] ${phase} ${Date.now() - startedAt}ms\n`)
-}
-
-/**
- * TEMPORARY (#500 measurement). The run that matters is the one vitest kills at the budget, and a
- * killed hook prints no completion line at all — so the only way to learn anything from a failing
- * run is to report, from outside the awaits, which phase was still in flight and what the event
- * loop was holding open when it stalled.
- */
-function startWatchdog(): ReturnType<typeof setTimeout> {
-    const timer = setTimeout(() => {
-        const resources = process.getActiveResourcesInfo()
-        const counted = resources.reduce<Record<string, number>>(
-            (acc, name) => ({ ...acc, [name]: (acc[name] ?? 0) + 1 }),
-            {},
-        )
-        process.stdout.write(
-            `[teardown-timing] WATCHDOG stalled in ${inFlightPhase ?? 'nothing'} — active resources: ${JSON.stringify(counted)}\n`,
-        )
-    }, WATCHDOG_AT_MS)
-    timer.unref()
-    return timer
 }
 
 type RunParams = {
     app: FastifyInstance
-}
-
-type TimePhaseParams = {
-    phase: string
-    run: () => Promise<void>
 }

@@ -77,9 +77,6 @@ let egressStack: EgressStack | null = null
 
 let sandboxManagers: SandboxManager[] = []
 
-/** TEMPORARY (#500 measurement): when `stop()` was asked to stop, so the poll loops can report how long they outlived it. */
-let stopRequestedAt: number | null = null
-
 let activePollLoops = 0
 
 /**
@@ -171,7 +168,6 @@ export const worker = {
     },
 
     async stop(): Promise<void> {
-        stopRequestedAt = Date.now()
         stopped = true
         reconnectIsOurs = false
         if (reconnectTimer !== null) {
@@ -180,28 +176,19 @@ export const worker = {
         }
         polling = false
         stopController.abort()
-        process.stdout.write('[teardown-timing] worker.stop/pollLoops START\n')
-        const pollLoopsStartedAt = Date.now()
+        // Before the sandbox managers go: a loop still running is a loop that can still be handed
+        // a job, and it would run it against managers this call has already shut down and dropped.
         await awaitPollLoops()
-        printStopPhase({ phase: 'pollLoops', startedAt: pollLoopsStartedAt })
-        process.stdout.write(`[teardown-timing] worker.stop/sandboxManagers.shutdown START (${sandboxManagers.length} managers)\n`)
-        const sandboxStartedAt = Date.now()
         await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
-        printStopPhase({ phase: 'sandboxManagers.shutdown', startedAt: sandboxStartedAt })
         sandboxManagers = []
-        const socketStartedAt = Date.now()
         socket?.disconnect()
         socket = null
         healthServerInstance?.close()
         healthServerInstance = null
-        printStopPhase({ phase: 'socket.disconnect+healthServer.close', startedAt: socketStartedAt })
-        process.stdout.write('[teardown-timing] worker.stop/egressStack.shutdown START\n')
-        const egressStartedAt = Date.now()
         if (egressStack) {
             await egressStack.shutdown()
             egressStack = null
         }
-        printStopPhase({ phase: 'egressStack.shutdown', startedAt: egressStartedAt })
         logger.info('Worker stopped')
     },
 }
@@ -213,11 +200,6 @@ export const worker = {
  */
 export const workerInternals = {
     activePollLoopCount: (): number => activePollLoops,
-}
-
-/** TEMPORARY (#500 measurement): which await inside `stop()` consumes the suites' teardown budget. */
-function printStopPhase({ phase, startedAt }: { phase: string, startedAt: number }): void {
-    process.stdout.write(`[teardown-timing] worker.stop/${phase} ${Date.now() - startedAt}ms\n`)
 }
 
 /**
@@ -322,14 +304,14 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
     activePollLoops++
 
     try {
-        await runPollLoop({ apiClient, sbManager, workerIndex, generation, workerLog })
+        await runPollLoop({ apiClient, sbManager, generation, workerLog })
     }
     finally {
         activePollLoops--
     }
 }
 
-async function runPollLoop({ apiClient, sbManager, workerIndex, generation, workerLog }: RunPollLoopParams): Promise<void> {
+async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
     while (polling && connectionGeneration === generation) {
         const { data: machineInfo, error: machineError } = await tryCatch(buildMachineInfo)
         if (machineError) {
@@ -356,9 +338,6 @@ async function runPollLoop({ apiClient, sbManager, workerIndex, generation, work
             // `stop()` has just cleared. One exit path, not two.
             whenStopped: null,
         }))
-        if (stopRequestedAt !== null) {
-            process.stdout.write(`[teardown-timing] pollLoop[${workerIndex}] poll returned ${Date.now() - stopRequestedAt}ms after stop was requested — ${pollError ? 'error' : job ? 'job' : 'null'}\n`)
-        }
         if (pollError) {
             workerLog.error({ error: pollError }, 'Poll failed')
             await sleepUnlessStopped(25000)
@@ -368,10 +347,6 @@ async function runPollLoop({ apiClient, sbManager, workerIndex, generation, work
         if (!job) {
             workerLog.debug('Poll returned null, re-polling')
             continue
-        }
-
-        if (stopRequestedAt !== null) {
-            process.stdout.write(`[teardown-timing] pollLoop[${workerIndex}] EXECUTING a job dequeued ${Date.now() - stopRequestedAt}ms after stop was requested — jobType=${job.jobData.jobType}\n`)
         }
 
         workerLog.debug({ jobId: job.jobId, jobType: job.jobData.jobType }, 'Job received from poll')
@@ -408,9 +383,6 @@ async function runPollLoop({ apiClient, sbManager, workerIndex, generation, work
         if (completeError) {
             workerLog.error({ error: completeError, jobId: job.jobId }, 'Failed to complete job')
         }
-    }
-    if (stopRequestedAt !== null) {
-        process.stdout.write(`[teardown-timing] pollLoop[${workerIndex}].exit ${Date.now() - stopRequestedAt}ms-after-stop-requested\n`)
     }
 }
 
@@ -630,7 +602,6 @@ type RaceStopRequestParams<T> = {
 type RunPollLoopParams = {
     apiClient: WorkerToApiContract
     sbManager: SandboxManager
-    workerIndex: number
     generation: number
     workerLog: Logger
 }
