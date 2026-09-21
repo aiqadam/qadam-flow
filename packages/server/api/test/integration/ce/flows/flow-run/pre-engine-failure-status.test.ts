@@ -151,6 +151,43 @@ describe('Pre-engine failure status (#434)', () => {
         expect(run?.logsFileId).toBeNull()
     })
 
+    // The abandon path, and the reason #500 kept recurring. `processRunsMetadataUpdate` used to
+    // return here without consuming the snapshot it had just read, so the re-enqueue at the end of
+    // the job saw a non-empty hash and added another job, which abandoned it again — a permanent
+    // hot loop, one job every few milliseconds, that saturated the BullMQ worker's main loop and
+    // made `Worker.close()` (which awaits it) take up to 29s of the suites' 30s teardown budget.
+    //
+    // On the unfixed code the hash below never empties and this times out. The sibling case above
+    // covers the unconditional delete; this one carries a `requestId`, so it covers the
+    // compare-and-delete branch.
+    it('consumes the hash when the flow is gone, rather than re-enqueueing forever', async () => {
+        const runId = apId()
+        const key = redisMetadataKey(runId)
+
+        // No flow_run row, and a flowId no flow owns: `flowService.exists` says no, which is the
+        // state every CE suite leaves behind when it truncates between files.
+        await distributedStore.merge(key, {
+            id: runId,
+            projectId: ctx.project.id,
+            flowId: apId(),
+            status: FlowRunStatus.FAILED,
+            finishTime: new Date().toISOString(),
+            requestId: apId(),
+        })
+        await runsMetadataQueue(app.log).get().add(
+            'update-run-metadata',
+            { runId, projectId: ctx.project.id },
+            { deduplication: { id: runId } },
+        )
+
+        await waitForCondition({
+            fn: async () => {
+                const leftover = await distributedStore.hgetJson(key)
+                return leftover === null
+            },
+        })
+    })
+
     it('consumes the hash in one pass when it carries no requestId', async () => {
         const { runId } = await createQueuedRun()
         const key = redisMetadataKey(runId)

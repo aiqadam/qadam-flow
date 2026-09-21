@@ -198,6 +198,23 @@ async function waitForStatus(conversationId: string, status: ChatConversationSta
     throw new Error(`conversation ${conversationId} never reached ${status}`)
 }
 
+/**
+ * `flowService.delete` enqueues the removal and only marks the row DELETING, so the conversation
+ * reaching IDLE says nothing about whether the row is gone — the delete job is still in flight.
+ * Asserting the row is null off the conversation barrier passes only while the delete wins that
+ * race, which is how #500 caught this one failing with `operationStatus: "DELETING"`.
+ */
+async function waitForFlowDeleted({ flowId, because }: { flowId: string, because: string }): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt++) {
+        const row = await db.findOneBy('flow', { id: flowId })
+        if (isNil(row)) {
+            return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error(`${because}: flow ${flowId} was still in the database after 10s`)
+}
+
 async function createFlow(): Promise<{ id: string }> {
     const flow = createMockFlow({ projectId: ctx.project.id })
     await db.save('flow', flow)
@@ -480,7 +497,7 @@ describe('Chat tool approval gates (#264)', () => {
             const firstAnswer = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${requests[0].approvalId}`, { approved: true })
             expect(firstAnswer?.statusCode).toBe(StatusCodes.OK)
             await waitForStatus(conversationId, ChatConversationStatus.IDLE)
-            expect(await db.findOneBy('flow', { id: first.id }), 'the first approval did not execute').toBeNull()
+            await waitForFlowDeleted({ flowId: first.id, because: 'the first approval did not execute' })
 
             const secondAnswer = await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${requests[1].approvalId}`, { approved: true })
 
@@ -502,7 +519,7 @@ describe('Chat tool approval gates (#264)', () => {
             expect(response?.statusCode).toBe(StatusCodes.OK)
             await waitForStatus(conversationId, ChatConversationStatus.IDLE)
 
-            expect(await db.findOneBy('flow', { id: flow.id }), 'the approved delete never ran').toBeNull()
+            await waitForFlowDeleted({ flowId: flow.id, because: 'the approved delete never ran' })
             expect(await readPendingGate(conversationId)).toBeNull()
 
             // What the model is sent on resume. The SDK executes the approved call before the first

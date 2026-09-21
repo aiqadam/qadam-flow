@@ -1,4 +1,5 @@
 import { createServer } from 'http'
+import { setMaxListeners } from 'node:events'
 import os from 'os'
 import { apVersionUtil, systemUsage } from '@aiqadam/server-utils'
 import {
@@ -20,6 +21,7 @@ import {
 } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { nanoid } from 'nanoid'
+import type { Logger } from 'pino'
 import { io, Socket } from 'socket.io-client'
 import { qadamInstaller } from './cache/qadams/qadam-installer'
 import { getApiUrl, system, WorkerSystemProp } from './config/configs'
@@ -76,10 +78,35 @@ let egressStack: EgressStack | null = null
 
 let sandboxManagers: SandboxManager[] = []
 
+let activePollLoops = 0
+
+/**
+ * Aborted by `stop()`. The poll loops park inside a long-poll whose server-side budget is
+ * WAITER_TIMEOUT_MS (50s) and whose client-side RPC timeout is 60s, and they only re-read
+ * `polling` at the head of the `while` — so without something to interrupt the await, "stop
+ * polling" means "stop polling in up to a minute".
+ */
+let stopController = new AbortController()
+
+/** The loops `startPollingWorkers` launched, so `stop()` has something to wait for. */
+let pollingWorkers: Promise<void> | null = null
+
+/**
+ * How long `stop()` waits for its loops before giving up on them. A loop parked in a poll unwinds
+ * at once; one that is mid-`executeJob` can take as long as the job, and a shutdown that blocks on
+ * a running flow is worse than one that abandons it. Same bound, for the same reason, as
+ * `longPollingHost.stop()` in the API.
+ */
+const POLL_LOOP_SHUTDOWN_GRACE_MS = 5_000
+
+/** Node's own default; kept as headroom so a genuine listener leak still trips the warning. */
+const DEFAULT_MAX_LISTENERS = 10
+
 export const worker = {
     async start({ apiUrl, socketUrl, workerToken, withHealthServer = false }: WorkerStartParams): Promise<void> {
         // Reset, so a worker started again after `stop()` can still reconnect.
         stopped = false
+        stopController = new AbortController()
         // The worker group is not sent in the handshake any more: the API reads it from the
         // verified token principal, so a value asserted here would be ignored. AP_WORKER_GROUP_ID
         // still gates the local sandbox-mode checks below, but it no longer selects a group (#207).
@@ -110,7 +137,8 @@ export const worker = {
                 egressStack = data
             }
             void warmupPiecesOnStartup(apiClient)
-            void startPollingWorkers(apiClient).catch((err) => {
+            pollingWorkers = startPollingWorkers(apiClient)
+            void pollingWorkers.catch((err) => {
                 logger.error({ error: err }, 'Polling workers crashed unexpectedly')
             })
         })
@@ -151,6 +179,10 @@ export const worker = {
             reconnectTimer = null
         }
         polling = false
+        stopController.abort()
+        // Before the sandbox managers go: a loop still running is a loop that can still be handed
+        // a job, and it would run it against managers this call has already shut down and dropped.
+        await awaitPollLoops()
         await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
         sandboxManagers = []
         socket?.disconnect()
@@ -163,6 +195,80 @@ export const worker = {
         }
         logger.info('Worker stopped')
     },
+}
+
+/**
+ * Read-only introspection for the shutdown test. `stop()`'s postcondition is that no poll loop is
+ * still running, and that is not observable from outside the module — the loops are launched as
+ * `void startPollingWorkers(...)` and nothing holds them. Nothing in production reads this.
+ */
+export const workerInternals = {
+    activePollLoopCount: (): number => activePollLoops,
+}
+
+/**
+ * Waits for the poll loops to unwind, but never longer than the grace: `stop()` must not hang on a
+ * loop that is mid-job. The loops are cleared afterwards either way, so a second `stop()` does not
+ * wait on a promise that already had its chance.
+ */
+async function awaitPollLoops(): Promise<void> {
+    if (isNil(pollingWorkers)) {
+        return
+    }
+    const loops = pollingWorkers
+    pollingWorkers = null
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
+    try {
+        await Promise.race([
+            loops.catch(() => undefined),
+            // Cleared below and unref'd meanwhile: a grace that loses the race must not keep the
+            // event loop alive for its remaining 5s, which in the CE suites outlives the hook.
+            new Promise<void>((resolve) => {
+                graceTimer = setTimeout(resolve, POLL_LOOP_SHUTDOWN_GRACE_MS)
+                graceTimer.unref()
+            }),
+        ])
+    }
+    finally {
+        clearTimeout(graceTimer)
+    }
+}
+
+/**
+ * Resolves with `whenStopped` as soon as `stop()` is requested, so a parked long-poll does not keep
+ * the loop alive for the rest of its 60s RPC timeout. The losing promise is not abandoned silently
+ * — an unobserved rejection from the poll we walked away from would surface as an unhandled
+ * rejection and, in the API's own test harness, fail an unrelated suite.
+ */
+async function raceStopRequest<T>({ promise, whenStopped }: RaceStopRequestParams<T>): Promise<T> {
+    const { signal } = stopController
+    if (signal.aborted) {
+        promise.catch(() => undefined)
+        return whenStopped
+    }
+    let onAbort: (() => void) | null = null
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((resolve) => {
+                onAbort = (): void => {
+                    promise.catch(() => undefined)
+                    resolve(whenStopped)
+                }
+                signal.addEventListener('abort', onAbort, { once: true })
+            }),
+        ])
+    }
+    finally {
+        if (!isNil(onAbort)) {
+            signal.removeEventListener('abort', onAbort)
+        }
+    }
+}
+
+/** A `sleep` that gives up when `stop()` is requested, so a back-off is not a shutdown delay. */
+function sleepUnlessStopped(ms: number): Promise<void> {
+    return raceStopRequest({ promise: sleep(ms), whenStopped: undefined })
 }
 
 function scheduleReconnect(): void {
@@ -180,7 +286,9 @@ function scheduleReconnect(): void {
 }
 
 async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void> {
-    if (polling) return
+    // A `connect` that lands after `stop()` would otherwise start loops against an aborted
+    // controller, where every poll returns instantly and the loop spins on the CPU.
+    if (stopped || polling) return
     polling = true
 
     const generation = connectionGeneration
@@ -199,6 +307,10 @@ async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void
     const proxyPort = egressStack?.proxyPort ?? null
     sandboxManagers = Array.from({ length: concurrency }, (_, i) => createSandboxManager({ boxId: i + 1, proxyPort }))
 
+    // One `abort` listener per loop lives on the shared signal at a time. Node warns past 10, so
+    // size the budget to the loops actually running rather than disabling the leak check outright.
+    setMaxListeners(concurrency + DEFAULT_MAX_LISTENERS, stopController.signal)
+
     logger.info({ concurrency }, 'Starting polling workers')
 
     const workers = sandboxManagers.map((sbManager, index) =>
@@ -210,12 +322,22 @@ async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void
 async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: SandboxManager, workerIndex: number, generation: number): Promise<void> {
     const workerLog = logger.child({ workerIndex })
     workerLog.info('Polling worker started')
+    activePollLoops++
 
+    try {
+        await runPollLoop({ apiClient, sbManager, generation, workerLog })
+    }
+    finally {
+        activePollLoops--
+    }
+}
+
+async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
     while (polling && connectionGeneration === generation) {
         const { data: machineInfo, error: machineError } = await tryCatch(buildMachineInfo)
         if (machineError) {
             workerLog.error({ error: machineError }, 'Failed to build machine info')
-            await sleep(20000)
+            await sleepUnlessStopped(20000)
             continue
         }
 
@@ -226,14 +348,20 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
             // it is never called — so without a heartbeat the API expires the entry of a worker
             // that is still connected, and loses its version with it (#222).
             socket?.emit(WebsocketServerEvent.WORKER_HEALTHCHECK, machineInfo)
-            await sleep(VERSION_MISMATCH_POLL_PAUSE_MS)
+            await sleepUnlessStopped(VERSION_MISMATCH_POLL_PAUSE_MS)
             continue
         }
 
-        const { data: job, error: pollError } = await tryCatch(() => apiClient.poll(machineInfo))
+        const { data: job, error: pollError } = await tryCatch(() => raceStopRequest({
+            promise: apiClient.poll(machineInfo),
+            // `null` and not a dedicated sentinel: the loop already treats an empty poll as
+            // "nothing to do, go round again", and going round again re-reads `polling`, which
+            // `stop()` has just cleared. One exit path, not two.
+            whenStopped: null,
+        }))
         if (pollError) {
             workerLog.error({ error: pollError }, 'Poll failed')
-            await sleep(25000)
+            await sleepUnlessStopped(25000)
             continue
         }
 
@@ -485,4 +613,16 @@ type WorkerStartParams = {
     socketUrl: { url: string, path: string }
     workerToken: string
     withHealthServer?: boolean
+}
+
+type RaceStopRequestParams<T> = {
+    promise: Promise<T>
+    whenStopped: T
+}
+
+type RunPollLoopParams = {
+    apiClient: WorkerToApiContract
+    sbManager: SandboxManager
+    generation: number
+    workerLog: Logger
 }
