@@ -1,0 +1,114 @@
+# TEMPORARY — measurement harness for #500, deleted once the split is recorded.
+#
+# #500 asks which `await` in the three worker-bearing CE suites' `afterAll` consumes the 30s
+# budget. That cannot be answered locally (the suite needs a real Postgres and Redis), and
+# answering it through `ci.yml` would mean opening a PR and running the docker builds and the e2e
+# job for every measurement. This runs the CE suite alone, on push to the #500 branch, with the
+# `[teardown-timing]` lines the instrumentation commit prints.
+#
+# Mirrors ci.yml's `integration-run` services and setup deliberately — same Postgres image, same
+# Redis image, same install path — so the numbers are comparable to the runs in the issue.
+name: Teardown measurement (#500, temporary)
+
+on:
+  push:
+    branches: ['claude/ce-teardown-timeout-debug-**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: Measure CE teardown phases
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg14
+        env:
+          POSTGRES_DB: qadam_flow_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.0.7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        id: bun
+        with:
+          bun-version: 1.3.3
+
+      # Restore-only, exactly as `integration-run` is: `verify` in ci.yml is the only writer.
+      - name: Restore built node_modules
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      - name: Verify native addons load
+        run: tools/ci/verify-native-modules.sh
+
+      - name: Set up turbo remote cache (GHA-backed)
+        uses: rharkor/caching-for-turbo@v2.3.12
+
+      # The `test-ce` turbo task declares these; built explicitly so the isolated vitest run below
+      # (which bypasses turbo) has the same prerequisites the full suite gets.
+      - name: Build test-ce prerequisites
+        run: >-
+          npx turbo run build
+          --filter=api
+          --filter=@aiqadam/engine
+          --filter=@aiqadam/qadam-http
+          --filter=@aiqadam/qadam-data-mapper
+          --filter=@aiqadam/qadam-approval
+          --filter=@aiqadam/qadam-webhook
+          --filter=@aiqadam/qadam-delay
+          --filter=@aiqadam/qadam-subflows
+
+      # First and cheap: the three suites with nothing else in the run. Establishes the floor cost
+      # of each teardown phase, unloaded. Runs before the full suite so a `--bail 1` stop in the
+      # full suite cannot cost us this baseline.
+      - name: Measure the three worker suites in isolation
+        working-directory: packages/server/api
+        run: |
+          set -euo pipefail
+          export $(cat .env.tests | xargs)
+          npx vitest run \
+            test/integration/ce/flows/flow-run/golden-path.test.ts \
+            test/integration/ce/flows/flow-run/execute-flow-e2e.test.ts \
+            test/integration/ce/qadams/qadam-options-e2e.test.ts \
+            --no-file-parallelism --passWithNoTests=false
+
+      # Then the real thing: the same command ci.yml runs, under the same serial single-Postgres
+      # load that produced the timeouts in the issue.
+      - name: Measure under the full CE suite
+        if: always()
+        run: npx turbo run test-ce --filter=api

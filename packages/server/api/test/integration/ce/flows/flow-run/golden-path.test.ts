@@ -28,6 +28,7 @@ import { db } from '../../../../helpers/db'
 import { setupE2eEnvironment } from '../../../../helpers/e2e-setup'
 import { createMockQadamMetadata } from '../../../../helpers/mocks'
 import { createTestContext } from '../../../../helpers/test-context'
+import { workerSuiteTeardown } from '../../../../helpers/worker-teardown'
 
 let app: FastifyInstance
 
@@ -43,13 +44,8 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-    // Awaited, not void: closes the race where app.close() tears down the Socket.IO server the
-    // worker's socket is still connected to. The 30s budget (was 15s) is the actual fix for #464 —
-    // qadam-options-e2e.test.ts already awaited both calls in this same order and still hit the
-    // 15s timeout under CI load, so the teardown itself, not the ordering, needed the headroom.
-    await worker.stop()
-    await app.close()
-}, 30_000)
+    await workerSuiteTeardown.run({ app })
+}, workerSuiteTeardown.timeoutMs)
 
 async function saveWebhookQadamMetadata(): Promise<void> {
     const webhookPiece = createMockQadamMetadata({

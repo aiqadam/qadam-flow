@@ -30,6 +30,7 @@ import {
     createMockQadamMetadata,
     mockAndSaveBasicSetup,
 } from '../../../helpers/mocks'
+import { workerSuiteTeardown } from '../../../helpers/worker-teardown'
 
 let app: FastifyInstance
 
@@ -46,9 +47,8 @@ beforeAll(async () => {
 }, 30_000)
 
 afterAll(async () => {
-    await worker.stop()
-    await app.close()
-}, 30_000)
+    await workerSuiteTeardown.run({ app })
+}, workerSuiteTeardown.timeoutMs)
 
 describe('Piece Options E2E', () => {
     it('returns dynamic properties for webhook authFields via full worker round-trip', async () => {

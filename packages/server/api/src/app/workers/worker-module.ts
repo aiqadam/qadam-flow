@@ -22,13 +22,20 @@ export const workerModule: FastifyPluginAsyncZod = async (app) => {
     await setupBullMQBoard(app)
 
     app.addHook('onClose', async () => {
-        await jobBroker(app.log).close()
-        await runsMetadataQueue(app.log).close()
-        await jobQueue(app.log).close()
-        await pubsub.close()
+        await timeCloseStep({ step: 'jobBroker.close', run: () => jobBroker(app.log).close() })
+        await timeCloseStep({ step: 'runsMetadataQueue.close', run: () => runsMetadataQueue(app.log).close() })
+        await timeCloseStep({ step: 'jobQueue.close', run: () => jobQueue(app.log).close() })
+        await timeCloseStep({ step: 'pubsub.close', run: () => pubsub.close() })
     })
 }
 
+
+/** TEMPORARY (#500 measurement): which `onClose` hook consumes the CE suites' teardown budget. */
+async function timeCloseStep({ step, run }: { step: string, run: () => Promise<void> }): Promise<void> {
+    const startedAt = Date.now()
+    await run()
+    process.stdout.write(`[teardown-timing] app.close/${step} ${Date.now() - startedAt}ms\n`)
+}
 
 // This should be called after the app is booted, to ensure no plugin timeout
 export const migrateQueuesAndRunConsumers = async (app: FastifyInstance) => {

@@ -76,6 +76,9 @@ let egressStack: EgressStack | null = null
 
 let sandboxManagers: SandboxManager[] = []
 
+/** TEMPORARY (#500 measurement): when `stop()` was asked to stop, so the poll loops can report how long they outlived it. */
+let stopRequestedAt: number | null = null
+
 export const worker = {
     async start({ apiUrl, socketUrl, workerToken, withHealthServer = false }: WorkerStartParams): Promise<void> {
         // Reset, so a worker started again after `stop()` can still reconnect.
@@ -144,6 +147,7 @@ export const worker = {
     },
 
     async stop(): Promise<void> {
+        stopRequestedAt = Date.now()
         stopped = true
         reconnectIsOurs = false
         if (reconnectTimer !== null) {
@@ -151,18 +155,29 @@ export const worker = {
             reconnectTimer = null
         }
         polling = false
+        const sandboxStartedAt = Date.now()
         await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
+        printStopPhase({ phase: 'sandboxManagers.shutdown', startedAt: sandboxStartedAt })
         sandboxManagers = []
+        const socketStartedAt = Date.now()
         socket?.disconnect()
         socket = null
         healthServerInstance?.close()
         healthServerInstance = null
+        printStopPhase({ phase: 'socket.disconnect+healthServer.close', startedAt: socketStartedAt })
+        const egressStartedAt = Date.now()
         if (egressStack) {
             await egressStack.shutdown()
             egressStack = null
         }
+        printStopPhase({ phase: 'egressStack.shutdown', startedAt: egressStartedAt })
         logger.info('Worker stopped')
     },
+}
+
+/** TEMPORARY (#500 measurement): which await inside `stop()` consumes the suites' teardown budget. */
+function printStopPhase({ phase, startedAt }: { phase: string, startedAt: number }): void {
+    process.stdout.write(`[teardown-timing] worker.stop/${phase} ${Date.now() - startedAt}ms\n`)
 }
 
 function scheduleReconnect(): void {
@@ -276,6 +291,9 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
         if (completeError) {
             workerLog.error({ error: completeError, jobId: job.jobId }, 'Failed to complete job')
         }
+    }
+    if (stopRequestedAt !== null) {
+        process.stdout.write(`[teardown-timing] pollLoop[${workerIndex}].exit ${Date.now() - stopRequestedAt}ms-after-stop-requested\n`)
     }
 }
 
