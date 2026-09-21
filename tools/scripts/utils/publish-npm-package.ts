@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { readPackageJson } from './files'
 import { packagePrePublishChecks } from './package-pre-publish-checks'
 import { prepareQadamDistForPublish } from '../../../packages/cli/src/lib/utils/prepare-qadam-utils'
@@ -20,7 +20,8 @@ const NPM_DIST_TAG_PATTERN = /^[a-z][a-z0-9-]*$/
 // downloads the tarballs — which is the one boundary this has to survive to be worth anything.
 // Not exported: nothing in TypeScript consumes it, and the shell side pins the spelling instead.
 const SKIP_REGISTRY_CHECK_MARKER = 'PACKED-WITH-SKIP-REGISTRY-CHECK'
-const REPO_LICENSE_PATH = join(__dirname, '..', '..', '..', 'LICENSE')
+const REPO_ROOT = join(__dirname, '..', '..', '..')
+const REPO_LICENSE_PATH = join(REPO_ROOT, 'LICENSE')
 // Spelled exactly as the three framework packages already spell it in their own manifests, so a
 // package that declares `repository` and one that has it filled in below are indistinguishable
 // on the registry.
@@ -176,9 +177,14 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   //     catalogue as license-undeclared while the README in the same tarball claims otherwise.
   //
   // `directory` is the package's own path, which is what makes the attestation point at the
-  // subtree that produced the tarball rather than at the monorepo root.
+  // subtree that produced the tarball rather than at the monorepo root. Re-derived against the
+  // repo root rather than used as passed: every shipped caller already hands this function a
+  // repo-relative path, but the CLI entrypoint at the bottom of this file takes `process.argv[2]`
+  // verbatim and publishes for real, so an absolute path typed by a maintainer would mint an
+  // immutable tarball whose manifest reads `directory: "/home/<someone>/..."`. npm 403s a
+  // republish of the same version, so there is no taking that back.
   json.license = json.license ?? 'MIT'
-  json.repository = json.repository ?? { type: 'git', url: REPOSITORY_URL, directory: path }
+  json.repository = json.repository ?? { type: 'git', url: REPOSITORY_URL, directory: relative(REPO_ROOT, resolve(path)) }
   writeFileSync(`${outputPath}/package.json`, JSON.stringify(json, null, 2))
 
   assertNoUnresolvedWorkspaceDeps(`${outputPath}/package.json`)
