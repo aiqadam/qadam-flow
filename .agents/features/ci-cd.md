@@ -28,7 +28,8 @@ can read a repository secret, including the ones that install and build the thir
 dependency graph on a pull request, and the environment's required reviewers would then gate
 the timing of the publish rather than the credential. `tools/ci/test-publish-packed-tarballs.sh`
 pins the two copies of the publishing job equal, and pins on each copy the properties #486
-bought: the `npm-publish` environment, the shared publisher script as the job's last step, a
+bought: the `npm-publish` environment, the shared publisher script as the job's last step
+with the step count pinned so that adding a step is a deliberate edit, a
 credential-less checkout, `id-token: write`, and an allowlist of the three actions the job may
 use. It also greps the job for install and package-runner invocations — that one is a
 denylist, so read it as "no install we know how to spell", and read the regex in the file

@@ -310,8 +310,14 @@ for wf in release.yml publish-packages.yml; do
     # every other appended-step shape, without caring about first keys or bodies at all.
     # Bumping this number when a step is legitimately added is the point: a new step in the one
     # job that holds the publish credential should cost a line of review.
+    #
+    # Counted from `steps:` rather than over the whole job, because `needs:` sits at the same
+    # depth and rewriting it from flow to block style is a semantically identical reformat that
+    # would otherwise read as a sixth step. And it bounds how many steps there are, not what
+    # they do: editing the BODY of a step that legitimately exists is invisible here, as it is
+    # to the other assertions. Pinning bodies is a different and much heavier tool.
     check "$wf's publishing job has exactly the five expected steps" "5" \
-        "$(printf '%s\n' "$job" | grep -cE '^      - ' || true)"
+        "$(printf '%s\n' "$job" | sed -n '/^    steps:$/,$p' | grep -cE '^      - ' || true)"
 
     # #486: the job holding the token installs nothing and resolves no binary out of
     # node_modules/.bin. A build step appearing here is the regression that split bought.
@@ -324,8 +330,11 @@ for wf in release.yml publish-packages.yml; do
     # only spelling caught — but a gap of arbitrary words is not, because that made a step
     # renamed "Publish to npm and add the dist-tag" red. The one-letter verbs `i` and `x` stay
     # adjacent-only: nobody writes `npm --prefix /tmp i`, and a gap before a single letter
-    # matches far too much prose. Every branch carries a left boundary — without one, `apt`
-    # matched inside "ad*apt*" and reddened the sentence "do not adapt install steps".
+    # matches far too much prose. Every package-manager branch carries a left boundary — the
+    # three literal alternatives do not need one — and it is `[^[:alnum:]_]` rather than
+    # whitespace: whitespace alone dropped `bash -c "npm install evil"`, `cd /tmp;npm install`
+    # and `echo $(npm install evil)`, which are ordinary shell, while still excluding the
+    # alphanumeric predecessor that made `apt` match inside "ad*apt*".
     #
     # It stays a denylist, and a denylist is never complete — a piped `curl | sh`, or an
     # `npm \` continuation with the verb on the next line, are in reach of anyone who wants
@@ -334,7 +343,7 @@ for wf in release.yml publish-packages.yml; do
     # job's whole text, so the words `no npm install here` in a step NAME or a `run:` body
     # redden it; a full-line YAML comment does not, because the extractor strips those.
     check "$wf's publishing job installs nothing and runs no npx" "clean" \
-        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(^|[[:space:]/])(npm|pnpm|yarn|bun)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|ci|add|exec|dlx)([[:space:]]|$)|(^|[[:space:]/])(npm|pnpm|yarn|bun)[[:space:]]+(i|x)([[:space:]]|$)|(^|[[:space:]/])yarn[[:space:]]*$|(^|[[:space:]/])(npx|bunx|turbo)([[:space:]]|$)|(^|[[:space:]/])(pipx|pip3?|gem|brew|apt(-get)?|apk)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(^|[^[:alnum:]_])(npm|pnpm|yarn|bun)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|ci|add|exec|dlx)([[:space:]]|$)|(^|[^[:alnum:]_])(npm|pnpm|yarn|bun)[[:space:]]+(i|x)([[:space:]]|$)|(^|[^[:alnum:]_])yarn[[:space:]]*$|(^|[^[:alnum:]_])(npx|bunx|turbo)([[:space:]]|$)|(^|[^[:alnum:]_])(pipx|pip3?|gem|brew|apt(-get)?|apk)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
 
     # A text scan over `run:` cannot see an install that arrives as a composite action, so the
     # set of actions is an allowlist rather than a denylist. A check that silently DROPS what
