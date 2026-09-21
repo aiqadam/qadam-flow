@@ -17,10 +17,18 @@ any of their versions.
 
 Publishing them is **decoupled from the release tag** (#496): a `v*` tag publishes whatever is
 current as a side effect of releasing the engine, and `publish-packages.yml` publishes without
-a release. Both call the same reusable workflow, so they cannot drift. The publishing half sits
-behind the `npm-publish` GitHub Environment and its required reviewers, and reads `NPM_TOKEN`
-as an **environment** secret on that environment — a repository secret of the same name would
-not resolve into a reusable workflow.
+a release. Both call the same reusable workflow for **packing**, so the expensive half cannot
+drift. The **publishing** half is duplicated in each of them on purpose (#498): environment
+secrets do not resolve inside a reusable workflow — measured, and reported against
+actions/runner since 2021 — so a shared publishing job reads `NPM_TOKEN` as an empty string.
+
+`NPM_TOKEN` therefore belongs on the `npm-publish` GitHub Environment and **nowhere else**.
+Do not move it to repository scope to "fix" an empty-token failure: every workflow in the repo
+can read a repository secret, including the ones that install and build the third-party
+dependency graph on a pull request, and the environment's required reviewers would then gate
+the timing of the publish rather than the credential. `tools/ci/test-publish-packed-tarballs.sh`
+pins the two copies of the publishing job equal and pins that both still declare
+`environment: npm-publish`.
 
 ## Key Files
 - `Dockerfile` — single source of truth for the production image (multi-stage: `base → build → run`)

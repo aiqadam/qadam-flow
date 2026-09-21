@@ -224,10 +224,17 @@ check "and that name is not empty (so the check above is not vacuous)" "publish-
 # chosen deliberately still drifts, and the half that drifts silently is the one nobody runs
 # until a release — so the two copies are pinned equal here, comments excluded because each
 # carries its own lead paragraph.
+# `[^ #]` rather than `[^ ]` in the terminator, and that character class is the whole point:
+# a 2-space-indented COMMENT is not the next job. With `[^ ]` the extraction stopped at the
+# first such comment inside the job body, so everything below it silently left the comparison
+# — review demonstrated it by adding one comment line to both files and an exfiltrating
+# `run:` below it, and watching all of these assertions stay green. The trailing greps drop
+# comments and blanks, so over-capturing the comment block that precedes the next job key
+# costs nothing.
 extract_publish_job() {
     awk '
         /^  publish-framework-packages:$/ { inside = 1; print; next }
-        inside && /^  [^ ]/               { inside = 0 }
+        inside && /^  [^ #]/              { inside = 0 }
         inside                            { print }
     ' "$1" | grep -vE '^[[:space:]]*#' | grep -vE '^[[:space:]]*$'
 }
@@ -243,12 +250,36 @@ else
     check "release.yml and publish-packages.yml carry the same publishing job" "identical" "they differ"
 fi
 
-# Both copies must keep the environment, which is what makes the secret resolve at all and
-# what summons the required reviewer. Deleting it is the single edit that would silently turn
-# the publish into an unreviewed one.
+# Equality alone is only a drift detector: an edit applied IDENTICALLY to both copies passes
+# it. The properties below are the ones #486 bought, asserted positively on each copy so that
+# symmetric damage is caught too. Review's phrasing, worth keeping: the difference between a
+# drift detector and a control.
 for wf in release.yml publish-packages.yml; do
-    env_line="$(extract_publish_job "$REPO_ROOT/.github/workflows/$wf" | sed -n 's/^    environment: //p')"
-    check "$wf's publishing job still declares the npm-publish environment" "npm-publish" "$env_line"
+    job="$(extract_publish_job "$REPO_ROOT/.github/workflows/$wf")"
+
+    # The environment is what makes the secret resolve at all and what summons the required
+    # reviewer. Deleting it is the single edit that would silently turn the publish into an
+    # unreviewed one.
+    check "$wf's publishing job still declares the npm-publish environment" "npm-publish" \
+        "$(printf '%s\n' "$job" | sed -n 's/^    environment: //p')"
+
+    # The anchor: without it, a copy whose final step was replaced in BOTH files still looks
+    # identical and still has an environment.
+    check "$wf's publishing job still ends in the shared publisher script" "yes" \
+        "$(printf '%s\n' "$job" | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
+
+    # #486: the job holding the token installs nothing and resolves no binary out of
+    # node_modules/.bin. A build step appearing here is the regression that split bought.
+    check "$wf's publishing job installs nothing and runs no npx" "clean" \
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|bun install|npm ci|npx |turbo ' && echo "found an install or npx" || echo clean)"
+
+    # A job holding an npm publish token has no business also holding a git one.
+    check "$wf's publishing job checks out without git credentials" "yes" \
+        "$(printf '%s\n' "$job" | grep -qF 'persist-credentials: false' && echo yes || echo no)"
+
+    # --provenance cannot mint an attestation without it.
+    check "$wf's publishing job still requests the OIDC token for --provenance" "yes" \
+        "$(printf '%s\n' "$job" | grep -qE '^      id-token: write$' && echo yes || echo no)"
 done
 
 echo ""
