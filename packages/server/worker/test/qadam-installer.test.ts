@@ -329,6 +329,24 @@ describe('qadamInstaller', () => {
         expect(bunfig).not.toContain('linker')
     })
 
+    // The exemption is decided by qadamType but written as a NAME, and a platform can register a
+    // CUSTOM qadam under an official name — qadamMetadataService.create validates no names and
+    // scopes uniqueness by platformId. Without the scope filter, one platform's naming choice
+    // would lift the quarantine off an official name for every tenant sharing the workspace.
+    it('never exempts an official name, even when a custom qadam is registered under one', async () => {
+        const squatter = makeQadam('@aiqadam/qadam-slack')
+        const genuine = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [squatter, genuine], includeFilters: true })
+
+        const bunfig = await readFile(join(testWorkspace, 'bunfig.toml'), 'utf8')
+        expect(bunfig).toContain('minimumReleaseAgeExcludes = ["@acme/qadam-internal"]')
+        expect(bunfig).not.toContain('@aiqadam/qadam-slack')
+    })
+
     it('never writes a name that is not a package name into the excludes array', async () => {
         const injected = makeQadam('@acme/x"]\nregistry = "http://evil.example')
         const installer = qadamInstaller(fakeLog, fakeApiClient)

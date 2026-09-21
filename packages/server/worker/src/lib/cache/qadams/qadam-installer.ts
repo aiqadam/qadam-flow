@@ -41,8 +41,16 @@ const OFFICIAL_QADAM_SCOPE = '@aiqadam'
 // validate an admin-supplied URL that `safeHttp` structurally cannot cover (bun performs the fetch
 // in a subprocess, so the request-filtering agent never sees it). Pinning it to a literal is what
 // closes #482 item 2 on its own — with the scope named here, resolution for `@aiqadam/*` cannot
-// silently fall back to whatever a stray `$HOME/.npmrc`, an internal mirror or a transparently
-// rewriting proxy would otherwise choose. #478 replaces the literal; it does not remove the pin.
+// silently follow a default `registry=` set by a stray `$HOME/.npmrc` or by an internal mirror.
+// #478 replaces the literal; it does not remove the pin.
+//
+// Two things it deliberately does NOT do. It pins the SCOPE, not the graph: every third-party
+// transitive dependency of an official qadam — axios, tslib, the AWS SDKs — loads into the same
+// engine process and still resolves through bun's default registry. Closing that would mean
+// writing a default `registry=` line too, which would forbid operators from mirroring at all, so
+// it belongs in #478's design rather than here. And it is not a defence against a proxy that
+// intercepts the URL named below; what defends an `https://` registry against interception is
+// TLS trust, not the scope mapping.
 const OFFICIAL_QADAM_REGISTRY_URL = 'https://registry.npmjs.org/'
 // The same three days the repo-root bunfig.toml applies to this repo's own installs.
 const INSTALL_QUARANTINE_SECONDS = 259_200
@@ -337,8 +345,11 @@ async function createInstallWorkspaceFiles({ path, qadamsToInstall }: {
 // Three measured properties of bun 1.3 shape this, and none of them is obvious from the docs:
 //
 //   * `minimumReleaseAge` does not DOWNGRADE an exact pin, it fails the install outright
-//     ("No version matching … blocked by minimum-release-age"). Every dependency in this
-//     workspace is exact-pinned, so the quarantine is a hard refusal here, not a soft one.
+//     ("No version matching … blocked by minimum-release-age"). The dependency
+//     `createQadamPackageJson` writes is always an exact version, so for the qadam itself the
+//     quarantine is a hard refusal rather than a downgrade. Its transitive dependencies are
+//     whatever the published tarball declares, and a third-party qadam may well declare ranges —
+//     there a fresh release is skipped over instead, which is the quieter of the two outcomes.
 //   * `minimumReleaseAgeExcludes` is NOT transitive. Exempting a package exempts that name only;
 //     its own freshly published dependencies stay blocked. So the exemption below rescues the
 //     common case (an administrator installing a custom qadam they just published) and not the
@@ -353,6 +364,13 @@ async function createInstallWorkspaceFiles({ path, qadamsToInstall }: {
 // blocking it for three days would break iterating on a private qadam, a workflow that works
 // today. The official catalogue gets no exemption, which is the entire point of item 3.
 //
+// The exemption is narrower than "every custom qadam", in two ways worth knowing before someone
+// widens it. An ARCHIVE qadam gets none, because it installs from a tarball on disk and the
+// quarantine has nothing to say about it — but its third-party dependencies still resolve from
+// the registry and are still quarantined. And because the excludes are not transitive, a custom
+// qadam that pins a dependency released in the last three days still fails to install, exempt
+// name or not. Both are behaviour changes against today; neither has a fix at this layer.
+//
 // `[install]` carries the quarantine keys and NOTHING else. The repo-root bunfig.toml also sets
 // `linker = "isolated"`; copying that here would change the node_modules layout the engine's
 // loader walks, which is a behaviour change this file has no reason to make. Keep this minimal.
@@ -361,7 +379,16 @@ function buildInstallBunfig(qadamsToInstall: QadamPackage[]): string {
         qadamsToInstall
             .filter((piece) => piece.packageType === PackageType.REGISTRY && piece.qadamType === QadamType.CUSTOM)
             .map((piece) => piece.qadamName)
-            .filter((qadamName) => NPM_PACKAGE_NAME_PATTERN.test(qadamName)),
+            .filter((qadamName) => NPM_PACKAGE_NAME_PATTERN.test(qadamName))
+            // The exemption is decided by `qadamType`, but what lands in the file is a NAME, and
+            // nothing stops a CUSTOM qadam from being registered under an official one:
+            // `qadamMetadataService.create` applies no name validation and scopes uniqueness by
+            // platformId, so a platform can register `@aiqadam/qadam-slack` of its own. In the
+            // default UNSANDBOXED mode that qadam installs into this same shared workspace, so
+            // without this filter one platform's naming choice would lift the quarantine off an
+            // official name for every tenant on the worker. Filter on the name, because the name
+            // is what the quarantine keys on.
+            .filter((qadamName) => !qadamName.startsWith(`${OFFICIAL_QADAM_SCOPE}/`)),
     )
     const excludes = adminChosenNames.map((qadamName) => `"${qadamName}"`).join(', ')
     return [
