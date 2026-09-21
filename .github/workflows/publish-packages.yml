@@ -27,8 +27,10 @@ name: Publish packages
 # docs/install/configuration/breaking-changes.mdx, which is about the ENGINE release a tag
 # performs — it says nothing about whether `@aiqadam/shared` changed compatibly, and running
 # it here would fail dispatches for breaking changes to a Docker image this run does not
-# touch. What is left is `default-branch-gate` below, `verify`, and the two controls inside
-# the called workflow: the `origin/main` ancestry check and the environment reviewers.
+# touch. What is left is `default-branch-gate` below, `verify`, the `origin/main` ancestry
+# check inside the called packing workflow, and the `npm-publish` environment reviewers on the
+# publishing job below — which is in THIS file, not the called one, for the reason that job's
+# own comment gives.
 #
 # `verify` here is a strict subset of what a PR gets: two of its steps (the new-migration
 # metadata check and check-required-prop-defaults) carry `if: github.event_name ==
@@ -86,7 +88,9 @@ jobs:
   #
   # A job rather than an `if:` on the call, so a dispatch from the wrong ref fails loudly
   # instead of reporting a green run in which nothing happened. It gates `verify` too, so a
-  # wrong ref costs seconds rather than a full lint-and-test cycle.
+  # wrong ref costs seconds rather than a full lint-and-test cycle — while the queue is empty.
+  # The workflow-level `concurrency` above means a run dispatched behind one parked on the
+  # approval gate pends as a whole and may never report this gate at all.
   default-branch-gate:
     name: Dispatched from the default branch
     runs-on: ubuntu-latest
@@ -129,7 +133,7 @@ jobs:
   # a reusable workflow the environment still gates on its reviewers but `secrets.NPM_TOKEN`
   # comes back empty — measured twice, see _pack-framework-packages.yml's header. Passing the
   # token down instead would force it to repository scope, where every workflow in the repo
-  # can read it, so the four steps below are duplicated on purpose. Everything with real logic
+  # can read it, so the five steps below are duplicated on purpose. Everything with real logic
   # in it is shared: the packing workflow above and tools/ci/publish-packed-tarballs.sh.
   publish-framework-packages:
     name: Publish framework packages to npm

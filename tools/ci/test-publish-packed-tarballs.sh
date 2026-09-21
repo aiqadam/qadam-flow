@@ -224,18 +224,27 @@ check "and that name is not empty (so the check above is not vacuous)" "publish-
 # chosen deliberately still drifts, and the half that drifts silently is the one nobody runs
 # until a release — so the two copies are pinned equal here, comments excluded because each
 # carries its own lead paragraph.
-# `[^ #]` rather than `[^ ]` in the terminator, and that character class is the whole point:
-# a 2-space-indented COMMENT is not the next job. With `[^ ]` the extraction stopped at the
-# first such comment inside the job body, so everything below it silently left the comparison
-# — review demonstrated it by adding one comment line to both files and an exfiltrating
-# `run:` below it, and watching all of these assertions stay green. The trailing greps drop
-# comments and blanks, so over-capturing the comment block that precedes the next job key
-# costs nothing.
+# Both halves of the terminator were found by review, each by executing an attack rather than
+# by reading:
+#
+#   /^[^[:space:]]/      a COLUMN-0 key. Without it nothing stopped the scan at a top-level
+#                        block, so appending one after the last job in publish-packages.yml
+#                        (where this job is last and awk otherwise runs to EOF) made the two
+#                        extractions differ while the jobs were identical — a failure on the
+#                        wrong property, the same self-inflicted class the upload-path check
+#                        above already suffered once.
+#   /^  [^[:space:]#]/   the next JOB key, and deliberately not a two-space COMMENT. With a
+#                        bare `[^ ]` the scan stopped at the first such comment inside the job
+#                        body: one comment line added to both files, plus an exfiltrating
+#                        `run:` below it in both, and every assertion here stayed green.
+#
+# The trailing greps drop comments and blanks, so over-capturing the comment block that
+# precedes the next job key costs nothing.
 extract_publish_job() {
     awk '
-        /^  publish-framework-packages:$/ { inside = 1; print; next }
-        inside && /^  [^ #]/              { inside = 0 }
-        inside                            { print }
+        /^  publish-framework-packages:$/                  { inside = 1; print; next }
+        inside && (/^[^[:space:]]/ || /^  [^[:space:]#]/)  { inside = 0 }
+        inside                                             { print }
     ' "$1" | grep -vE '^[[:space:]]*#' | grep -vE '^[[:space:]]*$'
 }
 release_job="$(extract_publish_job "$REPO_ROOT/.github/workflows/release.yml")"

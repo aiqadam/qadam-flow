@@ -30,7 +30,9 @@ name: Pack framework packages
 # resolve `NPM_TOKEN` from REPOSITORY or ORGANIZATION scope, which makes it readable by every
 # workflow in the repository. The required-reviewers gate would then protect the timing of the
 # publish and nothing about the token itself. Keeping the publishing job in the caller keeps
-# the token environment-scoped, which is the whole point of #486.
+# the token environment-scoped, which is what makes #486's split worth anything — the split
+# itself is about the job holding the credential not installing or building, and a token every
+# workflow can read would leave that split guarding a credential already available elsewhere.
 #
 # WHAT A CALLER MUST PROVIDE:
 #
@@ -55,7 +57,8 @@ name: Pack framework packages
 # GitHub cancelling the older pending run when a third arrives. A `v*` tag is rare, visible and
 # expensive to create, so that trade is wrong for release.yml. It is the right trade for a
 # dispatch, which anyone with write can fire in a loop, so publish-packages.yml declares its
-# own group on its calling job.
+# own group at WORKFLOW level — not on a job, which would leave a second run's packing free to
+# interleave between this run's packing and publishing.
 on:
   workflow_call:
 
@@ -103,9 +106,12 @@ jobs:
   # finds the version already on the registry and skips. Two that overlap are a different case
   # and are not prevented — see the concurrency paragraph above for why that is left alone.
   #
-  # WHY TWO JOBS (#486). The npm packages are minted once and cannot be re-pushed the way a
-  # GHCR tag can, so the step that holds the publish token does not get to also install
-  # dependencies, run a build, or resolve a binary out of `node_modules/.bin`. `pack-…`
+  # WHY PACKING AND PUBLISHING ARE SEPARATE JOBS (#486). The npm packages are minted once and
+  # cannot be re-pushed the way a GHCR tag can, so the job that holds the publish token does
+  # not get to also install dependencies, run a build, or resolve a binary out of
+  # `node_modules/.bin`. The publishing job is not in this file — #498 moved it into each
+  # caller, where `environment:` resolves its secrets — but the split is the same one and the
+  # reasoning below is why it exists. `pack-…`
   # restores the node_modules cache, installs, builds and runs every pre-publish check, then
   # stops at `npm pack` and uploads the tarballs; `publish-…` downloads exactly those bytes
   # and uploads them. Two properties follow that the single-job shape could not have:
@@ -118,7 +124,8 @@ jobs:
   #   * The exact bytes that went to npm are downloadable and diffable by a human from the
   #     run's artifacts. Nobody could do that when pack and publish were one step.
   #
-  # The publishing job deliberately does NOT install: `tools/ci/publish-packed-tarballs.sh`
+  # The publishing job in each caller deliberately does NOT install:
+  # `tools/ci/publish-packed-tarballs.sh`
   # needs nothing but `npm` itself, so no `npx` ever prepends `node_modules/.bin` to PATH in
   # the one step where a long-lived publish token is readable. It also publishes from the
   # artifact directory under RUNNER_TEMP rather than from the checkout, because npm's project
@@ -170,7 +177,7 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
-      # The automatic half of the human gate on the publishing job below, and the only thing
+      # The automatic half of the human gate on the publishing job in each caller, and the only thing
       # this workflow refuses by itself: it stops on any ref whose commit is not reachable by
       # walking backward from `origin/main`'s current tip — i.e. a commit that was never
       # actually merged into main, regardless of who pushed the tag or dispatched the run, or

@@ -218,7 +218,7 @@ jobs:
   # triggered. Inside a reusable workflow the environment still gates on its reviewers but
   # `secrets.NPM_TOKEN` comes back empty — measured twice, see _pack-framework-packages.yml's
   # header. Passing the token down instead would force it to repository scope, where every
-  # workflow in the repo can read it, so the four steps below are duplicated on purpose.
+  # workflow in the repo can read it, so the five steps below are duplicated on purpose.
   # Everything with real logic in it is shared: the packing workflow above and
   # tools/ci/publish-packed-tarballs.sh.
   #
