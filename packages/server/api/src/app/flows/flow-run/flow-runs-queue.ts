@@ -175,6 +175,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
                 jobId: job.id,
                 runId: job.data.runId,
             }, '[runsMetadataQueue#worker] Flow run was deleted during update, skipping job')
+            await consumeProcessedMetadata({ key, runMetadata })
             return false
         }
         savedFlowRun = updatedFlowRun
@@ -187,6 +188,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
                 jobId: job.id,
                 runId: job.data.runId,
             }, '[runsMetadataQueue#worker] Flow does not exist (deleted), skipping job')
+            await consumeProcessedMetadata({ key, runMetadata })
             return false
         }
         savedFlowRun = await flowRunRepo().save({
@@ -206,16 +208,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         })
     }
 
-    if (!isNil(runMetadata.requestId)) {
-        await distributedStore.deleteKeyIfFieldValueMatches(key, 'requestId', runMetadata.requestId)
-    }
-    else {
-        // No version marker to compare against, so the payload just processed cannot
-        // be told apart from a fresh one on the next drain read. Drop it outright:
-        // leaving it would reprocess the same update up to MAX_DRAIN_ITERATIONS and
-        // then re-enqueue a job that does it all over again.
-        await distributedStore.delete(key)
-    }
+    await consumeProcessedMetadata({ key, runMetadata })
     if (!isNil(runMetadata.finishTime)) {
         await flowRunSideEffects(log).onFinish(savedFlowRun)
     }
@@ -233,6 +226,31 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         }
     }
     return true
+}
+
+/**
+ * Consumes the snapshot this job just processed, so the drain loop and
+ * `reenqueueWhenUpdatesArrivedLate` see an empty hash and stop.
+ *
+ * Conditional on `requestId` so an update merged while this job was working survives and gets its
+ * own pass; without a version marker to compare against, the payload just processed cannot be told
+ * apart from a fresh one on the next drain read, so it is dropped outright — leaving it would
+ * reprocess the same update up to MAX_DRAIN_ITERATIONS and then re-enqueue a job that does it all
+ * over again.
+ *
+ * Every path that finishes with a snapshot must call this, including the ones that abandon it.
+ * The two "the flow is gone" paths used to return without consuming anything, and that is a
+ * permanent hot loop, not a leak that drains later: the hash stays non-empty, so the re-enqueue at
+ * the end of the job adds another job, which abandons it again, forever. Measured at ~200k job
+ * invocations in 25 minutes across a single CE suite run, one runId accounting for 18,814 of them,
+ * with the churn outliving the test file that created it (#500).
+ */
+async function consumeProcessedMetadata({ key, runMetadata }: ConsumeProcessedMetadataParams): Promise<void> {
+    if (!isNil(runMetadata.requestId)) {
+        await distributedStore.deleteKeyIfFieldValueMatches(key, 'requestId', runMetadata.requestId)
+        return
+    }
+    await distributedStore.delete(key)
 }
 
 async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
@@ -373,6 +391,11 @@ type DrainRunsMetadataParams = {
     log: FastifyBaseLogger
     job: Job<RunsMetadataJobData>
     key: string
+}
+
+type ConsumeProcessedMetadataParams = {
+    key: string
+    runMetadata: RunsMetadataUpsertData
 }
 
 type ResolveWritableLogsFileIdParams = {
