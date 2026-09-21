@@ -155,6 +155,7 @@ export const worker = {
             reconnectTimer = null
         }
         polling = false
+        process.stdout.write(`[teardown-timing] worker.stop/sandboxManagers.shutdown START (${sandboxManagers.length} managers)\n`)
         const sandboxStartedAt = Date.now()
         await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
         printStopPhase({ phase: 'sandboxManagers.shutdown', startedAt: sandboxStartedAt })
@@ -165,6 +166,7 @@ export const worker = {
         healthServerInstance?.close()
         healthServerInstance = null
         printStopPhase({ phase: 'socket.disconnect+healthServer.close', startedAt: socketStartedAt })
+        process.stdout.write('[teardown-timing] worker.stop/egressStack.shutdown START\n')
         const egressStartedAt = Date.now()
         if (egressStack) {
             await egressStack.shutdown()
@@ -246,6 +248,9 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
         }
 
         const { data: job, error: pollError } = await tryCatch(() => apiClient.poll(machineInfo))
+        if (stopRequestedAt !== null) {
+            process.stdout.write(`[teardown-timing] pollLoop[${workerIndex}] poll returned ${Date.now() - stopRequestedAt}ms after stop was requested — ${pollError ? 'error' : job ? 'job' : 'null'}\n`)
+        }
         if (pollError) {
             workerLog.error({ error: pollError }, 'Poll failed')
             await sleep(25000)
@@ -255,6 +260,10 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
         if (!job) {
             workerLog.debug('Poll returned null, re-polling')
             continue
+        }
+
+        if (stopRequestedAt !== null) {
+            process.stdout.write(`[teardown-timing] pollLoop[${workerIndex}] EXECUTING a job dequeued ${Date.now() - stopRequestedAt}ms after stop was requested — jobType=${job.jobData.jobType}\n`)
         }
 
         workerLog.debug({ jobId: job.jobId, jobType: job.jobData.jobType }, 'Job received from poll')

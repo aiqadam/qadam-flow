@@ -32,6 +32,7 @@ export const workerModule: FastifyPluginAsyncZod = async (app) => {
 
 /** TEMPORARY (#500 measurement): which `onClose` hook consumes the CE suites' teardown budget. */
 async function timeCloseStep({ step, run }: { step: string, run: () => Promise<void> }): Promise<void> {
+    process.stdout.write(`[teardown-timing] app.close/${step} START\n`)
     const startedAt = Date.now()
     await run()
     process.stdout.write(`[teardown-timing] app.close/${step} ${Date.now() - startedAt}ms\n`)

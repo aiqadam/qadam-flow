@@ -223,17 +223,25 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
 
     app.addHook('onClose', async () => {
         app.log.info('Shutting down')
-        await systemJobsSchedule(app.log).close()
-        await longPollingHost(app.log).stop()
-        await redisConnections.destroy()
-        await distributedLock(app.log).destroy()
-        await engineResponseWatcher(app.log).shutdown()
+        await timeAppCloseStep({ step: 'systemJobsSchedule.close', run: () => systemJobsSchedule(app.log).close() })
+        await timeAppCloseStep({ step: 'longPollingHost.stop', run: () => longPollingHost(app.log).stop() })
+        await timeAppCloseStep({ step: 'redisConnections.destroy', run: () => redisConnections.destroy() })
+        await timeAppCloseStep({ step: 'distributedLock.destroy', run: () => distributedLock(app.log).destroy() })
+        await timeAppCloseStep({ step: 'engineResponseWatcher.shutdown', run: () => engineResponseWatcher(app.log).shutdown() })
     })
 
     return app
 }
 
 
+
+/** TEMPORARY (#500 measurement): which step of this `onClose` chain consumes the CE suites' teardown budget. */
+async function timeAppCloseStep({ step, run }: { step: string, run: () => Promise<void> }): Promise<void> {
+    process.stdout.write(`[teardown-timing] app.close/${step} START\n`)
+    const startedAt = Date.now()
+    await run()
+    process.stdout.write(`[teardown-timing] app.close/${step} ${Date.now() - startedAt}ms\n`)
+}
 
 export async function getAdapter() {
     const redisConnectionInstance = await redisConnections.useExisting()
