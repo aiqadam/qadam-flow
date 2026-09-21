@@ -32,8 +32,8 @@ const main = async (): Promise<void> => {
   // Keyed on the flag being PRESENT, not on it yielding a value. `--pack-to` with no `=`, or
   // `--pack-to=` with nothing after it, would otherwise leave packDestination falsy and fall
   // straight through to a real `npm publish` — on the one command in this repo that has no
-  // undo, and the two likeliest ways to mistype it. CI never hits this (release.yml always
-  // interpolates a non-empty runner.temp path) and the pack job holds no credential, but that
+  // undo, and the two likeliest ways to mistype it. CI never hits this (the pack job always
+  // interpolates a non-empty runner.temp path) and it holds no credential, but that
   // makes "pack never publishes" a property of the secret being absent rather than an
   // assertion, which is not where it belongs. `slice`, not `split('=')[1]`, so a destination
   // containing an `=` is not silently truncated.
@@ -42,8 +42,9 @@ const main = async (): Promise<void> => {
   if (packToArg !== undefined && (packDestination === undefined || packDestination.length === 0)) {
     throw new Error('[publishFrameworkPackages] --pack-to requires a destination: --pack-to=<dir>. Refusing to fall through to a real publish.')
   }
-  // release.yml no longer sets this: the job is skipped entirely for a prerelease ref (see its
-  // header comment), so every real run here is a stable tag and always publishes to `latest`.
+  // Neither publish workflow sets this. release.yml skips the call entirely for a prerelease
+  // ref (see its header comment) and publish-packages.yml has no prerelease concept at all, so
+  // every CI run here publishes to `latest`.
   // Left overridable for manual/local use — `publishNpmPackage` normalizes an unset or empty
   // value to `latest` on its own.
   const npmDistTag = process.env['NPM_DIST_TAG']

@@ -154,298 +154,69 @@ jobs:
       - name: List migrations tagged for this release
         run: npm run check-release-migrations -- "${GITHUB_REF_NAME#v}"
 
-  # Step 1a of the version-model decision in #433 (#475): publish the three framework
-  # packages every qadam depends on through the bun workspace protocol —
-  # `@aiqadam/shared`, `@aiqadam/qadams-framework`, `@aiqadam/qadams-common` — to npmjs
-  # under the `@aiqadam` scope. #476 (step 1b, publishing the 238 qadams themselves) is
-  # blocked on this landing first and is NOT wired here.
+  # Step 1a of the version-model decision in #433 (#475): publish `@aiqadam/shared`,
+  # `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` — the three packages every
+  # qadam depends on through the bun workspace protocol. #476 (step 1b, publishing the 238
+  # qadams themselves) is blocked on this landing first and is NOT wired here.
   #
-  # WHY NOT bun's OWN `workspace:*` rewrite. `bun publish` / `bun pm pack` do rewrite a
-  # `workspace:*` dependency to a real version, but they read that version from bun.lock's
-  # per-workspace `version` field, not from the dependency's own package.json. That field
-  # does not reliably refresh: on this repo, bumping `packages/shared/package.json` alone
-  # (no dependency change) left `bun.lock` quoting the prior version through both a plain
-  # `bun install` and `bun install --force` — only deleting and fully regenerating the
-  # lockfile picked up the new version. A publish pipeline that trusted the native rewrite
-  # would have silently packed a dependent against a `shared` version that was never
-  # published (or, worse, one that later stops existing). tools/scripts/utils/publish-npm-
-  # package.ts therefore uses the transform already written in
-  # packages/cli/src/lib/utils/{workspace,prepare-qadam}-utils.ts, which reads each
-  # workspace package's live source package.json directly and rewrites only the staged
-  # `dist/package.json` copy that gets published — the source tree keeps `workspace:*`.
-  # tools/ci/test-publish-workspace-invariants.sh pins this against a synthetic workspace so
-  # a regression here fails a PR instead of a real publish.
+  # The jobs live in _publish-framework-packages.yml, not here, because a `v*` tag is no
+  # longer the only way to reach them (#496): that tag IS the engine release — it moves the
+  # Docker `:latest` every `run.sh` install resolves to and cuts a GitHub Release — and
+  # requiring one in order to publish a `0.135.0` library was backwards. publish-packages.yml
+  # calls the same workflow on `workflow_dispatch`. Read that file for what packing and
+  # publishing do, why they are two jobs, and what a caller has to supply. What stays here is
+  # only what is true of the TAG path.
   #
   # WHY NOT GATING `build`/`publish` ON THIS. The Docker image and the npm packages are
   # independent artifacts for independent consumers (self-hosted operators vs. qadam SDK
   # authors); a flaky or rate-limited npm publish should not hold back the image tag users
   # actually install from. tools/scripts/publish-framework-packages.ts is idempotent per
   # package (packagePrePublishChecks skips anything already published at its current
-  # version), so a re-run of this job after a transient failure is safe. The asymmetry this
-  # trades away: `npm publish` cannot be undone the way a GHCR tag can be re-pushed — a
-  # 72-hour unpublish window that closes the moment anything depends on the version, versus
-  # a Docker tag that is simply overwritten by the next attempt. A run where this job
-  # succeeds and `build`/`publish` then fails leaves a real, permanent npm release for a
-  # Docker image that never shipped. That is the accepted cost of not gating; it is not a
-  # reason to gate `build` on this job instead, since the reverse order (npm waiting on a
-  # 2-platform Docker build) would block every framework-only patch on image build time for
-  # no correctness reason of its own.
+  # version), so a re-run after a transient failure is safe. The asymmetry this trades away:
+  # `npm publish` cannot be undone the way a GHCR tag can be re-pushed — a 72-hour unpublish
+  # window that closes the moment anything depends on the version, versus a Docker tag that is
+  # simply overwritten by the next attempt. A run where this call succeeds and `build`/
+  # `publish` then fails leaves a real, permanent npm release for a Docker image that never
+  # shipped. That is the accepted cost of not gating; it is not a reason to gate `build` on
+  # this instead, since the reverse order (npm waiting on a 2-platform Docker build) would
+  # block every framework-only patch on image build time for no correctness reason of its own.
   #
-  # WHAT THIS JOB DOES NOT CATCH. It has no opinion on whether these three packages should
-  # be republished for a given tag at all — `packagePrePublishChecks` makes a no-op publish
-  # safe, but nothing here asserts any of the three was actually bumped for this release.
-  # The three version independently of the release tag (`vX.Y.Z` on the Docker image says
-  # nothing about `packages/shared/package.json`'s own version), so "we published nothing
-  # this release" and "we published all three" are both a green job with identical logs
-  # apart from the per-package skip lines — read those lines, not the job conclusion, to
-  # know what actually shipped. It also does not catch a prerelease tag arriving between two
-  # stable ones: `if:` below skips the job entirely for `github.ref_name` containing a `-`,
-  # rather than publishing under the npm `next` dist-tag, because the two checks above combine
-  # badly with a prerelease dist-tag. Cut `v2.1.0-rc.1` while `shared` is at `0.135.0` and it
-  # publishes to `next`; cut the real `v2.1.0` later with `shared` still at `0.135.0` (normal,
-  # since the three version independently of the tag) and `packagePrePublishChecks` reports
-  # "already published" and skips — `latest` never advances to `0.135.0`, silently, in a green
-  # job, and once #476 lands every qadam install resolves through `latest`. Nothing consumes
-  # these three yet, so an RC of Qadam Flow being unable to publish an RC of them costs nothing;
-  # the next stable tag publishes whatever version is current at that point, same as always. The
-  # alternative — on "already published", additionally call `npm dist-tag add <pkg>@<version>
-  # latest` — handles the gap without ever skipping a publish, but is real additional
-  # complexity (a second network-mutating npm call, run unconditionally alongside a no-op
-  # publish) for a gap that costs nothing today; revisit if #476 or a real consumer make "an RC
-  # can carry a real framework-package release" a requirement rather than a hypothetical.
+  # WHY A PRERELEASE TAG SKIPS THE CALL ENTIRELY rather than publishing under the npm `next`
+  # dist-tag — the `!contains(github.ref_name, '-')` below, mirroring the Docker `publish`
+  # job's own `enable=${{ !contains(github.ref_name, '-') }}`. Cut `v2.1.0-rc.1` while
+  # `shared` is at `0.135.0` and it would publish `0.135.0` to `next`; cut the real `v2.1.0`
+  # later with `shared` still at `0.135.0` (normal, since the three version independently of
+  # the tag) and `packagePrePublishChecks` reports "already published" and skips — `latest`
+  # never advances to `0.135.0`, silently, in a green job, and once #476 lands every qadam
+  # install resolves through `latest`. Nothing consumes these three yet, so an RC of Qadam
+  # Flow being unable to publish an RC of them costs nothing; the next stable tag publishes
+  # whatever version is current at that point, same as always. The alternative — on "already
+  # published", additionally call `npm dist-tag add <pkg>@<version> latest` — handles the gap
+  # without ever skipping a publish, but is real additional complexity (a second
+  # network-mutating npm call, run unconditionally alongside a no-op publish) for a gap that
+  # costs nothing today; revisit if #476 or a real consumer make "an RC can carry a real
+  # framework-package release" a requirement rather than a hypothetical. Note that this is a
+  # statement about prerelease TAGS only: publishing prereleases from `main` is #494, and it
+  # is a third trigger with its own credentials, not a loosening of this line.
   #
-  # WHY TWO JOBS (#486). The npm packages are minted once and cannot be re-pushed the way a
-  # GHCR tag can, so the step that holds the publish token does not get to also install
-  # dependencies, run a build, or resolve a binary out of `node_modules/.bin`. `pack-…`
-  # restores the node_modules cache, installs, builds and runs every pre-publish check, then
-  # stops at `npm pack` and uploads the tarballs; `publish-…` downloads exactly those bytes
-  # and uploads them. Two properties follow that the single-job shape could not have:
-  #
-  #   * The tarball is compiled by a `tsc` resolved out of a restored cache artifact — which
-  #     install-deps.sh's own header is explicit that `--frozen-lockfile` does NOT
-  #     integrity-check — but that now happens in a job with no credential in scope, and
-  #     tools/ci/verify-native-modules.sh (the one step that can observe a corrupt-at-the-
-  #     right-version restore) runs there before anything is packed.
-  #   * The exact bytes that went to npm are downloadable and diffable by a human from the
-  #     run's artifacts. Nobody could do that when pack and publish were one step.
-  #
-  # The publishing job deliberately does NOT install: `tools/ci/publish-packed-tarballs.sh`
-  # needs nothing but `npm` itself, so no `npx` ever prepends `node_modules/.bin` to PATH in
-  # the one step where a long-lived publish token is readable. It also publishes from the
-  # artifact directory under RUNNER_TEMP rather than from the checkout, because npm's project
-  # config OUTRANKS the userconfig `setup-node` writes — and the repo-root .npmrc carries
-  # `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`, an env var this job does not set.
-  #
-  # That takes two guards in the script, not one, and review caught the gap between them: the
-  # `npm prefix` check catches a package.json or node_modules in an ANCESTOR, but npm falls
-  # back to the cwd for localPrefix when the walk finds nothing, so a `.npmrc` planted in the
-  # artifact directory itself is read as project config with that check still green — and it
-  # would expand `${NODE_AUTH_TOKEN}` against whatever registry it names. The script therefore
-  # also refuses any directory entry the manifest does not declare, dotfiles included. Both
-  # are pinned by tools/ci/test-publish-packed-tarballs.sh, along with the publish ORDER,
-  # which no longer survives implicitly now that a directory of tarballs sits between the two
-  # halves (`*.tgz` sorts `aiqadam-qadams-common` ahead of `aiqadam-shared`, exactly
-  # backwards), and the destination registry, which is passed as a CLI flag so a tarball's own
-  # `publishConfig.registry` cannot choose where the token is sent.
-  #
-  # HOW TO PROCEED IF THIS FAILS PARTWAY. The publish half walks the manifest in order and
-  # stops at the first failure, and the whole thing is safe to just re-run from the top:
-  # packagePrePublishChecks skips anything already at its published version, so a package that
-  # made it to npm is not packed again on the retry and therefore is not in the next run's
-  # manifest at all. A re-run after e.g. shared succeeded and framework hit a registry timeout
-  # only retries framework and common.
-  pack-framework-packages:
-    name: Pack framework packages
+  # `success()` is spelled out as documentation, not as load-bearing logic: GitHub ADDS the
+  # implicit "every `needs:` job succeeded" requirement to a job's own `if:` rather than
+  # replacing it, and only a status function such as `always()` overrides it — so a failed
+  # `verify` / `breaking-change-gate` / `version-tag-gate` skips this call with or without it.
+  framework-packages:
     needs: [verify, breaking-change-gate, version-tag-gate]
-    # Mirrors the Docker `publish` job's own `enable=${{ !contains(github.ref_name, '-') }}`
-    # guard below — see "WHAT THIS JOB DOES NOT CATCH" above for why a prerelease tag skips
-    # this entirely rather than publishing under a second npm dist-tag. `success()` is spelled
-    # out as documentation, not as load-bearing logic: GitHub ADDS the implicit "every `needs:`
-    # job succeeded" requirement to a job's own `if:` rather than replacing it, and only a status
-    # function such as `always()` overrides it — so a failed `verify` / `breaking-change-gate` /
-    # `version-tag-gate` skips this job with or without it. An earlier version of this comment
-    # claimed the reverse; it was wrong, and the `if:` is unchanged because the correction does
-    # not change behaviour.
     if: ${{ success() && !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # No `environment:` and no secret: that is the point of the split. Everything expensive,
-    # cacheable and attackable happens here, where there is no credential to steal.
+    # The ceiling for everything inside the called workflow: permissions can be narrowed on
+    # the way down but never widened, so `id-token: write` has to be granted HERE or
+    # `--provenance` cannot mint an attestation. The publishing job is the only one that
+    # keeps it; the packing job narrows back to `contents: read`.
     permissions:
       contents: read
-    steps:
-      # fetch-depth: 0 (+ fetch-tags), same reasoning as breaking-change-gate above:
-      # packagePrePublishChecks diffs against `origin/main` to tell "already published,
-      # nothing changed" apart from "version not bumped after a real change", and the
-      # ancestry check below needs the full history of `origin/main` to walk. A depth-1
-      # checkout has neither.
-      # `persist-credentials: false`: after the fetch this job needs git only locally, and it is
-      # the half that runs `bun install` and `npx turbo` — i.e. the most third-party code in the
-      # pipeline. No reason for a git token to sit in its config while that runs.
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-
-      # The automatic half of the human gate on the publishing job below: refuses to go on
-      # from a tag whose commit is not reachable by walking backward from `origin/main`'s
-      # current tip — i.e. a commit that was never actually merged into main, regardless of
-      # who pushed the tag or what it's named. Deliberately `--is-ancestor HEAD origin/main`,
-      # not the reverse: checking "is origin/main an ancestor of HEAD" would pass for a tag
-      # built by stacking extra, unreviewed commits on top of a legitimate main commit (HEAD
-      # would still descend from main), which is exactly the case this exists to catch.
-      #
-      # It sits in THIS job, not the publishing one, and still covers both: no tarball is
-      # produced for a tag that fails it, so the publishing job's `needs` is unsatisfied and
-      # it never starts. That also means the script the publishing job runs out of its own
-      # checkout can only ever come from a tag that passed this.
-      - name: Refuse to publish a tag that was never merged into main
-        run: |
-          if ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::${GITHUB_REF_NAME} (${GITHUB_SHA}) is not reachable from origin/main — refusing to publish framework packages from a commit that was never merged."
-            exit 1
-          fi
-
-      - uses: actions/setup-node@v6
-        id: node
-        with:
-          node-version: 24
-
-      - uses: oven-sh/setup-bun@v2
-        id: bun
-        with:
-          bun-version: 1.3.3
-
-      # Restore-only, same key `_verify.yml`'s `verify` job writes — see release-migrations
-      # above for what each key component is for.
-      - name: Restore built node_modules
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-            packages/*/*/node_modules
-            packages/*/*/*/node_modules
-          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
-
-      - name: Install dependencies
-        run: tools/ci/install-deps.sh
-
-      # The only step that can observe a restore which is corrupt at the expected version —
-      # `bun install --frozen-lockfile` asserts that resolution needs no lockfile change, not
-      # that the restored files are intact. Not every installing job in this repo runs it
-      # (`release-migrations` above and ci.yml's e2e job do not), but the jobs whose output
-      # anyone keeps do, and until #486 this one — whose output is permanent and unretractable
-      # — did not.
-      - name: Verify native addons load
-        run: tools/ci/verify-native-modules.sh
-
-      - name: Build shared, qadams-framework, qadams-common
-        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
-
-      # `npm run`, not a second copy of the raw `ts-node --project ... tools/scripts/publish-
-      # framework-packages.ts` invocation: `package.json`'s `publish-framework-packages`
-      # script is that exact command, kept as one string so this workflow and the local/manual
-      # entry point (`npm run publish-framework-packages -- --dry-run`) cannot drift apart.
-      # `--pack-to` is the same code path `--dry-run` takes, with the destination named
-      # instead of a temp directory — so a local dry run stays evidence about what a release
-      # will actually upload.
-      #
-      # A package already published at its current version produces no tarball and no manifest
-      # line, which is how a re-run after a partial failure stays safe.
-      - name: Pack shared, qadams-framework, qadams-common
-        run: |
-          mkdir -p "${{ runner.temp }}/npm-packages"
-          npm run publish-framework-packages -- --pack-to="${{ runner.temp }}/npm-packages"
-
-      # `if-no-files-found: error` is not redundant with the pack step succeeding:
-      # publish-order.txt is written even when nothing was packed, so an empty upload here
-      # means the path is wrong, not that there was nothing to publish.
-      #
-      # `path:` is the whole directory, and that is load-bearing rather than shorthand. A pack
-      # run with the registry checks bypassed drops a PACKED-WITH-SKIP-REGISTRY-CHECK marker
-      # (see SKIP_REGISTRY_CHECK_MARKER in tools/scripts/utils/publish-npm-package.ts) that the
-      # publishing job's undeclared-entry sweep refuses. Narrowing this to an enumeration such
-      # as `*.tgz` plus publish-order.txt would exclude the marker from the artifact, the sweep
-      # would see only declared files, and that protection would evaporate with every test
-      # still green — so tools/ci/test-publish-packed-tarballs.sh asserts this line's shape.
-      - name: Upload the packed tarballs
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-framework-packages
-          path: ${{ runner.temp }}/npm-packages
-          if-no-files-found: error
-          # The bytes that went to npm, kept as long as Actions allows, so "what exactly did
-          # we publish for v2.1.0" is answerable without unpacking it back off the registry.
-          retention-days: 90
-
-  publish-framework-packages:
-    name: Publish framework packages to npm
-    # `result == 'success'`, not `success()`: a `needs:` job that was SKIPPED (prerelease tag)
-    # leaves `success()` true, which would start this job with no artifact to download.
-    needs: [pack-framework-packages]
-    if: ${{ needs.pack-framework-packages.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Requires a GitHub Environment named `npm-publish` to exist (Settings → Environments)
-    # with required reviewers configured. The gates on `pack-framework-packages` constrain the
-    # tagged tree's QUALITY, not its PROVENANCE — none of verify/breaking-change-gate/
-    # version-tag-gate assert the tagged commit was ever reviewed, breaking-change-gate is
-    # deliberately tagger-overridable by design (see its own header), and `on: push: tags`
-    # runs whatever release.yml says at the tagged commit regardless of who pushed the tag.
-    # Anyone with `contents: write` — a collaborator, a leaked PAT, a compromised Action —
-    # could otherwise push a tag at a commit that never touched `main` and publish
-    # `@aiqadam/shared`, the transitive root of every qadam, to public npm at `latest` with
-    # no human in the loop. A required-reviewers environment is the one control in Actions
-    # that interposes a human between "a tag exists" and "the publish secret is readable".
-    # The ancestry check in the packing job is a second, automatic layer underneath it, not a
-    # replacement for it.
-    environment: npm-publish
-    permissions:
-      contents: read
-      # For --provenance: npm exchanges this job's OIDC token for a signed attestation tying
-      # the published tarball to this workflow run and commit. libnpmpublish builds that
-      # attestation from the Actions environment (GITHUB_REPOSITORY / GITHUB_SHA /
-      # GITHUB_REF / GITHUB_WORKFLOW_REF) and the tarball's own digest, never from a working
-      # tree — which is why it still works with nothing installed here.
       id-token: write
-    steps:
-      # Shallow and credential-less, for one file: tools/ci/publish-packed-tarballs.sh. No
-      # install runs here and nothing is built, so there is no node_modules for an `npx` to
-      # resolve a shimmed `npm` out of. `persist-credentials: false` because a job holding an
-      # npm publish token has no business also holding a git one.
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-
-      # `registry-url` + `scope` write an npmrc to $RUNNER_TEMP and export NPM_CONFIG_USERCONFIG
-      # for the rest of the job, which npm honours from any cwd. That generated npmrc's auth
-      # line is `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, so the secret has to be
-      # exported under exactly that name below — NPM_TOKEN is what the secret is called in
-      # Settings → Environments → npm-publish; NODE_AUTH_TOKEN is what npm's own generated
-      # config reads.
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: 'https://registry.npmjs.org'
-          scope: '@aiqadam'
-
-      # Into RUNNER_TEMP, deliberately OUTSIDE the checkout: npm resolves its project config
-      # from the nearest ancestor holding a package.json or a node_modules, and project config
-      # outranks the userconfig setup-node just wrote. Downloading these into the workspace
-      # would put the repo-root .npmrc — whose auth line names NPM_TOKEN, not NODE_AUTH_TOKEN —
-      # in front of the one that carries the credential. The script asserts this rather than
-      # trusting it.
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-framework-packages
-          path: ${{ runner.temp }}/npm-packages
-
-      - name: Publish the packed tarballs to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
+    # No `secrets:` / `secrets: inherit`: NPM_TOKEN is an environment secret on `npm-publish`,
+    # which the called workflow resolves from its own job-level `environment:` and which
+    # cannot be passed from a caller at all.
+    uses: ./.github/workflows/_publish-framework-packages.yml
 
   build:
     name: Build ${{ matrix.platform }}
