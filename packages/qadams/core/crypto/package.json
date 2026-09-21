@@ -8,7 +8,7 @@
     "@aiqadam/qadams-framework": "workspace:*",
     "@aiqadam/shared": "workspace:*",
     "buffer": "6.0.3",
-    "openpgp": "^6.2.0",
+    "openpgp": "6.3.0",
     "zod": "4.3.6",
     "tslib": "2.6.2"
   },

@@ -8,8 +8,8 @@
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
     "@aiqadam/shared": "workspace:*",
-    "@pinecone-database/pinecone": "^6.1.1",
-    "tslib": "^2.3.0"
+    "@pinecone-database/pinecone": "6.1.4",
+    "tslib": "2.8.1"
   },
   "scripts": {
     "build": "tsc -p tsconfig.lib.json && cp package.json dist/",

@@ -1,9 +1,14 @@
 name: Pack framework packages
 
-# Reusable build-and-pack for the three framework packages every qadam depends on through
-# the bun workspace protocol. Produces tarballs and a publish-order manifest as an artifact;
+# Reusable build-and-pack for everything this repo publishes to npm: the three framework
+# packages every qadam depends on through the bun workspace protocol, and — since #476 — the 238
+# official qadams themselves. Produces tarballs and a publish-order manifest as an artifact;
 # publishing them is the caller's job, literally. Extracted for the same reason _verify.yml
 # was (#64): two callers that must not drift.
+#
+# The file, the job and the artifact are all still named for the three. Renaming them would be a
+# lockstep edit across both callers and the assertions that pin those two copies equal, for no
+# behavioural gain on the one path in this repo that cannot be undone; see the upload step.
 #
 # WHO CALLS THIS: release.yml on a `v*` tag, and publish-packages.yml on workflow_dispatch.
 # See release.yml for why the tag path is gated the way it is, and publish-packages.yml for
@@ -157,7 +162,19 @@ jobs:
     # workflow. What this workflow refuses on its own, it refuses in a step below, so the
     # refusal is identical whichever trigger got here.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 was sized for an install plus a three-package build. Since #476 this job also builds and
+    # packs the 238-qadam catalogue — most of the image's build stage, plus one
+    # `registry.npmjs.org/<pkg>/latest` round trip per package inside packagePrePublishChecks,
+    # bounded to 16 in flight. Measured locally with a warm turbo cache and the registry checks
+    # skipped, the pack step alone took 19m42s for 241 packages; it is dominated by 241 `npm pack`
+    # process spawns, not by the network. Add a cold build and the install and the real figure is
+    # well north of that.
+    #
+    # A timeout here is a stuck-job backstop, not a schedule, so it sits well above the measured
+    # duration deliberately: the failure it guards against is a hung runner, and the failure it
+    # CAUSES when set too tight is a half-packed catalogue on a release tag. Re-running is safe
+    # either way — anything already published is skipped rather than repacked.
+    timeout-minutes: 90
     # No `environment:` and no secret: that is the point of the split. Everything expensive,
     # cacheable and attackable happens here, where there is no credential to steal.
     permissions:
@@ -233,8 +250,17 @@ jobs:
       - name: Verify native addons load
         run: tools/ci/verify-native-modules.sh
 
-      - name: Build shared, qadams-framework, qadams-common
-        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
+      # The three framework packages plus the whole official catalogue (#476). `@aiqadam/qadam-*`
+      # matches the 238 and NOT `@aiqadam/qadams-framework` / `@aiqadam/qadams-common` — the
+      # character after `qadam` is `s`, not the `-` the pattern requires — which is why those two
+      # still need naming explicitly. It is the same glob `lint-dev` inverts to exclude them.
+      #
+      # This is the step that makes the job expensive: it is most of the image's build stage.
+      # Building the catalogue here rather than packing whatever `dist` happens to exist is not
+      # optional — `publishNpmPackage` refuses a package with no build output, and a stale `dist`
+      # would publish a tarball whose contents do not match the version on its package.json.
+      - name: Build shared, qadams-framework, qadams-common and the official qadams
+        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework --filter=@aiqadam/qadam-*
 
       # `npm run`, not a second copy of the raw `ts-node --project ... tools/scripts/publish-
       # framework-packages.ts` invocation: `package.json`'s `publish-framework-packages`
@@ -246,10 +272,20 @@ jobs:
       #
       # A package already published at its current version produces no tarball and no manifest
       # line, which is how a re-run after a partial failure stays safe.
-      - name: Pack shared, qadams-framework, qadams-common
+      # `--include-qadams` adds the 238 official qadams to the same manifest, AFTER the three
+      # framework packages (#476, step 1b). One manifest and one artifact rather than a second
+      # pack/publish pair, because the publishing job is duplicated across release.yml and
+      # publish-packages.yml on purpose (#498) and a third copy of it would be pinned by nothing
+      # — tools/ci/test-publish-packed-tarballs.sh names the two files it knows about, and
+      # demonstrates a third copy passing every other assertion.
+      #
+      # Order inside the manifest is what keeps a registry client from resolving a qadam before
+      # the framework packages it depends on. The 238 depend only on those three and on none of
+      # each other, so nothing else in the tail needs ordering.
+      - name: Pack shared, qadams-framework, qadams-common and the official qadams
         run: |
           mkdir -p "${{ runner.temp }}/npm-packages"
-          npm run publish-framework-packages -- --pack-to="${{ runner.temp }}/npm-packages"
+          npm run publish-framework-packages -- --pack-to="${{ runner.temp }}/npm-packages" --include-qadams
 
       # `if-no-files-found: error` is not redundant with the pack step succeeding:
       # publish-order.txt is written even when nothing was packed, so an empty upload here
@@ -262,6 +298,11 @@ jobs:
       # as `*.tgz` plus publish-order.txt would exclude the marker from the artifact, the sweep
       # would see only declared files, and that protection would evaporate with every test
       # still green — so tools/ci/test-publish-packed-tarballs.sh asserts this line's shape.
+      # The artifact NAME is part of the contract with the publishing job in each caller, which
+      # hardcodes it, and tools/ci/test-publish-packed-tarballs.sh pins those two copies byte for
+      # byte. Since #476 it carries the 238 qadams as well, so the name under-describes its
+      # contents — renaming it would be a three-file lockstep edit against a pinned job for a
+      # cosmetic gain, which is not a trade worth making on the publish path.
       - name: Upload the packed tarballs
         uses: actions/upload-artifact@v4
         with:

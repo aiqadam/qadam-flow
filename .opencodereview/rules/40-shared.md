@@ -27,12 +27,14 @@ the language rules OCR already merges from its system layer.
 - **Util files.** Multiple plain functions in one util file are grouped into a
   single exported `const` object; callers use `myUtils.fn1()`. React components
   are named exports instead.
-- **Shared package versioning.** Any change under `packages/shared` must bump
-  the version in `packages/shared/package.json`: patch for fixes or
-  non-breaking additions, minor for new exports or behaviour changes. A
-  `packages/shared` diff without a version bump is a finding (note the diff may
-  put the two files in different review groups — check the changeset, not just
-  this file).
+- **Published package versioning.** `@aiqadam/shared`, `@aiqadam/qadams-framework`,
+  `@aiqadam/qadams-common` and every qadam publish to npm, so a version is a public
+  contract. Any change under one of those packages must bump the version in that
+  package's own `package.json`: patch for fixes or non-breaking additions, minor for
+  new exports or behaviour changes. They are on `0.x`, where minor is the breaking
+  slot; `@aiqadam/qadam-assemblyai` is `1.x`, so a break there is major instead. A
+  diff without a version bump is a finding (note the diff may put the two files in
+  different review groups — check the changeset, not just this file).
 - **Agent knowledge lives in `.agents/`.** `.claude/` and `.cursor/` are
   git-symlink mirrors; editing a mirror instead of `.agents/` is a finding.
 <!-- repo-wide:end -->
@@ -41,7 +43,12 @@ the language rules OCR already merges from its system layer.
   version bump in `packages/shared/package.json`: patch for fixes and
   non-breaking additions, minor for new exports or behaviour changes. Check
   whether the branch already bumps the version before flagging — one bump per
-  branch is enough.
+  branch is enough. This is now a published package, so the bump is what a
+  consumer resolves and not bookkeeping: every published qadam pins an exact
+  `@aiqadam/shared`, so a break here is a break in the whole catalogue's install
+  graph. Flag a missing bump even for a comment-only diff — `packages/shared`
+  being unchanged at an already-published version is what the pack job checks,
+  and it does not care why the file changed.
 - **No `any`, no `as` casts.** This package is the type surface every other
   package consumes; a forced cast here hides errors everywhere.
 - **Error helpers.** `QadamFlowError({ code, params })`, `tryCatch`,

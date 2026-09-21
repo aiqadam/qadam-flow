@@ -292,6 +292,74 @@ describe('qadamInstaller', () => {
         expect(await pathExists(readyFilePath(custom))).toBe(true)
     })
 
+    // #482 items 2 and 3. Both files have to land in the workspace bun installs FROM, because
+    // bun reads `.npmrc` and `bunfig.toml` from the install cwd and `$HOME` and does not walk up
+    // the tree — so the repo-root copies of both are not in force here and never were.
+    it('pins the @aiqadam scope in the .npmrc bun actually reads', async () => {
+        const qadam = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [qadam], includeFilters: true })
+
+        const npmrc = await readFile(join(testWorkspace, '.npmrc'), 'utf8')
+        expect(npmrc).toContain('@aiqadam:registry=https://registry.npmjs.org/')
+    })
+
+    it('quarantines fresh releases, exempting only the admin-chosen custom names', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [official, custom], includeFilters: true })
+
+        const bunfig = await readFile(join(testWorkspace, 'bunfig.toml'), 'utf8')
+        expect(bunfig).toContain('minimumReleaseAge = 259200')
+        // An administrator typed this name, so blocking their own fresh publish for three days
+        // would break iterating on a private qadam — a workflow that works today.
+        expect(bunfig).toContain('minimumReleaseAgeExcludes = ["@acme/qadam-internal"]')
+        // The official catalogue is chosen by nobody, which is the whole reason item 3 exists.
+        expect(bunfig).not.toContain(official.qadamName)
+        // The repo-root bunfig also sets `linker = "isolated"`; copying it here would change the
+        // node_modules layout the engine's loader walks.
+        expect(bunfig).not.toContain('linker')
+    })
+
+    // The exemption is decided by qadamType but written as a NAME, and a platform can register a
+    // CUSTOM qadam under an official name — qadamMetadataService.create validates no names and
+    // scopes uniqueness by platformId. Without the scope filter, one platform's naming choice
+    // would lift the quarantine off an official name for every tenant sharing the workspace.
+    it('never exempts an official name, even when a custom qadam is registered under one', async () => {
+        const squatter = makeQadam('@aiqadam/qadam-slack')
+        const genuine = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [squatter, genuine], includeFilters: true })
+
+        const bunfig = await readFile(join(testWorkspace, 'bunfig.toml'), 'utf8')
+        expect(bunfig).toContain('minimumReleaseAgeExcludes = ["@acme/qadam-internal"]')
+        expect(bunfig).not.toContain('@aiqadam/qadam-slack')
+    })
+
+    it('never writes a name that is not a package name into the excludes array', async () => {
+        const injected = makeQadam('@acme/x"]\nregistry = "http://evil.example')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [injected], includeFilters: true })
+
+        const bunfig = await readFile(join(testWorkspace, 'bunfig.toml'), 'utf8')
+        expect(bunfig).toContain('minimumReleaseAgeExcludes = []')
+        expect(bunfig).not.toContain('evil.example')
+    })
+
     it('the workspaces glob matches the directory qadams are written to', async () => {
         const qadam = makeQadam('@aiqadam/qadam-workspace')
         const installer = qadamInstaller(fakeLog, fakeApiClient)

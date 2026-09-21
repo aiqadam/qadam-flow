@@ -10,7 +10,7 @@
     "@aiqadam/shared": "workspace:*",
     "@microsoft/microsoft-graph-client": "3.0.7",
     "dayjs": "1.11.9",
-    "tslib": "^2.3.0"
+    "tslib": "2.8.1"
   },
   "scripts": {
     "build": "tsc -p tsconfig.lib.json && cp package.json dist/",

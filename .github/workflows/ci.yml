@@ -346,6 +346,15 @@ jobs:
       - name: Verify native addons load
         run: tools/ci/verify-native-modules.sh
 
+      # Three packages, NOT the 238-qadam catalogue the real pack job also builds since #476, and
+      # that divergence is deliberate rather than an oversight. This job runs on every PR; the
+      # catalogue build is most of the image's build stage and the PR already pays for that once
+      # in the Docker build. What this job exists to smoke-test is the pack PATH — build output ->
+      # prepareQadamDistForPublish -> npm pack -> manifest — and the qadams travel that path
+      # through the same publishNpmPackage call these three do. What it therefore does NOT cover
+      # is the qadam-specific half: findOfficialQadamPackagePaths, the chunked concurrency, and
+      # the empty-catalogue refusal. Those are unit-testable and are covered in
+      # tools/ci/test-publish-workspace-invariants.sh rather than by lengthening this job.
       - name: Build shared, qadams-framework, qadams-common
         run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
 
