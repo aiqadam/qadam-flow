@@ -357,7 +357,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-required-prop-defaults
 
-      # _publish-framework-packages.yml's `pack-framework-packages` job trusts a custom
+      # _pack-framework-packages.yml's `pack-framework-packages` job trusts a custom
       # workspace:* rewrite instead of bun's own (see that job's header for why). Needs
       # ts-node and the transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
       # node_modules, so it sits down here with the other post-install tooling suites

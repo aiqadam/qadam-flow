@@ -196,12 +196,12 @@ check "the marker fixture above uses the name the producer actually writes" "PAC
 # DOWNLOAD step carries too — the looser range swept in a third, unrelated `path:` and the
 # check failed on its own extraction rather than on the property.
 #
-# The file moved in #496: both jobs now live in the reusable workflow that release.yml and
-# publish-packages.yml call, so pinning release.yml would pin a file that no longer contains
-# an upload step at all — and `sed` over a file with no match prints nothing, which is the
-# failure mode this suite's own docs warn about. The emptiness check below is what turns that
-# into a red test rather than a vacuous pass.
-WORKFLOW="$REPO_ROOT/.github/workflows/_publish-framework-packages.yml"
+# The file has moved twice: out of release.yml in #496, then again in #498 when the PUBLISHING
+# job went back into each caller and only packing stayed reusable. Pinning the wrong file would
+# pin one with no upload step in it — and `sed` over a file with no match prints nothing, which
+# is the failure mode this suite's own docs warn about. The existence check and the
+# exactly-one-line check below are what turn that into a red test rather than a vacuous pass.
+WORKFLOW="$REPO_ROOT/.github/workflows/_pack-framework-packages.yml"
 [ -f "$WORKFLOW" ] || { echo "FAIL: $WORKFLOW does not exist"; exit 1; }
 upload_block="$(sed -n '/- name: Upload the packed tarballs/,/retention-days/p' "$WORKFLOW")"
 upload_path="$(printf '%s\n' "$upload_block" | sed -n 's/^ *path: //p')"
@@ -216,6 +216,40 @@ esac
 sh_name="$(sed -n 's/^PUBLISH_ORDER_FILENAME="\(.*\)"$/\1/p' "$REPO_ROOT/tools/ci/publish-packed-tarballs.sh")"
 check "the producer and the consumer agree on the manifest filename" "$ts_name" "$sh_name"
 check "and that name is not empty (so the check above is not vacuous)" "publish-order.txt" "$ts_name"
+
+# The publishing job is duplicated in release.yml and publish-packages.yml on purpose (#498):
+# `environment:` only resolves its secrets in a job that lives in the workflow the event
+# triggered, so it cannot move into the reusable packing workflow, and passing the token down
+# instead would force it to repository scope where every workflow can read it. Duplication
+# chosen deliberately still drifts, and the half that drifts silently is the one nobody runs
+# until a release — so the two copies are pinned equal here, comments excluded because each
+# carries its own lead paragraph.
+extract_publish_job() {
+    awk '
+        /^  publish-framework-packages:$/ { inside = 1; print; next }
+        inside && /^  [^ ]/               { inside = 0 }
+        inside                            { print }
+    ' "$1" | grep -vE '^[[:space:]]*#' | grep -vE '^[[:space:]]*$'
+}
+release_job="$(extract_publish_job "$REPO_ROOT/.github/workflows/release.yml")"
+dispatch_job="$(extract_publish_job "$REPO_ROOT/.github/workflows/publish-packages.yml")"
+release_job_lines="$(printf '%s\n' "$release_job" | grep -c . || true)"
+check "the publishing job was actually found in release.yml (guards a vacuous compare below)" \
+    "yes" "$([ "$release_job_lines" -gt 20 ] && echo yes || echo "no: only $release_job_lines lines")"
+if [ "$release_job" = "$dispatch_job" ]; then
+    check "release.yml and publish-packages.yml carry the same publishing job" "identical" "identical"
+else
+    printf 'publishing job drift:\n%s\n' "$(diff <(printf '%s\n' "$release_job") <(printf '%s\n' "$dispatch_job") || true)"
+    check "release.yml and publish-packages.yml carry the same publishing job" "identical" "they differ"
+fi
+
+# Both copies must keep the environment, which is what makes the secret resolve at all and
+# what summons the required reviewer. Deleting it is the single edit that would silently turn
+# the publish into an unreviewed one.
+for wf in release.yml publish-packages.yml; do
+    env_line="$(extract_publish_job "$REPO_ROOT/.github/workflows/$wf" | sed -n 's/^    environment: //p')"
+    check "$wf's publishing job still declares the npm-publish environment" "npm-publish" "$env_line"
+done
 
 echo ""
 echo "=== Results ==="

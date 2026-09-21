@@ -207,8 +207,8 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     // unpublishable by convention. tools/ci/publish-packed-tarballs.sh refuses any directory
     // entry its manifest does not declare, so this marker aborts it before it publishes anything
     // out of a directory packed with the guards off — including across the artifact upload and
-    // download between the two jobs of _publish-framework-packages.yml, which is why the name is
-    // not a dotfile.
+    // download between the packing job (_pack-framework-packages.yml) and each caller's own
+    // publishing job, which is why the name is not a dotfile.
     // ci.yml's `pack-smoke` reads only the manifest and is unaffected.
     //
     // What this is: a stop on maintainer error and on this flag drifting from ci.yml's smoke job

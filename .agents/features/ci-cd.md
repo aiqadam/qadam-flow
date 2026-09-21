@@ -28,8 +28,10 @@ not resolve into a reusable workflow.
 - `.github/workflows/release.yml` — tagged release builds (`v*`): Docker image, `:latest`, GitHub Release
 - `.github/workflows/publish-packages.yml` — manual (`workflow_dispatch`) npm publish, no release (#496)
 - `.github/workflows/_verify.yml` — reusable lint + typecheck + unit-test gate, called by the three above
-- `.github/workflows/_publish-framework-packages.yml` — reusable pack-then-publish for the three
-  `@aiqadam` framework packages, called by `release.yml` and `publish-packages.yml`
+- `.github/workflows/_pack-framework-packages.yml` — reusable build-and-pack for the three
+  `@aiqadam` framework packages, called by `release.yml` and `publish-packages.yml`. The
+  publishing job is deliberately NOT shared: environment secrets do not resolve inside a
+  reusable workflow, so each caller carries its own (#498)
 - `.github/workflows/pr-title.yml` — semantic PR-title enforcement
 - `.github/workflows/cleanup.yml` — scheduled cleanup of old workflow runs
 
