@@ -49,6 +49,59 @@ case "$1" in
         if [ -n "${FAKE_PUBLISH_FAILS:-}" ]; then
             echo 'stub-npm: publish failed' >&2; exit 1
         fi
+        # One line of FAKE_PUBLISH_SEQUENCE per ATTEMPT, not per package — which is what makes
+        # the retry cases expressible at all. The line number is the attempt number because
+        # every attempt appends exactly one line to PUBLISH_LOG above. Beyond the last line the
+        # sed prints nothing and the attempt succeeds, so a sequence only has to spell out its
+        # interesting prefix.
+        # `npm publish` lists the tarball's contents before it attempts the PUT, one
+        # `npm notice <size> <path>` per file. FAKE_TARBALL_CONTENTS plants paths in that
+        # listing, which is how the classifier's input can be steered by package content.
+        if [ -n "${FAKE_TARBALL_CONTENTS:-}" ]; then
+            echo 'npm notice Tarball Contents'
+            printf '%s\n' "$FAKE_TARBALL_CONTENTS" | while IFS= read -r entry; do
+                [ -n "$entry" ] && echo "npm notice 2B ${entry}"
+            done
+        fi
+        if [ -n "${FAKE_PUBLISH_SEQUENCE:-}" ]; then
+            attempt="$(grep -c . < "$PUBLISH_LOG")"
+            case "$(printf '%s\n' "$FAKE_PUBLISH_SEQUENCE" | sed -n "${attempt}p")" in
+                429)
+                    # npm's real wording, so the script's classifier is exercised against the
+                    # text it will actually be handed rather than against a token invented here.
+                    echo 'npm error code E429' >&2
+                    # Optional padding AFTER the marker, so a classifier that stops reading at
+                    # the first match still has a writer trying to push the rest at it.
+                    if [ -n "${FAKE_ERROR_PADDING_LINES:-}" ]; then
+                        i=0
+                        while [ "$i" -lt "$FAKE_ERROR_PADDING_LINES" ]; do
+                            echo 'npm error padding to outrun the pipe buffer' >&2
+                            i=$((i + 1))
+                        done
+                    fi
+                    echo 'npm error 429 Too Many Requests - PUT https://registry.npmjs.org/@aiqadam%2fqadam-baserow - Could not publish, as user undefined: rate limited exceeded' >&2
+                    exit 1
+                    ;;
+                5xx)
+                    # The other retryable class, and the only one after which a conflict can be
+                    # our own earlier PUT: the request may have been processed and only the
+                    # answer lost.
+                    echo 'npm error code E503' >&2
+                    echo 'npm error 503 Service Unavailable - PUT https://registry.npmjs.org/@aiqadam%2fshared' >&2
+                    exit 1
+                    ;;
+                conflict)
+                    echo 'npm error code EPUBLISHCONFLICT' >&2
+                    echo 'npm error Cannot publish over previously published version 0.1.0.' >&2
+                    exit 1
+                    ;;
+                fatal)
+                    echo 'npm error code E403' >&2
+                    echo 'npm error 403 Forbidden - PUT https://registry.npmjs.org/@aiqadam%2fqadam-x' >&2
+                    exit 1
+                    ;;
+            esac
+        fi
         ;;
     *)
         echo "stub-npm: unexpected command: $*" >&2; exit 1
@@ -57,6 +110,13 @@ esac
 STUB
 chmod +x "$STUB_DIR/bin/npm"
 export PATH="$STUB_DIR/bin:$PATH"
+
+# The retry backoff is real `sleep`, so the suite would otherwise spend 15 minutes asleep proving
+# a case about arithmetic. Zeroed here rather than per case: a case that forgets to zero it is
+# not wrong, just slow, and slow is how a suite stops being run. The two cases that assert on
+# pacing set their own value.
+export NPM_PUBLISH_RETRY_BASE_SECONDS=0
+export NPM_PUBLISH_THROTTLE_ON_LIMIT_SECONDS=0
 
 # A fresh tarball directory with the given manifest lines, each also created as a real file
 # unless the name is prefixed with `!` (declared-but-absent).
@@ -176,6 +236,138 @@ dir="$(new_case publish-fails aiqadam-shared-0.135.0.tgz aiqadam-qadams-framewor
 FAKE_PUBLISH_FAILS=1 run_case "$dir"
 check "a failing publish exits non-zero" 1 $?
 check "and does not continue to the next package" "1" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
+# --- rate limiting: the failure that actually happened -------------------------------------
+# #476's first real run died 23 packages into a 239-entry manifest on `429 Too Many Requests`,
+# with 216 left and no way to resume but another approved dispatch. These cases pin the two
+# halves of the answer — retry the package, then pace the rest of the manifest — and, just as
+# importantly, pin that neither of them fires for a failure retrying cannot fix.
+dir="$(new_case rate-limited-then-ok aiqadam-shared-0.135.0.tgz)"
+FAKE_PUBLISH_SEQUENCE='429' run_case "$dir"
+check "a rate-limited publish is retried rather than failing the run" 0 $?
+check "and the retry is a second attempt at the same package" "2" "$(grep -c . < "$WORK_ROOT/publish.log")"
+
+dir="$(new_case rate-limited-forever aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE=$'429\n429\n429\n429\n429' NPM_PUBLISH_MAX_ATTEMPTS=3 run_case "$dir"
+check "a registry that keeps refusing eventually fails the run" 1 $?
+check "after exactly NPM_PUBLISH_MAX_ATTEMPTS attempts" "3" "$(grep -c . < "$WORK_ROOT/publish.log")"
+check "and it says how to resume, since the pack step skips what is already published" "yes" \
+    "$(grep -qF 'Re-dispatch to resume' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# The counterpart to the retry, and the reason it is not enough on its own: retrying gets THIS
+# package published, pacing is what stops the next two hundred hitting the same wall.
+#
+# Asserted as elapsed WALL CLOCK, not as the log line announcing the pace. The log line was the
+# first spelling and it is not an assertion about pacing at all: mutating the loop to sleep
+# before every package regardless left it green, because the announcement and the sleep are
+# different statements. Timing is coarse — `SECONDS` is integer and CI runners are noisy — so
+# the two bounds are set far apart (a 2s pace over a 2-entry manifest against a <3s ceiling for
+# the unpaced run) rather than tightly around the expected value.
+dir="$(new_case throttle-engages aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+started=$SECONDS
+FAKE_PUBLISH_SEQUENCE='429' NPM_PUBLISH_THROTTLE_ON_LIMIT_SECONDS=2 run_case "$dir"
+status=$?
+elapsed=$((SECONDS - started))
+check "a rate limit paces the rest of the manifest" 0 "$status"
+check "and the next publish really waits for that pace" "waited" \
+    "$([ "$elapsed" -ge 2 ] && echo waited || echo "did not wait: ${elapsed}s")"
+check "and says the pace it settled on" "yes" \
+    "$(grep -qF 'pacing the rest of the manifest at 2s' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# Pacing a run that was never rate-limited would slow every ordinary release for nothing. With
+# the default starting pace of zero this is what holds the ordinary path at the speed it had
+# before the loop grew a throttle at all.
+dir="$(new_case no-throttle-without-a-limit aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz aiqadam-qadams-common-0.14.1.tgz)"
+started=$SECONDS
+run_case "$dir"
+elapsed=$((SECONDS - started))
+check "a run that is never rate-limited is never paced" "fast" \
+    "$([ "$elapsed" -lt 3 ] && echo fast || echo "paced anyway: ${elapsed}s")"
+check "and it never claims to have paced itself" "no" \
+    "$(grep -qF 'pacing the rest of the manifest' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# `npm publish` is a PUT, so a retry can meet the registry holding what the lost attempt wrote.
+# Without this the retry above would turn a successful publish into a failed run — which is why
+# it is a case and not a footnote. Note what makes it the lost-response case: the earlier attempt
+# ended WITHOUT AN ANSWER (a 5xx), not merely earlier.
+dir="$(new_case conflict-after-lost-response aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE=$'5xx\nconflict' run_case "$dir"
+check "a version conflict after an unanswered attempt is the lost-response case, not a failure" 0 $?
+check "and the manifest still finishes" "3" "$(grep -c . < "$WORK_ROOT/publish.log")"
+
+# ...and a 429 is NOT that. The registry declining to process the PUT means nothing of ours was
+# written, so a conflict on the retry was put there by something else — and the first spelling of
+# this loop took `attempt > 1` as proof of a lost response and accepted it silently. Publishing
+# under the official scope from outside this pipeline is the single thing #482 exists to notice,
+# so it ends the run red even though it arrives on a retry.
+dir="$(new_case conflict-after-rate-limit aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE=$'429\nconflict' run_case "$dir"
+check "a version conflict after a 429 is NOT counted as our own lost publish" 1 $?
+check "and the run names which package it was" "yes" \
+    "$(grep -qF '::error::  aiqadam-shared-0.135.0.tgz' "$WORK_ROOT/out.log" && echo yes || echo no)"
+check "and the rest of the manifest is still published" "3" "$(grep -c . < "$WORK_ROOT/publish.log")"
+
+# The lost-response flag is about ONE name@version, so it has to be cleared between packages.
+# Here the first package survives an unanswered attempt and then publishes; the second conflicts
+# on its own first attempt and must still be refused. A flag hoisted out of the per-package loop
+# would carry the first package's excuse onto the second.
+dir="$(new_case lost-response-does-not-carry-over aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE=$'5xx\n\nconflict' run_case "$dir"
+check "one package's lost response does not excuse the next package's conflict" 1 $?
+check "and it is the second package the run names" "yes" \
+    "$(grep -qF '::error::  aiqadam-qadams-framework-0.32.1.tgz' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# The same registry answer on the FIRST attempt means the same thing: nothing in this job
+# published it, and the pack step refuses to pack a version the registry already has. The
+# rest of the manifest is still the deliverable — no outcome here can change bytes already
+# published — but the run must not end green on it.
+dir="$(new_case conflict-on-first-attempt aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE='conflict' run_case "$dir"
+check "a version already on the registry at the first attempt fails the run" 1 $?
+check "but the rest of the manifest is still published" "2" "$(grep -c . < "$WORK_ROOT/publish.log")"
+# Anchored on the summary's own `::error::  ` prefix, not on the bare file name: the run logs
+# `publishing aiqadam-shared-0.135.0.tgz` on the way in, so a plain grep for the name passes
+# whether or not the summary exists at all.
+check "and the run names which package it was" "yes" \
+    "$(grep -qF '::error::  aiqadam-shared-0.135.0.tgz' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# Retrying a bad token, a forbidden scope or a malformed tarball buys nothing and costs the
+# backoff on every one of 239 entries. Only the transient classes are retried.
+dir="$(new_case fatal-not-retried aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE='fatal' run_case "$dir"
+check "a 403 is not retried" 1 $?
+check "and stops the manifest at the first attempt" "1" "$(grep -c . < "$WORK_ROOT/publish.log")"
+
+# The classifier reads npm's output, and `npm publish` prints the tarball's CONTENTS into that
+# output before it attempts the PUT — so without a restriction to npm's own error lines, a file
+# path inside a published package chooses the classification. app-sec demonstrated the whole
+# chain: a doc named `Cannot publish over.md`, a 429 on the first attempt and a real 403 on the
+# second, and the 403 was counted as the retry's own lost response. Exit 0, "published 1
+# package(s)", nothing published. This is the only case in the suite where the interesting input
+# is package CONTENT rather than the manifest, which is exactly why it was missed.
+dir="$(new_case notice-lines-cannot-steer-the-classifier aiqadam-shared-0.135.0.tgz)"
+FAKE_TARBALL_CONTENTS=$'docs/Cannot publish over.md\nsrc/E429.ts' \
+  FAKE_PUBLISH_SEQUENCE=$'429\nfatal' run_case "$dir"
+check "a tarball path that looks like an npm error cannot make a 403 look like a conflict" 1 $?
+check "and the run does not claim to have published it" "no" \
+    "$(grep -qF 'published 1 package(s)' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# A long error log must not change the classification. With `printf ... | grep -q`, an early
+# match plus a log past the pipe buffer made `printf` take SIGPIPE and — under `set -o pipefail` —
+# handed the branch status 141 even though grep matched, so a real 429 classified as `fatal` and
+# the run stopped instead of retrying. 20k padding lines is ~900 KB, comfortably past the ~64 KB
+# buffer; the marker is the FIRST line so grep really does stop early.
+dir="$(new_case a-long-error-log-still-classifies aiqadam-shared-0.135.0.tgz)"
+FAKE_ERROR_PADDING_LINES=20000 FAKE_PUBLISH_SEQUENCE=$'429\n' run_case "$dir"
+check "a 429 buried under a very long error log is still retried, not called fatal" 0 $?
+check "and the retry is what published it" "2" "$(grep -c . < "$WORK_ROOT/publish.log")"
+
+# The same planted paths must not fake a RATE LIMIT either, which would burn every backoff on a
+# failure that is never going to clear.
+dir="$(new_case notice-lines-cannot-fake-a-rate-limit aiqadam-shared-0.135.0.tgz)"
+FAKE_TARBALL_CONTENTS='src/E429.ts' FAKE_PUBLISH_SEQUENCE='fatal' run_case "$dir"
+check "a tarball path naming E429 does not turn a 403 into a retry" 1 $?
+check "and the publish is attempted exactly once" "1" "$(grep -c . < "$WORK_ROOT/publish.log")"
 
 # --- the dist-tag is honoured --------------------------------------------------------------
 dir="$(new_case dist-tag aiqadam-shared-0.135.0.tgz)"
