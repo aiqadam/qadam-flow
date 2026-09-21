@@ -28,12 +28,11 @@ can read a repository secret, including the ones that install and build the thir
 dependency graph on a pull request, and the environment's required reviewers would then gate
 the timing of the publish rather than the credential. `tools/ci/test-publish-packed-tarballs.sh`
 pins the two copies of the publishing job equal, and pins on each copy the properties #486
-bought: the `npm-publish` environment; the shared publisher script present and with no step
-after it; no *known* install or package-runner invocation (the `npm`/`pnpm`/`yarn`/`bun`
-install/add/exec matrix, `npx`, `bunx`, `node_modules/.bin`, `corepack`, `turbo`) — a denylist,
-so read it as "no install we know how to spell", not "no install"; only the three expected
-actions, which is an allowlist and does cover a composite action that installs; a
-credential-less checkout; and `id-token: write`.
+bought: the `npm-publish` environment, the shared publisher script as the job's last step, a
+credential-less checkout, `id-token: write`, and an allowlist of the three actions the job may
+use. It also greps the job for install and package-runner invocations — that one is a
+denylist, so read it as "no install we know how to spell", and read the regex in the file
+before relying on it.
 
 ## Key Files
 - `Dockerfile` — single source of truth for the production image (multi-stage: `base → build → run`)

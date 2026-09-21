@@ -278,31 +278,59 @@ for wf in release.yml publish-packages.yml; do
         "$(printf '%s\n' "$job" | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
 
     # `contains` alone would pass a token-reading step APPENDED after the publish, so the
-    # publisher must also be the last step. Count step headers after it rather than pinning the
-    # job's last text line: `run:` before `env:` is an equally common key order and a `run: |`
-    # block may have more than one line, and neither is a reason to redden every PR in the repo
-    # (this suite gates _verify.yml, which ci.yml, release.yml and publish-packages.yml all call).
-    check "$wf's publishing job runs no step after the shared publisher script" "0" \
-        "$(printf '%s\n' "$job" | sed -n '\#tools/ci/publish-packed-tarballs.sh#,$p' | grep -cE '^      - (name|uses):' || true)"
+    # publisher must also be the LAST step. Two spellings of that were tried and both were
+    # wrong. `tail -1` pinned the job's last text line, so `run:` written before `env:` — an
+    # equally common key order — reddened every PR in the repo (this suite gates _verify.yml,
+    # which ci.yml, release.yml and publish-packages.yml all call). Counting
+    # `^      - (name|uses):` headers after the publisher then missed every other first key a
+    # step may carry: `- run:`, `- id:`, `- if:` and `- env:` all appended cleanly, and
+    # anchoring the range on the FIRST mention of the script path meant merely naming that path
+    # in the credential check's error text moved the anchor and reddened the suite.
+    #
+    # So: find the last step header and the last occurrence of the invocation, and require the
+    # invocation to fall inside that final step. Any first key works, prose mentioning the path
+    # earlier is harmless, and multi-line `run: |` bodies are fine.
+    check "$wf's publishing job runs the shared publisher script as its last step" "yes" \
+        "$(printf '%s\n' "$job" | awk -v needle='tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' '
+            /^      - /        { last = NR }
+            index($0, needle)  { hit = NR }
+            END                { print (hit > 0 && hit >= last) ? "yes" : "no" }
+        ')"
 
     # #486: the job holding the token installs nothing and resolves no binary out of
     # node_modules/.bin. A build step appearing here is the regression that split bought.
     # Spell the package managers out as a matrix rather than listing the two or three
-    # invocations that happen to be on the mind of whoever last edited this: the previous
+    # invocations that happen to be on the mind of whoever last edited this: an earlier
     # version named `bun install`, `npm ci` and `bunx` but not `npm install` or `bun x`, which
-    # is the plainest spelling of the very property the assertion is named for.
+    # is the plainest spelling of the very property the assertion is named for. Flags between
+    # the manager and the verb are allowed for — up to four of them, so `npm --prefix /tmp
+    # install` is caught along with `npm -g install`, both of which are the same command as the
+    # `npm install -g` that was the only spelling caught before. The one-letter verbs `i` and
+    # `x` stay adjacent-only: nobody writes `npm --prefix /tmp i`, and an unbounded gap in
+    # front of a single letter matches far too much prose.
+    #
+    # It stays a denylist, and a denylist is never complete — `gem`, `brew`, `pipx` and a
+    # piped `curl | sh` are in reach of anyone who wants them. It is a regression detector for
+    # the accident, not a barrier against the adversary; the barrier is the environment's
+    # deployment-branch and reviewer policy. Note too that it scans the whole job text, `run:`
+    # prose included, so writing "this job runs no npm install" in a comment reddens it.
     check "$wf's publishing job installs nothing and runs no npx" "clean" \
-        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|exec|dlx|x)([[:space:]]|$)|(npx|bunx|turbo)([[:space:]]|$)|(pip3?|apt-get|apk)[[:space:]]+(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(npm|pnpm|yarn|bun)([[:space:]]+[^[:space:]]+){0,4}[[:space:]]+(install|ci|add|exec|dlx)([[:space:]]|$)|(npm|pnpm|yarn|bun)[[:space:]]+(i|x)([[:space:]]|$)|(npx|bunx|turbo)([[:space:]]|$)|(pipx|pip3?|gem|brew|apt(-get)?|apk)([[:space:]]+[^[:space:]]+){0,4}[[:space:]]+(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
 
     # A text scan over `run:` cannot see an install that arrives as a composite action, so the
-    # set of actions is an allowlist rather than a denylist. Versions are stripped: a bump to
-    # actions/checkout is routine and must not redden this, a fourth action must. Strip the
-    # version with a second expression rather than requiring an `@` in the match — a local
-    # action (`./.github/actions/install-deps`) carries no version, and a pattern that only
-    # matched `<name>@<ref>` dropped exactly that case out of the set instead of flagging it.
+    # set of actions is an allowlist rather than a denylist. A check that silently DROPS what
+    # it is meant to catch is worse than no check, and this one managed that twice: first by
+    # requiring `<name>@<ref>`, which skipped a version-less local action, then by requiring
+    # `uses:` to be the dash key, which skipped the `- name:` / `uses:` form that 28 of this
+    # repo's own steps are written in. So match `uses:` at any indent with or without the dash,
+    # then strip quotes, trailing comments and the version separately — a routine
+    # actions/checkout bump must not redden this, a fourth action must.
     check "$wf's publishing job uses only the three expected actions" \
         "actions/checkout actions/download-artifact actions/setup-node" \
-        "$(printf '%s\n' "$job" | sed -n 's/^      - uses: //p' | sed 's/@.*//' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+        "$(printf '%s\n' "$job" \
+            | sed -nE 's/^[[:space:]]+(- )?uses:[[:space:]]+//p' \
+            | sed -E 's/["'"'"']//g; s/[[:space:]]*#.*//; s/@.*//; s/[[:space:]]+$//' \
+            | sort -u | tr '\n' ' ' | sed 's/ $//')"
 
     # A job holding an npm publish token has no business also holding a git one.
     check "$wf's publishing job checks out without git credentials" "yes" \
