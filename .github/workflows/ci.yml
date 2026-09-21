@@ -221,10 +221,12 @@ jobs:
           # in neither and the script runs under it.
           #
           # The two publish workflows joined the list when #496 split the pack and publish jobs
-          # out of release.yml into _publish-framework-packages.yml: that file is what
-          # tools/ci/test-publish-packed-tarballs.sh reads the upload `path:` shape out of, and
-          # publish-packages.yml is the second caller whose wiring can break independently of
-          # release.yml's.
+          # out of release.yml: _publish-framework-packages.yml now IS the release pack path
+          # this job smoke-tests, so a change to it is exactly what `pack-smoke` exists to catch
+          # early, and publish-packages.yml is a second caller whose wiring can break
+          # independently of release.yml's. (The suite that pins that file's upload `path:`,
+          # tools/ci/test-publish-packed-tarballs.sh, does NOT run here — it runs in `verify`,
+          # unconditionally, like the .npmrc pin below.)
           #
           # Deliberately NOT here: bun.lock, bunfig.toml, .npmrc. The first two only change what
           # the install produces, and `verify` installs on every non-docs PR, so a break is
@@ -305,7 +307,7 @@ jobs:
       contents: read
     steps:
       # Shallow, and no git credential: `--skip-registry-check` means nothing here diffs against
-      # origin/main, so the full history release.yml's pack job needs is not needed.
+      # origin/main, so the full history the real pack job needs is not needed.
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -338,7 +340,7 @@ jobs:
       - name: Install dependencies
         run: tools/ci/install-deps.sh
 
-      # release.yml's pack job runs this too. A job that exists to smoke-test that path should
+      # The real pack job runs this too. A job that exists to smoke-test that path should
       # not quietly differ from it, and the probe is the only step that can see a cache restore
       # which is corrupt at the expected version.
       - name: Verify native addons load

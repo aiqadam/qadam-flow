@@ -26,13 +26,29 @@ name: Publish packages
 # docs/install/configuration/breaking-changes.mdx, which is about the ENGINE release a tag
 # performs — it says nothing about whether `@aiqadam/shared` changed compatibly, and running
 # it here would fail dispatches for breaking changes to a Docker image this run does not
-# touch. What is left is `verify` (the tarball is built from this tree, so this tree has to
-# lint, typecheck and pass unit tests) plus the two controls that actually bound a publish:
-# the called workflow's `origin/main` ancestry check, and the environment reviewers.
+# touch. What is left is `default-branch-gate` below, `verify`, and the two controls inside
+# the called workflow: the `origin/main` ancestry check and the environment reviewers.
+#
+# `verify` here is a strict subset of what a PR gets: two of its steps (the new-migration
+# metadata check and check-required-prop-defaults) carry `if: github.event_name ==
+# 'pull_request'` and are skipped. Neither is a publish-path control, and the tag path has
+# always had the same property — but do not read "verify ran" as "the PR suite ran".
 #
 # A BREAKING CHANGE TO THE PACKAGES is therefore on the person dispatching, as it is on the
 # person tagging. The check that would make it automatic does not exist yet; #475's third
 # deliverable (the version-bump policy now that these numbers are public) is where it belongs.
+#
+# WHAT THIS WORKFLOW CANNOT ENFORCE, and what has to be configured on the environment itself.
+# Both reviews of #496 landed on the same point from opposite directions, so it is recorded
+# here rather than in a PR thread: the gate below, and the ancestry check in the called
+# workflow, both ship FROM the ref being dispatched. Anyone who can push a branch can push one
+# with either check deleted and dispatch that — the same privilege that could always push a
+# `v*` tag at an arbitrary commit, so this is not a new class of exposure, but it does mean no
+# in-repo check is the real control. The real control is a DEPLOYMENT BRANCH POLICY on the
+# `npm-publish` environment (Settings -> Environments -> npm-publish -> "Selected branches and
+# tags" -> the default branch, plus `v*` for the tag path). That is enforced outside the ref,
+# so a modified workflow on a branch cannot reach the credential at all — the job is blocked
+# before a reviewer is even asked. Everything below is defence in depth underneath it.
 on:
   workflow_dispatch:
 
@@ -40,15 +56,65 @@ permissions:
   contents: read
 
 jobs:
-  # Not gated on a path filter and not skippable: this is the only thing standing between a
-  # manual dispatch and a permanent npm release, and it is cheap next to an unretractable
-  # publish. ci.yml has already run it on the merge commit, but a dispatch can name any ref
-  # the ancestry check accepts, which is not necessarily one ci.yml saw green.
+  # WHY THIS EXISTS AND THE ANCESTRY CHECK IS NOT ENOUGH. `git merge-base --is-ancestor HEAD
+  # origin/main` establishes "this commit was merged into main", not "this IS main". Every old
+  # commit on main passes it — including one that was merged, found bad, and reverted, since a
+  # revert adds a commit rather than removing the original from history. On the tag path that
+  # gap was covered incidentally: reaching an old commit meant creating a `v*` tag on it, and
+  # version-tag-gate then demands the tag equal the root package.json version. There is no tag
+  # here, so nothing pins the ref to anything current.
+  #
+  # What that buys an honest mistake is worse than it sounds, because the skip is computed
+  # against a dist-tag rather than the version list: packagePrePublishChecks asks npm for
+  # `<pkg>/latest`, so dispatching from a ref where shared says 0.130.0 while npm's `latest`
+  # is 0.135.0 reads as "not published", packs, and publishes 0.130.0 to `latest` — moving it
+  # BACKWARDS. Once #476 lands every qadam install resolves through `latest`. A 403 (the
+  # version really does exist) is the lucky outcome; a version that predates this pipeline and
+  # was never published is the unlucky one.
+  #
+  # A job rather than an `if:` on the call, so a dispatch from the wrong ref fails loudly
+  # instead of reporting a green run in which nothing happened. It gates `verify` too, so a
+  # wrong ref costs seconds rather than a full lint-and-test cycle.
+  default-branch-gate:
+    name: Dispatched from the default branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse a dispatch from any ref but the default branch
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "${DEFAULT_BRANCH:-}" ]; then
+            echo '::error::the event payload carried no repository.default_branch, so this gate cannot establish what it is meant to establish. Refusing to publish rather than passing vacuously.'
+            exit 1
+          fi
+          if [ "${REF_TYPE:-}" != "branch" ] || [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::this workflow publishes the tip of ${DEFAULT_BRANCH}; it was dispatched from ${REF_TYPE:-?} '${REF_NAME}'. Publishing an older or unmerged tree can move the npm 'latest' dist-tag backwards. Re-dispatch from ${DEFAULT_BRANCH}, or cut a v* tag if this is a release."
+            exit 1
+          fi
+          echo "Dispatched from ${DEFAULT_BRANCH}; proceeding."
+
+  # Not gated on a path filter and not skippable: the tarball is built from this tree, and it
+  # is cheap next to an unretractable publish. ci.yml has already run it on the merge commit,
+  # but that run is not this run and its result is not consulted here.
   verify:
+    needs: [default-branch-gate]
     uses: ./.github/workflows/_verify.yml
 
   framework-packages:
-    needs: [verify]
+    needs: [default-branch-gate, verify]
+    # Scoped to this caller, so the tag path keeps the no-concurrency reasoning in
+    # _publish-framework-packages.yml's header. That reasoning assumed the only way in was
+    # creating a `v*` tag — rare, visible, and expensive. A dispatch is none of those: anyone
+    # who can fire it can fire it in a loop, and every run that clears the gates parks on the
+    # `npm-publish` approval and pages the reviewers. Approval fatigue is the precondition for
+    # every other attack on this pipeline, so queueing is worth more here than it costs.
+    # `cancel-in-progress: false` because a run that is mid-publish must never be killed.
+    concurrency:
+      group: publish-framework-packages-dispatch
+      cancel-in-progress: false
     # Same ceiling as release.yml's call: `id-token: write` has to be granted here because
     # permissions narrow but never widen down the chain, and `--provenance` needs the OIDC
     # token. See _publish-framework-packages.yml for why no `secrets:` are passed.

@@ -1,9 +1,14 @@
 name: Verify
 
 # Reusable lint + typecheck + unit-test gate. Called by ci.yml (every PR and push
-# to main) and by release.yml (tag builds), so those two cannot drift apart. They
-# already had: before this extraction both carried a copy of this job and only
-# ci.yml's copy ran the two pure-shell tests below.
+# to main), by release.yml (tag builds) and by publish-packages.yml (a dispatched
+# npm publish), so those cannot drift apart. The first two already had: before this
+# extraction both carried a copy of this job and only ci.yml's copy ran the two
+# pure-shell tests below.
+#
+# Note for readers of the two non-PR callers: the steps below carrying
+# `if: github.event_name == 'pull_request'` are skipped for them, so "verify ran"
+# is not the same statement there as it is on a PR.
 #
 # Callers must wrap this in a gate job — see the comment on `verify` in ci.yml for
 # why. A reusable workflow's check reports as "<caller job> / <inner job>", which
@@ -353,8 +358,8 @@ jobs:
         run: npm run check-required-prop-defaults
 
       # _publish-framework-packages.yml's `pack-framework-packages` job trusts a custom
-      # workspace:* rewrite instead of bun's own (see that job's header for why). Needs ts-node and the
-      # transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
+      # workspace:* rewrite instead of bun's own (see that job's header for why). Needs
+      # ts-node and the transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
       # node_modules, so it sits down here with the other post-install tooling suites
       # rather than with the pure-shell suite above.
       - name: Test the publish-time workspace:* rewrite invariants

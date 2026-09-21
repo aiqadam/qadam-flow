@@ -7,10 +7,29 @@ engine, all 211 community qadams and 27 core qadams are bundled into one OCI ima
 no separate npm publishes per qadam, no per-piece versioning. CI/CD is built around this
 single artifact.
 
+That is still true of the **engine**, but it is no longer the whole picture. Step 1a of #433
+(#475) publishes three framework packages — `@aiqadam/shared`, `@aiqadam/qadams-framework`,
+`@aiqadam/qadams-common` — to npm, because every qadam depends on them through the bun
+`workspace:*` protocol, which no registry client can resolve. The 238 qadams themselves are
+still bundled and unpublished (#476 is the step that would change that). The three version
+independently of the root `package.json`, so a `vX.Y.Z` tag on the image says nothing about
+any of their versions.
+
+Publishing them is **decoupled from the release tag** (#496): a `v*` tag publishes whatever is
+current as a side effect of releasing the engine, and `publish-packages.yml` publishes without
+a release. Both call the same reusable workflow, so they cannot drift. The publishing half sits
+behind the `npm-publish` GitHub Environment and its required reviewers, and reads `NPM_TOKEN`
+as an **environment** secret on that environment — a repository secret of the same name would
+not resolve into a reusable workflow.
+
 ## Key Files
 - `Dockerfile` — single source of truth for the production image (multi-stage: `base → build → run`)
 - `.github/workflows/ci.yml` — PR + push validation, conditional image push on `main`
-- `.github/workflows/release.yml` — tagged release builds (`v*`)
+- `.github/workflows/release.yml` — tagged release builds (`v*`): Docker image, `:latest`, GitHub Release
+- `.github/workflows/publish-packages.yml` — manual (`workflow_dispatch`) npm publish, no release (#496)
+- `.github/workflows/_verify.yml` — reusable lint + typecheck + unit-test gate, called by the three above
+- `.github/workflows/_publish-framework-packages.yml` — reusable pack-then-publish for the three
+  `@aiqadam` framework packages, called by `release.yml` and `publish-packages.yml`
 - `.github/workflows/pr-title.yml` — semantic PR-title enforcement
 - `.github/workflows/cleanup.yml` — scheduled cleanup of old workflow runs
 
@@ -20,7 +39,8 @@ single artifact.
 |----------------------|--------------------|-----------|--------------|----------------|-----------------------------------------|
 | `pull_request`       | `ci.yml`           | ✅        | ✅           | ❌             | —                                       |
 | `push: main`         | `ci.yml`           | ✅        | ✅           | ✅             | `:main`, `:sha-<7chars>`                |
-| `push: tag v*`       | `release.yml`      | ✅        | ✅           | ✅             | `:vX.Y.Z`, `:latest`                    |
+| `push: tag v*`       | `release.yml`      | ✅        | ✅           | ✅             | `:vX.Y.Z`, `:latest` — and the npm publish |
+| `workflow_dispatch`  | `publish-packages.yml` | ✅    | ❌           | ❌             | npm only; no image, no GitHub Release   |
 | `pull_request` title | `pr-title.yml`     | —         | —            | —              | Validates Conventional Commits format   |
 | `schedule daily`     | `cleanup.yml`      | —         | —            | —              | Deletes runs older than 30 days         |
 
