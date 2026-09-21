@@ -27,8 +27,10 @@ Do not move it to repository scope to "fix" an empty-token failure: every workfl
 can read a repository secret, including the ones that install and build the third-party
 dependency graph on a pull request, and the environment's required reviewers would then gate
 the timing of the publish rather than the credential. `tools/ci/test-publish-packed-tarballs.sh`
-pins the two copies of the publishing job equal and pins that both still declare
-`environment: npm-publish`.
+pins the two copies of the publishing job equal, and pins on each copy the properties #486
+bought: the `npm-publish` environment, the shared publisher script as the job's last step, no
+install and no `npx`/`bunx`/`node_modules/.bin`, a credential-less checkout, and
+`id-token: write`.
 
 ## Key Files
 - `Dockerfile` — single source of truth for the production image (multi-stage: `base → build → run`)

@@ -273,14 +273,19 @@ for wf in release.yml publish-packages.yml; do
         "$(printf '%s\n' "$job" | sed -n 's/^    environment: //p')"
 
     # The anchor: without it, a copy whose final step was replaced in BOTH files still looks
-    # identical and still has an environment.
+    # identical and still has an environment. Read the LAST line, not any line — a `contains`
+    # check passes a token-reading step appended after the publish, which is exactly the shape
+    # this assertion's name promises to exclude. The extraction already drops comments and
+    # blanks, so `tail -1` is the job's last real line.
     check "$wf's publishing job still ends in the shared publisher script" "yes" \
-        "$(printf '%s\n' "$job" | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
+        "$(printf '%s\n' "$job" | tail -1 | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
 
     # #486: the job holding the token installs nothing and resolves no binary out of
     # node_modules/.bin. A build step appearing here is the regression that split bought.
+    # `node_modules/.bin` is in the alternation literally: naming only the runners (npx, bunx)
+    # misses the plain `./node_modules/.bin/<tool>` spelling of the same property.
     check "$wf's publishing job installs nothing and runs no npx" "clean" \
-        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|bun install|npm ci|npx |turbo ' && echo "found an install or npx" || echo clean)"
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|bun install|npm ci|npx |bunx |pnpm dlx |node_modules/\.bin|turbo ' && echo "found an install or npx" || echo clean)"
 
     # A job holding an npm publish token has no business also holding a git one.
     check "$wf's publishing job checks out without git credentials" "yes" \
