@@ -264,8 +264,15 @@ fi
 # plausible: whoever needs a hotfix publish path will copy the job again. Demonstrated: a
 # `hotfix-publish.yml` carrying the job plus a step curling the token out passed all 45
 # assertions. This is the list, so adding a caller means adding it here too.
-check "no third copy of the publishing job exists" "publish-packages.yml release.yml" \
-    "$(cd "$REPO_ROOT/.github/workflows" && grep -l '^  publish-framework-packages:' ./*.yml \
+#
+# Both extensions: Actions reads `.yaml` as well, and the first spelling of this guard globbed
+# only `./*.yml`, so the same copy named `hotfix-publish.yaml` walked straight past the check
+# added to catch it. It keys on the job NAME, so a renamed or quoted key still evades — that is
+# the limit of a text grep and the reason the real control is the environment's policy.
+check "the publishing job appears only in release.yml and publish-packages.yml" \
+    "publish-packages.yml release.yml" \
+    "$(cd "$REPO_ROOT/.github/workflows" \
+        && grep -l '^  publish-framework-packages:' ./*.yml ./*.yaml 2>/dev/null \
         | sed 's#^\./##' | sort | tr '\n' ' ' | sed 's/ $//')"
 
 # Equality alone is only a drift detector: an edit applied IDENTICALLY to both copies passes
@@ -323,9 +330,11 @@ for wf in release.yml publish-packages.yml; do
     # Counted from `steps:` rather than over the whole job, because `needs:` sits at the same
     # depth and rewriting it from flow to block style is a semantically identical reformat that
     # would otherwise read as a sixth step. The anchor is a prefix, not an exact match: a
-    # trailing comment or a trailing space on the `steps:` line would otherwise read as zero. And it bounds how many steps there are, not what
-    # they do: editing the BODY of a step that legitimately exists is invisible here, as it is
-    # to the other assertions. Pinning bodies is a different and much heavier tool.
+    # trailing comment or a trailing space on the `steps:` line would otherwise read as zero.
+    #
+    # And it bounds how many steps there are, not what they do: editing the BODY of a step that
+    # legitimately exists is invisible here, as it is to the other assertions. Pinning bodies is
+    # a different and much heavier tool.
     check "$wf's publishing job has exactly the five expected steps" "5" \
         "$(printf '%s\n' "$job" | sed -n '/^    steps:/,$p' | grep -cE '^      - ' || true)"
 
