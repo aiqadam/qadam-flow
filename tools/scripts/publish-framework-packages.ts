@@ -1,6 +1,8 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { publishNpmPackage } from './utils/publish-npm-package'
+import { findOfficialQadamPackagePaths } from './utils/qadam-publish-paths'
+import { chunk } from '../../packages/shared/src/lib/core/common/utils/utils'
 
 // Every qadam depends on these three through the bun workspace protocol
 // (`"@aiqadam/shared": "workspace:*"`, etc. — see #475), so they are step 1a of the
@@ -27,6 +29,50 @@ const FRAMEWORK_PACKAGE_PATHS = [
 // duplication cannot drift silently.
 const PUBLISH_ORDER_FILENAME = 'publish-order.txt'
 
+// Step 1b (#476) adds 238 more packages behind `--include-qadams`, and every one of them costs a
+// serial `registry.npmjs.org/<pkg>/latest` round trip in packagePrePublishChecks before it can be
+// packed. Serially that is the dominant cost of the pack job; unbounded it is 238 concurrent
+// requests, which invites the 429 that `getLatestPublishedVersion`'s 4^n backoff turns into
+// minutes of sleeping. 16 is chosen to keep the registry leg busy without looking like a burst —
+// the pre-#486 script this replaces used 30-wide chunks with a 5s sleep between them, which is
+// the same trade made less precisely.
+//
+// Bounded concurrency is safe here in a way it would not be at publish time: the 238 qadams
+// depend only on the three framework packages and on none of each other (checked across all 238
+// manifests), so nothing in this set has an ordering constraint against anything else in it.
+const QADAM_PACK_CONCURRENCY = 16
+
+// Returns the packed filenames rather than appending to a list the caller owns: the manifest is
+// written once, from one array, in one place, so there is no window in which a partially
+// appended manifest could be observed or written out.
+const packOfficialQadams = async ({ dryRun, npmDistTag, packDestination, skipRegistryCheck }: PackOfficialQadamsParams): Promise<string[]> => {
+  const qadamPaths = await findOfficialQadamPackagePaths()
+
+  // Not a formality. The whole point of 1b is that the catalogue in the image and the catalogue
+  // on the registry are the same set; a traversal that silently found nothing (a moved root, a
+  // `dist`-only checkout) would publish the three framework packages, report green, and leave
+  // the qadams unpublished — which is the exact state #477 must not be flipped on top of.
+  if (qadamPaths.length === 0) {
+    throw new Error('[publishFrameworkPackages] --include-qadams found no official qadams to pack — refusing to report a successful catalogue publish that shipped none.')
+  }
+  console.info(`[publishFrameworkPackages] considering ${qadamPaths.length} official qadams`)
+
+  const packedPerChunk: (string | null)[][] = []
+  for (const paths of chunk(qadamPaths, QADAM_PACK_CONCURRENCY)) {
+    packedPerChunk.push(await Promise.all(paths.map(async (path) => {
+      const result = await publishNpmPackage({ path, dryRun, npmDistTag, packDestination, skipRegistryCheck })
+      // `skipped` is the normal outcome for a qadam whose version is already on the registry and
+      // unchanged since main — with 238 packages it will be nearly all of them on nearly every
+      // run, which is what keeps a re-run after a partial publish cheap and safe.
+      return result.status === 'packed' ? result.filename : null
+    })))
+  }
+
+  const packed = packedPerChunk.flat().filter((filename): filename is string => filename !== null)
+  console.info(`[publishFrameworkPackages] packed ${packed.length} of ${qadamPaths.length} official qadams (the rest were already published at their current version)`)
+  return packed
+}
+
 const main = async (): Promise<void> => {
   const dryRun = process.argv.includes('--dry-run')
   // Keyed on the flag being PRESENT, not on it yielding a value. `--pack-to` with no `=`, or
@@ -51,6 +97,19 @@ const main = async (): Promise<void> => {
   // See PublishNpmPackageParams.skipRegistryCheck. publishNpmPackage refuses this unless the run
   // also packs, so it cannot be used to force a publish past the already-published guard.
   const skipRegistryCheck = process.argv.includes('--skip-registry-check')
+  // Step 1b of #433 (#476). Opt-in rather than always-on so ci.yml's `pack-smoke` job — which
+  // exists to prove the real pack path still works on every PR — does not grow a build and pack
+  // of the whole catalogue, and so the three framework packages stay publishable on their own.
+  const includeQadams = process.argv.includes('--include-qadams')
+
+  // Same shape as the skipRegistryCheck guard above and for the same reason: without a pack
+  // destination this function publishes directly from the process that built the tree, which is
+  // exactly the shape #486 split apart. Three packages doing that was the old world; 238 doing it
+  // would put the whole catalogue through a code path with no artifact to diff and no
+  // credential-free packing half.
+  if (includeQadams && !packDestination && !dryRun) {
+    throw new Error('[publishFrameworkPackages] --include-qadams is only valid with --pack-to or --dry-run — the qadams publish through tools/ci/publish-packed-tarballs.sh, never from the packing process (#486).')
+  }
 
   const packedFilenames: string[] = []
   for (const path of FRAMEWORK_PACKAGE_PATHS) {
@@ -58,6 +117,14 @@ const main = async (): Promise<void> => {
     if (result.status === 'packed' && packDestination) {
       packedFilenames.push(result.filename)
     }
+  }
+
+  // After the three, never interleaved with them: publish-packed-tarballs.sh walks this manifest
+  // in order, so the framework packages a qadam depends on are on the registry before the qadam
+  // that names them is, and a client racing the tail never resolves a dependent ahead of its
+  // dependency.
+  if (includeQadams) {
+    packedFilenames.push(...await packOfficialQadams({ dryRun, npmDistTag, packDestination, skipRegistryCheck }))
   }
 
   if (packDestination) {
@@ -74,4 +141,11 @@ if (require.main === module) {
     console.error(err)
     process.exitCode = 1
   })
+}
+
+type PackOfficialQadamsParams = {
+  dryRun: boolean
+  npmDistTag: string | undefined
+  packDestination: string | undefined
+  skipRegistryCheck: boolean
 }

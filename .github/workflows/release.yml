@@ -228,7 +228,12 @@ jobs:
     name: Publish framework packages to npm
     needs: [pack-framework-packages]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Sized for the manifest, not for three packages: since #476 it can carry the 238-qadam
+    # catalogue as well, and publish-packed-tarballs.sh walks it SERIALLY with --provenance, so
+    # each entry costs a registry round trip plus a Sigstore signing exchange. Keep this and the
+    # copy in the other caller identical — tools/ci/test-publish-packed-tarballs.sh compares the
+    # two jobs line for line with comments stripped, and a timeout that differs is drift.
+    timeout-minutes: 90
     # Requires a GitHub Environment named `npm-publish` (Settings → Environments) with
     # required reviewers configured and `NPM_TOKEN` stored as an ENVIRONMENT secret on it.
     #

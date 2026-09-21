@@ -10,10 +10,24 @@ single artifact.
 That is still true of the **engine**, but it is no longer the whole picture. Step 1a of #433
 (#475) publishes three framework packages — `@aiqadam/shared`, `@aiqadam/qadams-framework`,
 `@aiqadam/qadams-common` — to npm, because every qadam depends on them through the bun
-`workspace:*` protocol, which no registry client can resolve. The 238 qadams themselves are
-still bundled and unpublished (#476 is the step that would change that). The three version
+`workspace:*` protocol, which no registry client can resolve. Step 1b (#476) adds the 238
+qadams themselves, so the same pipeline now publishes 241 packages. All of them version
 independently of the root `package.json`, so a `vX.Y.Z` tag on the image says nothing about
-any of their versions.
+any of their versions — and a version number in any of them is a public contract now, which
+is what the version-bump policy in `AGENTS.md` exists for.
+
+The qadams ride the **same** pack half, the **same** `publish-order.txt` manifest and the
+**same** `tools/ci/publish-packed-tarballs.sh` as the three framework packages, behind
+`--include-qadams` on the pack step. That is a constraint, not a convenience: the publishing
+job is deliberately duplicated (below), and a separate qadam pipeline would mean a third copy
+of it, which the suite below is explicit that nothing would pin. The manifest keeps the three
+framework packages ahead of the 238 so a registry client racing the tail never resolves a
+qadam before what it depends on; the 238 depend on those three and on none of each other, so
+nothing else in the tail needs ordering. Packing them is bounded-concurrency (the registry
+round trip in `packagePrePublishChecks` is per package); publishing them stays serial.
+`ci.yml`'s `pack-smoke` deliberately covers only the three — building the catalogue on every
+PR would duplicate the Docker build — and the qadam-specific half is covered by
+`tools/ci/test-publish-workspace-invariants.sh` instead.
 
 Publishing them is **decoupled from the release tag** (#496): a `v*` tag publishes whatever is
 current as a side effect of releasing the engine, and `publish-packages.yml` publishes without
