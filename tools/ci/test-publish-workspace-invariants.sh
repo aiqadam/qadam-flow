@@ -272,6 +272,84 @@ else
   pass=$((pass + 1)); echo "ok: the guard case never reaches npm at all"
 fi
 
+# --- step 1b: the official-qadam leg (#476) -----------------------------------------------
+#
+# ci.yml's `pack-smoke` deliberately builds and packs only the three framework packages, so the
+# qadam-specific half of the pack script is exercised nowhere else on a PR. These cover it.
+
+: > "$NPM_CALL_LOG"
+qadam_guard_out="$(cd "$repo_root" && PATH="$guard_stub/bin:$PATH" timeout 60 "$ts_node_bin" --project "$ts_project" \
+  tools/scripts/publish-framework-packages.ts --include-qadams 2>&1)"
+qadam_guard_status=$?
+# By name, for the same reason the skipRegistryCheck case above is: without the guard this run
+# still fails eventually, so "exited non-zero" alone would pass with the guard deleted.
+case "$qadam_guard_out" in
+  *"--include-qadams is only valid with --pack-to or --dry-run"*) qadam_guard_refused=yes ;;
+  *) qadam_guard_refused=no ;;
+esac
+
+if [ "$qadam_guard_refused" = yes ] && [ "$qadam_guard_status" -ne 0 ]; then
+  pass=$((pass + 1)); echo "ok: --include-qadams without a pack destination is refused, by name"
+else
+  fail=$((fail + 1)); echo "FAIL: expected the includeQadams refusal, got status ${qadam_guard_status}: ${qadam_guard_out}"
+fi
+
+if [ -s "$NPM_CALL_LOG" ]; then
+  fail=$((fail + 1)); echo "FAIL: the --include-qadams guard case invoked npm — 238 unretractable publishes from the packing process: $(cat "$NPM_CALL_LOG")"
+else
+  pass=$((pass + 1)); echo "ok: the --include-qadams guard case never reaches npm at all"
+fi
+
+# The expected count is derived with `find`, not hardcoded and not read back out of the module
+# under test: "238 == 238" against a constant would survive the traversal returning the wrong
+# SET at the right size, and reading it from the same code makes the assertion circular.
+expected_qadam_count="$(cd "$repo_root" && find packages/qadams/core packages/qadams/community \
+  -mindepth 2 -maxdepth 2 -name package.json 2>/dev/null | grep -c . || true)"
+if [ "${expected_qadam_count:-0}" -lt 2 ]; then
+  fail=$((fail + 1)); echo "FAIL: found ${expected_qadam_count:-0} qadam package.json files on disk — the assertions below would be vacuous"
+else
+  pass=$((pass + 1)); echo "ok: ${expected_qadam_count} official qadams on disk to compare against"
+fi
+
+# `tail -1` because ts-node's own diagnostics (and anything the imported modules log) share
+# stdout; the probe prints its JSON last and nothing after it.
+qadam_paths_out="$(cd "$repo_root" && timeout 180 "$ts_node_bin" --project "$ts_project" -e '
+const { findOfficialQadamPackagePaths } = require("./tools/scripts/utils/qadam-publish-paths")
+findOfficialQadamPackagePaths().then((paths) => {
+  console.log(JSON.stringify({
+    count: paths.length,
+    frameworkLeaked: paths.filter((p) => p === "packages/qadams/framework" || p === "packages/qadams/common").length,
+    customLeaked: paths.filter((p) => p.startsWith("packages/qadams/custom")).length,
+    sorted: JSON.stringify(paths) === JSON.stringify([...paths].sort()),
+  }))
+}).catch((err) => { console.log(JSON.stringify({ error: String(err) })); process.exitCode = 1 })' 2>&1 | tail -1)"
+
+read_probe() { printf '%s' "$qadam_paths_out" | sed -n "s/.*\"$1\":\\([^,}]*\\).*/\\1/p"; }
+
+check_probe() {
+  if [ "$2" = "$3" ]; then
+    pass=$((pass + 1)); echo "ok: $1"
+  else
+    fail=$((fail + 1)); echo "FAIL: $1 — expected '$3', got '$2' (probe output: ${qadam_paths_out})"
+  fi
+}
+
+check_probe "findOfficialQadamPackagePaths returns every official qadam and no more" \
+  "$(read_probe count)" "$expected_qadam_count"
+# The failure this one exists for: packing a framework package a second time under the qadam
+# sweep puts two tarballs for the same name@version in one manifest, and the second 403s after
+# the first has already uploaded — a partial publish that reads as a build failure.
+check_probe "the framework packages do not leak into the qadam sweep" \
+  "$(read_probe frameworkLeaked)" "0"
+# packages/qadams/custom is where a locally authored qadam lands. Publishing one to the
+# @aiqadam scope from a developer's tree is not a thing this pipeline may ever do.
+check_probe "packages/qadams/custom does not leak into the qadam sweep" \
+  "$(read_probe customLeaked)" "0"
+# Filesystem order is not lexical, so without the sort two runs of the same tree produce
+# manifests that differ only by shuffling — which makes diffing two publish artifacts useless.
+check_probe "the returned paths are sorted, so the manifest is stable between runs" \
+  "$(read_probe sorted)" "true"
+
 echo
 echo "passed: ${pass}   failed: ${fail}"
 if [ "$fail" -ne 0 ]; then
