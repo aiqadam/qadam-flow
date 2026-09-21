@@ -12,6 +12,7 @@ import {
     QadamPackage,
     QadamType,
     tryCatch,
+    unique,
     WorkerToApiContract,
 } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
@@ -24,11 +25,33 @@ import { bunRunner } from '../code/bun-runner'
 const tracer = trace.getTracer('qadam-installer')
 
 const usedQadamsMemoryCache: Record<string, boolean> = {}
-// The workspaces glob in createRootPackageJson has to address this same directory. When the two
-// drifted apart (the glob still said `pieces/**` after the rename), bun matched no workspace,
+// The workspaces glob in createInstallWorkspaceFiles has to address this same directory. When the
+// two drifted apart (the glob still said `pieces/**` after the rename), bun matched no workspace,
 // exited 0 with "No packages!", and created no node_modules — so qadamCheckIfAlreadyInstalled
 // deleted the `ready` marker and every job reinstalled from scratch, forever.
 const QADAMS_DIR = 'qadams'
+
+// #482 items 2 and 3. Both exist because bun reads `.npmrc` and `bunfig.toml` from the install
+// WORKING DIRECTORY and from `$HOME`, and does not walk up the tree — so neither of the repo-root
+// copies reaches this workspace (`cache/v12/common`, see getGlobalCacheCommonPath). Writing them
+// here, next to the root package.json, is the only way either one is in force where packages are
+// actually installed.
+const OFFICIAL_QADAM_SCOPE = '@aiqadam'
+// A literal rather than an operator knob: making the registry configurable is #478, and it has to
+// validate an admin-supplied URL that `safeHttp` structurally cannot cover (bun performs the fetch
+// in a subprocess, so the request-filtering agent never sees it). Pinning it to a literal is what
+// closes #482 item 2 on its own — with the scope named here, resolution for `@aiqadam/*` cannot
+// silently fall back to whatever a stray `$HOME/.npmrc`, an internal mirror or a transparently
+// rewriting proxy would otherwise choose. #478 replaces the literal; it does not remove the pin.
+const OFFICIAL_QADAM_REGISTRY_URL = 'https://registry.npmjs.org/'
+// The same three days the repo-root bunfig.toml applies to this repo's own installs.
+const INSTALL_QUARANTINE_SECONDS = 259_200
+// Conservative npm package-name shape. Names reaching the excludes list below come from the
+// database (an administrator typed them when registering a custom qadam) and are interpolated
+// into a TOML array, so anything that is not plainly a package name is dropped rather than
+// written. Dropping fails safe: the name stays quarantined, and a name this rejects could not
+// have been installed from a registry anyway.
+const NPM_PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
 const relativeQadamPath = (piece: QadamPackage) => join('./', QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
 const qadamPath = (rootWorkspace: string, piece: QadamPackage) => join(rootWorkspace, QADAMS_DIR, `${piece.qadamName}-${piece.qadamVersion}`)
 
@@ -92,8 +115,9 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 pieces: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
             }, '[qadamInstaller] acquired lock and starting to install qadams')
 
-            await createRootPackageJson({
+            await createInstallWorkspaceFiles({
                 path: rootWorkspace,
+                qadamsToInstall,
             })
 
             await savePackageArchivesToDiskIfNotCached(rootWorkspace, qadamsToInstall, apiClient)
@@ -161,22 +185,39 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 // loader falls back to `packages/qadams/**/dist` for exactly that reason.
 //
 // DO NOT flip `OFFICIAL_QADAMS_INSTALL_ENABLED` on in any environment, including staging, until
-// #482 is closed. The `@aiqadam` npm scope is UNCLAIMED — `.npmrc` maps only `@activepieces`, so
-// every `@aiqadam/*` name resolves against public npm today, and nobody has registered it yet.
-// That is not a stable "it 404s" state, it is a dependency-confusion target sitting open: the
-// moment anyone squats the scope and publishes any of these names, this predicate starts routing
-// the ENTIRE official catalogue through `bun install` against a package chosen by an attacker, not
-// an administrator. `createQadamPackageJson` writes it straight into a package.json dependency and
-// `bunRunner.install` fetches it. It lands in the SHARED workspace (`getGlobalCacheCommonPath()`,
-// not a per-platform path — see `groupQadamsByPackagePath`), the engine prefers an installed
-// directory over the bundled `dist` build, and the substituted code then runs for every tenant on
-// that worker. Two mitigations that look like they'd cover this and do not, so nobody re-derives
-// and re-rejects them: `bun install --ignore-scripts` (`bun-runner.ts`) blocks `postinstall`, but
-// the qadam is `require`d by the engine rather than run via a lifecycle script, so that is not the
-// vector; and the repo-root `bunfig.toml`'s `minimumReleaseAge` quarantine is not in force here,
-// because bun reads `bunfig.toml` from the install cwd and `$HOME` and does not walk up the tree,
-// and the install cwd (`cache/v12/common`) has none. See #482 for what has to land first (claiming
-// the org, pinning `@aiqadam:registry` explicitly, carrying the quarantine into the install cwd).
+// #482 is closed. What follows is the state as of step 1a landing; read it as a status board
+// rather than as a standing description, because two of the three facts it used to state have
+// changed and the third has not.
+//
+// The `@aiqadam` npm scope IS OURS — claimed, and now occupied: `@aiqadam/shared`,
+// `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` are published (#475), and #476 puts the
+// 238 qadams under it. An earlier version of this comment told the reader the scope was unclaimed
+// and that every `@aiqadam/*` name therefore 404s, which was the benign-but-true reading at the
+// time and is simply wrong now — an operator who flips the flag "to watch it 404" would instead
+// get a real resolution against real packages. The dependency-confusion squat that framing warned
+// about is closed: nobody else can publish these names.
+//
+// What the flag still routes, and why the remaining preconditions matter. With it on, the ENTIRE
+// official catalogue is resolved from a registry rather than from the image — the names are not
+// chosen by any administrator, they are the whole catalogue. `createQadamPackageJson` writes each
+// one straight into a package.json dependency and `bunRunner.install` fetches it. It lands in the
+// SHARED workspace (`getGlobalCacheCommonPath()`, not a per-platform path — see
+// `groupQadamsByPackagePath`), the engine prefers an installed directory over the bundled `dist`
+// build, and whatever resolved then executes for every tenant on that worker.
+//
+// One mitigation that looks like it would cover that and does not, recorded so nobody re-derives
+// and re-rejects it: `bun install --ignore-scripts` (`bun-runner.ts`) blocks `postinstall`, but
+// the qadam is `require`d by the engine rather than run via a lifecycle script, so lifecycle
+// scripts are not the vector.
+//
+// Two mitigations that DO apply are now in force, written by `createInstallWorkspaceFiles` into
+// the directory bun actually installs in: the `@aiqadam:registry` pin (#482 item 2), so
+// resolution for the scope cannot fall back to a mirror, proxy or stray `$HOME/.npmrc`; and the
+// `minimumReleaseAge` quarantine (#482 item 3), which the repo-root `bunfig.toml` never reached
+// because bun does not walk up the tree. #482 item 4 (integrity pinning for the official set) is
+// still open, and `--frozen-lockfile` is not the answer to it — this workspace has no
+// checked-in lockfile to freeze and gains qadams incrementally, so freezing it would fail every
+// install that adds one. See #482 before flipping anything.
 //
 // #433/#477 decided that official qadams become real published packages so a version pin survives
 // an image upgrade instead of resolving to whatever happens to be built. Once #475/#476 publish
@@ -274,16 +315,61 @@ async function savePackageArchivesToDiskIfNotCached(
     await Promise.all(saveToDiskJobs)
 }
 
-async function createRootPackageJson({ path }: { path: string }): Promise<void> {
+async function createInstallWorkspaceFiles({ path, qadamsToInstall }: {
+    path: string
+    qadamsToInstall: QadamPackage[]
+}): Promise<void> {
     const packageJsonPath = join(path, 'package.json')
     await fileSystemUtils.threadSafeMkdir(dirname(packageJsonPath))
-    await writeFileAtomic(packageJsonPath, JSON.stringify({
-        'name': 'fast-workspace',
-        'version': '1.0.0',
-        'workspaces': [
-            `${QADAMS_DIR}/**`,
-        ],
-    }, null, 2), 'utf8')
+    await Promise.all([
+        writeFileAtomic(packageJsonPath, JSON.stringify({
+            'name': 'fast-workspace',
+            'version': '1.0.0',
+            'workspaces': [
+                `${QADAMS_DIR}/**`,
+            ],
+        }, null, 2), 'utf8'),
+        writeFileAtomic(join(path, '.npmrc'), `${OFFICIAL_QADAM_SCOPE}:registry=${OFFICIAL_QADAM_REGISTRY_URL}\n`, 'utf8'),
+        writeFileAtomic(join(path, 'bunfig.toml'), buildInstallBunfig(qadamsToInstall), 'utf8'),
+    ])
+}
+
+// Three measured properties of bun 1.3 shape this, and none of them is obvious from the docs:
+//
+//   * `minimumReleaseAge` does not DOWNGRADE an exact pin, it fails the install outright
+//     ("No version matching … blocked by minimum-release-age"). Every dependency in this
+//     workspace is exact-pinned, so the quarantine is a hard refusal here, not a soft one.
+//   * `minimumReleaseAgeExcludes` is NOT transitive. Exempting a package exempts that name only;
+//     its own freshly published dependencies stay blocked. So the exemption below rescues the
+//     common case (an administrator installing a custom qadam they just published) and not the
+//     case where that qadam also pins a dependency released in the last three days.
+//   * an unrecognised key in `[install]` is silently ignored — no warning, no error. A typo in
+//     either key name therefore reads as a fully-armed quarantine with no exemptions, which is
+//     the fail-safe direction but is invisible. Do not rename these without re-probing bun.
+//
+// The exemption is drawn exactly where #482 draws the line it cares about: "these names are not
+// admin-chosen, so there is no human in the loop to notice a substitution". A CUSTOM REGISTRY
+// qadam is the opposite case — an administrator typed that package name deliberately — and
+// blocking it for three days would break iterating on a private qadam, a workflow that works
+// today. The official catalogue gets no exemption, which is the entire point of item 3.
+//
+// `[install]` carries the quarantine keys and NOTHING else. The repo-root bunfig.toml also sets
+// `linker = "isolated"`; copying that here would change the node_modules layout the engine's
+// loader walks, which is a behaviour change this file has no reason to make. Keep this minimal.
+function buildInstallBunfig(qadamsToInstall: QadamPackage[]): string {
+    const adminChosenNames = unique(
+        qadamsToInstall
+            .filter((piece) => piece.packageType === PackageType.REGISTRY && piece.qadamType === QadamType.CUSTOM)
+            .map((piece) => piece.qadamName)
+            .filter((qadamName) => NPM_PACKAGE_NAME_PATTERN.test(qadamName)),
+    )
+    const excludes = adminChosenNames.map((qadamName) => `"${qadamName}"`).join(', ')
+    return [
+        '[install]',
+        `minimumReleaseAge = ${INSTALL_QUARANTINE_SECONDS}`,
+        `minimumReleaseAgeExcludes = [${excludes}]`,
+        '',
+    ].join('\n')
 }
 
 async function createQadamPackageJson({ rootWorkspace, qadamPackage }: {
