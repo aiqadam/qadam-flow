@@ -8,7 +8,9 @@ import {
 } from '@aiqadam/shared'
 import { In } from 'typeorm'
 import { repoFactory } from '../../../core/db/repo-factory'
+import { system } from '../../../helper/system/system'
 import { FieldEntity } from '../../../tables/field/field.entity'
+import { flowMigrationUtil } from './flow-migration-util'
 import { Migration } from '.'
 
 const fieldRepo = repoFactory<Field>(FieldEntity)
@@ -56,9 +58,37 @@ export const migrateV18TablesFieldIds: Migration = {
             }
         }
 
-        const fields = await fieldRepo().find({
-            where: { id: In([...new Set(fieldIds)]) },
-        })
+        // `.agents/rules/data-isolation.md`: every query filters by `projectId`. Not a formality
+        // here — `fieldIds` come straight from `step.settings.input.filters.filters[].field.id`,
+        // and a PIECE step's `input` is `z.record(z.string(), z.unknown())` with no per-key
+        // validation, so an id belonging to another project reaches this query untouched on the
+        // `ap_import_flow` / `ap_duplicate_flow` path (`prepareRequest`'s IMPORT_FLOW case rewrites
+        // only `notes`), and the migration then writes the other project's `externalId` into this
+        // flow version where its owner can read it (#488).
+        //
+        // WHICH HALF OF THIS DEFENDS WHICH PATH, because they are not the same half. On a flow
+        // version loaded from the database the `projectId` filter is what closes it. On the
+        // IMPORT_FLOW path the filter never runs at all: `migrateFlowVersionTemplate` hardcodes
+        // `flowId: ''`, so the resolve below always yields `undefined` and the degrade is the
+        // entire defence. That is the path this is most needed on — `flow.controller.ts` invokes
+        // it from `preValidation`, which runs BEFORE the auth middleware registered in `app.ts`,
+        // so before this change an unauthenticated request reached an unfiltered field query.
+        //
+        // An undeterminable project therefore resolves NOTHING rather than failing: the migration
+        // still runs and still pins `qadamVersion` below, but every `field.id` is left exactly as
+        // authored. Throwing instead would page on-call (`flow-version-migration.service.ts`) on
+        // an ordinary template import. The visible cost, worth knowing: a schema-18 flow JSON
+        // re-imported into the project that does own those fields keeps its raw ids and is stamped
+        // past this migration, because the chain never re-enters a migration it has already run.
+        // Fixing that means giving `migrateFlowVersionTemplate` a trustworthy project, which means
+        // moving it out of `preValidation` where `request.projectId` is not yet populated — a
+        // larger change than this one, and not a regression in isolation terms.
+        const projectId = await flowMigrationUtil.resolveProjectId({ flowId: flowVersion.flowId, flowVersionId: flowVersion.id, log: system.globalLogger() })
+        const fields = isNil(projectId)
+            ? []
+            : await fieldRepo().find({
+                where: { id: In([...new Set(fieldIds)]), projectId },
+            })
 
         // A `Map`, not a `Record`: `filter.field.id` comes straight from
         // `step.settings.input.filters.filters[].field.id`, i.e. flow JSON that is never

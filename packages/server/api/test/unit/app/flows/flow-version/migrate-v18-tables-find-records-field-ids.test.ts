@@ -2,9 +2,14 @@ import { FlowActionType, FlowVersion } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockFind = vi.fn()
+const mockGetOneById = vi.fn()
 
 vi.mock('../../../../../src/app/core/db/repo-factory', () => ({
     repoFactory: () => () => ({ find: mockFind }),
+}))
+
+vi.mock('../../../../../src/app/flows/flow/flow.service', () => ({
+    flowService: (): { getOneById: typeof mockGetOneById } => ({ getOneById: mockGetOneById }),
 }))
 
 import { migrateV18TablesFieldIds } from '../../../../../src/app/flows/flow-version/migrations/migrate-v18-tables-find-records-field-ids'
@@ -13,6 +18,7 @@ const TABLES_QADAM_NAME = '@aiqadam/qadam-tables'
 const LEGIT_FIELD_ID = 'field-1'
 const LEGIT_FIELD_EXTERNAL_ID = 'external-field-1'
 const LEGIT_FIELD_VERSION = '0.2.9'
+const PROJECT_ID = 'project-1'
 
 // A `tables-find-records` step whose one real filter (`LEGIT_FIELD_ID`) the migration is meant to
 // resolve to an external id, plus a second filter literally naming its field `constructor` —
@@ -73,6 +79,7 @@ describe('migrateV18TablesFieldIds', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mockFind.mockResolvedValue([{ id: LEGIT_FIELD_ID, externalId: LEGIT_FIELD_EXTERNAL_ID }])
+        mockGetOneById.mockResolvedValue({ id: 'flow-1', projectId: PROJECT_ID })
     })
 
     it('starts at 18', () => {
@@ -97,5 +104,40 @@ describe('migrateV18TablesFieldIds', () => {
         const prototypeNamedFilterId = readFilters(migrated)[1].id
         expect(prototypeNamedFilterId).toBe('constructor')
         expect(typeof prototypeNamedFilterId).toBe('string')
+    })
+
+    // #488. `field.id` is read straight out of flow JSON and nothing constrains it to a field this
+    // project owns, so an unfiltered lookup resolves an id belonging to another project and writes
+    // that project's `externalId` into this flow version. Fails against the unfiltered query: the
+    // `where` it passed carried only `id`.
+    it('scopes the field lookup to the flow own project', async () => {
+        await migrateV18TablesFieldIds.migrate(flowVersionWithLegitFilterAndPrototypeNamedFieldId())
+
+        expect(mockFind).toHaveBeenCalledOnce()
+        expect(mockFind.mock.calls[0]?.[0]).toMatchObject({ where: { projectId: PROJECT_ID } })
+    })
+
+    // The degrade path, which matters as much as the filter: `migrateFlowVersionTemplate` runs the
+    // chain with no context and, on the template-import path, a flowId that may not be in the
+    // database at all. A throw here pages on-call (`flow-version-migration.service.ts`), so the
+    // migration must resolve nothing and leave every id exactly as authored — while still pinning
+    // `qadamVersion`, which is the rest of its job.
+    it('resolves nothing, rather than throwing, when the project cannot be determined', async () => {
+        mockGetOneById.mockResolvedValue(null)
+
+        const migrated = await migrateV18TablesFieldIds.migrate(flowVersionWithLegitFilterAndPrototypeNamedFieldId())
+
+        expect(mockFind).not.toHaveBeenCalled()
+        expect(readFilters(migrated)[0].id).toBe(LEGIT_FIELD_ID)
+        expect(migrated.schemaVersion).toBe('19')
+    })
+
+    it('resolves nothing when looking the flow up throws, rather than propagating', async () => {
+        mockGetOneById.mockRejectedValue(new Error('flow row is gone'))
+
+        const migrated = await migrateV18TablesFieldIds.migrate(flowVersionWithLegitFilterAndPrototypeNamedFieldId())
+
+        expect(mockFind).not.toHaveBeenCalled()
+        expect(readFilters(migrated)[0].id).toBe(LEGIT_FIELD_ID)
     })
 })
