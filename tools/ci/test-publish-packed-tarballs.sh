@@ -273,19 +273,36 @@ for wf in release.yml publish-packages.yml; do
         "$(printf '%s\n' "$job" | sed -n 's/^    environment: //p')"
 
     # The anchor: without it, a copy whose final step was replaced in BOTH files still looks
-    # identical and still has an environment. Read the LAST line, not any line — a `contains`
-    # check passes a token-reading step appended after the publish, which is exactly the shape
-    # this assertion's name promises to exclude. The extraction already drops comments and
-    # blanks, so `tail -1` is the job's last real line.
-    check "$wf's publishing job still ends in the shared publisher script" "yes" \
-        "$(printf '%s\n' "$job" | tail -1 | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
+    # identical and still has an environment.
+    check "$wf's publishing job still runs the shared publisher script" "yes" \
+        "$(printf '%s\n' "$job" | grep -qF 'tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' && echo yes || echo no)"
+
+    # `contains` alone would pass a token-reading step APPENDED after the publish, so the
+    # publisher must also be the last step. Count step headers after it rather than pinning the
+    # job's last text line: `run:` before `env:` is an equally common key order and a `run: |`
+    # block may have more than one line, and neither is a reason to redden every PR in the repo
+    # (this suite gates _verify.yml, which ci.yml, release.yml and publish-packages.yml all call).
+    check "$wf's publishing job runs no step after the shared publisher script" "0" \
+        "$(printf '%s\n' "$job" | sed -n '\#tools/ci/publish-packed-tarballs.sh#,$p' | grep -cE '^      - (name|uses):' || true)"
 
     # #486: the job holding the token installs nothing and resolves no binary out of
     # node_modules/.bin. A build step appearing here is the regression that split bought.
-    # `node_modules/.bin` is in the alternation literally: naming only the runners (npx, bunx)
-    # misses the plain `./node_modules/.bin/<tool>` spelling of the same property.
+    # Spell the package managers out as a matrix rather than listing the two or three
+    # invocations that happen to be on the mind of whoever last edited this: the previous
+    # version named `bun install`, `npm ci` and `bunx` but not `npm install` or `bun x`, which
+    # is the plainest spelling of the very property the assertion is named for.
     check "$wf's publishing job installs nothing and runs no npx" "clean" \
-        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|bun install|npm ci|npx |bunx |pnpm dlx |node_modules/\.bin|turbo ' && echo "found an install or npx" || echo clean)"
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|exec|dlx|x)([[:space:]]|$)|(npx|bunx|turbo)([[:space:]]|$)|(pip3?|apt-get|apk)[[:space:]]+(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
+
+    # A text scan over `run:` cannot see an install that arrives as a composite action, so the
+    # set of actions is an allowlist rather than a denylist. Versions are stripped: a bump to
+    # actions/checkout is routine and must not redden this, a fourth action must. Strip the
+    # version with a second expression rather than requiring an `@` in the match — a local
+    # action (`./.github/actions/install-deps`) carries no version, and a pattern that only
+    # matched `<name>@<ref>` dropped exactly that case out of the set instead of flagging it.
+    check "$wf's publishing job uses only the three expected actions" \
+        "actions/checkout actions/download-artifact actions/setup-node" \
+        "$(printf '%s\n' "$job" | sed -n 's/^      - uses: //p' | sed 's/@.*//' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 
     # A job holding an npm publish token has no business also holding a git one.
     check "$wf's publishing job checks out without git credentials" "yes" \
