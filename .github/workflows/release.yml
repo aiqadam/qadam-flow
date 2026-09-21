@@ -259,11 +259,13 @@ jobs:
     needs: [verify, breaking-change-gate, version-tag-gate]
     # Mirrors the Docker `publish` job's own `enable=${{ !contains(github.ref_name, '-') }}`
     # guard below — see "WHAT THIS JOB DOES NOT CATCH" above for why a prerelease tag skips
-    # this entirely rather than publishing under a second npm dist-tag. `success()` is
-    # explicit and load-bearing: a job's own `if:` REPLACES the implicit "only run if every
-    # `needs:` job succeeded" check rather than adding to it, so omitting it would let this
-    # job run even after `verify`/`breaking-change-gate`/`version-tag-gate` failed, as long as
-    # the ref happened to not be a prerelease tag.
+    # this entirely rather than publishing under a second npm dist-tag. `success()` is spelled
+    # out as documentation, not as load-bearing logic: GitHub ADDS the implicit "every `needs:`
+    # job succeeded" requirement to a job's own `if:` rather than replacing it, and only a status
+    # function such as `always()` overrides it — so a failed `verify` / `breaking-change-gate` /
+    # `version-tag-gate` skips this job with or without it. An earlier version of this comment
+    # claimed the reverse; it was wrong, and the `if:` is unchanged because the correction does
+    # not change behaviour.
     if: ${{ success() && !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -360,6 +362,14 @@ jobs:
       # `if-no-files-found: error` is not redundant with the pack step succeeding:
       # publish-order.txt is written even when nothing was packed, so an empty upload here
       # means the path is wrong, not that there was nothing to publish.
+      #
+      # `path:` is the whole directory, and that is load-bearing rather than shorthand. A pack
+      # run with the registry checks bypassed drops a PACKED-WITH-SKIP-REGISTRY-CHECK marker
+      # (see SKIP_REGISTRY_CHECK_MARKER in tools/scripts/utils/publish-npm-package.ts) that the
+      # publishing job's undeclared-entry sweep refuses. Narrowing this to an enumeration such
+      # as `*.tgz` plus publish-order.txt would exclude the marker from the artifact, the sweep
+      # would see only declared files, and that protection would evaporate with every test
+      # still green — so tools/ci/test-publish-packed-tarballs.sh asserts this line's shape.
       - name: Upload the packed tarballs
         uses: actions/upload-artifact@v4
         with:

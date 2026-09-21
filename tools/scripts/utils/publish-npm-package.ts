@@ -9,6 +9,17 @@ import { prepareQadamDistForPublish } from '../../../packages/cli/src/lib/utils/
 import { isExactVersion } from '../../../packages/cli/src/lib/utils/workspace-utils'
 
 const NPM_DIST_TAG_PATTERN = /^[a-z][a-z0-9-]*$/
+// Dropped into the pack destination whenever the registry check was bypassed. Its only job is to
+// exist: tools/ci/publish-packed-tarballs.sh refuses ANY directory entry its manifest does not
+// declare, so the name does not have to be known there and this file needs no counterpart.
+// tools/ci/test-publish-packed-tarballs.sh pins that a marker-bearing directory is refused, so
+// narrowing that sweep would fail a test rather than quietly make skip-check packs publishable.
+//
+// NOT a dotfile, deliberately: `actions/upload-artifact@v4` defaults `include-hidden-files` to
+// false, so a `.`-prefixed marker would be dropped at upload and never reach the job that
+// downloads the tarballs — which is the one boundary this has to survive to be worth anything.
+// Not exported: nothing in TypeScript consumes it, and the shell side pins the spelling instead.
+const SKIP_REGISTRY_CHECK_MARKER = 'PACKED-WITH-SKIP-REGISTRY-CHECK'
 const REPO_LICENSE_PATH = join(__dirname, '..', '..', '..', 'LICENSE')
 
 // `workspace:` deps are deliberately not "exact" here — they are a different, later-resolved
@@ -70,7 +81,7 @@ export function assertNoUnresolvedWorkspaceDeps(packageJsonPath: string): void {
   }
 }
 
-export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, packDestination }: PublishNpmPackageParams): Promise<PublishNpmPackageResult> => {
+export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, packDestination, skipRegistryCheck = false }: PublishNpmPackageParams): Promise<PublishNpmPackageResult> => {
   // A set-but-empty npmDistTag (e.g. an env var exported as "") is not `undefined`, so a
   // destructured default alone would not catch it — normalized once, here, rather than trusted
   // to every caller.
@@ -82,6 +93,27 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
   console.info(`[publishPackage] path=${path}, dryRun=${dryRun}, npmDistTag=${resolvedNpmDistTag}`)
   assert(path, '[publishPackage] parameter "path" is required')
 
+  // Ahead of every other check, including the build-output one below: this is a structural
+  // refusal about how the function was called, and a caller that gets it wrong should be told
+  // that rather than told its `dist` is missing.
+  //
+  // Two independent guards, because this one flag removes the only decision about what gets
+  // uploaded. packagePrePublishChecks is what stops a second publish of an already-published
+  // version and what throws when a changed package was not bumped; since #486 split the
+  // pipeline, nothing downstream re-checks either — tools/ci/publish-packed-tarballs.sh
+  // publishes every manifest line it is handed.
+  //
+  // The first guard, here, stops this call from publishing. Note what it does NOT stop, and why
+  // the second one below exists: `packDestination` no longer means "this run stops short of the
+  // registry". Since the split it means "this is the PACK HALF of a publish", so satisfying this
+  // guard is exactly what adding the flag to release.yml's pack step would do. That would put
+  // all three tarballs in the manifest regardless of publish state, and a re-run after a partial
+  // publish — the case packagePrePublishChecks exists for — would 403 on the first already-
+  // published package and abort before the ones that still needed publishing.
+  if (skipRegistryCheck && !packDestination && !dryRun) {
+    throw new Error('[publishPackage] skipRegistryCheck is only valid with packDestination or dryRun — refusing to publish with the already-published and version-bump guards disabled.')
+  }
+
   const outputPath = `${path}/dist`
 
   // A missing build output used to be a silent skip (console.info + return 0). Now that a CI job
@@ -92,12 +124,14 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
     throw new Error(`[publishPackage] no build output at ${outputPath} for ${path} — refusing to silently skip`)
   }
 
-  const packageAlreadyPublished = await packagePrePublishChecks(path);
-  if (packageAlreadyPublished) {
-    // No tarball is produced, so in pack mode this package simply does not appear in the
-    // publish manifest and the publishing job never sees it. That is what keeps a re-run
-    // after a partial failure safe, exactly as it was when one job did both halves.
-    return { status: 'skipped' };
+  if (!skipRegistryCheck) {
+    const packageAlreadyPublished = await packagePrePublishChecks(path);
+    if (packageAlreadyPublished) {
+      // No tarball is produced, so in pack mode this package simply does not appear in the
+      // publish manifest and the publishing job never sees it. That is what keeps a re-run
+      // after a partial failure safe, exactly as it was when one job did both halves.
+      return { status: 'skipped' };
+    }
   }
   const { version } = await readPackageJson(path)
 
@@ -168,6 +202,25 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, pack
       stdio: ['ignore', 'pipe', 'inherit'],
     })
     const filename = parsePackedFilename(packOutput)
+
+    // The second guard: make a skip-check pack structurally unpublishable rather than
+    // unpublishable by convention. tools/ci/publish-packed-tarballs.sh refuses any directory
+    // entry its manifest does not declare, so this marker aborts it before it publishes anything
+    // out of a directory packed with the guards off — including across the artifact upload and
+    // download between release.yml's two jobs, which is why the name is not a dotfile.
+    // ci.yml's `pack-smoke` reads only the manifest and is unaffected.
+    //
+    // What this is: a stop on maintainer error and on this flag drifting from ci.yml's smoke job
+    // into release.yml. What it is not: a control against anyone who can edit release.yml, who
+    // could equally delete this write or widen the sweep. The required-reviewers `npm-publish`
+    // environment remains the actual provenance control.
+    if (skipRegistryCheck) {
+      writeFileSync(
+        join(destination, SKIP_REGISTRY_CHECK_MARKER),
+        'Packed with --skip-registry-check: the already-published and version-bump guards were\ndisabled, so these tarballs are a build smoke test and must never be published.\n',
+      )
+    }
+
     console.info(`[publishPackage] packed only, path=${path}, version=${version}, filename=${filename}, destination=${destination}`)
     return { status: 'packed', filename, version }
   }
@@ -230,6 +283,12 @@ type PublishNpmPackageParams = {
   // Set by the pack half of the split release pipeline (#486). Produces the tarball in this
   // directory instead of publishing it; `dryRun` is the same behaviour into a temp directory.
   packDestination?: string
+  // Skip packagePrePublishChecks entirely. Exists for ci.yml's `pack-smoke` job, whose whole
+  // purpose is to prove the real build-stage-pack path still works: with the check in place that
+  // job would pack NOTHING once these versions are published and unchanged, and go green having
+  // exercised nothing. It also drops the job's dependency on registry.npmjs.org being reachable.
+  // Rejected above unless the run also packs rather than publishes.
+  skipRegistryCheck?: boolean
 }
 
 type PublishNpmPackageResult =

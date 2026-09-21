@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Regression tests for the workspace:* rewrite the framework-packages publish job depends on
-# (release.yml's `pack-framework-packages` job, tools/scripts/pack-framework-packages.ts).
+# (release.yml's `pack-framework-packages` job, tools/scripts/publish-framework-packages.ts).
 # That job's whole thesis — recorded in its own header comment — is "do not trust the
 # toolchain's own workspace:* rewrite", because bun's native one reads a version bun.lock does
 # not reliably keep in sync with the dependency's own package.json (measured on this repo: a
@@ -52,6 +52,7 @@ fail=0
 
 cleanup() {
   [ -n "${root:-}" ] && rm -rf "$root"
+  [ -n "${guard_stub:-}" ] && rm -rf "$guard_stub"
   return 0
 }
 trap cleanup EXIT
@@ -205,6 +206,70 @@ write_json "$root/source-package.json" '{
 run_harness assert-no-semver-ranges "$root/source-package.json"
 expect_status 1 "a caret range on a real dependency is still refused even with workspace:* present"
 expect_contains "some-lib" "the error names the offending dependency, not the tolerated workspace:* one"
+
+# The refusal guard on --skip-registry-check. Driven through the real CLI entry point rather than
+# the harness, because the mistake it exists to stop is a human adding the flag to an invocation
+# that publishes — and because until this case existed, the branch the flag's own comment calls
+# load-bearing was executed by no test in a repo whose release paths are already too rarely run.
+# The guard is the first thing publishNpmPackage does, so this needs no fixture, no build output
+# and no network.
+# Behind a stub `npm`, and the third assertion below is that the stub is never called.
+# Without it this case would be the one thing in this suite that can reach a real
+# `npm publish`: it drives the real CLI with no --pack-to and no --dry-run, so the ONLY thing
+# between it and a live publish of @aiqadam/shared is the guard it is testing. A guard
+# regression — precisely the event this case exists to catch — would therefore be detected by
+# performing the unretractable action it protects against. In CI that 401s (no job here sets
+# NPM_TOKEN), but the script is deliberately kept usable by hand, and a maintainer with
+# NPM_TOKEN exported would publish for real. Same shape as the stub in
+# tools/ci/test-publish-packed-tarballs.sh; `timeout` because a regression would otherwise
+# spend ~3 minutes in getLatestPublishedVersion's retry backoff (2+8+32+128 s — it rethrows on
+# the fifth attempt before sleeping the last delay), and unbounded if the connection hangs,
+# since that axios call sets no timeout of its own.
+guard_stub="$(mktemp -d)"
+mkdir -p "$guard_stub/bin"
+cat > "$guard_stub/bin/npm" <<'GUARD_STUB'
+#!/usr/bin/env bash
+echo "npm $*" >> "$NPM_CALL_LOG"
+exit 0
+GUARD_STUB
+chmod +x "$guard_stub/bin/npm"
+NPM_CALL_LOG="$guard_stub/npm-calls.log"
+export NPM_CALL_LOG
+: > "$NPM_CALL_LOG"
+
+# Positive control for the call-log assertion further down. An empty log is equally consistent
+# with "the guard refused before npm" and with "the stub was never on PATH and the real npm
+# ran" — the second being the state that assertion exists to rule out, so it has to be excluded
+# separately rather than inferred from the log being empty.
+resolved_npm="$(PATH="$guard_stub/bin:$PATH" command -v npm || true)"
+if [ "$resolved_npm" = "$guard_stub/bin/npm" ]; then
+  pass=$((pass + 1)); echo "ok: the stub npm is what the guard case would reach"
+else
+  fail=$((fail + 1)); echo "FAIL: stub not on PATH — npm resolves to ${resolved_npm:-nothing}, so the call-log assertion is vacuous"
+fi
+
+guard_out="$(cd "$repo_root" && PATH="$guard_stub/bin:$PATH" timeout 60 "$ts_node_bin" --project "$ts_project" \
+  tools/scripts/publish-framework-packages.ts --skip-registry-check 2>&1)"
+guard_status=$?
+# Both assertions require the guard's own message. Asserting only "exited non-zero" or only
+# "no registry line" would pass with the guard deleted — verified by mutation: without it the run
+# still fails, just later and for another reason, so those two on their own prove nothing.
+case "$guard_out" in
+  *"skipRegistryCheck is only valid with packDestination or dryRun"*) guard_refused=yes ;;
+  *) guard_refused=no ;;
+esac
+
+if [ "$guard_refused" = yes ] && [ "$guard_status" -ne 0 ]; then
+  pass=$((pass + 1)); echo "ok: --skip-registry-check without a pack destination is refused, by name"
+else
+  fail=$((fail + 1)); echo "FAIL: expected the skipRegistryCheck refusal, got status ${guard_status}: ${guard_out}"
+fi
+
+if [ -s "$NPM_CALL_LOG" ]; then
+  fail=$((fail + 1)); echo "FAIL: the guard case invoked npm — a regression here would publish for real: $(cat "$NPM_CALL_LOG")"
+else
+  pass=$((pass + 1)); echo "ok: the guard case never reaches npm at all"
+fi
 
 echo
 echo "passed: ${pass}   failed: ${fail}"
