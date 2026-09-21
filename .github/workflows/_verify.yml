@@ -60,6 +60,14 @@ jobs:
       - name: Test the release breaking-change gate
         run: tools/ci/test-breaking-change-gate.sh
 
+      # The other half of the release pipeline that only ever runs for real on a tag: the step
+      # that holds the npm publish token (#486). Its reject cases are the point — publishing in
+      # the wrong ORDER, or publishing a tarball the pack job never declared, both look green,
+      # and `npm publish` is the one action in this repo with no undo. Pure shell against a stub
+      # `npm`, so it belongs up here with the other dependency-free suites.
+      - name: Test the packed-tarball publisher
+        run: tools/ci/test-publish-packed-tarballs.sh
+
       # install-deps.sh is a recursive delete that every install in CI runs, and
       # the only thing keeping it off a tracked git fixture is a depth bound
       # that has to stay equal to the cache `path:` globs below and in ci.yml.
@@ -344,7 +352,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run check-required-prop-defaults
 
-      # release.yml's `publish-framework-packages` job trusts a custom workspace:* rewrite
+      # release.yml's `pack-framework-packages` job trusts a custom workspace:* rewrite
       # instead of bun's own (see that job's header for why). Needs ts-node and the
       # transform's own runtime deps (axios, via package-pre-publish-checks.ts) from
       # node_modules, so it sits down here with the other post-install tooling suites

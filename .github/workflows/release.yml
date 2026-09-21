@@ -214,60 +214,90 @@ jobs:
   # publish) for a gap that costs nothing today; revisit if #476 or a real consumer make "an RC
   # can carry a real framework-package release" a requirement rather than a hypothetical.
   #
-  # HOW TO PROCEED IF THIS JOB FAILS PARTWAY. It publishes shared, then framework, then
-  # common, sequentially, and is safe to just re-run: packagePrePublishChecks skips anything
-  # already at its published version, so a re-run after e.g. shared succeeded and framework
-  # hit a registry timeout only retries framework and common.
-  publish-framework-packages:
-    name: Publish framework packages to npm
+  # WHY TWO JOBS (#486). The npm packages are minted once and cannot be re-pushed the way a
+  # GHCR tag can, so the step that holds the publish token does not get to also install
+  # dependencies, run a build, or resolve a binary out of `node_modules/.bin`. `pack-…`
+  # restores the node_modules cache, installs, builds and runs every pre-publish check, then
+  # stops at `npm pack` and uploads the tarballs; `publish-…` downloads exactly those bytes
+  # and uploads them. Two properties follow that the single-job shape could not have:
+  #
+  #   * The tarball is compiled by a `tsc` resolved out of a restored cache artifact — which
+  #     install-deps.sh's own header is explicit that `--frozen-lockfile` does NOT
+  #     integrity-check — but that now happens in a job with no credential in scope, and
+  #     tools/ci/verify-native-modules.sh (the one step that can observe a corrupt-at-the-
+  #     right-version restore) runs there before anything is packed.
+  #   * The exact bytes that went to npm are downloadable and diffable by a human from the
+  #     run's artifacts. Nobody could do that when pack and publish were one step.
+  #
+  # The publishing job deliberately does NOT install: `tools/ci/publish-packed-tarballs.sh`
+  # needs nothing but `npm` itself, so no `npx` ever prepends `node_modules/.bin` to PATH in
+  # the one step where a long-lived publish token is readable. It also publishes from the
+  # artifact directory under RUNNER_TEMP rather than from the checkout, because npm's project
+  # config OUTRANKS the userconfig `setup-node` writes — and the repo-root .npmrc carries
+  # `//registry.npmjs.org/:_authToken=${NPM_TOKEN}`, an env var this job does not set.
+  #
+  # That takes two guards in the script, not one, and review caught the gap between them: the
+  # `npm prefix` check catches a package.json or node_modules in an ANCESTOR, but npm falls
+  # back to the cwd for localPrefix when the walk finds nothing, so a `.npmrc` planted in the
+  # artifact directory itself is read as project config with that check still green — and it
+  # would expand `${NODE_AUTH_TOKEN}` against whatever registry it names. The script therefore
+  # also refuses any directory entry the manifest does not declare, dotfiles included. Both
+  # are pinned by tools/ci/test-publish-packed-tarballs.sh, along with the publish ORDER,
+  # which no longer survives implicitly now that a directory of tarballs sits between the two
+  # halves (`*.tgz` sorts `aiqadam-qadams-common` ahead of `aiqadam-shared`, exactly
+  # backwards), and the destination registry, which is passed as a CLI flag so a tarball's own
+  # `publishConfig.registry` cannot choose where the token is sent.
+  #
+  # HOW TO PROCEED IF THIS FAILS PARTWAY. The publish half walks the manifest in order and
+  # stops at the first failure, and the whole thing is safe to just re-run from the top:
+  # packagePrePublishChecks skips anything already at its published version, so a package that
+  # made it to npm is not packed again on the retry and therefore is not in the next run's
+  # manifest at all. A re-run after e.g. shared succeeded and framework hit a registry timeout
+  # only retries framework and common.
+  pack-framework-packages:
+    name: Pack framework packages
     needs: [verify, breaking-change-gate, version-tag-gate]
     # Mirrors the Docker `publish` job's own `enable=${{ !contains(github.ref_name, '-') }}`
     # guard below — see "WHAT THIS JOB DOES NOT CATCH" above for why a prerelease tag skips
-    # this job entirely rather than publishing under a second npm dist-tag. `success()` is
+    # this entirely rather than publishing under a second npm dist-tag. `success()` is
     # explicit and load-bearing: a job's own `if:` REPLACES the implicit "only run if every
-    # `needs:` job succeeded" check rather than adding to it, so omitting this would let the
-    # job run — and attempt a real npm publish — even after `verify`/`breaking-change-gate`/
-    # `version-tag-gate` failed, as long as the ref happened to not be a prerelease tag.
+    # `needs:` job succeeded" check rather than adding to it, so omitting it would let this
+    # job run even after `verify`/`breaking-change-gate`/`version-tag-gate` failed, as long as
+    # the ref happened to not be a prerelease tag.
     if: ${{ success() && !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Requires a GitHub Environment named `npm-publish` to exist (Settings → Environments)
-    # with required reviewers configured. `needs:` above constrains the tagged tree's
-    # QUALITY, not its PROVENANCE — none of verify/breaking-change-gate/version-tag-gate
-    # assert the tagged commit was ever merged to main or reviewed, breaking-change-gate is
-    # deliberately tagger-overridable by design (see its own header), and `on: push: tags`
-    # runs whatever release.yml says at the tagged commit regardless of who pushed the tag.
-    # Anyone with `contents: write` — a collaborator, a leaked PAT, a compromised Action —
-    # could otherwise push a tag at a commit that never touched `main` and publish
-    # `@aiqadam/shared`, the transitive root of every qadam, to public npm at `latest` with
-    # no human in the loop. A required-reviewers environment is the one control in Actions
-    # that interposes a human between "a tag exists" and "the publish secret is readable".
-    # The ancestry check below is a second, automatic layer underneath it, not a
-    # replacement for it.
-    environment: npm-publish
+    # No `environment:` and no secret: that is the point of the split. Everything expensive,
+    # cacheable and attackable happens here, where there is no credential to steal.
     permissions:
       contents: read
-      # For --provenance below: npm exchanges this job's OIDC token for a signed
-      # attestation tying the published tarball to this workflow run and commit.
-      id-token: write
     steps:
       # fetch-depth: 0 (+ fetch-tags), same reasoning as breaking-change-gate above:
       # packagePrePublishChecks diffs against `origin/main` to tell "already published,
       # nothing changed" apart from "version not bumped after a real change", and the
       # ancestry check below needs the full history of `origin/main` to walk. A depth-1
       # checkout has neither.
+      # `persist-credentials: false`: after the fetch this job needs git only locally, and it is
+      # the half that runs `bun install` and `npx turbo` — i.e. the most third-party code in the
+      # pipeline. No reason for a git token to sit in its config while that runs.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
-      # The automatic half of the human gate above: refuses to publish from a tag whose
-      # commit is not reachable by walking backward from `origin/main`'s current tip — i.e.
-      # a commit that was never actually merged into main, regardless of who pushed the tag
-      # or what it's named. Deliberately `--is-ancestor HEAD origin/main`, not the reverse:
-      # checking "is origin/main an ancestor of HEAD" would pass for a tag built by stacking
-      # extra, unreviewed commits on top of a legitimate main commit (HEAD would still
-      # descend from main), which is exactly the case this exists to catch.
+      # The automatic half of the human gate on the publishing job below: refuses to go on
+      # from a tag whose commit is not reachable by walking backward from `origin/main`'s
+      # current tip — i.e. a commit that was never actually merged into main, regardless of
+      # who pushed the tag or what it's named. Deliberately `--is-ancestor HEAD origin/main`,
+      # not the reverse: checking "is origin/main an ancestor of HEAD" would pass for a tag
+      # built by stacking extra, unreviewed commits on top of a legitimate main commit (HEAD
+      # would still descend from main), which is exactly the case this exists to catch.
+      #
+      # It sits in THIS job, not the publishing one, and still covers both: no tarball is
+      # produced for a tag that fails it, so the publishing job's `needs` is unsatisfied and
+      # it never starts. That also means the script the publishing job runs out of its own
+      # checkout can only ever come from a tag that passed this.
       - name: Refuse to publish a tag that was never merged into main
         run: |
           if ! git merge-base --is-ancestor HEAD origin/main; then
@@ -279,8 +309,6 @@ jobs:
         id: node
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
-          scope: '@aiqadam'
 
       - uses: oven-sh/setup-bun@v2
         id: bun
@@ -302,30 +330,112 @@ jobs:
       - name: Install dependencies
         run: tools/ci/install-deps.sh
 
+      # The only step that can observe a restore which is corrupt at the expected version —
+      # `bun install --frozen-lockfile` asserts that resolution needs no lockfile change, not
+      # that the restored files are intact. Not every installing job in this repo runs it
+      # (`release-migrations` above and ci.yml's e2e job do not), but the jobs whose output
+      # anyone keeps do, and until #486 this one — whose output is permanent and unretractable
+      # — did not.
+      - name: Verify native addons load
+        run: tools/ci/verify-native-modules.sh
+
       - name: Build shared, qadams-framework, qadams-common
         run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
 
-      # NODE_AUTH_TOKEN, not a bare NPM_TOKEN env var and not the root .npmrc: publishNpmPackage
-      # runs `npm publish` with `cwd: <pkg>/dist`, and npm resolves its project config from
-      # `localPrefix` — the nearest ancestor containing a `package.json` OR a `node_modules`.
-      # `dist/` has both (the staged manifest, and the `node_modules` symlink
-      # prepareQadamDistForPublish creates), so `localPrefix` is `dist/` and the repo-root
-      # `.npmrc` is never consulted from there — measured directly: `npm config get save-exact`
-      # is `true` from the repo root and `false` from `packages/shared/dist`. `registry-url` +
-      # `scope` on setup-node above write an npmrc to `$RUNNER_TEMP` and export
-      # `NPM_CONFIG_USERCONFIG` for the rest of the job, which npm honours from ANY cwd; that
-      # generated npmrc's auth line is `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`,
-      # so the env var has to be named exactly that for npm to find it. NPM_TOKEN is the
-      # secret name (see Settings → Environments → npm-publish, or Settings → Secrets);
-      # NODE_AUTH_TOKEN is the name npm's own generated config expects it under.
       # `npm run`, not a second copy of the raw `ts-node --project ... tools/scripts/publish-
       # framework-packages.ts` invocation: `package.json`'s `publish-framework-packages`
       # script is that exact command, kept as one string so this workflow and the local/manual
       # entry point (`npm run publish-framework-packages -- --dry-run`) cannot drift apart.
-      - name: Publish shared, qadams-framework, qadams-common to npm
+      # `--pack-to` is the same code path `--dry-run` takes, with the destination named
+      # instead of a temp directory — so a local dry run stays evidence about what a release
+      # will actually upload.
+      #
+      # A package already published at its current version produces no tarball and no manifest
+      # line, which is how a re-run after a partial failure stays safe.
+      - name: Pack shared, qadams-framework, qadams-common
+        run: |
+          mkdir -p "${{ runner.temp }}/npm-packages"
+          npm run publish-framework-packages -- --pack-to="${{ runner.temp }}/npm-packages"
+
+      # `if-no-files-found: error` is not redundant with the pack step succeeding:
+      # publish-order.txt is written even when nothing was packed, so an empty upload here
+      # means the path is wrong, not that there was nothing to publish.
+      - name: Upload the packed tarballs
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-framework-packages
+          path: ${{ runner.temp }}/npm-packages
+          if-no-files-found: error
+          # The bytes that went to npm, kept as long as Actions allows, so "what exactly did
+          # we publish for v2.1.0" is answerable without unpacking it back off the registry.
+          retention-days: 90
+
+  publish-framework-packages:
+    name: Publish framework packages to npm
+    # `result == 'success'`, not `success()`: a `needs:` job that was SKIPPED (prerelease tag)
+    # leaves `success()` true, which would start this job with no artifact to download.
+    needs: [pack-framework-packages]
+    if: ${{ needs.pack-framework-packages.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Requires a GitHub Environment named `npm-publish` to exist (Settings → Environments)
+    # with required reviewers configured. The gates on `pack-framework-packages` constrain the
+    # tagged tree's QUALITY, not its PROVENANCE — none of verify/breaking-change-gate/
+    # version-tag-gate assert the tagged commit was ever reviewed, breaking-change-gate is
+    # deliberately tagger-overridable by design (see its own header), and `on: push: tags`
+    # runs whatever release.yml says at the tagged commit regardless of who pushed the tag.
+    # Anyone with `contents: write` — a collaborator, a leaked PAT, a compromised Action —
+    # could otherwise push a tag at a commit that never touched `main` and publish
+    # `@aiqadam/shared`, the transitive root of every qadam, to public npm at `latest` with
+    # no human in the loop. A required-reviewers environment is the one control in Actions
+    # that interposes a human between "a tag exists" and "the publish secret is readable".
+    # The ancestry check in the packing job is a second, automatic layer underneath it, not a
+    # replacement for it.
+    environment: npm-publish
+    permissions:
+      contents: read
+      # For --provenance: npm exchanges this job's OIDC token for a signed attestation tying
+      # the published tarball to this workflow run and commit. libnpmpublish builds that
+      # attestation from the Actions environment (GITHUB_REPOSITORY / GITHUB_SHA /
+      # GITHUB_REF / GITHUB_WORKFLOW_REF) and the tarball's own digest, never from a working
+      # tree — which is why it still works with nothing installed here.
+      id-token: write
+    steps:
+      # Shallow and credential-less, for one file: tools/ci/publish-packed-tarballs.sh. No
+      # install runs here and nothing is built, so there is no node_modules for an `npx` to
+      # resolve a shimmed `npm` out of. `persist-credentials: false` because a job holding an
+      # npm publish token has no business also holding a git one.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # `registry-url` + `scope` write an npmrc to $RUNNER_TEMP and export NPM_CONFIG_USERCONFIG
+      # for the rest of the job, which npm honours from any cwd. That generated npmrc's auth
+      # line is `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, so the secret has to be
+      # exported under exactly that name below — NPM_TOKEN is what the secret is called in
+      # Settings → Environments → npm-publish; NODE_AUTH_TOKEN is what npm's own generated
+      # config reads.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@aiqadam'
+
+      # Into RUNNER_TEMP, deliberately OUTSIDE the checkout: npm resolves its project config
+      # from the nearest ancestor holding a package.json or a node_modules, and project config
+      # outranks the userconfig setup-node just wrote. Downloading these into the workspace
+      # would put the repo-root .npmrc — whose auth line names NPM_TOKEN, not NODE_AUTH_TOKEN —
+      # in front of the one that carries the credential. The script asserts this rather than
+      # trusting it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-framework-packages
+          path: ${{ runner.temp }}/npm-packages
+
+      - name: Publish the packed tarballs to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm run publish-framework-packages
+        run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"
 
   build:
     name: Build ${{ matrix.platform }}

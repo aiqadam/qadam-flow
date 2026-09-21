@@ -70,7 +70,7 @@ export function assertNoUnresolvedWorkspaceDeps(packageJsonPath: string): void {
   }
 }
 
-export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag }: PublishNpmPackageParams): Promise<void> => {
+export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag, packDestination }: PublishNpmPackageParams): Promise<PublishNpmPackageResult> => {
   // A set-but-empty npmDistTag (e.g. an env var exported as "") is not `undefined`, so a
   // destructured default alone would not catch it — normalized once, here, rather than trusted
   // to every caller.
@@ -94,7 +94,10 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag }: Pu
 
   const packageAlreadyPublished = await packagePrePublishChecks(path);
   if (packageAlreadyPublished) {
-    return;
+    // No tarball is produced, so in pack mode this package simply does not appear in the
+    // publish manifest and the publishing job never sees it. That is what keeps a re-run
+    // after a partial failure safe, exactly as it was when one job did both halves.
+    return { status: 'skipped' };
   }
   const { version } = await readPackageJson(path)
 
@@ -137,19 +140,36 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag }: Pu
     `# ${json.name}\n\n${json.description ?? ''}\n\nPart of the [Qadam Flow](https://github.com/aiqadam/qadam-flow) monorepo. See the repository for documentation. Licensed under MIT.\n`,
   )
 
-  if (dryRun) {
-    // A destination OUTSIDE outputPath: `npm pack` with no `--pack-destination` writes the
-    // tarball into its own cwd, and npm's default ignore rules do not exclude `.tgz` — a
-    // second run (or the real publish that follows in the same job) would then pack the
-    // previous run's own tarball into the new one. Verified by reproducing it: a bare
-    // `npm pack` run twice from `outputPath` embeds the first tarball inside the second.
-    // execFileSync, not a template-string execSync: packDestination is process-generated and
-    // safe either way, but npmDistTag below is not (env-var sourced), and running both through
-    // the same code shape rather than one safe and one shell-interpolated is the point.
-    const packDestination = mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
-    execFileSync('npm', ['pack', '--pack-destination', packDestination], { cwd: outputPath, stdio: 'inherit' })
-    console.info(`[publishPackage] dry run, packed only, path=${path}, version=${version}, destination=${packDestination}`)
-    return
+  // Pack and dry run are the same operation with a different destination: stage `dist`, run
+  // every check above, produce the tarball, stop short of the registry. They share this branch
+  // deliberately — release.yml's `pack-framework-packages` job hands its tarball to a separate
+  // publishing job (#486), and if that artifact were produced by a code path `--dry-run` does
+  // not exercise, a local dry run would stop being evidence about the release.
+  //
+  // A destination OUTSIDE outputPath: `npm pack` with no `--pack-destination` writes the
+  // tarball into its own cwd, and npm's default ignore rules do not exclude `.tgz` — a
+  // second run would then pack the previous run's own tarball into the new one. Verified by
+  // reproducing it: a bare `npm pack` run twice from `outputPath` embeds the first tarball
+  // inside the second.
+  // execFileSync, not a template-string execSync: the destination is caller-supplied and
+  // npmDistTag below is env-var sourced, and running both through the same code shape rather
+  // than one safe and one shell-interpolated is the point.
+  if (packDestination || dryRun) {
+    const destination = packDestination ?? mkdtempSync(join(tmpdir(), 'qadam-flow-npm-pack-'))
+    // `--json` rather than deriving the filename from name+version ourselves: npm owns the
+    // scope-mangling rule (`@aiqadam/shared` -> `aiqadam-shared-0.135.0.tgz`), and a publish
+    // manifest built from our guess at it would send the publishing job looking for a file
+    // that is not there — a failure that could only ever surface on a real tag.
+    // stdout piped so it can be parsed; stderr inherited so npm's own diagnostics still reach
+    // the log rather than being swallowed into a variable nobody prints.
+    const packOutput = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
+      cwd: outputPath,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    })
+    const filename = parsePackedFilename(packOutput)
+    console.info(`[publishPackage] packed only, path=${path}, version=${version}, filename=${filename}, destination=${destination}`)
+    return { status: 'packed', filename, version }
   }
 
   // --provenance needs `permissions: { id-token: write }` on the calling job (for the OIDC
@@ -162,6 +182,26 @@ export const publishNpmPackage = async ({ path, dryRun = false, npmDistTag }: Pu
   execFileSync('npm', ['publish', '--access', 'public', '--tag', resolvedNpmDistTag, '--provenance'], { cwd: outputPath, stdio: 'inherit' })
 
   console.info(`[publishProject] success, path=${path}, version=${version}, npmDistTag=${resolvedNpmDistTag}`)
+  return { status: 'published', version }
+}
+
+// npm pack --json emits an array with one entry per packed package. Anything else means npm
+// changed a contract this pipeline reads, which must fail the pack job rather than produce a
+// manifest naming a file that does not exist.
+function parsePackedFilename(packOutput: string): string {
+  const parsed: unknown = JSON.parse(packOutput)
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw new Error(`[publishPackage] expected exactly one packed artifact from \`npm pack --json\`, got: ${packOutput}`)
+  }
+  const entry: unknown = parsed[0]
+  if (typeof entry !== 'object' || entry === null || !('filename' in entry)) {
+    throw new Error(`[publishPackage] \`npm pack --json\` reported no filename: ${packOutput}`)
+  }
+  const filename: unknown = entry.filename
+  if (typeof filename !== 'string' || filename.length === 0) {
+    throw new Error(`[publishPackage] \`npm pack --json\` reported no filename: ${packOutput}`)
+  }
+  return filename
 }
 
 const main = async (): Promise<void> => {
@@ -187,4 +227,12 @@ type PublishNpmPackageParams = {
   path: string
   dryRun?: boolean
   npmDistTag?: string
+  // Set by the pack half of the split release pipeline (#486). Produces the tarball in this
+  // directory instead of publishing it; `dryRun` is the same behaviour into a temp directory.
+  packDestination?: string
 }
+
+type PublishNpmPackageResult =
+  | { status: 'skipped' }
+  | { status: 'packed'; filename: string; version: string }
+  | { status: 'published'; version: string }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Regression tests for the workspace:* rewrite the framework-packages publish job depends on
-# (release.yml's `publish-framework-packages` job, tools/scripts/publish-framework-packages.ts).
+# (release.yml's `pack-framework-packages` job, tools/scripts/pack-framework-packages.ts).
 # That job's whole thesis — recorded in its own header comment — is "do not trust the
 # toolchain's own workspace:* rewrite", because bun's native one reads a version bun.lock does
 # not reliably keep in sync with the dependency's own package.json (measured on this repo: a
