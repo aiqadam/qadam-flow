@@ -144,6 +144,17 @@ run_case "$dir"
 check "an .npmrc planted in the tarball directory fails" 1 $?
 check "and the token never reaches a publish" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
 
+# A pack run that used --skip-registry-check drops this marker (see SKIP_REGISTRY_CHECK_MARKER in
+# tools/scripts/utils/publish-npm-package.ts). Those tarballs were built with the already-published
+# and version-bump guards disabled and must never reach the registry. Nothing here knows the name:
+# the undeclared-entry sweep refuses it because the manifest does not name it, which is precisely
+# the coupling this case exists to pin — narrow that sweep and this goes red.
+dir="$(new_case skip-registry-check-marker aiqadam-shared-0.135.0.tgz)"
+printf 'packed with the guards off\n' > "$dir/PACKED-WITH-SKIP-REGISTRY-CHECK"
+run_case "$dir"
+check "a directory marked as packed with --skip-registry-check is refused" 1 $?
+check "and nothing from it is published" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
 dir="$(new_case planted-package-json aiqadam-shared-0.135.0.tgz)"
 echo '{"name":"smuggled"}' > "$dir/package.json"
 run_case "$dir"
@@ -175,6 +186,25 @@ check "NPM_DIST_TAG is honoured" "1" "$(grep -c -- '--tag next' "$WORK_ROOT/publ
 # which cannot import from each other. Nothing else would notice them drifting apart.
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ts_name="$(sed -n "s/^const PUBLISH_ORDER_FILENAME = '\\(.*\\)'.*/\\1/p" "$REPO_ROOT/tools/scripts/publish-framework-packages.ts")"
+ts_marker="$(sed -n "s/^const SKIP_REGISTRY_CHECK_MARKER = '\\(.*\\)'.*/\\1/p" "$REPO_ROOT/tools/scripts/utils/publish-npm-package.ts")"
+check "the marker fixture above uses the name the producer actually writes" "PACKED-WITH-SKIP-REGISTRY-CHECK" "$ts_marker"
+
+# The marker only reaches the publishing job because release.yml uploads the pack directory
+# whole. An enumerated `path:` would drop it and silently undo the protection above, with this
+# suite still green — so the shape of that one line is pinned here rather than left to a comment.
+# Anchored on the step name, not on `name: npm-framework-packages`, which the DOWNLOAD step
+# carries too — the looser range swept in a third, unrelated `path:` and the check failed on
+# its own extraction rather than on the property.
+upload_block="$(sed -n '/- name: Upload the packed tarballs/,/retention-days/p' "$REPO_ROOT/.github/workflows/release.yml")"
+upload_path="$(printf '%s\n' "$upload_block" | sed -n 's/^ *path: //p')"
+upload_path_count="$(printf '%s\n' "$upload_path" | grep -c . || true)"
+check "exactly one path: line was read out of the upload step" "1" "$upload_path_count"
+check "release.yml uploads the pack directory whole, so the marker is in the artifact" \
+    "\${{ runner.temp }}/npm-packages" "$upload_path"
+case "$ts_marker" in
+  .*) check "the marker is not a dotfile (upload-artifact drops those)" "not-a-dotfile" "dotfile" ;;
+  *)  check "the marker is not a dotfile (upload-artifact drops those)" "not-a-dotfile" "not-a-dotfile" ;;
+esac
 sh_name="$(sed -n 's/^PUBLISH_ORDER_FILENAME="\(.*\)"$/\1/p' "$REPO_ROOT/tools/ci/publish-packed-tarballs.sh")"
 check "the producer and the consumer agree on the manifest filename" "$ts_name" "$sh_name"
 check "and that name is not empty (so the check above is not vacuous)" "publish-order.txt" "$ts_name"

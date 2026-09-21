@@ -40,6 +40,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       e2e_relevant: ${{ steps.e2e.outputs.e2e_relevant }}
+      release_relevant: ${{ steps.release.outputs.release_relevant }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -162,6 +163,77 @@ jobs:
           echo "Diff touches none of packages/tests-e2e/, tools/ci/, or this workflow."
           emit false
 
+      # Same shape and the same fail-open reasoning as the E2E gate above, for the same reason:
+      # `pack-smoke` below exists because the real pack — turbo-building the three framework
+      # packages, rewriting their `workspace:*` deps on the real tree, asserting the real
+      # manifests, and running `npm pack` — otherwise executes for the first time on a release
+      # tag. The repo already refuses that feedback loop for the other release gates
+      # (`breaking-change-gate` and `version-tag-gate` are pinned by suites in _verify.yml);
+      # this closes the same hole for the pack.
+      #
+      # A wrong `true` costs one cheap job. A wrong `false` merges a broken release path that
+      # nothing notices until someone cuts a tag — and by then the person debugging it is
+      # mid-release. So the list below prefers whole trees to an enumeration of the files the
+      # pipeline reads today, which would fall behind them silently.
+      - name: Detect changes to the release/packaging path
+        id: release
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          emit() {
+            echo "release_relevant=$1" >> "$GITHUB_OUTPUT"
+            echo "::notice::release_relevant=$1"
+            exit 0
+          }
+
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::warning::Missing base/head SHA; running the pack smoke job."
+            emit true
+          fi
+
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::Could not compute merge-base; running the pack smoke job."
+            emit true
+          fi
+
+          if ! changed="$(git diff --name-only --no-renames "$merge_base" "$HEAD_SHA" 2>/dev/null)"; then
+            echo "::warning::git diff failed; running the pack smoke job."
+            emit true
+          fi
+
+          # Four of these are not obvious from the path alone. The first was here from the
+          # start; review caught the other three missing, along with the tools/ widening:
+          #   packages/cli/src/lib/utils/  the workspace:* transform the publish path calls into
+          #                                (prepare-qadam-utils, workspace-utils)
+          #   package.json (root)          holds the `publish-framework-packages` script string,
+          #                                and the `workspaces` globs buildWorkspaceVersionMap
+          #                                walks to resolve every workspace:*
+          #   turbo.json                   defines the `build` task whose `dist` the pack needs,
+          #                                and "a turbo config change" is the exact failure
+          #                                publish-npm-package.ts refuses to skip silently
+          #   tsconfig.base.json           tools/tsconfig.tools.json extends it, so a break there
+          #                                breaks the ts-node invocation the pack runs under
+          # `tools/` whole rather than tools/scripts/ + tools/ci/, because tsconfig.tools.json is
+          # in neither and the script runs under it.
+          #
+          # Deliberately NOT here: bun.lock, bunfig.toml, .npmrc. The first two only change what
+          # the install produces, and `verify` installs on every non-docs PR, so a break is
+          # already caught there. `.npmrc` is release-path-relevant for another reason entirely —
+          # it carries the auth line publish-packed-tarballs.sh's whole "NO PROJECT CONFIG" guard
+          # is about — but `pack-smoke` never publishes and never reads it in that role, and the
+          # suite that does pin it runs in `verify`, unconditionally.
+          if printf '%s\n' "$changed" \
+            | grep -qE '^(\.github/workflows/(ci|release)\.yml$|tools/|packages/cli/src/lib/utils/|package\.json$|turbo\.json$|tsconfig\.base\.json$|packages/shared/package\.json$|packages/qadams/(framework|common)/package\.json$)'; then
+            emit true
+          fi
+
+          echo "Diff touches none of the release or packaging paths."
+          emit false
+
   # Calls the reusable workflow instead of inlining the steps, so ci.yml and
   # release.yml cannot drift (#64). This job is NOT the required status check:
   # a called workflow reports its check as "<caller job> / <inner job>", i.e.
@@ -194,6 +266,140 @@ jobs:
             exit 1
           fi
           echo "Lint + unit tests passed. ✅"
+
+  # Proves the RELEASE pack still works, on a normal PR rather than on a tag.
+  #
+  # WHY THIS EXISTS. Until now nothing in CI ever ran the real thing. The two suites that look
+  # like they cover it both run against fakes: tools/ci/test-publish-workspace-invariants.sh
+  # exercises the workspace:* rewrite on a synthetic workspace, and
+  # tools/ci/test-publish-packed-tarballs.sh exercises the publisher against a stub `npm`.
+  # Neither builds the three real packages, rewrites their real manifests, or runs `npm pack`.
+  # That whole path first executed for real on a release tag — the same too-rare feedback loop
+  # release.yml's own gates are pinned against, and the worst moment to discover a break.
+  #
+  # WHAT IT DOES NOT DO. It never publishes and holds no credential: no `environment:`, no
+  # secret, `contents: read`. It also does not check WHETHER a package should be published —
+  # see `--skip-registry-check` below.
+  pack-smoke:
+    name: Pack the framework packages
+    needs: changes
+    # Every push to main, plus any PR touching the release path. No `always()` dance is needed
+    # here (unlike `e2e` below): `changes` is unconditional, so a plain `needs:` cannot wedge
+    # this into a permanent skip.
+    #
+    # This is deliberately NOT a required status check, and adding it to the branch ruleset as
+    # one would deadlock every PR that does not touch the release path, since a skipped job
+    # never reports its context. If it should ever become required, it needs the gate-job
+    # pattern `verify`/`integration` already use here: an unconditional job that resolves this
+    # one's result and carries the required name.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.release_relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Shallow, and no git credential: `--skip-registry-check` means nothing here diffs against
+      # origin/main, so the full history release.yml's pack job needs is not needed.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        id: node
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        id: bun
+        with:
+          bun-version: 1.3.3
+
+      # Restore-only, same key `_verify.yml`'s `verify` job writes. The `refresh-cache` label
+      # skips it for the same reason it does in `integration-run` and `e2e`: that label means
+      # "this PR cold-installs everywhere", and a job ignoring it would make it mean "everywhere
+      # except here".
+      - name: Restore built node_modules
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'refresh-cache') }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/*/node_modules
+            packages/*/*/*/node_modules
+          key: node-modules-${{ vars.NODE_MODULES_CACHE_EPOCH || 'v1' }}-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-bun${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock', 'bunfig.toml', 'package.json', '.npmrc', 'tools/ci/install-deps.sh') }}
+
+      - name: Install dependencies
+        run: tools/ci/install-deps.sh
+
+      # release.yml's pack job runs this too. A job that exists to smoke-test that path should
+      # not quietly differ from it, and the probe is the only step that can see a cache restore
+      # which is corrupt at the expected version.
+      - name: Verify native addons load
+        run: tools/ci/verify-native-modules.sh
+
+      - name: Build shared, qadams-framework, qadams-common
+        run: npx turbo run build --filter=@aiqadam/shared --filter=@aiqadam/qadams-common --filter=@aiqadam/qadams-framework
+
+      # `--skip-registry-check` is what keeps this job honest. packagePrePublishChecks answers
+      # "is this version already published, and was the package changed since main" — once these
+      # versions are released, a PR that leaves them UNCHANGED gets "skip" for all three and the
+      # pack produces NOTHING. (Changed-and-unbumped makes it throw instead; the skip is the
+      # common case, and the one that would go green having proved nothing.) The job would then pass having exercised none of the path it
+      # exists to exercise. publishNpmPackage refuses the flag unless the run also packs, so it
+      # cannot be used to force a publish past that guard. It also drops this job's dependency on
+      # registry.npmjs.org being reachable.
+      - name: Pack shared, qadams-framework, qadams-common
+        run: |
+          mkdir -p "${{ runner.temp }}/npm-packages"
+          npm run publish-framework-packages -- --pack-to="${{ runner.temp }}/npm-packages" --skip-registry-check
+
+      # The pack step succeeding is not the same as it having produced anything — see
+      # .agents/docs/verification-pitfalls.md. The expected count is read out of the script's own
+      # package list rather than hardcoded, so adding a fourth framework package does not silently
+      # leave it uncovered here, and a formatting change that breaks the read fails loudly.
+      - name: Assert the pack produced a tarball for every framework package
+        run: |
+          set -euo pipefail
+          dir="${{ runner.temp }}/npm-packages"
+          manifest="$dir/publish-order.txt"
+
+          expected="$(grep -cE "^  'packages/" tools/scripts/publish-framework-packages.ts || true)"
+          if [ "${expected:-0}" -lt 1 ]; then
+            echo "::error::could not read the package list out of tools/scripts/publish-framework-packages.ts"
+            exit 1
+          fi
+
+          [ -f "$manifest" ] || { echo "::error::no publish-order.txt in ${dir}"; exit 1; }
+
+          actual="$(grep -c . "$manifest" || true)"
+          if [ "${actual:-0}" -ne "$expected" ]; then
+            echo "::error::expected ${expected} packed package(s), got ${actual:-0}"
+            cat "$manifest"
+            exit 1
+          fi
+
+          while IFS= read -r filename; do
+            [ -n "$filename" ] || continue
+            if [ ! -s "${dir}/${filename}" ]; then
+              echo "::error::${filename} is named by the manifest but missing or empty"
+              exit 1
+            fi
+            echo "ok: ${filename} ($(stat -c%s "${dir}/${filename}") bytes)"
+          done < "$manifest"
+
+          # The other half of the marker mechanism. publish-packed-tarballs.sh's refusal of a
+          # marked directory is pinned in tools/ci/test-publish-packed-tarballs.sh, but that
+          # test plants the marker itself — so deleting the write in publishNpmPackage left
+          # every suite green and the guard silently gone. This job packs with
+          # --skip-registry-check, so it is exactly the run that must produce one.
+          marker="$dir/PACKED-WITH-SKIP-REGISTRY-CHECK"
+          if [ ! -f "$marker" ]; then
+            echo "::error::a --skip-registry-check pack wrote no PACKED-WITH-SKIP-REGISTRY-CHECK marker, so publish-packed-tarballs.sh would not refuse this directory"
+            exit 1
+          fi
+
+          echo "Packed ${actual} framework package(s), marked unpublishable. ✅"
 
   # The heavy suite. NOT a required status check — the `integration` gate job
   # below carries the required "CE Integration Tests" context and always reports.
@@ -239,9 +445,9 @@ jobs:
         with:
           bun-version: 1.3.3
 
-      # Restore-only, by design. This job and `verify` install the same tree
-      # from the same lockfile, so they compute the same key; letting both save
-      # would mean two concurrent uploads of an identical entry (357 MiB
+      # Restore-only, by design. Four jobs install the same tree from the same lockfile and so
+      # compute the same key — `verify`, this one, `e2e` and `pack-smoke`; letting them all save
+      # would mean three concurrent uploads of an identical entry (357 MiB
       # measured), with the loser discarded as "cache already exists". `verify`
       # is the writer because it is the job that always runs — this one is
       # skipped on a docs-only diff.

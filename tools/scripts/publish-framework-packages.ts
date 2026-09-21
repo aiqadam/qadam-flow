@@ -47,10 +47,13 @@ const main = async (): Promise<void> => {
   // Left overridable for manual/local use — `publishNpmPackage` normalizes an unset or empty
   // value to `latest` on its own.
   const npmDistTag = process.env['NPM_DIST_TAG']
+  // See PublishNpmPackageParams.skipRegistryCheck. publishNpmPackage refuses this unless the run
+  // also packs, so it cannot be used to force a publish past the already-published guard.
+  const skipRegistryCheck = process.argv.includes('--skip-registry-check')
 
   const packedFilenames: string[] = []
   for (const path of FRAMEWORK_PACKAGE_PATHS) {
-    const result = await publishNpmPackage({ path, dryRun, npmDistTag, packDestination })
+    const result = await publishNpmPackage({ path, dryRun, npmDistTag, packDestination, skipRegistryCheck })
     if (result.status === 'packed' && packDestination) {
       packedFilenames.push(result.filename)
     }
