@@ -1,4 +1,4 @@
-import { rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import path, { dirname, join } from 'node:path'
 import { fileLock, fileSystemUtils } from '@aiqadam/server-utils'
 import {
@@ -31,6 +31,9 @@ const usedQadamsMemoryCache: Record<string, boolean> = {}
 // exited 0 with "No packages!", and created no node_modules — so qadamCheckIfAlreadyInstalled
 // deleted the `ready` marker and every job reinstalled from scratch, forever.
 const QADAMS_DIR = 'qadams'
+// Read and restored by name here rather than imported from qadam-integrity: this module owns
+// the workspace's files, that one owns their interpretation.
+const LOCKFILE_NAME = 'bun.lock'
 
 // #482 items 2 and 3. Both exist because bun reads `.npmrc` and `bunfig.toml` from the install
 // WORKING DIRECTORY and from `$HOME`, and does not walk up the tree — so neither of the repo-root
@@ -136,7 +139,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 qadamPackage: piece,
             })))
 
-            const refusedBeforeInstall = await readRefusalsBeforeInstall({ rootWorkspace, log })
+            const before = await readWorkspaceBeforeInstall({ rootWorkspace, log })
 
             await tracer.startActiveSpan('qadamInstaller.bunInstall', async (span) => {
                 try {
@@ -149,7 +152,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     }))
 
                     if (isNil(batchError)) {
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, refusedBeforeInstall, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, span, log })
                         log.info({
                             rootWorkspace,
                             qadamsCount: qadamsToInstall.length,
@@ -161,7 +164,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     if (qadamsToInstall.length === 1) {
                         log.error({ rootWorkspace, error: batchError }, '[qadamInstaller] Qadam installation failed, rolling back')
-                        await rollbackInstallation(rootWorkspace, qadamsToInstall)
+                        await rollbackInstallation({ rootWorkspace, pieces: qadamsToInstall, before })
                         throw batchError
                     }
 
@@ -184,7 +187,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     // offender, and does it once.
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, refusedBeforeInstall, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, span, log })
                     }
 
                     if (failedQadams.length > 0) {
@@ -268,11 +271,25 @@ function needsInstalling({ piece, officialQadamsInstallEnabled }: {
     return officialQadamsInstallEnabled && piece.qadamType === QadamType.OFFICIAL
 }
 
-async function rollbackInstallation(rootWorkspace: string, pieces: QadamPackage[]): Promise<void> {
+// `before` is optional because the two rollbacks want different things. A rollback that ABANDONS
+// the install (a fatal batch error, a failed integrity pass) passes it, so the lockfile goes back
+// to what it was and this attempt leaves no trace for the next one to misread. The per-piece
+// rollback inside the individual-fallback loop does not: later iterations legitimately extend the
+// lockfile, and restoring mid-loop would discard the entries of the qadams that just succeeded.
+// That loop is still covered — the integrity pass runs once over whatever bun finally wrote, and
+// if it throws, the abandoning rollback above it restores the snapshot.
+async function rollbackInstallation({ rootWorkspace, pieces, before }: {
+    rootWorkspace: string
+    pieces: QadamPackage[]
+    before?: WorkspaceBeforeInstall
+}): Promise<void> {
     await Promise.all(pieces.map(piece => rm(path.resolve(rootWorkspace, relativeQadamPath(piece)), {
         recursive: true,
         force: true,
     })))
+    if (!isNil(before)) {
+        await restoreLockfile({ rootWorkspace, before })
+    }
 }
 
 async function tryInstallQadamsIndividually(
@@ -293,7 +310,7 @@ async function tryInstallQadamsIndividually(
                 piece: `${piece.qadamName}@${piece.qadamVersion}`,
                 error,
             }, '[qadamInstaller] Individual qadam installation failed, rolling back')
-            await rollbackInstallation(rootWorkspace, [piece])
+            await rollbackInstallation({ rootWorkspace, pieces: [piece] })
             failures.push(piece)
         }
     }
@@ -315,40 +332,83 @@ async function tryInstallQadamsIndividually(
 // a plain custom install too, and verifying them fail-closed would turn a brief registry outage
 // into a failed install where today there is none. The flag is also the documented escape hatch
 // for an npmjs key rotation, which only means anything if it gates this.
-// Read immediately before `bun install` and inside the same file lock, so the post-install pass
-// can tell an unverifiable lockfile entry THIS install wrote from one that was already in the
-// shared workspace — the two need different answers, and only the first may fail the install. Off
-// the flag as well as the verification itself: with the flag off nothing verifies, so the read
-// would be a file stat and a JSONC parse bought for nothing on every custom-qadam install.
-async function readRefusalsBeforeInstall({ rootWorkspace, log }: {
-    rootWorkspace: string
-    log: Logger
-}): Promise<Set<string>> {
-    if (!workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
-        return new Set()
-    }
-    return qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace })
-}
-
-async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, refusedBeforeInstall, span, log }: {
+async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, span, log }: {
     rootWorkspace: string
     installed: QadamPackage[]
-    refusedBeforeInstall: Set<string>
+    before: WorkspaceBeforeInstall
     span: Span
     log: Logger
 }): Promise<void> {
     if (workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
         const { error } = await tryCatch(async () =>
-            qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace, installed, refusedBeforeInstall }),
+            qadamIntegrity(log).verifyOfficialQadams({
+                rootWorkspace,
+                installed,
+                refusedBeforeInstall: before.refusedKeys,
+            }),
         )
         if (!isNil(error)) {
             span.recordException(error instanceof Error ? error : new Error(String(error)))
             log.error({ rootWorkspace, error }, '[qadamInstaller] Integrity verification failed, rolling back')
-            await rollbackInstallation(rootWorkspace, installed)
+            await rollbackInstallation({ rootWorkspace, pieces: installed, before })
             throw error
         }
     }
     await markQadamsAsUsed(rootWorkspace, installed)
+}
+
+// Everything about the workspace that a rollback has to be able to put back. Captured immediately
+// before `bun install`, inside the same file lock.
+//
+// `lockfileContents` is the reason this is a snapshot rather than just the key set. `bun install`
+// REWRITES `bun.lock` before the integrity pass ever reads it, and the old rollback removed only
+// the qadam directories — so a pass that failed closed left its own refused entry in the shared
+// lockfile, and the NEXT pass read that as "already refused before this install" and let the same
+// entry through. Both reviewers found it independently: the gate held for exactly one attempt, and
+// the batch is reinstalled on the next job because no `ready` marker was written. Restoring the
+// bytes means a rejected install authors no part of its successor's pre-image, so every retry
+// re-derives the same fail-closed answer.
+//
+// Restoring rather than deleting: the lockfile is the whole shared workspace's, so deleting it to
+// undo one batch would discard every other tenant's resolution and force a full re-resolve.
+//
+// What this deliberately does NOT restore is `node_modules` — nothing prunes the refused bytes
+// from the tree. The guarantee is "a refused batch is never marked usable and never launders its
+// own output into the next attempt", not "the tree is clean".
+async function readWorkspaceBeforeInstall({ rootWorkspace, log }: {
+    rootWorkspace: string
+    log: Logger
+}): Promise<WorkspaceBeforeInstall> {
+    // Off the flag as well as the verification itself: with the flag off nothing verifies and
+    // nothing rolls back on integrity grounds, so this would be a read bought for nothing on
+    // every custom-qadam install.
+    if (!workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
+        return { lockfileContents: undefined, refusedKeys: new Set() }
+    }
+    const { data } = await tryCatch(async () =>
+        readFile(join(rootWorkspace, LOCKFILE_NAME), 'utf8'))
+    // `tryCatch` reports "no value" as null; the rest of this path reads absence as undefined.
+    const lockfileContents = data ?? undefined
+    return {
+        lockfileContents,
+        // Classified from the SAME bytes that were snapshotted, not from a second read — otherwise
+        // the set restored and the set reasoned about could not be shown to be the same file.
+        refusedKeys: qadamIntegrity(log).refusedKeysIn({ lockfileContents }),
+    }
+}
+
+async function restoreLockfile({ rootWorkspace, before }: {
+    rootWorkspace: string
+    before: WorkspaceBeforeInstall
+}): Promise<void> {
+    const lockfilePath = join(rootWorkspace, LOCKFILE_NAME)
+    if (isNil(before.lockfileContents)) {
+        // There was no lockfile before, and a missing one is already the conservative
+        // "nothing was refused before" reading the next pass needs.
+        await rm(lockfilePath, { force: true })
+        return
+    }
+    await writeFileAtomic(lockfilePath, before.lockfileContents, 'utf8')
 }
 
 function groupQadamsByPackagePath(pieces: QadamPackage[]): Record<string, QadamPackage[]> {
@@ -532,6 +592,14 @@ async function markQadamsAsUsed(rootWorkspace: string, pieces: QadamPackage[]): 
 
 function getPackageArchivePathForQadam(rootWorkspace: string, qadamPackage: PrivateQadamPackage): string {
     return join(qadamPath(rootWorkspace, qadamPackage), `${qadamPackage.archiveId}.tgz`)
+}
+
+// The workspace state a rollback may have to put back — see `readWorkspaceBeforeInstall`.
+// `lockfileContents` is undefined when there was no lockfile at all, which is both the
+// first-install case and the state a rollback restores to.
+type WorkspaceBeforeInstall = {
+    lockfileContents: string | undefined
+    refusedKeys: Set<string>
 }
 
 type InstallParams = {

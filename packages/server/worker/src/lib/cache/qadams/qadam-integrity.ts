@@ -86,16 +86,21 @@ export const qadamIntegrity = (log: Logger) => ({
         }
     },
 
-    // The lockfile keys that were ALREADY unverifiable before this install ran. Read by the
-    // installer immediately before `bun install`, inside the same file lock, so nothing can write
-    // between the two reads — see `reportRefusals` for what the difference is used for.
+    // The lockfile keys that were ALREADY unverifiable before this install ran — see
+    // `reportRefusals` for what the difference is used for. Takes the lockfile's CONTENTS rather
+    // than reading it, because the installer must snapshot the same bytes it classifies: it
+    // restores them if this install is abandoned, and a second read could not be shown to have
+    // seen the same file.
     //
     // Never throws, unlike every other read in this file. A missing, empty or unparseable lockfile
-    // at this point is the ordinary first-install case, and treating it as "nothing was refused
+    // before an install is the ordinary first-install case, and treating it as "nothing was refused
     // before" is the conservative reading: every refusal the post-install pass then finds counts
     // as introduced by this install, and fails it closed.
-    async readRefusedLockfileKeys({ rootWorkspace }: { rootWorkspace: string }): Promise<Set<string>> {
-        const { data, error } = await tryCatch(async () => readOfficialQadamsFromLockfile({ rootWorkspace }))
+    refusedKeysIn({ lockfileContents }: { lockfileContents: string | undefined }): Set<string> {
+        if (isNil(lockfileContents)) {
+            return new Set()
+        }
+        const { data, error } = tryCatchSync(() => collectOfficialEntries(parseLockfile(lockfileContents)))
         if (!isNil(error) || isNil(data)) {
             return new Set()
         }
@@ -169,8 +174,10 @@ const HTTP_TOO_MANY_REQUESTS = 429
 // 150s is chosen against the WAITERS, not against the happy path: `fileLock` retries 100 times
 // with a 2s cap — ≈177s summed — so a replica queued behind this gives up at roughly that.
 // Releasing first means a pathological registry fails the one install holding the lock, which is
-// retried, instead of failing that one AND every replica waiting on it. Note the lock covers
-// `bun install` as well as this pass, so that headroom is what absorbs the install itself. The
+// retried, instead of failing that one AND every replica waiting on it. What this number does NOT
+// do is keep the whole hold under the waiter budget: the lock also covers `bun install`, whose own
+// timeout is 10 minutes (`bun-runner.ts`), so a slow install blows past every waiter with or
+// without this pass. 150s is chosen only so that verification does not ADD to that. The
 // happy path is far under: a few hundred cached-DNS GETs to registry.npmjs.org run in tens of
 // seconds, and only the first install per process pays even that.
 const VERIFICATION_BUDGET_MS = 150_000
@@ -202,13 +209,16 @@ const readOfficialQadamsFromLockfile = async ({ rootWorkspace }: { rootWorkspace
         throw new Error(`[qadamIntegrity] cannot verify official qadams: ${LOCKFILE_NAME} is unreadable at ${lockfilePath}`)
     }
 
+    return collectOfficialEntries(parseLockfile(contents))
+}
+
+const parseLockfile = (contents: string): unknown => {
     const parseErrors: { error: number, offset: number, length: number }[] = []
     const lockfile: unknown = parseJsonc(contents, parseErrors, { allowTrailingComma: true })
     if (parseErrors.length > 0) {
         throw new Error(`[qadamIntegrity] cannot verify official qadams: ${LOCKFILE_NAME} did not parse (${parseErrors.length} error(s))`)
     }
-
-    return collectOfficialEntries(lockfile)
+    return lockfile
 }
 
 const collectOfficialEntries = (lockfile: unknown): LockfileReading => {

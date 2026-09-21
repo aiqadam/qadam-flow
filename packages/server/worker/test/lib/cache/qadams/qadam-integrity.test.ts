@@ -71,7 +71,12 @@ const log = {
 // would not exercise the reason that dependency is there.
 async function writeLockfile(entries: string): Promise<string> {
     const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
-    await writeFile(join(workspace, 'bun.lock'), `{
+    await writeFile(join(workspace, 'bun.lock'), lockfileText(entries))
+    return workspace
+}
+
+function lockfileText(entries: string): string {
+    return `{
   "lockfileVersion": 1,
   "workspaces": {
     "": { "name": "qadam-flow" },
@@ -80,8 +85,7 @@ async function writeLockfile(entries: string): Promise<string> {
 ${entries}
   },
 }
-`)
-    return workspace
+`
 }
 
 function registryEntry({ name, version, integrity }: { name: string, version: string, integrity: string }): string {
@@ -254,6 +258,35 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         // One, not the four REGISTRY_RATE_LIMIT_ATTEMPTS allows: the budget cut the retries short
         // rather than letting them run out.
         expect(mockGet).toHaveBeenCalledTimes(1)
+    })
+
+    // The backoff sleep is the one part of an attempt that runs outside the per-request timeout,
+    // so the deadline has to CAP it, not merely be re-checked after it: an unclamped final backoff
+    // holds the lock past the budget by up to its own length, which is the overrun the budget
+    // exists to prevent. Asserted on the requested delay rather than on the error, because the
+    // unclamped version reaches the same error — just later.
+    it('shortens the last backoff to what is left of the budget rather than overshooting it', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+
+        let clock = Date.now()
+        const now = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+        // Leaves 500ms of the 150s budget by the time the first 429 comes back, so a full 2s
+        // backoff would spend four times the remaining hold.
+        mockGet.mockImplementation(async () => {
+            clock += 149_500
+            throw { response: { status: 429 } }
+        })
+        mockDelay.mockImplementation(async (ms) => {
+            clock += ms
+        })
+        try {
+            await expect(verify(workspace)).rejects.toThrow(/verification pass is allowed to hold the install lock/)
+        }
+        finally {
+            now.mockRestore()
+        }
+
+        expect(mockDelay.mock.calls.flat()).toEqual([500])
     })
 
     // A non-429 failure is not retried: it is not the contention this backoff exists for, and
@@ -519,8 +552,10 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
 })
 
 // The pre-install half of the same reading. It answers one question — which lockfile keys were
-// ALREADY unverifiable — and the installer asks it before `bun install`, inside the same lock.
-describe('qadamIntegrity.readRefusedLockfileKeys', () => {
+// ALREADY unverifiable — over the bytes the installer snapshotted before `bun install`, inside the
+// same lock. It takes those bytes rather than a path precisely so the classification and the
+// snapshot the installer restores on rollback cannot be of two different files.
+describe('qadamIntegrity.refusedKeysIn', () => {
     beforeEach(async () => {
         vi.clearAllMocks()
         mockGet.mockReset()
@@ -528,41 +563,33 @@ describe('qadamIntegrity.readRefusedLockfileKeys', () => {
         ;({ qadamIntegrity } = await import('../../../../src/lib/cache/qadams/qadam-integrity'))
     })
 
-    it('returns the keys of entries that are already unverifiable, and nothing else', async () => {
-        const workspace = await writeLockfile([
+    it('returns the keys of entries that are already unverifiable, and nothing else', () => {
+        const lockfileContents = lockfileText([
             '    "@aiqadam/qadam-slack": ["@aiqadam/qadam-slack@/tmp/squatter.tgz", {}, "sha512-whatever"],',
             '    "some-dep/@aiqadam/shared": ["not-ours@1.0.0", "", {}, "sha512-whatever"],',
             registryEntry(SHARED),
             registryEntry({ name: 'lodash', version: '4.17.21', integrity: 'sha512-unsigned' }),
         ].join('\n'))
 
-        const keys = await qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace })
+        const keys = qadamIntegrity(log).refusedKeysIn({ lockfileContents })
 
         expect(keys).toEqual(new Set(['@aiqadam/qadam-slack', 'some-dep/@aiqadam/shared']))
     })
 
-    // It reads the lockfile BEFORE an install, where absence is the ordinary first-install case
-    // rather than the anomaly it is afterwards. Returning empty is the conservative answer: every
-    // refusal the post-install pass then finds counts as introduced, and fails the install.
-    it('returns nothing rather than throwing when there is no lockfile yet', async () => {
-        const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
-
-        await expect(qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace }))
-            .resolves.toEqual(new Set())
+    // It classifies the lockfile as it stood BEFORE an install, where absence is the ordinary
+    // first-install case rather than the anomaly it is afterwards. Returning empty is the
+    // conservative answer: every refusal the post-install pass then finds counts as introduced,
+    // and fails the install.
+    it('returns nothing rather than throwing when there was no lockfile yet', () => {
+        expect(qadamIntegrity(log).refusedKeysIn({ lockfileContents: undefined })).toEqual(new Set())
     })
 
-    it('returns nothing rather than throwing when the lockfile does not parse', async () => {
-        const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
-        await writeFile(join(workspace, 'bun.lock'), '{ not json at all')
-
-        await expect(qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace }))
-            .resolves.toEqual(new Set())
+    it('returns nothing rather than throwing when the lockfile does not parse', () => {
+        expect(qadamIntegrity(log).refusedKeysIn({ lockfileContents: '{ not json at all' })).toEqual(new Set())
     })
 
-    it('never reaches the registry', async () => {
-        const workspace = await writeLockfile(registryEntry(SHARED))
-
-        await qadamIntegrity(log).readRefusedLockfileKeys({ rootWorkspace: workspace })
+    it('never reaches the registry', () => {
+        qadamIntegrity(log).refusedKeysIn({ lockfileContents: lockfileText(registryEntry(SHARED)) })
 
         expect(mockGet).not.toHaveBeenCalled()
     })
