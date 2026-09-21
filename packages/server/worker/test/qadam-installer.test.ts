@@ -449,7 +449,12 @@ describe('qadamInstaller', () => {
 
         await installer.install({ pieces: [official], includeFilters: true })
 
-        expect(mockVerifyOfficialQadams).toHaveBeenCalledWith({ rootWorkspace: testWorkspace })
+        // The batch goes with it, not just the workspace: the check reads the whole shared
+        // workspace, so this is the only thing telling it which entries THIS install introduced.
+        expect(mockVerifyOfficialQadams).toHaveBeenCalledWith({
+            rootWorkspace: testWorkspace,
+            installed: [official],
+        })
         expect(readyExistedDuringVerification).toBe(false)
         expect(await pathExists(readyFilePath(official))).toBe(true)
     })

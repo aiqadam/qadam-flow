@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { safeHttp } from '@aiqadam/server-utils'
-import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { isNil, QadamPackage, QadamType, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { parse as parseJsonc } from 'jsonc-parser'
 import { Logger } from 'pino'
 
@@ -48,11 +48,16 @@ export const qadamIntegrity = (log: Logger) => ({
     // engine's loader would resolve it in preference to the bundled build.
     //
     // Called ONCE per install, never per qadam. bun resolves every workspace member regardless of
-    // `--filter` (measured on bun 1.3.11), so even a filtered install writes lockfile entries for
+    // `--filter` (measured on bun 1.3.11 — note the runtime image pins 1.3.1 and CI 1.3.3, so
+    // this is a measurement on a NEWER bun than we ship; `assertBatchIsCovered` is what stops it
+    // from being load-bearing), so even a filtered install writes lockfile entries for
     // packages outside the filter — running this inside the per-qadam fallback loop made one
     // unverifiable entry roll back every other qadam in the batch, and blame the wrong one.
-    async verifyOfficialQadams({ rootWorkspace }: { rootWorkspace: string }): Promise<void> {
-        const resolved = await readOfficialQadamsFromLockfile({ rootWorkspace })
+    async verifyOfficialQadams({ rootWorkspace, installed }: { rootWorkspace: string, installed: QadamPackage[] }): Promise<void> {
+        const { resolved, refusals } = await readOfficialQadamsFromLockfile({ rootWorkspace })
+        reportRefusals({ refusals, installed, log })
+        assertBatchIsCovered({ resolved, installed })
+
         const unverified = resolved.filter((pkg) => !verifiedPackages.has(cacheKey(pkg)))
         if (unverified.length === 0) {
             return
@@ -67,8 +72,12 @@ export const qadamIntegrity = (log: Logger) => ({
         // Serially rather than in parallel. This runs inside the installer's file lock, on a set
         // that is normally a handful of packages, and a burst of registry requests from every
         // worker replica coming out of a cold cache at once is the shape that earns a 429.
+        //
+        // Serial and unbounded would be a different thing though, so the whole pass shares one
+        // deadline rather than only bounding each request — see VERIFICATION_BUDGET_MS.
+        const deadline = Date.now() + VERIFICATION_BUDGET_MS
         for (const pkg of unverified) {
-            await verifySignature({ pkg, log })
+            await verifySignature({ pkg, deadline, log })
             verifiedPackages.add(cacheKey(pkg))
         }
     },
@@ -121,6 +130,21 @@ const REGISTRY_TIMEOUT_MS = 30_000
 const REGISTRY_RATE_LIMIT_ATTEMPTS = 4
 const REGISTRY_RATE_LIMIT_BACKOFF_MS = 2_000
 const HTTP_TOO_MANY_REQUESTS = 429
+// One budget for the WHOLE pass, not just per request, because the per-request bound multiplies:
+// the first install after a worker process restart re-verifies everything (`verifiedPackages` is
+// process-local), which with the official catalogue installed is a few hundred sequential reads,
+// each of which can itself spend 30s × axios-retry's 5xx retries × the 429 attempts above. All of
+// that happens inside `fileLock.runExclusive`, and `proper-lockfile` refreshes the lock's mtime
+// while it is held — so the 5-minute stale window never expires under a live holder and the hold
+// is genuinely unbounded without this.
+//
+// 150s is chosen against the WAITERS, not against the happy path: `fileLock` retries 100 times
+// with a 2s cap, so a replica queued behind this gives up at roughly 175s. Releasing first means
+// a pathological registry fails the one install holding the lock — which is retried — instead of
+// failing that one AND every replica waiting on it. The happy path is far under: a few hundred
+// cached-DNS GETs to registry.npmjs.org run in tens of seconds, and only the first install per
+// process pays even that.
+const VERIFICATION_BUDGET_MS = 150_000
 
 // Keyed on the triple, not on `name@version`: if the same version ever resolves to a different
 // integrity, that is precisely the event this guard exists to catch, and a cache keyed on the
@@ -133,12 +157,13 @@ const cacheKey = ({ name, version, integrity }: ResolvedPackage): string => `${n
 //
 // The whole workspace is read, not just the batch that triggered this install, because a filtered
 // `bun install` resolves every workspace member anyway: entries for packages outside `--filter`
-// are present from the first install onwards (measured on bun 1.3.11). The in-memory cache above
+// are present from the first install onwards (measured on bun 1.3.11; the image pins 1.3.1 and
+// CI 1.3.3, and `assertBatchIsCovered` turns this from an assumption into a check). The cache above
 // is what keeps that from re-checking the same packages on every install. An earlier version of
 // this comment claimed the lockfile is never pruned; that is wrong — removing a workspace member
 // and re-installing does drop its entries — and the difference matters, because it means a
 // rejected qadam does not permanently poison the shared workspace.
-const readOfficialQadamsFromLockfile = async ({ rootWorkspace }: { rootWorkspace: string }): Promise<ResolvedPackage[]> => {
+const readOfficialQadamsFromLockfile = async ({ rootWorkspace }: { rootWorkspace: string }): Promise<LockfileReading> => {
     const lockfilePath = join(rootWorkspace, LOCKFILE_NAME)
     const { data: contents, error } = await tryCatch(async () => readFile(lockfilePath, 'utf8'))
     if (!isNil(error) || isNil(contents)) {
@@ -157,15 +182,76 @@ const readOfficialQadamsFromLockfile = async ({ rootWorkspace }: { rootWorkspace
     return collectOfficialEntries(lockfile)
 }
 
-const collectOfficialEntries = (lockfile: unknown): ResolvedPackage[] => {
+const collectOfficialEntries = (lockfile: unknown): LockfileReading => {
     const packages = readProperty({ source: lockfile, key: 'packages' })
     if (!isRecord(packages)) {
         throw new Error(`[qadamIntegrity] cannot verify official qadams: ${LOCKFILE_NAME} has no packages map`)
     }
-    return Object.entries(packages).flatMap(([key, entry]) => {
-        const resolved = classifyEntry({ key, entry })
-        return isNil(resolved) ? [] : [resolved]
+    const classified = Object.entries(packages).flatMap(([key, entry]) => {
+        const result = classifyEntry({ key, entry })
+        return isNil(result) ? [] : [result]
     })
+    return {
+        resolved: classified.filter((entry): entry is ResolvedPackage => !('reason' in entry)),
+        refusals: classified.filter((entry): entry is Refusal => 'reason' in entry),
+    }
+}
+
+// A refusal is only fatal for the install that could have introduced it.
+//
+// The check reads the WHOLE workspace lockfile — it has to, because bun resolves every workspace
+// member regardless of `--filter` — but the workspace is shared by every tenant on this worker
+// (`getCustomPiecesPath` returns the common cache in the default UNSANDBOXED mode). Throwing on
+// any refusal anywhere therefore had a failure mode both reviewers found independently: one
+// platform registers a CUSTOM ARCHIVE qadam under an `@aiqadam/` name — `qadamMetadataService`
+// applies no name validation and scopes uniqueness by platformId — which writes a tarball entry
+// under an official-scope key. Every later install into that workspace then threw, for every
+// tenant, forever, and the rollback removed the innocent current batch while the offending entry
+// (whose own directory is still there, so bun does not prune it) stayed put.
+//
+// Throwing bought nothing there. An out-of-batch refusal was written by an earlier install and
+// shadows an official name whether or not THIS install proceeds, so failing this batch neither
+// removes it nor protects the packages this batch is installing. It is logged, named, and given
+// the remedy instead. A refusal for a qadam in the current batch is a different thing entirely —
+// this install is what would put it on disk — and still fails closed.
+//
+// Note what is NOT softened: a signature that does not verify still throws for every official
+// entry, in the batch or not. That is the substitution #482 exists to catch, and unlike a
+// structural refusal it is evidence about bytes, not about a name someone chose.
+const reportRefusals = ({ refusals, installed, log }: { refusals: Refusal[], installed: QadamPackage[], log: Logger }): void => {
+    if (refusals.length === 0) {
+        return
+    }
+    const installedNames = new Set(installed.map((piece) => piece.qadamName))
+    const fromThisBatch = refusals.filter((refusal) => installedNames.has(refusal.name))
+
+    for (const refusal of refusals.filter((refusal) => !installedNames.has(refusal.name))) {
+        log.error({
+            qadam: refusal.name,
+            reason: refusal.reason,
+        }, '[qadamIntegrity] an official-scope package already in this workspace cannot be verified. It was not installed by this batch, so the install continues — but while it is there it occupies an official name in node_modules and the engine loader will resolve it. Rename it.')
+    }
+
+    if (fromThisBatch.length > 0) {
+        const detail = fromThisBatch.map(({ name, reason }) => `${name} (${reason})`).join('; ')
+        throw new Error(`[qadamIntegrity] refusing to install: ${detail}`)
+    }
+}
+
+// The guard verifies whatever official-scope entries it finds, so on its own it says nothing
+// about the qadams this batch is about to mark usable. If bun ever stopped writing an entry for
+// one of them, every one of them would be marked `ready` with nothing verified — a silent
+// fail-open, and the only thing standing between here and that was a comment recording a
+// measurement. Asserting it turns the assumption into a check that fails loudly.
+const assertBatchIsCovered = ({ resolved, installed }: { resolved: ResolvedPackage[], installed: QadamPackage[] }): void => {
+    const covered = new Set(resolved.map(({ name, version }) => `${name}@${version}`))
+    const missing = installed
+        .filter((piece) => piece.qadamType === QadamType.OFFICIAL)
+        .filter((piece) => !covered.has(`${piece.qadamName}@${piece.qadamVersion}`))
+    if (missing.length > 0) {
+        const names = missing.map((piece) => `${piece.qadamName}@${piece.qadamVersion}`).join(', ')
+        throw new Error(`[qadamIntegrity] refusing to mark ${names} usable: ${LOCKFILE_NAME} carries no registry entry for them, so nothing about the bytes bun installed could be verified.`)
+    }
 }
 
 // Scope is decided on the MAP KEY as well as on the spec, and an official-scope key that is not a
@@ -188,7 +274,7 @@ const collectOfficialEntries = (lockfile: unknown): ResolvedPackage[] => {
 //
 // A workspace member is a one-element entry and is skipped: those are the `qadams/<name>-<ver>`
 // directories this installer writes itself, and they were never published.
-const classifyEntry = ({ key, entry }: { key: string, entry: unknown }): ResolvedPackage | undefined => {
+const classifyEntry = ({ key, entry }: { key: string, entry: unknown }): ResolvedPackage | Refusal | undefined => {
     if (!Array.isArray(entry) || entry.length === LOCKFILE_WORKSPACE_ENTRY_ARITY) {
         return undefined
     }
@@ -197,7 +283,7 @@ const classifyEntry = ({ key, entry }: { key: string, entry: unknown }): Resolve
 
     if (entry.length !== LOCKFILE_REGISTRY_ENTRY_ARITY) {
         if (keyIsOfficial) {
-            throw new Error(`[qadamIntegrity] refusing ${keyName}: it resolves to a local tarball or URL rather than to the registry, so npmjs cannot have signed it. A custom qadam must not be registered under the ${OFFICIAL_QADAM_SCOPE_PREFIX} scope — rename it.`)
+            return { name: keyName, reason: `it resolves to a local tarball or URL rather than to the registry, so npmjs cannot have signed it. A custom qadam must not be registered under the ${OFFICIAL_QADAM_SCOPE_PREFIX} scope — rename it` }
         }
         return undefined
     }
@@ -205,12 +291,12 @@ const classifyEntry = ({ key, entry }: { key: string, entry: unknown }): Resolve
     const parsed = parseLockfileEntry(entry)
     if (isNil(parsed)) {
         if (keyIsOfficial) {
-            throw new Error(`[qadamIntegrity] refusing ${keyName}: its ${LOCKFILE_NAME} entry is not a shape this can verify.`)
+            return { name: keyName, reason: `its ${LOCKFILE_NAME} entry is not a shape this can verify` }
         }
         return undefined
     }
     if (keyIsOfficial && parsed.name !== keyName) {
-        throw new Error(`[qadamIntegrity] refusing ${keyName}: it is an alias for ${parsed.name}, so what loads under the official name is not what npmjs would be signing.`)
+        return { name: keyName, reason: `it is an alias for ${parsed.name}, so what loads under the official name is not what npmjs would be signing` }
     }
     if (!keyIsOfficial && !parsed.name.startsWith(OFFICIAL_QADAM_SCOPE_PREFIX)) {
         return undefined
@@ -245,9 +331,9 @@ const parseLockfileEntry = (entry: unknown[]): ResolvedPackage | undefined => {
     return { name, version, integrity }
 }
 
-const verifySignature = async ({ pkg, log }: { pkg: ResolvedPackage, log: Logger }): Promise<void> => {
+const verifySignature = async ({ pkg, deadline, log }: { pkg: ResolvedPackage, deadline: number, log: Logger }): Promise<void> => {
     const { name, version, integrity } = pkg
-    const metadata = await readVersionMetadata({ name, version })
+    const metadata = await readVersionMetadata({ name, version, deadline })
 
     const signatures = readSignatures(metadata)
     if (signatures.length === 0) {
@@ -283,12 +369,18 @@ const verifySignature = async ({ pkg, log }: { pkg: ResolvedPackage, log: Logger
 // rather than a security one. It still fails the install closed — a guard that waves a package
 // through because it could not reach the registry is not a guard — but the wording distinguishes
 // the two, so nobody goes looking for a compromise that is really an outage.
-const readVersionMetadata = async ({ name, version }: { name: string, version: string }): Promise<unknown> => {
+const readVersionMetadata = async ({ name, version, deadline }: { name: string, version: string, deadline: number }): Promise<unknown> => {
     const url = `${OFFICIAL_QADAM_REGISTRY_URL}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`
     let attempt = 1
     for (;;) {
+        // The pass deadline caps the request rather than merely being checked around it, so one
+        // slow read cannot carry the whole pass past the budget by up to a full timeout.
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) {
+            throw new Error(`[qadamIntegrity] refusing ${name}@${version}: the registry did not answer for the whole ${VERIFICATION_BUDGET_MS}ms this verification pass is allowed to hold the install lock`)
+        }
         const { data: response, error } = await tryCatch(async () =>
-            safeHttp.retryingAxios.get<unknown>(url, { timeout: REGISTRY_TIMEOUT_MS }),
+            safeHttp.retryingAxios.get<unknown>(url, { timeout: Math.min(REGISTRY_TIMEOUT_MS, remaining) }),
         )
         if (isNil(error) && !isNil(response)) {
             return response.data
@@ -359,6 +451,20 @@ type ResolvedPackage = {
     name: string
     version: string
     integrity: string
+}
+
+// An official-scope entry no version of this check can pass — an alias, or a tarball/URL
+// dependency npmjs was never asked to sign. Carried as data rather than thrown at the point it
+// is spotted, so `reportRefusals` can tell "this install would introduce it" from "it was
+// already here", which are different failures with different remedies.
+type Refusal = {
+    name: string
+    reason: string
+}
+
+type LockfileReading = {
+    resolved: ResolvedPackage[]
+    refusals: Refusal[]
 }
 
 type Signature = {

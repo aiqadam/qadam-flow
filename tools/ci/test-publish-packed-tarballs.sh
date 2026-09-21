@@ -70,6 +70,15 @@ case "$1" in
                     # npm's real wording, so the script's classifier is exercised against the
                     # text it will actually be handed rather than against a token invented here.
                     echo 'npm error code E429' >&2
+                    # Optional padding AFTER the marker, so a classifier that stops reading at
+                    # the first match still has a writer trying to push the rest at it.
+                    if [ -n "${FAKE_ERROR_PADDING_LINES:-}" ]; then
+                        i=0
+                        while [ "$i" -lt "$FAKE_ERROR_PADDING_LINES" ]; do
+                            echo 'npm error padding to outrun the pipe buffer' >&2
+                            i=$((i + 1))
+                        done
+                    fi
                     echo 'npm error 429 Too Many Requests - PUT https://registry.npmjs.org/@aiqadam%2fqadam-baserow - Could not publish, as user undefined: rate limited exceeded' >&2
                     exit 1
                     ;;
@@ -342,6 +351,16 @@ FAKE_TARBALL_CONTENTS=$'docs/Cannot publish over.md\nsrc/E429.ts' \
 check "a tarball path that looks like an npm error cannot make a 403 look like a conflict" 1 $?
 check "and the run does not claim to have published it" "no" \
     "$(grep -qF 'published 1 package(s)' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# A long error log must not change the classification. With `printf ... | grep -q`, an early
+# match plus a log past the pipe buffer made `printf` take SIGPIPE and — under `set -o pipefail` —
+# handed the branch status 141 even though grep matched, so a real 429 classified as `fatal` and
+# the run stopped instead of retrying. 20k padding lines is ~900 KB, comfortably past the ~64 KB
+# buffer; the marker is the FIRST line so grep really does stop early.
+dir="$(new_case a-long-error-log-still-classifies aiqadam-shared-0.135.0.tgz)"
+FAKE_ERROR_PADDING_LINES=20000 FAKE_PUBLISH_SEQUENCE=$'429\n' run_case "$dir"
+check "a 429 buried under a very long error log is still retried, not called fatal" 0 $?
+check "and the retry is what published it" "2" "$(grep -c . < "$WORK_ROOT/publish.log")"
 
 # The same planted paths must not fake a RATE LIMIT either, which would burn every backoff on a
 # failure that is never going to clear.

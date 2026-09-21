@@ -173,14 +173,23 @@ fi
 # the same name@version was not put there by us. A 5xx or a dropped connection says only that we
 # never learned the outcome, which is the one case where a conflict on the retry is our own
 # earlier PUT coming back to us.
+#
+# Each test is a HERESTRING, never `printf ... | grep -q`. Under this script's `set -o pipefail`
+# the pipeline form is wrong whenever the match is early and the log is long: `grep -q` exits at
+# the first hit, `printf` takes SIGPIPE on the next write, and the pipeline's status becomes 141
+# even though grep matched. Reproduced directly — 20k `npm error` padding lines after an
+# `npm error code E429` first line gives status 141 and the branch is skipped, so a genuine 429
+# classifies as `fatal` and the run stops instead of retrying. It needs the log to outrun the
+# pipe buffer (~64 KB), which is why it is latent rather than live; a herestring has no pipeline
+# and no status to poison.
 classify_failure() { # attempt-log -> rate-limited | lost-response | conflict | fatal
   local errors
   errors="$(grep -E '^npm (error|ERR!)' "$1" || true)"
-  if printf '%s\n' "$errors" | grep -qE '(^|[^[:alnum:]])E429([^[:alnum:]]|$)|429 Too Many Requests'; then
+  if grep -qE '(^|[^[:alnum:]])E429([^[:alnum:]]|$)|429 Too Many Requests' <<< "$errors"; then
     echo rate-limited
-  elif printf '%s\n' "$errors" | grep -qE '(^|[^[:alnum:]])(E5[0-9][0-9]|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN)([^[:alnum:]]|$)'; then
+  elif grep -qE '(^|[^[:alnum:]])(E5[0-9][0-9]|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN)([^[:alnum:]]|$)' <<< "$errors"; then
     echo lost-response
-  elif printf '%s\n' "$errors" | grep -qE 'EPUBLISHCONFLICT|[Cc]annot publish over'; then
+  elif grep -qE 'EPUBLISHCONFLICT|[Cc]annot publish over' <<< "$errors"; then
     echo conflict
   else
     # Includes the case where npm printed no `npm error` line at all — a publish that failed

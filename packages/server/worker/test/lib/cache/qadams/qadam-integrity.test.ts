@@ -2,6 +2,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PackageType, QadamType } from '@aiqadam/shared'
+import type { QadamPackage } from '@aiqadam/shared'
 import type { Logger } from 'pino'
 
 const mockGet = vi.fn()
@@ -90,6 +92,22 @@ function packumentFor(signatures: { sig: string, keyid: string }[]): { data: unk
     return { data: { dist: { signatures } } }
 }
 
+// `installed` defaults to empty — most cases are about what the guard reads out of the lockfile,
+// and an empty batch is the honest way to say "nothing here is what this install is introducing".
+// The cases that turn on the batch pass it explicitly.
+async function verify(workspace: string, installed: QadamPackage[] = []): Promise<void> {
+    return qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace, installed })
+}
+
+function officialQadam(name: string, version = '1.0.0'): QadamPackage {
+    return {
+        packageType: PackageType.REGISTRY,
+        qadamType: QadamType.OFFICIAL,
+        qadamName: name,
+        qadamVersion: version,
+    }
+}
+
 describe('qadamIntegrity.verifyOfficialQadams', () => {
     beforeEach(async () => {
         vi.clearAllMocks()
@@ -104,7 +122,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+        await expect(verify(workspace)).resolves.toBeUndefined()
         expect(mockGet).toHaveBeenCalledWith('https://registry.npmjs.org/%40aiqadam%2Fshared/0.135.1', { timeout: 30_000 })
     })
 
@@ -115,7 +133,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry({ ...SHARED, integrity: tampered }))
         mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/npmjs has not signed the bytes bun fetched/)
     })
 
@@ -126,7 +144,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry({ ...SHARED, version: '0.135.0' }))
         mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/npmjs has not signed the bytes bun fetched/)
     })
 
@@ -134,7 +152,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockResolvedValue(packumentFor([]))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/returned no publisher signature/)
     })
 
@@ -144,7 +162,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockResolvedValue(packumentFor([{ sig: SHARED.signatures[0].sig, keyid: UNPINNED_KEY_ID }]))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/does not pin/)
     })
 
@@ -157,7 +175,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             SHARED.signatures[1],
         ]))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+        await expect(verify(workspace)).resolves.toBeUndefined()
     })
 
     // ...and the other half of that: an appended entry cannot BUY acceptance, because the key it
@@ -170,7 +188,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             { sig: SHARED.signatures[0].sig, keyid: UNPINNED_KEY_ID },
         ]))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/npmjs has not signed the bytes bun fetched/)
     })
 
@@ -178,7 +196,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockRejectedValue(new Error('ECONNREFUSED'))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/could not read its registry metadata/)
     })
 
@@ -191,7 +209,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             .mockRejectedValueOnce({ response: { status: 429 } })
             .mockResolvedValueOnce(packumentFor(SHARED.signatures))
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+        await expect(verify(workspace)).resolves.toBeUndefined()
         expect(mockGet).toHaveBeenCalledTimes(2)
         expect(mockDelay.mock.calls.flat()).toEqual([2_000])
     })
@@ -202,10 +220,35 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockRejectedValue({ response: { status: 429 } })
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/could not read its registry metadata/)
         expect(mockGet).toHaveBeenCalledTimes(4)
         expect(mockDelay.mock.calls.flat()).toEqual([2_000, 4_000, 8_000])
+    })
+
+    // All of this runs inside `fileLock.runExclusive`, and proper-lockfile refreshes the lock's
+    // mtime while it is held — so the stale window never expires under a live holder and a
+    // registry that answers slowly forever holds the shared workspace forever. The budget covers
+    // the whole pass, not each request, because per-request bounds multiply across a few hundred
+    // sequential reads.
+    it('gives up rather than holding the install lock past its budget', async () => {
+        const workspace = await writeLockfile(registryEntry(SHARED))
+        mockGet.mockRejectedValue({ response: { status: 429 } })
+
+        let clock = Date.now()
+        const now = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+        mockDelay.mockImplementation(async (ms) => {
+            clock += ms + 150_000
+        })
+        try {
+            await expect(verify(workspace)).rejects.toThrow(/verification pass is allowed to hold the install lock/)
+        }
+        finally {
+            now.mockRestore()
+        }
+        // One, not the four REGISTRY_RATE_LIMIT_ATTEMPTS allows: the budget cut the retries short
+        // rather than letting them run out.
+        expect(mockGet).toHaveBeenCalledTimes(1)
     })
 
     // A non-429 failure is not retried: it is not the contention this backoff exists for, and
@@ -214,7 +257,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockRejectedValue({ response: { status: 404 } })
 
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+        await expect(verify(workspace))
             .rejects.toThrow(/could not read its registry metadata/)
         expect(mockGet).toHaveBeenCalledOnce()
         expect(mockDelay).not.toHaveBeenCalled()
@@ -227,7 +270,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
                 registryEntry({ name: '@types/node', version: '24.11.0', integrity: 'sha512-unsigned' }),
             ].join('\n'))
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+            await expect(verify(workspace)).resolves.toBeUndefined()
             expect(mockGet).not.toHaveBeenCalled()
         })
 
@@ -236,7 +279,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         it('skips workspace members, which carry no integrity', async () => {
             const workspace = await writeLockfile('    "@aiqadam/shared": ["@aiqadam/shared@workspace:packages/shared"],')
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+            await expect(verify(workspace)).resolves.toBeUndefined()
             expect(mockGet).not.toHaveBeenCalled()
         })
 
@@ -248,7 +291,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             )
             mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+            await expect(verify(workspace)).resolves.toBeUndefined()
             expect(mockGet).toHaveBeenCalledWith('https://registry.npmjs.org/%40aiqadam%2Fshared/0.135.1', { timeout: 30_000 })
         })
 
@@ -261,8 +304,8 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
                 '    "@aiqadam/qadam-slack": ["not-ours@1.0.0", "", {}, "sha512-whatever"],',
             )
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
-                .rejects.toThrow(/refusing @aiqadam\/qadam-slack: it is an alias for not-ours/)
+            await expect(verify(workspace, [officialQadam('@aiqadam/qadam-slack')]))
+                .rejects.toThrow(/refusing to install: @aiqadam\/qadam-slack \(it is an alias for not-ours/)
             expect(mockGet).not.toHaveBeenCalled()
         })
 
@@ -273,8 +316,8 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
                 '    "some-dep/@aiqadam/shared": ["not-ours@1.0.0", "", {}, "sha512-whatever"],',
             )
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
-                .rejects.toThrow(/refusing @aiqadam\/shared: it is an alias for not-ours/)
+            await expect(verify(workspace, [officialQadam('@aiqadam/shared')]))
+                .rejects.toThrow(/refusing to install: @aiqadam\/shared \(it is an alias for not-ours/)
         })
 
         // A tarball or URL dependency is a three-element entry with no registry field. npmjs
@@ -285,7 +328,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
                 '    "@aiqadam/qadam-slack": ["@aiqadam/qadam-slack@/tmp/qadam.tgz", {}, "sha512-whatever"],',
             )
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+            await expect(verify(workspace, [officialQadam('@aiqadam/qadam-slack')]))
                 .rejects.toThrow(/resolves to a local tarball or URL/)
             expect(mockGet).not.toHaveBeenCalled()
         })
@@ -297,14 +340,84 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
                 '    "vendored-thing": ["vendored-thing@/tmp/vendored.tgz", {}, "sha512-whatever"],',
             )
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })).resolves.toBeUndefined()
+            await expect(verify(workspace)).resolves.toBeUndefined()
             expect(mockGet).not.toHaveBeenCalled()
+        })
+
+        // The workspace is shared by every tenant on the worker, and one platform can register a
+        // CUSTOM ARCHIVE qadam under an `@aiqadam/` name (qadamMetadataService validates no names
+        // and scopes uniqueness by platformId). Throwing on that entry for every LATER install
+        // bricked the workspace permanently for everyone, and the rollback removed the innocent
+        // batch while the offender — whose own directory is still there, so bun does not prune it
+        // — stayed. Failing this batch removes nothing and protects nothing, because the squatter
+        // shadows the official name whether or not this install proceeds.
+        it('does not fail an install over an unverifiable entry the install did not introduce', async () => {
+            const workspace = await writeLockfile([
+                '    "@aiqadam/qadam-slack": ["@aiqadam/qadam-slack@/tmp/squatter.tgz", {}, "sha512-whatever"],',
+                registryEntry(SHARED),
+            ].join('\n'))
+            mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+            await expect(verify(workspace, [officialQadam(SHARED.name, SHARED.version)])).resolves.toBeUndefined()
+        })
+
+        it('still names the squatter, and says what to do about it', async () => {
+            const workspace = await writeLockfile(
+                '    "@aiqadam/qadam-slack": ["@aiqadam/qadam-slack@/tmp/squatter.tgz", {}, "sha512-whatever"],',
+            )
+
+            await verify(workspace)
+
+            expect(log.error).toHaveBeenCalledWith(
+                expect.objectContaining({ qadam: '@aiqadam/qadam-slack' }),
+                expect.stringContaining('Rename it'),
+            )
+        })
+
+        // ...but a cryptographic refusal is never softened this way. A bad signature is evidence
+        // about bytes, not about a name somebody chose, so it fails closed whether or not the
+        // package is in the batch — otherwise the substitution #482 exists to catch would be
+        // waved through on every install after the one that introduced it.
+        it('still fails closed on a bad signature for a package outside the batch', async () => {
+            const workspace = await writeLockfile(registryEntry({ ...SHARED, integrity: SHARED.integrity.replace('j5nu', 'J5nu') }))
+            mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+            await expect(verify(workspace, [])).rejects.toThrow(/npmjs has not signed the bytes bun fetched/)
+        })
+
+        // The guard verifies whatever it finds, so on its own it says nothing about the qadams
+        // the caller is about to mark `ready`. The completeness argument rested entirely on a
+        // measurement recorded in a comment — and taken on a newer bun than the image ships.
+        it('refuses to pass a batch the lockfile carries no entry for', async () => {
+            const workspace = await writeLockfile(registryEntry(SHARED))
+            mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+            await expect(verify(workspace, [officialQadam('@aiqadam/qadam-tables', '0.4.0')]))
+                .rejects.toThrow(/refusing to mark @aiqadam\/qadam-tables@0\.4\.0 usable/)
+        })
+
+        // A CUSTOM qadam is not this guard's business — it resolves a name an administrator typed,
+        // which is the whole distinction #482 draws — so its absence from the lockfile is not a
+        // reason to fail. Without this the coverage check would break every ARCHIVE install.
+        it('does not demand a lockfile entry for a custom qadam', async () => {
+            const workspace = await writeLockfile(registryEntry(SHARED))
+            mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+            const custom: QadamPackage = {
+                packageType: PackageType.ARCHIVE,
+                qadamType: QadamType.CUSTOM,
+                qadamName: '@acme/qadam-internal',
+                qadamVersion: '1.0.0',
+                platformId: 'platform_1',
+                archiveId: 'archive_1',
+            }
+
+            await expect(verify(workspace, [custom])).resolves.toBeUndefined()
         })
 
         it('fails loudly when there is no lockfile to read', async () => {
             const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+            await expect(verify(workspace))
                 .rejects.toThrow(/bun\.lock is unreadable/)
         })
 
@@ -312,7 +425,7 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             const workspace = await mkdtemp(join(tmpdir(), 'qadam-integrity-'))
             await writeFile(join(workspace, 'bun.lock'), '{ "lockfileVersion": 1 }')
 
-            await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace }))
+            await expect(verify(workspace))
                 .rejects.toThrow(/no packages map/)
         })
     })
@@ -324,8 +437,8 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const workspace = await writeLockfile(registryEntry(SHARED))
         mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-        await qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })
-        await qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: workspace })
+        await verify(workspace)
+        await verify(workspace)
 
         expect(mockGet).toHaveBeenCalledTimes(1)
     })
@@ -338,8 +451,8 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
         const substituted = await writeLockfile(registryEntry({ ...SHARED, integrity: SHARED.integrity.replace('j5nu', 'J5nu') }))
         mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
 
-        await qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: honest })
-        await expect(qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace: substituted })).rejects.toThrow()
+        await verify(honest)
+        await expect(verify(substituted)).rejects.toThrow()
         expect(mockGet).toHaveBeenCalledTimes(2)
     })
 })

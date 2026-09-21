@@ -173,10 +173,13 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     // Verification happens here rather than per iteration, and the survivors are
                     // marked usable only once it has passed. Per iteration was wrong twice over:
-                    // bun resolves every workspace member regardless of `--filter`, so one
-                    // unverifiable entry failed every remaining qadam and named the innocent one
-                    // in the log; and marking inside the loop would have recorded a qadam usable
-                    // before anything checked what came down with it.
+                    // bun resolves every workspace member regardless of `--filter`, so each
+                    // iteration re-read the same whole-workspace lockfile and blamed whichever
+                    // qadam happened to be in hand rather than the offending entry; and marking
+                    // inside the loop recorded a qadam usable before anything had checked what
+                    // came down with it. A failure here still fails the whole surviving batch —
+                    // that part is unchanged, and deliberate — but it now names the real
+                    // offender, and does it once.
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
                         await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, span, log })
@@ -318,7 +321,7 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, span, l
 }): Promise<void> {
     if (workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
         const { error } = await tryCatch(async () =>
-            qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace }),
+            qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace, installed }),
         )
         if (!isNil(error)) {
             span.recordException(error instanceof Error ? error : new Error(String(error)))
@@ -417,7 +420,7 @@ async function createInstallWorkspaceFiles({ path, qadamsToInstall }: {
 //
 // `[install]` carries the quarantine keys and NOTHING else. The repo-root bunfig.toml also sets
 // `linker = "isolated"`, and an earlier version of this comment claimed copying it here would
-// change the node_modules layout the engine's loader walks. Measured against bun 1.3.11, that is
+// change the node_modules layout the engine's loader walks. Measured against bun 1.3.11 (newer than the 1.3.1 the image pins), that is
 // wrong: the default is hoisted for a plain project but ISOLATED for a workspace, and the root
 // package.json written above declares `workspaces`, so this layout is already isolated and the
 // key would be a no-op. Leaving it out is still right — an inherited default that matches is not
