@@ -290,32 +290,51 @@ for wf in release.yml publish-packages.yml; do
     # So: find the last step header and the last occurrence of the invocation, and require the
     # invocation to fall inside that final step. Any first key works, prose mentioning the path
     # earlier is harmless, and multi-line `run: |` bodies are fine.
+    #
+    # `last > 0` is the whole assertion, not a detail. Step headers are matched at a literal
+    # six spaces, so re-indenting the `steps:` sequence to the zero-indent block style — legal
+    # YAML, and what yamlfmt and prettier emit by default — leaves `last` at 0, and without
+    # this clause `hit >= 0` would then be unconditionally true and the check silently
+    # permanent-green. A reformat now reddens it loudly instead, which is the trade this file
+    # already makes at the `path:` and job-found guards above.
     check "$wf's publishing job runs the shared publisher script as its last step" "yes" \
         "$(printf '%s\n' "$job" | awk -v needle='tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"' '
             /^      - /        { last = NR }
             index($0, needle)  { hit = NR }
-            END                { print (hit > 0 && hit >= last) ? "yes" : "no" }
+            END                { print (hit > 0 && last > 0 && hit >= last) ? "yes" : "no" }
         ')"
+
+    # The last-step check above still passes if the appended step's own body happens to repeat
+    # the invocation — an exfiltrating `run:` with it in a trailing comment does, and so does an
+    # ordinary job-summary step echoing the command it ran. Pinning the count closes that, and
+    # every other appended-step shape, without caring about first keys or bodies at all.
+    # Bumping this number when a step is legitimately added is the point: a new step in the one
+    # job that holds the publish credential should cost a line of review.
+    check "$wf's publishing job has exactly the five expected steps" "5" \
+        "$(printf '%s\n' "$job" | grep -cE '^      - ' || true)"
 
     # #486: the job holding the token installs nothing and resolves no binary out of
     # node_modules/.bin. A build step appearing here is the regression that split bought.
     # Spell the package managers out as a matrix rather than listing the two or three
     # invocations that happen to be on the mind of whoever last edited this: an earlier
     # version named `bun install`, `npm ci` and `bunx` but not `npm install` or `bun x`, which
-    # is the plainest spelling of the very property the assertion is named for. Flags between
-    # the manager and the verb are allowed for — up to four of them, so `npm --prefix /tmp
-    # install` is caught along with `npm -g install`, both of which are the same command as the
-    # `npm install -g` that was the only spelling caught before. The one-letter verbs `i` and
-    # `x` stay adjacent-only: nobody writes `npm --prefix /tmp i`, and an unbounded gap in
-    # front of a single letter matches far too much prose.
+    # is the plainest spelling of the very property the assertion is named for. Anything
+    # FLAG-SHAPED between the manager and the verb is allowed for, so `npm -g install` and
+    # `npm --prefix /tmp install` are caught alongside the `npm install -g` that was once the
+    # only spelling caught — but a gap of arbitrary words is not, because that made a step
+    # renamed "Publish to npm and add the dist-tag" red. The one-letter verbs `i` and `x` stay
+    # adjacent-only: nobody writes `npm --prefix /tmp i`, and a gap before a single letter
+    # matches far too much prose. Every branch carries a left boundary — without one, `apt`
+    # matched inside "ad*apt*" and reddened the sentence "do not adapt install steps".
     #
-    # It stays a denylist, and a denylist is never complete — `gem`, `brew`, `pipx` and a
-    # piped `curl | sh` are in reach of anyone who wants them. It is a regression detector for
-    # the accident, not a barrier against the adversary; the barrier is the environment's
-    # deployment-branch and reviewer policy. Note too that it scans the whole job text, `run:`
-    # prose included, so writing "this job runs no npm install" in a comment reddens it.
+    # It stays a denylist, and a denylist is never complete — a piped `curl | sh`, or an
+    # `npm \` continuation with the verb on the next line, are in reach of anyone who wants
+    # them. It is a regression detector for the accident, not a barrier against the adversary;
+    # the barrier is the environment's deployment-branch and reviewer policy. It scans the
+    # job's whole text, so the words `no npm install here` in a step NAME or a `run:` body
+    # redden it; a full-line YAML comment does not, because the extractor strips those.
     check "$wf's publishing job installs nothing and runs no npx" "clean" \
-        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(npm|pnpm|yarn|bun)([[:space:]]+[^[:space:]]+){0,4}[[:space:]]+(install|ci|add|exec|dlx)([[:space:]]|$)|(npm|pnpm|yarn|bun)[[:space:]]+(i|x)([[:space:]]|$)|(npx|bunx|turbo)([[:space:]]|$)|(pipx|pip3?|gem|brew|apt(-get)?|apk)([[:space:]]+[^[:space:]]+){0,4}[[:space:]]+(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
+        "$(printf '%s\n' "$job" | grep -qE 'install-deps\.sh|node_modules/\.bin|corepack|(^|[[:space:]/])(npm|pnpm|yarn|bun)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|ci|add|exec|dlx)([[:space:]]|$)|(^|[[:space:]/])(npm|pnpm|yarn|bun)[[:space:]]+(i|x)([[:space:]]|$)|(^|[[:space:]/])yarn[[:space:]]*$|(^|[[:space:]/])(npx|bunx|turbo)([[:space:]]|$)|(^|[[:space:]/])(pipx|pip3?|gem|brew|apt(-get)?|apk)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*(install|add)([[:space:]]|$)' && echo "found an install or npx" || echo clean)"
 
     # A text scan over `run:` cannot see an install that arrives as a composite action, so the
     # set of actions is an allowlist rather than a denylist. A check that silently DROPS what
@@ -324,7 +343,9 @@ for wf in release.yml publish-packages.yml; do
     # `uses:` to be the dash key, which skipped the `- name:` / `uses:` form that 28 of this
     # repo's own steps are written in. So match `uses:` at any indent with or without the dash,
     # then strip quotes, trailing comments and the version separately — a routine
-    # actions/checkout bump must not redden this, a fourth action must.
+    # actions/checkout bump must not redden this, a fourth action must. Deliberately wide: a
+    # `uses:` line inside a `with:` value or a heredoc is counted too and shows up as a loud,
+    # diffable mismatch. Narrowing the pattern is what produced the two silent drops above.
     check "$wf's publishing job uses only the three expected actions" \
         "actions/checkout actions/download-artifact actions/setup-node" \
         "$(printf '%s\n' "$job" \
