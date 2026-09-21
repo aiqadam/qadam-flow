@@ -15,10 +15,23 @@ let testWorkspace = ''
 let officialQadamsInstallEnabled = false
 
 const mockInstall = vi.fn()
+const mockVerifyOfficialQadams = vi.fn()
 
 vi.mock('../src/lib/cache/code/bun-runner', () => ({
     bunRunner: () => ({
         install: mockInstall,
+    }),
+}))
+
+// Stubbed rather than exercised: what the real check reads is a `bun.lock` written by a real
+// `bun install`, and it answers by fetching publisher signatures from npmjs. Both belong to
+// qadam-integrity.test.ts, which drives them against a recorded registry response. What is left
+// for this file — and what the tests at the bottom assert — is the wiring: that the installer
+// calls it at all, that it calls it before writing the `ready` marker, and that it does not call
+// it when OFFICIAL_QADAMS_INSTALL_ENABLED is off.
+vi.mock('../src/lib/cache/qadams/qadam-integrity', () => ({
+    qadamIntegrity: () => ({
+        verifyOfficialQadams: mockVerifyOfficialQadams,
     }),
 }))
 
@@ -123,6 +136,8 @@ beforeEach(async () => {
     officialQadamsInstallEnabled = false
     vi.clearAllMocks()
     mockInstall.mockReset()
+    mockVerifyOfficialQadams.mockReset()
+    mockVerifyOfficialQadams.mockResolvedValue(undefined)
 })
 
 afterEach(async () => {
@@ -416,5 +431,78 @@ describe('qadamInstaller', () => {
         expect(mockInstall.mock.calls[2]?.[0]).toMatchObject({
             filtersPath: [expect.stringContaining(`${qadam2.qadamName}-${qadam2.qadamVersion}`)],
         })
+    })
+
+    // #482 item 4. `ready` is what makes every later install skip the qadam entirely, so a batch
+    // recorded as usable is a batch nothing will look at again — the check has to have answered
+    // before the marker exists, not merely have been called at some point in the run.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — verifies publisher signatures before marking ready', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+        let readyExistedDuringVerification = true
+        mockVerifyOfficialQadams.mockImplementation(async () => {
+            readyExistedDuringVerification = await pathExists(readyFilePath(official))
+        })
+
+        await installer.install({ pieces: [official], includeFilters: true })
+
+        expect(mockVerifyOfficialQadams).toHaveBeenCalledWith({ rootWorkspace: testWorkspace })
+        expect(readyExistedDuringVerification).toBe(false)
+        expect(await pathExists(readyFilePath(official))).toBe(true)
+    })
+
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — an unverifiable install is rolled back, not marked ready', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+        mockVerifyOfficialQadams.mockRejectedValue(new Error('[qadamIntegrity] refusing @aiqadam/qadam-tables@1.0.0'))
+
+        await expect(installer.install({ pieces: [official], includeFilters: true }))
+            .rejects.toThrow('[qadamIntegrity] refusing @aiqadam/qadam-tables@1.0.0')
+
+        expect(await pathExists(qadamDirPath(official))).toBe(false)
+    })
+
+    // The fallback loop installs one qadam at a time, but bun resolves every workspace member
+    // regardless of `--filter`, so what lands on disk is never one qadam's graph. Verifying per
+    // iteration would therefore blame whichever qadam happened to be in hand; one pass over the
+    // whole workspace afterwards is the only reading that matches what bun wrote.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — the individual fallback verifies once, after the loop', async () => {
+        officialQadamsInstallEnabled = true
+        const qadam1 = makeOfficialQadam('@aiqadam/qadam-tables')
+        const qadam2 = makeOfficialQadam('@aiqadam/qadam-subflows')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall
+            .mockRejectedValueOnce(new Error('batch error'))
+            .mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [qadam1, qadam2], includeFilters: false })
+
+        expect(mockInstall).toHaveBeenCalledTimes(3)
+        expect(mockVerifyOfficialQadams).toHaveBeenCalledOnce()
+        expect(await pathExists(readyFilePath(qadam1))).toBe(true)
+        expect(await pathExists(readyFilePath(qadam2))).toBe(true)
+    })
+
+    // Off is the default, and with it no official qadam is installed at all. Running the check
+    // anyway would put a hard dependency on npmjs reachability onto the plain custom-qadam path,
+    // which has none today: every qadam pins @aiqadam/shared, @aiqadam/qadams-framework and
+    // @aiqadam/qadams-common, so all three are in a custom install's lockfile too.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED off — a custom install never reaches the registry', async () => {
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await installer.install({ pieces: [custom], includeFilters: true })
+
+        expect(mockVerifyOfficialQadams).not.toHaveBeenCalled()
+        expect(await pathExists(readyFilePath(custom))).toBe(true)
     })
 })

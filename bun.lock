@@ -3511,6 +3511,7 @@
         "dayjs": "1.11.9",
         "dotenv": "16.4.7",
         "env-var": "7.5.0",
+        "jsonc-parser": "3.3.1",
         "nanoid": "3.3.8",
         "pino": "10.1.0",
         "pino-pretty": "13.0.0",
@@ -3529,7 +3530,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.135.0",
+      "version": "0.135.1",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",

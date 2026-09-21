@@ -15,12 +15,13 @@ import {
     unique,
     WorkerToApiContract,
 } from '@aiqadam/shared'
-import { trace } from '@opentelemetry/api'
+import { Span, trace } from '@opentelemetry/api'
 import { Logger } from 'pino'
 import writeFileAtomic from 'write-file-atomic'
 import { workerSettings } from '../../config/worker-settings'
 import { getGlobalCacheCommonPath, getGlobalCachePathLatestVersion } from '../cache-paths'
 import { bunRunner } from '../code/bun-runner'
+import { qadamIntegrity } from './qadam-integrity'
 
 const tracer = trace.getTracer('qadam-installer')
 
@@ -146,7 +147,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     }))
 
                     if (isNil(batchError)) {
-                        await markQadamsAsUsed(rootWorkspace, qadamsToInstall)
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, span, log })
                         log.info({
                             rootWorkspace,
                             qadamsCount: qadamsToInstall.length,
@@ -169,6 +170,17 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     }, '[qadamInstaller] Batch install failed, retrying qadams individually')
 
                     const failedQadams = await tryInstallQadamsIndividually(rootWorkspace, qadamsToInstall, log)
+
+                    // Verification happens here rather than per iteration, and the survivors are
+                    // marked usable only once it has passed. Per iteration was wrong twice over:
+                    // bun resolves every workspace member regardless of `--filter`, so one
+                    // unverifiable entry failed every remaining qadam and named the innocent one
+                    // in the log; and marking inside the loop would have recorded a qadam usable
+                    // before anything checked what came down with it.
+                    const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
+                    if (installed.length > 0) {
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, span, log })
+                    }
 
                     if (failedQadams.length > 0) {
                         const names = failedQadams.map(p => `${p.qadamName}@${p.qadamVersion}`).join(', ')
@@ -279,11 +291,43 @@ async function tryInstallQadamsIndividually(
             await rollbackInstallation(rootWorkspace, [piece])
             failures.push(piece)
         }
-        else {
-            await markQadamsAsUsed(rootWorkspace, [piece])
+    }
+    // The survivors are NOT marked usable here — the caller does that, after one integrity pass
+    // over the whole workspace. Marking a qadam usable is the thing that makes the next install
+    // skip it entirely, so it must not happen before whatever came down with it has been checked.
+    return failures
+}
+
+// #482 item 4's wiring, and the ordering is the point: verify, then mark. `markQadamsAsUsed`
+// writes the `ready` marker that makes every later install short-circuit, so a batch recorded as
+// usable is a batch nothing will ever look at again.
+//
+// Gated on OFFICIAL_QADAMS_INSTALL_ENABLED because the check exists for the feature that flag
+// guards. With the flag off no official qadam is installed at all, and running the check anyway
+// would put a new hard dependency on registry reachability FROM THIS PROCESS onto the default
+// custom-qadam path: every qadam built against this framework pins `@aiqadam/shared`,
+// `@aiqadam/qadams-framework` and `@aiqadam/qadams-common`, so those three land in the lockfile of
+// a plain custom install too, and verifying them fail-closed would turn a brief registry outage
+// into a failed install where today there is none. The flag is also the documented escape hatch
+// for an npmjs key rotation, which only means anything if it gates this.
+async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, span, log }: {
+    rootWorkspace: string
+    installed: QadamPackage[]
+    span: Span
+    log: Logger
+}): Promise<void> {
+    if (workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
+        const { error } = await tryCatch(async () =>
+            qadamIntegrity(log).verifyOfficialQadams({ rootWorkspace }),
+        )
+        if (!isNil(error)) {
+            span.recordException(error instanceof Error ? error : new Error(String(error)))
+            log.error({ rootWorkspace, error }, '[qadamInstaller] Integrity verification failed, rolling back')
+            await rollbackInstallation(rootWorkspace, installed)
+            throw error
         }
     }
-    return failures
+    await markQadamsAsUsed(rootWorkspace, installed)
 }
 
 function groupQadamsByPackagePath(pieces: QadamPackage[]): Record<string, QadamPackage[]> {
@@ -372,8 +416,12 @@ async function createInstallWorkspaceFiles({ path, qadamsToInstall }: {
 // name or not. Both are behaviour changes against today; neither has a fix at this layer.
 //
 // `[install]` carries the quarantine keys and NOTHING else. The repo-root bunfig.toml also sets
-// `linker = "isolated"`; copying that here would change the node_modules layout the engine's
-// loader walks, which is a behaviour change this file has no reason to make. Keep this minimal.
+// `linker = "isolated"`, and an earlier version of this comment claimed copying it here would
+// change the node_modules layout the engine's loader walks. Measured against bun 1.3.11, that is
+// wrong: the default is hoisted for a plain project but ISOLATED for a workspace, and the root
+// package.json written above declares `workspaces`, so this layout is already isolated and the
+// key would be a no-op. Leaving it out is still right — an inherited default that matches is not
+// a reason to restate it — but do not re-add it believing it changes anything.
 function buildInstallBunfig(qadamsToInstall: QadamPackage[]): string {
     const adminChosenNames = unique(
         qadamsToInstall
