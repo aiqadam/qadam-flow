@@ -39,10 +39,11 @@ The engine is untrusted; the worker is not. The run-scoped `WorkerContract` RPCs
 - no flow job in the sandbox (trigger, property, validation jobs) → every such RPC is refused;
 - a refusal throws `ErrorCode.AUTHORIZATION` back to the engine and is logged as a warning.
 
-The API side does not trust the metadata either: the runs-metadata drain (`flow-runs-queue.ts`)
+The runs-metadata drain (`flow-runs-queue.ts`) adds defence in depth for the row itself: it
 matches a row on `id` **and** `projectId`, never writes `projectId`, drops an update whose run id
 already exists under another project, and creates a pending row only for a flow in the project the
-metadata names.
+metadata names. It does not police the `runs_metadata:<id>` hash, which merges every write for a run
+id regardless of project — the worker check above is what keeps foreign writes out of it.
 
 ## Version Gating (rolling-deploy safety)
 During a rolling upgrade the app and worker fleets briefly run different builds. Mixing them risks flow-schema/contract skew and silent run corruption, so dispatch is gated on an exact release match — both sides enforce it, whichever runs the newer build:

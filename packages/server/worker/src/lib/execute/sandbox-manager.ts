@@ -5,7 +5,6 @@ import { workerSettings } from '../config/worker-settings'
 import { Sandbox } from '../sandbox/types'
 import { createSandboxForJob } from './create-sandbox-for-job'
 
-
 export function createSandboxManager({ boxId, proxyPort }: { boxId: number, proxyPort: number | null }): SandboxManager {
     let currentSandbox: Sandbox | null = null
     let currentJobContext: SandboxJobContext | null = null

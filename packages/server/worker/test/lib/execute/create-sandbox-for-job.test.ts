@@ -1,4 +1,4 @@
-import { ApEnvironment, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, WorkerContract } from '@aiqadam/shared'
+import { ApEnvironment, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMock, getGlobalCacheCommonPathMock, getGlobalCodeCachePathMock, getEnginePathMock, provisionFlowPiecesMock } = vi.hoisted(() => ({
@@ -333,6 +333,26 @@ describe('engine RPC run scope', () => {
         }
     }
 
+    function runProgressFor({ runId, projectId }: { runId: string, projectId: string }): UpdateRunProgressRequest {
+        const now = new Date().toISOString()
+        return {
+            flowRun: {
+                id: runId,
+                projectId,
+                flowId: 'flow-own',
+                flowVersionId: 'flow-version-own',
+                status: FlowRunStatus.RUNNING,
+                environment: RunEnvironment.PRODUCTION,
+                failParentOnFailure: false,
+                logsFileId: null,
+                archivedAt: null,
+                tags: [],
+                created: now,
+                updated: now,
+            },
+        }
+    }
+
     const refused = expect.objectContaining({ error: expect.objectContaining({ code: ErrorCode.AUTHORIZATION }) })
 
     beforeEach(() => {
@@ -374,12 +394,11 @@ describe('engine RPC run scope', () => {
 
     it('refuses updateRunProgress addressed to another project', async () => {
         const { client, handlers } = setup({ jobContext: () => JOB })
-        const flowRun = { id: 'run-own', projectId: 'project-foreign' }
 
-        await expect(handlers.updateRunProgress({ flowRun } as never)).rejects.toEqual(refused)
+        await expect(handlers.updateRunProgress(runProgressFor({ runId: 'run-own', projectId: 'project-foreign' }))).rejects.toEqual(refused)
         expect(client.updateRunProgress).not.toHaveBeenCalled()
 
-        await handlers.updateRunProgress({ flowRun: { ...flowRun, projectId: 'project-own' } } as never)
+        await handlers.updateRunProgress(runProgressFor({ runId: 'run-own', projectId: 'project-own' }))
         expect(client.updateRunProgress).toHaveBeenCalledTimes(1)
     })
 

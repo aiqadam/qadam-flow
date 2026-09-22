@@ -144,8 +144,9 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
 
     const projectId = runMetadata.projectId
     if (isNil(projectId)) {
-        // TypeORM drops an undefined criterion rather than matching on it, so every lookup below
-        // would silently widen to the run id alone.
+        // TypeORM drops an undefined criterion from a find rather than matching on it, so the
+        // lookups below would read the run by id alone, whichever project owns it, and carry that
+        // row into the finish side effects.
         log.warn({
             jobId: job.id,
             runId: job.data.runId,
@@ -153,7 +154,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         await consumeProcessedMetadata({ key, runMetadata })
         return false
     }
-    const logsFileId = await resolveWritableLogsFileId({ log, job, runMetadata })
+    const logsFileId = await resolveWritableLogsFileId({ log, job, projectId, runMetadata })
     const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId, projectId })
     let savedFlowRun: FlowRun
     if (!isNil(existingFlowRun)) {
@@ -256,11 +257,10 @@ async function consumeProcessedMetadata({ key, runMetadata }: ConsumeProcessedMe
     await distributedStore.delete(key)
 }
 
-async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
+async function resolveWritableLogsFileId({ log, job, projectId, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
     if (isNil(runMetadata.logsFileId)) {
         return undefined
     }
-    const projectId = runMetadata.projectId ?? job.data.projectId
     const exists = await fileService(log).exists({
         projectId,
         fileId: runMetadata.logsFileId,
@@ -399,6 +399,7 @@ type ConsumeProcessedMetadataParams = {
 type ResolveWritableLogsFileIdParams = {
     log: FastifyBaseLogger
     job: Job<RunsMetadataJobData>
+    projectId: string
     runMetadata: RunsMetadataUpsertData
 }
 

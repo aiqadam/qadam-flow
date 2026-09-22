@@ -16,12 +16,18 @@ export const engineRunScope = {
     create({ log, getCurrentJobContext }: CreateEngineRunScopeParams): EngineRunScope {
         // Keyed by the context object itself: `acquire()` installs a fresh one per job, so a reused
         // sandbox never inherits the previous job's children.
-        const inlineChildRunIds = new WeakMap<SandboxJobContext, ReadonlySet<string>>()
+        const inlineChildRunIds = new WeakMap<SandboxJobContext, Set<string>>()
 
         return {
             recordInlineChild({ jobContext, childRunId }) {
-                const known = inlineChildRunIds.get(jobContext) ?? new Set<string>()
-                inlineChildRunIds.set(jobContext, new Set([...known, childRunId]))
+                // Mutated in place: a loop of inline calls records one child per iteration, and
+                // copying the set each time would make that quadratic.
+                const known = inlineChildRunIds.get(jobContext)
+                if (isNil(known)) {
+                    inlineChildRunIds.set(jobContext, new Set([childRunId]))
+                    return
+                }
+                known.add(childRunId)
             },
             assertOwnsRun({ rpc, runId, projectId }) {
                 const jobContext = getCurrentJobContext()
