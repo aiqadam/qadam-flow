@@ -1,4 +1,4 @@
-import { CreateWaitpointRequest, CreateWaitpointResponse } from '@aiqadam/shared'
+import { CreateWaitpointRequest, CreateWaitpointResponse, ErrorCode, QadamFlowError } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { securityAccess } from '../../../core/security/authorization/fastify-security'
@@ -8,9 +8,18 @@ import { waitpointService } from './waitpoint-service'
 export const waitpointController: FastifyPluginAsyncZod = async (app) => {
     app.post('/', CreateWaitpointParams, async (request, reply) => {
         const { flowRunId, projectId, stepName, type, version, resumeDateTime, responseToSend, workerHandlerId, httpRequestId, internal } = request.body
+        if (projectId !== request.principal.projectId) {
+            throw new QadamFlowError({
+                code: ErrorCode.AUTHORIZATION,
+                params: {
+                    message: 'waitpoint creation refused: projectId does not match the engine token\'s own project',
+                },
+            })
+        }
         const { waitpoint } = await waitpointService(request.log).createForPause({
             flowRunId,
             projectId,
+            callerRunId: request.principal.id,
             stepName,
             type,
             version,

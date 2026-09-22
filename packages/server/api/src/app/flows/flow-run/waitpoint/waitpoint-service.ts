@@ -1,10 +1,11 @@
-import { apId, FlowRunStatus, isNil, PauseType } from '@aiqadam/shared'
+import { apId, ApId, ErrorCode, FlowRunDispatchMode, FlowRunStatus, INLINE_SUBFLOW_DEPTH_LIMIT, isNil, PauseType, QadamFlowError } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { repoFactory } from '../../../core/db/repo-factory'
 import { transaction } from '../../../core/db/transaction'
 import { SystemJobName } from '../../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../../helper/system-jobs/system-job'
+import { flowRunRepo } from '../flow-run-service'
 import { WaitpointEntity } from './waitpoint-entity'
 import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, FindPendingByVersionParams, HandleResumeSignalParams, Waitpoint, WaitpointStatus } from './waitpoint-types'
 
@@ -12,8 +13,11 @@ const waitpointRepo = repoFactory(WaitpointEntity)
 
 export const waitpointService = (log: FastifyBaseLogger) => ({
     async createForPause(params: CreateForPauseParams): Promise<CreateForPauseResult> {
+        await assertCallerOwnsRun({ flowRunId: params.flowRunId, projectId: params.projectId, callerRunId: params.callerRunId, log })
+
         const preCompleted = await waitpointRepo().findOneBy({
             flowRunId: params.flowRunId,
+            projectId: params.projectId,
             stepName: params.stepName,
             status: WaitpointStatus.COMPLETED,
         })
@@ -44,7 +48,7 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
             .orIgnore()
             .execute()
 
-        const waitpoint = await waitpointRepo().findOneByOrFail({ flowRunId: params.flowRunId, stepName: params.stepName })
+        const waitpoint = await waitpointRepo().findOneByOrFail({ flowRunId: params.flowRunId, projectId: params.projectId, stepName: params.stepName })
         const inserted = waitpoint.id === id
         if (inserted) {
             log.info({ flowRunId: params.flowRunId, waitpointId: id }, '[waitpointService#createForPause] Waitpoint created')
@@ -151,3 +155,87 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         log.info({ flowRunId }, '[waitpointService#deleteByFlowRunId] Waitpoint deleted')
     },
 })
+
+/**
+ * The engine token's own id is the BullMQ job id, which for an EXECUTE_FLOW job — a fresh BEGIN
+ * dispatch or a RESUME re-dispatch alike — is always the job's own top-level flow run id
+ * (`jobId: params.id` in job-queue.ts, threaded through job-broker.ts#tryDequeue's
+ * `jobId = job.id ?? job.name` into `generateEngineToken`). That equality check needs no database
+ * round trip, so it also sidesteps the #509 ordering trap where a PRODUCTION run's own row may not
+ * have reached Postgres yet when the engine pauses.
+ *
+ * A `callFlow` "inline" child runs in the SAME engine process and reuses the SAME engine token as
+ * its parent (inline-flow-executor.ts never mints a new one), so its own flowRunId differs from
+ * the token's id even for a legitimate call. An inline child can never actually complete a pause —
+ * `inline-flow-executor.ts#toCallFlowResult` throws ("cannot be called with Execution Mode Inline
+ * because it pauses") the moment the child's own executor returns a PAUSED verdict — but the
+ * waitpoint HTTP call happens *before* that verdict is translated, so without this path the
+ * legitimate attempt would fail here first with a confusing 403 instead of surfacing that accurate
+ * error. isRunDescendantOfCallerJob authorizes exactly that: an unbroken chain of INLINE-dispatched
+ * runs from flowRunId up to a run whose `parentRunId` is callerRunId.
+ */
+async function assertCallerOwnsRun(params: AssertCallerOwnsRunParams): Promise<void> {
+    const { flowRunId, projectId, callerRunId, log } = params
+    if (flowRunId === callerRunId) {
+        return
+    }
+    const isInlineDescendant = await isRunDescendantOfCallerJob({ flowRunId, projectId, callerRunId })
+    if (!isInlineDescendant) {
+        log.warn({ flowRunId, projectId, callerRunId }, '[waitpointService#assertCallerOwnsRun] Refused a waitpoint request outside the engine token\'s own run')
+        throw new QadamFlowError({
+            code: ErrorCode.AUTHORIZATION,
+            params: {
+                message: 'waitpoint creation refused: the engine token may only act on its own run or a run it started inline',
+            },
+        })
+    }
+}
+
+/**
+ * Matches on `"parentRunId" = callerRunId` on any row the walk collects, rather than requiring
+ * callerRunId's own row to appear as an `id` in the walk. That distinction is why this never hits
+ * the #509 ordering trap either: an inline child's row is always persisted synchronously
+ * (`inlineFlowRunService#start` awaits the insert), and it already carries its parent's id in its
+ * own `parentRunId` column regardless of whether that parent's own row — a top-level PRODUCTION run
+ * queued moments ago — has reached Postgres yet. So the walk only ever needs rows that are
+ * guaranteed to exist; it never needs the caller's own possibly-unflushed row.
+ *
+ * Every hop, including the anchor (`flowRunId` itself), is additionally required to be
+ * `dispatchMode = 'INLINE'`. That keeps this path scoped to genuine inline descendants only: a
+ * QUEUE-mode child has its own job and its own engine token and must never be authorized by
+ * someone else's, and a run attached via a forged public-webhook `ap-parent-run-id` header (#521)
+ * is also dispatched as `QUEUE`, never `INLINE`, so it is excluded the same way.
+ */
+async function isRunDescendantOfCallerJob(params: IsRunDescendantOfCallerJobParams): Promise<boolean> {
+    const { flowRunId, projectId, callerRunId } = params
+    const query = `
+        WITH RECURSIVE ancestors AS (
+            SELECT id, "parentRunId", 1 AS depth
+            FROM flow_run
+            WHERE id = $1 AND "projectId" = $2 AND "dispatchMode" = $5
+
+            UNION ALL
+
+            SELECT f.id, f."parentRunId", a.depth + 1
+            FROM flow_run f
+            INNER JOIN ancestors a ON f.id = a."parentRunId"
+            WHERE f."projectId" = $2 AND f."dispatchMode" = $5 AND a.depth < $3
+        )
+        SELECT 1 FROM ancestors WHERE "parentRunId" = $4 LIMIT 1
+    `
+    const results: unknown[] = await flowRunRepo().query(query, [flowRunId, projectId, INLINE_SUBFLOW_DEPTH_LIMIT + 1, callerRunId, FlowRunDispatchMode.enum.INLINE])
+    return results.length > 0
+}
+
+type AssertCallerOwnsRunParams = {
+    flowRunId: ApId
+    projectId: ApId
+    callerRunId: ApId
+    log: FastifyBaseLogger
+}
+
+type IsRunDescendantOfCallerJobParams = {
+    flowRunId: ApId
+    projectId: ApId
+    callerRunId: ApId
+}
