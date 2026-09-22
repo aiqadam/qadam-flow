@@ -720,10 +720,10 @@ describe('flow operation invariants', () => {
             expect(sent.httpRequestId).toBe('req-1')
             expect(sent.runResponse.status).toBe(500)
             // No step names, no error text, no terminal status: the endpoint is reachable by
-            // anyone holding the flow id.
+            // anyone holding the flow id. No run id: a retried run can pause, and the legacy resume
+            // route takes the id alone as its credential.
             expect(sent.runResponse.body).toEqual({
                 message: 'The flow run did not complete successfully.',
-                runId: 'run-1',
             })
         })
 

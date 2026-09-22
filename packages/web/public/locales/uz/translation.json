@@ -1789,6 +1789,7 @@
   "Flow can't be published with empty trigger {name}": "Flow bo'sh trigger {name} bilan nashr qilinmaydi",
   "Please contact support as your published flow has a problem": "Nashr qilingan flowingizda muammo bor, qo'llab-quvvatlash xizmatiga murojaat qiling",
   "This field is required": "Bu maydon kiritilishi shart",
+  "The flow is still running and did not reply in time. Its reply will not appear in this chat.": "Flow hali bajarilmoqda va o'z vaqtida javob bermadi. Uning javobi bu chatda ko'rinmaydi.",
   "Your submission was received. The flow is still running.": "Ma'lumotlaringiz qabul qilindi. Flow hali bajarilmoqda.",
   "Your submission was successfully received.": "Yuborganingiz muvaffaqiyatli qabul qilindi.",
   "The flow you are trying to submit to does not exist.": "Siz yuborishga urinayotgan flow mavjud emas.",

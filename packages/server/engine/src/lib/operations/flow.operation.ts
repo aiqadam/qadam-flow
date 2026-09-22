@@ -75,20 +75,19 @@ export const flowOperation = {
  * The failure body stays generic on purpose. This endpoint is reachable by anyone holding the flow id,
  * so it carries no step names, error text, nor the terminal status itself — MEMORY_LIMIT_EXCEEDED vs
  * TIMEOUT vs QUOTA_EXCEEDED is a resource-limit signal an unauthenticated caller should not be
- * probing for. `runId` identifies the caller's own run and is what makes the failure diagnosable.
+ * probing for.
  *
- * `runId` is disclosed knowingly. resume-controller.ts documents a run id as its own access
- * control ("an unguessable apId"), but every path that discloses it is a terminal failure and all
- * three resume paths require PAUSED, so a disclosed id is not resumable. It stays because it is
- * the only identifier that opens the run: `httpRequestId` is never persisted on the row, and the
- * caller already receives it as the `x-webhook-id` header on every sync response anyway.
+ * Nor does it carry the run id. The legacy resume route (`/:id/requests/:requestId`) accepts the run
+ * id alone as its credential, and a failed run does not stay terminal: a FROM_FAILED_STEP retry
+ * requeues the same row, which can then pause and be resumed by whoever holds the id. A webhook
+ * caller correlates through the `x-webhook-id` header instead; a resume caller already has the id.
  */
 async function respondToSyncCaller({ constants, verdictStatus }: RespondToSyncCallerParams): Promise<void> {
     const { workerHandlerId, httpRequestId } = constants
     if (isNil(workerHandlerId) || isNil(httpRequestId)) {
         return
     }
-    const runResponse = syncResponseForVerdict({ verdictStatus, runId: constants.flowRunId })
+    const runResponse = syncResponseForVerdict({ verdictStatus })
     if (isNil(runResponse)) {
         return
     }
@@ -105,7 +104,7 @@ async function respondToSyncCaller({ constants, verdictStatus }: RespondToSyncCa
     }
 }
 
-function syncResponseForVerdict({ verdictStatus, runId }: SyncResponseForVerdictParams): EngineHttpResponse | null {
+function syncResponseForVerdict({ verdictStatus }: SyncResponseForVerdictParams): EngineHttpResponse | null {
     if (verdictStatus === FlowRunStatus.SUCCEEDED) {
         return { status: 204, body: {}, headers: {} }
     }
@@ -116,7 +115,6 @@ function syncResponseForVerdict({ verdictStatus, runId }: SyncResponseForVerdict
         status: 500,
         body: {
             message: 'The flow run did not complete successfully.',
-            runId,
         },
         headers: {},
     }
@@ -310,7 +308,6 @@ type RespondToSyncCallerParams = {
 
 type SyncResponseForVerdictParams = {
     verdictStatus: FlowRunStatus
-    runId: string
 }
 
 type ResolveStateParams = {

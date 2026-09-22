@@ -65,16 +65,17 @@ const PENDING_RUN_OWNER_TTL_SECONDS = system.getNumberOrThrow(AppSystemProp.FLOW
 export const WEBHOOK_TIMEOUT_MS = system.getNumberOrThrow(AppSystemProp.WEBHOOK_TIMEOUT_SECONDS) * 1000
 /**
  * What a sync caller gets when AP_WEBHOOK_TIMEOUT_SECONDS runs out. Since the engine answers every
- * terminal verdict itself (flow.operation.ts), this is only reached by a run that is still queued,
- * executing or paused, so it must not read as success the way the old empty 204 did (#509).
+ * terminal verdict itself (flow.operation.ts), this is normally a run that is still queued,
+ * executing or paused — or one whose answer never arrived (a failed publish) — so it must not read
+ * as success the way the old empty 204 did (#509), and the body says only that it may be running.
  *
  * 504 rather than 408 or 503: the caller was not slow and we are not overloaded; the run behind us
  * did not answer in time. No `Retry-After`, deliberately — a retry starts the flow again from the
  * trigger, so inviting one duplicates every side effect a non-idempotent flow has already made.
  *
- * No `runId` either, unlike the failure 500. A run can be paused when this fires, and the legacy
- * resume route (`/:id/requests/:requestId`) accepts the run id alone as its credential, so disclosing
- * it here would let the webhook caller resume — approve — its own paused run.
+ * No `runId` either, for the same reason the failure 500 omits it: the legacy resume route
+ * (`/:id/requests/:requestId`) accepts the run id alone as its credential, and a run can be paused
+ * when this fires, so disclosing it would let the webhook caller resume — approve — its own run.
  */
 export const SYNC_RUN_TIMEOUT_RESPONSE: EngineHttpResponse = {
     status: StatusCodes.GATEWAY_TIMEOUT,

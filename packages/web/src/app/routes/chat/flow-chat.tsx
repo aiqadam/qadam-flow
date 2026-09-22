@@ -18,6 +18,8 @@ import {
   ChatIntro,
   ImageDialog,
   ChatMessageList,
+  ChatSendingError,
+  FLOW_STILL_RUNNING,
   Messages,
 } from '@/features/chat';
 import { humanInputApi } from '@/features/forms';
@@ -92,7 +94,9 @@ export function FlowChat({
 
   const previousInputRef = useRef('');
   const previousFilesRef = useRef<File[]>([]);
-  const [sendingError, setSendingError] = useState<ApErrorParams | null>(null);
+  const [sendingError, setSendingError] = useState<ChatSendingError | null>(
+    null,
+  );
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
 
@@ -201,6 +205,11 @@ export function FlowChat({
     },
 
     onError: (error: AxiosError) => {
+      if (error.response?.status === 504) {
+        setSendingError({ code: FLOW_STILL_RUNNING });
+        scrollToBottom();
+        return;
+      }
       const errorData = error.response?.data as ApErrorParams;
       setSendingError(errorData);
       onError?.(errorData);

@@ -1789,6 +1789,7 @@
   "Flow can't be published with empty trigger {name}": "Flow-ды бос {name} триггерімен жариялау мүмкін емес",
   "Please contact support as your published flow has a problem": "Жарияланған flow-ыңызда мәселе бар, қолдау қызметіне хабарласыңыз",
   "This field is required": "Бұл өріс міндетті",
+  "The flow is still running and did not reply in time. Its reply will not appear in this chat.": "Flow әлі орындалуда және уақытында жауап бермеді. Оның жауабы бұл чатта көрінбейді.",
   "Your submission was received. The flow is still running.": "Деректеріңіз қабылданды. Flow әлі орындалуда.",
   "Your submission was successfully received.": "Жіберілген деректеріңіз қабылданды.",
   "The flow you are trying to submit to does not exist.": "Сіз деректер жіберуге тырысқан flow жоқ.",

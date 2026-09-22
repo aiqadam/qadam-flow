@@ -11,10 +11,10 @@
  * Also tests the draft variant:
  *   → POST /api/v1/webhooks/:flowId/draft (execute the latest version in TESTING)
  *
- * Uses the async webhook endpoints and polls the run to completion. One case
- * hits /sync on purpose: these flows emit no "respond", and the engine must
- * still answer the finished run straight away instead of leaving the caller
- * to wait out WEBHOOK_TIMEOUT.
+ * Uses the async webhook endpoints and polls the run to completion. Two cases
+ * are sync on purpose: these flows emit no "respond", so the engine must still
+ * answer a finished run straight away (204), and a run that outlives the
+ * timeout must get the watcher's 504 rather than a success-shaped answer.
  *
  * Prerequisites:
  *   - Engine must be built (cache/<version>/common/main.js)
@@ -24,7 +24,8 @@ import { FlowActionType, FlowOperationType, FlowRunStatus, FlowTriggerType, Flow
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { worker } from '../../../../../../worker/src/lib/worker'
-import { flowRunService } from '../../../../../src/app/flows/flow-run/flow-run-service'
+import { flowRunService, WEBHOOK_TIMEOUT_MS } from '../../../../../src/app/flows/flow-run/flow-run-service'
+import { WebhookFlowVersionToRun, webhookService } from '../../../../../src/app/webhooks/webhook.service'
 import { db } from '../../../../helpers/db'
 import { setupE2eEnvironment } from '../../../../helpers/e2e-setup'
 import { createMockQadamMetadata } from '../../../../helpers/mocks'
@@ -219,6 +220,7 @@ describe('Golden-path API journey', () => {
         const ctx = await createTestContext(app)
         const flow = await createPublishedEchoFlow({ ctx })
 
+        const startedAt = Date.now()
         const webhookResponse = await app.inject({
             method: 'POST',
             url: `/api/v1/webhooks/${flow.id}/sync`,
@@ -226,11 +228,47 @@ describe('Golden-path API journey', () => {
             payload: { message: 'hello world' },
         })
 
-        // The status alone tells the two paths apart: the engine answers a finished run with 204,
-        // while the watcher's own AP_WEBHOOK_TIMEOUT_SECONDS default is now 504 (#509).
+        // The engine answers a finished run with 204; the watcher's own timeout default is 504 (#509).
+        // The elapsed bound catches the old behaviour too, where the same 204 came only after the wait.
         expect(webhookResponse.statusCode).toBe(StatusCodes.NO_CONTENT)
         expect(webhookResponse.body).toBe('')
+        expect(Date.now() - startedAt).toBeLessThan(WEBHOOK_TIMEOUT_MS)
 
+        const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
+        const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+    }, 120_000)
+
+    it('answers a sync webhook that outlives its timeout with a 504 that invites no retry and names no run', async () => {
+        await saveWebhookQadamMetadata()
+        const ctx = await createTestContext(app)
+        const flow = await createPublishedEchoFlow({ ctx })
+
+        // No engine answers within 1 ms, so this is the watcher's own default and nothing else.
+        const response = await webhookService.handleWebhook({
+            flowId: flow.id,
+            async: false,
+            saveSampleData: false,
+            flowVersionToRun: WebhookFlowVersionToRun.LOCKED_FALL_BACK_TO_LATEST,
+            data: async () => ({
+                body: { message: 'hello world' },
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                queryParams: {},
+            }),
+            logger: app.log,
+            execute: true,
+            failParentOnFailure: false,
+            timeoutMs: 1,
+        })
+
+        expect(response.status).toBe(StatusCodes.GATEWAY_TIMEOUT)
+        expect(response.body).toEqual({
+            message: 'The flow run did not respond within the time limit. It may still be running.',
+        })
+        expect(Object.keys(response.headers)).toEqual(['x-webhook-id'])
+
+        // The 504 says the run may still be going; it must, and must finish on its own.
         const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
         const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
         expect(result.status).toBe(FlowRunStatus.SUCCEEDED)

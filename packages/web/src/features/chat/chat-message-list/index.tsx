@@ -1,9 +1,4 @@
-import {
-  ApErrorParams,
-  ChatUIResponse,
-  FileResponseInterface,
-  isNil,
-} from '@aiqadam/shared';
+import { ChatUIResponse, FileResponseInterface, isNil } from '@aiqadam/shared';
 import { BotIcon } from 'lucide-react';
 import React from 'react';
 import { z } from 'zod';
@@ -18,7 +13,7 @@ import {
 import { ChatMessage } from '../chat-input';
 import { MultiMediaMessage } from '../chat-message';
 
-import { ErrorBubble } from './error-bubble';
+import { ChatSendingError, ErrorBubble } from './error-bubble';
 
 export const Messages = z.array(
   z.object({
@@ -33,7 +28,7 @@ interface ChatMessageListProps extends React.HTMLAttributes<HTMLDivElement> {
   messagesRef?: React.RefObject<HTMLDivElement | null>;
   messages?: Messages;
   chatUI?: ChatUIResponse | null | undefined;
-  sendingError?: ApErrorParams | null;
+  sendingError?: ChatSendingError | null;
   isSending?: boolean;
   flowId?: string;
   sendMessage?: (arg0: { isRetrying: boolean; message: ChatMessage }) => void;

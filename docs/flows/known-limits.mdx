@@ -89,8 +89,11 @@ raising `AP_MAX_FLOW_RUN_LOG_SIZE_MB` does.
 | Webhook payload inline threshold | 1024 KB | `AP_WEBHOOK_PAYLOAD_INLINE_THRESHOLD_KB` | `512` |
 
 <Tip>
-For synchronous webhook requests (URLs ending in `/sync`), Qadam Flow will
-wait up to the response timeout before returning HTTP 408. Payloads above the
+For synchronous webhook requests (URLs ending in `/sync`), Qadam Flow waits
+up to the response timeout for the flow to answer. A flow that finishes without
+a Return Response step answers 204 right away, and a failed flow answers 500. If
+the flow is still running when the timeout ends, you get HTTP 504 and the run
+keeps going, so a retry starts the flow again. Payloads above the
 inline threshold are offloaded from Redis to file storage to protect Redis
 memory; smaller payloads stay inline for the fastest path.
 </Tip>

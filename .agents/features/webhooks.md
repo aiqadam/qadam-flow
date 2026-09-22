@@ -52,7 +52,7 @@ The worker forwards the `JobPayload` straight into the `EXECUTE_TRIGGER_HOOK` en
 1. Create FlowRun with `ProgressUpdateType.WEBHOOK_RESPONSE`
 2. Register one-time listener via `engineResponseWatcher`
 3. Wait for engine to send response (default timeout: `AP_WEBHOOK_TIMEOUT_SECONDS`, default 30; callers may pass `timeoutMs` to override per-invocation, e.g. MCP uses 5 minutes)
-4. Return flow's response (status, body, headers) or 204 on timeout
+4. Return the flow's response (status, body, headers). With no Return Response step the engine answers itself: 204 on SUCCEEDED, a generic 500 on any other terminal status (`flow.operation.ts`, plus `execute-flow.ts` for failures the engine never reports). A run still going at the timeout gets `SYNC_RUN_TIMEOUT_RESPONSE`: 504, no `Retry-After`, no `runId` (the legacy resume route takes the run id alone as its credential)
 
 ## Request Conversion
 
