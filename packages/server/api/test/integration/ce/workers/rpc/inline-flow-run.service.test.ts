@@ -236,7 +236,7 @@ describe('inlineFlowRunService', () => {
     })
 
     describe('parent run still pending its Postgres flush', () => {
-        it('accepts a parent that exists only as pending metadata', async () => {
+        it('accepts a parent that exists only as an ownership record', async () => {
             const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
             const flow = await createCallableFlow(mockProject.id)
             const parentRunId = await seedPendingRunOwner({ projectId: mockProject.id })
@@ -257,7 +257,7 @@ describe('inlineFlowRunService', () => {
             expect(result.inlineDepth).toBe(2)
         })
 
-        it('still rejects pending metadata belonging to another project', async () => {
+        it('still rejects an ownership record belonging to another project', async () => {
             const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
             const { mockProject: otherProject } = await mockAndSaveBasicSetup()
             const flow = await createCallableFlow(mockProject.id)

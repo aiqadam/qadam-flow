@@ -71,6 +71,12 @@ export const flowOperation = {
  * carries no step names, error text, nor the terminal status itself — MEMORY_LIMIT_EXCEEDED vs
  * TIMEOUT vs QUOTA_EXCEEDED is a resource-limit signal an unauthenticated caller should not be
  * probing for. `runId` identifies the caller's own run and is what makes the failure diagnosable.
+ *
+ * `runId` is disclosed knowingly. resume-controller.ts documents a run id as its own access
+ * control ("an unguessable apId"), but every path that reaches here is a terminal failure and all
+ * three resume paths require PAUSED, so a disclosed id is not resumable. It stays because it is
+ * the only identifier that opens the run: `httpRequestId` is never persisted on the row, and the
+ * caller already receives it as the `x-webhook-id` header on every sync response anyway.
  */
 async function respondToSyncCallerOnFailure({ constants, verdictStatus }: RespondToSyncCallerParams): Promise<void> {
     const { workerHandlerId, httpRequestId } = constants

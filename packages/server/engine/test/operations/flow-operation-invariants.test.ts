@@ -748,8 +748,10 @@ describe('flow operation invariants', () => {
 
             await flowOperation.execute(operation)
 
+            // Pin SUCCEEDED specifically: a RUNNING verdict is also silent, but via the
+            // non-terminal branch, which is not what this case is meant to cover.
             const finalSendUpdate = mockSendUpdate.mock.calls[mockSendUpdate.mock.calls.length - 1][0]
-            expect(finalSendUpdate.flowExecutorContext.verdict.status).not.toBe(FlowRunStatus.FAILED)
+            expect(finalSendUpdate.flowExecutorContext.verdict.status).toBe(FlowRunStatus.SUCCEEDED)
             expect(mockSendFlowResponse).not.toHaveBeenCalled()
         })
 
