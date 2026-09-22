@@ -103,6 +103,16 @@ async function createPausedFlowRunWithWaitpoint(params: {
     return { flow, flowVersion, flowRun }
 }
 
+// A pre-shim (before the 2026-04-13 piece-API pause shim) V0 WEBHOOK pause: the shape
+// resumeService#isEligibleForLegacyNoWaitpointResume requires on flow_run.pauseMetadata for the
+// no-waitpoint legacy branch to accept a resume at all. Every legacy-pause fixture below that
+// expects to actually resume through that branch needs this — a run with no pauseMetadata (NULL,
+// the shim-era/current shape) or a DELAY pauseMetadata must NOT be accepted, see the dedicated
+// tests for those below.
+function legacyWebhookPauseMetadata(): Record<string, unknown> {
+    return { type: 'WEBHOOK', requestId: apId(), response: {} }
+}
+
 describe('Resume flow run', () => {
     it('should resume legacy PAUSED flow with no waitpoint via async endpoint', async () => {
         const flow = createMockFlow({ projectId: ctx.project.id })
@@ -121,7 +131,7 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
             environment: RunEnvironment.PRODUCTION,
         })
-        await db.save('flow_run', flowRun)
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
 
         const response = await app.inject({
             method: 'POST',
@@ -132,6 +142,123 @@ describe('Resume flow run', () => {
         expect(response.statusCode).toBe(200)
         expect(response.json()).toEqual({
             message: 'Your response has been recorded. You can close this page now.',
+        })
+    })
+
+    it('should treat legacy PAUSED flow with no waitpoint and no pauseMetadata as stale', async () => {
+        // Every V0 pause since the piece-API pause shim (2026-04-13) creates a real waitpoint row
+        // itself, so a PAUSED run with NEITHER a waitpoint row NOR pre-shim pauseMetadata cannot
+        // be a legitimate pending approval — it must not be resumable via the run id alone.
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.PAUSED,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', { ...flowRun, pauseMetadata: null })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+
+        const jobsQueue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+        try {
+            const job = await jobsQueue.getJob(flowRun.id)
+            expect(job).toBeFalsy()
+        }
+        finally {
+            await jobsQueue.close()
+        }
+    })
+
+    it('should treat legacy PAUSED flow with no waitpoint and a DELAY pauseMetadata as stale', async () => {
+        // A DELAY pause is never resumed by this HTTP route at all: refill-paused-jobs.ts only
+        // reschedules RESUME_DELAY_WAITPOINT for a run that already has a DELAY waitpoint row (it
+        // skips a paused run whose waitpoint is nil or not DELAY; it never creates one). A pre-shim
+        // DELAY run with no waitpoint row is resumed by its original delayed job, or not at all —
+        // this route was never in that path. A DELAY pauseMetadata reaching here is not this
+        // route's case.
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.PAUSED,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', {
+            ...flowRun,
+            pauseMetadata: { type: 'DELAY', resumeDateTime: new Date(Date.now() + 60000).toISOString() },
+        })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+    })
+
+    it('should treat a non-PAUSED flow run with a valid legacy WEBHOOK pauseMetadata and no waitpoint as stale', async () => {
+        // Isolates the status===PAUSED guard on its own: pauseMetadata and the no-waitpoint
+        // condition are both otherwise satisfied here, so only the status check can be the reason
+        // this is refused.
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
         })
     })
 
@@ -243,7 +370,7 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
             environment: RunEnvironment.PRODUCTION,
         })
-        await db.save('flow_run', flowRun)
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
 
         const responsePromise = app.inject({
             method: 'POST',
@@ -681,7 +808,14 @@ describe('Resume flow run', () => {
         expect(waitpointAfter).toBeNull()
     })
 
-    it('V0 async: should take legacy path when only V1 waitpoint exists', async () => {
+    // #527 app-sec finding: run ids appear in every resume URL, V0 or V1, sent to an external
+    // approver — so anyone holding an EARLIER approval link for this run could otherwise reach
+    // this run-id-only legacy route and resume the run's CURRENT, unrelated V1 pause with an
+    // arbitrary payload, without ever learning the real waitpoint id, and without the real V1
+    // waitpoint ever leaving PENDING. This run has a pre-shim WEBHOOK pauseMetadata (i.e. would
+    // otherwise be a legitimate legacy-branch candidate on its own), but the presence of ANY
+    // waitpoint row — regardless of version or status — must still refuse the no-waitpoint branch.
+    it('V0 async: should treat run as stale when only a V1 waitpoint exists (no bypass via run id)', async () => {
         const flow = createMockFlow({ projectId: ctx.project.id })
         await db.save('flow', flow)
 
@@ -698,7 +832,7 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
             environment: RunEnvironment.PRODUCTION,
         })
-        await db.save('flow_run', flowRun)
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
 
         const waitpointId = apId()
         await db.save('waitpoint', {
@@ -721,16 +855,140 @@ describe('Resume flow run', () => {
 
         expect(response.statusCode).toBe(200)
         expect(response.json()).toEqual({
-            message: 'Your response has been recorded. You can close this page now.',
+            message: 'This link has expired. The action may have already been processed.',
         })
 
-        const waitpointAfter = await db.findOneBy<{ id: string, version: string }>('waitpoint', { flowRunId: flowRun.id })
+        const waitpointAfter = await db.findOneBy<{ id: string, version: string, status: string }>('waitpoint', { flowRunId: flowRun.id })
         expect(waitpointAfter).not.toBeNull()
         expect(waitpointAfter!.id).toBe(waitpointId)
         expect(waitpointAfter!.version).toBe('V1')
+        expect(waitpointAfter!.status).toBe('PENDING')
+
+        const jobsQueue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+        try {
+            const job = await jobsQueue.getJob(flowRun.id)
+            expect(job).toBeFalsy()
+        }
+        finally {
+            await jobsQueue.close()
+        }
     })
 
-    it('V0 sync: should return 409 when flow run is in terminal state', async () => {
+    it('V0 sync: should treat run as stale when only a V1 waitpoint exists (no bypass via run id)', async () => {
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.PAUSED,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
+
+        const waitpointId = apId()
+        await db.save('waitpoint', {
+            id: waitpointId,
+            flowRunId: flowRun.id,
+            projectId: ctx.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            version: 'V1',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}/sync`,
+            body: { status: 'approved' },
+        })
+
+        expect(response.statusCode).toBe(410)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+
+        const waitpointAfter = await db.findOneBy<{ id: string, version: string, status: string }>('waitpoint', { flowRunId: flowRun.id })
+        expect(waitpointAfter).not.toBeNull()
+        expect(waitpointAfter!.id).toBe(waitpointId)
+        expect(waitpointAfter!.version).toBe('V1')
+        expect(waitpointAfter!.status).toBe('PENDING')
+
+        const jobsQueue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+        try {
+            const job = await jobsQueue.getJob(flowRun.id)
+            expect(job).toBeFalsy()
+        }
+        finally {
+            await jobsQueue.close()
+        }
+    })
+
+    // Pins guard 3's "any status" wording: a COMPLETED waitpoint (not just a PENDING one) must
+    // also refuse the no-waitpoint legacy branch. hasAnyWaitpoint counts any status/version.
+    it('V0 async: should treat run as stale when only a COMPLETED waitpoint exists', async () => {
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.PAUSED,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
+
+        const waitpointId = apId()
+        await db.save('waitpoint', {
+            id: waitpointId,
+            flowRunId: flowRun.id,
+            projectId: ctx.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            version: 'V0',
+            status: 'COMPLETED',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}`,
+            body: { status: 'approved' },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+
+        const jobsQueue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+        try {
+            const job = await jobsQueue.getJob(flowRun.id)
+            expect(job).toBeFalsy()
+        }
+        finally {
+            await jobsQueue.close()
+        }
+    })
+
+    it('V0 sync: should treat terminal-state flow run with no waitpoint as stale', async () => {
         const flow = createMockFlow({ projectId: ctx.project.id })
         await db.save('flow', flow)
 
@@ -755,10 +1013,16 @@ describe('Resume flow run', () => {
             body: { data: 'test' },
         })
 
-        expect(response.statusCode).toBe(409)
-        expect(response.json()).toEqual(expect.objectContaining({
-            message: 'Flow run is not paused',
-        }))
+        // Behaviour change (#527): a non-PAUSED run with no waitpoint now fails the same combined
+        // eligibility guard as every other ineligible case (see
+        // isEligibleForLegacyNoWaitpointResume), and reports the generic "stale" response rather
+        // than a status-specific 409. The V1/non-legacy waitpoint routes (handleSyncResumeFlow)
+        // still answer a genuinely terminal run with 409 "Flow run is not paused" — that check is
+        // unchanged; this route no longer runs it once a waitpoint doesn't exist to route through.
+        expect(response.statusCode).toBe(410)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
     })
 
     it('V0 sync: should resume via waitpoint path when V0 waitpoint exists', async () => {
@@ -816,6 +1080,96 @@ describe('Resume flow run', () => {
 
         const waitpointAfter = await db.findOneBy('waitpoint', { flowRunId: flowRun.id })
         expect(waitpointAfter).toBeNull()
+    })
+
+    // #527: resume-controller resolves the run's own row exactly once (findFlowRunForLegacyResume,
+    // via resolveV0FlowRun) before either branch — "has a PENDING V0 waitpoint" or the no-waitpoint
+    // legacy fallback — is chosen. A flow run id that resolves to no row at all is not an error
+    // here: this is the same "row not yet visible" tolerance the non-legacy waitpoint path already
+    // applies (resumeFromWaitpoint's ENTITY_NOT_FOUND -> stale), and it now degrades to "stale"
+    // directly in the controller rather than falling through to legacyResume/legacySyncResume at
+    // all — a bogus/unknown flow run id gets "stale" here, not a 404.
+    it('V0 async: should treat a nonexistent flow run as stale rather than erroring', async () => {
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${apId()}/requests/${apId()}`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+    })
+
+    it('V0 sync: should treat a nonexistent flow run as stale rather than erroring', async () => {
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${apId()}/requests/${apId()}/sync`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(410)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+    })
+
+    // #509 drain-lag case: a PENDING V0 waitpoint row can exist (waitpoint creation is a direct
+    // synchronous write) for a flow run whose own row has not reached Postgres yet via the async
+    // runsMetadataQueue drain. resolveV0FlowRun must still degrade to "stale" for this flow run id
+    // — it must never reach findPendingByVersion (and so never read the orphaned waitpoint) before
+    // the run's own row exists, and it must not throw.
+    it('V0 async: should treat a PENDING V0 waitpoint with no flow_run row yet as stale', async () => {
+        const orphanFlowRunId = apId()
+        await db.save('waitpoint', {
+            id: apId(),
+            flowRunId: orphanFlowRunId,
+            projectId: ctx.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            version: 'V0',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${orphanFlowRunId}/requests/${apId()}`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
+    })
+
+    it('V0 sync: should treat a PENDING V0 waitpoint with no flow_run row yet as stale', async () => {
+        const orphanFlowRunId = apId()
+        await db.save('waitpoint', {
+            id: apId(),
+            flowRunId: orphanFlowRunId,
+            projectId: ctx.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            version: 'V0',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        const response = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${orphanFlowRunId}/requests/${apId()}/sync`,
+            body: { data: 'test' },
+        })
+
+        expect(response.statusCode).toBe(410)
+        expect(response.json()).toEqual({
+            message: 'This link has expired. The action may have already been processed.',
+        })
     })
 
     it('V0 sync: two concurrent in-flight resumes on one server do not cross-talk', async () => {
@@ -1069,7 +1423,7 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
             environment: RunEnvironment.PRODUCTION,
         })
-        await db.save('flow_run', flowRun)
+        await db.save('flow_run', { ...flowRun, pauseMetadata: legacyWebhookPauseMetadata() })
 
         const listenOrder = vi.fn()
         const enqueueOrder = vi.fn()

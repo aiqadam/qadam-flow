@@ -81,8 +81,24 @@ type HandleResumeSignalParams = {
 
 type FindPendingByVersionParams = {
     flowRunId: ApId
+    projectId: ApId
     version: WaitpointVersion
 }
 
+type GetByFlowRunIdParams = {
+    flowRunId: ApId
+    projectId: ApId
+}
+
+type DeleteByFlowRunIdParams = {
+    flowRunId: ApId
+    projectId: ApId
+}
+
+type HasAnyWaitpointParams = {
+    flowRunId: ApId
+    projectId: ApId
+}
+
 export { WaitpointStatus, WaitpointVersionEnum }
-export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, HandleResumeSignalParams }
+export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, GetByFlowRunIdParams, DeleteByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams }

@@ -83,6 +83,12 @@ export const SYNC_RUN_TIMEOUT_RESPONSE: EngineHttpResponse = {
     headers: {},
 }
 export const flowRunRepo = repoFactory<FlowRun>(FlowRunEntity)
+// V0 legacy resume needs pauseMetadata, which is deliberately excluded from the public FlowRun
+// schema (see flow-run-entity.ts), and does not need findFlowRunOrThrow's flowVersion join (that
+// join exists only to populate flowVersion.displayName for API responses; nothing on the legacy
+// resume path reads it). repoFactory caches by entity name, so this is the same physical
+// `flow_run` repository as flowRunRepo above, just retyped and queried without the join.
+const flowRunLegacyResumeRepo = repoFactory<LegacyResumeFlowRun>(FlowRunEntity)
 
 export const flowRunService = (log: FastifyBaseLogger) => ({
     async upsert({ id, projectId }: { id: FlowRunId, projectId: ProjectId }): Promise<FlowRun> {
@@ -672,6 +678,41 @@ export async function findFlowRunOrThrow(flowRunId: FlowRunId): Promise<FlowRun>
     return flowRun
 }
 
+/**
+ * Resolves the run for the V0 legacy resume routes (`/:id/requests/:requestId[/sync]`). If the
+ * run has no PENDING V0 waitpoint, this is the ONLY read: resume-service's no-waitpoint legacy
+ * branch (legacyResume/legacySyncResume) takes the resolved row as a parameter and never
+ * re-fetches it. That closes a check-then-use gap that used to exist there — findPendingV0Waitpoint
+ * resolving the run, then legacyResume/legacySyncResume resolving it again — where the #509
+ * runsMetadataQueue drain lag could insert a PAUSED row, or the real waitpoint row, in between the
+ * two reads, so a request that saw "no V0 waitpoint yet" on the first read could still land in the
+ * no-waitpoint branch on the second. A single un-joined read (dropping findFlowRunOrThrow's
+ * flowVersion join, unused here) returns everything that branch needs — the eligibility guard's
+ * inputs (status, pauseMetadata) and everything enqueueResume needs to dispatch the resume
+ * (flowId, flowVersionId, environment, logsFileId, stepNameToTest).
+ *
+ * If the run DOES have a PENDING V0 waitpoint, the controller still re-resolves it a second time
+ * inside resumeFromWaitpoint (via findFlowRunOrThrow) before completing that waitpoint. That
+ * second read is safe from the same race: handleResumeSignal locks that exact waitpoint id
+ * (pessimistic write) and deletes it in the same transaction before its onReady callback enqueues
+ * the resume, so a second, unrelated waitpoint appearing between the two reads cannot be silently
+ * swapped in — there is nothing analogous to fix on that branch.
+ */
+export async function findFlowRunForLegacyResume({ flowRunId }: FindFlowRunForLegacyResumeParams): Promise<LegacyResumeFlowRun> {
+    const flowRun = await flowRunLegacyResumeRepo().findOneBy({ id: flowRunId })
+    if (isNil(flowRun)) {
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: {
+                entityType: 'flow_run',
+                entityId: flowRunId,
+                message: 'Flow run not found',
+            },
+        })
+    }
+    return flowRun
+}
+
 function queryBuilderForFlowRun(repo: Repository<FlowRun>): SelectQueryBuilder<FlowRun> {
     return repo.createQueryBuilder('flow_run')
         .leftJoinAndSelect('flow_run.flowVersion', 'flowVersion')
@@ -866,6 +907,17 @@ type CountByStatusParams = {
     projectId: ProjectId
     createdAfter?: string
     createdBefore?: string
+}
+
+export type FindFlowRunForLegacyResumeParams = {
+    flowRunId: FlowRunId
+}
+
+// pauseMetadata is a pre-shim (before 2026-04-13) column, deliberately excluded from the public
+// FlowRun schema — see flow-run-entity.ts. Everything else here is exactly what FlowRun already
+// carries; this is the same row, just also exposing that one legacy column.
+export type LegacyResumeFlowRun = FlowRun & {
+    pauseMetadata?: unknown
 }
 
 type FilterFlowRunsAndApplyFiltersParams = {

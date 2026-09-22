@@ -7,7 +7,7 @@ import { SystemJobName } from '../../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../../helper/system-jobs/system-job'
 import { flowRunRepo } from '../flow-run-service'
 import { WaitpointEntity } from './waitpoint-entity'
-import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, FindPendingByVersionParams, HandleResumeSignalParams, Waitpoint, WaitpointStatus } from './waitpoint-types'
+import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, DeleteByFlowRunIdParams, FindPendingByVersionParams, GetByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, Waitpoint, WaitpointStatus } from './waitpoint-types'
 
 const waitpointRepo = repoFactory(WaitpointEntity)
 
@@ -140,20 +140,28 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         return false
     },
 
-    async findPendingByVersion({ flowRunId, version }: FindPendingByVersionParams): Promise<Waitpoint | null> {
+    async findPendingByVersion({ flowRunId, projectId, version }: FindPendingByVersionParams): Promise<Waitpoint | null> {
         return waitpointRepo().findOne({
-            where: { flowRunId, status: WaitpointStatus.PENDING, version },
+            where: { flowRunId, projectId, status: WaitpointStatus.PENDING, version },
         })
     },
 
-    async getByFlowRunId(flowRunId: string): Promise<Waitpoint | null> {
-        const completed = await waitpointRepo().findOneBy({ flowRunId, status: WaitpointStatus.COMPLETED })
-        return completed ?? waitpointRepo().findOneBy({ flowRunId })
+    async getByFlowRunId({ flowRunId, projectId }: GetByFlowRunIdParams): Promise<Waitpoint | null> {
+        const completed = await waitpointRepo().findOneBy({ flowRunId, projectId, status: WaitpointStatus.COMPLETED })
+        return completed ?? waitpointRepo().findOneBy({ flowRunId, projectId })
     },
 
-    async deleteByFlowRunId(flowRunId: string): Promise<void> {
-        await waitpointRepo().delete({ flowRunId })
-        log.info({ flowRunId }, '[waitpointService#deleteByFlowRunId] Waitpoint deleted')
+    async deleteByFlowRunId({ flowRunId, projectId }: DeleteByFlowRunIdParams): Promise<void> {
+        await waitpointRepo().delete({ flowRunId, projectId })
+        log.info({ flowRunId, projectId }, '[waitpointService#deleteByFlowRunId] Waitpoint deleted')
+    },
+
+    // Any status/version, not just PENDING V0 — the V0 legacy no-waitpoint resume branch must
+    // refuse a run that has a PENDING V1 waitpoint (or even a COMPLETED one still being drained),
+    // not just a PENDING V0 one. See resume-service.ts#isEligibleForLegacyNoWaitpointResume.
+    async hasAnyWaitpoint({ flowRunId, projectId }: HasAnyWaitpointParams): Promise<boolean> {
+        const count = await waitpointRepo().countBy({ flowRunId, projectId })
+        return count > 0
     },
 })
 
