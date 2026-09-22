@@ -18,7 +18,8 @@ export const userInteractionWatcher = {
                 schemaVersion: LATEST_JOB_DATA_SCHEMA_VERSION,
             },
         })
-        const result = await engineResponseWatcher(log).oneTimeListener<T>(id, true, WATCHER_SAFETY_TIMEOUT_MS, undefined)
+        const { promise } = engineResponseWatcher(log).oneTimeListener<T | undefined>(id, true, WATCHER_SAFETY_TIMEOUT_MS, undefined)
+        const result = await promise
         if (isNil(result)) {
             throw new QadamFlowError({
                 code: ErrorCode.ENGINE_OPERATION_FAILURE,

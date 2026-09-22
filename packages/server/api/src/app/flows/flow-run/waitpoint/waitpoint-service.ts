@@ -92,6 +92,7 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
                 status: WaitpointStatus.COMPLETED,
                 resumePayload: params.resumePayload,
                 workerHandlerId: params.workerHandlerId ?? pending.workerHandlerId,
+                httpRequestId: params.httpRequestId ?? pending.httpRequestId,
             }
             await repo.save(updated)
             log.info({ flowRunId: params.flowRunId }, '[waitpointService#complete] Completed existing PENDING waitpoint')
@@ -100,7 +101,7 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
     },
 
     async handleResumeSignal(params: HandleResumeSignalParams): Promise<boolean> {
-        const { flowRunId, waitpointId, flowRunStatus, projectId, resumePayload, workerHandlerId, onReady } = params
+        const { flowRunId, waitpointId, flowRunStatus, projectId, resumePayload, workerHandlerId, httpRequestId, onReady } = params
 
         if (flowRunStatus === FlowRunStatus.PAUSED) {
             const waitpoint = await transaction(async (entityManager) => {
@@ -126,7 +127,7 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         }
 
         if (flowRunStatus === FlowRunStatus.RUNNING || flowRunStatus === FlowRunStatus.QUEUED) {
-            const { completedExisting } = await this.complete({ flowRunId, projectId, waitpointId, resumePayload, workerHandlerId })
+            const { completedExisting } = await this.complete({ flowRunId, projectId, waitpointId, resumePayload, workerHandlerId, httpRequestId })
             if (!completedExisting) {
                 log.info({ flowRunId, waitpointId }, '[waitpointService#handleResumeSignal] Stale resume signal during RUNNING/QUEUED, ignoring')
                 return false

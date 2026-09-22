@@ -1,4 +1,4 @@
-import { apId, assertNotNullOrUndefined, EngineHttpResponse, EventPayload, ExecutionType, Flow, FlowRun, FlowStatus, FlowVersionId, isNil, LATEST_JOB_DATA_SCHEMA_VERSION, PlatformId, ProjectId, RunEnvironment, StreamStepProgress, TriggerPayload, WorkerJobType } from '@aiqadam/shared'
+import { apId, assertNotNullOrUndefined, EngineHttpResponse, EventPayload, ExecutionType, Flow, FlowRun, FlowStatus, FlowVersionId, isNil, LATEST_JOB_DATA_SCHEMA_VERSION, PlatformId, ProjectId, RunEnvironment, StreamStepProgress, TriggerPayload, tryCatch, WorkerJobType } from '@aiqadam/shared'
 import { context, propagation, trace } from '@opentelemetry/api'
 import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -288,7 +288,15 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 }
             }
 
-            const createdRun = await flowRunService(logger).start({
+            // Register the listener before starting the run: the engine can answer as soon as
+            // the run is created, and if that happens before the listener is registered, the
+            // response is delivered to nobody and the caller times out (same class of bug as
+            // #519's resume paths). Cancel this exact listener (identity-bound, never a
+            // key-based lookup) on the only early-exit below so it isn't left waiting out the
+            // full timeout for nothing.
+            const listener = engineResponseWatcher(logger).oneTimeListener<EngineHttpResponse>(webhookRequestId, true, timeoutMs ?? WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+
+            const { data: createdRun, error } = await tryCatch(() => flowRunService(logger).start({
                 platformId,
                 environment: runEnvironment,
                 flowId: flow.id,
@@ -302,13 +310,16 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 streamStepProgress: StreamStepProgress.NONE,
                 parentRunId,
                 failParentOnFailure,
-            })
+            }))
+            if (error) {
+                listener.cancel()
+                throw error
+            }
 
             span.setAttribute('webhook.runId', createdRun.id)
             params.onRunCreated?.(createdRun)
 
-            const listenerResult = await engineResponseWatcher(logger).oneTimeListener<EngineHttpResponse>(webhookRequestId, true, timeoutMs ?? WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
-            return listenerResult
+            return await listener.promise
         }
         finally {
             span.end()

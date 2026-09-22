@@ -60,6 +60,7 @@ type CompleteParams = {
     waitpointId: ApId
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
+    httpRequestId?: string
 }
 
 type CompleteResult = {
@@ -74,6 +75,7 @@ type HandleResumeSignalParams = {
     projectId: ApId
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
+    httpRequestId?: string
     onReady: (waitpoint: Waitpoint) => Promise<void>
 }
 

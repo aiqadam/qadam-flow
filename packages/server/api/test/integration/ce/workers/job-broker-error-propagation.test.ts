@@ -68,7 +68,7 @@ describe('Job broker error propagation', () => {
         const polledJob = await jobBroker(app.log).poll()
         expect(polledJob).not.toBeNull()
 
-        const listenerPromise = engineResponseWatcher(app.log).oneTimeListener(
+        const { promise: listenerPromise } = engineResponseWatcher(app.log).oneTimeListener(
             requestId,
             true,
             5000,
@@ -119,7 +119,7 @@ describe('Job broker error propagation', () => {
         const polledJob = await jobBroker(app.log).poll()
         expect(polledJob).not.toBeNull()
 
-        const listenerPromise = engineResponseWatcher(app.log).oneTimeListener(
+        const { promise: listenerPromise } = engineResponseWatcher(app.log).oneTimeListener(
             requestId,
             true,
             5000,
@@ -169,7 +169,7 @@ describe('Job broker error propagation', () => {
         const polledJob = await jobBroker(app.log).poll()
         expect(polledJob).not.toBeNull()
 
-        const listenerPromise = engineResponseWatcher(app.log).oneTimeListener(
+        const { promise: listenerPromise } = engineResponseWatcher(app.log).oneTimeListener(
             requestId,
             true,
             5000,
@@ -220,7 +220,7 @@ describe('Job broker error propagation', () => {
         const polledJob = await jobBroker(app.log).poll()
         expect(polledJob).not.toBeNull()
 
-        const listenerPromise = engineResponseWatcher(app.log).oneTimeListener(
+        const { promise: listenerPromise } = engineResponseWatcher(app.log).oneTimeListener(
             requestId,
             true,
             5000,
@@ -272,7 +272,7 @@ describe('Job broker error propagation', () => {
         const polledJob = await jobBroker(app.log).poll()
         expect(polledJob).not.toBeNull()
 
-        const listenerPromise = engineResponseWatcher(app.log).oneTimeListener(
+        const { promise: listenerPromise } = engineResponseWatcher(app.log).oneTimeListener(
             requestId,
             true,
             5000,

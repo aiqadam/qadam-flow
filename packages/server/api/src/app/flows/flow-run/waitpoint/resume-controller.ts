@@ -1,5 +1,6 @@
 import {
     ALL_PRINCIPAL_TYPES,
+    apId,
     ApId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyReply } from 'fastify'
@@ -19,7 +20,11 @@ export const resumeController: FastifyPluginAsyncZod = async (app) => {
     app.all('/:id/waitpoints/:waitpointId/sync', ResumeByWaitpointRequest, async (req, reply) => {
         const headers = req.headers as Record<string, string>
         const queryParams = req.query as Record<string, string>
-        await handleSyncResume({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, body: req.body, headers, queryParams, log: req.log, reply, correlationId: req.params.waitpointId })
+        // waitpointId is unique per waitpoint but NOT per request: a duplicate/retried request
+        // (double-click, client retry, link-scanner prefetch) hitting the same waitpoint would
+        // otherwise share this key with the original request and collide in
+        // engineResponseWatcher's listener map. Mint a fresh id per request instead.
+        await handleSyncResume({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
     })
 
     /**
@@ -46,11 +51,17 @@ export const resumeController: FastifyPluginAsyncZod = async (app) => {
         const headers = req.headers as Record<string, string>
         const queryParams = req.query as Record<string, string>
         const waitpoint = await waitpointService(req.log).findPendingByVersion({ flowRunId: req.params.id, version: 'V0' })
+        // Each sync resume needs its own key into engineResponseWatcher's process-wide listener
+        // map. waitpoint.workerHandlerId is the SERVER_ID shared by every V0 waitpoint on this
+        // server, and req.params.requestId is caller-chosen and unvalidated (see this route's
+        // own JSDoc above) — either one used as the key lets two concurrent callers collide and
+        // receive each other's response. Mint a fresh id per request instead, the way the
+        // non-V0 waitpoint route above does.
         if (waitpoint) {
-            await handleSyncResume({ flowRunId: req.params.id, waitpointId: waitpoint.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: waitpoint.workerHandlerId ?? waitpoint.id })
+            await handleSyncResume({ flowRunId: req.params.id, waitpointId: waitpoint.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
         }
         else {
-            await handleLegacySyncResume({ flowRunId: req.params.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: req.params.requestId })
+            await handleLegacySyncResume({ flowRunId: req.params.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
         }
     })
 }
