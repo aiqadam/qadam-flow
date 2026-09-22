@@ -218,7 +218,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     }
 
     if (savedFlowRun.status === FlowRunStatus.PAUSED) {
-        const latestWaitpoint = await waitpointService(log).getByFlowRunId(savedFlowRun.id)
+        const latestWaitpoint = await waitpointService(log).getByFlowRunId({ flowRunId: savedFlowRun.id, projectId: savedFlowRun.projectId })
         const isPreCompleted = !isNil(latestWaitpoint)
             && latestWaitpoint.status === WaitpointStatus.COMPLETED
         if (isPreCompleted) {
@@ -370,7 +370,7 @@ async function markParentRunAsFailed({
         queryParams: {},
     }
 
-    const existingWaitpoint = await waitpointService(log).getByFlowRunId(parentRunId)
+    const existingWaitpoint = await waitpointService(log).getByFlowRunId({ flowRunId: parentRunId, projectId: flowRun.projectId })
     const result = await waitpointService(log).complete({
         flowRunId: parentRunId,
         projectId: flowRun.projectId,
