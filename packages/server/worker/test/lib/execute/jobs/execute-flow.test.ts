@@ -118,6 +118,7 @@ function makeMockContext(apiOverrides?: Record<string, Mock>) {
         },
         apiClient: {
             uploadRunLog: vi.fn(),
+            sendFlowResponse: vi.fn(),
             ...apiOverrides,
         },
         sandboxManager: {
@@ -285,6 +286,74 @@ describe('executeFlowJob', () => {
             const reported = ctx.apiClient.uploadRunLog.mock.calls[0][0]
             expect(reported.status).toBe(FlowRunStatus.INTERNAL_ERROR)
             expect(reported.logsFileId).toBe('logs-file-1')
+        })
+    })
+
+    describe('sync caller response on failure', () => {
+        it('answers the waiting sync caller with an explicit 500 instead of leaving it to time out', async () => {
+            mockGetVersion.mockResolvedValue(null)
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ workerHandlerId: 'handler-1', httpRequestId: 'req-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.apiClient.sendFlowResponse).toHaveBeenCalledWith({
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+                runResponse: {
+                    status: 500,
+                    body: {
+                        message: 'The flow run did not complete successfully.',
+                        runId: 'run-1',
+                        status: FlowRunStatus.FAILED,
+                    },
+                    headers: {},
+                },
+            })
+        })
+
+        it('reports the terminal status that actually occurred', async () => {
+            const ctx = makeMockContext()
+            ctx.mockSandbox.execute.mockRejectedValueOnce(new QadamFlowError({
+                code: ErrorCode.SANDBOX_EXECUTION_TIMEOUT,
+                params: { standardOutput: '', standardError: '' },
+            }, 'timed out'))
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, workerHandlerId: 'handler-1', httpRequestId: 'req-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            const sent = ctx.apiClient.sendFlowResponse.mock.calls[0][0]
+            expect(sent.runResponse.body.status).toBe(FlowRunStatus.TIMEOUT)
+        })
+
+        it('stays silent when no sync caller is waiting', async () => {
+            mockGetVersion.mockResolvedValue(null)
+            const ctx = makeMockContext()
+
+            await executeFlowJob.execute(ctx, makeResumeJobData())
+
+            expect(ctx.apiClient.sendFlowResponse).not.toHaveBeenCalled()
+        })
+
+        it('stays silent on a run that did not fail', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ workerHandlerId: 'handler-1', httpRequestId: 'req-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.apiClient.sendFlowResponse).not.toHaveBeenCalled()
+        })
+
+        it('never lets a failed response publish cost the run its status upload', async () => {
+            mockGetVersion.mockResolvedValue(null)
+            const ctx = makeMockContext({ sendFlowResponse: vi.fn().mockRejectedValue(new Error('pubsub down')) })
+            const data = makeResumeJobData({ workerHandlerId: 'handler-1', httpRequestId: 'req-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(
+                expect.objectContaining({ status: FlowRunStatus.FAILED }),
+            )
         })
     })
 })

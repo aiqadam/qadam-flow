@@ -7,6 +7,8 @@ import {
     RunEnvironment,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
+import { distributedStore } from '../../../../../src/app/database/redis-connections'
+import { redisMetadataKey } from '../../../../../src/app/workers/job'
 import { inlineFlowRunService } from '../../../../../src/app/workers/rpc/inline-flow-run.service'
 import { db } from '../../../../helpers/db'
 import {
@@ -82,6 +84,23 @@ async function seedRunChain(length: number, projectId: string): Promise<string> 
         lastId = id
     }
     return lastId
+}
+
+/**
+ * Mirrors what `queueOrCreateInstantly` leaves behind for a PRODUCTION run: the pending metadata
+ * hash in Redis, with the Postgres row still owed by the runs-metadata queue.
+ */
+async function seedPendingRunMetadata({ projectId, parentRunId }: { projectId: string, parentRunId?: string }): Promise<string> {
+    const id = apId()
+    await distributedStore.merge(redisMetadataKey(id), {
+        id,
+        projectId,
+        ...(parentRunId ? { parentRunId } : {}),
+        environment: RunEnvironment.PRODUCTION,
+        status: FlowRunStatus.QUEUED,
+        requestId: apId(),
+    })
+    return id
 }
 
 describe('inlineFlowRunService', () => {
@@ -203,5 +222,82 @@ describe('inlineFlowRunService', () => {
         })
         expect(childRun?.parentRunId).toBe(parentRun)
         expect(childRun?.projectId).toBe(mockProject.id)
+    })
+
+    describe('parent run still pending its Postgres flush', () => {
+        it('accepts a parent that exists only as pending metadata', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            const parentRunId = await seedPendingRunMetadata({ projectId: mockProject.id })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result.ok).toBe(true)
+            if (!result.ok) return
+            // The parent is real but unpersisted, so its own row cannot be walked: the depth must
+            // still count it rather than reading as a root.
+            expect(result.inlineDepth).toBe(2)
+        })
+
+        it('still rejects pending metadata belonging to another project', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const { mockProject: otherProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            const parentRunId = await seedPendingRunMetadata({ projectId: otherProject.id })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual(expect.objectContaining({ ok: false }))
+        })
+
+        it('still rejects a parent that exists in neither Postgres nor Redis', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId: apId(),
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual(expect.objectContaining({ ok: false }))
+        })
+
+        it('counts the pending parent against the depth limit instead of restarting the chain', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            // One hop short of the limit in Postgres, with the pending parent supplying the last
+            // one: seeding from the grandparent is what stops the guard under-counting by one.
+            const grandParentRunId = await seedRunChain(INLINE_SUBFLOW_DEPTH_LIMIT - 1, mockProject.id)
+            const parentRunId = await seedPendingRunMetadata({ projectId: mockProject.id, parentRunId: grandParentRunId })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual(expect.objectContaining({ ok: false }))
+        })
     })
 })
