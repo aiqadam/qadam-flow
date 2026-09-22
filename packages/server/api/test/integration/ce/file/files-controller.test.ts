@@ -1,10 +1,11 @@
-import { apId, FileType, PrincipalType } from '@aiqadam/shared'
+import { apId, ErrorCode, FileType, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { vi } from 'vitest'
+import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { filesService } from '../../../../src/app/file/files-service'
 import { generateMockToken } from '../../../helpers/auth'
-import { mockAndSaveBasicSetup } from '../../../helpers/mocks'
+import { createMockProject, mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 let app: FastifyInstance | null = null
@@ -148,6 +149,170 @@ describe('Files Controller', () => {
                 StatusCodes.CONFLICT,
                 StatusCodes.INTERNAL_SERVER_ERROR,
             ]).toContain(response?.statusCode)
+        })
+
+        it('refuses a PUT for a fileId owned by another project, and leaves the original row untouched (#517)', async () => {
+            const { mockProject: projectB, mockPlatform: platformB } = await mockAndSaveBasicSetup()
+            const engineTokenB = await generateMockToken({
+                type: PrincipalType.ENGINE,
+                id: apId(),
+                projectId: projectB.id,
+                platform: { id: platformB.id },
+            })
+            const fileId = apId()
+
+            const putAsB = await app!.inject({
+                method: 'PUT',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineTokenB },
+                headers: {
+                    'content-type': 'application/octet-stream',
+                    'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                },
+                payload: Buffer.from('project B original content'),
+            })
+            expect(putAsB?.statusCode).toBe(StatusCodes.OK)
+            const readUrl = putAsB!.json().readUrl as string
+            const readTokenForB = new URL(readUrl).searchParams.get('token') as string
+
+            const { mockProject: projectA, mockPlatform: platformA } = await mockAndSaveBasicSetup()
+            const engineTokenA = await generateMockToken({
+                type: PrincipalType.ENGINE,
+                id: apId(),
+                projectId: projectA.id,
+                platform: { id: platformA.id },
+            })
+
+            const putAsA = await app!.inject({
+                method: 'PUT',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineTokenA },
+                headers: {
+                    'content-type': 'application/octet-stream',
+                    'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                },
+                payload: Buffer.from('project A takeover attempt'),
+            })
+            expect(putAsA?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(putAsA?.json().code).toBe(ErrorCode.AUTHORIZATION)
+
+            const getAsOriginalReader = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: readTokenForB },
+            })
+            expect(getAsOriginalReader?.statusCode).toBe(StatusCodes.OK)
+            expect(getAsOriginalReader?.rawPayload.toString('utf-8')).toBe('project B original content')
+
+            // The row's projectId never became A's — A cannot look the id up as its own file either.
+            const getAsA = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineTokenA },
+            })
+            expect(getAsA?.statusCode).toBe(StatusCodes.NOT_FOUND)
+        })
+
+        it('refuses a PUT for a fileId owned by another project on the SAME platform (#517)', async () => {
+            // The S3 key template (`platform/${platformId}/${type}/${fileId}`) ignores
+            // projectId, so two projects on the same platform would compute the identical
+            // "fresh" key for the same fileId — this is the scenario the cross-platform test
+            // above cannot exercise, since a fresh platformId always yields a fresh key path.
+            const { mockProject: projectB, mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+            const projectA = createMockProject({ ownerId: mockOwner.id, platformId: mockPlatform.id })
+            await databaseConnection().getRepository('project').save(projectA)
+
+            const engineTokenB = await generateMockToken({
+                type: PrincipalType.ENGINE,
+                id: apId(),
+                projectId: projectB.id,
+                platform: { id: mockPlatform.id },
+            })
+            const engineTokenA = await generateMockToken({
+                type: PrincipalType.ENGINE,
+                id: apId(),
+                projectId: projectA.id,
+                platform: { id: mockPlatform.id },
+            })
+            const fileId = apId()
+
+            const putAsB = await app!.inject({
+                method: 'PUT',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineTokenB },
+                headers: {
+                    'content-type': 'application/octet-stream',
+                    'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                },
+                payload: Buffer.from('project B original content'),
+            })
+            expect(putAsB?.statusCode).toBe(StatusCodes.OK)
+            const readUrl = putAsB!.json().readUrl as string
+            const readTokenForB = new URL(readUrl).searchParams.get('token') as string
+
+            const putAsA = await app!.inject({
+                method: 'PUT',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineTokenA },
+                headers: {
+                    'content-type': 'application/octet-stream',
+                    'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                },
+                payload: Buffer.from('project A takeover attempt'),
+            })
+            expect(putAsA?.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(putAsA?.json().code).toBe(ErrorCode.AUTHORIZATION)
+
+            const getAsOriginalReader = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: readTokenForB },
+            })
+            expect(getAsOriginalReader?.statusCode).toBe(StatusCodes.OK)
+            expect(getAsOriginalReader?.rawPayload.toString('utf-8')).toBe('project B original content')
+        })
+
+        it('lets the same project overwrite its own file id on re-upload (e.g. a run log progress update)', async () => {
+            const { mockProject, mockPlatform } = await mockAndSaveBasicSetup()
+            const engineToken = await generateMockToken({
+                type: PrincipalType.ENGINE,
+                id: apId(),
+                projectId: mockProject.id,
+                platform: { id: mockPlatform.id },
+            })
+            const fileId = apId()
+
+            const first = await app!.inject({
+                method: 'PUT',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineToken },
+                headers: {
+                    'content-type': 'application/octet-stream',
+                    'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                },
+                payload: Buffer.from('first version'),
+            })
+            expect(first?.statusCode).toBe(StatusCodes.OK)
+
+            const second = await app!.inject({
+                method: 'PUT',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineToken },
+                headers: {
+                    'content-type': 'application/octet-stream',
+                    'x-ap-file-type': FileType.FLOW_STEP_FILE,
+                },
+                payload: Buffer.from('second version'),
+            })
+            expect(second?.statusCode).toBe(StatusCodes.OK)
+
+            const getResponse = await app!.inject({
+                method: 'GET',
+                url: `/api/v1/files/${fileId}`,
+                query: { token: engineToken },
+            })
+            expect(getResponse?.statusCode).toBe(StatusCodes.OK)
+            expect(getResponse?.rawPayload.toString('utf-8')).toBe('second version')
         })
 
         it('rejects an unsupported X-AP-File-Type', async () => {
