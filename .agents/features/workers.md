@@ -36,7 +36,13 @@ The engine is untrusted; the worker is not. The run-scoped `WorkerContract` RPCs
   `resolveInlineFlow`; the project id must be the job's;
 - `sendFlowResponse` must name the job's own `workerHandlerId` + `httpRequestId`, so an async job
   (both null) can answer no one;
-- no flow job in the sandbox (trigger, property, validation jobs) → every such RPC is refused;
+- `resolveInlineFlow`'s `parentRunId` is held to the same run set, under the job's project, before
+  `startInlineFlowRun` is called: every inline child fails its parent on failure, and the API only
+  checks that the parent is in the caller's project, so a foreign same-project parent would let the
+  engine fail and resume an unrelated paused run (#525). A nested inline call names its own inline
+  parent, which the scope already recorded, so it still passes;
+- no flow job in the sandbox (trigger, property, validation jobs) → every such RPC is refused
+  (`resolveInlineFlow` answers `{ ok: false }` without calling the API, as it always did);
 - a refusal throws `ErrorCode.AUTHORIZATION` back to the engine and is logged as a warning.
 
 The runs-metadata drain (`flow-runs-queue.ts`) adds defence in depth for the row itself: it

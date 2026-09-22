@@ -426,6 +426,54 @@ describe('engine RPC run scope', () => {
         await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-child', projectId: 'project-own' }))).rejects.toEqual(refused)
     })
 
+    // Every inline child fails its parent on failure, so a parent outside the job's own run tree would
+    // let the engine fail and resume an unrelated paused run in the same project (#525).
+    it('refuses resolveInlineFlow under another run in the same project without calling the API', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-foreign' })).rejects.toEqual(refused)
+        expect(client.startInlineFlowRun).not.toHaveBeenCalled()
+        expect(provisionFlowPiecesMock).not.toHaveBeenCalled()
+    })
+
+    it('starts an inline child under the job\'s own run', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        const resolved = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+
+        expect(resolved.ok).toBe(true)
+        expect(client.startInlineFlowRun).toHaveBeenCalledWith(expect.objectContaining({ parentRunId: 'run-own', callerProjectId: 'project-own' }))
+    })
+
+    it('starts a nested inline child under an inline child the job recorded', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+        await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+        client.startInlineFlowRun.mockResolvedValueOnce({
+            ok: true,
+            flowVersion: { flowId: 'grandchild-flow' },
+            childRunId: 'run-grandchild',
+            childLogsFileId: 'logs-grandchild',
+            inlineDepth: 2,
+        })
+
+        const nested = await handlers.resolveInlineFlow({ flowId: 'grandchild-flow', payload: {}, parentRunId: 'run-child' })
+        const deeper = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-grandchild' })
+
+        expect(nested.ok).toBe(true)
+        expect(deeper.ok).toBe(true)
+        expect(client.startInlineFlowRun).toHaveBeenNthCalledWith(2, expect.objectContaining({ parentRunId: 'run-child' }))
+        expect(client.startInlineFlowRun).toHaveBeenNthCalledWith(3, expect.objectContaining({ parentRunId: 'run-grandchild' }))
+    })
+
+    it('refuses resolveInlineFlow when no flow job occupies the sandbox', async () => {
+        const { client, handlers } = setup({ jobContext: () => null })
+
+        const resolved = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+
+        expect(resolved.ok).toBe(false)
+        expect(client.startInlineFlowRun).not.toHaveBeenCalled()
+    })
+
     it('forgets the previous job\'s runs when a reused sandbox takes the next job', async () => {
         let current: SandboxJobContext = JOB
         const { client, handlers } = setup({ jobContext: () => current })

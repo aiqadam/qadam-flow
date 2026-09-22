@@ -8,7 +8,7 @@ import { simpleProcess } from '../sandbox/fork'
 import { isolateProcess } from '../sandbox/isolate'
 import { createSandbox } from '../sandbox/sandbox'
 import { Sandbox, SandboxMount } from '../sandbox/types'
-import { engineRunScope } from './engine-run-scope'
+import { EngineRunScope, engineRunScope } from './engine-run-scope'
 import { SandboxJobContext } from './sandbox-manager'
 import { provisionFlowPieces } from './utils/flow-helpers'
 
@@ -45,7 +45,7 @@ export function createSandboxForJob(params: {
         },
         resolveInlineFlow: async (input) => {
             const jobContext = getCurrentJobContext()
-            const result = await resolveInlineFlow({ input, log, apiClient, jobContext })
+            const result = await resolveInlineFlow({ input, log, apiClient, jobContext, runScope })
             if (result.ok && !isNil(jobContext)) {
                 runScope.recordInlineChild({ jobContext, childRunId: result.childRunId })
             }
@@ -89,8 +89,9 @@ async function resolveInlineFlow(params: {
     log: Logger
     apiClient: WorkerToApiContract
     jobContext: SandboxJobContext | null
+    runScope: EngineRunScope
 }): Promise<ResolveInlineFlowResult> {
-    const { input, log, apiClient, jobContext } = params
+    const { input, log, apiClient, jobContext, runScope } = params
     if (isNil(jobContext)) {
         return { ok: false, error: 'Inline subflows are only supported when called from a running flow.' }
     }
@@ -98,12 +99,15 @@ async function resolveInlineFlow(params: {
     // callerProjectId/callerPlatformId/environment come from the worker's own
     // trusted current-job identity — never from the engine. parentRunId is the
     // one field that MUST come from the engine's own current run (`input.parentRunId`,
-    // not `jobContext.parentRunId`): a nested inline call (child calling another
+    // not `jobContext.runId`): a nested inline call (child calling another
     // child inline) is nested under the immediate parent's run, not the outermost
     // job's — using the job-level value here would let cyclic inline flows recurse
     // unbounded, since every nested call would report the same ancestor to the depth
-    // guard. The API cross-checks `parentRunId` actually belongs to `callerProjectId`
-    // before trusting it, so this can't be used to attach a child under a foreign run.
+    // guard. The API only checks that `parentRunId` is a run in `callerProjectId`, and
+    // every child it creates fails its parent on failure, so the parent must also be
+    // held to this job's own run tree here: otherwise the engine could fail and resume
+    // any other paused run in the project (#525).
+    runScope.assertOwnsRun({ rpc: 'resolveInlineFlow', runId: input.parentRunId, projectId: jobContext.projectId })
     const started = await apiClient.startInlineFlowRun({
         callerProjectId: jobContext.projectId,
         callerPlatformId: jobContext.platformId,
