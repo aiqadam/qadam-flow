@@ -1,17 +1,21 @@
-import { apId, FlowRunStatus, FlowVersionState, isNil, RunEnvironment } from '@aiqadam/shared'
+import { apId, FlowRunStatus, FlowVersionState, isNil, ResumeExecuteFlowJobData, RunEnvironment } from '@aiqadam/shared'
+import { Queue } from 'bullmq'
 import { FastifyInstance } from 'fastify'
-import { distributedStore } from '../../../../../src/app/database/redis-connections'
+import { distributedStore, redisConnections } from '../../../../../src/app/database/redis-connections'
 import { batchDeleteByFlowId } from '../../../../../src/app/flows/flow/flow.jobs'
+import * as flowRunServiceModule from '../../../../../src/app/flows/flow-run/flow-run-service'
 import { flowRunSideEffects } from '../../../../../src/app/flows/flow-run/flow-run-side-effects'
 import { waitpointService } from '../../../../../src/app/flows/flow-run/waitpoint/waitpoint-service'
 import { pubsub } from '../../../../../src/app/helper/pubsub'
-import { engineResponseWatcher } from '../../../../../src/app/workers/engine-response-watcher'
-import { redisMetadataKey, RunsMetadataUpsertData } from '../../../../../src/app/workers/job'
+import * as engineResponseWatcherModule from '../../../../../src/app/workers/engine-response-watcher'
+import { QueueName, redisMetadataKey, RunsMetadataUpsertData } from '../../../../../src/app/workers/job'
 import { createHandlers } from '../../../../../src/app/workers/rpc/worker-rpc-service'
 import { db } from '../../../../helpers/db'
 import { createMockFlow, createMockFlowRun, createMockFlowVersion } from '../../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../../helpers/test-setup'
+
+const { engineResponseWatcher } = engineResponseWatcherModule
 
 async function waitForCondition(fn: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
     const start = Date.now()
@@ -22,6 +26,31 @@ async function waitForCondition(fn: () => Promise<boolean>, timeoutMs = 5000): P
         await new Promise((resolve) => setTimeout(resolve, 100))
     }
     throw new Error('waitForCondition timed out')
+}
+
+// The httpRequestId the server actually keys its sync listener by is minted internally
+// (a fresh apId(), or the caller-opaque waitpointId) and never returned to the test directly.
+// The resume job's own queue entry — id'd by flowRunId, per addToQueue — is the one place it's
+// externally observable, so tests read it from there instead of guessing/hardcoding a key.
+async function waitForResumeJobHttpRequestId({ flowRunId, timeoutMs = 5000 }: { flowRunId: string, timeoutMs?: number }): Promise<string> {
+    const queue = new Queue(QueueName.WORKER_JOBS, { connection: await redisConnections.create() })
+    try {
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+            const job = await queue.getJob(flowRunId)
+            if (job) {
+                const jobData = ResumeExecuteFlowJobData.parse(job.data)
+                if (jobData.httpRequestId) {
+                    return jobData.httpRequestId
+                }
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        throw new Error(`Timed out waiting for a queued resume job for run ${flowRunId}`)
+    }
+    finally {
+        await queue.close()
+    }
 }
 
 let app: FastifyInstance
@@ -207,7 +236,6 @@ describe('Resume flow run', () => {
         })
         await db.save('flow_version', flowVersion)
 
-        const requestId = apId()
         const flowRun = createMockFlowRun({
             projectId: ctx.project.id,
             flowId: flow.id,
@@ -219,13 +247,15 @@ describe('Resume flow run', () => {
 
         const responsePromise = app.inject({
             method: 'POST',
-            url: `/api/v1/flow-runs/${flowRun.id}/requests/${requestId}/sync`,
+            url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}/sync`,
             body: { data: 'test' },
         })
 
-        await new Promise((resolve) => setTimeout(resolve, 500))
+        // #518: the legacy branch mints its own key rather than trusting the caller-chosen,
+        // unvalidated :requestId param — read the actual key off the queued resume job.
+        const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
         await pubsub.publish(`engine-run:sync:${engineResponseWatcher(app.log).getServerId()}`, JSON.stringify({
-            requestId,
+            requestId: httpRequestId,
             response: { status: 200, body: { ok: true }, headers: {} },
         }))
 
@@ -769,17 +799,530 @@ describe('Resume flow run', () => {
             body: { data: 'test' },
         })
 
-        await new Promise((resolve) => setTimeout(resolve, 500))
+        // #518: the V0 sync route must key its listener by a fresh id it mints itself, never by
+        // waitpoint.workerHandlerId (the SERVER_ID shared by every V0 waitpoint on this server).
+        // The actual key isn't returned to the caller, so read it off the queued resume job.
+        const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
+        expect(httpRequestId).not.toBe(workerHandlerId)
 
-        await pubsub.publish(`engine-run:sync:${engineResponseWatcher(app.log).getServerId()}`, JSON.stringify({
-            requestId: workerHandlerId,
+        await pubsub.publish(`engine-run:sync:${workerHandlerId}`, JSON.stringify({
+            requestId: httpRequestId,
             response: { status: 200, body: { ok: true }, headers: {} },
         }))
 
         const response = await responsePromise
         expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({ ok: true })
 
         const waitpointAfter = await db.findOneBy('waitpoint', { flowRunId: flowRun.id })
         expect(waitpointAfter).toBeNull()
+    })
+
+    it('V0 sync: two concurrent in-flight resumes on one server do not cross-talk', async () => {
+        const workerHandlerId = engineResponseWatcher(app.log).getServerId()
+
+        async function createV0PausedRunWithPendingWaitpoint(stepName: string): Promise<{ id: string }> {
+            const flow = createMockFlow({ projectId: ctx.project.id })
+            await db.save('flow', flow)
+            const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })
+            await db.save('flow_version', flowVersion)
+            const flowRun = createMockFlowRun({
+                projectId: ctx.project.id,
+                flowId: flow.id,
+                flowVersionId: flowVersion.id,
+                status: FlowRunStatus.PAUSED,
+                environment: RunEnvironment.PRODUCTION,
+            })
+            await db.save('flow_run', flowRun)
+            // Every V0 waitpoint created on this server shares this same workerHandlerId — that
+            // is exactly the value the pre-#518 code mistakenly used as the sync listener key.
+            await db.save('waitpoint', {
+                id: apId(),
+                flowRunId: flowRun.id,
+                projectId: ctx.project.id,
+                stepName,
+                type: 'WEBHOOK',
+                status: 'PENDING',
+                workerHandlerId,
+                httpRequestId: null,
+            })
+            return flowRun
+        }
+
+        const runA = await createV0PausedRunWithPendingWaitpoint('approval-a')
+        const runB = await createV0PausedRunWithPendingWaitpoint('approval-b')
+
+        const responseAPromise = app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${runA.id}/requests/${apId()}/sync`,
+            body: { data: 'A' },
+        })
+        const responseBPromise = app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${runB.id}/requests/${apId()}/sync`,
+            body: { data: 'B' },
+        })
+
+        const [httpRequestIdA, httpRequestIdB] = await Promise.all([
+            waitForResumeJobHttpRequestId({ flowRunId: runA.id }),
+            waitForResumeJobHttpRequestId({ flowRunId: runB.id }),
+        ])
+
+        // The bug in #518 was both ending up keyed by the shared per-process SERVER_ID.
+        expect(httpRequestIdA).not.toBe(workerHandlerId)
+        expect(httpRequestIdB).not.toBe(workerHandlerId)
+        expect(httpRequestIdA).not.toBe(httpRequestIdB)
+
+        // Deliver B's answer first, then A's — the order responses arrive in must not affect
+        // which caller receives which body.
+        await createHandlers(app.log).sendFlowResponse({
+            workerHandlerId,
+            httpRequestId: httpRequestIdB,
+            runResponse: { status: 200, body: { owner: 'B' }, headers: {} },
+        })
+        await createHandlers(app.log).sendFlowResponse({
+            workerHandlerId,
+            httpRequestId: httpRequestIdA,
+            runResponse: { status: 200, body: { owner: 'A' }, headers: {} },
+        })
+
+        const [responseA, responseB] = await Promise.all([responseAPromise, responseBPromise])
+        expect(responseA.json()).toEqual({ owner: 'A' })
+        expect(responseB.json()).toEqual({ owner: 'B' })
+    })
+
+    it('sync resume arriving while RUNNING still receives the run\'s answer after it pauses and is resumed', async () => {
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', flowRun)
+        const runId = flowRun.id
+
+        await distributedStore.merge(redisMetadataKey(runId), {
+            id: runId,
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            environment: RunEnvironment.PRODUCTION,
+            status: FlowRunStatus.RUNNING,
+        })
+
+        const waitpointId = apId()
+        await db.save('waitpoint', {
+            id: waitpointId,
+            flowRunId: runId,
+            projectId: ctx.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        const responsePromise = app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${runId}/waitpoints/${waitpointId}/sync`,
+            body: { data: 'test' },
+        })
+
+        await waitForCondition(async () => {
+            const wp = await db.findOneBy<{ status: string }>('waitpoint', { flowRunId: runId })
+            return wp?.status === 'COMPLETED'
+        })
+
+        const handlers = createHandlers(app.log)
+        await handlers.uploadRunLog({ runId, projectId: ctx.project.id, status: FlowRunStatus.PAUSED })
+
+        // #519: complete() must persist the caller's httpRequestId next to workerHandlerId so the
+        // drain's pre-completed-waitpoint branch resumes with it, instead of falling back to a
+        // fresh id nobody is listening on. #518: that httpRequestId must be a fresh id minted for
+        // this request, never the waitpointId itself (unique per waitpoint, not per request) or
+        // the shared per-process SERVER_ID — either one used as the key would let a second,
+        // duplicate request to the same waitpoint collide with this one.
+        const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: runId })
+        expect(httpRequestId).not.toBe(waitpointId)
+
+        const workerHandlerId = engineResponseWatcher(app.log).getServerId()
+        expect(httpRequestId).not.toBe(workerHandlerId)
+        await handlers.sendFlowResponse({
+            workerHandlerId,
+            httpRequestId,
+            runResponse: { status: 200, body: { ok: true }, headers: {} },
+        })
+
+        const response = await responsePromise
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toEqual({ ok: true })
+    })
+
+    it('registers the sync listener before enqueueing the resume, so an immediate engine response is not dropped', async () => {
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.PAUSED,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', flowRun)
+
+        const waitpointId = apId()
+        await db.save('waitpoint', {
+            id: waitpointId,
+            flowRunId: flowRun.id,
+            projectId: ctx.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        const listenOrder = vi.fn()
+        const enqueueOrder = vi.fn()
+
+        const originalAddToQueue = flowRunServiceModule.addToQueue
+        const addToQueueSpy = vi.spyOn(flowRunServiceModule, 'addToQueue').mockImplementation(async (params, log) => {
+            enqueueOrder()
+            return originalAddToQueue(params, log)
+        })
+
+        const originalEngineResponseWatcher = engineResponseWatcherModule.engineResponseWatcher
+        const watcherSpy = vi.spyOn(engineResponseWatcherModule, 'engineResponseWatcher')
+            .mockImplementation((log): ReturnType<typeof engineResponseWatcherModule.engineResponseWatcher> => {
+                const real = originalEngineResponseWatcher(log)
+                return {
+                    ...real,
+                    oneTimeListener<T>(requestId: string, timeoutRequest: boolean, timeoutMs: number | undefined, defaultResponse: T) {
+                        listenOrder()
+                        return real.oneTimeListener<T>(requestId, timeoutRequest, timeoutMs, defaultResponse)
+                    },
+                }
+            })
+
+        try {
+            const responsePromise = app.inject({
+                method: 'POST',
+                url: `/api/v1/flow-runs/${flowRun.id}/waitpoints/${waitpointId}/sync`,
+                body: { data: 'test' },
+            })
+
+            const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
+            const workerHandlerId = engineResponseWatcher(app.log).getServerId()
+            await createHandlers(app.log).sendFlowResponse({
+                workerHandlerId,
+                httpRequestId,
+                runResponse: { status: 200, body: { ok: true }, headers: {} },
+            })
+
+            const response = await responsePromise
+            expect(response.statusCode).toBe(200)
+            expect(response.json()).toEqual({ ok: true })
+
+            expect(listenOrder).toHaveBeenCalledTimes(1)
+            expect(enqueueOrder).toHaveBeenCalledTimes(1)
+            // #519: the listener must be registered before the resume is enqueued — otherwise an
+            // engine response published the instant the job is enqueued reaches no one.
+            expect(listenOrder.mock.invocationCallOrder[0]).toBeLessThan(enqueueOrder.mock.invocationCallOrder[0])
+        }
+        finally {
+            addToQueueSpy.mockRestore()
+            watcherSpy.mockRestore()
+        }
+    })
+
+    it('registers the sync listener before enqueueing the resume in the legacy no-waitpoint path too', async () => {
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+
+        const flowVersion = createMockFlowVersion({
+            flowId: flow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', flowVersion)
+
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.PAUSED,
+            environment: RunEnvironment.PRODUCTION,
+        })
+        await db.save('flow_run', flowRun)
+
+        const listenOrder = vi.fn()
+        const enqueueOrder = vi.fn()
+
+        const originalAddToQueue = flowRunServiceModule.addToQueue
+        const addToQueueSpy = vi.spyOn(flowRunServiceModule, 'addToQueue').mockImplementation(async (params, log) => {
+            enqueueOrder()
+            return originalAddToQueue(params, log)
+        })
+
+        const originalEngineResponseWatcher = engineResponseWatcherModule.engineResponseWatcher
+        const watcherSpy = vi.spyOn(engineResponseWatcherModule, 'engineResponseWatcher')
+            .mockImplementation((log): ReturnType<typeof engineResponseWatcherModule.engineResponseWatcher> => {
+                const real = originalEngineResponseWatcher(log)
+                return {
+                    ...real,
+                    oneTimeListener<T>(requestId: string, timeoutRequest: boolean, timeoutMs: number | undefined, defaultResponse: T) {
+                        listenOrder()
+                        return real.oneTimeListener<T>(requestId, timeoutRequest, timeoutMs, defaultResponse)
+                    },
+                }
+            })
+
+        try {
+            // No waitpoint exists for this run, so this hits legacySyncResume, not
+            // handleSyncResumeFlow — the reorder needs its own coverage in that branch.
+            const responsePromise = app.inject({
+                method: 'POST',
+                url: `/api/v1/flow-runs/${flowRun.id}/requests/${apId()}/sync`,
+                body: { data: 'test' },
+            })
+
+            const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
+            const workerHandlerId = engineResponseWatcher(app.log).getServerId()
+            await createHandlers(app.log).sendFlowResponse({
+                workerHandlerId,
+                httpRequestId,
+                runResponse: { status: 200, body: { ok: true }, headers: {} },
+            })
+
+            const response = await responsePromise
+            expect(response.statusCode).toBe(200)
+            expect(response.json()).toEqual({ ok: true })
+
+            expect(listenOrder).toHaveBeenCalledTimes(1)
+            expect(enqueueOrder).toHaveBeenCalledTimes(1)
+            expect(listenOrder.mock.invocationCallOrder[0]).toBeLessThan(enqueueOrder.mock.invocationCallOrder[0])
+        }
+        finally {
+            addToQueueSpy.mockRestore()
+            watcherSpy.mockRestore()
+        }
+    })
+
+    it('cancels the sync listener when the resume turns out to be stale, instead of leaving it to expire on the timeout', async () => {
+        const { flowRun } = await createPausedFlowRunWithWaitpoint({
+            projectId: ctx.project.id,
+        })
+        const waitpoint = await db.findOneBy<{ id: string }>('waitpoint', { flowRunId: flowRun.id })
+        expect(waitpoint).not.toBeNull()
+
+        // Resolve the waitpoint through the async route first so the sync request below always
+        // finds it already gone — the 410 branch does not depend on this timing, only on the
+        // waitpoint no longer existing.
+        const firstResponse = await app.inject({
+            method: 'POST',
+            url: `/api/v1/flow-runs/${flowRun.id}/waitpoints/${waitpoint!.id}`,
+            body: { status: 'success' },
+        })
+        expect(firstResponse.statusCode).toBe(200)
+
+        const cancelSpies: (() => void)[] = []
+        const originalEngineResponseWatcher = engineResponseWatcherModule.engineResponseWatcher
+        const watcherSpy = vi.spyOn(engineResponseWatcherModule, 'engineResponseWatcher')
+            .mockImplementation((log): ReturnType<typeof engineResponseWatcherModule.engineResponseWatcher> => {
+                const real = originalEngineResponseWatcher(log)
+                return {
+                    ...real,
+                    oneTimeListener<T>(requestId: string, timeoutRequest: boolean, timeoutMs: number | undefined, defaultResponse: T) {
+                        const registration = real.oneTimeListener<T>(requestId, timeoutRequest, timeoutMs, defaultResponse)
+                        const cancelSpy = vi.fn(registration.cancel)
+                        cancelSpies.push(cancelSpy)
+                        return { ...registration, cancel: cancelSpy }
+                    },
+                }
+            })
+
+        try {
+            const secondResponse = await app.inject({
+                method: 'POST',
+                url: `/api/v1/flow-runs/${flowRun.id}/waitpoints/${waitpoint!.id}/sync`,
+                body: { status: 'success' },
+            })
+
+            expect(secondResponse.statusCode).toBe(410)
+            expect(secondResponse.json()).toEqual({
+                message: 'This link has expired. The action may have already been processed.',
+            })
+            expect(cancelSpies).toHaveLength(1)
+            expect(cancelSpies[0]).toHaveBeenCalledTimes(1)
+        }
+        finally {
+            watcherSpy.mockRestore()
+        }
+    })
+
+    it('cancels the sync listener when enqueueing the resume fails', async () => {
+        const { flowRun } = await createPausedFlowRunWithWaitpoint({
+            projectId: ctx.project.id,
+        })
+        const waitpoint = await db.findOneBy<{ id: string }>('waitpoint', { flowRunId: flowRun.id })
+        expect(waitpoint).not.toBeNull()
+
+        const cancelSpies: (() => void)[] = []
+        const originalEngineResponseWatcher = engineResponseWatcherModule.engineResponseWatcher
+        const watcherSpy = vi.spyOn(engineResponseWatcherModule, 'engineResponseWatcher')
+            .mockImplementation((log): ReturnType<typeof engineResponseWatcherModule.engineResponseWatcher> => {
+                const real = originalEngineResponseWatcher(log)
+                return {
+                    ...real,
+                    oneTimeListener<T>(requestId: string, timeoutRequest: boolean, timeoutMs: number | undefined, defaultResponse: T) {
+                        const registration = real.oneTimeListener<T>(requestId, timeoutRequest, timeoutMs, defaultResponse)
+                        const cancelSpy = vi.fn(registration.cancel)
+                        cancelSpies.push(cancelSpy)
+                        return { ...registration, cancel: cancelSpy }
+                    },
+                }
+            })
+        const addToQueueSpy = vi.spyOn(flowRunServiceModule, 'addToQueue').mockRejectedValueOnce(new Error('enqueue boom'))
+
+        try {
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/flow-runs/${flowRun.id}/waitpoints/${waitpoint!.id}/sync`,
+                body: { status: 'success' },
+            })
+
+            expect(response.statusCode).toBe(500)
+            expect(cancelSpies).toHaveLength(1)
+            expect(cancelSpies[0]).toHaveBeenCalledTimes(1)
+        }
+        finally {
+            addToQueueSpy.mockRestore()
+            watcherSpy.mockRestore()
+        }
+    })
+
+    it('two concurrent sync requests to the same waitpoint on one server: winner gets the engine\'s body, loser gets 410', async () => {
+        const { flowRun } = await createPausedFlowRunWithWaitpoint({
+            projectId: ctx.project.id,
+        })
+        const waitpoint = await db.findOneBy<{ id: string }>('waitpoint', { flowRunId: flowRun.id })
+        expect(waitpoint).not.toBeNull()
+
+        // #518: waitpointId is unique per waitpoint, not per request — a duplicate/retried
+        // request (double-click, client retry, link-scanner prefetch) hitting the same waitpoint
+        // must not collide with the original request's listener. Capture the requestId each sync
+        // request registers under, the same way the stale-cancel test captures cancel(), so a
+        // regression back to the shared waitpointId key is caught directly by asserting two
+        // distinct keys — not only indirectly, and only when the pessimistic-lock loser happens
+        // to register second.
+        const capturedRequestIds: string[] = []
+        const originalEngineResponseWatcher = engineResponseWatcherModule.engineResponseWatcher
+        const watcherSpy = vi.spyOn(engineResponseWatcherModule, 'engineResponseWatcher')
+            .mockImplementation((log): ReturnType<typeof engineResponseWatcherModule.engineResponseWatcher> => {
+                const real = originalEngineResponseWatcher(log)
+                return {
+                    ...real,
+                    oneTimeListener<T>(requestId: string, timeoutRequest: boolean, timeoutMs: number | undefined, defaultResponse: T) {
+                        capturedRequestIds.push(requestId)
+                        return real.oneTimeListener<T>(requestId, timeoutRequest, timeoutMs, defaultResponse)
+                    },
+                }
+            })
+
+        try {
+            const responseAPromise = app.inject({
+                method: 'POST',
+                url: `/api/v1/flow-runs/${flowRun.id}/waitpoints/${waitpoint!.id}/sync`,
+                body: { data: 'A' },
+            })
+            const responseBPromise = app.inject({
+                method: 'POST',
+                url: `/api/v1/flow-runs/${flowRun.id}/waitpoints/${waitpoint!.id}/sync`,
+                body: { data: 'B' },
+            })
+
+            // Only the request that wins the pessimistic lock on the waitpoint row enqueues a
+            // resume job (id'd by flowRunId) — the loser finds the row already gone and returns
+            // 410 without enqueueing anything, so exactly one job is ever queued for this run.
+            const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
+            const workerHandlerId = engineResponseWatcher(app.log).getServerId()
+            await createHandlers(app.log).sendFlowResponse({
+                workerHandlerId,
+                httpRequestId,
+                runResponse: { status: 200, body: { winner: true }, headers: {} },
+            })
+
+            // A regression back to keying by waitpointId (shared across both requests) leaves one
+            // of these two requests waiting on a listener the other one owns, which only resolves
+            // after the full WEBHOOK_TIMEOUT_MS. Race against a short timeout so that regression
+            // fails fast and deterministically instead of eating vitest's own 60s test timeout.
+            const raceTimeoutMs = 15000
+            const timedOut = Symbol('timed out')
+            const raceResult = await Promise.race([
+                Promise.all([responseAPromise, responseBPromise]),
+                new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), raceTimeoutMs)),
+            ])
+            if (raceResult === timedOut) {
+                throw new Error(`Timed out after ${raceTimeoutMs}ms waiting for both sync responses — likely a listener key collision`)
+            }
+            const [responseA, responseB] = raceResult
+
+            expect(capturedRequestIds).toHaveLength(2)
+            expect(new Set(capturedRequestIds).size).toBe(2)
+
+            const responses = [responseA, responseB]
+            const winnerResponse = responses.find((response) => response.statusCode === 200)
+            const loserResponse = responses.find((response) => response.statusCode === 410)
+
+            expect(winnerResponse).toBeDefined()
+            expect(loserResponse).toBeDefined()
+            expect(winnerResponse!.json()).toEqual({ winner: true })
+            expect(loserResponse!.json()).toEqual({
+                message: 'This link has expired. The action may have already been processed.',
+            })
+
+            const waitpointAfter = await db.findOneBy('waitpoint', { flowRunId: flowRun.id })
+            expect(waitpointAfter).toBeNull()
+        }
+        finally {
+            watcherSpy.mockRestore()
+        }
+    })
+
+    it('a listener\'s timeout does not delete a different listener since registered under the same key', async () => {
+        const watcher = engineResponseWatcher(app.log)
+        const requestId = apId()
+
+        const { promise: firstPromise } = watcher.oneTimeListener<string>(requestId, true, 50, 'first-timed-out')
+        // Register a second listener under the same key while the first is still pending, the
+        // way a reused/collided key would — the second registration replaces the map entry.
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        const { promise: secondPromise } = watcher.oneTimeListener<string>(requestId, true, 5000, 'second-timed-out')
+
+        // Let the first listener's own 50ms timeout fire. Without an "am I still the owner"
+        // guard this unconditionally deletes the map entry, destroying the second listener too.
+        expect(await firstPromise).toBe('first-timed-out')
+
+        await pubsub.publish(`engine-run:sync:${watcher.getServerId()}`, JSON.stringify({
+            requestId,
+            response: 'second-response',
+        }))
+        expect(await secondPromise).toBe('second-response')
     })
 })

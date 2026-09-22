@@ -48,6 +48,7 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             projectId: flowRun.projectId,
             resumePayload: resumePayload ?? null,
             workerHandlerId,
+            httpRequestId,
             onReady: async (waitpoint) => {
                 await enqueueResume({
                     flowRun,
@@ -85,15 +86,28 @@ export const resumeService = (log: FastifyBaseLogger) => ({
         }
 
         const syncServerId = engineResponseWatcher(log).getServerId()
-        const { stale } = await this.resumeFromWaitpoint({
+        // Register the listener before enqueueing the resume: the engine can answer as soon as
+        // the job is enqueued, and if that happens before oneTimeListener runs, the response is
+        // delivered to nobody and the caller times out. The returned cancel() is bound to this
+        // exact registration (never a key-based lookup), so every early exit below can tear it
+        // down without risking cancelling a different request's listener that has since
+        // registered under the same key (see engineResponseWatcher#oneTimeListener).
+        const listener = engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+
+        const { data, error } = await tryCatch(() => this.resumeFromWaitpoint({
             flowRunId: runId,
             waitpointId,
             resumePayload: payload,
             workerHandlerId: syncServerId,
             httpRequestId: correlationId,
-        })
+        }))
+        if (error) {
+            listener.cancel()
+            throw error
+        }
 
-        if (stale) {
+        if (data.stale) {
+            listener.cancel()
             return {
                 status: StatusCodes.GONE,
                 body: { message: 'This link has expired. The action may have already been processed.' },
@@ -101,7 +115,7 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             }
         }
 
-        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+        return listener.promise
     },
 
     async legacySyncResume({ runId, payload, correlationId }: LegacySyncResumeParams): Promise<EngineHttpResponse> {
@@ -114,8 +128,15 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             }
         }
         const syncServerId = engineResponseWatcher(log).getServerId()
-        await enqueueResume({ flowRun, resumePayload: payload, workerHandlerId: syncServerId, httpRequestId: correlationId }, log)
-        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+        const listener = engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+
+        const { error } = await tryCatch(() => enqueueResume({ flowRun, resumePayload: payload, workerHandlerId: syncServerId, httpRequestId: correlationId }, log))
+        if (error) {
+            listener.cancel()
+            throw error
+        }
+
+        return listener.promise
     },
 })
 
