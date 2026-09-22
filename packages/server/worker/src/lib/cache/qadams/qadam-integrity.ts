@@ -62,7 +62,13 @@ export const qadamIntegrity = (log: Logger) => ({
         reportRefusals({ refusals, installed, refusedBeforeInstall, log })
         assertBatchIsCovered({ resolved, installed })
 
-        const unverified = resolved.filter((pkg) => !verifiedPackages.has(cacheKey(pkg)))
+        // Deduplicated, not just filtered: the same official package can appear at two tree
+        // positions, and each copy would otherwise buy its own registry read. The serial loop
+        // below exists precisely to keep this pass off the registry's rate limiter, so reading one
+        // version document twice is the request it is shaped to avoid — and `count` in the log
+        // would overstate the work for the same reason.
+        const notYetVerified = resolved.filter((pkg) => !verifiedPackages.has(cacheKey(pkg)))
+        const unverified = uniqueByCacheKey(notYetVerified)
         if (unverified.length === 0) {
             return
         }
@@ -70,7 +76,9 @@ export const qadamIntegrity = (log: Logger) => ({
         log.info({
             rootWorkspace,
             count: unverified.length,
-            alreadyVerified: resolved.length - unverified.length,
+            // Against the filtered-but-undeduped array, not `resolved`: a second tree position for
+            // a package nothing has verified is not an already-verified package.
+            alreadyVerified: resolved.length - notYetVerified.length,
         }, '[qadamIntegrity] verifying registry signatures for official qadams')
 
         // Serially rather than in parallel. This runs inside the installer's file lock, on a set
@@ -188,6 +196,10 @@ const VERIFICATION_BUDGET_MS = 150_000
 const verifiedPackages = new Set<string>()
 
 const cacheKey = ({ name, version, integrity }: ResolvedPackage): string => `${name}@${version}:${integrity}`
+
+function uniqueByCacheKey(packages: ResolvedPackage[]): ResolvedPackage[] {
+    return [...new Map(packages.map((pkg) => [cacheKey(pkg), pkg])).values()]
+}
 
 // `bun.lock` is JSONC — bun writes trailing commas, so `JSON.parse` rejects it outright.
 //

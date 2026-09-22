@@ -209,6 +209,22 @@ describe('qadamIntegrity.verifyOfficialQadams', () => {
             .rejects.toThrow(/could not read its registry metadata/)
     })
 
+    // bun keys a package by its path in the tree, so one package pinned by two dependents appears
+    // twice. Both copies carry the same name@version:integrity, so the second read can only return
+    // what the first did — and the serial loop exists to keep this pass off the registry's rate
+    // limiter, which a duplicate read works directly against.
+    it('reads the registry once for a package that sits at two tree positions', async () => {
+        const workspace = await writeLockfile([
+            registryEntry(SHARED),
+            `    "@aiqadam/qadam-tables/${SHARED.name}": ["${SHARED.name}@${SHARED.version}", "", {}, "${SHARED.integrity}"],`,
+        ].join('\n'))
+        mockGet.mockResolvedValue(packumentFor(SHARED.signatures))
+
+        await verify(workspace)
+
+        expect(mockGet).toHaveBeenCalledOnce()
+    })
+
     // `retryingAxios` retries 5xx and nothing else, so a 429 arrives here unhandled. It is also
     // the failure most likely to happen: every worker replica coming out of a cold cache reads
     // the same registry at once. Without this the anticipated case fails the install outright.
