@@ -32,13 +32,9 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
             if (!signedFileTransport.shouldRedirectForType(fileType)) {
                 return
             }
-            const readUrl = await filesService.constructReadUrl({
-                fileId,
-                fileType,
-                platformId: principal.platform.id,
-                internal: true,
-            })
-            void reply.header(fileTransportHeaders.READ_URL, readUrl)
+            // save() runs before the read URL is computed/exposed: it is where the
+            // ownership check lives (#517), and nothing derived from this fileId should be
+            // handed back to the caller before that check has passed.
             const file = await fileService(request.log).save({
                 fileId,
                 projectId: principal.projectId,
@@ -49,6 +45,13 @@ export const filesController: FastifyPluginAsyncZod = async (app) => {
                 size: contentLength,
                 data: null,
             })
+            const readUrl = await filesService.constructReadUrl({
+                fileId,
+                fileType,
+                platformId: principal.platform.id,
+                internal: true,
+            })
+            void reply.header(fileTransportHeaders.READ_URL, readUrl)
             const redirected = await signedFileTransport.maybeRedirectToS3Put({
                 reply,
                 log: request.log,
