@@ -37,6 +37,8 @@ import { FastifyBaseLogger } from 'fastify'
 import pLimit from 'p-limit'
 import { ArrayContains, In, IsNull, Not, Repository, SelectQueryBuilder } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
+import { getPendingRunOwnerKey } from '../../database/redis/keys'
+import { distributedStore } from '../../database/redis-connections'
 import { fileService } from '../../file/file.service'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
@@ -57,6 +59,7 @@ const CANCELLABLE_STATUSES: FlowRunStatus[] = [FlowRunStatus.PAUSED, FlowRunStat
 
 
 const tracer = trace.getTracer('flow-run-service')
+const PENDING_RUN_OWNER_TTL_SECONDS = system.getNumberOrThrow(AppSystemProp.FLOW_TIMEOUT_SECONDS)
 export const WEBHOOK_TIMEOUT_MS = system.getNumberOrThrow(AppSystemProp.WEBHOOK_TIMEOUT_SECONDS) * 1000
 export const flowRunRepo = repoFactory<FlowRun>(FlowRunEntity)
 
@@ -693,6 +696,16 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         case RunEnvironment.TESTING:
             return flowRunRepo().save(flowRun)
         case RunEnvironment.PRODUCTION:
+            // The row itself is owed by the runs-metadata queue, so for the length of that flush
+            // the run exists everywhere except the table. An inline subflow dispatched in the
+            // meantime still has to prove its parent belongs to its own project, and this is the
+            // only record of that written by the API rather than by anything the engine can reach
+            // (#509). Scoped to the run's own outside limit — past FLOW_TIMEOUT_SECONDS the run
+            // cannot still be executing, so the record has nothing left to authorize.
+            await distributedStore.put(getPendingRunOwnerKey(flowRun.id), {
+                projectId: flowRun.projectId,
+                parentRunId: flowRun.parentRunId,
+            }, PENDING_RUN_OWNER_TTL_SECONDS)
             await runsMetadataQueue(log).add(flowRun)
             return flowRun
     }

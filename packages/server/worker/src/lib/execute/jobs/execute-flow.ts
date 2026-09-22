@@ -9,6 +9,7 @@ import {
     ExecutionType,
     FlowRunStatus,
     FlowVersion,
+    isFlowRunStateTerminal,
     isNil,
     QadamFlowError,
     ResumeExecuteFlowOperation,
@@ -178,7 +179,59 @@ function toInternalError(source: RunInternalErrorSource, error: unknown): RunInt
     }
 }
 
+/**
+ * Every caller of `reportFlowStatus` is a terminal failure the engine never got to report itself
+ * (missing flow version, provisioning failure, sandbox timeout, OOM, engine internal error). Without
+ * a response the sync HTTP caller blocks for the full AP_WEBHOOK_TIMEOUT_SECONDS and then receives
+ * the watcher's hardcoded empty 204, indistinguishable from a successful empty body (#509).
+ *
+ * The engine sends its own failure response when it survives long enough (flow.operation.ts); a
+ * double publish is harmless, since the watcher drops its listener after the first message. The body
+ * carries no internal detail, not even the terminal status — this endpoint is reachable by anyone
+ * holding the flow id, and which resource limit a run hit is not theirs to probe for.
+ *
+ * The terminal-failure check is redundant against today's call sites and deliberately kept: a future
+ * caller passing PAUSED would otherwise answer 500 to a run that is merely waiting to resume, whose
+ * response belongs to the waitpoint machinery.
+ *
+ * `runId` is disclosed knowingly. resume-controller.ts documents a run id as its own access
+ * control ("an unguessable apId"), but every path that reaches here is a terminal failure and all
+ * three resume paths require PAUSED, so a disclosed id is not resumable. It stays because it is
+ * the only identifier that opens the run: `httpRequestId` is never persisted on the row, and the
+ * caller already receives it as the `x-webhook-id` header on every sync response anyway.
+ */
+async function respondToSyncCallerOnFailure({ ctx, data, status }: RespondToSyncCallerParams): Promise<void> {
+    const { workerHandlerId, httpRequestId } = data
+    if (isNil(workerHandlerId) || isNil(httpRequestId)) {
+        return
+    }
+    const terminalFailure = status !== FlowRunStatus.SUCCEEDED
+        && isFlowRunStateTerminal({ status, ignoreInternalError: false })
+    if (!terminalFailure) {
+        return
+    }
+    const { error } = await tryCatch(() => ctx.apiClient.sendFlowResponse({
+        workerHandlerId,
+        httpRequestId,
+        runResponse: {
+            status: 500,
+            body: {
+                message: 'The flow run did not complete successfully.',
+                runId: data.runId,
+            },
+            headers: {},
+        },
+    }))
+    if (!isNil(error)) {
+        // The run's own status upload matters more — leaving the caller to time out is exactly the
+        // behaviour that existed before this response was sent at all.
+        ctx.log.error({ runId: data.runId, error: inspect(error) }, 'Failed to send the failure response to the sync caller')
+    }
+}
+
 async function reportFlowStatus({ ctx, data, status, internalError, logsFileId }: ReportFlowStatusParams): Promise<void> {
+    await respondToSyncCallerOnFailure({ ctx, data, status })
+
     await ctx.apiClient.uploadRunLog({
         runId: data.runId,
         status,
@@ -200,6 +253,12 @@ async function reportFlowStatus({ ctx, data, status, internalError, logsFileId }
 
 function isDedicatedWorker(): boolean {
     return !isNil(system.get(WorkerSystemProp.WORKER_GROUP_ID))
+}
+
+type RespondToSyncCallerParams = {
+    ctx: JobContext
+    data: ExecuteFlowJobData
+    status: FlowRunStatus
 }
 
 type ReportFlowStatusParams = {
