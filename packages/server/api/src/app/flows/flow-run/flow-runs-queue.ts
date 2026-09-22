@@ -342,9 +342,18 @@ async function markParentRunAsFailed({
 }: MarkParentRunAsFailedParams): Promise<void> {
     const flowRun = await flowRunRepo().findOneBy({
         id: parentRunId,
+        projectId,
     })
 
-    if (isNil(flowRun) || isFlowRunStateTerminal({ status: flowRun.status, ignoreInternalError: false })) {
+    if (isNil(flowRun)) {
+        // parentRunId can come straight from the public webhook's `ap-parent-run-id` header
+        // with no project check (webhook-request-converter.ts), so the child's own project is
+        // the only trustworthy scope for this read.
+        log.warn({ parentRunId, childRunId, projectId }, '[markParentRunAsFailed] Parent run not found in the child\'s project, skipping')
+        return
+    }
+
+    if (isFlowRunStateTerminal({ status: flowRun.status, ignoreInternalError: false })) {
         return
     }
 

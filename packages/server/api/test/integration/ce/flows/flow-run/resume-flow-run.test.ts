@@ -1,4 +1,4 @@
-import { apId, FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
+import { apId, FlowRunStatus, FlowVersionState, isNil, RunEnvironment } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { distributedStore } from '../../../../../src/app/database/redis-connections'
 import { batchDeleteByFlowId } from '../../../../../src/app/flows/flow/flow.jobs'
@@ -422,6 +422,98 @@ describe('Resume flow run', () => {
 
         const waitpoint = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
         expect(waitpoint).toBeNull()
+    })
+
+    it('markParentRunAsFailed should not touch a parent run in another project (#520)', async () => {
+        const otherCtx = await createTestContext(app)
+        const { flowRun: parentRun } = await createPausedFlowRunWithWaitpoint({
+            projectId: otherCtx.project.id,
+        })
+
+        const childFlow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', childFlow)
+        const childFlowVersion = createMockFlowVersion({
+            flowId: childFlow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', childFlowVersion)
+        const childRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: childFlow.id,
+            flowVersionId: childFlowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+        })
+        await db.save('flow_run', childRun)
+
+        await createHandlers(app.log).uploadRunLog({
+            runId: childRun.id,
+            projectId: ctx.project.id,
+            status: FlowRunStatus.FAILED,
+            finishTime: new Date().toISOString(),
+        })
+
+        // The child's status flips to FAILED before markParentRunAsFailed runs (it reads off
+        // the already-saved row), so waiting on that status alone races the very call this test
+        // is meant to observe. consumeProcessedMetadata — which clears this Redis hash — runs
+        // after markParentRunAsFailed in processRunsMetadataUpdate, so waiting for it to be gone
+        // guarantees the drain, including markParentRunAsFailed, has already finished.
+        await waitForCondition(async () => {
+            const pending = await distributedStore.hgetJson<RunsMetadataUpsertData>(redisMetadataKey(childRun.id))
+            return isNil(pending) || Object.keys(pending).length === 0
+        })
+
+        const parentAfter = await db.findOneByOrFail<{ status: string }>('flow_run', { id: parentRun.id })
+        expect(parentAfter.status).toBe(FlowRunStatus.PAUSED)
+
+        const waitpointAfter = await db.findOneByOrFail<{ status: string }>('waitpoint', { flowRunId: parentRun.id })
+        expect(waitpointAfter.status).toBe('PENDING')
+    })
+
+    it('markParentRunAsFailed should still fail/resume a same-project parent (#520)', async () => {
+        const { flowRun: parentRun } = await createPausedFlowRunWithWaitpoint({
+            projectId: ctx.project.id,
+        })
+
+        const childFlow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', childFlow)
+        const childFlowVersion = createMockFlowVersion({
+            flowId: childFlow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', childFlowVersion)
+        const childRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: childFlow.id,
+            flowVersionId: childFlowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+        })
+        await db.save('flow_run', childRun)
+
+        await createHandlers(app.log).uploadRunLog({
+            runId: childRun.id,
+            projectId: ctx.project.id,
+            status: FlowRunStatus.FAILED,
+            finishTime: new Date().toISOString(),
+        })
+
+        // A same-project resume runs the waitpoint through complete() (PENDING -> COMPLETED)
+        // and then straight through resumeFromWaitpoint's PAUSED branch, which deletes the
+        // waitpoint row once the resume is enqueued (see the "pre-completed waitpoint" test
+        // above) — so "gone" is the observable signal that the parent was actually resumed,
+        // not left untouched the way the cross-project parent above is.
+        await waitForCondition(async () => {
+            const waitpoint = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
+            return waitpoint === null
+        })
+
+        const waitpointAfter = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
+        expect(waitpointAfter).toBeNull()
     })
 
     it('should drop stale resume signal when parent is already in terminal state and not produce a buffered waitpoint', async () => {
