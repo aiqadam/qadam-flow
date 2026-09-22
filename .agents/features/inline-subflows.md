@@ -37,9 +37,12 @@ the **worker**, over the existing engine↔worker socket (`WorkerContract`, the 
 
 The worker, in turn, calls a new worker→API RPC, `startInlineFlowRun`
 (`packages/server/api/src/app/workers/rpc/inline-flow-run.service.ts`), passing the **worker's own
-trusted current-job context** (`callerProjectId`, `callerPlatformId`, `parentRunId`, `environment`
-— captured from `ExecuteFlowJobData` at the top of `execute-flow.ts`, never anything the engine
-supplied) alongside the caller-chosen `flowId`. The API handler:
+trusted current-job context** (`callerProjectId`, `callerPlatformId`, `environment` — captured
+from `ExecuteFlowJobData` at the top of `execute-flow.ts`, never anything the engine supplied)
+alongside the caller-chosen `flowId`. `parentRunId` is the one engine-supplied field (the run the
+call is nested under, which for a nested inline call is the immediate inline parent); the worker
+refuses it unless it is the job's own run or an inline child that job already started (#525, see
+"Engine RPC Run Scope" in `workers.md`). The API handler:
 
 1. Resolves the flow scoped by that trusted `callerProjectId` (`flowService.getOneOrThrow({ id,
    projectId })`) — a flow in another project simply isn't found, closing the gap the dropped
@@ -135,7 +138,8 @@ Error(JSON.stringify(data))` when `waitForResponse` is set) — no new error-han
   `resolveInlineFlow` starts, so the child's own `uploadRunLog`/progress RPCs pass the worker's
   run-scope check (#512)
 - `packages/server/worker/src/lib/execute/create-sandbox-for-job.ts` — `resolveInlineFlow`
-  `WorkerContract` handler: calls the API, then provisions child pieces locally
+  `WorkerContract` handler: checks `parentRunId` against the run scope, calls the API, then
+  provisions child pieces locally
 - `packages/server/worker/src/lib/execute/jobs/execute-flow.ts` — passes the trusted job context
   into `sandboxManager.acquire()`
 - `packages/server/api/src/app/workers/rpc/inline-flow-run.service.ts` — project-scoped resolve +
@@ -189,7 +193,7 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   process, via a recursive `flowExecutor` call — no queue job, no waitpoint.
 - **Queue subflow**: The pre-existing path — child dispatched as a worker job, parent paused on a
   waitpoint, resumed by an HTTP callback.
-- **Inline job context**: The worker's own trusted `{projectId, platformId, parentRunId,
+- **Inline job context**: The worker's own trusted `{runId, projectId, platformId,
   environment}` for the job currently occupying a sandbox slot — the only source `resolveInlineFlow`
   may use to scope a target; never derived from anything the engine/sandbox supplies.
 
