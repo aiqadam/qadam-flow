@@ -48,6 +48,15 @@ vi.mock('../../src/lib/engine-file-api', () => ({
     },
 }))
 
+const { mockSendFlowResponse } = vi.hoisted(() => ({
+    mockSendFlowResponse: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../src/lib/worker-socket', () => ({
+    workerSocket: {
+        getWorkerClient: () => ({ sendFlowResponse: mockSendFlowResponse }),
+    },
+}))
+
 const { mockCreateWaitpoint } = vi.hoisted(() => ({
     mockCreateWaitpoint: vi.fn(),
 }))
@@ -688,6 +697,76 @@ describe('flow operation invariants', () => {
                 engineToken: 'test-token',
                 fileId: 'resume-file-1',
             })
+        })
+    })
+
+    describe('sync caller response on a terminal failure', () => {
+        it('answers the waiting caller with a 500 rather than leaving it to time out', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockRejectedValue(new ConnectionNotFoundError('missing-conn'))
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            await flowOperation.execute(operation)
+
+            expect(mockSendFlowResponse).toHaveBeenCalledTimes(1)
+            const sent = mockSendFlowResponse.mock.calls[0][0]
+            expect(sent.workerHandlerId).toBe('handler-1')
+            expect(sent.httpRequestId).toBe('req-1')
+            expect(sent.runResponse.status).toBe(500)
+            // No step names, no error text, no terminal status: the endpoint is reachable by
+            // anyone holding the flow id.
+            expect(sent.runResponse.body).toEqual({
+                message: 'The flow run did not complete successfully.',
+                runId: 'run-1',
+            })
+        })
+
+        it('stays silent when no sync caller is waiting', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockRejectedValue(new ConnectionNotFoundError('missing-conn'))
+
+            await flowOperation.execute(makeBeginOperation({ executeTrigger: true }))
+
+            expect(mockSendFlowResponse).not.toHaveBeenCalled()
+        })
+
+        it('stays silent on a run that succeeded', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockReset()
+            mockExecuteTrigger.mockResolvedValue({ output: [{ ok: true }] })
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            await flowOperation.execute(operation)
+
+            const finalSendUpdate = mockSendUpdate.mock.calls[mockSendUpdate.mock.calls.length - 1][0]
+            expect(finalSendUpdate.flowExecutorContext.verdict.status).not.toBe(FlowRunStatus.FAILED)
+            expect(mockSendFlowResponse).not.toHaveBeenCalled()
+        })
+
+        it('never lets a failed publish break the run', async () => {
+            mockSendFlowResponse.mockClear()
+            mockSendFlowResponse.mockRejectedValueOnce(new Error('pubsub down'))
+            mockExecuteTrigger.mockRejectedValue(new ConnectionNotFoundError('missing-conn'))
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            const response = await flowOperation.execute(operation)
+
+            expect(response.status).toBe(EngineResponseStatus.OK)
         })
     })
 })

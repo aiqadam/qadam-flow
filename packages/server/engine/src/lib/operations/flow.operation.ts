@@ -68,7 +68,9 @@ export const flowOperation = {
  * watcher drops its listener after the first message.
  *
  * The body stays generic on purpose. This endpoint is reachable by anyone holding the flow id, so it
- * carries no step names or error text; `runId` is what makes the failure diagnosable operator-side.
+ * carries no step names, error text, nor the terminal status itself — MEMORY_LIMIT_EXCEEDED vs
+ * TIMEOUT vs QUOTA_EXCEEDED is a resource-limit signal an unauthenticated caller should not be
+ * probing for. `runId` identifies the caller's own run and is what makes the failure diagnosable.
  */
 async function respondToSyncCallerOnFailure({ constants, verdictStatus }: RespondToSyncCallerParams): Promise<void> {
     const { workerHandlerId, httpRequestId } = constants
@@ -89,7 +91,6 @@ async function respondToSyncCallerOnFailure({ constants, verdictStatus }: Respon
             body: {
                 message: 'The flow run did not complete successfully.',
                 runId: constants.flowRunId,
-                status: verdictStatus,
             },
             headers: {},
         },

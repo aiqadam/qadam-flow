@@ -9,6 +9,7 @@ import {
     ExecutionType,
     FlowRunStatus,
     FlowVersion,
+    isFlowRunStateTerminal,
     isNil,
     QadamFlowError,
     ResumeExecuteFlowOperation,
@@ -186,11 +187,21 @@ function toInternalError(source: RunInternalErrorSource, error: unknown): RunInt
  *
  * The engine sends its own failure response when it survives long enough (flow.operation.ts); a
  * double publish is harmless, since the watcher drops its listener after the first message. The body
- * carries no internal detail — this endpoint is reachable by anyone holding the flow id.
+ * carries no internal detail, not even the terminal status — this endpoint is reachable by anyone
+ * holding the flow id, and which resource limit a run hit is not theirs to probe for.
+ *
+ * The terminal-failure check is redundant against today's call sites and deliberately kept: a future
+ * caller passing PAUSED would otherwise answer 500 to a run that is merely waiting to resume, whose
+ * response belongs to the waitpoint machinery.
  */
 async function respondToSyncCallerOnFailure({ ctx, data, status }: RespondToSyncCallerParams): Promise<void> {
     const { workerHandlerId, httpRequestId } = data
     if (isNil(workerHandlerId) || isNil(httpRequestId)) {
+        return
+    }
+    const terminalFailure = status !== FlowRunStatus.SUCCEEDED
+        && isFlowRunStateTerminal({ status, ignoreInternalError: false })
+    if (!terminalFailure) {
         return
     }
     const { error } = await tryCatch(() => ctx.apiClient.sendFlowResponse({
@@ -201,7 +212,6 @@ async function respondToSyncCallerOnFailure({ ctx, data, status }: RespondToSync
             body: {
                 message: 'The flow run did not complete successfully.',
                 runId: data.runId,
-                status,
             },
             headers: {},
         },
