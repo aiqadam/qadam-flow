@@ -17,7 +17,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { projectService } from '../../../project/project-service'
 import { engineResponseWatcher } from '../../../workers/engine-response-watcher'
-import { addToQueue, findFlowRunOrThrow, flowRunService, WEBHOOK_TIMEOUT_MS } from '../flow-run-service'
+import { addToQueue, findFlowRunOrThrow, flowRunService, SYNC_RUN_TIMEOUT_RESPONSE, WEBHOOK_TIMEOUT_MS } from '../flow-run-service'
 import { flowRunSideEffects } from '../flow-run-side-effects'
 import { waitpointService } from './waitpoint-service'
 import { Waitpoint, WaitpointResumePayload } from './waitpoint-types'
@@ -101,11 +101,7 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             }
         }
 
-        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, {
-            status: StatusCodes.NO_CONTENT,
-            body: {},
-            headers: {},
-        })
+        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
     },
 
     async legacySyncResume({ runId, payload, correlationId }: LegacySyncResumeParams): Promise<EngineHttpResponse> {
@@ -119,11 +115,7 @@ export const resumeService = (log: FastifyBaseLogger) => ({
         }
         const syncServerId = engineResponseWatcher(log).getServerId()
         await enqueueResume({ flowRun, resumePayload: payload, workerHandlerId: syncServerId, httpRequestId: correlationId }, log)
-        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, {
-            status: StatusCodes.NO_CONTENT,
-            body: {},
-            headers: {},
-        })
+        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
     },
 })
 

@@ -1791,6 +1791,7 @@
   "Flow can't be published with empty trigger {name}": "Flow can't be published with empty trigger {name}",
   "Please contact support as your published flow has a problem": "Please contact support as your published flow has a problem",
   "This field is required": "This field is required",
+  "Your submission was received. The flow is still running.": "Your submission was received. The flow is still running.",
   "Your submission was successfully received.": "Your submission was successfully received.",
   "The flow you are trying to submit to does not exist.": "The flow you are trying to submit to does not exist.",
   "The flow failed to execute.": "The flow failed to execute.",

@@ -1,5 +1,6 @@
 import {
     EngineGenericError,
+    EngineHttpResponse,
     EngineResponse,
     EngineResponseStatus,
     ExecuteFlowOperation,
@@ -45,7 +46,7 @@ export const flowOperation = {
             flowExecutorContext: output,
         })
         await flowRunProgressReporter.backup()
-        await respondToSyncCallerOnFailure({ constants, verdictStatus: output.verdict.status })
+        await respondToSyncCaller({ constants, verdictStatus: output.verdict.status })
         const status = output.verdict.status === FlowRunStatus.LOG_SIZE_EXCEEDED
             ? EngineResponseStatus.LOG_SIZE_EXCEEDED
             : EngineResponseStatus.OK
@@ -57,54 +58,67 @@ export const flowOperation = {
 }
 
 /**
- * Only a `respond`/`stop` hook publishes a sync response (see qadam-executor), so a run that fails
- * before reaching one leaves the HTTP caller with nothing: it blocks for the full
- * AP_WEBHOOK_TIMEOUT_SECONDS and then receives the watcher's hardcoded empty 204, which reads
- * identically to "the flow ran and returned no body" (#509). A terminal non-success verdict answers
- * explicitly instead.
+ * Only a `respond`/`stop` hook publishes a sync response (see qadam-executor), so any run that ends
+ * without reaching one left the HTTP caller with nothing: it blocked for the full
+ * AP_WEBHOOK_TIMEOUT_SECONDS and then received the watcher's timeout default (#509). The engine now
+ * answers every terminal verdict itself, so that default is only ever reached by a run that is
+ * genuinely still going.
  *
- * PAUSED and RUNNING are deliberately excluded — a paused run's response is owned by the waitpoint
- * machinery. A run that already responded and then failed publishes twice, which is harmless: the
- * watcher drops its listener after the first message.
+ * - SUCCEEDED answers the empty 204 the caller always got, just without the wait. That keeps its
+ *   meaning — "the flow finished and had nothing to say" — which the chat's "add Respond on UI" hint
+ *   and the form's success toast both read. A run that already responded publishes twice, which is
+ *   harmless: the watcher drops its listener after the first message.
+ * - A terminal failure answers 500.
+ * - PAUSED and RUNNING stay silent. A pause that owes the caller something sends it through the
+ *   hook's own `responseToSend`; anything else is still in flight and belongs to the timeout.
  *
- * The body stays generic on purpose. This endpoint is reachable by anyone holding the flow id, so it
- * carries no step names, error text, nor the terminal status itself — MEMORY_LIMIT_EXCEEDED vs
+ * The failure body stays generic on purpose. This endpoint is reachable by anyone holding the flow id,
+ * so it carries no step names, error text, nor the terminal status itself — MEMORY_LIMIT_EXCEEDED vs
  * TIMEOUT vs QUOTA_EXCEEDED is a resource-limit signal an unauthenticated caller should not be
  * probing for. `runId` identifies the caller's own run and is what makes the failure diagnosable.
  *
  * `runId` is disclosed knowingly. resume-controller.ts documents a run id as its own access
- * control ("an unguessable apId"), but every path that reaches here is a terminal failure and all
+ * control ("an unguessable apId"), but every path that discloses it is a terminal failure and all
  * three resume paths require PAUSED, so a disclosed id is not resumable. It stays because it is
  * the only identifier that opens the run: `httpRequestId` is never persisted on the row, and the
  * caller already receives it as the `x-webhook-id` header on every sync response anyway.
  */
-async function respondToSyncCallerOnFailure({ constants, verdictStatus }: RespondToSyncCallerParams): Promise<void> {
+async function respondToSyncCaller({ constants, verdictStatus }: RespondToSyncCallerParams): Promise<void> {
     const { workerHandlerId, httpRequestId } = constants
     if (isNil(workerHandlerId) || isNil(httpRequestId)) {
         return
     }
-    const succeededOrStillRunning = verdictStatus === FlowRunStatus.SUCCEEDED
-        || !isFlowRunStateTerminal({ status: verdictStatus, ignoreInternalError: false })
-    if (succeededOrStillRunning) {
+    const runResponse = syncResponseForVerdict({ verdictStatus, runId: constants.flowRunId })
+    if (isNil(runResponse)) {
         return
     }
 
     const { error } = await tryCatch(() => workerSocket.getWorkerClient().sendFlowResponse({
         workerHandlerId,
         httpRequestId,
-        runResponse: {
-            status: 500,
-            body: {
-                message: 'The flow run did not complete successfully.',
-                runId: constants.flowRunId,
-            },
-            headers: {},
-        },
+        runResponse,
     }))
     if (!isNil(error)) {
         // Never let this cost the run its own status reporting — the caller still times out, which is
         // the behaviour that existed before this response was sent at all.
-        console.error('[flowOperation] Failed to send the failure response to the sync caller', error)
+        console.error('[flowOperation] Failed to send the terminal response to the sync caller', error)
+    }
+}
+
+function syncResponseForVerdict({ verdictStatus, runId }: SyncResponseForVerdictParams): EngineHttpResponse | null {
+    if (verdictStatus === FlowRunStatus.SUCCEEDED) {
+        return { status: 204, body: {}, headers: {} }
+    }
+    if (!isFlowRunStateTerminal({ status: verdictStatus, ignoreInternalError: false })) {
+        return null
+    }
+    return {
+        status: 500,
+        body: {
+            message: 'The flow run did not complete successfully.',
+            runId,
+        },
+        headers: {},
     }
 }
 
@@ -292,6 +306,11 @@ function isStepRestorable({ status, isWaitpointResume }: IsStepRestorableParams)
 type RespondToSyncCallerParams = {
     constants: EngineConstants
     verdictStatus: FlowRunStatus
+}
+
+type SyncResponseForVerdictParams = {
+    verdictStatus: FlowRunStatus
+    runId: string
 }
 
 type ResolveStateParams = {

@@ -1789,6 +1789,7 @@
   "Flow can't be published with empty trigger {name}": "Flow не может быть опубликован с пустым триггером {name}",
   "Please contact support as your published flow has a problem": "Обратитесь в службу поддержки: с вашим опубликованным flow возникла проблема",
   "This field is required": "Это поле является обязательным",
+  "Your submission was received. The flow is still running.": "Данные получены. Flow ещё выполняется.",
   "Your submission was successfully received.": "Ваша работа была успешно получена.",
   "The flow you are trying to submit to does not exist.": "Flow, в который вы пытаетесь отправить данные, не существует.",
   "The flow failed to execute.": "Не удалось выполнить flow.",

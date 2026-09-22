@@ -3,7 +3,7 @@ import { context, propagation, trace } from '@opentelemetry/api'
 import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { flowExecutionCache } from '../flows/flow/flow-execution-cache'
-import { flowRunService } from '../flows/flow-run/flow-run-service'
+import { flowRunService, SYNC_RUN_TIMEOUT_RESPONSE } from '../flows/flow-run/flow-run-service'
 import { flowVersionRepo } from '../flows/flow-version/flow-version.service'
 import { pinoLogging } from '../helper/logger'
 import { rejectedPromiseHandler } from '../helper/promise-handler'
@@ -307,11 +307,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
             span.setAttribute('webhook.runId', createdRun.id)
             params.onRunCreated?.(createdRun)
 
-            const listenerResult = await engineResponseWatcher(logger).oneTimeListener<EngineHttpResponse>(webhookRequestId, true, timeoutMs ?? WEBHOOK_TIMEOUT_MS, {
-                status: StatusCodes.NO_CONTENT,
-                body: {},
-                headers: {},
-            })
+            const listenerResult = await engineResponseWatcher(logger).oneTimeListener<EngineHttpResponse>(webhookRequestId, true, timeoutMs ?? WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
             return listenerResult
         }
         finally {

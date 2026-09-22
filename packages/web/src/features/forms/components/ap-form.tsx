@@ -182,6 +182,11 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
               ),
               duration: 3000,
             });
+          } else if (status === 504) {
+            toast.info(
+              t('Your submission was received. The flow is still running.'),
+              { duration: 3000 },
+            );
           } else {
             toast.error(t('The flow failed to execute.'), {
               duration: 3000,
