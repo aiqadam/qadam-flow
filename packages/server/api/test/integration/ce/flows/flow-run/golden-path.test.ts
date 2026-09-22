@@ -11,9 +11,10 @@
  * Also tests the draft variant:
  *   → POST /api/v1/webhooks/:flowId/draft (execute the latest version in TESTING)
  *
- * Uses the async webhook endpoints and polls the run to completion. The /sync
- * endpoints block on an engine "respond" that these flows don't emit, so they
- * would hang until WEBHOOK_TIMEOUT.
+ * Uses the async webhook endpoints and polls the run to completion. Two cases
+ * are sync on purpose: these flows emit no "respond", so the engine must still
+ * answer a finished run straight away (204), and a run that outlives the
+ * timeout must get the watcher's 504 rather than a success-shaped answer.
  *
  * Prerequisites:
  *   - Engine must be built (cache/<version>/common/main.js)
@@ -23,7 +24,8 @@ import { FlowActionType, FlowOperationType, FlowRunStatus, FlowTriggerType, Flow
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { worker } from '../../../../../../worker/src/lib/worker'
-import { flowRunService } from '../../../../../src/app/flows/flow-run/flow-run-service'
+import { flowRunService, WEBHOOK_TIMEOUT_MS } from '../../../../../src/app/flows/flow-run/flow-run-service'
+import { WebhookFlowVersionToRun, webhookService } from '../../../../../src/app/webhooks/webhook.service'
 import { db } from '../../../../helpers/db'
 import { setupE2eEnvironment } from '../../../../helpers/e2e-setup'
 import { createMockQadamMetadata } from '../../../../helpers/mocks'
@@ -112,74 +114,83 @@ async function pollFlowRunToCompletion({ flowRunId, projectId }: { flowRunId: st
     return result
 }
 
+/**
+ * Webhook trigger + one code step, published. Deliberately has no respond step: the sync route's
+ * answer for it is exactly the "finished, nothing to say" case.
+ */
+async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof createTestContext>> }): Promise<PopulatedFlow> {
+    // Step 1: Create the flow
+    const createResponse = await ctx.post('/v1/flows', {
+        displayName: 'Golden Path Flow',
+        projectId: ctx.project.id,
+    }, { query: { projectId: ctx.project.id } })
+
+    expect(createResponse.statusCode).toBe(StatusCodes.CREATED)
+    const flow: PopulatedFlow = createResponse.json()
+
+    // Step 2: Update trigger to webhook
+    const updateTriggerResponse = await ctx.post(`/v1/flows/${flow.id}`, {
+        type: FlowOperationType.UPDATE_TRIGGER,
+        request: {
+            type: FlowTriggerType.PIECE,
+            settings: {
+                qadamName: '@aiqadam/qadam-webhook',
+                qadamVersion: '0.1.34',
+                input: { authType: 'none' },
+                triggerName: 'catch_webhook',
+                propertySettings: {},
+            },
+            valid: false,
+            name: 'trigger',
+            displayName: 'Catch Webhook',
+            lastUpdatedDate: new Date().toISOString(),
+        },
+    })
+
+    expect(updateTriggerResponse.statusCode).toBe(StatusCodes.OK)
+
+    // Step 3: Add a code action that echoes back the incoming message
+    const addActionResponse = await ctx.post(`/v1/flows/${flow.id}`, {
+        type: FlowOperationType.ADD_ACTION,
+        request: {
+            parentStep: 'trigger',
+            action: {
+                type: FlowActionType.CODE,
+                displayName: 'Code Step',
+                name: 'step_1',
+                settings: {
+                    input: { body: '{{trigger.body}}' },
+                    sourceCode: {
+                        code: 'export const code = async (inputs) => { return { success: true, message: inputs.body?.message || "no message" }; }',
+                        packageJson: '{}',
+                    },
+                },
+                valid: true,
+                skip: false,
+            },
+        },
+    })
+
+    expect(addActionResponse.statusCode).toBe(StatusCodes.OK)
+
+    // Step 4: Publish the flow (LOCK_AND_PUBLISH auto-enables it)
+    const publishResponse = await ctx.post(`/v1/flows/${flow.id}`, {
+        type: FlowOperationType.LOCK_AND_PUBLISH,
+        request: {},
+    })
+
+    expect(publishResponse.statusCode).toBe(StatusCodes.OK)
+    const publishedFlow: PopulatedFlow = publishResponse.json()
+    expect(publishedFlow.version.state).toBe(FlowVersionState.LOCKED)
+    return publishedFlow
+}
+
 describe('Golden-path API journey', () => {
     it('create flow → webhook trigger → code action → publish → POST sync webhook → run SUCCEEDED', async () => {
         await saveWebhookQadamMetadata()
         const ctx = await createTestContext(app)
 
-        // Step 1: Create the flow
-        const createResponse = await ctx.post('/v1/flows', {
-            displayName: 'Golden Path Flow',
-            projectId: ctx.project.id,
-        }, { query: { projectId: ctx.project.id } })
-
-        expect(createResponse.statusCode).toBe(StatusCodes.CREATED)
-        const flow: PopulatedFlow = createResponse.json()
-
-        // Step 2: Update trigger to webhook
-        const updateTriggerResponse = await ctx.post(`/v1/flows/${flow.id}`, {
-            type: FlowOperationType.UPDATE_TRIGGER,
-            request: {
-                type: FlowTriggerType.PIECE,
-                settings: {
-                    qadamName: '@aiqadam/qadam-webhook',
-                    qadamVersion: '0.1.34',
-                    input: { authType: 'none' },
-                    triggerName: 'catch_webhook',
-                    propertySettings: {},
-                },
-                valid: false,
-                name: 'trigger',
-                displayName: 'Catch Webhook',
-                lastUpdatedDate: new Date().toISOString(),
-            },
-        })
-
-        expect(updateTriggerResponse.statusCode).toBe(StatusCodes.OK)
-
-        // Step 3: Add a code action that echoes back the incoming message
-        const addActionResponse = await ctx.post(`/v1/flows/${flow.id}`, {
-            type: FlowOperationType.ADD_ACTION,
-            request: {
-                parentStep: 'trigger',
-                action: {
-                    type: FlowActionType.CODE,
-                    displayName: 'Code Step',
-                    name: 'step_1',
-                    settings: {
-                        input: { body: '{{trigger.body}}' },
-                        sourceCode: {
-                            code: 'export const code = async (inputs) => { return { success: true, message: inputs.body?.message || "no message" }; }',
-                            packageJson: '{}',
-                        },
-                    },
-                    valid: true,
-                    skip: false,
-                },
-            },
-        })
-
-        expect(addActionResponse.statusCode).toBe(StatusCodes.OK)
-
-        // Step 4: Publish the flow (LOCK_AND_PUBLISH auto-enables it)
-        const publishResponse = await ctx.post(`/v1/flows/${flow.id}`, {
-            type: FlowOperationType.LOCK_AND_PUBLISH,
-            request: {},
-        })
-
-        expect(publishResponse.statusCode).toBe(StatusCodes.OK)
-        const publishedFlow: PopulatedFlow = publishResponse.json()
-        expect(publishedFlow.version.state).toBe(FlowVersionState.LOCKED)
+        const flow = await createPublishedEchoFlow({ ctx })
 
         // Step 5: Fire the sync webhook and wait for the synchronous response
         const webhookResponse = await app.inject({
@@ -202,6 +213,65 @@ describe('Golden-path API journey', () => {
         expect(result.steps.step_1.output).toEqual(
             expect.objectContaining({ success: true, message: 'no message' }),
         )
+    }, 120_000)
+
+    it('answers a sync webhook on a flow with no respond step with an immediate 204, not the timeout', async () => {
+        await saveWebhookQadamMetadata()
+        const ctx = await createTestContext(app)
+        const flow = await createPublishedEchoFlow({ ctx })
+
+        const startedAt = Date.now()
+        const webhookResponse = await app.inject({
+            method: 'POST',
+            url: `/api/v1/webhooks/${flow.id}/sync`,
+            headers: { 'content-type': 'application/json' },
+            payload: { message: 'hello world' },
+        })
+
+        // The engine answers a finished run with 204; the watcher's own timeout default is 504 (#509).
+        // The elapsed bound catches the old behaviour too, where the same 204 came only after the wait.
+        expect(webhookResponse.statusCode).toBe(StatusCodes.NO_CONTENT)
+        expect(webhookResponse.body).toBe('')
+        expect(Date.now() - startedAt).toBeLessThan(WEBHOOK_TIMEOUT_MS)
+
+        const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
+        const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+    }, 120_000)
+
+    it('answers a sync webhook that outlives its timeout with a 504 that invites no retry and names no run', async () => {
+        await saveWebhookQadamMetadata()
+        const ctx = await createTestContext(app)
+        const flow = await createPublishedEchoFlow({ ctx })
+
+        // No engine answers within 1 ms, so this is the watcher's own default and nothing else.
+        const response = await webhookService.handleWebhook({
+            flowId: flow.id,
+            async: false,
+            saveSampleData: false,
+            flowVersionToRun: WebhookFlowVersionToRun.LOCKED_FALL_BACK_TO_LATEST,
+            data: async () => ({
+                body: { message: 'hello world' },
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                queryParams: {},
+            }),
+            logger: app.log,
+            execute: true,
+            failParentOnFailure: false,
+            timeoutMs: 1,
+        })
+
+        expect(response.status).toBe(StatusCodes.GATEWAY_TIMEOUT)
+        expect(response.body).toEqual({
+            message: 'The flow run did not respond within the time limit. It may still be running.',
+        })
+        expect(Object.keys(response.headers)).toEqual(['x-webhook-id'])
+
+        // The 504 says the run may still be going; it must, and must finish on its own.
+        const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
+        const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
     }, 120_000)
 
     it('create flow → webhook trigger → code action → test via draft sync webhook', async () => {

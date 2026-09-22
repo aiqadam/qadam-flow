@@ -183,7 +183,7 @@ function toInternalError(source: RunInternalErrorSource, error: unknown): RunInt
  * Every caller of `reportFlowStatus` is a terminal failure the engine never got to report itself
  * (missing flow version, provisioning failure, sandbox timeout, OOM, engine internal error). Without
  * a response the sync HTTP caller blocks for the full AP_WEBHOOK_TIMEOUT_SECONDS and then receives
- * the watcher's hardcoded empty 204, indistinguishable from a successful empty body (#509).
+ * the watcher's timeout default, a 504 that tells it the run may still be going (#509).
  *
  * The engine sends its own failure response when it survives long enough (flow.operation.ts); a
  * double publish is harmless, since the watcher drops its listener after the first message. The body
@@ -194,11 +194,10 @@ function toInternalError(source: RunInternalErrorSource, error: unknown): RunInt
  * caller passing PAUSED would otherwise answer 500 to a run that is merely waiting to resume, whose
  * response belongs to the waitpoint machinery.
  *
- * `runId` is disclosed knowingly. resume-controller.ts documents a run id as its own access
- * control ("an unguessable apId"), but every path that reaches here is a terminal failure and all
- * three resume paths require PAUSED, so a disclosed id is not resumable. It stays because it is
- * the only identifier that opens the run: `httpRequestId` is never persisted on the row, and the
- * caller already receives it as the `x-webhook-id` header on every sync response anyway.
+ * No `runId` either. The legacy resume route (`/:id/requests/:requestId`) accepts the run id alone
+ * as its credential, and a failed run does not stay terminal: a FROM_FAILED_STEP retry requeues the
+ * same row, which can then pause and be resumed by whoever holds the id. A webhook caller correlates
+ * through the `x-webhook-id` header instead; a resume caller already has the id.
  */
 async function respondToSyncCallerOnFailure({ ctx, data, status }: RespondToSyncCallerParams): Promise<void> {
     const { workerHandlerId, httpRequestId } = data
@@ -217,7 +216,6 @@ async function respondToSyncCallerOnFailure({ ctx, data, status }: RespondToSync
             status: 500,
             body: {
                 message: 'The flow run did not complete successfully.',
-                runId: data.runId,
             },
             headers: {},
         },

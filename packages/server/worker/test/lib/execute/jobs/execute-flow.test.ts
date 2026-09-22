@@ -304,7 +304,6 @@ describe('executeFlowJob', () => {
                     status: 500,
                     body: {
                         message: 'The flow run did not complete successfully.',
-                        runId: 'run-1',
                     },
                     headers: {},
                 },
@@ -323,7 +322,7 @@ describe('executeFlowJob', () => {
 
             const sent = ctx.apiClient.sendFlowResponse.mock.calls[0][0]
             expect(sent.runResponse.status).toBe(500)
-            expect(Object.keys(sent.runResponse.body)).toEqual(['message', 'runId'])
+            expect(Object.keys(sent.runResponse.body)).toEqual(['message'])
         })
 
         it('stays silent when no sync caller is waiting', async () => {
