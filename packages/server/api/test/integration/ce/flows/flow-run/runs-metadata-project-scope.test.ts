@@ -124,6 +124,21 @@ describe('Runs metadata project scope (#512)', () => {
         })
     })
 
+    it('does not take over another project\'s run through a pending-run upsert', async () => {
+        const { runId } = await createOwnerRun()
+        const otherFlow = createMockFlow({ projectId: other.project.id })
+        await db.save('flow', otherFlow)
+        const otherFlowVersion = createMockFlowVersion({ flowId: otherFlow.id, state: FlowVersionState.LOCKED })
+        await db.save('flow_version', otherFlowVersion)
+
+        await runsMetadataQueue(app.log).add(pendingRunMetadata({ runId, projectId: other.project.id, flowId: otherFlow.id, flowVersionId: otherFlowVersion.id }))
+        await waitForMetadataConsumed({ runId })
+
+        const run = await db.findOneBy<{ projectId: string, status: string }>('flow_run', { id: runId })
+        expect(run?.projectId).toBe(owner.project.id)
+        expect(run?.status).toBe(FlowRunStatus.RUNNING)
+    })
+
     it('does not create a run in one project for a flow owned by another', async () => {
         const { flowId, flowVersionId } = await createOwnerFlow()
         const runId = apId()
