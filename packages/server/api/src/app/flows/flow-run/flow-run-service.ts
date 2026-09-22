@@ -693,10 +693,10 @@ export async function findFlowRunOrThrow(flowRunId: FlowRunId): Promise<FlowRun>
  *
  * If the run DOES have a PENDING V0 waitpoint, the controller still re-resolves it a second time
  * inside resumeFromWaitpoint (via findFlowRunOrThrow) before completing that waitpoint. That
- * second read is safe from the same race: handleResumeSignal takes a pessimistic write lock on the
- * waitpoint row and only calls its onReady callback (which enqueues the resume) after confirming
- * that exact row is still PENDING, so a second, unrelated waitpoint appearing between the two reads
- * cannot be silently swapped in — there is nothing analogous to fix on that branch.
+ * second read is safe from the same race: handleResumeSignal locks that exact waitpoint id
+ * (pessimistic write) and deletes it in the same transaction before its onReady callback enqueues
+ * the resume, so a second, unrelated waitpoint appearing between the two reads cannot be silently
+ * swapped in — there is nothing analogous to fix on that branch.
  */
 export async function findFlowRunForLegacyResume({ flowRunId }: FindFlowRunForLegacyResumeParams): Promise<LegacyResumeFlowRun> {
     const flowRun = await flowRunLegacyResumeRepo().findOneBy({ id: flowRunId })
