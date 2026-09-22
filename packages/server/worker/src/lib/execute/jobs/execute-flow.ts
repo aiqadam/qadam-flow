@@ -59,9 +59,12 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             log: ctx.log,
             apiClient: ctx.apiClient,
             jobContext: {
+                runId: data.runId,
                 projectId: data.projectId,
                 platformId: data.platformId,
                 environment: data.environment,
+                workerHandlerId: data.workerHandlerId ?? null,
+                httpRequestId: data.httpRequestId ?? null,
             },
         })
         try {

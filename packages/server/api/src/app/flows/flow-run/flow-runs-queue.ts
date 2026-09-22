@@ -142,12 +142,24 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         return false
     }
 
-    const logsFileId = await resolveWritableLogsFileId({ log, job, runMetadata })
-    const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
+    const projectId = runMetadata.projectId
+    if (isNil(projectId)) {
+        // TypeORM drops an undefined criterion from a find rather than matching on it, so the
+        // lookups below would read the run by id alone, whichever project owns it, and carry that
+        // row into the finish side effects.
+        log.warn({
+            jobId: job.id,
+            runId: job.data.runId,
+        }, '[runsMetadataQueue#worker] Runs metadata carries no projectId, dropping it')
+        await consumeProcessedMetadata({ key, runMetadata })
+        return false
+    }
+    const logsFileId = await resolveWritableLogsFileId({ log, job, projectId, runMetadata })
+    const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId, projectId })
     let savedFlowRun: FlowRun
     if (!isNil(existingFlowRun)) {
-        await updateFlowRunIgnoringDanglingLogsFile({ runId: job.data.runId, runMetadata, logsFileId, log, job })
-        const updatedFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
+        await updateFlowRunIgnoringDanglingLogsFile({ runId: job.data.runId, projectId, runMetadata, logsFileId, log, job })
+        const updatedFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId, projectId })
         if (isNil(updatedFlowRun)) {
             log.info({
                 jobId: job.id,
@@ -159,13 +171,27 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         savedFlowRun = updatedFlowRun
     }
     else {
+        // Deliberately unscoped: the run id is the table's primary key, so this asks whether the id
+        // is taken at all. If it is, the row belongs to another project, and `save` below would
+        // upsert it — rewriting that project's run, its projectId included, from metadata that does
+        // not speak for it (#512).
+        const claimedByAnotherProject = await flowRunRepo().existsBy({ id: job.data.runId })
+        if (claimedByAnotherProject) {
+            log.warn({
+                jobId: job.id,
+                runId: job.data.runId,
+                projectId,
+            }, '[runsMetadataQueue#worker] Run belongs to another project, dropping its metadata')
+            await consumeProcessedMetadata({ key, runMetadata })
+            return false
+        }
         const flowId = runMetadata.flowId
-        const flowExists = !isNil(flowId) && await flowService(log).exists(flowId)
+        const flowExists = !isNil(flowId) && await flowService(log).exists({ id: flowId, projectId })
         if (!flowExists) {
             log.info({
                 jobId: job.id,
                 runId: job.data.runId,
-            }, '[runsMetadataQueue#worker] Flow does not exist (deleted), skipping job')
+            }, '[runsMetadataQueue#worker] Flow does not exist in the run\'s project (deleted?), skipping job')
             await consumeProcessedMetadata({ key, runMetadata })
             return false
         }
@@ -231,11 +257,10 @@ async function consumeProcessedMetadata({ key, runMetadata }: ConsumeProcessedMe
     await distributedStore.delete(key)
 }
 
-async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
+async function resolveWritableLogsFileId({ log, job, projectId, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
     if (isNil(runMetadata.logsFileId)) {
         return undefined
     }
-    const projectId = runMetadata.projectId ?? job.data.projectId
     const exists = await fileService(log).exists({
         projectId,
         fileId: runMetadata.logsFileId,
@@ -252,8 +277,8 @@ async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWrita
     return undefined
 }
 
-async function updateFlowRunIgnoringDanglingLogsFile({ runId, runMetadata, logsFileId, log, job }: UpdateFlowRunParams): Promise<void> {
-    const { error } = await tryCatch(() => flowRunRepo().update(runId, buildFlowRunUpdate({ runMetadata, logsFileId })))
+async function updateFlowRunIgnoringDanglingLogsFile({ runId, projectId, runMetadata, logsFileId, log, job }: UpdateFlowRunParams): Promise<void> {
+    const { error } = await tryCatch(() => flowRunRepo().update({ id: runId, projectId }, buildFlowRunUpdate({ runMetadata, logsFileId })))
     if (isNil(error)) {
         return
     }
@@ -264,15 +289,15 @@ async function updateFlowRunIgnoringDanglingLogsFile({ runId, runMetadata, logsF
             runId: job.data.runId,
             logsFileId,
         }, '[runsMetadataQueue#worker] Logs file gone mid-write, retrying status update without it')
-        await flowRunRepo().update(runId, buildFlowRunUpdate({ runMetadata, logsFileId: undefined }))
+        await flowRunRepo().update({ id: runId, projectId }, buildFlowRunUpdate({ runMetadata, logsFileId: undefined }))
         return
     }
     throw error
 }
 
+// No projectId: the row was matched on it, and a run never changes project.
 function buildFlowRunUpdate({ runMetadata, logsFileId }: BuildFlowRunUpdateParams) {
     return {
-        ...spreadIfDefined('projectId', runMetadata.projectId),
         ...spreadIfDefined('flowId', runMetadata.flowId),
         ...spreadIfDefined('flowVersionId', runMetadata.flowVersionId),
         ...spreadIfDefined('environment', runMetadata.environment),
@@ -374,11 +399,13 @@ type ConsumeProcessedMetadataParams = {
 type ResolveWritableLogsFileIdParams = {
     log: FastifyBaseLogger
     job: Job<RunsMetadataJobData>
+    projectId: string
     runMetadata: RunsMetadataUpsertData
 }
 
 type UpdateFlowRunParams = {
     runId: string
+    projectId: string
     runMetadata: RunsMetadataUpsertData
     logsFileId: string | undefined
     log: FastifyBaseLogger

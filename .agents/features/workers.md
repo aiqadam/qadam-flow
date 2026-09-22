@@ -27,6 +27,24 @@ Workers are separate Node processes that poll the app for jobs and execute flows
 
 > **Payload resolution is engine-side, not worker-side.** Jobs carry a `JobPayload` (`inline` value or `ref` `fileId`). The worker forwards it unchanged into the engine operation; the engine hydrates a `ref` via the file-download path (direct bytes or an S3 signed-link redirect). There is no worker→API payload-fetch RPC — the contract exposes no `getPayloadFile`.
 
+## Engine RPC Run Scope (#512)
+The engine is untrusted; the worker is not. The run-scoped `WorkerContract` RPCs the engine makes
+(`uploadRunLog`, `updateRunProgress`, `updateStepProgress`, `sendFlowResponse`) are checked in
+`create-sandbox-for-job.ts` via `engineRunScope` (`execute/engine-run-scope.ts`) against the
+`SandboxJobContext` the worker itself built from the dequeued job, before they reach the API:
+- the run id must be the job's own run, or an inline child that job started through
+  `resolveInlineFlow`; the project id must be the job's;
+- `sendFlowResponse` must name the job's own `workerHandlerId` + `httpRequestId`, so an async job
+  (both null) can answer no one;
+- no flow job in the sandbox (trigger, property, validation jobs) → every such RPC is refused;
+- a refusal throws `ErrorCode.AUTHORIZATION` back to the engine and is logged as a warning.
+
+The runs-metadata drain (`flow-runs-queue.ts`) adds defence in depth for the row itself: it
+matches a row on `id` **and** `projectId`, never writes `projectId`, drops an update whose run id
+already exists under another project, and creates a pending row only for a flow in the project the
+metadata names. It does not police the `runs_metadata:<id>` hash, which merges every write for a run
+id regardless of project — the worker check above is what keeps foreign writes out of it.
+
 ## Version Gating (rolling-deploy safety)
 During a rolling upgrade the app and worker fleets briefly run different builds. Mixing them risks flow-schema/contract skew and silent run corruption, so dispatch is gated on an exact release match — both sides enforce it, whichever runs the newer build:
 - **App side** (`worker-rpc-service.ts#poll`): if `input.workerProps.version !== apVersionUtil.getCurrentRelease()`, it logs a warning and returns `null` (withholds the job). An old worker can never receive jobs from a new app.
