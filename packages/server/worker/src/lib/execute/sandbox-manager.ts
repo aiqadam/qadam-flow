@@ -5,23 +5,13 @@ import { workerSettings } from '../config/worker-settings'
 import { Sandbox } from '../sandbox/types'
 import { createSandboxForJob } from './create-sandbox-for-job'
 
-// The trusted identity of the job currently occupying this manager's sandbox — the
-// ONLY source `resolveInlineFlow` may use to scope an inline `callFlow` target.
-// Sandboxes can be reused across many jobs (dev/trusted execution modes), so this is
-// a mutable ref updated on every `acquire()`, read fresh by the WorkerContract
-// handlers at call time rather than captured once at sandbox-creation time.
-export type InlineJobContext = {
-    projectId: string
-    platformId: string
-    environment: RunEnvironment
-}
 
 export function createSandboxManager({ boxId, proxyPort }: { boxId: number, proxyPort: number | null }): SandboxManager {
     let currentSandbox: Sandbox | null = null
-    let currentJobContext: InlineJobContext | null = null
+    let currentJobContext: SandboxJobContext | null = null
 
     return {
-        acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: InlineJobContext }): Sandbox {
+        acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: SandboxJobContext }): Sandbox {
             currentJobContext = params.jobContext ?? null
             if (canReuseSandbox() && currentSandbox && currentSandbox.isReady()) {
                 return currentSandbox
@@ -100,9 +90,26 @@ export type ActiveSandboxInfo = {
 }
 
 export type SandboxManager = {
-    acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: InlineJobContext }): Sandbox
+    acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: SandboxJobContext }): Sandbox
     invalidate(log: Logger): Promise<void>
     release(log: Logger): Promise<void>
     shutdown(log: Logger): Promise<void>
     getActiveSandbox(): ActiveSandboxInfo | null
+}
+
+// The trusted identity of the job currently occupying this manager's sandbox — the
+// ONLY source the WorkerContract handlers may use to scope what the engine asks for:
+// `resolveInlineFlow` scopes an inline `callFlow` target by it, and the run-scoped
+// RPCs (`uploadRunLog`, progress, `sendFlowResponse`) are refused for any run,
+// project or sync request it does not name (#512).
+// Sandboxes can be reused across many jobs (dev/trusted execution modes), so this is
+// a mutable ref updated on every `acquire()`, read fresh by the WorkerContract
+// handlers at call time rather than captured once at sandbox-creation time.
+export type SandboxJobContext = {
+    runId: string
+    projectId: string
+    platformId: string
+    environment: RunEnvironment
+    workerHandlerId: string | null
+    httpRequestId: string | null
 }

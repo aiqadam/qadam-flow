@@ -129,8 +129,11 @@ Error(JSON.stringify(data))` when `waitForResponse` is set) — no new error-han
 - `packages/server/engine/src/lib/handler/context/engine-constants.ts` — `isInlineChild`,
   `inlineDepth`
 - `packages/server/engine/src/lib/helper/flow-run-progress-reporter.ts` — inline-child guard
-- `packages/server/worker/src/lib/execute/sandbox-manager.ts` — `InlineJobContext` (mutable,
-  updated per `acquire()`, read fresh by the RPC handler — sandboxes can be reused across jobs)
+- `packages/server/worker/src/lib/execute/sandbox-manager.ts` — `SandboxJobContext` (mutable,
+  updated per `acquire()`, read fresh by the RPC handlers — sandboxes can be reused across jobs)
+- `packages/server/worker/src/lib/execute/engine-run-scope.ts` — records each child run id
+  `resolveInlineFlow` starts, so the child's own `uploadRunLog`/progress RPCs pass the worker's
+  run-scope check (#512)
 - `packages/server/worker/src/lib/execute/create-sandbox-for-job.ts` — `resolveInlineFlow`
   `WorkerContract` handler: calls the API, then provisions child pieces locally
 - `packages/server/worker/src/lib/execute/jobs/execute-flow.ts` — passes the trusted job context
