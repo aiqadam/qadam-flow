@@ -105,6 +105,22 @@ describe('tryDequeue', () => {
         expect(mockWorker.getNextJob).toHaveBeenCalledTimes(1)
     })
 
+    // Pinning this is the whole basis of #516's waitpoint isolation fix: waitpoint-service.ts's
+    // assertCallerOwnsRun trusts the engine token's own id as the job's top-level flow run id with
+    // no database round trip, specifically because generateEngineToken is minted from the job's own
+    // id here — for a BEGIN dispatch and a RESUME re-dispatch alike, since both go through the same
+    // ONE_TIME job path (`jobId: params.id` in job-queue.ts) and the same tryDequeue.
+    it('should mint the engine token with jobId equal to the dequeued job\'s own id', async () => {
+        const job = createMockJob('job-1')
+        vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+        mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+        await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+        expect(mockGenerateEngineToken).toHaveBeenCalledTimes(1)
+        expect(mockGenerateEngineToken).toHaveBeenCalledWith(expect.objectContaining({ jobId: job.id }))
+    })
+
     it('should retry when interceptor rejects then return next allowed job', async () => {
         const jobA = createMockJob('job-a')
         const jobB = createMockJob('job-b')

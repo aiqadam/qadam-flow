@@ -51,6 +51,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -68,6 +69,7 @@ describe('Waitpoint service', () => {
 
             const step1Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_1',
                 type: PauseType.WEBHOOK,
@@ -83,6 +85,7 @@ describe('Waitpoint service', () => {
 
             const step2Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_2',
                 type: PauseType.WEBHOOK,
@@ -100,6 +103,7 @@ describe('Waitpoint service', () => {
 
             const firstPause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -116,6 +120,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -133,6 +138,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
@@ -154,6 +160,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'webhook_step',
                 type: PauseType.WEBHOOK,
@@ -175,6 +182,7 @@ describe('Waitpoint service', () => {
 
             const pauseResult = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -241,6 +249,7 @@ describe('Waitpoint service', () => {
 
             const step1Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_1',
                 type: PauseType.WEBHOOK,
@@ -273,6 +282,7 @@ describe('Waitpoint service', () => {
 
             const step2Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_2',
                 type: PauseType.WEBHOOK,
@@ -293,6 +303,7 @@ describe('Waitpoint service', () => {
             for (const stepName of stepNames) {
                 const pause = await waitpointService(app.log).createForPause({
                     flowRunId: flowRun.id,
+                    callerRunId: flowRun.id,
                     projectId: ctx.project.id,
                     stepName,
                     type: PauseType.WEBHOOK,
@@ -338,6 +349,7 @@ describe('Waitpoint service', () => {
 
             await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -351,6 +363,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
@@ -374,6 +387,7 @@ describe('Waitpoint service', () => {
 
             await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -392,6 +406,7 @@ describe('Waitpoint service', () => {
 
             const pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -453,6 +468,7 @@ describe('Waitpoint service', () => {
 
             const pauseResult = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -482,6 +498,7 @@ describe('Waitpoint service', () => {
 
             const pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -555,6 +572,7 @@ describe('Waitpoint service', () => {
 
             await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -584,6 +602,7 @@ describe('Waitpoint service', () => {
 
             const delayPause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
@@ -596,6 +615,7 @@ describe('Waitpoint service', () => {
             await waitpointService(app.log).deleteByFlowRunId(flowRun.id)
             const approvalPause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval_step',
                 type: PauseType.WEBHOOK,
@@ -629,6 +649,7 @@ describe('Waitpoint service', () => {
 
             const pauseResult = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,

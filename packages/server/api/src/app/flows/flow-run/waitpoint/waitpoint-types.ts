@@ -36,6 +36,10 @@ type Waitpoint = {
 type CreateForPauseParams = {
     flowRunId: ApId
     projectId: ApId
+    // The EnginePrincipal's own id (the BullMQ job id, which for an EXECUTE_FLOW job equals its
+    // top-level flow run's id — see access-token-manager.ts/job-broker.ts). Used to bind the
+    // request to the caller's own run instead of trusting flowRunId/projectId from the body alone.
+    callerRunId: ApId
     stepName: string
     type: `${PauseType}`
     version: WaitpointVersion
