@@ -57,6 +57,11 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                     message: `Dispatch deadline exceeded before execution could start (syncDeadline: ${data.syncDeadline})`,
                     occurredAt: new Date().toISOString(),
                 },
+                // Without this, the internalError above is built but never persisted:
+                // worker-rpc-service.ts only writes internalError inside its
+                // `if (!isNil(input.logsFileId))` branch (ensureLogsFileExists), the same way the
+                // provisioning-throw path above passes it.
+                logsFileId: data.logsFileId,
             })
             // A handled outcome, not an error needing a retry — returning INTERNAL_ERROR here would
             // burn a second BullMQ attempt (and its ~8 minute backoff) on a run that has already been

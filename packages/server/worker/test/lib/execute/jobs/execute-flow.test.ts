@@ -377,6 +377,10 @@ describe('executeFlowJob', () => {
                 expect.objectContaining({
                     status: FlowRunStatus.FAILED,
                     internalError: expect.objectContaining({ source: 'WORKER' }),
+                    // #510 review round 2, item 1: without logsFileId, worker-rpc-service.ts never
+                    // reaches ensureLogsFileExists, and the internalError above is built but never
+                    // persisted anywhere a caller could read it back.
+                    logsFileId: data.logsFileId,
                 }),
             )
             expect(ctx.apiClient.sendFlowResponse).toHaveBeenCalledWith(

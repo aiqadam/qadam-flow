@@ -52,7 +52,7 @@ const mockLog: FastifyBaseLogger = {
     level: 'info',
 } as unknown as FastifyBaseLogger
 
-function createMockJob(id: string, data?: Record<string, unknown>, deferredFailure?: string): Job {
+function createMockJob(id: string, data?: Record<string, unknown>, deferredFailure?: string, deliveryOverrides?: { attemptsMade?: number, stalledCounter?: number }): Job {
     return {
         id,
         name: `job-name-${id}`,
@@ -70,7 +70,8 @@ function createMockJob(id: string, data?: Record<string, unknown>, deferredFailu
             execute: true,
             ...data,
         },
-        attemptsMade: 0,
+        attemptsMade: deliveryOverrides?.attemptsMade ?? 0,
+        stalledCounter: deliveryOverrides?.stalledCounter ?? 0,
         deferredFailure,
         moveToDelayed: vi.fn().mockResolvedValue(undefined),
         moveToFailed: vi.fn().mockResolvedValue(undefined),
@@ -244,5 +245,41 @@ describe('tryDequeue', () => {
 
         expect(result).toBeNull()
         expect(mockWorker.getNextJob).toHaveBeenCalledTimes(1)
+    })
+
+    describe('attempsStarted (#510 review round 2)', () => {
+        it('is 0 on a genuine first delivery (attemptsMade 0, stalledCounter 0)', async () => {
+            const job = createMockJob('job-1', undefined, undefined, { attemptsMade: 0, stalledCounter: 0 })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.attempsStarted).toBe(0)
+        })
+
+        it('is non-zero on a stalled job\'s re-delivery, even though BullMQ never bumped attemptsMade for a stall', async () => {
+            // BullMQ only increments attemptsMade in moveToFinished (a reported failure that
+            // triggers a retry) — a stall is detected and requeued entirely in
+            // moveStalledJobsToWait, which increments stalledCounter instead and never touches
+            // attemptsMade. A stalled re-delivery therefore arrives with attemptsMade still 0.
+            const job = createMockJob('job-1', undefined, undefined, { attemptsMade: 0, stalledCounter: 1 })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.attempsStarted).toBe(1)
+        })
+
+        it('is non-zero on a failed-and-retried delivery', async () => {
+            const job = createMockJob('job-1', undefined, undefined, { attemptsMade: 1, stalledCounter: 0 })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.attempsStarted).toBe(1)
+        })
     })
 })
