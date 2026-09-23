@@ -23,7 +23,7 @@ import {
 } from '@aiqadam/shared'
 import { EngineConstants } from '../handler/context/engine-constants'
 import { testExecutionContext } from '../handler/context/test-execution-context'
-import { createFlowsContext } from '../qadam-context/flows'
+import { createPropertyContext } from '../qadam-context/property-context'
 import { utils } from '../utils'
 import { createPropsResolver } from '../variables/props-resolver'
 import { qadamLoader } from './qadam-loader'
@@ -57,29 +57,12 @@ export const qadamHelper = {
                 unresolvedInput: operation.input,
                 executionState,
             })
-            const ctx = {
+            const ctx = createPropertyContext({
+                constants,
+                stepName: operation.actionOrTriggerName,
+                contextVersion: qadam.getContextInfo?.().version,
                 searchValue: operation.searchValue,
-                server: {
-                    token: constants.engineToken,
-                    apiUrl: constants.internalApiUrl,
-                    publicUrl: operation.publicApiUrl,
-                },
-                project: {
-                    id: constants.projectId,
-                    externalId: constants.externalProjectId,
-                },
-                flows: createFlowsContext(constants),
-                step: {
-                    name: operation.actionOrTriggerName,
-                },
-                connections: utils.createConnectionManager({
-                    projectId: constants.projectId,
-                    engineToken: constants.engineToken,
-                    apiUrl: constants.internalApiUrl,
-                    target: 'properties',
-                    contextVersion: qadam.getContextInfo?.().version,
-                }),
-            }
+            })
           
             switch (property.type) {
                 case PropertyType.DYNAMIC: {

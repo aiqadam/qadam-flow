@@ -6,6 +6,7 @@ import { FlowExecutorContext } from '../handler/context/flow-execution-context'
 import { createConnectionResolver } from '../qadam-context/connection-resolver'
 import { createFileUploader } from '../qadam-context/file-uploader'
 import { createFlowsContext } from '../qadam-context/flows'
+import { createPropertyContext } from '../qadam-context/property-context'
 import { createContextStore } from '../qadam-context/store'
 import { utils } from '../utils'
 import { propsProcessor } from '../variables/props-processor'
@@ -37,6 +38,7 @@ export const triggerHelper = {
             devQadams: constants.devQadams,
             propertySettings,
             stepNames: constants.stepNames,
+            constants,
         })
         const isOldVersionOrNotSupported = isNil(qadamTrigger.onStart)
         if (isOldVersionOrNotSupported) {
@@ -95,6 +97,7 @@ export const triggerHelper = {
             devQadams: constants.devQadams,
             propertySettings,
             stepNames: constants.stepNames,
+            constants,
         })
 
         const appListeners: Listener[] = []
@@ -249,7 +252,7 @@ type ExecuteTriggerParams = {
     constants: EngineConstants
 }
 
-async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, input, propertySettings, projectId, apiUrl, engineToken, devQadams, stepNames, authMetadata: authMetadataMode }: PrepareTriggerExecutionParams) {
+async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, input, propertySettings, projectId, apiUrl, engineToken, devQadams, stepNames, constants, authMetadata: authMetadataMode }: PrepareTriggerExecutionParams) {
     const { qadam, qadamTrigger } = await qadamLoader.getQadamAndTriggerOrThrow({
         qadamName,
         qadamVersion,
@@ -268,7 +271,18 @@ async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, i
         executionState: FlowExecutorContext.empty(),
     })
 
-    const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(resolvedInput, qadamTrigger.props, qadam.auth, qadamTrigger.requireAuth, propertySettings)
+    const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({
+        resolvedInput,
+        props: qadamTrigger.props,
+        auth: qadam.auth,
+        requireAuth: qadamTrigger.requireAuth,
+        propertySettings,
+        propertyContext: createPropertyContext({
+            constants,
+            stepName: triggerName,
+            contextVersion: qadam.getContextInfo?.().version,
+        }),
+    })
 
     if (Object.keys(errors).length > 0) {
         throw new Error(JSON.stringify(errors, null, 2))
@@ -348,4 +362,6 @@ type PrepareTriggerExecutionParams = {
     engineToken: string
     devQadams: string[]
     stepNames: string[]
+    /** Builds the context a DYNAMIC prop's `props()` runs with when the trigger stores no schema. */
+    constants: EngineConstants
 }

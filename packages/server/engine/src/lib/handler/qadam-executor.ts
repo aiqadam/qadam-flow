@@ -7,6 +7,7 @@ import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
 import { qadamLoader } from '../helper/qadam-loader'
 import { createFileUploader } from '../qadam-context/file-uploader'
 import { createFlowsContext } from '../qadam-context/flows'
+import { createPropertyContext } from '../qadam-context/property-context'
 import { createContextStore } from '../qadam-context/store'
 import { waitpointClient } from '../qadam-context/waitpoint-client'
 import { agentTools } from '../tools'
@@ -60,7 +61,18 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
 
         stepOutput.input = censoredInput
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(resolvedInput, qadamAction.props, qadam.auth, qadamAction.requireAuth, action.settings.propertySettings)
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({
+            resolvedInput,
+            props: qadamAction.props,
+            auth: qadam.auth,
+            requireAuth: qadamAction.requireAuth,
+            propertySettings: action.settings.propertySettings,
+            propertyContext: createPropertyContext({
+                constants,
+                stepName: action.name,
+                contextVersion: qadam.getContextInfo?.().version,
+            }),
+        })
         if (Object.keys(errors).length > 0) {
             throw new Error(JSON.stringify(errors, null, 2))
         }
