@@ -188,7 +188,10 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
               { duration: 3000 },
             );
           } else if (status === 503) {
-            toast.info(
+            // Unlike the 504 branch above, the submission was NOT accepted here — the
+            // sync webhook refused it outright — so this must not share the 504's
+            // toast.info styling, which reads as "received, just still working on it".
+            toast.error(
               t(
                 'The service is temporarily busy. Please try again in a moment.',
               ),

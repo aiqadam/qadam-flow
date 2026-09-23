@@ -7,6 +7,7 @@ import { createRoot, Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { humanInputApi } from '@/features/forms/api/human-input-api';
 import { ApForm } from '@/features/forms/components/ap-form';
 
 vi.mock('@/hooks/flags-hooks', () => ({
@@ -19,6 +20,22 @@ vi.mock('@/features/forms/api/human-input-api', () => ({
   humanInputApi: {
     submitForm: vi.fn(),
   },
+}));
+
+const toastSpies = vi.hoisted(() => ({
+  error: vi.fn(),
+  info: vi.fn(),
+  success: vi.fn(),
+}));
+
+vi.mock('sonner', () => ({
+  toast: toastSpies,
+}));
+
+// i18next is not initialised in this harness, so the real `t` answers ''.
+vi.mock('i18next', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('i18next')>()),
+  t: (key: string) => key,
 }));
 
 let container: HTMLDivElement | undefined;
@@ -85,6 +102,7 @@ afterEach(async () => {
   container?.remove();
   container = undefined;
   root = undefined;
+  vi.clearAllMocks();
 });
 
 describe('ApForm toggle input label', () => {
@@ -128,5 +146,58 @@ describe('ApForm toggle input label', () => {
     await flush();
 
     expect(control?.getAttribute('data-state')).toBe('checked');
+  });
+});
+
+describe('ApForm submission errors', () => {
+  const submitAndFlush = async (): Promise<void> => {
+    const submitButton = [
+      ...(container?.querySelectorAll('button[type="submit"]') ?? []),
+    ][0] as HTMLButtonElement | undefined;
+    await act(async () => {
+      submitButton?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+  };
+
+  // 503 means the sync webhook refused the submission outright (unlike the 504 case, where
+  // it was accepted and is merely still running), so it must not share the 504 branch's
+  // toast.info styling — see error-bubble's CHAT_SERVICE_UNAVAILABLE for the chat-side twin.
+  it('shows a distinct, retryable toast.error on a 503, not the 504 toast.info', async () => {
+    vi.mocked(humanInputApi.submitForm).mockRejectedValueOnce(
+      Object.assign(new Error('Service Unavailable'), {
+        isAxiosError: true,
+        response: { status: 503, data: { message: 'Too many concurrent runs.' } },
+      }),
+    );
+
+    await mount();
+    await submitAndFlush();
+
+    expect(toastSpies.error).toHaveBeenCalledWith(
+      'The service is temporarily busy. Please try again in a moment.',
+      expect.objectContaining({ duration: 3000 }),
+    );
+    expect(toastSpies.info).not.toHaveBeenCalled();
+  });
+
+  it('shows the still-running toast.info on a 504', async () => {
+    vi.mocked(humanInputApi.submitForm).mockRejectedValueOnce(
+      Object.assign(new Error('Gateway Timeout'), {
+        isAxiosError: true,
+        response: { status: 504, data: { message: 'Still running.' } },
+      }),
+    );
+
+    await mount();
+    await submitAndFlush();
+
+    expect(toastSpies.info).toHaveBeenCalledWith(
+      'Your submission was received. The flow is still running.',
+      expect.objectContaining({ duration: 3000 }),
+    );
+    expect(toastSpies.error).not.toHaveBeenCalled();
   });
 });

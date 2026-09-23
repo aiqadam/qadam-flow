@@ -8,4 +8,5 @@ export {
   CHAT_SERVICE_UNAVAILABLE,
 } from './chat-message-list/error-bubble';
 export type { ChatSendingError } from './chat-message-list/error-bubble';
+export { chatSendingErrorUtils } from './chat-message-list/classify-sending-error';
 export { ImageDialog } from './chat-message/image-dialog';

@@ -19,9 +19,7 @@ import {
   ImageDialog,
   ChatMessageList,
   ChatSendingError,
-  FLOW_STILL_RUNNING,
-  FLOW_RUN_FAILED,
-  CHAT_SERVICE_UNAVAILABLE,
+  chatSendingErrorUtils,
   Messages,
 } from '@/features/chat';
 import { humanInputApi } from '@/features/forms';
@@ -207,29 +205,17 @@ export function FlowChat({
     },
 
     onError: (error: AxiosError) => {
-      const status = error.response?.status;
-      // Classified by HTTP status, not by response body: the 500/503/504 bodies the
-      // sync webhook answers with are `{ message }` only, with no `code` field for
-      // ErrorBubble to switch on (see /sync's contract in webhook.service.ts).
-      if (status === 504) {
-        setSendingError({ code: FLOW_STILL_RUNNING });
-        scrollToBottom();
-        return;
-      }
-      if (status === 500) {
-        setSendingError({ code: FLOW_RUN_FAILED });
-        scrollToBottom();
-        return;
-      }
-      if (status === 503) {
-        setSendingError({ code: CHAT_SERVICE_UNAVAILABLE });
-        scrollToBottom();
-        return;
-      }
-      const responseData = error.response?.data;
-      const errorData = isApErrorParams(responseData) ? responseData : null;
+      const errorData = chatSendingErrorUtils.classify({
+        status: error.response?.status,
+        data: error.response?.data,
+      });
       setSendingError(errorData);
-      onError?.(errorData);
+      // `onError` is typed to only ever receive a real `ApErrorParams` (or null), so the
+      // web-local sentinel kinds (still-running/failed/overloaded) are deliberately not
+      // forwarded to it — same as the pre-existing FLOW_STILL_RUNNING behaviour.
+      onError?.(
+        chatSendingErrorUtils.isApErrorParams(errorData) ? errorData : null,
+      );
       scrollToBottom();
     },
   });
@@ -316,6 +302,3 @@ export const ChatNotFound = () => {
     />
   );
 };
-
-const isApErrorParams = (data: unknown): data is ApErrorParams =>
-  typeof data === 'object' && data !== null && 'code' in data;
