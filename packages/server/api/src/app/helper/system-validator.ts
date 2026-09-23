@@ -71,6 +71,8 @@ const systemPropValidators: {
     [AppSystemProp.SANDBOX_PROPAGATED_ENV_VARS]: stringValidator,
     [AppSystemProp.SENTRY_DSN]: urlValidator,
     [AppSystemProp.RUNS_METADATA_UPDATE_CONCURRENCY]: numberValidator,
+    [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_ENABLED]: booleanValidator,
+    [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS]: numberValidator,
     [AppSystemProp.LOKI_PASSWORD]: stringValidator,
     [AppSystemProp.LOKI_URL]: urlValidator,
     [AppSystemProp.LOKI_USERNAME]: stringValidator,

@@ -87,6 +87,8 @@ raising `AP_MAX_FLOW_RUN_LOG_SIZE_MB` does.
 | Sync webhook response timeout | 30 s | `AP_WEBHOOK_TIMEOUT_SECONDS` | `30` |
 | Max webhook payload size | 5 MB | `AP_MAX_WEBHOOK_PAYLOAD_SIZE_MB` | `25` |
 | Webhook payload inline threshold | 1024 KB | `AP_WEBHOOK_PAYLOAD_INLINE_THRESHOLD_KB` | `512` |
+| Sync webhook backpressure | — | `AP_SYNC_WEBHOOK_BACKPRESSURE_ENABLED` | `true` |
+| Sync webhook backpressure `Retry-After` | — | `AP_SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS` | `5` |
 
 <Tip>
 For synchronous webhook requests (URLs ending in `/sync`), Qadam Flow waits
@@ -97,6 +99,57 @@ keeps going, so a retry starts the flow again. Payloads above the
 inline threshold are offloaded from Redis to file storage to protect Redis
 memory; smaller payloads stay inline for the fastest path.
 </Tip>
+
+#### Dispatch: acceptance to first step
+
+Accepting a sync webhook call and starting the run are two different moments —
+the run sits `QUEUED` until a worker picks it up. Three things bound and surface
+that gap:
+
+- **A dispatch deadline.** The run's deadline is the same instant its caller's
+  own `AP_WEBHOOK_TIMEOUT_SECONDS` budget expires. If a worker dequeues the job
+  after that instant has passed, it fails the run explicitly (status `FAILED`)
+  instead of executing it late, after the caller has already been answered a
+  504. A run that has already started keeps going exactly as before — only a
+  run that never started is affected.
+- **Observability.** Every flow run exposes a derived `dispatchWaitMs` field
+  (`GET /v1/flow-runs` and `GET /v1/flow-runs/:id`): the time between the run
+  being accepted and the engine actually beginning execution. It is `null`
+  until the run starts. Two cases are worth knowing when reading it:
+  - An **inline** subflow call (`dispatchMode: INLINE`) always reads `0` — it
+    executes synchronously in its parent's own engine process, so there is no
+    queue wait to measure.
+  - A run **retried** with "Retry from failed step" resets its own dispatch
+    clock at the moment of the retry. `dispatchWaitMs` on a retried run
+    reflects time since the run's *original* creation, not the latest retry's
+    own queue wait — read it as a lifetime figure, not a live per-attempt
+    health metric.
+- **Backpressure at submit time.** A sync webhook call can be refused upfront,
+  before a run is even created, with `503` and a `Retry-After` header
+  (`AP_SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS`), when every worker slot
+  is already busy **and** a full extra round of runs is already waiting behind
+  them. The slot count is read live from the connected worker registry
+  (`AP_WORKER_CONCURRENCY` × online workers), not a fixed number, so it tracks
+  however many workers and replicas are actually online. Set
+  `AP_SYNC_WEBHOOK_BACKPRESSURE_ENABLED=false` to disable this check.
+
+<Info>
+**Dispatch throughput ceiling.** With one sandbox per worker concurrency slot,
+the instance's maximum sync-webhook throughput is bounded by:
+
+```
+max throughput ≈ (worker replicas × AP_WORKER_CONCURRENCY) ÷ run duration
+latency at offered concurrency C ≈ C ÷ max throughput   (for C > slot count)
+```
+
+At the shipped defaults (`replicas: 5`, `AP_WORKER_CONCURRENCY=5` → 25 slots)
+and a ~6 s flow, that is ~4 runs/s, and 40 concurrent callers see roughly 10 s
+each — ordinary queueing against a saturated instance, not a stall. The 25
+slots are shared with every other job type (polling triggers, property/
+validation calls), so a busy instance gets less than the formula's best case.
+Raise throughput with more worker replicas or `AP_WORKER_CONCURRENCY`
+(memory-bound, one sandbox per slot), or shorten the flow itself.
+</Info>
 
 ---
 

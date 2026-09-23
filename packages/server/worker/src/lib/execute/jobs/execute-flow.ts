@@ -27,6 +27,19 @@ import { provisionFlowPieces } from '../utils/flow-helpers'
 export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResult> = {
     jobType: WorkerJobType.EXECUTE_FLOW,
     async execute(ctx: JobContext, data: ExecuteFlowJobData): Promise<FireAndForgetJobResult> {
+        // Checked before any other work, so a run that already missed its caller's deadline never
+        // reaches the sandbox at all — only a run that has not yet started is affected; one already
+        // executing keeps going exactly as before (#510). `syncDeadline` is only ever set on a sync
+        // webhook's initial BEGIN dispatch (webhook.service.ts#handleSync), so every other dispatch
+        // path (retry, async webhook, manual trigger, test run) is untouched by this check. A plain
+        // wall-clock comparison is multi-server safe by construction: whichever worker instance
+        // dequeues the job evaluates the same absolute instant, with no coordination needed.
+        if (!isNil(data.syncDeadline) && Date.now() > new Date(data.syncDeadline).getTime()) {
+            ctx.log.warn({ runId: data.runId, syncDeadline: data.syncDeadline }, 'Sync webhook run exceeded its dispatch deadline before starting; failing explicitly instead of executing late')
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED })
+            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
+        }
+
         const timeoutInSeconds = workerSettings.getSettings().FLOW_TIMEOUT_SECONDS
 
         const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })

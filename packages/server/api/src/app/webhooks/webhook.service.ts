@@ -14,6 +14,7 @@ import { triggerSourceService } from '../trigger/trigger-source/trigger-source-s
 import { engineResponseWatcher } from '../workers/engine-response-watcher'
 import { jobQueue, JobType } from '../workers/job-queue/job-queue'
 import { payloadOffloader } from '../workers/payload-offloader'
+import { webhookBackpressureService } from './webhook-backpressure-service'
 import { webhookHandshake } from './webhook-handshake'
 
 const tracer = trace.getTracer('webhook-service')
@@ -310,6 +311,22 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 }
             }
 
+            const capacity = await webhookBackpressureService(logger).checkCapacity()
+            if (!capacity.ok) {
+                span.setAttribute('webhook.backpressureRejected', true)
+                return {
+                    status: StatusCodes.SERVICE_UNAVAILABLE,
+                    body: { message: 'The instance is at capacity for synchronous webhook runs and this one would not start in time. Retry after the given delay, or switch this webhook to async.' },
+                    headers: { 'Retry-After': String(capacity.retryAfterSeconds) },
+                }
+            }
+
+            // The same instant the sync listener below times out at — a run dequeued after this
+            // has passed fails explicitly instead of executing for a caller that has already
+            // stopped waiting (#510). Computed here, not inside `start()`, so it shares the exact
+            // reference instant the listener's own timeout starts counting from.
+            const syncDeadline = new Date(Date.now() + (timeoutMs ?? WEBHOOK_TIMEOUT_MS)).toISOString()
+
             // Register the listener before starting the run: the engine can answer as soon as
             // the run is created, and if that happens before the listener is registered, the
             // response is delivered to nobody and the caller times out (same class of bug as
@@ -333,6 +350,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 parentRunId,
                 failParentOnFailure,
                 parentWaitpointId,
+                syncDeadline,
             }))
             if (error) {
                 listener.cancel()

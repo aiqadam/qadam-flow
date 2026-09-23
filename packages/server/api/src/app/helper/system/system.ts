@@ -68,6 +68,10 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     // registry: `false` keeps `needsInstalling()` excluding OFFICIAL qadams and keeps
     // `qadamCache` shadowing persisted rows by name alone. See #477.
     [AppSystemProp.OFFICIAL_QADAMS_INSTALL_ENABLED]: 'false',
+    // Whether a sync webhook refuses upfront (503) rather than accept a run it cannot start in
+    // time. See webhook-backpressure-service.ts for the trip point.
+    [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_ENABLED]: 'true',
+    [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS]: '5',
 }
 
 let globalLogger: FastifyBaseLogger

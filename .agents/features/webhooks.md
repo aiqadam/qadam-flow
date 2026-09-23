@@ -8,6 +8,7 @@ Ingests inbound HTTP requests from external services and routes them to flows fo
 - `packages/server/api/src/app/webhooks/webhook-controller.ts` — 5 route registrations (sync, async, draft sync, draft async, test)
 - `packages/server/api/src/app/webhooks/webhook-request-converter.ts` — payload normalization and file upload
 - `packages/server/api/src/app/webhooks/webhook-handshake.ts` — handshake verification logic
+- `packages/server/api/src/app/webhooks/webhook-backpressure-service.ts` — submit-time capacity check for sync webhooks (#510)
 - `packages/server/api/src/app/webhooks/webhook-module.ts` — module registration
 - `packages/shared/src/lib/automation/webhook/dto.ts` — WebhookUrlParams schema
 - `packages/shared/src/lib/automation/trigger/index.ts` — WebhookHandshakeStrategy enum and WebhookHandshakeConfiguration schema
@@ -53,6 +54,12 @@ The worker forwards the `JobPayload` straight into the `EXECUTE_TRIGGER_HOOK` en
 2. Register one-time listener via `engineResponseWatcher`
 3. Wait for engine to send response (default timeout: `AP_WEBHOOK_TIMEOUT_SECONDS`, default 30; callers may pass `timeoutMs` to override per-invocation, e.g. MCP uses 5 minutes)
 4. Return the flow's response (status, body, headers). With no Return Response step the engine answers itself: 204 on SUCCEEDED, a generic 500 on any other terminal status (`flow.operation.ts`, plus `execute-flow.ts` for failures the engine never reports). A run still going at the timeout gets `SYNC_RUN_TIMEOUT_RESPONSE`: 504, no `Retry-After`, no `runId` (the legacy resume route takes the run id alone as its credential)
+
+### Dispatch deadline, backpressure, and dispatch-wait observability (#510)
+
+- **`syncDeadline`** — `handleSync` computes `Date.now() + (timeoutMs ?? WEBHOOK_TIMEOUT_MS)` (the exact instant the sync listener's own timeout fires) and threads it through `flowRunService.start` → `addToQueue` as `ExecuteFlowJobData.syncDeadline` (optional, set only on a sync webhook's initial `BEGIN` dispatch — never on retry, async webhook, manual trigger, or test run). `executeFlowJob.execute` (worker) checks it before any other work: if the wall clock is already past it, the run is failed explicitly (`FlowRunStatus.FAILED`, following the same "engine never ran" convention as a missing flow version or a provisioning failure) instead of executing for a caller that has already been answered the 504. A run whose deadline has not yet passed by dequeue time is unaffected even if it later runs long — only the "has not started yet" moment is gated. Multi-server safe by construction: a plain wall-clock comparison, no coordination needed.
+- **Backpressure** (`webhook-backpressure-service.ts`) — before creating a run, a sync webhook call checks `checkCapacity()`: worker slot count (`AP_WORKER_CONCURRENCY` summed across the online worker registry, `workerMachineCache`) versus the shared BullMQ queue's `waiting`/`active` counts. Refuses upfront with `503` + `Retry-After: AP_SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS` only when every slot is busy **and** a full extra round of runs is already queued behind them (`active >= slots && waiting >= slots`) — the earliest point "will not start in time" can be said without guessing a per-run duration. A registry read of zero slots (no worker has ever connected, e.g. most non-e2e test suites) is treated as unknown capacity, not zero, and never blocks. Toggle with `AP_SYNC_WEBHOOK_BACKPRESSURE_ENABLED`.
+- **`dispatchWaitMs`** — derived (never persisted) on `FlowRun`, computed at read time in `flowRunService` as `startTime - created`. `null` until the run starts. INLINE dispatch mode reads `0` by construction (synchronous with row creation); a `FROM_FAILED_STEP` retry resets `startTime` on the same row, so the field then measures elapsed time since the run's original creation, not the latest retry's own queue wait — see the comment on `withDispatchWaitMs` for the full reasoning. No DB migration: purely a read-path computation.
 
 ## Request Conversion
 

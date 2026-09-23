@@ -355,4 +355,48 @@ describe('executeFlowJob', () => {
             )
         })
     })
+
+    describe('sync webhook dispatch deadline (#510)', () => {
+        it('fails the run explicitly, without ever reaching the sandbox, once its deadline has passed', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({
+                executionType: ExecutionType.BEGIN,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+                syncDeadline: new Date(Date.now() - 1000).toISOString(),
+            })
+
+            const result = await executeFlowJob.execute(ctx, data)
+
+            expect(result.kind).toBe(JobResultKind.FIRE_AND_FORGET)
+            expect(ctx.sandboxManager.acquire).not.toHaveBeenCalled()
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(
+                expect.objectContaining({ status: FlowRunStatus.FAILED }),
+            )
+            expect(ctx.apiClient.sendFlowResponse).toHaveBeenCalledWith(
+                expect.objectContaining({ workerHandlerId: 'handler-1', httpRequestId: 'req-1' }),
+            )
+        })
+
+        it('executes normally once the deadline has not yet passed', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({
+                executionType: ExecutionType.BEGIN,
+                syncDeadline: new Date(Date.now() + 60_000).toISOString(),
+            })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.sandboxManager.acquire).toHaveBeenCalled()
+        })
+
+        it('is never checked on a dispatch with no syncDeadline (retry, async webhook, manual trigger)', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, syncDeadline: undefined })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.sandboxManager.acquire).toHaveBeenCalled()
+        })
+    })
 })
