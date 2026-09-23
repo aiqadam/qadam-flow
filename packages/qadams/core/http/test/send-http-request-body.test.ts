@@ -1,5 +1,3 @@
-/// <reference types="vitest/globals" />
-
 import { AxiosHttpClient, HttpMethod, httpClient } from '@aiqadam/qadams-common';
 import { ApFile, createMockActionContext } from '@aiqadam/qadams-framework';
 import axios, { AxiosRequestConfig } from 'axios';

@@ -8,7 +8,7 @@ export const httpRequestBodyUtils = {
   descriptions: {
     raw: 'Sent exactly as typed. Content-Type is text/plain unless you set a Content-Type header.',
     binary:
-      "The file's bytes are sent as the request body, unchanged. Content-Type is taken from your Content-Type header if you set one, otherwise from the file's extension, otherwise application/octet-stream.",
+      "The file's bytes are sent as the request body, unchanged. Content-Type is taken from your Content-Type header if you set one (a connection that sets its own, such as Mautic or PagerDuty, overrides it), otherwise from the file's extension, otherwise application/octet-stream.",
   },
   // The text goes out as bytes rather than as a string: axios JSON-encodes a string body whenever
   // the Content-Type is application/json, which would quote a raw body the user typed verbatim.

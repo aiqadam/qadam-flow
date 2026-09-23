@@ -11,6 +11,12 @@ const customApiCall = createCustomApiCallAction({
   baseUrl: () => 'https://api.example.com',
 });
 
+// Mautic and PagerDuty map their connection to headers that include a Content-Type.
+const customApiCallWithConnectionContentType = createCustomApiCallAction({
+  baseUrl: () => 'https://api.example.com',
+  authMapping: async () => ({ 'Content-Type': 'application/json' }),
+});
+
 describe('createCustomApiCallAction request body', () => {
   let sent: SentRequest[] = [];
 
@@ -114,19 +120,39 @@ describe('createCustomApiCallAction request body', () => {
     expect(sent[0].contentTypes).toHaveLength(1);
     expect(sent[0].contentTypes[0]).toMatch(/^multipart\/form-data; boundary=/);
   });
+
+  it.each([
+    ['raw', { data: 'a,b\n1,2' }],
+    ['binary', { data: new ApFile('rows.csv', Buffer.from('a,b\n1,2'), 'csv') }],
+  ])(
+    "lets a connection's own Content-Type override the user's for a %s body, as one header",
+    async (body_type, body) => {
+      await run({
+        action: customApiCallWithConnectionContentType,
+        body_type,
+        body,
+        headers: { 'content-type': 'text/csv' },
+      });
+
+      expect(sent[0].contentTypes).toEqual(['application/json']);
+      expect(bodyText({ request: sent[0] })).toBe('a,b\n1,2');
+    }
+  );
 });
 
 async function run({
+  action = customApiCall,
   body_type,
   body,
   headers = {},
 }: {
+  action?: typeof customApiCall;
   body_type: string;
   body: Record<string, unknown>;
   headers?: Record<string, string>;
 }): Promise<unknown> {
-  return customApiCall.run(
-    createMockActionContext<typeof customApiCall.props>({
+  return action.run(
+    createMockActionContext<typeof action.props>({
       propsValue: {
         url: { url: 'https://api.example.com/upload' },
         method: HttpMethod.POST,
