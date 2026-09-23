@@ -40,6 +40,43 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### Steps built outside the builder now have their dynamic sub-fields processed, and a bad file value fails the step
+
+Some qadam inputs are dynamic: the fields inside them depend on another input, such as the HTTP
+qadam's **Body** or the Telegram **Send Media** action's **Media**. The builder stores the shape of
+those inner fields with the step when you fill in the form, and the engine used that stored shape to
+convert and validate them at run time. A step created through MCP, the REST API or a flow import
+stores no shape, so its inner fields reached the qadam untouched. A file inside one arrived as its
+raw URL string, and the step failed with messages like "No media defined" or sent an empty
+multipart part ([#388](https://github.com/aiqadam/qadam-flow/issues/388)).
+
+When a step stores no shape, the engine now works it out at run time by calling the same function
+the builder calls, and then converts and validates every inner field exactly as it does for a
+builder-built step. A step that already stores a shape behaves as before. If working out the shape
+fails, for example because the third-party API behind it is down, the value is passed through
+unprocessed as it was before.
+
+File inputs, wherever they appear, are also stricter. The engine accepts only an `http(s)` URL,
+such as `{{step_1['output'].file}}`, or a `data:<mime>;base64,<data>` URI. A download that fails now
+fails the step with the reason, for example
+`Failed to download file from https://example.com/report.pdf: HTTP 401`. The URL's query string is
+left out of the message, because platform file URLs carry an access token there.
+
+- **An invalid inner value in a step built outside the builder now fails the step.** It used to pass
+  through silently. The step's error lists the field and the problem, in the same format as any
+  other input validation error.
+- **A file value that is not an `http(s)` URL or a `data:` URI now fails the step.** This covers
+  objects such as `{ "url": …, "filename": … }`, bare base64 without a `data:` prefix, and other
+  schemes such as `file://` or `memory://`. Before, the qadam received an empty file. An empty value
+  in an optional file input is still allowed.
+- **A file download that fails now fails the step.** A network error or a non-2xx response used to
+  hand the qadam an empty file, or the error page itself as the file's content.
+- **Steps without a stored shape make one extra call per run.** The shape is worked out on every run
+  of those steps, and for some qadams that means a call to the third-party service. Steps saved in
+  the builder are unaffected.
+- **To fix a step that now fails**, correct the value the error names. Alternatively, open the step
+  in the builder and save it again so that it stores its shape.
+
 #### A custom qadam registered under the `@aiqadam/` scope is refused, and existing ones are removed
 
 A platform admin could upload a custom qadam whose `package.json` name sat in the official
