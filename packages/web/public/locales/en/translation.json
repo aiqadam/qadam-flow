@@ -1448,6 +1448,8 @@
   "No model found.": "No model found.",
   "Auto": "Auto",
   "Could not switch models. Please try again.": "Could not switch models. Please try again.",
+  "Could not switch projects. Please try again.": "Could not switch projects. Please try again.",
+  "Start a new conversation to work in another project.": "Start a new conversation to work in another project.",
   "Embedding model for knowledge base: {model}": "Embedding model for knowledge base: {model}",
   "This provider does not support knowledge base embeddings.": "This provider does not support knowledge base embeddings.",
   "Follow these instructions to get your Claude API Key:\n\n1. Go to https://console.anthropic.com/settings/keys.\n2. Once on the website, locate and click on the option to obtain your Claude API Key.\n": "Follow these instructions to get your Claude API Key:\n\n1. Go to https://console.anthropic.com/settings/keys.\n2. Once on the website, locate and click on the option to obtain your Claude API Key.\n",

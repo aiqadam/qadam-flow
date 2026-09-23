@@ -158,12 +158,16 @@ export type ChatConversation = z.infer<typeof ChatConversation>
 export const CreateChatConversationRequest = z.object({
     title: Nullable(z.string()).optional(),
     modelName: Nullable(z.string()).optional(),
+    // Null or absent lets the first run pick the default project; either way the project is pinned
+    // on that first run and cannot change afterwards.
+    projectId: Nullable(z.string()).optional(),
 })
 export type CreateChatConversationRequest = z.infer<typeof CreateChatConversationRequest>
 
 export const UpdateChatConversationRequest = z.object({
     title: Nullable(z.string()).optional(),
     modelName: Nullable(z.string()).optional(),
+    projectId: Nullable(z.string()).optional(),
 })
 export type UpdateChatConversationRequest = z.infer<typeof UpdateChatConversationRequest>
 

@@ -1,8 +1,9 @@
-import { apId, ChatConversationStatus, DefaultProjectRole, PersistedChatPartType, PersistedChatRole } from '@aiqadam/shared'
+import { apId, ChatConversationStatus, DefaultProjectRole, PersistedChatPartType, PersistedChatRole, Project } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { chatConversationService } from '../../../../src/app/chat/chat-conversation.service'
 import { db } from '../../../helpers/db'
+import { createMockProject } from '../../../helpers/mocks'
 import { createMemberContext, createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -38,8 +39,8 @@ describe('Chat conversations API', () => {
                 platformId: ctx.platform.id,
                 userId: ctx.user.id,
             })
-            // Null rather than the caller's project: the model picks a project mid-conversation,
-            // so the row must be creatable without one.
+            // Null when nothing was picked: the first run pins the default project, so the row
+            // must be creatable without one.
             expect(conversation['projectId']).toBeNull()
         })
 
@@ -163,6 +164,110 @@ describe('Chat conversations API', () => {
             expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
             const saved = await db.findOneBy('chat_conversation', { id: theirs['id'] })
             expect(saved).toMatchObject({ title: 'theirs' })
+        })
+    })
+
+    describe('project pick', () => {
+        async function saveTeamProject(platformId: string): Promise<Project> {
+            const project = createMockProject({ platformId, ownerId: ctx.user.id })
+            await db.save('project', project)
+            return project
+        }
+
+        async function startedConversation(body: Record<string, unknown> = {}): Promise<string> {
+            const conversation = await createConversation(ctx, body)
+            await db.update('chat_conversation', conversation['id'], {
+                projectId: ctx.project.id,
+                uiMessages: [{ role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'hi' }] }],
+            })
+            return conversation['id']
+        }
+
+        it('creates the conversation in a project the caller can reach', async () => {
+            const project = await saveTeamProject(ctx.platform.id)
+
+            const conversation = await createConversation(ctx, { projectId: project.id })
+
+            expect(conversation['projectId']).toBe(project.id)
+        })
+
+        it('refuses a project on another platform with the same 404 as a missing one', async () => {
+            const other = await createTestContext(app!)
+
+            const response = await ctx.post('/v1/chat/conversations', { projectId: other.project.id })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+            expect(await db.findOneBy('chat_conversation', { userId: ctx.user.id })).toBeNull()
+        })
+
+        it('refuses a project on the same platform the caller is not a member of', async () => {
+            const member = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.EDITOR })
+            const notTheirs = await saveTeamProject(ctx.platform.id)
+
+            const response = await member.post('/v1/chat/conversations', { projectId: notTheirs.id })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+        })
+
+        it('repins an empty conversation, with the project as the only field sent', async () => {
+            const project = await saveTeamProject(ctx.platform.id)
+            const conversation = await createConversation(ctx, { title: 'kept' })
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversation['id']}`, { projectId: project.id })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response!.json()).toMatchObject({ projectId: project.id, title: 'kept' })
+        })
+
+        it('refuses to repin to a project the caller cannot reach', async () => {
+            const other = await createTestContext(app!)
+            const conversation = await createConversation(ctx)
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversation['id']}`, { projectId: other.project.id })
+
+            expect(response?.statusCode).toBe(StatusCodes.NOT_FOUND)
+            const saved = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversation['id'] })
+            expect(saved?.projectId).toBeNull()
+        })
+
+        it('refuses to repin a conversation that has already run', async () => {
+            const id = await startedConversation()
+            const project = await saveTeamProject(ctx.platform.id)
+
+            const response = await ctx.post(`/v1/chat/conversations/${id}`, { projectId: project.id })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const saved = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id })
+            expect(saved?.projectId).toBe(ctx.project.id)
+        })
+
+        it('accepts the project a started conversation is already pinned to', async () => {
+            const id = await startedConversation()
+
+            const response = await ctx.post(`/v1/chat/conversations/${id}`, { projectId: ctx.project.id, title: 'renamed' })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response!.json()).toMatchObject({ projectId: ctx.project.id, title: 'renamed' })
+        })
+
+        // At the service because the window — a repin landing between the run's project lookup and
+        // its admission — cannot be hit on purpose through the API.
+        it('refuses to admit a run resolved against a project the row no longer carries', async () => {
+            const project = await saveTeamProject(ctx.platform.id)
+            const conversation = await createConversation(ctx, { projectId: project.id })
+
+            await expect(chatConversationService.startRun({
+                id: conversation['id'],
+                platformId: ctx.platform.id,
+                userId: ctx.user.id,
+                projectId: ctx.project.id,
+                runId: apId(),
+                log: app!.log,
+                userMessage: { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'hi' }] },
+            })).rejects.toThrow()
+
+            const saved = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversation['id'] })
+            expect(saved).toMatchObject({ projectId: project.id, status: ChatConversationStatus.IDLE, uiMessages: null })
         })
     })
 

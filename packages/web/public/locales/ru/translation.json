@@ -1446,6 +1446,8 @@
   "No model found.": "Модель не найдена.",
   "Auto": "Авто",
   "Could not switch models. Please try again.": "Не удалось сменить модель. Попробуйте ещё раз.",
+  "Could not switch projects. Please try again.": "Не удалось сменить проект. Попробуйте ещё раз.",
+  "Start a new conversation to work in another project.": "Чтобы работать в другом проекте, начните новый диалог.",
   "Embedding model for knowledge base: {model}": "Модель эмбеддингов для базы знаний: {model}",
   "This provider does not support knowledge base embeddings.": "Этот провайдер не поддерживает эмбеддинги для базы знаний.",
   "Follow these instructions to get your Claude API Key:\n\n1. Go to https://console.anthropic.com/settings/keys.\n2. Once on the website, locate and click on the option to obtain your Claude API Key.\n": "Выполните эти инструкции, чтобы получить API-ключ Claude:\n\n1. Перейдите на https://console.anthropic.com/settings/keys.\n2. На сайте найдите и нажмите опцию получения API-ключа Claude.\n",

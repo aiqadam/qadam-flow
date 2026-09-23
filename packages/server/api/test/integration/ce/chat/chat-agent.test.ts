@@ -398,6 +398,22 @@ describe('Chat agent API', () => {
             expect(finished.projectId).toBe(ctx.project.id)
         })
 
+        it('works in the project picked when the conversation was created, not the default one', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const picked = createMockProject({ platformId: ctx.platform.id, ownerId: ctx.user.id })
+            await db.save('project', picked)
+            const conversationId = await createConversation(ctx, { projectId: picked.id })
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, {
+                content: 'say hello',
+                runId: apId(),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const finished = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            expect(finished.projectId).toBe(picked.id)
+        })
+
         // The suite otherwise only ever streams plain text, which proves the tools are *declared*
         // to the provider and never that one can be *run*. This drives a real tool call through
         // the adapter, the project-scoped handler and the persistence, and then a second turn so
