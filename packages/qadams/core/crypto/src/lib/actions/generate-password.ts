@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import {
   Property,
   createAction,
@@ -36,15 +37,12 @@ export const generatePassword = createAction({
     const charset = context.propsValue.characterSet === 'alphanumeric'
       ? 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
       : 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+~`|}{[]:;?><,./-=';
-    
-    let password = '';
+
     const length = context.propsValue.length;
 
-    for (let i = 0; i < length; i++) {
-      const randomIndex = Math.floor(Math.random() * charset.length);
-      password += charset[randomIndex];
-    }
-
-    return password;
+    // Flows use this output for invite tokens, one-time codes and API keys (#507), so the
+    // characters must come from a CSPRNG. `randomInt` is uniform over [0, max) — it rejection-
+    // samples internally, so there is no modulo bias to correct here.
+    return Array.from({ length }, () => charset[randomInt(charset.length)]).join('');
   },
 });
