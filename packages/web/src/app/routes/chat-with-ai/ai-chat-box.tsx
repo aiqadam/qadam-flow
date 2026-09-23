@@ -28,6 +28,7 @@ import {
   MessageSkeletons,
   SetupRequiredState,
 } from './components/chat-empty-state';
+import { useChatProjects } from './components/chat-project-picker';
 import { QuickReplies } from './components/quick-replies';
 import { UserMessage } from './components/user-message';
 import { getTextFromParts } from './lib/message-parsers';
@@ -67,6 +68,7 @@ function ChatBoxContent({
   onConversationCreated,
 }: AIChatBoxProps) {
   const queryClient = useQueryClient();
+  const { defaultProject } = useChatProjects();
 
   const {
     messages,
@@ -79,9 +81,12 @@ function ChatBoxContent({
     setConversationId,
     modelName,
     setModelName,
+    projectId,
+    setProjectId,
   } = useAgentChat({
     onTitleUpdate,
     onConversationCreated,
+    defaultProjectId: defaultProject?.id ?? null,
   });
 
   const quickReplies = useChatStoreContext((s) => s.quickReplies);
@@ -275,6 +280,9 @@ function ChatBoxContent({
               }
               modelName={modelName}
               onModelChange={setModelName}
+              projectId={projectId}
+              onProjectChange={setProjectId}
+              isProjectLocked={!isEmpty}
             />
           </div>
         </div>

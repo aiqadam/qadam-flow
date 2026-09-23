@@ -20,6 +20,7 @@ export const chatController: FastifyPluginAsyncZod = async (app) => {
             platformId: request.principal.platform.id,
             userId: request.principal.id,
             request: request.body,
+            log: request.log,
         })
     })
 
@@ -57,6 +58,7 @@ export const chatController: FastifyPluginAsyncZod = async (app) => {
             platformId: request.principal.platform.id,
             userId: request.principal.id,
             request: request.body,
+            log: request.log,
         })
     })
 

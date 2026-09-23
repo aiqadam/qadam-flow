@@ -21,16 +21,19 @@ import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
 import { AnsweredGate, chatApprovals } from './chat-approvals'
 import { ChatConversationEntity, ChatConversationSchema } from './chat-conversation-entity'
+import { chatProjects } from './chat-projects'
 
 const repo = repoFactory(ChatConversationEntity)
 
 export const chatConversationService = {
-    async create({ platformId, userId, request }: CreateParams): Promise<ChatConversation> {
+    async create({ platformId, userId, request, log }: CreateParams): Promise<ChatConversation> {
+        const projectId = request.projectId ?? null
+        await assertProjectAccessible({ projectId, platformId, userId, log })
         return repo().save({
             id: apId(),
             platformId,
             userId,
-            projectId: null,
+            projectId,
             title: request.title ?? null,
             modelName: request.modelName ?? null,
             status: ChatConversationStatus.IDLE,
@@ -87,12 +90,19 @@ export const chatConversationService = {
         return conversation.uiMessages ?? []
     },
 
-    async update({ id, platformId, userId, request }: UpdateParams): Promise<ChatConversation> {
+    async update({ id, platformId, userId, request, log }: UpdateParams): Promise<ChatConversation> {
         await this.getOneOrThrow({ id, platformId, userId })
-        await repo().update({ id, platformId, userId }, {
+        if (request.projectId !== undefined) {
+            await assertProjectAccessible({ projectId: request.projectId, platformId, userId, log })
+            await repinProject({ id, platformId, userId, projectId: request.projectId })
+        }
+        const changes = {
             ...spreadIfNotUndefined('title', request.title),
             ...spreadIfNotUndefined('modelName', request.modelName),
-        })
+        }
+        if (Object.keys(changes).length > 0) {
+            await repo().update({ id, platformId, userId }, changes)
+        }
         return this.getOneOrThrow({ id, platformId, userId })
     },
 
@@ -191,6 +201,53 @@ export const chatConversationService = {
 }
 
 
+// Same answer the run loop gives (`resolveProjectId`), asked up front so a pick the user may not
+// reach is refused when it is made rather than on the first message. Deliberately the same error
+// whether the project is absent or merely not theirs, so this cannot probe for project ids.
+async function assertProjectAccessible({ projectId, platformId, userId, log }: AssertProjectAccessibleParams): Promise<void> {
+    if (isNil(projectId)) {
+        return
+    }
+    const project = await chatProjects.findAccessible({ projectId, platformId, userId, log })
+    if (isNil(project)) {
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: { entityId: projectId, entityType: 'Project' },
+        })
+    }
+}
+
+// The project may only change while the conversation is empty: once a run has happened, the
+// transcript and the tool results in it describe the pinned project, and replaying them against
+// another one would have the model act on flows and connections that are not there. Locked like
+// `admitRun`, which is the write that makes a conversation non-empty, so a repin and a first message
+// cannot both pass their checks.
+async function repinProject({ id, platformId, userId, projectId }: RepinProjectParams): Promise<void> {
+    await repo().manager.transaction(async (entityManager) => {
+        const conversation = await entityManager.findOne(ChatConversationEntity, {
+            where: { id, platformId, userId },
+            lock: { mode: 'pessimistic_write' },
+        })
+        if (isNil(conversation)) {
+            throw new QadamFlowError({
+                code: ErrorCode.ENTITY_NOT_FOUND,
+                params: { entityId: id, entityType: 'ChatConversation' },
+            })
+        }
+        if (conversation.projectId === projectId) {
+            return
+        }
+        const hasStarted = (conversation.uiMessages ?? []).length > 0 || conversation.status === ChatConversationStatus.STREAMING
+        if (hasStarted) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'The project of a conversation cannot be changed after it has started. Start a new conversation to work in another project.' },
+            })
+        }
+        await entityManager.update(ChatConversationEntity, { id, platformId, userId }, { projectId })
+    })
+}
+
 async function admitRun({ id, platformId, userId, projectId, runId, userMessage, approval }: AdmitRunParams): Promise<AdmittedRun> {
     return repo().manager.transaction(async (entityManager) => {
         const conversation = await entityManager.findOne(ChatConversationEntity, {
@@ -248,6 +305,15 @@ async function admitRun({ id, platformId, userId, projectId, runId, userMessage,
             })
         }
 
+        // `projectId` was resolved from a read taken before this lock. A repin that landed in between
+        // (only possible while the conversation is still empty) would otherwise be overwritten here,
+        // and the run would work in a project other than the one the picker now shows.
+        if (!isNil(conversation.projectId) && conversation.projectId !== projectId) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'The project of this conversation changed while your message was being sent. Send it again.' },
+            })
+        }
         const uiMessages = nextUiMessages({ conversation, userMessage, answered })
         await entityManager.save(ChatConversationEntity, {
             ...conversation,
@@ -314,6 +380,7 @@ type CreateParams = {
     platformId: string
     userId: string
     request: CreateChatConversationRequest
+    log: FastifyBaseLogger
 }
 
 type ListParams = {
@@ -331,6 +398,18 @@ type GetParams = {
 
 type UpdateParams = GetParams & {
     request: UpdateChatConversationRequest
+    log: FastifyBaseLogger
+}
+
+type AssertProjectAccessibleParams = {
+    projectId: string | null
+    platformId: string
+    userId: string
+    log: FastifyBaseLogger
+}
+
+type RepinProjectParams = GetParams & {
+    projectId: string | null
 }
 
 type RunScopedParams = GetParams & {
