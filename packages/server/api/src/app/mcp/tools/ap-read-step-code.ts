@@ -49,6 +49,8 @@ export const apReadStepCodeTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 const code = settings.sourceCode?.code ?? ''
                 const packageJson = settings.sourceCode?.packageJson ?? '{}'
                 const input = settings.input ?? {}
+                const logInput = step.logInput ?? true
+                const logOutput = step.logOutput ?? true
 
                 // `code`/`packageJson` are flow-authored and go out inside a triple-backtick fence
                 // unwrapped — a deliberate decision, not an oversight (#485 review). This tool's
@@ -62,9 +64,9 @@ export const apReadStepCodeTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 return {
                     content: [{
                         type: 'text',
-                        text: `Source code for step "${stepName}":\n\n### Source Code\n\`\`\`typescript\n${code}\n\`\`\`\n\n### package.json\n\`\`\`json\n${packageJson}\n\`\`\`\n\n### Input\n${JSON.stringify(input, null, 2)}`,
+                        text: `Source code for step "${stepName}":\n\n### Source Code\n\`\`\`typescript\n${code}\n\`\`\`\n\n### package.json\n\`\`\`json\n${packageJson}\n\`\`\`\n\n### Input\n${JSON.stringify(input, null, 2)}\n\n### Run log\nlogInput: ${logInput}, logOutput: ${logOutput}`,
                     }],
-                    structuredContent: { stepName, code, packageJson, input },
+                    structuredContent: { stepName, code, packageJson, input, logInput, logOutput },
                 }
             }
             catch (err) {

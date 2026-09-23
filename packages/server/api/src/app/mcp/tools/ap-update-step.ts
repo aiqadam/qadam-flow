@@ -1,5 +1,6 @@
 import { QadamPropertyMap } from '@aiqadam/qadams-framework'
 import {
+    FlowAction,
     FlowActionType,
     FlowOperationRequest,
     FlowOperationType,
@@ -10,6 +11,7 @@ import {
     Permission,
     ProjectScopedMcpServer,
     QadamActionSettings,
+    Step,
     UpdateActionRequest,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
@@ -33,6 +35,8 @@ const updateStepInput = z.object({
     packageJson: z.string().optional(),
     continueOnFailure: z.boolean().optional(),
     retryOnFailure: z.boolean().optional(),
+    logInput: z.boolean().optional(),
+    logOutput: z.boolean().optional(),
 })
 
 export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -53,10 +57,12 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
             packageJson: z.string().optional().describe('For CODE steps only: package.json content as a JSON string for npm dependencies. Defaults to "{}".'),
             continueOnFailure: z.boolean().optional().describe('For CODE/PIECE steps: set true on the step that can fail (the one whose failure you want to react to), NOT on the recovery step. The flow keeps running on failure and the step gains On success / On failure branches — add handler steps into them with ap_add_step using stepLocationRelativeToParent INSIDE_ON_SUCCESS_BRANCH / INSIDE_ON_FAILURE_BRANCH and parentStepName = this step.'),
             retryOnFailure: z.boolean().optional().describe('For CODE/PIECE steps: whether to retry this step on failure.'),
+            logInput: z.boolean().optional().describe(mcpUtils.LOG_INPUT_HINT),
+            logOutput: z.boolean().optional().describe(mcpUtils.LOG_OUTPUT_HINT),
         },
         annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
-            const { flowId, stepName, displayName, input, auth, actionName, loopItems, skip, sourceCode, packageJson, continueOnFailure, retryOnFailure } = updateStepInput.parse(args)
+            const { flowId, stepName, displayName, input, auth, actionName, loopItems, skip, sourceCode, packageJson, continueOnFailure, retryOnFailure, logInput, logOutput } = updateStepInput.parse(args)
 
             const [flow, project] = await Promise.all([
                 flowService(log).getOnePopulated({ id: flowId, projectId: mcp.projectId }),
@@ -74,7 +80,7 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 }
             }
 
-            if (flowStructureUtil.isTrigger(step.type)) {
+            if (!isActionStep(step)) {
                 return {
                     content: [{ type: 'text', text: `❌ "${stepName}" is a trigger step. Use ap_update_trigger to configure triggers.` }],
                 }
@@ -177,13 +183,18 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 }
             }
 
+            // `_updateAction` writes `skip`, `logInput` and `logOutput` straight from the request with
+            // no fallback to the stored step, so a field this tool leaves out is not "unchanged" — it
+            // is reset. Every one of them therefore defaults to the step's current value (#505).
             const payload = {
                 type: step.type,
                 name: step.name,
                 displayName: displayName ?? step.displayName,
                 valid: step.valid,
                 settings: updatedSettings,
-                ...(skip !== undefined && { skip }),
+                skip: skip ?? step.skip,
+                logInput: logInput ?? step.logInput,
+                logOutput: logOutput ?? step.logOutput,
             }
 
             const parseResult = UpdateActionRequest.safeParse(payload)
@@ -233,6 +244,10 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
             }
         },
     }
+}
+
+function isActionStep(step: Step): step is FlowAction {
+    return flowStructureUtil.isAction(step.type)
 }
 
 // AI qadams' `providerId` only names a row of the `provider` type it was picked alongside

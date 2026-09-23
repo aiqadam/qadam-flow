@@ -76,6 +76,14 @@ Flow Runs records every execution of a flow, tracking its full lifecycle from qu
 - Compressed with zstd before upload
 - Worker uploads via JWT-signed URLs (7-day expiry)
 - State backed up every 15s during execution for crash recovery
+- **Per-step redaction (#389 / #451 / #505):** an action's `logInput` / `logOutput: false` and a
+  trigger's `logOutput: false` replace that step's persisted input/output with `**REDACTED**`
+  (`packages/server/engine/src/lib/helper/log-redaction.ts`); the live value still flows to the
+  next step. The trigger has no `logInput`: its logged input is configuration, the payload that
+  carries user data is its output. Outputs stay raw while a run is PAUSED (RESUME hydrates from
+  the log) and are redacted by the terminal backup. Settable from the builder (`StepLogSettingsForm`)
+  and from MCP (`ap_add_step` / `ap_update_step` / `ap_build_flow` / `ap_update_trigger`), visible
+  in `ap_flow_structure`.
 
 ## Pause & Resume
 

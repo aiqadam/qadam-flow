@@ -45,8 +45,11 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   TRIGGER step also carries `qadamPin`/`qadamVersionResolvable` (both in the rendered text and in
   `structuredContent.steps[]`) — a step whose pinned qadam version no longer resolves is flagged
   with the same actionable message `ap_validate_flow`'s `qadam_version` category uses, via the
-  shared `qadamPinUtil` (`packages/server/api/src/app/qadams/metadata/qadam-pin-util.ts`).
-- `ap_read_step_code` — read full source code of a CODE step
+  shared `qadamPinUtil` (`packages/server/api/src/app/qadams/metadata/qadam-pin-util.ts`). Since
+  #505 a step that opts out of the run log carries `logInput: false` / `logOutput: false` in
+  `structuredContent.steps[]` and a `[LOG OFF: input, output]` label in the text; the default
+  (logged) case adds nothing, so a reviewer can audit redaction without running the flow.
+- `ap_read_step_code` — read full source code of a CODE step, plus its `logInput`/`logOutput`
 - `ap_validate_flow`, `ap_validate_step_config` — validation helpers. `ap_validate_flow` reports six
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
   cannot resolve, #432), `template_reference`, `empty_branch`, and — since #391 — `subflow_payload`
@@ -62,8 +65,15 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
 
 **Controllable tools** (can be toggled per-project):
 - `ap_create_flow`, `ap_rename_flow`, `ap_build_flow`, `ap_delete_flow`, `ap_duplicate_flow` — flow management; `ap_build_flow` returns `flowUrl` (via `domainHelper.getPublicUrl`) in both text and structured output
-- `ap_update_trigger` — change flow trigger
-- `ap_add_step`, `ap_update_step`, `ap_delete_step` — step management
+- `ap_update_trigger` — change flow trigger; optional `logOutput` redacts the trigger payload in
+  the run log (#505). The trigger has no `logInput`: what the log records as its input is
+  configuration, the payload that carries user data is the output.
+- `ap_add_step`, `ap_update_step`, `ap_delete_step` — step management. `ap_add_step`,
+  `ap_update_step` and `ap_build_flow`'s per-step spec accept `logInput`/`logOutput` (#451's
+  step-level run-log opt-outs, #505). `ap_update_step` carries the stored `skip`, `logInput` and
+  `logOutput` forward when the call omits them — `_updateAction` in shared copies all three straight
+  from the request, so a field the tool left out was a reset, not a no-op (the pre-#505 tool
+  silently un-redacted and un-skipped every step it touched).
 - `ap_add_branch`, `ap_update_branch`, `ap_delete_branch` — conditional branching
 - `ap_lock_and_publish` — publish flow version
 - `ap_change_flow_status` — enable/disable flow

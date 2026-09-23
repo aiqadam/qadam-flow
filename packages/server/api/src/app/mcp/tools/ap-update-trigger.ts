@@ -22,6 +22,7 @@ const updateTriggerInput = z.object({
     input: z.record(z.string(), z.unknown()).optional(),
     auth: z.string().optional(),
     displayName: z.string().optional(),
+    logOutput: z.boolean().optional(),
 })
 
 export const apUpdateTriggerTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -36,10 +37,11 @@ export const apUpdateTriggerTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
             input: z.record(z.string(), z.unknown()).optional().describe(`Input settings for the trigger (key-value pairs). ${mcpUtils.STEP_REFERENCE_HINT}`),
             auth: z.string().optional().describe('Connection `externalId` from `ap_list_connections`. The tool wraps it automatically as `{{connections[\'externalId\']}}`.'),
             displayName: z.string().optional().describe('Display name for the trigger step'),
+            logOutput: z.boolean().optional().describe('Whether the trigger payload is written to the run log. Defaults to true. Set false when the payload carries personal data (e.g. a Telegram contact share): the persisted log shows **REDACTED** while later steps still read the real value. Left unchanged when omitted.'),
         },
         annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
-            const { flowId, qadamName, triggerName, input: rawInput, auth, displayName: rawDisplayName } = updateTriggerInput.parse(args)
+            const { flowId, qadamName, triggerName, input: rawInput, auth, displayName: rawDisplayName, logOutput } = updateTriggerInput.parse(args)
 
             const authError = mcpUtils.validateAuth(auth)
             if (authError) {
@@ -84,6 +86,9 @@ export const apUpdateTriggerTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                 valid: false,
                 lastUpdatedDate: new Date().toISOString(),
                 type: FlowTriggerType.PIECE,
+                // `_updateTrigger` rebuilds the trigger from the request alone, so an omitted flag
+                // would reset it — carry the stored value forward (#505).
+                logOutput: logOutput ?? existingTrigger.logOutput,
                 settings: {
                     qadamName: resolvedPieceName,
                     qadamVersion,
