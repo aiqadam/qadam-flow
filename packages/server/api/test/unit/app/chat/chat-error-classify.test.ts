@@ -5,7 +5,7 @@
  * and the SSRF filter enrichment — so a renamed transport message fails here first.
  */
 import { describe, expect, it } from 'vitest'
-import { CHAT_ERROR_CODES, classifyChatError } from '../../../../src/app/chat/chat-error-classify'
+import { CHAT_ERROR_CODES, classifyChatError, describeChatError } from '../../../../src/app/chat/chat-error-classify'
 
 describe('classifyChatError (#265 DoD 3)', () => {
     it('classifies the inter-chunk idle timeout', () => {
@@ -85,5 +85,13 @@ describe('classifyChatError (#265 DoD 3)', () => {
         expect(code).toBe(CHAT_ERROR_CODES.UNKNOWN)
         const { code: code2 } = classifyChatError({ name: 'APICallError', requestBodyValues: { apiKey: 'secret' } })
         expect(code2).toBe(CHAT_ERROR_CODES.UNKNOWN)
+    })
+
+    // The log line is built from this, so it must never hand back anything but the three primitives.
+    it('describes an error by name, message and status only', () => {
+        const apiCallError = { name: 'AI_APICallError', message: 'Bad Request', statusCode: 400, requestBodyValues: { apiKey: 'secret' }, responseHeaders: { 'x-api-key': 'secret' } }
+        expect(describeChatError(apiCallError)).toEqual({ name: 'AI_APICallError', message: 'Bad Request', statusCode: 400 })
+        expect(describeChatError('a string rejection')).toEqual({ name: '', message: 'a string rejection', statusCode: null })
+        expect(describeChatError({ message: { nested: 'object' } })).toEqual({ name: '', message: '', statusCode: null })
     })
 })

@@ -23,10 +23,19 @@ const RATE_LIMIT_RE = /rate limit|too many requests/i
 const CONNECTION_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|EHOSTUNREACH|ETIMEDOUT|socket hang up|cannot connect to api/i
 
 export function classifyChatError(error: unknown): ClassifiedChatError {
-    const message = readString({ source: error, key: 'message' })
-    const statusCode = readStatusCode(error)
+    const { message, statusCode } = describeChatError(error)
     const rule = RULES.find((candidate) => candidate.matches({ message, statusCode }))
     return rule?.result ?? UNKNOWN_RESULT
+}
+
+// The one place the fields above are read off a provider error, shared with the loop's log line so
+// the "primitives only, never the object" guarantee has a single implementation to keep honest.
+export function describeChatError(error: unknown): ChatErrorFields {
+    return {
+        name: readString({ source: error, key: 'name' }),
+        message: typeof error === 'string' ? error : readString({ source: error, key: 'message' }),
+        statusCode: readStatusCode(error),
+    }
 }
 
 // Types at the end of the file; exported constants right after imports (AGENTS.md file order).
@@ -146,6 +155,8 @@ function readProperty({ source, key }: { source: unknown, key: string }): unknow
 export type ChatErrorCode = (typeof CHAT_ERROR_CODES)[keyof typeof CHAT_ERROR_CODES]
 
 export type ClassifiedChatError = { code: ChatErrorCode, message: string }
+
+export type ChatErrorFields = { name: string, message: string, statusCode: number | null }
 
 type ClassificationRule = {
     matches: (params: { message: string, statusCode: number | null }) => boolean

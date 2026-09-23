@@ -355,9 +355,10 @@ describe('Chat agent API', () => {
             const payloads = operatorEmits.flatMap((emit) => emit.mock.calls.map((call) => call[1]))
             const errorEvent = payloads.find((payload) => isRecord(payload) && payload.type === ChatAgentEventType.ERROR)
             expect(errorEvent).toMatchObject({ data: { code: 'PROVIDER_TOOLS_NOT_SUPPORTED' } })
-            // The raw provider text stays server-side: every chunk, the SDK's own `error` chunk
-            // included, carries only the fixed classified strings.
+            // The raw provider text stays server-side: the SDK's own `error` chunk, which carries
+            // it verbatim, is never forwarded.
             expect(JSON.stringify(payloads)).not.toContain('registry.ollama.ai')
+            expect(payloads.some((payload) => isRecord(payload) && isRecord(payload.data) && payload.data.type === 'error')).toBe(false)
         })
 
         it('starts the run and answers with the conversation and run ids when a provider is configured', async () => {

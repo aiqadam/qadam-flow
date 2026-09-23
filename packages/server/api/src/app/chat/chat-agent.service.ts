@@ -19,7 +19,7 @@ import {
     tryCatch,
     WebsocketClientEvent,
 } from '@aiqadam/shared'
-import { ModelMessage, stepCountIs, StepResult, streamText, TextPart, ToolSet, UserContent } from 'ai'
+import { ModelMessage, NoOutputGeneratedError, stepCountIs, StepResult, streamText, TextPart, ToolSet, UserContent } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { websocketService } from '../core/websockets.service'
 import { rejectedPromiseHandler } from '../helper/promise-handler'
@@ -29,7 +29,7 @@ import { mcpServerService } from '../mcp/mcp-service'
 import { qadamMetadataService } from '../qadams/metadata/qadam-metadata-service'
 import { chatApprovals } from './chat-approvals'
 import { chatConversationService } from './chat-conversation.service'
-import { classifyChatError } from './chat-error-classify'
+import { classifyChatError, describeChatError } from './chat-error-classify'
 import { chatModel, ResolvedChatModel } from './chat-model'
 import { chatProjects } from './chat-projects'
 import { chatTools } from './chat-tools'
@@ -252,11 +252,16 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             },
         })
 
-        // The SDK's default here is `getErrorMessage`, which puts the provider's raw message — or,
-        // for a non-Error rejection, its whole `JSON.stringify` — into an `error` chunk that goes
-        // straight to the browser. The client learns about the failure from the ERROR event below;
-        // the chunk only has to carry the same fixed string that event does.
-        for await (const chunk of result.toUIMessageStream({ onError: (streamError) => classifyChatError(streamError).message })) {
+        for await (const chunk of result.toUIMessageStream()) {
+            // The SDK fills an `error` chunk through `getErrorMessage`: the provider's raw message,
+            // or a non-Error rejection's whole `JSON.stringify`. The client learns about a failed
+            // run from the classified ERROR event below and its reducer ignores this chunk, so it
+            // is not forwarded at all. Overriding `toUIMessageStream`'s `onError` instead is not
+            // an option: the same callback writes every failed tool call's `errorText`, which the
+            // tool cards display, and would turn each of them into a turn-failed message.
+            if (isStreamErrorChunk(chunk)) {
+                continue
+            }
             // Accumulated as it goes rather than read off `result` at the end, because on an abort
             // `result.steps` rejects along with the stream — this is the only copy of the partial
             // reply that survives a cancel.
@@ -286,6 +291,21 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
 
     activeRuns.delete(runId)
     if (isNil(error)) {
+        // A step after the first can fail too — a 429 or a context overflow a few tool rounds in —
+        // and then `result.steps` resolves with what came before and the run settles as a success
+        // with a cut-off reply. The SDK's `console.error` used to be the only trace of that; with
+        // `onError` taken over, this is.
+        if (!isNil(providerError)) {
+            const { name: errorName, message: errorMessage, statusCode: errorStatusCode } = describeChatError(providerError)
+            log.warn({
+                conversationId: id,
+                runId,
+                errorCode: classifyChatError(providerError).code,
+                errorName,
+                errorMessage,
+                errorStatusCode,
+            }, '[chatAgentService#runAgentLoop] provider failed after the first step; the reply is partial')
+        }
         return
     }
 
@@ -298,19 +318,23 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         return
     }
 
-    const cause = providerError ?? error
+    // The captured error is the cause only when the SDK reports that nothing was produced — the
+    // one rejection it raises in place of the provider's. Anything else that threw here (e.g.
+    // `finishRun` failing after a later step's provider error) is its own cause.
+    const cause = NoOutputGeneratedError.isInstance(error) && !isNil(providerError) ? providerError : error
     // Only the error's name, message and HTTP status are read, never the error object: an AI SDK
     // `APICallError` carries `requestBodyValues` and the response headers, which is where the
     // provider API key lives. classifyChatError is deliberately pure and reads the same three, so
     // the user-facing payload stays a fixed string per class (DoD 3 of #265).
     const { code, message } = classifyChatError(cause)
+    const { name: errorName, message: errorMessage, statusCode: errorStatusCode } = describeChatError(cause)
     log.error({
         conversationId: id,
         runId,
         errorCode: code,
-        errorName: describeError({ error: cause, key: 'name' }),
-        errorMessage: describeError({ error: cause, key: 'message' }),
-        errorStatusCode: describeError({ error: cause, key: 'statusCode' }),
+        errorName,
+        errorMessage,
+        errorStatusCode,
         ...spreadIfDefined('wrapperErrorName', cause === error ? undefined : error.name),
     }, '[chatAgentService#runAgentLoop] chat run failed')
     // Classified before failRun is persisted: the ERROR status then proves the classifier
@@ -355,14 +379,8 @@ function trackToolApproval({ chunk, gatedCallInputs }: TrackApprovalParams): Too
     }
 }
 
-// `onError` hands over `unknown` — a provider can reject with anything — so each field is read off
-// only when it is a primitive, which also keeps a nested object from ever reaching the log line.
-function describeError({ error, key }: { error: unknown, key: 'name' | 'message' | 'statusCode' }): string | number | undefined {
-    if (typeof error !== 'object' || isNil(error) || !(key in error)) {
-        return typeof error === 'string' && key === 'message' ? error : undefined
-    }
-    const value: unknown = Reflect.get(error, key)
-    return typeof value === 'string' || typeof value === 'number' ? value : undefined
+function isStreamErrorChunk(chunk: unknown): boolean {
+    return typeof chunk === 'object' && !isNil(chunk) && 'type' in chunk && chunk.type === 'error'
 }
 
 function toInputRecord(value: unknown): Record<string, unknown> {
