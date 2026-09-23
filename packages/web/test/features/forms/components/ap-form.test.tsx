@@ -201,10 +201,12 @@ describe('ApForm submission errors', () => {
     await submitAndFlush();
 
     // #510: a run that hadn't started by the deadline is now failed, not "still
-    // running" — the toast must not claim the submission is safely in progress.
+    // running" — the toast must not claim the submission is safely in progress, must
+    // not point at the run history (an anonymous submitter can't open it), and needs
+    // longer than the default 3000ms to be read.
     expect(toastSpies.info).toHaveBeenCalledWith(
-      'The flow did not finish in time. It may still be running — check the run history before retrying.',
-      expect.objectContaining({ duration: 3000 }),
+      "The flow did not finish in time and may still be running. Please don't resubmit right away.",
+      expect.objectContaining({ duration: 8000 }),
     );
     expect(toastSpies.error).not.toHaveBeenCalled();
   });

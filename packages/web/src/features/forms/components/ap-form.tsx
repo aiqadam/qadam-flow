@@ -184,13 +184,15 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
             });
           } else if (status === 504) {
             // A run that had not started yet by the deadline is now failed, not merely
-            // slow (#510) — retrying could double-execute one that did start, so this
-            // must not claim the submission is safely "still running".
+            // slow (#510) — resubmitting could double-execute one that did start, so
+            // this must not claim the submission is safely "still running". Anonymous
+            // form submitters can't open the (builder-only) run history, so the copy
+            // doesn't point them at it; a longer duration gives them time to read it.
             toast.info(
               t(
-                'The flow did not finish in time. It may still be running — check the run history before retrying.',
+                "The flow did not finish in time and may still be running. Please don't resubmit right away.",
               ),
-              { duration: 3000 },
+              { duration: 8000 },
             );
           } else if (status === 503) {
             // Unlike the 504 branch above, the submission was NOT accepted here — the

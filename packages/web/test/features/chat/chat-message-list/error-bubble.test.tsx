@@ -60,9 +60,13 @@ describe('ErrorBubble', () => {
     await mountBubble({ sendingError: { code: FLOW_STILL_RUNNING } });
 
     // #510: a run that hadn't started by the deadline is now failed, not "still
-    // running" — the copy must not claim the run is safely in progress.
+    // running" — the copy must not claim the run is safely in progress, and must not
+    // point at the run history, which an anonymous chat user can't open.
     expect(container?.textContent).toContain(
-      'The flow did not finish in time. It may still be running',
+      'The flow did not finish in time and may still be running.',
+    );
+    expect(container?.textContent).toContain(
+      'Its reply will not appear in this chat',
     );
     // A retry could double-execute a run that did start.
     expect(container?.querySelector('button')).toBeNull();
