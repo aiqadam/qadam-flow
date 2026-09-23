@@ -32,6 +32,9 @@ type StepInfo = {
     branchName?: string
     valid: boolean
     skip?: boolean
+    // Only carried when the author opted out (`false`); absent means the default, "logged".
+    logInput?: false
+    logOutput?: false
     configStatus: string
     input: Record<string, unknown> | null
     qadamPin?: string
@@ -213,6 +216,7 @@ function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qada
                 relationship: 'trigger',
                 valid: step.valid,
                 skip: (step as { skip?: boolean }).skip,
+                ...logFlags(step),
                 configStatus: getConfigStatus(step),
                 input: getStepInput(step),
                 ...qadamPinInfo({ step, qadamResolutions }),
@@ -267,12 +271,32 @@ function buildFlowStructure({ trigger, qadamResolutions }: { trigger: Step, qada
             ...(relationship === 'branch' && { branchIndex, branchName }),
             valid: step.valid,
             skip: (step as { skip?: boolean }).skip,
+            ...logFlags(step),
             configStatus: getConfigStatus(step),
             input: getStepInput(step),
             ...qadamPinInfo({ step, qadamResolutions }),
         }
     })
     return { structure, stepByName }
+}
+
+// A reviewer auditing which steps redact their run log needs to see it here, without running the
+// flow (#505). Only an explicit opt-out is reported, so the default case adds no noise.
+function logFlags(step: Step): Pick<StepInfo, 'logInput' | 'logOutput'> {
+    const logInput = 'logInput' in step && step.logInput === false
+    const logOutput = step.logOutput === false
+    return {
+        ...(logInput && { logInput: false }),
+        ...(logOutput && { logOutput: false }),
+    }
+}
+
+function redactionLabel(step: StepInfo): string {
+    const off = [
+        ...(step.logInput === false ? ['input'] : []),
+        ...(step.logOutput === false ? ['output'] : []),
+    ]
+    return off.length > 0 ? ` [LOG OFF: ${off.join(', ')}]` : ''
 }
 
 function formatFlowStructure(
@@ -293,6 +317,7 @@ function formatFlowStructure(
 
     for (const step of structure) {
         const skipLabel = step.skip ? ' [SKIPPED]' : ''
+        const logLabel = redactionLabel(step)
         const pos = positions.get(step.name)
         const canvasLabel = pos ? ` | canvas: (${Math.round(pos.x)}, ${Math.round(pos.y)})` : ''
         const fullStep = stepByName.get(step.name)
@@ -308,7 +333,7 @@ function formatFlowStructure(
             if (fullStep && fullStep.type === FlowTriggerType.PIECE && fullStep.settings.qadamName) {
                 triggerDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(fullStep.settings.qadamName)}, trigger: ${fullStep.settings.triggerName ? mcpUtils.wrapUntrustedValue(fullStep.settings.triggerName) : 'not set'})`
             }
-            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+            lines.push(`- [TRIGGER] ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${triggerDetail}${qadamPinWarning(step)} | parent: — | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
             if (fullStep) {
                 lines.push(...formatStepSettings(fullStep, includeInput))
             }
@@ -323,7 +348,7 @@ function formatFlowStructure(
             if (s?.qadamName) stepDetail = ` (qadam: ${mcpUtils.wrapUntrustedValue(s.qadamName)}, action: ${s.actionName ? mcpUtils.wrapUntrustedValue(s.actionName) : 'not set'})`
         }
 
-        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${canvasLabel}`)
+        lines.push(`- ${step.name} | ${step.type} | ${mcpUtils.wrapUntrustedValue(step.displayName)}${stepDetail}${qadamPinWarning(step)} | parent: ${step.parentName} | ${rel} | ${step.configStatus}${sampleLabel}${skipLabel}${logLabel}${canvasLabel}`)
 
         if (fullStep) {
             lines.push(...formatStepSettings(fullStep, includeInput))
@@ -458,6 +483,8 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                             ...(s.branchIndex !== undefined ? { branchIndex: s.branchIndex } : {}),
                             ...(s.branchName !== undefined ? { branchName: s.branchName } : {}),
                             valid: s.valid,
+                            ...(s.logInput !== undefined ? { logInput: s.logInput } : {}),
+                            ...(s.logOutput !== undefined ? { logOutput: s.logOutput } : {}),
                             configStatus: s.configStatus,
                             ...(includeInput && s.input !== null ? { input: s.input } : {}),
                             ...(s.qadamPin !== undefined ? { qadamPin: s.qadamPin, qadamVersionResolvable: s.qadamVersionResolvable } : {}),

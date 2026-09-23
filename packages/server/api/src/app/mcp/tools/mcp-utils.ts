@@ -24,6 +24,8 @@ const RESOLVABLE_PROP_TYPES = new Set<PropertyType>([
     PropertyType.DYNAMIC,
 ])
 
+const LOG_INPUT_HINT = 'Whether this step\'s input is written to the run log. Defaults to true. Set false when the input carries personal or secret data: the persisted log shows **REDACTED** while the step still runs on the real value.'
+const LOG_OUTPUT_HINT = 'Whether this step\'s output is written to the run log. Defaults to true. Set false when the output carries personal or secret data (e.g. tables-update-record returns the whole row): the persisted log shows **REDACTED** while the value still flows to the next step.'
 const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].message}}.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
@@ -613,6 +615,8 @@ export const mcpUtils = {
     qadamPinIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
+    LOG_INPUT_HINT,
+    LOG_OUTPUT_HINT,
     BRANCH_CONDITIONS_INPUT_SCHEMA,
 }
 

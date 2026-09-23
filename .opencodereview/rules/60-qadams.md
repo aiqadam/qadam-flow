@@ -62,6 +62,15 @@ the language rules OCR already merges from its system layer.
   is a deliberate "unset" sentinel (`''`, `null`) on an optional prop with no
   natural default, dropping `defaultValue` entirely is correct — that is not a
   finding.
+- **An action that calls `waitForWaitpoint` declares `pauses` on
+  `createAction`** (#426): `true` when every execution waits, `'conditional'`
+  when it depends on the step's configuration. Flag a new or changed action
+  that waits (directly or through a `common/` helper) without the marker, and
+  a marker on an action where nothing waits — `tools/ci/check-pause-markers.mjs`
+  runs the same check statically in CI. Creating a waitpoint and returning
+  (`create_approval_links`) is not pausing and needs no marker. A PR that adds
+  a row to `LEGACY_PAUSING_ACTIONS` in `ap-validate-flow.ts` instead of the
+  marker is a finding: that table is frozen to pins predating the marker.
 - **Custom API Call's shared props.** `packages/qadams/common/src/lib/helpers`
   defines `StaticDropdown` props (e.g. `body_type`) imported by many qadams'
   Custom API Call action — the same defaultValue/options rule applies there,

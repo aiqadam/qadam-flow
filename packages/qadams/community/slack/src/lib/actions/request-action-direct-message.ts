@@ -14,6 +14,7 @@ import { requestAction } from '../common/request-action';
 export const requestActionDirectMessageAction = createAction({
   auth: slackAuth,
   name: 'request_action_direct_message',
+  pauses: true,
   displayName: 'Request Action from A User',
   description:
     'Send a message to a user and wait until the user selects an action',

@@ -15,6 +15,7 @@ function createTrigger(name: string, request: UpdateTriggerRequest, nextAction: 
         valid: false,
         nextAction,
         lastUpdatedDate: dayjs().toISOString(),
+        logOutput: request.logOutput,
     }
     let trigger: FlowTrigger
     switch (request.type) {

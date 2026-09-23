@@ -213,15 +213,22 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   `packages/server/api/src/app/mcp/tools/ap-validate-flow.ts`. The static check reads the callee's
   **draft** version, because it exists to judge what the author is about to publish; the runtime
   check in `inline-flow-executor.ts` remains the authority for what actually executes, and neither
-  replaces the other. Its known limit: the pausing actions it recognises are an **allowlist**
-  (`ALWAYS_PAUSING_ACTIONS`, eleven entries, plus three conditional cases: `delayFor` above its 10s
-  threshold, assemblyai `transcribe` when `wait_until_ready` is set, and a Queue-mode `callFlow`
-  that waits for a response),
-  derived by grepping every qadam for `waitForWaitpoint`. A qadam added later that pauses will
-  validate green and still fail at run time. Making this exhaustive needs a declared marker on the
-  action rather than a table — tracked in #426, together with the narrower gap that the conditional
-  cases (`wait_until_ready`, `waitForResponse`) are read as literals and so miss a value bound to a
-  template expression.
+  replaces the other. Since #426 the check asks the action, not a table: every action that waits on
+  a waitpoint declares `pauses: true | 'conditional'` on `createAction` (framework `ActionBase`),
+  the validator reads it off the **pinned version's** metadata (one lookup per distinct pin across
+  the call graph), and `tools/ci/check-pause-markers.mjs` fails CI on a file that calls
+  `waitForWaitpoint` whose action lacks the marker, on a consumer of a waiting helper that lacks
+  it, and on a stale marker. `'conditional'` is decided by one of three evaluators (`delayFor`
+  above its 10s threshold, `transcribe` when `wait_until_ready` is set, a Queue-mode `callFlow`
+  that waits for a response); a `'conditional'` action with no evaluator is reported as "may
+  pause" rather than assumed safe — the policy `delayFor` already applied to an unknown duration.
+  The two Checkbox props are read by one reader: a template expression is reported as unknown, the
+  literals `true`/`'true'` and `false`/`'false'` are parsed the same way for both. What remains of
+  the old allowlist is `LEGACY_PAUSING_ACTIONS`, **frozen**: consulted only for a pin whose
+  metadata predates the marker (or could not be read), so flows built before #426 do not lose the
+  check. It gained exactly two rows on freezing — Slack's `request_action_message` /
+  `request_action_direct_message`, which wait through `common/request-action.ts` and were missed
+  by the grep that built the original list; the marker scan is what would have caught that.
 - No live step-by-step streaming for an inline child in "Test Flow" mode — only the parent's own
   steps stream live; the child's full step history is still persisted and visible once it finishes.
 - Narrow race: the child `FlowRun` row is created by the API (`inlineFlowRunService.start`) before

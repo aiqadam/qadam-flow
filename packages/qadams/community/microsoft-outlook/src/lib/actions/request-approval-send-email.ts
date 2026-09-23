@@ -11,6 +11,7 @@ import { microsoftOutlookAuth } from '../common/auth';
 export const requestApprovalInMail = createAction({
   auth: microsoftOutlookAuth,
   name: 'request_approval_in_mail',
+  pauses: true,
   displayName: 'Request Approval in Email',
   description:
     'Send approval request email and then wait until the email is approved or disapproved',

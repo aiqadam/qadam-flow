@@ -31,6 +31,8 @@ type TranscribeContext = ActionContext<
 >;
 export const transcribe = createAction({
   name: 'transcribe',
+  // Pauses only when `wait_until_ready` is set; the default submits and moves on.
+  pauses: 'conditional',
   auth: assemblyaiAuth,
   requireAuth: true,
   displayName: 'Transcribe',

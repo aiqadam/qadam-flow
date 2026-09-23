@@ -10,6 +10,7 @@ import {
 export const telegramRequestApprovalMessageAction = createAction({
   auth: telegramBotAuth,
   name: 'request_approval_message',
+  pauses: true,
   displayName: 'Request Approval Message',
   description:
     'Send an approval message to a chat and wait until the message is approved or disapproved',

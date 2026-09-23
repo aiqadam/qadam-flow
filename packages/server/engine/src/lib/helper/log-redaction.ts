@@ -14,7 +14,12 @@ export const logRedaction = {
     buildStepLogPolicy({ trigger }: BuildStepLogPolicyParams): Map<string, StepLogPolicy> {
         const policy = new Map<string, StepLogPolicy>()
         for (const step of flowStructureUtil.getAllSteps(trigger)) {
+            // The trigger only opts out of its output (#505): its logged input is configuration,
+            // the payload that carries user data is the output.
             if (!isActionStep(step)) {
+                if (!isNil(step.logOutput)) {
+                    policy.set(step.name, { logInput: true, logOutput: step.logOutput })
+                }
                 continue
             }
             if (isNil(step.logInput) && isNil(step.logOutput)) {

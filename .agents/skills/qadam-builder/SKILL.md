@@ -309,6 +309,26 @@ Skip both unless deliberately tuning for agents. Full guidance: read `ai-metadat
 
 ---
 
+## Actions that pause the run (`pauses` marker)
+
+If an action calls `context.run.waitForWaitpoint(...)` — directly or through a `common/` helper —
+it pauses the run, and it must say so on `createAction`:
+
+- **`pauses: true`** — every execution waits (approval requests, `delay_until`, a webhook wait).
+- **`pauses: 'conditional'`** — whether it waits depends on the step's configuration (`delayFor`
+  above its in-process threshold, `transcribe` with `wait_until_ready`, Queue-mode `callFlow` with
+  `waitForResponse`).
+
+Creating a waitpoint is **not** pausing: `create_approval_links` calls `createWaitpoint` and
+returns, so it carries no marker. `ap_validate_flow` reads the marker to refuse an inline subflow
+that would pause at run time (#426), and `npm run check-pause-markers`
+(`tools/ci/check-pause-markers.mjs`, in CI) fails on a file that calls `waitForWaitpoint` whose
+action lacks the marker, on a helper consumer that lacks it, and on a stale marker where nothing
+waits. A `'conditional'` action the validator has no evaluator for is reported as "may pause"
+rather than assumed safe, so a new conditional action is visible without an API change.
+
+---
+
 ## Critical Reminders
 
 1. **Register in `tsconfig.base.json`** — alphabetically in `compilerOptions.paths`. Build fails silently without this.

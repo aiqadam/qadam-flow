@@ -2044,6 +2044,7 @@
   "Log output": "Chiqishni logga yozish",
   "Save this step input in the run log. Turn off to hide it.": "Qadam kiritish ma'lumotlarini run logiga saqlang. Yashirish uchun o'chiring.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Qadam chiqish ma'lumotlarini run logiga saqlang. Yashirish uchun o'chiring. Qiymat keyingi qadamga oqib o'tadi.",
+  "Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.": "Trigger payload'ini run logiga saqlang. Run tugagach uni yashirish uchun o'chiring. Qiymat baribir keyingi qadamga oqib o'tadi, lekin bu o'chirilgan run'ni qayta urinib bo'lmaydi.",
   "Extra request parameters": "Qo'shimcha so'rov parametrlari",
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Ushbu provayderga yuboriladigan har bir chat so'roviga qo'shiladigan ixtiyoriy JSON obyekt, masalan vLLM'da Qwen fikrlashini o'chirish uchun.",
   "extraBodyMustBeObject": "JSON obyekt yoki bo'sh bo'lishi kerak",

@@ -2044,6 +2044,7 @@
   "Log output": "Логировать выход",
   "Save this step input in the run log. Turn off to hide it.": "Сохранять входные данные шага в логе. Выключите, чтобы скрыть.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Сохранять выходные данные шага в логе. Выключите, чтобы скрыть. Значение по-прежнему передаётся следующему шагу.",
+  "Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.": "Сохранять payload триггера в логе запуска. Выключите, чтобы скрыть его после завершения запуска. Значение по-прежнему передаётся следующему шагу, но запуск с выключенным логированием нельзя будет повторить.",
   "Extra request parameters": "Дополнительные параметры запроса",
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Необязательный JSON-объект, который добавляется в каждый чат-запрос к этому провайдеру, например чтобы выключить размышления Qwen в vLLM.",
   "extraBodyMustBeObject": "Должен быть JSON-объектом или пустым",

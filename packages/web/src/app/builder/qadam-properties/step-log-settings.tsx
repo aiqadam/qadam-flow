@@ -1,4 +1,9 @@
-import { FlowAction, FlowActionType, FlowTrigger } from '@aiqadam/shared';
+import {
+  FlowAction,
+  FlowActionType,
+  FlowTrigger,
+  FlowTriggerType,
+} from '@aiqadam/shared';
 import { t } from 'i18next';
 import { ScrollText } from 'lucide-react';
 import React from 'react';
@@ -17,8 +22,12 @@ import { cn, GAP_SIZE_FOR_STEP_SETTINGS } from '@/lib/utils';
 const StepLogSettingsForm = React.memo(() => {
   const form = useFormContext<FlowAction | FlowTrigger>();
   const stepType = form.getValues('type');
+  // A trigger only opts out of its output: what the log records as its input is the trigger's
+  // configuration, while the payload that carries user data is the output (#505).
+  const isTrigger = stepType === FlowTriggerType.PIECE;
 
   if (
+    !isTrigger &&
     ![
       FlowActionType.CODE,
       FlowActionType.PIECE,
@@ -35,32 +44,34 @@ const StepLogSettingsForm = React.memo(() => {
         <ScrollText className="w-4 h-4" />
         <span>{t('Logging')}</span>
       </div>
-      <FormField
-        name="logInput"
-        control={form.control}
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel
-              htmlFor="logInput"
-              className="flex items-center gap-1 h-7.5 max-h-7.5"
-            >
-              <FormControl>
-                <Switch
-                  id="logInput"
-                  checked={field.value ?? true}
-                  onCheckedChange={field.onChange}
-                />
-              </FormControl>
-              <span className="ml-2">{t('Log input')}</span>
-            </FormLabel>
-            <ReadMoreDescription
-              text={t(
-                'Save this step input in the run log. Turn off to hide it.',
-              )}
-            />
-          </FormItem>
-        )}
-      />
+      {!isTrigger && (
+        <FormField
+          name="logInput"
+          control={form.control}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel
+                htmlFor="logInput"
+                className="flex items-center gap-1 h-7.5 max-h-7.5"
+              >
+                <FormControl>
+                  <Switch
+                    id="logInput"
+                    checked={field.value ?? true}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+                <span className="ml-2">{t('Log input')}</span>
+              </FormLabel>
+              <ReadMoreDescription
+                text={t(
+                  'Save this step input in the run log. Turn off to hide it.',
+                )}
+              />
+            </FormItem>
+          )}
+        />
+      )}
       <FormField
         name="logOutput"
         control={form.control}
@@ -81,7 +92,9 @@ const StepLogSettingsForm = React.memo(() => {
             </FormLabel>
             <ReadMoreDescription
               text={t(
-                'Save this step output in the run log. Turn off to hide it. The value still flows to the next step.',
+                isTrigger
+                  ? 'Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.'
+                  : 'Save this step output in the run log. Turn off to hide it. The value still flows to the next step.',
               )}
             />
           </FormItem>

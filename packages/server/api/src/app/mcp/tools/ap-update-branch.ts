@@ -108,6 +108,13 @@ export const apUpdateBranchTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         displayName: routerStep.displayName,
                         valid: routerStep.valid,
                         settings: updatedSettings,
+                        // `_updateAction` writes `skip`, `logInput` and `logOutput` straight from
+                        // the request with no fallback to the stored step (same #505 finding
+                        // ap-update-step.ts carries forward) — omitting them here would silently
+                        // un-skip and un-redact the router on every branch edit.
+                        skip: routerStep.skip,
+                        logInput: routerStep.logInput,
+                        logOutput: routerStep.logOutput,
                     },
                 }
 

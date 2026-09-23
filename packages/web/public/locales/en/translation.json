@@ -2044,6 +2044,7 @@
   "Log output": "Log output",
   "Save this step input in the run log. Turn off to hide it.": "Save this step input in the run log. Turn off to hide it.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.",
+  "Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.": "Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.",
   "Extra request parameters": "Extra request parameters",
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.",
   "extraBodyMustBeObject": "Must be a JSON object, or empty",
