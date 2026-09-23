@@ -1794,6 +1794,7 @@
   "Your submission was successfully received.": "Жіберілген деректеріңіз қабылданды.",
   "The flow you are trying to submit to does not exist.": "Сіз деректер жіберуге тырысқан flow жоқ.",
   "The flow failed to execute.": "flow орындалмады.",
+  "The service is temporarily busy. Please try again in a moment.": "Қызмет уақытша бос емес. Сәл кейінірек қайта көріңіз.",
   "Submit": "Жіберу",
   "Team Invitation Accepted": "Командаға шақыру қабылданды",
   "Thank you for accepting the invitation. We are redirecting you right now...": "Шақыруды қабылдағаныңызға рақмет. Сізді қазір бағыттап жатырмыз...",

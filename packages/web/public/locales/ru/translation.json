@@ -1794,6 +1794,7 @@
   "Your submission was successfully received.": "Ваша работа была успешно получена.",
   "The flow you are trying to submit to does not exist.": "Flow, в который вы пытаетесь отправить данные, не существует.",
   "The flow failed to execute.": "Не удалось выполнить flow.",
+  "The service is temporarily busy. Please try again in a moment.": "Сервис временно перегружен. Пожалуйста, повторите попытку через некоторое время.",
   "Submit": "Отправить",
   "Team Invitation Accepted": "Приглашение в команду принято",
   "Thank you for accepting the invitation. We are redirecting you right now...": "Спасибо, что приняли приглашение. Мы перенаправим вас прямо сейчас...",

@@ -1794,6 +1794,7 @@
   "Your submission was successfully received.": "Yuborganingiz muvaffaqiyatli qabul qilindi.",
   "The flow you are trying to submit to does not exist.": "Siz yuborishga urinayotgan flow mavjud emas.",
   "The flow failed to execute.": "Flowni bajarish muvaffaqiyatsiz tugadi.",
+  "The service is temporarily busy. Please try again in a moment.": "Xizmat vaqtincha band. Iltimos, birozdan so'ng qayta urinib ko'ring.",
   "Submit": "Yuborish",
   "Team Invitation Accepted": "Jamoa taklifi qabul qilindi",
   "Thank you for accepting the invitation. We are redirecting you right now...": "Taklifni qabul qilganingiz uchun rahmat. Sizni hozir yo'naltirmoqdamiz...",

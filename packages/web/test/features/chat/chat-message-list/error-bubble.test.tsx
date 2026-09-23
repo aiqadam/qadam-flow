@@ -6,8 +6,10 @@ import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  CHAT_SERVICE_UNAVAILABLE,
   ChatSendingError,
   ErrorBubble,
+  FLOW_RUN_FAILED,
   FLOW_STILL_RUNNING,
 } from '@/features/chat/chat-message-list/error-bubble';
 
@@ -77,5 +79,21 @@ describe('ErrorBubble', () => {
       retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(sendMessage).toHaveBeenCalledWith({ isRetrying: true });
+  });
+
+  it('tells the user the flow run itself failed, and offers a retry', async () => {
+    await mountBubble({ sendingError: { code: FLOW_RUN_FAILED } });
+
+    expect(container?.textContent).toContain('The flow failed to execute.');
+    expect(container?.querySelector('button')).not.toBeNull();
+  });
+
+  it('tells the user the service is overloaded, and offers a retry', async () => {
+    await mountBubble({ sendingError: { code: CHAT_SERVICE_UNAVAILABLE } });
+
+    expect(container?.textContent).toContain(
+      'The service is temporarily busy. Please try again in a moment.',
+    );
+    expect(container?.querySelector('button')).not.toBeNull();
   });
 });

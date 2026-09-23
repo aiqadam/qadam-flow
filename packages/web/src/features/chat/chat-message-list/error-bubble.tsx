@@ -11,6 +11,8 @@ import {
 } from '../chat-bubble';
 
 export const FLOW_STILL_RUNNING = 'FLOW_STILL_RUNNING';
+export const FLOW_RUN_FAILED = 'FLOW_RUN_FAILED';
+export const CHAT_SERVICE_UNAVAILABLE = 'CHAT_SERVICE_UNAVAILABLE';
 
 const formatError = (
   projectId: string | undefined | null,
@@ -24,6 +26,14 @@ const formatError = (
           {t(
             'The flow is still running and did not reply in time. Its reply will not appear in this chat.',
           )}
+        </span>
+      );
+    case FLOW_RUN_FAILED:
+      return <span>{t('The flow failed to execute.')}</span>;
+    case CHAT_SERVICE_UNAVAILABLE:
+      return (
+        <span>
+          {t('The service is temporarily busy. Please try again in a moment.')}
         </span>
       );
     case ErrorCode.NO_CHAT_RESPONSE:
@@ -108,4 +118,6 @@ ErrorBubble.displayName = 'ErrorBubble';
 
 export type ChatSendingError =
   | ApErrorParams
-  | { code: typeof FLOW_STILL_RUNNING };
+  | { code: typeof FLOW_STILL_RUNNING }
+  | { code: typeof FLOW_RUN_FAILED }
+  | { code: typeof CHAT_SERVICE_UNAVAILABLE };

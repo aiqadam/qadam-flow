@@ -187,6 +187,13 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
               t('Your submission was received. The flow is still running.'),
               { duration: 3000 },
             );
+          } else if (status === 503) {
+            toast.info(
+              t(
+                'The service is temporarily busy. Please try again in a moment.',
+              ),
+              { duration: 3000 },
+            );
           } else {
             toast.error(t('The flow failed to execute.'), {
               duration: 3000,

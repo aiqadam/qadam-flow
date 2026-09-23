@@ -20,6 +20,8 @@ import {
   ChatMessageList,
   ChatSendingError,
   FLOW_STILL_RUNNING,
+  FLOW_RUN_FAILED,
+  CHAT_SERVICE_UNAVAILABLE,
   Messages,
 } from '@/features/chat';
 import { humanInputApi } from '@/features/forms';
@@ -205,12 +207,27 @@ export function FlowChat({
     },
 
     onError: (error: AxiosError) => {
-      if (error.response?.status === 504) {
+      const status = error.response?.status;
+      // Classified by HTTP status, not by response body: the 500/503/504 bodies the
+      // sync webhook answers with are `{ message }` only, with no `code` field for
+      // ErrorBubble to switch on (see /sync's contract in webhook.service.ts).
+      if (status === 504) {
         setSendingError({ code: FLOW_STILL_RUNNING });
         scrollToBottom();
         return;
       }
-      const errorData = error.response?.data as ApErrorParams;
+      if (status === 500) {
+        setSendingError({ code: FLOW_RUN_FAILED });
+        scrollToBottom();
+        return;
+      }
+      if (status === 503) {
+        setSendingError({ code: CHAT_SERVICE_UNAVAILABLE });
+        scrollToBottom();
+        return;
+      }
+      const responseData = error.response?.data;
+      const errorData = isApErrorParams(responseData) ? responseData : null;
       setSendingError(errorData);
       onError?.(errorData);
       scrollToBottom();
@@ -299,3 +316,6 @@ export const ChatNotFound = () => {
     />
   );
 };
+
+const isApErrorParams = (data: unknown): data is ApErrorParams =>
+  typeof data === 'object' && data !== null && 'code' in data;
