@@ -8,7 +8,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { EmbeddingModel, ImageModel, LanguageModel } from 'ai'
 import { ProviderOptions } from '@ai-sdk/provider-utils'
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common'
-import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isNil, isValidAwsRegion, isValidAzureResourceName, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
+import { AIProviderName, AzureProviderConfig, BaseAIProviderAuthConfig, BedrockProviderAuthConfig, BedrockProviderConfig, CloudflareGatewayProviderConfig, GetProviderConfigResponse, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE, isNil, isValidAwsRegion, isValidAzureResourceName, mergeOpenAICompatibleExtraBody, OpenAICompatibleProviderConfig, splitCloudflareGatewayModelId } from '@aiqadam/shared'
 import { createAiGateway } from 'ai-gateway-provider';
 import { createAnthropic as createAnthropicGateway } from 'ai-gateway-provider/providers/anthropic';
 import { createGoogleGenerativeAI as createGoogleGateway } from 'ai-gateway-provider/providers/google';
@@ -245,7 +245,7 @@ export async function createAIModel({
         }
         case AIProviderName.CUSTOM: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            const { apiKeyHeader, baseUrl, defaultHeaders } = config as OpenAICompatibleProviderConfig
+            const { apiKeyHeader, baseUrl, defaultHeaders, extraBody } = config as OpenAICompatibleProviderConfig
 
             const customHeaders = defaultHeaders ?? {}
 
@@ -264,6 +264,10 @@ export async function createAIModel({
                     ...customHeaders,
                     [apiKeyHeader]: apiKey,
                 },
+                // The same model object backs the agent's own turns and the engine's per-tool
+                // property extraction, so e.g. `chat_template_kwargs: { enable_thinking: false }`
+                // reaches every call a Run Agent step makes, not just the visible ones.
+                transformRequestBody: (body) => mergeOpenAICompatibleExtraBody({ body, extraBody }),
             })
             if (isImage) {
                 return provider.imageModel(modelId)
