@@ -6,6 +6,7 @@ import {
     apId,
     AppConnectionStatus,
     AppConnectionType,
+    ChatAgentEventType,
     ChatConversationStatus,
     DefaultProjectRole,
     isNil,
@@ -16,6 +17,8 @@ import {
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { MockInstance } from 'vitest'
+import { websocketService } from '../../../../src/app/core/websockets.service'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { db } from '../../../helpers/db'
 import { createMockConnection, createMockProject } from '../../../helpers/mocks'
@@ -46,6 +49,7 @@ let scriptedResponses: string[] = []
 let providerHolds: Promise<void>[] = []
 let providerFirstChunkOnly = ''
 let providerStreamedFirstChunk = false
+let providerFailure: { status: number, body: Record<string, unknown> } | null = null
 
 beforeAll(async () => {
     providerServer = http.createServer((req, res) => {
@@ -54,6 +58,11 @@ beforeAll(async () => {
         req.on('end', () => {
             providerCalls.push(`${providerOrigin}${req.url}`)
             providerBodies.push(JSON.parse(Buffer.concat(chunks).toString()))
+            if (!isNil(providerFailure)) {
+                res.writeHead(providerFailure.status, { 'content-type': 'application/json' })
+                res.end(JSON.stringify(providerFailure.body))
+                return
+            }
             res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
             // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream —
             // the only way to cancel something real rather than a conversation that is already
@@ -93,6 +102,8 @@ afterEach(() => {
     providerHolds = []
     providerFirstChunkOnly = ''
     providerStreamedFirstChunk = false
+    providerFailure = null
+    vi.restoreAllMocks()
 })
 
 async function createConversation(context: TestContext, body: Record<string, unknown> = {}): Promise<string> {
@@ -224,6 +235,23 @@ async function waitForStatus(conversationId: string, status: ChatConversationSta
     throw new Error(`Conversation ${conversationId} never reached ${status}`)
 }
 
+// `websocketService.to` builds a fresh broadcast operator per call, so the spy has to be attached
+// to each one as it is handed out rather than once up front.
+function captureSocketEmits(): MockInstance[] {
+    const emits: MockInstance[] = []
+    const originalTo = websocketService.to
+    vi.spyOn(websocketService, 'to').mockImplementation((room: string) => {
+        const operator = originalTo(room)
+        emits.push(vi.spyOn(operator, 'emit'))
+        return operator
+    })
+    return emits
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
 async function saveProjectWithConnection({ platformId, ownerId, qadamName, displayName }: {
     platformId: string
     ownerId: string
@@ -302,6 +330,34 @@ describe('Chat agent API', () => {
                     process.env.AP_HTTP_STREAM_IDLE_TIMEOUT_SECONDS = previousIdleTimeout
                 }
             }
+        })
+
+        // The provider's refusal reaches `streamText`'s `onError`, not the loop's catch: what the
+        // catch sees is the `NoOutputGeneratedError` wrapper, which matches no class. Classifying
+        // that wrapper reported every first-step failure as UNKNOWN — a local model without tool
+        // support ended the turn with nothing to say why.
+        it('reports the provider own refusal to the user, not the wrapper the SDK rethrows it as', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            providerFailure = {
+                status: StatusCodes.BAD_REQUEST,
+                body: { error: { message: 'registry.ollama.ai/library/gemma:2b does not support tools', type: 'api_error' } },
+            }
+            const operatorEmits = captureSocketEmits()
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, {
+                content: 'build me a flow',
+                runId: apId(),
+            })
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            await waitForStatus(conversationId, ChatConversationStatus.ERROR)
+
+            const payloads = operatorEmits.flatMap((emit) => emit.mock.calls.map((call) => call[1]))
+            const errorEvent = payloads.find((payload) => isRecord(payload) && payload.type === ChatAgentEventType.ERROR)
+            expect(errorEvent).toMatchObject({ data: { code: 'PROVIDER_TOOLS_NOT_SUPPORTED' } })
+            // The raw provider text stays server-side: every chunk, the SDK's own `error` chunk
+            // included, carries only the fixed classified strings.
+            expect(JSON.stringify(payloads)).not.toContain('registry.ollama.ai')
         })
 
         it('starts the run and answers with the conversation and run ids when a provider is configured', async () => {

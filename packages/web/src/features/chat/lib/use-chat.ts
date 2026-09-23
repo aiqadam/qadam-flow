@@ -377,11 +377,27 @@ export function useAgentChat({
     // else will ever look again: the answer lands in the database and the open tab never shows it
     // (#289). Handing the wait to the poll is what closes that, and the poll ends itself as soon as
     // the conversation leaves STREAMING.
-    onStreamError: ({ conversationId: convId }) => {
+    //
+    // The error itself is moved onto the send status rather than left on the stream: the reconcile
+    // ends in `clearStreamingState`, which wipes the stream's error a moment after it was set, and a
+    // run the server reported as failed then read as a turn that silently ended with no reply. The
+    // send status is what the next send or a conversation switch resets, so the reason stays up
+    // until the user acts on it. It is withdrawn once the server says the run did not fail — still
+    // going (a stream ending is not a run failing, and the poll below is about to show its answer)
+    // or already finished, which this side's own timeout can race.
+    onStreamError: ({ conversationId: convId, errorMessage }) => {
+      const failure: SendStatus = { type: 'error', message: errorMessage };
+      updateSendStatus(failure);
       reconcileAndClearRef.current(convId);
       void tryCatch(async () => {
         const conv = await chatApi.getConversation(convId);
         if (isNil(conv) || conversationIdRef.current !== convId) return;
+        if (
+          conv.status !== ChatConversationStatus.ERROR &&
+          sendStatusRef.current === failure
+        ) {
+          updateSendStatus({ type: 'idle' });
+        }
         if (conv.status === ChatConversationStatus.STREAMING) {
           // The server's own bound, imported rather than restated: it stops honouring a STREAMING
           // conversation this long after its last heartbeat, so a poll that outlives it is waiting

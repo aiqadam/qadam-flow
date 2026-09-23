@@ -224,6 +224,14 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
     // past — correlated by `toolCallId` here rather than re-read from the database, which the row
     // does not yet contain.
     const gatedCallInputs = new Map<string, { toolName: string, input: Record<string, unknown> }>()
+    // `streamText` does not throw a provider failure: it hands it to `onError` and carries on, and
+    // when the very first step never produced anything, `result.steps` then rejects with a
+    // `NoOutputGeneratedError` whose message is a fixed "No output generated. Check the stream for
+    // errors." Classifying and logging that wrapper is what left every provider failure reported as
+    // UNKNOWN — timeouts, SSRF blocks and "model does not support tools" alike. The first error is
+    // kept because it is the cause; anything after it is fallout. Without an `onError` the SDK's
+    // default `console.error`s the whole error, request body included, past the logger's redaction.
+    let providerError: unknown = undefined
 
     const { error } = await tryCatch(async () => {
         const result = streamText({
@@ -233,6 +241,9 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             tools,
             stopWhen: stepCountIs(MAX_AGENT_STEPS),
             abortSignal: abortController.signal,
+            onError: ({ error: streamError }) => {
+                providerError ??= streamError
+            },
             // Proof of life for `isAbandoned`. Without it a long run looks identical to one whose
             // process died, and the staleness window would have to be longer than the longest
             // possible run to be safe — which would make it useless.
@@ -241,7 +252,11 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             },
         })
 
-        for await (const chunk of result.toUIMessageStream()) {
+        // The SDK's default here is `getErrorMessage`, which puts the provider's raw message — or,
+        // for a non-Error rejection, its whole `JSON.stringify` — into an `error` chunk that goes
+        // straight to the browser. The client learns about the failure from the ERROR event below;
+        // the chunk only has to carry the same fixed string that event does.
+        for await (const chunk of result.toUIMessageStream({ onError: (streamError) => classifyChatError(streamError).message })) {
             // Accumulated as it goes rather than read off `result` at the end, because on an abort
             // `result.steps` rejects along with the stream — this is the only copy of the partial
             // reply that survives a cancel.
@@ -283,20 +298,24 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
         return
     }
 
-    // Only the error's name and message are read, never the error object: an AI SDK
+    const cause = providerError ?? error
+    // Only the error's name, message and HTTP status are read, never the error object: an AI SDK
     // `APICallError` carries `requestBodyValues` and the response headers, which is where the
-    // provider API key lives. classifyChatError is deliberately pure and message-only, so the
-    // user-facing payload stays a fixed string per class (DoD 3 of #265).
+    // provider API key lives. classifyChatError is deliberately pure and reads the same three, so
+    // the user-facing payload stays a fixed string per class (DoD 3 of #265).
+    const { code, message } = classifyChatError(cause)
     log.error({
         conversationId: id,
         runId,
-        errorName: error.name,
-        errorMessage: error.message,
+        errorCode: code,
+        errorName: describeError({ error: cause, key: 'name' }),
+        errorMessage: describeError({ error: cause, key: 'message' }),
+        errorStatusCode: describeError({ error: cause, key: 'statusCode' }),
+        ...spreadIfDefined('wrapperErrorName', cause === error ? undefined : error.name),
     }, '[chatAgentService#runAgentLoop] chat run failed')
     // Classified before failRun is persisted: the ERROR status then proves the classifier
     // ran without throwing (it is total — any input maps to a code), so an integration
     // test asserting ERROR also pins the classified path, not just the failure itself.
-    const { code, message } = classifyChatError(error)
     await chatConversationService.failRun({ id, platformId, userId, runId })
     emit({
         userId,
@@ -334,6 +353,16 @@ function trackToolApproval({ chunk, gatedCallInputs }: TrackApprovalParams): Too
         displayName: chatApprovals.toDisplayName(gatedCall.toolName),
         toolInput: gatedCall.input,
     }
+}
+
+// `onError` hands over `unknown` — a provider can reject with anything — so each field is read off
+// only when it is a primitive, which also keeps a nested object from ever reaching the log line.
+function describeError({ error, key }: { error: unknown, key: 'name' | 'message' | 'statusCode' }): string | number | undefined {
+    if (typeof error !== 'object' || isNil(error) || !(key in error)) {
+        return typeof error === 'string' && key === 'message' ? error : undefined
+    }
+    const value: unknown = Reflect.get(error, key)
+    return typeof value === 'string' || typeof value === 'number' ? value : undefined
 }
 
 function toInputRecord(value: unknown): Record<string, unknown> {
