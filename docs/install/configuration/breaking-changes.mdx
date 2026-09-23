@@ -54,7 +54,7 @@ When a step stores no shape, the engine now works it out at run time by calling 
 the builder calls, and then converts and validates every inner field exactly as it does for a
 builder-built step. A step that already stores a shape behaves as before. If working out the shape
 fails, for example because the third-party API behind it is down, the value is passed through
-unprocessed as it was before.
+unprocessed as it was before, unless the failure is an internal engine error, which fails the run.
 
 File inputs, wherever they appear, are also stricter. The engine accepts only an `http(s)` URL,
 such as `{{step_1['output'].file}}`, or a `data:<mime>;base64,<data>` URI. A download that fails now

@@ -4,7 +4,8 @@ import { utils } from '../utils'
 import { createFlowsContext } from './flows'
 
 // One builder for the context a property's `options()` / `props()` sees, so the builder's
-// executeProps and the run-time schema computation for DYNAMIC props (#388) cannot drift apart:
+// executeProps and the run-time schema computation for DYNAMIC props (#388) share the same
+// server, project, flows and connections (only `step.name` follows each caller's convention):
 // a `props()` that resolved one way in the form and another at run time would process the
 // sub-fields against a schema the user never saw.
 export const createPropertyContext = ({ constants, stepName, contextVersion, searchValue }: CreatePropertyContextParams): PropertyContextWithStep => ({
