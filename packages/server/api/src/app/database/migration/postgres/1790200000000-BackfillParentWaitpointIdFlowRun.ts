@@ -23,8 +23,9 @@ export class BackfillParentWaitpointIdFlowRun1790200000000 implements Migration 
     //   the row is left NULL (the pre-existing "complete nothing" behavior);
     // - that waitpoint was created at or before the child's own `created` timestamp — the
     //   `callFlow` step always creates its waitpoint before it ever sends the request that creates
-    //   the child, so a legitimate binding always satisfies this; a waitpoint created afterwards
-    //   cannot be the one this child's request named;
+    //   the child, so a legitimate binding normally satisfies this (the two timestamps come from
+    //   the DB and API clocks, so skew can leave a legitimate row NULL — the fail-safe direction);
+    //   a waitpoint created afterwards cannot be the one this child's request named;
     // - the child's `dispatchMode` is not `INLINE` — an inline child never goes through the
     //   `failParentOnFailure`/waitpoint path at all (its failure is handled synchronously in the
     //   parent's own engine process), so it must never be backfilled a waitpoint id to complete.

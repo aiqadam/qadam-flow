@@ -488,7 +488,7 @@ describe('Webhook ingress: parentRunId / failParentOnFailure verification (#521)
      * hands `flowRun` (which already carries the verified `parentWaitpointId`) straight to
      * `runsMetadataQueue(log).add`, and only the drain's own `save()` actually writes the row.
      * That `add()` strips every field not on `RUNS_METADATA_UPSERT_KEYS` — if that
-     * whitelist ever omits `parentWaitpointId`, a PRODUCTION child's proof was silently
+     * whitelist ever omits `parentWaitpointId`, a PRODUCTION child's proof is silently
      * dropped before it reaches Postgres, and `markParentRunAsFailed` (which reads the
      * *persisted* column, not the in-memory value `onRunCreated` sees) would find it NULL and
      * strand the parent forever. TESTING runs `save()` directly and never go through this path,
