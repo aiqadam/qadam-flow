@@ -44,6 +44,26 @@ describe('redactAIProviderConfig', () => {
         })
     })
 
+    // The API rejects these configs, but a row written around it (or one that predates a tightened
+    // refine) must still not reach a low-privileged reader with its secrets attached.
+    it.each([
+        ['a reserved extraBody key', { model: 'other/model', user: 'tenant-secret' }],
+        ['an oversized extraBody', { user: 'tenant-secret', padding: 'x'.repeat(9000) }],
+    ])('fails closed for a stored CUSTOM row with %s', (_label, extraBody) => {
+        const redacted = redactAIProviderConfig({
+            provider: AIProviderName.CUSTOM,
+            config: {
+                baseUrl: 'https://user:secret-token@api.example.com/v1',
+                apiKeyHeader: 'Authorization',
+                models: [],
+                defaultHeaders: { 'X-Secondary-Auth': 'Bearer leaked' },
+                extraBody,
+            },
+        })
+
+        expect(redacted).toEqual({ apiKeyHeader: 'Authorization', models: [] })
+    })
+
     it('keeps apiKeyHeader and models exactly as stored', () => {
         const models = [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }]
         const redacted = redactAIProviderConfig({

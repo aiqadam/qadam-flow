@@ -2045,7 +2045,7 @@
   "Save this step input in the run log. Turn off to hide it.": "Qadam kiritish ma'lumotlarini run logiga saqlang. Yashirish uchun o'chiring.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Qadam chiqish ma'lumotlarini run logiga saqlang. Yashirish uchun o'chiring. Qiymat keyingi qadamga oqib o'tadi.",
   "Extra request parameters": "Qo'shimcha so'rov parametrlari",
-  "Optional JSON object added to every request to this provider, for example to turn off Qwen thinking on vLLM.": "Ushbu provayderga yuboriladigan har bir so'rovga qo'shiladigan ixtiyoriy JSON obyekt, masalan vLLM'da Qwen fikrlashini o'chirish uchun.",
+  "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Ushbu provayderga yuboriladigan har bir chat so'roviga qo'shiladigan ixtiyoriy JSON obyekt, masalan vLLM'da Qwen fikrlashini o'chirish uchun.",
   "extraBodyMustBeObject": "JSON obyekt yoki bo'sh bo'lishi kerak",
   "extraBodyReservedKey": "Bu yerda model, messages, tools, tool_choice, stream, stream_options va response_format ni o'rnatib bo'lmaydi",
   "extraBodyTooLarge": "Qo'shimcha so'rov parametrlari juda katta"

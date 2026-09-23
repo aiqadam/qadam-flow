@@ -432,7 +432,7 @@ export const UpsertProviderConfigForm = ({
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Optional JSON object added to every request to this provider, for example to turn off Qwen thinking on vLLM.',
+                    'Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.',
                   )}
                 </FormDescription>
                 <FormMessage />

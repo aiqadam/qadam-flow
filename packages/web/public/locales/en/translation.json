@@ -2045,7 +2045,7 @@
   "Save this step input in the run log. Turn off to hide it.": "Save this step input in the run log. Turn off to hide it.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.",
   "Extra request parameters": "Extra request parameters",
-  "Optional JSON object added to every request to this provider, for example to turn off Qwen thinking on vLLM.": "Optional JSON object added to every request to this provider, for example to turn off Qwen thinking on vLLM.",
+  "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.",
   "extraBodyMustBeObject": "Must be a JSON object, or empty",
   "extraBodyReservedKey": "Can't set model, messages, tools, tool_choice, stream, stream_options or response_format here",
   "extraBodyTooLarge": "Extra request parameters are too large"

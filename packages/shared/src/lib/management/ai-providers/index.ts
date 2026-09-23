@@ -90,8 +90,9 @@ export const OPENAI_COMPATIBLE_RESERVED_BODY_KEYS: readonly string[] = [
     'response_format',
 ]
 
-// Merged into every request the row makes and stored verbatim on the row, so bound it the same way
-// the model catalogue above is bounded: far above any real set of sampling / template parameters.
+// Merged into every chat request the row makes and stored verbatim on the row, so bound it the same
+// way the model catalogue above is bounded: 8192 serialized characters, far above any real set of
+// sampling / template parameters.
 const MAX_EXTRA_BODY_SERIALIZED_LENGTH = 8192
 
 export const OpenAICompatibleExtraBody = z.record(z.string(), z.unknown(), { error: formErrors.extraBodyMustBeObject })
@@ -109,12 +110,13 @@ export type OpenAICompatibleProviderConfig = z.infer<typeof OpenAICompatibleProv
 
 /**
  * Adds a CUSTOM row's `extraBody` to an outgoing chat-completions body. Reserved keys are dropped
- * here as well as rejected by the schema: the qadam reads `config` back from the server as an
- * unchecked cast, so this is the last point where a stored row that predates (or bypassed) the
- * refine can still be kept from overwriting `model`, `messages` or `tools`.
+ * here as well as rejected by the schema, and a non-object value is ignored: both call sites read
+ * `config` as an unchecked cast, so this is the last point where a stored row that predates (or
+ * bypassed) the refine can still be kept from overwriting `model`, `messages` or `tools`, or from
+ * failing every request on the provider.
  */
-export function mergeOpenAICompatibleExtraBody({ body, extraBody }: { body: Record<string, unknown>, extraBody: Record<string, unknown> | undefined }): Record<string, unknown> {
-    if (extraBody === undefined) {
+export function mergeOpenAICompatibleExtraBody({ body, extraBody }: { body: Record<string, unknown>, extraBody: unknown }): Record<string, unknown> {
+    if (typeof extraBody !== 'object' || extraBody === null || Array.isArray(extraBody)) {
         return body
     }
     const allowed = Object.fromEntries(Object.entries(extraBody).filter(([key]) => !OPENAI_COMPATIBLE_RESERVED_BODY_KEYS.includes(key)))
@@ -339,7 +341,10 @@ export function redactAIProviderConfig({ provider, config }: { provider: AIProvi
     }
     const parsed = OpenAICompatibleProviderConfig.safeParse(config)
     if (!parsed.success) {
-        return config
+        // Fail closed: a stored row that no longer satisfies the schema (a direct DB write, or a
+        // later tightening of a refine such as `extraBody`'s reserved keys) must not reach a
+        // low-privileged reader verbatim with its `defaultHeaders`/`extraBody` attached.
+        return RedactedFallbackConfig.parse(config)
     }
     const withoutSecrets = omit(parsed.data, ['defaultHeaders', 'extraBody'])
     return {
@@ -347,6 +352,13 @@ export function redactAIProviderConfig({ provider, config }: { provider: AIProvi
         baseUrl: originOnly(withoutSecrets.baseUrl),
     }
 }
+
+// Keeps only the two fields the pickers need and that cannot carry a credential; every other key,
+// `baseUrl` included, is stripped, and a malformed field degrades to empty instead of throwing.
+const RedactedFallbackConfig = z.object({
+    apiKeyHeader: z.string().catch(''),
+    models: z.array(ProviderModelConfig).catch([]),
+}).catch({ apiKeyHeader: '', models: [] })
 
 // A `baseUrl` that fails to parse as a URL at all has nothing safe to disambiguate rows with —
 // dropping it entirely (rather than passing the raw, unparseable string through) is the fail-closed

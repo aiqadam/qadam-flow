@@ -2045,7 +2045,7 @@
   "Save this step input in the run log. Turn off to hide it.": "Қадам кіріс деректерін run логында сақтаңыз. Жасыру үшін өшіріңіз.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Қадам шығыс деректерін run логында сақтаңыз. Жасыру үшін өшіріңіз. Мән келесі қадамға жіберіледі.",
   "Extra request parameters": "Қосымша сұрау параметрлері",
-  "Optional JSON object added to every request to this provider, for example to turn off Qwen thinking on vLLM.": "Осы провайдерге жіберілетін әр сұрауға қосылатын міндетті емес JSON нысаны, мысалы vLLM-де Qwen ойлауын өшіру үшін.",
+  "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Осы провайдерге жіберілетін әр чат сұрауына қосылатын міндетті емес JSON нысаны, мысалы vLLM-де Qwen ойлауын өшіру үшін.",
   "extraBodyMustBeObject": "JSON нысаны немесе бос болуы керек",
   "extraBodyReservedKey": "Мұнда model, messages, tools, tool_choice, stream, stream_options және response_format орнатуға болмайды",
   "extraBodyTooLarge": "Қосымша сұрау параметрлері тым үлкен"

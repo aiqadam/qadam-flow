@@ -294,6 +294,35 @@ describe('AI Providers API', () => {
             expect((saved as any).config.defaultHeaders).toEqual({ 'X-Custom': 'value-1' })
         })
 
+        it('should reject an update whose extraBody sets a reserved key and keep the stored config', async () => {
+            const provider = await mockAndSaveAIProvider({
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Existing Provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                    extraBody: { top_k: 20 },
+                },
+            })
+
+            const response = await ctx.post(`/v1/ai-providers/${provider.id}`, {
+                displayName: 'Existing Provider',
+                config: {
+                    baseUrl: 'https://api.example.com/v1',
+                    apiKeyHeader: 'Authorization',
+                    models: [],
+                    extraBody: { messages: [] },
+                },
+                auth: { apiKey: 'test-key' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const saved = await db.findOneBy('ai_provider', { id: provider.id })
+            expect((saved as any).config.extraBody).toEqual({ top_k: 20 })
+        })
+
         it('should keep the display name when the update does not carry one', async () => {
             const provider = await mockAndSaveAIProvider({
                 platformId: ctx.platform.id,

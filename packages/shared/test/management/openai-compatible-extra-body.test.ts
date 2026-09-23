@@ -70,4 +70,13 @@ describe('mergeOpenAICompatibleExtraBody', () => {
 
         expect(merged).toEqual({ ...body, top_k: 20 })
     })
+
+    // A tampered row must degrade to "no extraBody", not fail every request on the provider or
+    // spread a string's characters into the body as numbered keys.
+    it.each([['null', null], ['a string', 'top_k'], ['an array', ['top_k']], ['a number', 20]])(
+        'ignores an extraBody that is %s',
+        (_label, extraBody) => {
+            expect(mergeOpenAICompatibleExtraBody({ body, extraBody })).toBe(body)
+        },
+    )
 })

@@ -53,7 +53,7 @@ An optional JSON object merged into every chat-completions body the row sends, t
 
 - Applied in both model builders: the qadam's `createAIModel` (`ai-sdk.ts`) and the server chat's `chatAiUtils.createChatModel`. The qadam's model object is also what the engine uses for per-tool property extraction (`engine/src/lib/tools/index.ts`), so a Run Agent step's hidden calls get the same parameters as its visible ones.
 - Keys the SDK owns (`OPENAI_COMPATIBLE_RESERVED_BODY_KEYS`: `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `response_format`) are rejected by the schema and dropped again at merge time, since the qadam reads `config` back as an unchecked cast.
-- Capped at 8 KB serialized. Redacted from non-admin list responses like `defaultHeaders`, because gateways that authenticate in the body put their token there.
+- Capped at 8192 serialized characters (`JSON.stringify(...).length`, not bytes). Chat models only: CUSTOM image models ignore it. Redacted from non-admin list responses like `defaultHeaders`, because gateways that authenticate in the body put their token there.
 
 ## Model Caching
 
