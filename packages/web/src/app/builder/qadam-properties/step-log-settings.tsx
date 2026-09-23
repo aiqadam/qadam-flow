@@ -93,7 +93,7 @@ const StepLogSettingsForm = React.memo(() => {
             <ReadMoreDescription
               text={t(
                 isTrigger
-                  ? 'Save the trigger payload in the run log. Turn off to hide it. The value still flows to the next step.'
+                  ? 'Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.'
                   : 'Save this step output in the run log. Turn off to hide it. The value still flows to the next step.',
               )}
             />

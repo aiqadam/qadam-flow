@@ -365,7 +365,15 @@ export const createFlowState = (
           }
           applyOperation({
             type: FlowOperationType.UPDATE_TRIGGER,
-            request: defaultValues,
+            request: {
+              ...defaultValues,
+              // A privacy opt-out should survive replacing the trigger — ap_update_trigger
+              // already carries this forward (#505). `_updateTrigger` copies `logOutput`
+              // straight from the request with no fallback to the stored trigger, and
+              // `getDefaultStepValues` never sets it, so leaving it out here would silently
+              // turn trigger logging back on whenever the user picks a different trigger qadam.
+              logOutput: flowVersion.trigger.logOutput,
+            },
           });
           selectStepByName('trigger');
           applyOperation({

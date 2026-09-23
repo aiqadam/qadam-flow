@@ -16,6 +16,7 @@ import {
     FlowRunId,
     FlowRunStatus,
     FlowRunWithRetryError,
+    FlowVersion,
     FlowVersionId,
     isFlowRunStateTerminal,
     isNil,
@@ -29,6 +30,7 @@ import {
     RunInternalError,
     SampleDataFileType,
     SeekPage,
+    StepOutput,
     StepOutputStatus,
     StreamStepProgress,
     tryCatch,
@@ -61,6 +63,15 @@ import { waitpointService } from './waitpoint/waitpoint-service'
 
 const CANCELLABLE_STATUSES: FlowRunStatus[] = [FlowRunStatus.PAUSED, FlowRunStatus.QUEUED]
 
+/**
+ * Mirrors `REDACTED_VALUE` in `packages/server/engine/src/lib/helper/log-redaction.ts`. The api
+ * package cannot import that module directly: `@aiqadam/engine`'s `package.json` declares no
+ * `main`/`exports` entry, and the monorepo's own tsconfig path for the bare specifier resolves
+ * to `packages/server/engine/src/main.ts` — the sandbox worker's own bootstrap, which pulls in
+ * `isolated-vm` and other sandbox-only dependencies that must never load inside the api process.
+ * Duplicated here as the single place `retry()` checks for it.
+ */
+const REDACTED_TRIGGER_OUTPUT_VALUE = '**REDACTED**'
 
 const tracer = trace.getTracer('flow-run-service')
 const PENDING_RUN_OWNER_TTL_SECONDS = system.getNumberOrThrow(AppSystemProp.FLOW_TIMEOUT_SECONDS)
@@ -232,6 +243,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const flowVersion = await flowVersionService(log).getOneOrThrow(oldFlowRun.flowVersionId)
                 const triggerStep = oldFlowRun.steps?.[flowVersion.trigger.name]
                 const triggerFailed = triggerStep?.status === StepOutputStatus.FAILED
+                assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion: flowVersion, triggerStep })
 
                 await flowRunRepo().update({
                     id: oldFlowRun.id,
@@ -270,9 +282,14 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const latestFlowVersion = await flowVersionService(log).getLatestLockedVersionOrThrow(
                     oldFlowRun.flowId,
                 )
+                // The redaction check is against the version the run actually executed on, not
+                // the latest one being retried to — that's the version whose `trigger.logOutput`
+                // was in effect when this run's log was written.
+                const ranOnVersion = await flowVersionService(log).getOneOrThrow(oldFlowRun.flowVersionId)
                 const triggerStep = oldFlowRun.steps?.[latestFlowVersion.trigger.name]
                 const triggerFailed = triggerStep?.status === StepOutputStatus.FAILED
                 const payload = triggerStep?.output
+                assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion, triggerStep: oldFlowRun.steps?.[ranOnVersion.trigger.name] })
                 return this.start({
                     flowId: oldFlowRun.flowId,
                     payload,
@@ -547,6 +564,25 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
     },
 })
 
+
+/**
+ * Refuses a retry whose old run cannot supply a real trigger payload to replay, for either
+ * strategy — see the three mechanisms documented in flow-runs.md's Logs Storage and Retry
+ * Strategies sections: a redacted trigger's terminal log backup, a redacted failed-trigger's
+ * preserved raw event, and RESUME hydrating a redacted trigger step from the log. `ranOnVersion`
+ * must be the flow version the OLD run actually executed on (its `trigger.logOutput` reflects
+ * the setting in effect when the log was written, not whatever the trigger is configured to do
+ * now) — never the latest/target version, which may have logging on even though this run's own
+ * log holds `**REDACTED**`.
+ */
+function assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion, triggerStep }: AssertTriggerPayloadRetryableParams): void {
+    const triggerOutputRedacted = triggerStep?.output === REDACTED_TRIGGER_OUTPUT_VALUE
+    if (ranOnVersion.trigger.logOutput !== false && !triggerOutputRedacted) {
+        return
+    }
+    const message = `Can't retry run ${oldFlowRun.id}: its trigger payload was not kept in the run log because logging was turned off for the trigger. Re-trigger the flow with a fresh event, or turn trigger logging back on for future runs before retrying.`
+    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+}
 
 async function cancelSingleRun(log: FastifyBaseLogger, flowRun: FlowRun, platformId: string): Promise<void> {
     await jobQueue(log).removeOneTimeJob({
@@ -1048,6 +1084,12 @@ type RetryParams = {
     flowRunId: FlowRunId
     strategy: FlowRetryStrategy
     projectId: ProjectId
+}
+
+type AssertTriggerPayloadRetryableParams = {
+    oldFlowRun: FlowRun
+    ranOnVersion: FlowVersion
+    triggerStep: StepOutput | undefined
 }
 
 type CancelParams = {

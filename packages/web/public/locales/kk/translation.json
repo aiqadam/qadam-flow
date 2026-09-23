@@ -2044,7 +2044,7 @@
   "Log output": "Шығысты логқа жазу",
   "Save this step input in the run log. Turn off to hide it.": "Қадам кіріс деректерін run логында сақтаңыз. Жасыру үшін өшіріңіз.",
   "Save this step output in the run log. Turn off to hide it. The value still flows to the next step.": "Қадам шығыс деректерін run логында сақтаңыз. Жасыру үшін өшіріңіз. Мән келесі қадамға жіберіледі.",
-  "Save the trigger payload in the run log. Turn off to hide it. The value still flows to the next step.": "Триггер payload-ын run логында сақтаңыз. Жасыру үшін өшіріңіз. Мән келесі қадамға жіберіледі.",
+  "Save the trigger payload in the run log. Turn off to hide it once the run ends. The value still flows to the next step, but a run with it off cannot be retried.": "Триггер payload-ын run логында сақтаңыз. Run аяқталғаннан кейін жасыру үшін өшіріңіз. Мән бәрібір келесі қадамға жіберіледі, бірақ бұл өшірілген run-ды қайталауға болмайды.",
   "Extra request parameters": "Қосымша сұрау параметрлері",
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Осы провайдерге жіберілетін әр чат сұрауына қосылатын міндетті емес JSON нысаны, мысалы vLLM-де Qwen ойлауын өшіру үшін.",
   "extraBodyMustBeObject": "JSON нысаны немесе бос болуы керек",
