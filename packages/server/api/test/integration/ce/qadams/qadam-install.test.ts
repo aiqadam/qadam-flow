@@ -132,6 +132,8 @@ describe('POST /v1/pieces — private piece installation', () => {
 
         expect(response.statusCode).toBe(StatusCodes.CONFLICT)
         expect(response.json().code).toBe(ErrorCode.VALIDATION)
+        // Refused before the worker installs and executes the archive in the shared workspace.
+        expect(interactionSpy).not.toHaveBeenCalled()
 
         const persisted = await databaseConnection().getRepository('qadam_metadata').findBy({ name: officialName })
         expect(persisted).toHaveLength(0)

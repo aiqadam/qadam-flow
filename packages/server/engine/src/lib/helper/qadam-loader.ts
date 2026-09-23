@@ -9,10 +9,14 @@ import { utils } from '../utils'
 // process lives. Both caches hold the in-flight promise so concurrent steps share one walk.
 const qadamPathCache = new Map<string, Promise<string>>()
 let distIndexCache: Promise<Map<string, DistPackageEntry>> | null = null
-// Exact-version aliases only (`name-1.2.3`, plus a prerelease/build suffix). A dev qadam is
-// resolved by bare name and has no version to compare.
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+].*)?$/
-const distPackageJsonSchema = z.object({ name: z.string(), version: z.string().optional() })
+// Exact `x.y.z` aliases only (`name-1.2.3`): that is the shape the API accepts for a pinned
+// version (`ExactVersionType`), and `trimVersionFromAlias` splits on the last hyphen, so a
+// prerelease tail could not be recovered here anyway. A dev qadam is resolved by bare name and
+// has no version to compare.
+const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
+// `version` tolerated as missing or null so a package.json the old name-only index accepted stays
+// resolvable; it just never wins the same-version check.
+const distPackageJsonSchema = z.object({ name: z.string(), version: z.string().nullish() })
 
 export const qadamLoader = {
     loadQadamOrThrow: async (
@@ -182,7 +186,7 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
 async function findBundledBuildAtAliasVersion(packageName: string): Promise<string | null> {
     const name = trimVersionFromAlias(packageName)
     const version = packageName.slice(name.length + 1)
-    if (!SEMVER_PATTERN.test(version)) {
+    if (!EXACT_VERSION_PATTERN.test(version)) {
         return null
     }
     const distIndex = await getDistIndex({ refresh: false })
@@ -305,8 +309,8 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
 
 type DistPackageEntry = {
     name: string
-    // `null` when the bundled package.json carries no version — such a build can never claim an
-    // alias's version, so it never wins the #503 same-version check.
+    // `null` when the bundled package.json carries no usable version — such a build can never
+    // claim an alias's version, so it never wins the #503 same-version check.
     version: string | null
     indexPath: string
 }
