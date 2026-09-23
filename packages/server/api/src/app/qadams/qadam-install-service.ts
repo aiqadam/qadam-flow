@@ -9,6 +9,7 @@ import {
     FileId,
     FileType,
     isNil,
+    isOfficialQadamName,
     PackageType,
     PlatformId,
     ProjectId,
@@ -27,6 +28,20 @@ export const qadamInstallService = (log: FastifyBaseLogger) => ({
         platformId: string,
         params: AddQadamRequestBody,
     ): Promise<QadamMetadataModel> {
+        // #503, before anything is written or run: `saveQadamPackage` persists the archive and
+        // `extractQadamInformation` has the worker install the package into the workspace every
+        // tenant shares and execute it to read its metadata. Refusing only in
+        // `qadamMetadataService.create` (kept, as defence in depth) would leave that installed
+        // directory behind after the row is rejected. The engine echoes `qadamName` back as the
+        // metadata name, so the string checked here is the one the row would have carried.
+        if (isOfficialQadamName(params.qadamName)) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: {
+                    message: `qadam_name_reserved_for_official_qadams name=${params.qadamName}`,
+                },
+            })
+        }
         try {
             const qadamPackage = await saveQadamPackage(platformId, params, log)
             const qadamInformation = await extractQadamInformation({

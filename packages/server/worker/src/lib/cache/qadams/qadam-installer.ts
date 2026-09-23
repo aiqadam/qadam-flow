@@ -7,6 +7,7 @@ import {
     groupBy,
     isEmpty,
     isNil,
+    isOfficialQadamName,
     PackageType,
     PrivateQadamPackage,
     QadamPackage,
@@ -509,15 +510,14 @@ function buildInstallBunfig(qadamsToInstall: QadamPackage[]): string {
             .filter((piece) => piece.packageType === PackageType.REGISTRY && piece.qadamType === QadamType.CUSTOM)
             .map((piece) => piece.qadamName)
             .filter((qadamName) => NPM_PACKAGE_NAME_PATTERN.test(qadamName))
-            // The exemption is decided by `qadamType`, but what lands in the file is a NAME, and
-            // nothing stops a CUSTOM qadam from being registered under an official one:
-            // `qadamMetadataService.create` applies no name validation and scopes uniqueness by
-            // platformId, so a platform can register `@aiqadam/qadam-slack` of its own. In the
-            // default UNSANDBOXED mode that qadam installs into this same shared workspace, so
-            // without this filter one platform's naming choice would lift the quarantine off an
-            // official name for every tenant on the worker. Filter on the name, because the name
-            // is what the quarantine keys on.
-            .filter((qadamName) => !qadamName.startsWith(`${OFFICIAL_QADAM_SCOPE}/`)),
+            // The exemption is decided by `qadamType`, but what lands in the file is a NAME.
+            // `qadamMetadataService.create` refuses a platform-scoped row under the official scope
+            // since #503, but a row registered before that check and a worker whose API is an older
+            // image are both still possible, and in the default UNSANDBOXED mode such a qadam
+            // installs into this same shared workspace — so without this filter one platform's
+            // naming choice would lift the quarantine off an official name for every tenant on the
+            // worker. Filter on the name, because the name is what the quarantine keys on.
+            .filter((qadamName) => !isOfficialQadamName(qadamName)),
     )
     const excludes = adminChosenNames.map((qadamName) => `"${qadamName}"`).join(', ')
     return [

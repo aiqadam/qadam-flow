@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
     DefaultProjectRole,
     EngineResponseStatus,
+    ErrorCode,
     PackageType,
     QadamScope,
     QadamType,
@@ -98,6 +99,44 @@ describe('POST /v1/pieces — private piece installation', () => {
         expect(saved.qadamType).toBe(QadamType.CUSTOM)
         expect(saved.packageType).toBe(PackageType.ARCHIVE)
         expect(saved.archiveId).toBeDefined()
+    })
+
+    // #503: in the default UNSANDBOXED mode a platform-scoped qadam installs into the workspace
+    // every tenant shares, so a CUSTOM qadam under an official name would shadow the bundled one
+    // for every platform on the worker. The name is refused at the front door.
+    it('should refuse a custom qadam registered under the official @aiqadam scope', async () => {
+        const ctx = await createTestContext(app!)
+        const officialName = '@aiqadam/qadam-slack'
+        interactionSpy.mockResolvedValue({
+            status: EngineResponseStatus.OK,
+            response: { ...mockQadamMetadata, name: officialName },
+            error: undefined,
+        })
+
+        const formData = new FormData()
+        formData.append(
+            'qadamArchive',
+            new Blob([tgzBuffer], { type: 'application/gzip' }),
+            'private-piece-test.tgz',
+        )
+        formData.append('qadamName', officialName)
+        formData.append('qadamVersion', PIECE_VERSION)
+        formData.append('packageType', PackageType.ARCHIVE)
+        formData.append('scope', QadamScope.PLATFORM)
+
+        const response = await ctx.inject({
+            method: 'POST',
+            url: '/api/v1/qadams',
+            body: formData,
+        })
+
+        expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+        expect(response.json().code).toBe(ErrorCode.VALIDATION)
+        // Refused before the worker installs and executes the archive in the shared workspace.
+        expect(interactionSpy).not.toHaveBeenCalled()
+
+        const persisted = await databaseConnection().getRepository('qadam_metadata').findBy({ name: officialName })
+        expect(persisted).toHaveLength(0)
     })
 
     it('should reject installation by a non-platform-admin user', async () => {
