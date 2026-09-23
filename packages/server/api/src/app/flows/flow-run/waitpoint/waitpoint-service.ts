@@ -7,7 +7,7 @@ import { SystemJobName } from '../../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../../helper/system-jobs/system-job'
 import { flowRunRepo } from '../flow-run-service'
 import { WaitpointEntity } from './waitpoint-entity'
-import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, DeleteByFlowRunIdParams, FindPendingByVersionParams, GetByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, Waitpoint, WaitpointStatus } from './waitpoint-types'
+import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, DeleteByFlowRunIdParams, ExistsPendingWebhookWaitpointParams, FindPendingByVersionParams, GetByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, Waitpoint, WaitpointStatus } from './waitpoint-types'
 
 const waitpointRepo = repoFactory(WaitpointEntity)
 
@@ -162,6 +162,20 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
     async hasAnyWaitpoint({ flowRunId, projectId }: HasAnyWaitpointParams): Promise<boolean> {
         const count = await waitpointRepo().countBy({ flowRunId, projectId })
         return count > 0
+    },
+
+    /**
+     * The proof behind `failParentOnFailure` (#521 impact item 3): the waitpoint id is read from
+     * the request body's `callbackUrl` (see `webhook-request-converter.ts`), the same URL
+     * call-flow already sends whenever it waits for a response. This proof is exactly as strong
+     * as that URL itself, no stronger — whoever holds it could already resume the named run
+     * directly, with or without an error — so accepting it here as proof of `failParentOnFailure`
+     * grants nothing beyond what its holder can already do. Scoped to `projectId` too, though a
+     * matching row could not exist under the wrong project in the first place (`createForPause`
+     * always stores the waitpoint under the run's own project).
+     */
+    async existsPendingWebhookWaitpoint({ id, flowRunId, projectId }: ExistsPendingWebhookWaitpointParams): Promise<boolean> {
+        return waitpointRepo().existsBy({ id, flowRunId, projectId, status: WaitpointStatus.PENDING, type: PauseType.WEBHOOK })
     },
 })
 

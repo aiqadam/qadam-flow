@@ -71,7 +71,8 @@ const RUNS_METADATA_UPSERT_KEYS: (keyof RunsMetadataUpsertData)[] = [
     'id', 'projectId', 'created', 'flowId', 'flowVersionId', 'environment',
     'triggeredBy', 'startTime', 'finishTime', 'status', 'tags',
     'failedStep', 'stepNameToTest', 'parentRunId', 'failParentOnFailure',
-    'logsFileId', 'updated', 'stepsCount', 'requestId', 'dispatchMode',
+    'parentWaitpointId', 'logsFileId', 'updated', 'stepsCount', 'requestId',
+    'dispatchMode',
 ]
 
 function stripToRunsMetadataUpsertData(params: RunsMetadataUpsertData): RunsMetadataUpsertData {
@@ -116,6 +117,12 @@ export type RunsMetadataUpsertData = {
     stepNameToTest?: string
     parentRunId?: string
     failParentOnFailure?: boolean
+    // Only ever set on the creation-time `add()` call (`queueOrCreateInstantly`, server-verified
+    // via `resolveVerifiedParent`), never on a later update: `buildFlowRunUpdate` in
+    // `flow-runs-queue.ts` deliberately omits this field, and `uploadRunLog`'s own
+    // `RunsMetadataUpsertData` literal never sets it either, so the engine can never write it
+    // through this queue after the row is created (#521).
+    parentWaitpointId?: string
     logsFileId?: string | null
     updated?: string
     stepsCount?: number

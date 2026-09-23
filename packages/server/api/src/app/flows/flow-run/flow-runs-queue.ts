@@ -1,4 +1,4 @@
-import { apId, FileType, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch } from '@aiqadam/shared'
+import { FileType, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch } from '@aiqadam/shared'
 import { Job, Queue, Worker } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
@@ -206,6 +206,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     if (shouldMarkParentAsFailed) {
         await markParentRunAsFailed({
             parentRunId,
+            parentWaitpointId: savedFlowRun.parentWaitpointId,
             childRunId: savedFlowRun.id,
             projectId: savedFlowRun.projectId,
             log,
@@ -336,10 +337,30 @@ function isLogsFileForeignKeyViolation(error: unknown): boolean {
 
 async function markParentRunAsFailed({
     parentRunId,
+    parentWaitpointId,
     childRunId,
     projectId,
     log,
 }: MarkParentRunAsFailedParams): Promise<void> {
+    // A child predating `flow_run.parentWaitpointId` (#521 impact item 3 hardening) carries
+    // `failParentOnFailure` with no stored proof to complete exactly. Falling back to whatever
+    // waitpoint the parent happens to hold right now (the previous behavior) would reopen the
+    // vulnerability this column exists to close — a replay, or an unrelated retry that changed the
+    // parent's current waitpoint, could complete the wrong one. So a legacy child completes
+    // nothing here; its parent stays PAUSED until manually retried or cancelled. The migration
+    // (`AddParentWaitpointIdToFlowRun`) backfills this once for rows already in Postgres at
+    // deploy time, matched against the parent's own single PENDING WEBHOOK waitpoint where
+    // exactly one exists — this branch is the fallback for what the backfill could not resolve
+    // (zero or multiple candidate waitpoints on the parent), plus any row that reaches this
+    // state some other way: a job queued by the old API before the deploy but not landed in
+    // Postgres until after the migration ran, or a split-version deploy where an old-code
+    // instance still creates children without this column while new-code instances are already
+    // reading it. Recovery for any of these is the same as before: retry or cancel the parent.
+    if (isNil(parentWaitpointId)) {
+        log.warn({ parentRunId, childRunId, projectId }, '[markParentRunAsFailed] Child run has failParentOnFailure but no stored parentWaitpointId (predates this check, or was never verified); completing nothing')
+        return
+    }
+
     const flowRun = await flowRunRepo().findOneBy({
         id: parentRunId,
         projectId,
@@ -370,11 +391,16 @@ async function markParentRunAsFailed({
         queryParams: {},
     }
 
-    const existingWaitpoint = await waitpointService(log).getByFlowRunId({ flowRunId: parentRunId, projectId: flowRun.projectId })
+    // Completes exactly `parentWaitpointId` and nothing else — `complete()` is a no-op unless
+    // that id is still the PENDING row on `parentRunId`, so a replayed proof (this waitpoint
+    // already COMPLETED) or a stale one (superseded by a later retry) is silently harmless rather
+    // than completing whatever waitpoint the parent happens to hold at this later moment. No
+    // `getByFlowRunId` fallback here on purpose: falling back to whatever waitpoint the parent
+    // happens to hold right now would reopen the vulnerability `parentWaitpointId` exists to close.
     const result = await waitpointService(log).complete({
         flowRunId: parentRunId,
         projectId: flowRun.projectId,
-        waitpointId: existingWaitpoint?.id ?? apId(),
+        waitpointId: parentWaitpointId,
         resumePayload: errorPayload,
     })
 
@@ -389,6 +415,7 @@ async function markParentRunAsFailed({
 
 type MarkParentRunAsFailedParams = {
     parentRunId: string
+    parentWaitpointId: string | undefined
     childRunId: string
     projectId: string
     log: FastifyBaseLogger

@@ -17,7 +17,7 @@ import { setupTestEnvironment, teardownTestEnvironment } from '../../../../helpe
 
 const { engineResponseWatcher } = engineResponseWatcherModule
 
-async function waitForCondition(fn: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
+async function waitForCondition({ fn, timeoutMs = 5000 }: WaitForConditionParams): Promise<void> {
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
         if (await fn()) {
@@ -89,8 +89,9 @@ async function createPausedFlowRunWithWaitpoint(params: {
     })
     await db.save('flow_run', flowRun)
 
+    const waitpointId = apId()
     await db.save('waitpoint', {
-        id: apId(),
+        id: waitpointId,
         flowRunId: flowRun.id,
         projectId: params.projectId,
         stepName: 'approval',
@@ -100,7 +101,7 @@ async function createPausedFlowRunWithWaitpoint(params: {
         workerHandlerId: null,
     })
 
-    return { flow, flowVersion, flowRun }
+    return { flow, flowVersion, flowRun, waitpointId }
 }
 
 // A pre-shim (before the 2026-04-13 piece-API pause shim) V0 WEBHOOK pause: the shape
@@ -313,9 +314,11 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
         })
 
-        await waitForCondition(async () => {
-            const wp = await db.findOneBy('waitpoint', { flowRunId: runId })
-            return wp === null
+        await waitForCondition({
+            fn: async () => {
+                const wp = await db.findOneBy('waitpoint', { flowRunId: runId })
+                return wp === null
+            },
         })
 
         const dbRun = await db.findOneBy<{ id: string, status: string }>('flow_run', { id: runId })
@@ -431,9 +434,11 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
         })
 
-        await waitForCondition(async () => {
-            const dbRun = await db.findOneBy<{ status: string }>('flow_run', { id: runId })
-            return dbRun?.status === FlowRunStatus.PAUSED
+        await waitForCondition({
+            fn: async () => {
+                const dbRun = await db.findOneBy<{ status: string }>('flow_run', { id: runId })
+                return dbRun?.status === FlowRunStatus.PAUSED
+            },
         })
 
         const waitpoint = await db.findOneBy<{ status: string, type: string }>('waitpoint', { flowRunId: runId })
@@ -491,9 +496,11 @@ describe('Resume flow run', () => {
             status: FlowRunStatus.PAUSED,
         })
 
-        await waitForCondition(async () => {
-            const dbRun = await db.findOneBy<{ status: string }>('flow_run', { id: runId })
-            return dbRun?.status === FlowRunStatus.PAUSED
+        await waitForCondition({
+            fn: async () => {
+                const dbRun = await db.findOneBy<{ status: string }>('flow_run', { id: runId })
+                return dbRun?.status === FlowRunStatus.PAUSED
+            },
         })
 
         const waitpoint = await db.findOneBy<{ status: string, type: string, resumeDateTime: string }>('waitpoint', { flowRunId: runId })
@@ -583,7 +590,7 @@ describe('Resume flow run', () => {
 
     it('markParentRunAsFailed should not touch a parent run in another project (#520)', async () => {
         const otherCtx = await createTestContext(app)
-        const { flowRun: parentRun } = await createPausedFlowRunWithWaitpoint({
+        const { flowRun: parentRun, waitpointId } = await createPausedFlowRunWithWaitpoint({
             projectId: otherCtx.project.id,
         })
 
@@ -602,6 +609,7 @@ describe('Resume flow run', () => {
             environment: RunEnvironment.PRODUCTION,
             parentRunId: parentRun.id,
             failParentOnFailure: true,
+            parentWaitpointId: waitpointId,
         })
         await db.save('flow_run', childRun)
 
@@ -617,9 +625,11 @@ describe('Resume flow run', () => {
         // is meant to observe. consumeProcessedMetadata — which clears this Redis hash — runs
         // after markParentRunAsFailed in processRunsMetadataUpdate, so waiting for it to be gone
         // guarantees the drain, including markParentRunAsFailed, has already finished.
-        await waitForCondition(async () => {
-            const pending = await distributedStore.hgetJson<RunsMetadataUpsertData>(redisMetadataKey(childRun.id))
-            return isNil(pending) || Object.keys(pending).length === 0
+        await waitForCondition({
+            fn: async () => {
+                const pending = await distributedStore.hgetJson<RunsMetadataUpsertData>(redisMetadataKey(childRun.id))
+                return isNil(pending) || Object.keys(pending).length === 0
+            },
         })
 
         const parentAfter = await db.findOneByOrFail<{ status: string }>('flow_run', { id: parentRun.id })
@@ -630,6 +640,53 @@ describe('Resume flow run', () => {
     })
 
     it('markParentRunAsFailed should still fail/resume a same-project parent (#520)', async () => {
+        const { flowRun: parentRun, waitpointId } = await createPausedFlowRunWithWaitpoint({
+            projectId: ctx.project.id,
+        })
+
+        const childFlow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', childFlow)
+        const childFlowVersion = createMockFlowVersion({
+            flowId: childFlow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', childFlowVersion)
+        const childRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: childFlow.id,
+            flowVersionId: childFlowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+            parentWaitpointId: waitpointId,
+        })
+        await db.save('flow_run', childRun)
+
+        await createHandlers(app.log).uploadRunLog({
+            runId: childRun.id,
+            projectId: ctx.project.id,
+            status: FlowRunStatus.FAILED,
+            finishTime: new Date().toISOString(),
+        })
+
+        // A same-project resume runs the waitpoint through complete() (PENDING -> COMPLETED)
+        // and then straight through resumeFromWaitpoint's PAUSED branch, which deletes the
+        // waitpoint row once the resume is enqueued (see the "pre-completed waitpoint" test
+        // above) — so "gone" is the observable signal that the parent was actually resumed,
+        // not left untouched the way the cross-project parent above is.
+        await waitForCondition({
+            fn: async () => {
+                const waitpoint = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
+                return waitpoint === null
+            },
+        })
+
+        const waitpointAfter = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
+        expect(waitpointAfter).toBeNull()
+    })
+
+    it('markParentRunAsFailed should complete nothing when the child carries failParentOnFailure but no stored parentWaitpointId (legacy row, predates this column)', async () => {
         const { flowRun: parentRun } = await createPausedFlowRunWithWaitpoint({
             projectId: ctx.project.id,
         })
@@ -649,6 +706,7 @@ describe('Resume flow run', () => {
             environment: RunEnvironment.PRODUCTION,
             parentRunId: parentRun.id,
             failParentOnFailure: true,
+            // No parentWaitpointId set — the shape of a run created before this column existed.
         })
         await db.save('flow_run', childRun)
 
@@ -659,18 +717,106 @@ describe('Resume flow run', () => {
             finishTime: new Date().toISOString(),
         })
 
-        // A same-project resume runs the waitpoint through complete() (PENDING -> COMPLETED)
-        // and then straight through resumeFromWaitpoint's PAUSED branch, which deletes the
-        // waitpoint row once the resume is enqueued (see the "pre-completed waitpoint" test
-        // above) — so "gone" is the observable signal that the parent was actually resumed,
-        // not left untouched the way the cross-project parent above is.
-        await waitForCondition(async () => {
-            const waitpoint = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
-            return waitpoint === null
+        await waitForCondition({
+            fn: async () => {
+                const pending = await distributedStore.hgetJson<RunsMetadataUpsertData>(redisMetadataKey(childRun.id))
+                return isNil(pending) || Object.keys(pending).length === 0
+            },
         })
 
-        const waitpointAfter = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
-        expect(waitpointAfter).toBeNull()
+        const parentAfter = await db.findOneByOrFail<{ status: string }>('flow_run', { id: parentRun.id })
+        expect(parentAfter.status).toBe(FlowRunStatus.PAUSED)
+
+        const waitpointAfter = await db.findOneByOrFail<{ status: string }>('waitpoint', { flowRunId: parentRun.id })
+        expect(waitpointAfter.status).toBe('PENDING')
+    })
+
+    it('markParentRunAsFailed only ever completes the exact stored parentWaitpointId: a replayed/stale proof from an already-resumed waitpoint (W1) does not touch a later, different waitpoint (W2) on the same parent', async () => {
+        const { flowRun: parentRun, waitpointId: w1 } = await createPausedFlowRunWithWaitpoint({
+            projectId: ctx.project.id,
+        })
+
+        const childFlow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', childFlow)
+        const childFlowVersion = createMockFlowVersion({
+            flowId: childFlow.id,
+            state: FlowVersionState.LOCKED,
+        })
+        await db.save('flow_version', childFlowVersion)
+
+        const child1 = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: childFlow.id,
+            flowVersionId: childFlowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+            parentWaitpointId: w1,
+        })
+        await db.save('flow_run', child1)
+
+        await createHandlers(app.log).uploadRunLog({
+            runId: child1.id,
+            projectId: ctx.project.id,
+            status: FlowRunStatus.FAILED,
+            finishTime: new Date().toISOString(),
+        })
+
+        // W1 is resumed and its row deleted (same as the #520 same-project test above) before
+        // the parent is given a second, unrelated waitpoint (W2) — standing in for the parent
+        // having since paused again on a later step.
+        await waitForCondition({
+            fn: async () => {
+                const waitpoint = await db.findOneBy('waitpoint', { flowRunId: parentRun.id })
+                return waitpoint === null
+            },
+        })
+
+        const w2 = apId()
+        await db.save('waitpoint', {
+            id: w2,
+            flowRunId: parentRun.id,
+            projectId: ctx.project.id,
+            stepName: 'approval-2',
+            type: 'WEBHOOK',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+
+        // A second child, replaying (or still holding) W1's now-stale id as its stored proof —
+        // e.g. a duplicate delivery of the same job data, or a retry that copied the old id
+        // forward. `complete()` only ever matches an exact PENDING row by id, so this must not
+        // touch W2, which is a different waitpoint entirely.
+        const child2 = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: childFlow.id,
+            flowVersionId: childFlowVersion.id,
+            status: FlowRunStatus.RUNNING,
+            environment: RunEnvironment.PRODUCTION,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+            parentWaitpointId: w1,
+        })
+        await db.save('flow_run', child2)
+
+        await createHandlers(app.log).uploadRunLog({
+            runId: child2.id,
+            projectId: ctx.project.id,
+            status: FlowRunStatus.FAILED,
+            finishTime: new Date().toISOString(),
+        })
+
+        await waitForCondition({
+            fn: async () => {
+                const pending = await distributedStore.hgetJson<RunsMetadataUpsertData>(redisMetadataKey(child2.id))
+                return isNil(pending) || Object.keys(pending).length === 0
+            },
+        })
+
+        const w2After = await db.findOneByOrFail<{ status: string }>('waitpoint', { id: w2 })
+        expect(w2After.status).toBe('PENDING')
     })
 
     it('should drop stale resume signal when parent is already in terminal state and not produce a buffered waitpoint', async () => {
@@ -1292,9 +1438,11 @@ describe('Resume flow run', () => {
             body: { data: 'test' },
         })
 
-        await waitForCondition(async () => {
-            const wp = await db.findOneBy<{ status: string }>('waitpoint', { flowRunId: runId })
-            return wp?.status === 'COMPLETED'
+        await waitForCondition({
+            fn: async () => {
+                const wp = await db.findOneBy<{ status: string }>('waitpoint', { flowRunId: runId })
+                return wp?.status === 'COMPLETED'
+            },
         })
 
         const handlers = createHandlers(app.log)
@@ -1680,3 +1828,8 @@ describe('Resume flow run', () => {
         expect(await secondPromise).toBe('second-response')
     })
 })
+
+type WaitForConditionParams = {
+    fn: () => Promise<boolean>
+    timeoutMs?: number
+}

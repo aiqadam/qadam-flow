@@ -63,6 +63,12 @@ export const FlowRun = z.object({
     projectId: z.string(),
     flowId: z.string(),
     parentRunId: z.string().optional(),
+    // The exact WEBHOOK waitpoint this child proved it descends from at ingress (#521 impact item
+    // 3), persisted so a later failure can complete precisely that waitpoint — never whatever
+    // waitpoint the parent happens to hold at that later moment, which a replay or an unrelated
+    // retry could have changed underneath it. Absent on a run that never carried
+    // `failParentOnFailure`, and on any run created before this field existed.
+    parentWaitpointId: z.string().optional(),
     dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),
     triggeredBy: z.string().optional(),

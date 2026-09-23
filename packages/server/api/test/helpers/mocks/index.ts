@@ -362,6 +362,8 @@ export const createMockFlowRun = (flowRun?: Partial<FlowRun>): FlowRun => {
         steps: {},
         failParentOnFailure: flowRun?.failParentOnFailure ?? false,
         parentRunId: flowRun?.parentRunId ?? undefined,
+        parentWaitpointId: flowRun?.parentWaitpointId ?? undefined,
+        dispatchMode: flowRun?.dispatchMode ?? undefined,
         flowVersionId: flowRun?.flowVersionId ?? apId(),
         flowVersion: flowRun?.flowVersion,
         logsFileId: flowRun?.logsFileId ?? null,

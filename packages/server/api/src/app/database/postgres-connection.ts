@@ -18,6 +18,8 @@ import { AddFlowRunDispatchMode1789026491526 } from './migration/postgres/178902
 import { AddStoreEntryExpiresAt1789204010898 } from './migration/postgres/1789204010898-AddStoreEntryExpiresAt'
 import { BackfillLogoFlowLockup1789800000000 } from './migration/postgres/1789800000000-BackfillLogoFlowLockup'
 import { AddTableKeyDeclaration1789832775045 } from './migration/postgres/1789832775045-AddTableKeyDeclaration'
+import { AddParentWaitpointIdToFlowRun1790116373829 } from './migration/postgres/1790116373829-AddParentWaitpointIdToFlowRun'
+import { BackfillParentWaitpointIdFlowRun1790200000000 } from './migration/postgres/1790200000000-BackfillParentWaitpointIdFlowRun'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -43,6 +45,8 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddStoreEntryExpiresAt1789204010898,
         BackfillLogoFlowLockup1789800000000,
         AddTableKeyDeclaration1789832775045,
+        AddParentWaitpointIdToFlowRun1790116373829,
+        BackfillParentWaitpointIdFlowRun1790200000000,
     ]
 }
 

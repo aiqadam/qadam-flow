@@ -4,6 +4,7 @@ import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { flowExecutionCache } from '../flows/flow/flow-execution-cache'
 import { flowRunService, SYNC_RUN_TIMEOUT_RESPONSE } from '../flows/flow-run/flow-run-service'
+import { waitpointService } from '../flows/flow-run/waitpoint/waitpoint-service'
 import { flowVersionRepo } from '../flows/flow-version/flow-version.service'
 import { pinoLogging } from '../helper/logger'
 import { rejectedPromiseHandler } from '../helper/promise-handler'
@@ -53,6 +54,7 @@ export const webhookService = {
         onRunCreated,
         parentRunId,
         failParentOnFailure,
+        parentWaitpointId,
         timeoutMs,
     }: HandleWebhookParams): Promise<EngineHttpResponse> {
         return tracer.startActiveSpan('webhook.service.handle', {
@@ -126,6 +128,22 @@ export const webhookService = {
 
                 pinoLogger.info('Adding webhook job to queue')
 
+                // `parentRunId` itself is verified for project ownership downstream, in
+                // `flowRunService`'s `queueOrCreateInstantly` — safe to apply to every caller,
+                // trusted or not, since a trusted caller's parentRunId already belongs to its own
+                // project. `failParentOnFailure` needs a stronger proof here specifically: even a
+                // same-project run id can be *guessed* by anyone who can call this project's own
+                // webhooks, and failing it would complete and resume a stranger's paused run
+                // (#521 impact item 3). Verifying once, centrally, before branching into
+                // sync/async, means neither path has to repeat it.
+                const { failParentOnFailure: verifiedFailParentOnFailure, parentWaitpointId: verifiedParentWaitpointId } = await resolveParentAttachment({
+                    parentRunId,
+                    failParentOnFailure,
+                    parentWaitpointId,
+                    projectId: flow.projectId,
+                    logger: pinoLogger,
+                })
+
                 const resolvedPayload = payload ?? await data(flow.projectId)
 
                 const payloadSize = payloadOffloader.getPayloadSizeInBytes(resolvedPayload)
@@ -155,7 +173,8 @@ export const webhookService = {
                         webhookHeader,
                         execute: flow.status === FlowStatus.ENABLED && execute,
                         parentRunId,
-                        failParentOnFailure,
+                        failParentOnFailure: verifiedFailParentOnFailure,
+                        parentWaitpointId: verifiedParentWaitpointId,
                     })
                 }
 
@@ -175,7 +194,8 @@ export const webhookService = {
                     flowVersionToRun,
                     onRunCreated,
                     parentRunId,
-                    failParentOnFailure,
+                    failParentOnFailure: verifiedFailParentOnFailure,
+                    parentWaitpointId: verifiedParentWaitpointId,
                     timeoutMs,
                 })
                 return {
@@ -205,7 +225,7 @@ async function handleAsync(params: AsyncWebhookParams): Promise<EngineHttpRespon
         },
     }, async (span) => {
         try {
-            const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, webhookHeader, saveSampleData, execute, runEnvironment, parentRunId, failParentOnFailure, platformId } = params
+            const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, webhookHeader, saveSampleData, execute, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, platformId } = params
 
             span.setAttribute('webhook.platformId', platformId)
 
@@ -232,6 +252,7 @@ async function handleAsync(params: AsyncWebhookParams): Promise<EngineHttpRespon
                     execute,
                     parentRunId,
                     failParentOnFailure,
+                    parentWaitpointId,
                     traceContext,
                 },
             })
@@ -261,7 +282,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
         },
     }, async (span) => {
         try {
-            const { payload, projectId, flow, logger, webhookRequestId, workerHandlerId, flowVersionIdToRun, runEnvironment, saveSampleData, flowVersionToRun, parentRunId, failParentOnFailure, platformId, timeoutMs } = params
+            const { payload, projectId, flow, logger, webhookRequestId, workerHandlerId, flowVersionIdToRun, runEnvironment, saveSampleData, flowVersionToRun, parentRunId, failParentOnFailure, parentWaitpointId, platformId, timeoutMs } = params
 
             if (saveSampleData) {
                 rejectedPromiseHandler(savePayload({
@@ -274,6 +295,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                     runEnvironment,
                     parentRunId,
                     failParentOnFailure,
+                    parentWaitpointId,
                 }), logger)
             }
 
@@ -310,6 +332,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 streamStepProgress: StreamStepProgress.NONE,
                 parentRunId,
                 failParentOnFailure,
+                parentWaitpointId,
             }))
             if (error) {
                 listener.cancel()
@@ -328,7 +351,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
 }
 
 async function savePayload(params: Omit<AsyncWebhookParams, 'saveSampleData' | 'webhookHeader' | 'execute'>): Promise<void> {
-    const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, runEnvironment, parentRunId, failParentOnFailure, platformId } = params
+    const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, platformId } = params
     await handleAsync({
         flow,
         logger,
@@ -342,8 +365,47 @@ async function savePayload(params: Omit<AsyncWebhookParams, 'saveSampleData' | '
         platformId,
         parentRunId,
         failParentOnFailure,
+        parentWaitpointId,
     })
     await triggerSourceService(logger).disable({ flowId: flow.id, projectId: flow.projectId, simulate: true, ignoreError: true })
+}
+
+/**
+ * `parentRunId` naming a run in this same project is not enough to trust `failParentOnFailure`:
+ * anyone who can call this project's own public webhooks can guess or already know another run's
+ * id, and a failing child would otherwise complete and resume that run's waitpoint on their
+ * behalf (#521 impact item 3 — the same-project variant #520/#525 don't close). `parentWaitpointId`
+ * (read from the request body's `callbackUrl`, not a header — see `webhook-request-converter.ts`)
+ * must name a PENDING WEBHOOK waitpoint owned by `parentRunId`, in this project.
+ *
+ * This proof is exactly as strong as the `callbackUrl` capability itself, no stronger: whoever
+ * holds that URL could already resume the parent directly (with or without an error), so accepting
+ * it here grants nothing beyond what its holder can already do. Any *other* PENDING WEBHOOK
+ * waitpoint the same run happens to hold (e.g. an unrelated approval step) does not pass this check
+ * on its own, since the id must come from `callbackUrl` and match exactly — and once resolved, the
+ * verified id is persisted on the child (`flow-run-service.ts`) so a later failure completes only
+ * that one waitpoint, never whichever one the parent happens to hold at that later moment.
+ *
+ * Anything that fails to verify silently drops `failParentOnFailure` (and the waitpoint id with
+ * it) — the run still starts, unattached to any waitpoint completion.
+ */
+async function resolveParentAttachment({ parentRunId, failParentOnFailure, parentWaitpointId, projectId, logger }: ResolveParentAttachmentParams): Promise<ResolvedParentAttachment> {
+    const dropped: ResolvedParentAttachment = { failParentOnFailure: false, parentWaitpointId: undefined }
+    if (!failParentOnFailure || isNil(parentRunId)) {
+        return dropped
+    }
+    if (isNil(parentWaitpointId)) {
+        logger.warn({ parentRunId }, '[webhookService#resolveParentAttachment] Dropping failParentOnFailure: no parent waitpoint proof was presented')
+        return dropped
+    }
+    const proven = await waitpointService(logger).existsPendingWebhookWaitpoint({ id: parentWaitpointId, flowRunId: parentRunId, projectId })
+    if (!proven) {
+        // Deliberately not logging `parentWaitpointId` alongside `parentRunId`: that pair is a
+        // resume URL for the parent run.
+        logger.warn({ parentRunId }, '[webhookService#resolveParentAttachment] Dropping failParentOnFailure: parent waitpoint proof did not match')
+        return dropped
+    }
+    return { failParentOnFailure: true, parentWaitpointId }
 }
 
 type HandleWebhookParams = {
@@ -358,7 +420,21 @@ type HandleWebhookParams = {
     onRunCreated?: (run: FlowRun) => void
     parentRunId?: string
     failParentOnFailure: boolean
+    parentWaitpointId?: string
     timeoutMs?: number
+}
+
+type ResolveParentAttachmentParams = {
+    parentRunId: string | undefined
+    failParentOnFailure: boolean
+    parentWaitpointId: string | undefined
+    projectId: ProjectId
+    logger: FastifyBaseLogger
+}
+
+type ResolvedParentAttachment = {
+    failParentOnFailure: boolean
+    parentWaitpointId: string | undefined
 }
 
 type AsyncWebhookParams = {
@@ -374,6 +450,7 @@ type AsyncWebhookParams = {
     execute: boolean
     parentRunId?: string
     failParentOnFailure: boolean
+    parentWaitpointId?: string
 }
 
 type SyncWebhookParams = {
@@ -391,5 +468,6 @@ type SyncWebhookParams = {
     onRunCreated?: (run: FlowRun) => void
     parentRunId?: string
     failParentOnFailure: boolean
+    parentWaitpointId?: string
     timeoutMs?: number
 }
