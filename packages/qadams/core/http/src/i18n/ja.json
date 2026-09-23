@@ -29,6 +29,7 @@
   "Form Data": "フォームデータ",
   "JSON": "JSON",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Retry on all errors (4xx, 5xx)": "すべてのエラー（4xxx、5xx）を再試行してください",
   "Retry on internal errors (5xx)": "内部エラーを再試行（5xx）",
   "Do not retry": "再試行しない",

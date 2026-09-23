@@ -29,6 +29,7 @@
   "Form Data": "表单数据",
   "JSON": "JSON",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Retry on all errors (4xx, 5xx)": "Retry on all errors (4xx, 5xx)",
   "Retry on internal errors (5xx)": "Retry on internal errors (5xx)",
   "Do not retry": "Do not retry",

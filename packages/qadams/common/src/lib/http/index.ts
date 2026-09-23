@@ -8,6 +8,7 @@ export * from './core/http-headers';
 export * from './core/http-message-body';
 export * from './core/http-method';
 export * from './core/http-request';
+export * from './core/http-request-body-utils';
 export * from './core/http-response';
 export * from './core/media-type';
 export * from './core/query-params';

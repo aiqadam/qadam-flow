@@ -28,6 +28,7 @@
   "Form Data": "Form Data",
   "JSON": "JSON",
   "Raw": "Raw",
+  "Binary": "Nhị phân",
   "Retry on all errors (4xx, 5xx)": "Retry on all errors (4xx, 5xx)",
   "Retry on internal errors (5xx)": "Retry on internal errors (5xx)"
 }

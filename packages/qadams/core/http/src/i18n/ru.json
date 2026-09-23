@@ -28,6 +28,7 @@
   "Form Data": "Данные формы",
   "JSON": "JSON",
   "Raw": "Сырье",
+  "Binary": "Двоичные данные",
   "Retry on all errors (4xx, 5xx)": "Повторить все ошибки (4xx, 5xx)",
   "Retry on internal errors (5xx)": "Повторить внутренние ошибки (5xx)"
 }

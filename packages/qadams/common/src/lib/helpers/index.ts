@@ -18,6 +18,7 @@ import {
   HttpRequest,
   QueryParams,
   httpClient,
+  httpRequestBodyUtils,
 } from '../http';
 import { assertNotNullOrUndefined, isEmpty, isNil } from '@aiqadam/shared';
 import fs from 'fs';
@@ -190,6 +191,10 @@ i.e ${getBaseUrlForDescription(baseUrl, auth)}/resource or /resource`,
               label: 'Raw',
               value: 'raw',
             },
+            {
+              label: 'Binary',
+              value: 'binary',
+            },
           ],
         },
       }),
@@ -218,6 +223,14 @@ i.e ${getBaseUrlForDescription(baseUrl, auth)}/resource or /resource`,
             case 'raw':
               fields['data'] = Property.LongText({
                 displayName: 'Raw Body',
+                description: httpRequestBodyUtils.descriptions.raw,
+                required: true,
+              });
+              break;
+            case 'binary':
+              fields['data'] = Property.File({
+                displayName: 'File',
+                description: httpRequestBodyUtils.descriptions.binary,
                 required: true,
               });
               break;
@@ -359,6 +372,20 @@ i.e ${getBaseUrlForDescription(baseUrl, auth)}/resource or /resource`,
             }
             request.body = formData;
             request.headers = { ...request.headers, ...formData.getHeaders() };
+          } else if (body_type === 'raw') {
+            const prepared = httpRequestBodyUtils.raw({
+              text: bodyInput,
+              headers: request.headers ?? {},
+            });
+            request.body = prepared.body;
+            request.headers = prepared.headers;
+          } else if (body_type === 'binary') {
+            const prepared = httpRequestBodyUtils.binary({
+              file: bodyInput,
+              headers: request.headers ?? {},
+            });
+            request.body = prepared.body;
+            request.headers = prepared.headers;
           } else {
             request.body = bodyInput;
           }
