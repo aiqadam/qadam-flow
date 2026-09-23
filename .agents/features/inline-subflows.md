@@ -51,8 +51,12 @@ refuses it unless it is the job's own run or an inline child that job already st
    `callableFlow` (a crafted flow JSON could otherwise target a non-callable trigger).
 3. Computes nesting depth via a recursive `parentRunId` ancestry query (see "Depth guard" below)
    and rejects past `INLINE_SUBFLOW_DEPTH_LIMIT` (50).
-4. Creates the child `FlowRun` row (`parentRunId` set, `failParentOnFailure: true`) and fires the
-   same `flowRunSideEffects.onStart` audit event any other run gets.
+4. Creates the child `FlowRun` row (`parentRunId` set, `failParentOnFailure: false`) and fires the
+   same `flowRunSideEffects.onStart` audit event any other run gets. `failParentOnFailure` is
+   deliberately `false` here, unlike a queue/webhook subflow child: an inline call runs in the
+   parent's own engine process, and a failure is returned synchronously right there
+   (`callFlowInline` catches the FAILED verdict itself) — there is no waitpoint and no later,
+   out-of-band `markParentRunAsFailed` completion for this dispatch mode to ever perform (#521).
 
 Only *after* that succeeds does the worker provision the child's pieces onto **the same sandbox
 filesystem already in use** (`provisionFlowPieces`, reused as-is from `flow-helpers.ts`) and hand
@@ -143,7 +147,10 @@ Error(JSON.stringify(data))` when `waitForResponse` is set) — no new error-han
 - `packages/server/worker/src/lib/execute/jobs/execute-flow.ts` — passes the trusted job context
   into `sandboxManager.acquire()`
 - `packages/server/api/src/app/workers/rpc/inline-flow-run.service.ts` — project-scoped resolve +
-  depth-guard + child `FlowRun` creation
+  depth-guard + child `FlowRun` creation. `findParentRun` (persisted row, falling back to
+  `pending_run_owner:<id>` for the #509 ordering trap) now lives in `flow-run-service.ts`, exported,
+  and is shared with the webhook-parent verification in `queueOrCreateInstantly` (#521) — this file
+  imports it rather than keeping its own copy.
 - `packages/server/api/src/app/workers/rpc/worker-rpc-service.ts` — wires `startInlineFlowRun`
 - `packages/shared/src/lib/automation/engine/requests.ts` — `ResolveInlineFlowRequest/Result`,
   `INLINE_SUBFLOW_DEPTH_LIMIT`

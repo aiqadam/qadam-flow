@@ -9,13 +9,10 @@ import {
     isNil,
     StartInlineFlowRunRequest,
     StartInlineFlowRunResult,
-    tryCatch,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { getPendingRunOwnerKey } from '../../database/redis/keys'
-import { distributedStore } from '../../database/redis-connections'
 import { flowService } from '../../flows/flow/flow.service'
-import { flowRunRepo } from '../../flows/flow-run/flow-run-service'
+import { findParentRun, flowRunRepo, ParentRun } from '../../flows/flow-run/flow-run-service'
 import { flowRunSideEffects } from '../../flows/flow-run/flow-run-side-effects'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
 import { projectService } from '../../project/project-service'
@@ -79,7 +76,17 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
             environment: request.environment,
             parentRunId: request.parentRunId,
             dispatchMode: FlowRunDispatchMode.enum.INLINE,
-            failParentOnFailure: true,
+            // Never `true`: an inline call runs in the SAME engine process as its parent, and a
+            // failure is returned synchronously to the parent's own execution right there
+            // (`callFlowInline` in `inline-flow-executor.ts` catches the FAILED verdict itself and
+            // hands `{ status: 'error', ... }` straight back) — there is no waitpoint, no queue
+            // job, no later out-of-band completion for `markParentRunAsFailed` to perform. Setting
+            // this `true` did nothing functionally, since an inline child never has a
+            // `parentWaitpointId` to complete either way — but it made every ordinary inline
+            // failure log `markParentRunAsFailed`'s "legacy row, completing nothing" warning as if
+            // something were actually wrong (#521). `false` here reflects reality: inline dispatch
+            // is never the "fail parent via waitpoint" contract to begin with.
+            failParentOnFailure: false,
             status: FlowRunStatus.RUNNING,
             // Execution starts synchronously right after this row is created — unlike a
             // queued run, there is no separate dequeue moment to mark as the real start.
@@ -103,36 +110,6 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
         }
     },
 })
-
-/**
- * A PRODUCTION run's row reaches Postgres through the runs-metadata queue rather than the request
- * that created it (`queueOrCreateInstantly`), so a parent accepted milliseconds ago is legitimately
- * absent from the table while that flush is still pending. Under load that failed ~46% of a burst's
- * runs on a parent that did exist (#509); TESTING writes the row synchronously, which is why a
- * manual test never reproduced it.
- *
- * The fallback reads `pending_run_owner:<id>`, which the API writes when it accepts the run. It must
- * not read the `runs_metadata:` hash instead: `workerRpc.uploadRunLog` merges into that key with an
- * engine-supplied runId and projectId and no ownership check, so a compromised engine could mint one
- * for a foreign run — precisely the attachment this check exists to block.
- */
-async function findParentRun({ parentRunId, projectId, log }: FindParentRunParams): Promise<ParentRun | null> {
-    const persistedParentRun = await flowRunRepo().findOneBy({ id: parentRunId, projectId })
-    if (!isNil(persistedParentRun)) {
-        return { parentRunId: persistedParentRun.parentRunId, persisted: true }
-    }
-
-    const { data: pendingOwner, error } = await tryCatch(() => distributedStore.get<PendingRunOwner>(getPendingRunOwnerKey(parentRunId)))
-    if (!isNil(error)) {
-        // Fail closed: an unverifiable parent must never be accepted on the strength of a Redis blip.
-        log.warn({ parentRunId, projectId, err: error }, '[inlineFlowRunService#findParentRun] Failed to read the pending run owner, treating parent as unverified')
-        return null
-    }
-    if (isNil(pendingOwner) || pendingOwner.projectId !== projectId) {
-        return null
-    }
-    return { parentRunId: pendingOwner.parentRunId, persisted: false }
-}
 
 /**
  * `computeChildDepth` walks the ancestry in one recursive query, so it can only start from a row
@@ -181,25 +158,9 @@ async function computeChildDepth(parentRunId: string): Promise<number> {
     return ancestorChainLength + 1
 }
 
-type FindParentRunParams = {
-    parentRunId: string
-    projectId: string
-    log: FastifyBaseLogger
-}
-
 type ComputeInlineDepthParams = {
     parentRun: ParentRun
     parentRunId: string
     projectId: string
     log: FastifyBaseLogger
-}
-
-type PendingRunOwner = {
-    projectId: string
-    parentRunId?: string
-}
-
-type ParentRun = {
-    parentRunId?: string
-    persisted: boolean
 }

@@ -100,5 +100,11 @@ type HasAnyWaitpointParams = {
     projectId: ApId
 }
 
+type ExistsPendingWebhookWaitpointParams = {
+    id: ApId
+    flowRunId: ApId
+    projectId: ApId
+}
+
 export { WaitpointStatus, WaitpointVersionEnum }
-export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, GetByFlowRunIdParams, DeleteByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams }
+export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, GetByFlowRunIdParams, DeleteByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, ExistsPendingWebhookWaitpointParams }

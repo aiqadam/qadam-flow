@@ -54,6 +54,7 @@ export const SubmitPayloadsRequest = z.object({
     environment: z.nativeEnum(RunEnvironment),
     parentRunId: z.string().optional(),
     failParentOnFailure: z.boolean().optional(),
+    parentWaitpointId: z.string().optional(),
     platformId: z.string(),
 })
 

@@ -31,6 +31,7 @@ import {
     SeekPage,
     StepOutputStatus,
     StreamStepProgress,
+    tryCatch,
     WorkerJobType,
 } from '@aiqadam/shared'
 import { context, propagation, trace } from '@opentelemetry/api'
@@ -56,6 +57,7 @@ import { sampleDataService } from '../step-run/sample-data.service'
 import { FlowRunEntity } from './flow-run-entity'
 import { flowRunSideEffects } from './flow-run-side-effects'
 import { runsMetadataQueue } from './flow-runs-queue'
+import { waitpointService } from './waitpoint/waitpoint-service'
 
 const CANCELLABLE_STATUSES: FlowRunStatus[] = [FlowRunStatus.PAUSED, FlowRunStatus.QUEUED]
 
@@ -89,6 +91,39 @@ export const flowRunRepo = repoFactory<FlowRun>(FlowRunEntity)
 // resume path reads it). repoFactory caches by entity name, so this is the same physical
 // `flow_run` repository as flowRunRepo above, just retyped and queried without the join.
 const flowRunLegacyResumeRepo = repoFactory<LegacyResumeFlowRun>(FlowRunEntity)
+
+/**
+ * A PRODUCTION run's row reaches Postgres through the runs-metadata queue rather than the request
+ * that created it (`queueOrCreateInstantly`), so a parent accepted milliseconds ago is legitimately
+ * absent from the table while that flush is still pending. Under load that failed ~46% of a burst's
+ * runs on a parent that did exist (#509); TESTING writes the row synchronously, which is why a
+ * manual test never reproduced it.
+ *
+ * The fallback reads `pending_run_owner:<id>`, which the API writes below when it accepts the run. It
+ * must not read the `runs_metadata:` hash instead: `workerRpc.uploadRunLog` merges into that key with
+ * an engine-supplied runId and projectId and no ownership check, so a compromised engine could mint
+ * one for a foreign run — precisely the attachment this check exists to block.
+ *
+ * Shared by the inline-subflow depth guard (`inlineFlowRunService`) and by `resolveVerifiedParent`
+ * below — both need "does this run belong to this project" answered the same way.
+ */
+export async function findParentRun({ parentRunId, projectId, log }: FindParentRunParams): Promise<ParentRun | null> {
+    const persistedParentRun = await flowRunRepo().findOneBy({ id: parentRunId, projectId })
+    if (!isNil(persistedParentRun)) {
+        return { parentRunId: persistedParentRun.parentRunId, persisted: true }
+    }
+
+    const { data: pendingOwner, error } = await tryCatch(() => distributedStore.get<PendingRunOwner>(getPendingRunOwnerKey(parentRunId)))
+    if (!isNil(error)) {
+        // Fail closed: an unverifiable parent must never be accepted on the strength of a Redis blip.
+        log.warn({ parentRunId, projectId, err: error }, '[flowRunService#findParentRun] Failed to read the pending run owner, treating parent as unverified')
+        return null
+    }
+    if (isNil(pendingOwner) || pendingOwner.projectId !== projectId) {
+        return null
+    }
+    return { parentRunId: pendingOwner.parentRunId, persisted: false }
+}
 
 export const flowRunService = (log: FastifyBaseLogger) => ({
     async upsert({ id, projectId }: { id: FlowRunId, projectId: ProjectId }): Promise<FlowRun> {
@@ -252,6 +287,13 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     projectId: oldFlowRun.projectId,
                     failParentOnFailure: oldFlowRun.failParentOnFailure,
                     parentRunId: oldFlowRun.parentRunId,
+                    // Safe to copy verbatim: `start` -> `queueOrCreateInstantly` re-verifies it
+                    // via `resolveVerifiedParent` before it is ever persisted on the new run, so a
+                    // waitpoint the original parent has since completed is dropped here rather
+                    // than carried forward — and even if it weren't, `markParentRunAsFailed`
+                    // completes exactly this id (`complete()` is a no-op on anything else), so a
+                    // stale/consumed waitpoint could never complete the wrong one either way.
+                    parentWaitpointId: oldFlowRun.parentWaitpointId,
                 })
             }
         }
@@ -268,7 +310,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
             excludeFlowRunIds,
         })
         const cancelParentFlowRuns = await Promise.allSettled(flowRuns.map(flowRun => cancelSingleRun(log, flowRun, platformId)))
-        const childFlows = await getAllChildRuns(flowRuns.map(flowRun => flowRun.id))
+        const childFlows = await getAllChildRuns({ parentRunIds: flowRuns.map(flowRun => flowRun.id), projectId })
         log.info({
             flowRunsCount: flowRuns.length,
             childFlowCount: childFlows.length,
@@ -328,6 +370,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         flowVersionId,
         parentRunId,
         failParentOnFailure,
+        parentWaitpointId,
         platformId,
         stepNameToTest,
         environment,
@@ -352,6 +395,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     parentRunId,
                     flowId,
                     failParentOnFailure,
+                    parentWaitpointId,
                     stepNameToTest,
                     environment,
                 }, log)
@@ -518,7 +562,13 @@ async function cancelSingleRun(log: FastifyBaseLogger, flowRun: FlowRun, platfor
     }, 'Flow run cancelled')
 }
 
-async function getAllChildRuns(parentRunIds: string[]): Promise<FlowRun[]> {
+/**
+ * Scoped by projectId at the anchor AND on every recursive hop — without it, a descendant chain that
+ * crosses into another project (e.g. a webhook-forged `parentRunId`, see #521) would let one
+ * project's bulk cancel reach into another project's runs. `parentRunIds` are already all from
+ * `projectId` (filterFlowRunsAndApplyFilters), so this only ever walks that project's own tree.
+ */
+async function getAllChildRuns({ parentRunIds, projectId }: GetAllChildRunsParams): Promise<FlowRun[]> {
     if (parentRunIds.length === 0) {
         return []
     }
@@ -528,20 +578,23 @@ async function getAllChildRuns(parentRunIds: string[]): Promise<FlowRun[]> {
             SELECT *
             FROM flow_run
             WHERE "parentRunId" = ANY($1)
-              AND status = ANY($2)
+              AND "projectId" = $2
+              AND status = ANY($3)
 
             UNION ALL
 
             SELECT f.*
             FROM flow_run f
             INNER JOIN descendants d ON f."parentRunId" = d.id
-            WHERE f.status = ANY($2)
+            WHERE f."projectId" = $2
+              AND f.status = ANY($3)
         )
         SELECT * FROM descendants;
     `
 
     const params = [
         parentRunIds,
+        projectId,
         CANCELLABLE_STATUSES,
     ]
 
@@ -731,21 +784,84 @@ async function readLogsFile(log: FastifyBaseLogger, logsFileId: string, projectI
     return JSON.parse(result.data.toString('utf-8'))
 }
 
+/**
+ * A `parentRunId` reaching this point can be caller-controlled — the `ap-parent-run-id` webhook
+ * header rides job data all the way from a public, unauthenticated route through to here for both
+ * the sync and async webhook paths (`webhook.service.ts#handleSync`, `execute-webhook.ts` →
+ * `submitPayloads`) — and must never be attached on the strength of the caller's word alone: it can
+ * name a run in any project, which would let that project's own cancel/waitpoint machinery reach a
+ * foreign run (#521). This is the single choke point every `start()` caller funnels through, so
+ * verifying here (rather than at webhook ingress) covers every route without duplicating the check.
+ * A parent that fails verification is dropped, together with `failParentOnFailure` — the run must
+ * still start, just unparented; the caller gets no signal either way.
+ *
+ * `parentWaitpointId` is re-verified here too, not just at webhook ingress: `submitPayloads` is a
+ * WORKER-authenticated RPC method, callable directly by any worker, not only as the tail end of
+ * the webhook job `execute-webhook.ts` builds — so a `parentWaitpointId` reaching here has not
+ * necessarily passed through `webhook.service.ts#resolveParentAttachment`'s
+ * `existsPendingWebhookWaitpoint` check at all. Without re-checking it here, an unverified id
+ * would still be persisted and later handed to `waitpointService.complete()` as-is, which matches
+ * on id + PENDING status only, not on waitpoint type — so an id naming some *other* PENDING
+ * waitpoint on the same (now-verified) parent, e.g. a DELAY or an unrelated approval step, could
+ * be completed by an ordinary child failure instead of only ever the parent's own WEBHOOK
+ * waitpoint. Re-running the same check the legitimate call-flow proof already passed at ingress is
+ * therefore harmless for the real path (the parent is still waiting on its own WEBHOOK waitpoint
+ * at run-creation time — nothing can have completed it yet, since completion only ever happens
+ * later, when this very child terminates) and closes the gap for a WORKER principal calling
+ * `submitPayloads` directly.
+ */
+async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentWaitpointId, projectId, log }: ResolveVerifiedParentParams): Promise<ResolvedParent> {
+    if (isNil(parentRunId)) {
+        return { parentRunId: undefined, failParentOnFailure, parentWaitpointId: undefined }
+    }
+    const verifiedParent = await findParentRun({ parentRunId, projectId, log })
+    if (isNil(verifiedParent)) {
+        log.warn({ parentRunId, projectId }, '[flowRunService#resolveVerifiedParent] Dropping parentRunId: the named run does not belong to this project')
+        // `false`, not `undefined`: queueOrCreateInstantly defaults a genuinely-absent
+        // failParentOnFailure to `true` (`failParentOnFailure ?? true`), so `undefined` here would
+        // read as "no preference" and re-enable exactly the flag this branch exists to drop.
+        return { parentRunId: undefined, failParentOnFailure: false, parentWaitpointId: undefined }
+    }
+    // A waitpoint id is only ever meaningful alongside a `true` failParentOnFailure — dropping it
+    // otherwise keeps `flow_run.parentWaitpointId` from persisting a value nothing will ever read.
+    if (!failParentOnFailure || isNil(parentWaitpointId)) {
+        return { parentRunId, failParentOnFailure, parentWaitpointId: undefined }
+    }
+    const provenWaitpoint = await waitpointService(log).existsPendingWebhookWaitpoint({
+        id: parentWaitpointId,
+        flowRunId: parentRunId,
+        projectId,
+    })
+    if (!provenWaitpoint) {
+        log.warn({ parentRunId }, '[flowRunService#resolveVerifiedParent] Dropping failParentOnFailure: parentWaitpointId did not re-verify against a PENDING WEBHOOK waitpoint on this parent')
+        return { parentRunId, failParentOnFailure: false, parentWaitpointId: undefined }
+    }
+    return { parentRunId, failParentOnFailure, parentWaitpointId }
+}
+
 async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogger): Promise<FlowRun> {
     const now = new Date().toISOString()
+    const { parentRunId, failParentOnFailure, parentWaitpointId } = await resolveVerifiedParent({
+        parentRunId: params.parentRunId,
+        failParentOnFailure: params.failParentOnFailure,
+        parentWaitpointId: params.parentWaitpointId,
+        projectId: params.projectId,
+        log,
+    })
     const flowRun: FlowRun = {
         id: apId(),
         projectId: params.projectId,
         flowId: params.flowId,
         flowVersionId: params.flowVersionId,
         environment: params.environment,
-        parentRunId: params.parentRunId,
+        parentRunId,
+        parentWaitpointId,
         // Only a subflow child (parentRunId set) has a meaningful dispatch mode —
         // a top-level run isn't dispatched by a parent at all. This is the queue
         // path specifically; the inline path writes its own run row directly in
         // inlineFlowRunService.start, never through here.
-        dispatchMode: isNil(params.parentRunId) ? undefined : FlowRunDispatchMode.enum.QUEUE,
-        failParentOnFailure: params.failParentOnFailure ?? true,
+        dispatchMode: isNil(parentRunId) ? undefined : FlowRunDispatchMode.enum.QUEUE,
+        failParentOnFailure: failParentOnFailure ?? true,
         status: FlowRunStatus.QUEUED,
         stepNameToTest: params.stepNameToTest,
         created: now,
@@ -784,9 +900,45 @@ type CreateParams = {
     triggeredBy?: string
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
+    parentWaitpointId?: string
     stepNameToTest?: string
     flowId: FlowId
     environment: RunEnvironment
+}
+
+type GetAllChildRunsParams = {
+    parentRunIds: string[]
+    projectId: ProjectId
+}
+
+type ResolveVerifiedParentParams = {
+    parentRunId: FlowRunId | undefined
+    failParentOnFailure: boolean | undefined
+    parentWaitpointId: string | undefined
+    projectId: ProjectId
+    log: FastifyBaseLogger
+}
+
+type ResolvedParent = {
+    parentRunId: FlowRunId | undefined
+    failParentOnFailure: boolean | undefined
+    parentWaitpointId: string | undefined
+}
+
+export type FindParentRunParams = {
+    parentRunId: string
+    projectId: string
+    log: FastifyBaseLogger
+}
+
+export type ParentRun = {
+    parentRunId?: string
+    persisted: boolean
+}
+
+type PendingRunOwner = {
+    projectId: string
+    parentRunId?: string
 }
 
 type ListParams = {
@@ -835,6 +987,7 @@ type StartParams = {
     projectId: ProjectId
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
+    parentWaitpointId?: string
     stepNameToTest?: string
     executeTrigger: boolean
     executionType: ExecutionType.BEGIN
