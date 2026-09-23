@@ -24,6 +24,26 @@ describe('redactAIProviderConfig', () => {
         })
     })
 
+    // Gateways that authenticate in the body put their token in `extraBody`, so it is held back
+    // from a low-privileged reader exactly like `defaultHeaders`.
+    it('drops extraBody for a CUSTOM provider', () => {
+        const redacted = redactAIProviderConfig({
+            provider: AIProviderName.CUSTOM,
+            config: {
+                baseUrl: 'https://api.example.com',
+                apiKeyHeader: 'Authorization',
+                models: [],
+                extraBody: { user: 'tenant-secret', chat_template_kwargs: { enable_thinking: false } },
+            },
+        })
+
+        expect(redacted).toEqual({
+            baseUrl: 'https://api.example.com',
+            apiKeyHeader: 'Authorization',
+            models: [],
+        })
+    })
+
     it('keeps apiKeyHeader and models exactly as stored', () => {
         const models = [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }]
         const redacted = redactAIProviderConfig({

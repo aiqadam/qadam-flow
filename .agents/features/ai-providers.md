@@ -43,9 +43,17 @@ Registered in `packages/server/api/src/app/ai/providers/index.ts`; auth/config s
 | AZURE | apiKey | resourceName, apiVersion | Azure OpenAI |
 | OPENROUTER | apiKey | — | Model list fetched live from `https://openrouter.ai/api/v1/models` |
 | CLOUDFLARE_GATEWAY | apiKey | accountId, gatewayId, models, vertexProject, vertexRegion | Proxied via Cloudflare AI Gateway |
-| CUSTOM | apiKey | apiKeyHeader, baseUrl, models, defaultHeaders | OpenAI-compatible (LM Studio, Ollama) |
+| CUSTOM | apiKey | apiKeyHeader, baseUrl, models, defaultHeaders, extraBody | OpenAI-compatible (LM Studio, Ollama, vLLM) |
 | BEDROCK | accessKeyId, secretAccessKey | region | AWS Bedrock |
 | MISTRAL | apiKey | — | Mistral models |
+
+## CUSTOM `extraBody`
+
+An optional JSON object merged into every chat-completions body the row sends, through the AI SDK's `transformRequestBody` (`mergeOpenAICompatibleExtraBody` in shared). It is how an operator sets server-side template or sampling parameters the SDK has no option for — the motivating case is Qwen on vLLM, where `{ "chat_template_kwargs": { "enable_thinking": false } }` turns thinking off. Two rows pointing at the same endpoint with different `extraBody` give two selectable modes (e.g. non-thinking and `reasoning_effort: "low"`).
+
+- Applied in both model builders: the qadam's `createAIModel` (`ai-sdk.ts`) and the server chat's `chatAiUtils.createChatModel`. The qadam's model object is also what the engine uses for per-tool property extraction (`engine/src/lib/tools/index.ts`), so a Run Agent step's hidden calls get the same parameters as its visible ones.
+- Keys the SDK owns (`OPENAI_COMPATIBLE_RESERVED_BODY_KEYS`: `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `response_format`) are rejected by the schema and dropped again at merge time, since the qadam reads `config` back as an unchecked cast.
+- Capped at 8 KB serialized. Redacted from non-admin list responses like `defaultHeaders`, because gateways that authenticate in the body put their token there.
 
 ## Model Caching
 

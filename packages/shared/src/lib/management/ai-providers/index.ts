@@ -76,13 +76,50 @@ export const ProviderModelConfig = z.object({
 })
 export type ProviderModelConfig = z.infer<typeof ProviderModelConfig>
 
+// Keys the AI SDK itself writes into a chat-completions body. Letting operator config replace them
+// would silently re-point the model, drop the conversation or the tools, or break stream parsing,
+// so `extraBody` may add parameters (`chat_template_kwargs`, `top_k`, `reasoning_effort`, ...) but
+// never own one of these.
+export const OPENAI_COMPATIBLE_RESERVED_BODY_KEYS: readonly string[] = [
+    'model',
+    'messages',
+    'tools',
+    'tool_choice',
+    'stream',
+    'stream_options',
+    'response_format',
+]
+
+// Merged into every request the row makes and stored verbatim on the row, so bound it the same way
+// the model catalogue above is bounded: far above any real set of sampling / template parameters.
+const MAX_EXTRA_BODY_SERIALIZED_LENGTH = 8192
+
+export const OpenAICompatibleExtraBody = z.record(z.string(), z.unknown(), { error: formErrors.extraBodyMustBeObject })
+    .refine((body) => Object.keys(body).every((key) => !OPENAI_COMPATIBLE_RESERVED_BODY_KEYS.includes(key)), formErrors.extraBodyReservedKey)
+    .refine((body) => JSON.stringify(body).length <= MAX_EXTRA_BODY_SERIALIZED_LENGTH, formErrors.extraBodyTooLarge)
+
 export const OpenAICompatibleProviderConfig = z.object({
     apiKeyHeader: z.string(),
     baseUrl: z.string(),
     models: z.array(ProviderModelConfig).max(MAX_MODELS_PER_PROVIDER, formErrors.tooManyModels),
     defaultHeaders: z.record(z.string(), z.string()).optional(),
+    extraBody: OpenAICompatibleExtraBody.optional(),
 })
 export type OpenAICompatibleProviderConfig = z.infer<typeof OpenAICompatibleProviderConfig>
+
+/**
+ * Adds a CUSTOM row's `extraBody` to an outgoing chat-completions body. Reserved keys are dropped
+ * here as well as rejected by the schema: the qadam reads `config` back from the server as an
+ * unchecked cast, so this is the last point where a stored row that predates (or bypassed) the
+ * refine can still be kept from overwriting `model`, `messages` or `tools`.
+ */
+export function mergeOpenAICompatibleExtraBody({ body, extraBody }: { body: Record<string, unknown>, extraBody: Record<string, unknown> | undefined }): Record<string, unknown> {
+    if (extraBody === undefined) {
+        return body
+    }
+    const allowed = Object.fromEntries(Object.entries(extraBody).filter(([key]) => !OPENAI_COMPATIBLE_RESERVED_BODY_KEYS.includes(key)))
+    return { ...body, ...allowed }
+}
 
 
 export const CloudflareGatewayProviderConfig = z.object({
@@ -274,7 +311,7 @@ export function parseProviderConfig({ provider, config }: { provider: AIProvider
 // `apiKeyHeader` and `models` are unaffected: a header *name* is not a credential value, and
 // `parseProviderConfig`/every other reader of a stored config still gets a real `AIProviderConfig`
 // for the two fields that could not have carried a secret in the first place.
-export const PublicOpenAICompatibleProviderConfig = OpenAICompatibleProviderConfig.omit({ defaultHeaders: true }).extend({
+export const PublicOpenAICompatibleProviderConfig = OpenAICompatibleProviderConfig.omit({ defaultHeaders: true, extraBody: true }).extend({
     baseUrl: z.string().optional(),
 })
 export type PublicOpenAICompatibleProviderConfig = z.infer<typeof PublicOpenAICompatibleProviderConfig>
@@ -282,10 +319,12 @@ export type PublicOpenAICompatibleProviderConfig = z.infer<typeof PublicOpenAICo
 /**
  * Strips or masks the fields of a stored CUSTOM config that can themselves carry a credential:
  * `defaultHeaders` is an operator-defined record, and the second-header pattern (a signing header
- * alongside the primary `apiKeyHeader`) puts a live secret there; `baseUrl` is a free-form string
+ * alongside the primary `apiKeyHeader`) puts a live secret there; `extraBody` is the same kind of
+ * operator-defined record merged into the request body, where gateways that authenticate in the
+ * body (a `user` token, a tenant key) put theirs; `baseUrl` is a free-form string
  * that can carry the same secret in its userinfo or query string, and can disclose an internal
- * hostname besides. Both are the exact fields issue #297 (echoing #277) names as leaking "the same
- * class of operator credentials". `apiKeyHeader` and `models` are not secret-shaped and stay as-is
+ * hostname besides. `baseUrl` and `defaultHeaders` are the exact fields issue #297 (echoing #277)
+ * names as leaking "the same class of operator credentials". `apiKeyHeader` and `models` are not secret-shaped and stay as-is
  * — they are read directly off a redacted list response by the builder's model picker
  * (`provider-options.ts`'s `readBaseUrl`) and by the qadam's own picker (`props.ts`'s
  * `shareableLabels`) to disambiguate two rows of the same provider type, which is why `baseUrl` is
@@ -302,10 +341,10 @@ export function redactAIProviderConfig({ provider, config }: { provider: AIProvi
     if (!parsed.success) {
         return config
     }
-    const withoutHeaders = omit(parsed.data, ['defaultHeaders'])
+    const withoutSecrets = omit(parsed.data, ['defaultHeaders', 'extraBody'])
     return {
-        ...withoutHeaders,
-        baseUrl: originOnly(withoutHeaders.baseUrl),
+        ...withoutSecrets,
+        baseUrl: originOnly(withoutSecrets.baseUrl),
     }
 }
 

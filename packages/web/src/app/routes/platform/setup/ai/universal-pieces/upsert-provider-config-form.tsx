@@ -3,6 +3,7 @@ import {
   AIProviderModelType,
   CreateAIProviderRequest,
   ProviderModelConfig,
+  tryCatchSync,
 } from '@aiqadam/shared';
 import { t } from 'i18next';
 import {
@@ -35,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Tooltip,
   TooltipContent,
@@ -412,6 +414,31 @@ export const UpsertProviderConfigForm = ({
               </div>
             )}
           />
+
+          <FormField
+            control={form.control}
+            name="config.extraBody"
+            render={({ field }) => (
+              <FormItem className="grid space-y-3">
+                <FormLabel htmlFor="extraBody">
+                  {t('Extra request parameters')}
+                </FormLabel>
+                <FormControl>
+                  <ExtraBodyInput
+                    value={field.value}
+                    onChange={field.onChange}
+                    disabled={isLoading}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Optional JSON object added to every request to this provider, for example to turn off Qwen thinking on vLLM.',
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </>
       )}
 
@@ -461,6 +488,31 @@ export const UpsertProviderConfigForm = ({
         </div>
       )}
     </div>
+  );
+};
+
+type ExtraBodyInputProps = {
+  value: unknown;
+  onChange: (value: unknown) => void;
+  disabled?: boolean;
+};
+
+const ExtraBodyInput = ({ value, onChange, disabled }: ExtraBodyInputProps) => {
+  const [text, setText] = useState(() => extraBodyToText(value));
+  return (
+    <Textarea
+      id="extraBody"
+      className="font-mono"
+      minRows={3}
+      maxRows={10}
+      value={text}
+      disabled={disabled}
+      placeholder={EXTRA_BODY_PLACEHOLDER}
+      onChange={(event) => {
+        setText(event.target.value);
+        onChange(extraBodyFromText(event.target.value));
+      }}
+    />
   );
 };
 
@@ -536,3 +588,26 @@ const ModelTypeIcon = ({ modelType }: { modelType: AIProviderModelType }) => {
     </Tooltip>
   );
 };
+
+const EXTRA_BODY_PLACEHOLDER =
+  '{ "chat_template_kwargs": { "enable_thinking": false } }';
+
+function extraBodyToText(value: unknown): string {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+// Unparseable text is handed to the form as the raw string rather than dropped, so the schema
+// rejects it with `extraBodyMustBeObject` instead of silently saving the last valid value.
+function extraBodyFromText(text: string): unknown {
+  if (text.trim().length === 0) {
+    return undefined;
+  }
+  const { data, error } = tryCatchSync<unknown>(() => JSON.parse(text));
+  return error === null ? data : text;
+}

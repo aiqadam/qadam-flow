@@ -93,6 +93,41 @@ describe('AI Providers API', () => {
             })
         })
 
+        it('should create a custom provider with extraBody', async () => {
+            const extraBody = { chat_template_kwargs: { enable_thinking: false }, top_k: 20 }
+            const response = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Qwen on vLLM',
+                config: { baseUrl: 'https://vllm.example.com/v1', apiKeyHeader: 'Authorization', models: [], extraBody },
+                auth: { apiKey: 'test-key' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const saved = await db.findOneBy('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+            expect((saved as any).config.extraBody).toEqual(extraBody)
+        })
+
+        // `extraBody` is merged into every chat-completions body, so it must never be able to
+        // replace a field the AI SDK owns — the model, the conversation, the tools.
+        it('should reject a custom provider whose extraBody sets a reserved key', async () => {
+            const response = await ctx.post('/v1/ai-providers', {
+                provider: AIProviderName.CUSTOM,
+                displayName: 'Re-pointed',
+                config: { baseUrl: 'https://vllm.example.com/v1', apiKeyHeader: 'Authorization', models: [], extraBody: { model: 'other/model' } },
+                auth: { apiKey: 'test-key' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const saved = await db.findOneBy('ai_provider', {
+                platformId: ctx.platform.id,
+                provider: AIProviderName.CUSTOM,
+            })
+            expect(saved).toBeNull()
+        })
+
         it('should allow a second custom provider, each addressable by its own id', async () => {
             const deepseek = await ctx.post('/v1/ai-providers', {
                 provider: AIProviderName.CUSTOM,
@@ -528,6 +563,7 @@ describe('AI Providers API', () => {
                     apiKeyHeader: 'Authorization',
                     models: [{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }],
                     defaultHeaders: { 'X-Test': 'test' },
+                    extraBody: { user: 'tenant-secret' },
                 },
             })
             const member = await createMemberContext(app!, ctx, { projectRole: DefaultProjectRole.ADMIN })
@@ -542,6 +578,7 @@ describe('AI Providers API', () => {
             )
             expect(customProvider).toBeDefined()
             expect(customProvider.config.defaultHeaders).toBeUndefined()
+            expect(customProvider.config.extraBody).toBeUndefined()
             expect(customProvider.config.baseUrl).toBe('https://api.example.com')
             expect(customProvider.config.apiKeyHeader).toBe('Authorization')
             expect(customProvider.config.models).toEqual([{ modelId: 'm', modelName: 'M', modelType: AIProviderModelType.TEXT }])

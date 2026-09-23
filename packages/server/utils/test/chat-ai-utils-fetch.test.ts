@@ -59,6 +59,39 @@ describe('createChatModel SSRF wiring', () => {
     })
 })
 
+describe('createChatModel CUSTOM extraBody', () => {
+    function customTransform(config: Record<string, unknown>): (body: Record<string, unknown>) => Record<string, unknown> {
+        captured.clear()
+        chatAiUtils.createChatModel({
+            provider: AIProviderName.CUSTOM,
+            auth: { apiKey: 'k' },
+            config: { baseUrl: 'https://llm.internal/v1', apiKeyHeader: 'Authorization', models: [], ...config },
+            modelId: 'Qwen/Qwen3.8-27B',
+        })
+        const transform = captured.get('openai-compatible')?.['transformRequestBody']
+        if (typeof transform !== 'function') {
+            throw new Error('transformRequestBody was not passed to the openai-compatible factory')
+        }
+        return (body) => transform(body)
+    }
+
+    it('merges the row\'s extraBody into every chat request', () => {
+        const transform = customTransform({ extraBody: { chat_template_kwargs: { enable_thinking: false } } })
+
+        expect(transform({ model: 'Qwen/Qwen3.8-27B', messages: [] })).toEqual({
+            model: 'Qwen/Qwen3.8-27B',
+            messages: [],
+            chat_template_kwargs: { enable_thinking: false },
+        })
+    })
+
+    it('leaves the request body unchanged for a row without extraBody', () => {
+        const body = { model: 'Qwen/Qwen3.8-27B', messages: [] }
+
+        expect(customTransform({})(body)).toEqual(body)
+    })
+})
+
 // The sinks throw a `QadamFlowError`, whose `.message` is only the code. The operator-facing text
 // rides on `params.message`, and the code has to be `AI_REQUEST_NOT_SUPPORTED` — a plain `Error`
 // here would answer 500 and file an exception report on every chat turn.
