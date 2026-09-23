@@ -352,8 +352,9 @@ describe('qadamInstaller', () => {
         expect(bunfig).toContain('minimumReleaseAgeExcludes = ["@acme/qadam-internal"]')
         // The official catalogue is chosen by nobody, which is the whole reason item 3 exists.
         expect(bunfig).not.toContain(official.qadamName)
-        // The repo-root bunfig also sets `linker = "isolated"`; copying it here would change the
-        // node_modules layout the engine's loader walks.
+        // The repo-root bunfig also sets `linker = "isolated"`. Left out because an inherited
+        // default that already matches is not worth restating — NOT because copying it would
+        // change the layout, which is the claim `buildInstallBunfig`'s own comment retracts.
         expect(bunfig).not.toContain('linker')
     })
 
@@ -631,5 +632,105 @@ describe('qadamInstaller', () => {
         await installer.install({ pieces: [official], includeFilters: true })
 
         expect(await readFile(lockfile, 'utf8')).toBe(INSTALLED_LOCKFILE)
+    })
+
+    // With the flag off the snapshot is never taken, and "not taken" must not read as "there was
+    // no lockfile" — that reading turns the restore into a delete, and the file being deleted
+    // belongs to every tenant sharing the workspace, not to this batch. This is the default
+    // configuration, so a failing one-piece install is the ordinary case: a custom qadam whose
+    // version 404s, one published inside the `minimumReleaseAge` window, a corrupt archive, a
+    // network blip.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED off — a failed install leaves the shared lockfile alone', async () => {
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+        const lockfile = join(testWorkspace, 'bun.lock')
+        await writeFile(lockfile, CLEAN_LOCKFILE)
+
+        mockInstall.mockRejectedValueOnce(new Error('install failure'))
+
+        await expect(installer.install({ pieces: [custom], includeFilters: true })).rejects.toThrow('install failure')
+
+        expect(await readFile(lockfile, 'utf8')).toBe(CLEAN_LOCKFILE)
+    })
+
+    // Same conflation, reached through the individual-fallback loop instead of the one-piece
+    // branch.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED off — a wholly failed batch leaves the shared lockfile alone', async () => {
+        const custom1 = makeQadam('@acme/qadam-internal')
+        const custom2 = makeQadam('@acme/qadam-other')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+        const lockfile = join(testWorkspace, 'bun.lock')
+        await writeFile(lockfile, CLEAN_LOCKFILE)
+
+        mockInstall.mockRejectedValue(new Error('install failure'))
+
+        await expect(installer.install({ pieces: [custom1, custom2], includeFilters: true })).rejects.toThrow()
+
+        expect(await readFile(lockfile, 'utf8')).toBe(CLEAN_LOCKFILE)
+    })
+
+    // The abandoning-rollback guarantee has to cover the fallback loop's own total failure. No
+    // piece survives, so nothing marks `ready` and the next job reinstalls the batch — reading
+    // whatever bun left as its "already refused before this install" baseline unless it is undone.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — a batch whose every individual install fails restores the lockfile', async () => {
+        officialQadamsInstallEnabled = true
+        const official1 = makeOfficialQadam('@aiqadam/qadam-tables')
+        const official2 = makeOfficialQadam('@aiqadam/qadam-subflows')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+        const lockfile = join(testWorkspace, 'bun.lock')
+        await writeFile(lockfile, CLEAN_LOCKFILE)
+
+        mockInstall.mockImplementation(async () => {
+            await writeFile(lockfile, POISONED_LOCKFILE)
+            throw new Error('install failure')
+        })
+
+        await expect(installer.install({ pieces: [official1, official2], includeFilters: false })).rejects.toThrow()
+
+        expect(await readFile(lockfile, 'utf8')).toBe(CLEAN_LOCKFILE)
+    })
+
+    // `workerSettings.set` runs at runtime on socket connect, so the flag can flip mid-install.
+    // One install must answer from one reading of it: an off→on flip between the pre-install
+    // snapshot and the integrity check would otherwise leave the check with nothing to restore,
+    // and the abandoned attempt's own lockfile becomes its successor's baseline — the exact
+    // one-attempt-only gate the rest of this file exists to close.
+    it('decides on one reading of the flag, even if it flips mid-install', async () => {
+        const custom = makeQadam('@acme/qadam-internal')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+
+        mockInstall.mockImplementation(async (params: { path: string, filtersPath: string[] }) => {
+            officialQadamsInstallEnabled = true
+            return simulateBunInstall(params)
+        })
+
+        await installer.install({ pieces: [custom], includeFilters: true })
+
+        // The snapshot was skipped because the flag was off when this install started. Verifying
+        // on the flipped-on value would pair a check that can fail closed with a rollback holding
+        // nothing to restore — so the check must answer to the same reading the snapshot did.
+        expect(mockRefusedKeysIn).not.toHaveBeenCalled()
+        expect(mockVerifyOfficialQadams).not.toHaveBeenCalled()
+    })
+
+    // A lockfile that exists but cannot be read is not an absent one. Collapsing the two makes the
+    // rollback delete a file whose contents it never captured — the flag-off lockfile delete,
+    // reached through a transient EACCES/EIO instead of through the flag. And the failure must
+    // come before the install writes its member into the shared workspace, or that half-written
+    // member is left for every later install's workspaces glob.
+    it('OFFICIAL_QADAMS_INSTALL_ENABLED on — an unreadable lockfile fails the install rather than being deleted', async () => {
+        officialQadamsInstallEnabled = true
+        const official = makeOfficialQadam('@aiqadam/qadam-tables')
+        const installer = qadamInstaller(fakeLog, fakeApiClient)
+        const lockfile = join(testWorkspace, 'bun.lock')
+        await mkdir(lockfile, { recursive: true })
+
+        mockInstall.mockImplementation(simulateBunInstall)
+
+        await expect(installer.install({ pieces: [official], includeFilters: true })).rejects.toThrow(/bun\.lock/)
+
+        expect(mockInstall).not.toHaveBeenCalled()
+        expect(await pathExists(lockfile)).toBe(true)
+        expect(await pathExists(qadamDirPath(official))).toBe(false)
     })
 })

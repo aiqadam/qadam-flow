@@ -139,7 +139,13 @@ for present in "${directory}"/*; do
   if [ "$base" = "$PUBLISH_ORDER_FILENAME" ]; then
     continue
   fi
-  if ! printf '%s' "$declared" | grep -Fxq -- "$base"; then
+  # Herestring, not `printf … | grep -Fxq`, for the reason spelled out above `classify_failure`:
+  # under `set -o pipefail` an early match makes grep exit, printf take SIGPIPE, and the pipeline
+  # status become 141, which `!` reads as "not declared". It needs `$declared` to outrun the ~64 KiB
+  # pipe buffer — about 1,600 entries against today's 241, so latent rather than live — and it
+  # fails closed when it does bite. Converted anyway: the same trap one function from where it is
+  # documented is how it comes back.
+  if ! grep -Fxq -- "$base" <<< "$declared"; then
     echo "::error::publish-packed-tarballs: ${base} is present but named by no ${PUBLISH_ORDER_FILENAME} entry — refusing to publish from a directory carrying anything the pack job did not declare." >&2
     exit 1
   fi

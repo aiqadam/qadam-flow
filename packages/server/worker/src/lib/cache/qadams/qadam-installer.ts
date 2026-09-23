@@ -95,6 +95,10 @@ function getCustomPiecesPath(platformId: string): string {
 
 async function installQadams(rootWorkspace: string, pieces: QadamPackage[], includeFilters: boolean, log: Logger, apiClient: WorkerToApiContract): Promise<void> {
     const devQadams = workerSettings.getSettings().DEV_QADAMS
+    // Read once and threaded from here, never re-read downstream. `workerSettings.set` runs at
+    // runtime on socket connect, so a flip landing mid-install would otherwise let the selection,
+    // the pre-install snapshot and the verification each answer a different question — and an
+    // off→on flip between the snapshot and the check leaves the check with nothing to restore.
     const officialQadamsInstallEnabled = workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED
     const nonDevQadams = pieces.filter(piece => !devQadams.includes(getQadamNameFromAlias(piece.qadamName)))
     const installableQadams = nonDevQadams.filter(piece => needsInstalling({ piece, officialQadamsInstallEnabled }))
@@ -128,6 +132,12 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 pieces: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
             }, '[qadamInstaller] acquired lock and starting to install qadams')
 
+            // Before anything below writes into the workspace, so a snapshot that cannot be taken
+            // fails the install with no half-written member left for the workspaces glob to pick
+            // up. Nothing below touches `bun.lock` — only bun does — so these are the same bytes a
+            // read just before `bun install` would see.
+            const before = await readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, log })
+
             await createInstallWorkspaceFiles({
                 path: rootWorkspace,
                 qadamsToInstall,
@@ -140,8 +150,6 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 qadamPackage: piece,
             })))
 
-            const before = await readWorkspaceBeforeInstall({ rootWorkspace, log })
-
             await tracer.startActiveSpan('qadamInstaller.bunInstall', async (span) => {
                 try {
                     span.setAttribute('qadams.count', qadamsToInstall.length)
@@ -153,7 +161,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     }))
 
                     if (isNil(batchError)) {
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, officialQadamsInstallEnabled, span, log })
                         log.info({
                             rootWorkspace,
                             qadamsCount: qadamsToInstall.length,
@@ -188,7 +196,17 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     // offender, and does it once.
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log })
+                    }
+                    else {
+                        // No survivor, so nothing is marked `ready` and the next job reinstalls the
+                        // whole batch. The restore lives inside `verifyIntegrityThenMarkAsUsed`,
+                        // which is not reached here — leaving the lockfile bun wrote across the
+                        // batch attempt and every individual retry to become that next attempt's
+                        // "already refused before this install" baseline. The per-piece rollbacks
+                        // in the loop above deliberately do not restore, because a survivor's
+                        // entries are legitimate; this is the abandoning case they do not cover.
+                        await restoreLockfile({ rootWorkspace, before })
                     }
 
                     if (failedQadams.length > 0) {
@@ -333,14 +351,15 @@ async function tryInstallQadamsIndividually(
 // a plain custom install too, and verifying them fail-closed would turn a brief registry outage
 // into a failed install where today there is none. The flag is also the documented escape hatch
 // for an npmjs key rotation, which only means anything if it gates this.
-async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, span, log }: {
+async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log }: {
     rootWorkspace: string
     installed: QadamPackage[]
     before: WorkspaceBeforeInstall
+    officialQadamsInstallEnabled: boolean
     span: Span
     log: Logger
 }): Promise<void> {
-    if (workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
+    if (officialQadamsInstallEnabled) {
         const { error } = await tryCatch(async () =>
             qadamIntegrity(log).verifyOfficialQadams({
                 rootWorkspace,
@@ -358,8 +377,8 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before,
     await markQadamsAsUsed(rootWorkspace, installed)
 }
 
-// Everything about the workspace that a rollback has to be able to put back. Captured immediately
-// before `bun install`, inside the same file lock.
+// Everything about the workspace that a rollback has to be able to put back. Captured inside the
+// same file lock as `bun install`, before the install writes anything into the workspace.
 //
 // `lockfileContents` is the reason this is a snapshot rather than just the key set. `bun install`
 // REWRITES `bun.lock` before the integrity pass ever reads it, and the old rollback removed only
@@ -376,21 +395,32 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before,
 // What this deliberately does NOT restore is `node_modules` — nothing prunes the refused bytes
 // from the tree. The guarantee is "a refused batch is never marked usable and never launders its
 // own output into the next attempt", not "the tree is clean".
-async function readWorkspaceBeforeInstall({ rootWorkspace, log }: {
+async function readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, log }: {
     rootWorkspace: string
+    officialQadamsInstallEnabled: boolean
     log: Logger
 }): Promise<WorkspaceBeforeInstall> {
     // Off the flag as well as the verification itself: with the flag off nothing verifies and
     // nothing rolls back on integrity grounds, so this would be a read bought for nothing on
     // every custom-qadam install.
-    if (!workerSettings.getSettings().OFFICIAL_QADAMS_INSTALL_ENABLED) {
-        return { lockfileContents: undefined, refusedKeys: new Set() }
+    if (!officialQadamsInstallEnabled) {
+        return { captured: false, lockfileContents: undefined, refusedKeys: new Set() }
     }
-    const { data } = await tryCatch(async () =>
+    const { data, error } = await tryCatch(async () =>
         readFile(join(rootWorkspace, LOCKFILE_NAME), 'utf8'))
+    // Only ENOENT is absence. Every other read error (EACCES, EIO, EISDIR) is a lockfile that
+    // exists and whose bytes we do not have, and treating that as "there was no lockfile" would
+    // hand the rollback a delete of a file it never captured. Fail the install instead: bun has
+    // not run yet, so the lockfile this could not read is also untouched, and the next job retries.
+    if (!isNil(error) && !isFileNotFound(error)) {
+        // Named, because node's own message for EISDIR/EACCES on a read carries no path and this
+        // one is the shared workspace's lockfile.
+        throw new Error(`[qadamInstaller] could not read ${join(rootWorkspace, LOCKFILE_NAME)} to snapshot it before installing`, { cause: error })
+    }
     // `tryCatch` reports "no value" as null; the rest of this path reads absence as undefined.
     const lockfileContents = data ?? undefined
     return {
+        captured: true,
         lockfileContents,
         // Classified from the SAME bytes that were snapshotted, not from a second read — otherwise
         // the set restored and the set reasoned about could not be shown to be the same file.
@@ -398,10 +428,19 @@ async function readWorkspaceBeforeInstall({ rootWorkspace, log }: {
     }
 }
 
+function isFileNotFound(error: unknown): boolean {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
 async function restoreLockfile({ rootWorkspace, before }: {
     rootWorkspace: string
     before: WorkspaceBeforeInstall
 }): Promise<void> {
+    // Nothing was snapshotted, so there is nothing this rollback is entitled to assert about the
+    // lockfile — least of all that it should not exist.
+    if (!before.captured) {
+        return
+    }
     const lockfilePath = join(rootWorkspace, LOCKFILE_NAME)
     if (isNil(before.lockfileContents)) {
         // There was no lockfile before, and a missing one is already the conservative
@@ -597,7 +636,14 @@ function getPackageArchivePathForQadam(rootWorkspace: string, qadamPackage: Priv
 // The workspace state a rollback may have to put back — see `readWorkspaceBeforeInstall`.
 // `lockfileContents` is undefined when there was no lockfile at all, which is both the
 // first-install case and the state a rollback restores to.
+//
+// `captured` is what keeps that reading honest. With the flag off no snapshot is taken at all, and
+// an absent snapshot is NOT the same claim as "there was no lockfile" — collapsing the two turned
+// the restore into a delete of a file this install never read, in the default configuration, on
+// every failed one-piece install. The lockfile belongs to every tenant sharing the workspace, so
+// that is their resolution thrown away by one tenant's failing install.
 type WorkspaceBeforeInstall = {
+    captured: boolean
     lockfileContents: string | undefined
     refusedKeys: Set<string>
 }
