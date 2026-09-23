@@ -192,6 +192,32 @@ happened. The assignment has been removed.
   environment — which restores exactly the old behaviour, but does so deliberately and visibly
   instead of as a side effect of one qadam making one request.
 
+#### A `raw` request body is sent as `text/plain`, exactly as typed, instead of as JSON
+
+The **Raw** body type of the HTTP qadam's *Send HTTP request* and of every qadam's *Custom API Call*
+did not send raw text. With no `Content-Type` header set, the request went out as
+`application/json`, and any body that was not already valid JSON was JSON-quoted on the way:
+`hello` arrived as `"hello"`. Since `@aiqadam/qadam-http` 0.12.0 and `@aiqadam/qadams-common` 0.15.0,
+which every qadam with a *Custom API Call* action now pins, a `raw` body with no `Content-Type`
+header is sent as `text/plain`, byte for byte as you typed it
+([#388](https://github.com/aiqadam/qadam-flow/issues/388)).
+
+The same versions add a **Binary** body type, which sends a file's bytes unmodified. Its
+`Content-Type` is your own header if you set one, otherwise the MIME type of the file's extension,
+otherwise `application/octet-stream`.
+
+- **Upgrading needs no action for a `raw` step that sets its own `Content-Type` header.** Your header
+  is kept, matched in any letter case, and the body is no longer re-encoded even under
+  `application/json`.
+- **A `raw` step that relied on the old default to send JSON now sends `text/plain`**, and an API
+  that expects JSON may reject it. Switch the step to the **JSON** body type, or add
+  `Content-Type: application/json` to its headers.
+- **PagerDuty and Mautic connections still force `application/json`** on their *Custom API Call*,
+  because the connection's headers take precedence over the step's. A `raw` body there keeps going
+  out as `application/json`, now without being re-encoded.
+- **`@aiqadam/qadam-assemblyai` moves to 2.0.0** for this change, since it is past 1.0.0. The other
+  qadams that carry a *Custom API Call* action get a minor version bump.
+
 ## 2.0.0
 
 ### What has changed?
