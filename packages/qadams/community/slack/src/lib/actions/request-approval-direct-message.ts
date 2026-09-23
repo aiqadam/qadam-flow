@@ -12,6 +12,7 @@ import { getBotToken, SlackAuthValue } from '../common/auth-helpers';
 export const requestApprovalDirectMessageAction = createAction({
   auth: slackAuth,
   name: 'request_approval_direct_message',
+  pauses: true,
   displayName: 'Request Approval from A User',
   description:
     'Send approval message to a user and then wait until the message is approved or disapproved',

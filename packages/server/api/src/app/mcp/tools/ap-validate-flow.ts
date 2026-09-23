@@ -1,3 +1,4 @@
+import { PauseBehaviour, QadamMetadataModel } from '@aiqadam/qadams-framework'
 import {
     FlowActionType,
     flowStructureUtil,
@@ -8,12 +9,14 @@ import {
     ProjectScopedMcpServer,
     RouterActionSettingsWithValidation,
     Step,
+    tryCatch,
     unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
+import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
 import { mcpUtils } from './mcp-utils'
 
@@ -39,6 +42,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
+                        platformId,
                         log,
                     }),
                     validatePinnedQadamVersions({
@@ -194,9 +198,10 @@ async function validatePinnedQadamVersions({ trigger, platformId, log }: {
 // could not see the two ways a `callFlow` step fails at run time while reading as configured: an
 // empty argument set, and an inline child that pauses. Both are decidable statically — the payload
 // is right there in the step, and the call graph is already stored on the server (#391).
-async function validateCallFlowSteps({ trigger, projectId, log }: {
+async function validateCallFlowSteps({ trigger, projectId, platformId, log }: {
     trigger: Step
     projectId: string
+    platformId: string
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
     // A skipped step does not run, so it cannot fail — which is already how `validateFlow` treats
@@ -217,6 +222,7 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
     }
 
     const graph = await loadCallGraph({ roots, projectId, log })
+    const markers = await loadPauseMarkers({ graph, platformId, log })
 
     // An empty payload is only a defect when the callee actually takes arguments. A callable flow
     // that takes none legitimately stores `{}` — flagging that would leave the flow permanently
@@ -239,7 +245,7 @@ async function validateCallFlowSteps({ trigger, projectId, log }: {
     const inlineTargets = callFlowSteps.filter(step => readCallFlowInput(step).executionMode === INLINE_EXECUTION_MODE)
     const pauseIssues = inlineTargets.flatMap((step) => {
         const externalId = readCallFlowInput(step).externalId
-        const pausingStep = isNil(externalId) ? null : findPausingFlow({ root: externalId, graph })
+        const pausingStep = isNil(externalId) ? null : findPausingFlow({ root: externalId, graph, markers })
         if (isNil(pausingStep)) {
             return []
         }
@@ -286,30 +292,58 @@ async function loadCallGraph({ roots, projectId, log }: {
     return graph
 }
 
-// Reads the one fact the walk needs from a flow: whether it pauses on its own, and which flows it
-// runs inline. A Queue-mode child runs as a separate job and is not an edge here — it only matters
-// because waiting on one is itself a pause, which `readPauseReason` reports.
+// Reads what the walk needs from a flow: its qadam steps (judged for pausing once the markers are
+// loaded), and which flows it runs inline. A Queue-mode child runs as a separate job and is not
+// an edge here — it only matters because waiting on one is itself a pause, which `readPauseReason`
+// reports.
 function readFlowNode(flow: { version: { displayName: string, trigger: Step } }): FlowNode {
     const steps = flowStructureUtil.getAllSteps(flow.version.trigger)
         .filter(step => !('skip' in step && step.skip === true))
     const expectsArguments = !isEmptyPayload(readCallableFlowSampleData(flow.version.trigger))
-    const pausingStep = steps.reduce<PausingStep | null>((found, step) => {
-        if (!isNil(found)) {
-            return found
-        }
-        const reason = readPauseReason(step)
-        return isNil(reason)
-            ? null
-            : { flowName: flow.version.displayName, stepDisplayName: step.displayName, reason }
-    }, null)
-    const inlineChildren = steps.flatMap((step) => {
+    const qadamSteps = steps.filter(isQadamStep)
+    const inlineChildren = qadamSteps.flatMap((step) => {
         if (!isCallFlowStep(step) || readCallFlowInput(step).executionMode !== INLINE_EXECUTION_MODE) {
             return []
         }
         const childExternalId = readCallFlowInput(step).externalId
         return isNil(childExternalId) ? [] : [childExternalId]
     })
-    return { pausingStep, inlineChildren, expectsArguments }
+    return { flowName: flow.version.displayName, qadamSteps, inlineChildren, expectsArguments }
+}
+
+// Whether an action pauses is declared by the action itself (`pauses` on `createAction`, #426),
+// so the answer lives in the pinned version's metadata. One lookup per distinct pin across the
+// whole graph: a flow with twelve steps on one pin costs one resolution. A lookup that fails —
+// the pin no longer resolves (already reported under `qadam_version`), the DB errored — yields no
+// metadata, and the step is judged the way pins predating the marker are, by the frozen table.
+async function loadPauseMarkers({ graph, platformId, log }: {
+    graph: Map<string, FlowNode>
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<Map<string, QadamMetadataModel | undefined>> {
+    const steps = [...graph.values()].flatMap(node => node.qadamSteps)
+    const pins = qadamPinUtil.collectDistinctPins({ steps })
+    const entries = await Promise.all(pins.map(async (pin): Promise<[string, QadamMetadataModel | undefined]> => {
+        const { name, version } = qadamPinUtil.splitPin({ pin })
+        const { data, error } = await tryCatch(() => qadamMetadataService(log).get({ name, version, platformId }))
+        if (!isNil(error)) {
+            log.warn({ err: error, pin }, 'ap_validate_flow: qadam metadata lookup failed while reading pause markers')
+        }
+        return [pin, data ?? undefined]
+    }))
+    return new Map(entries)
+}
+
+function findPausingStepIn({ node, markers }: { node: FlowNode, markers: PauseMarkers }): PausingStep | null {
+    return node.qadamSteps.reduce<PausingStep | null>((found, step) => {
+        if (!isNil(found)) {
+            return found
+        }
+        const reason = readPauseReason({ step, metadata: markers.get(qadamPinUtil.pinOf({ step })) })
+        return isNil(reason)
+            ? null
+            : { flowName: node.flowName, stepDisplayName: step.displayName, reason }
+    }, null)
 }
 
 // The `Callable Flow` trigger's `exampleData.sampleData` is the child's declared argument shape —
@@ -327,7 +361,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function findPausingFlow({ root, graph }: { root: string, graph: Map<string, FlowNode> }): PausingStep | null {
+function findPausingFlow({ root, graph, markers }: { root: string, graph: Map<string, FlowNode>, markers: PauseMarkers }): PausingStep | null {
     const seen = new Set<string>()
     const pending = [root]
 
@@ -341,37 +375,77 @@ function findPausingFlow({ root, graph }: { root: string, graph: Map<string, Flo
         if (isNil(node)) {
             continue
         }
-        if (!isNil(node.pausingStep)) {
-            return node.pausingStep
+        const pausingStep = findPausingStepIn({ node, markers })
+        if (!isNil(pausingStep)) {
+            return pausingStep
         }
         pending.push(...node.inlineChildren)
     }
     return null
 }
 
-function readPauseReason(step: Step): string | null {
-    if (!isQadamStep(step)) {
+// The action's own `pauses` marker decides (#426). `true` pauses; `'conditional'` is handed to the
+// evaluator for that action when this check has one, and reported as "may pause" when it does not
+// — the policy `delayFor` set for an unknown duration, applied to an unknown action: a flow author
+// is told about a possible run-time failure rather than shown a green report that lies. A pin
+// whose metadata predates the marker (or could not be read) falls back to the frozen table.
+function readPauseReason({ step, metadata }: { step: QadamStep, metadata: QadamMetadataModel | undefined }): string | null {
+    const { qadamName, actionName } = step.settings
+    const key = `${qadamName}:${actionName}`
+    const action = isNil(actionName) ? undefined : metadata?.actions[actionName]
+    const marker: PauseBehaviour | undefined = action?.pauses
+    const evaluate = Object.hasOwn(CONDITIONAL_PAUSE_EVALUATORS, key) ? CONDITIONAL_PAUSE_EVALUATORS[key] : undefined
+
+    if (marker === true) {
+        return `${mcpUtils.wrapUntrustedValue(action?.displayName ?? actionName ?? '')}, which always pauses`
+    }
+    if (marker === 'conditional') {
+        return isNil(evaluate)
+            ? `${mcpUtils.wrapUntrustedValue(action?.displayName ?? actionName ?? '')}, which pauses depending on its configuration — this check cannot evaluate it, so it may pause`
+            : evaluate(step)
+    }
+    if (Object.hasOwn(LEGACY_PAUSING_ACTIONS, key)) {
+        return LEGACY_PAUSING_ACTIONS[key]
+    }
+    return isNil(evaluate) ? null : evaluate(step)
+}
+
+function readCallFlowPauseReason(step: QadamStep): string | null {
+    const callFlowInput = readCallFlowInput(step)
+    if (callFlowInput.executionMode === INLINE_EXECUTION_MODE) {
         return null
     }
-    const { qadamName, actionName, input } = step.settings
-    if (isCallFlowStep(step)) {
-        const callFlowInput = readCallFlowInput(step)
-        const waitsOnQueuedChild = callFlowInput.executionMode !== INLINE_EXECUTION_MODE && callFlowInput.waitForResponse
-        return waitsOnQueuedChild ? 'a Queue-mode Call Flow that waits for a response' : null
+    if (callFlowInput.waitForResponse === 'unknown') {
+        return 'a Queue-mode Call Flow whose "wait for response" is not known until run time, so it may pause'
     }
-    if (qadamName === DELAY_QADAM && actionName === DELAY_FOR_ACTION) {
-        return readDelayForPauseReason(step)
+    return callFlowInput.waitForResponse ? 'a Queue-mode Call Flow that waits for a response' : null
+}
+
+// `transcribe` only waits when the author asked it to wait; submitting and moving on is the
+// default, and flagging that would be a false "cannot publish" on a flow that works.
+function readTranscribePauseReason(step: QadamStep): string | null {
+    const waitUntilReady = readCheckbox((step.settings.input ?? {}).wait_until_ready)
+    if (waitUntilReady === 'unknown') {
+        return 'an AssemblyAI transcription whose "wait until ready" is not known until run time, so it may pause'
     }
-    // `transcribe` only waits when the author asked it to wait; submitting and moving on is the
-    // default, and flagging that would be a false "cannot publish" on a flow that works.
-    if (qadamName === ASSEMBLYAI_QADAM && actionName === ASSEMBLYAI_TRANSCRIBE_ACTION) {
-        const waitUntilReady = (input ?? {}).wait_until_ready
-        return waitUntilReady === true || waitUntilReady === 'true'
-            ? 'an AssemblyAI transcription set to wait until it is ready'
-            : null
+    return waitUntilReady ? 'an AssemblyAI transcription set to wait until it is ready' : null
+}
+
+// A Checkbox stores a boolean, or a string once the author switches it to dynamic mode
+// (`z.union([z.boolean(), z.string()])`). The two spellings of a literal are read the same way
+// here so the conditional cases cannot disagree with each other (#426); a template expression
+// resolves only at run time and is reported as unknown rather than assumed safe.
+function readCheckbox(value: unknown): boolean | 'unknown' {
+    if (isNil(value) || value === '') {
+        return false
     }
-    const reason = ALWAYS_PAUSING_ACTIONS[`${qadamName}:${actionName}`]
-    return reason ?? null
+    if (typeof value === 'boolean') {
+        return value
+    }
+    if (value === 'true' || value === 'false') {
+        return value === 'true'
+    }
+    return 'unknown'
 }
 
 // `delayFor` only pauses above DELAY_PAUSE_THRESHOLD_MS; below it the engine just sleeps in
@@ -410,7 +484,7 @@ function readCallFlowInput(step: QadamStep): CallFlowInput {
         externalId: typeof flow?.externalId === 'string' ? flow.externalId : undefined,
         payload: flowProps?.payload,
         executionMode: typeof input.executionMode === 'string' ? input.executionMode : undefined,
-        waitForResponse: input.waitForResponse === true,
+        waitForResponse: readCheckbox(input.waitForResponse),
     }
 }
 
@@ -502,26 +576,25 @@ const DELAY_UNIT_MS: Record<string, number> = {
     hours: 60 * 60 * 1000,
     days: 24 * 60 * 60 * 1000,
 }
-const UNRESOLVED_FLOW: FlowNode = { pausingStep: null, inlineChildren: [], expectsArguments: false }
-// Derived by grepping every qadam for `waitForWaitpoint` — creating a waitpoint is not enough
-// (`approval:create_approval_links` does that and keeps running); waiting on one is what pauses.
-//
-// This is an allowlist, and it is the check's known limit: a qadam added later that pauses will
-// validate green here and still fail at run time with the `inline-flow-executor.ts` error. Making
-// it exhaustive needs a declared marker on the action rather than a table — #426, not guessed at
-// here, because a wrong entry produces a false "cannot publish" on a flow that works.
-//
-// Second limit, tracked in the same ticket: in the conditional cases `wait_until_ready` and
-// `waitForResponse` are read as literals, so a value bound to a template expression reads as "does
-// not pause" while the engine's plain truthiness check would pause. `delayFor` is the one that
-// reports rather than assumes when its value is not statically known; the other two assume safe.
-// Both are still strictly better than no check at all, but neither is a guarantee.
-const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
+const UNRESOLVED_FLOW: FlowNode = { flowName: '', qadamSteps: [], inlineChildren: [], expectsArguments: false }
+const ASSEMBLYAI_QADAM = '@aiqadam/qadam-assemblyai'
+const ASSEMBLYAI_TRANSCRIBE_ACTION = 'transcribe'
+// FROZEN. Consulted only for a step pinned to a qadam version whose metadata carries no `pauses`
+// marker — every version published before #426 — so the check does not regress for flows already
+// built. Since #426 the fact lives on the action (`pauses` on `createAction`, enforced by
+// `tools/ci/check-pause-markers.mjs`), and a new pausing action must declare it there, never be
+// added here: a table entry covers exactly the versions that also carry the marker, so it would
+// be dead on arrival. The two `request_action_*` rows are the correction of the #425 grep that
+// built this list: both wait through `common/request-action.ts` rather than in their own files
+// and were missed — precisely the miss #426 predicted.
+const LEGACY_PAUSING_ACTIONS: Record<string, string> = {
     [`${DELAY_QADAM}:delay_until`]: 'a Delay Until',
     '@aiqadam/qadam-approval:wait_for_approval': 'a Wait for Approval',
     '@aiqadam/qadam-webhook:return_response_and_wait_for_next_webhook': 'a webhook wait',
     '@aiqadam/qadam-slack:request_approval_message': 'a Slack approval request',
     '@aiqadam/qadam-slack:request_approval_direct_message': 'a Slack approval request',
+    '@aiqadam/qadam-slack:request_action_message': 'a Slack action request',
+    '@aiqadam/qadam-slack:request_action_direct_message': 'a Slack action request',
     '@aiqadam/qadam-microsoft-teams:request_approval_direct_message': 'a Teams approval request',
     '@aiqadam/qadam-microsoft-teams:request_approval_in_channel': 'a Teams approval request',
     '@aiqadam/qadam-discord:request_approval_message': 'a Discord approval request',
@@ -529,8 +602,15 @@ const ALWAYS_PAUSING_ACTIONS: Record<string, string> = {
     '@aiqadam/qadam-gmail:request_approval_in_mail': 'a Gmail approval request',
     '@aiqadam/qadam-microsoft-outlook:request_approval_in_mail': 'an Outlook approval request',
 }
-const ASSEMBLYAI_QADAM = '@aiqadam/qadam-assemblyai'
-const ASSEMBLYAI_TRANSCRIBE_ACTION = 'transcribe'
+// The `'conditional'` markers this check knows how to evaluate against the step's stored input.
+// A `'conditional'` action absent from here is reported as "may pause" (see `readPauseReason`);
+// the same three are also evaluated for pre-marker pins, where they were the conditional cases
+// of the frozen table.
+const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string | null> = {
+    [`${SUBFLOWS_QADAM}:${CALL_FLOW_ACTION}`]: readCallFlowPauseReason,
+    [`${DELAY_QADAM}:${DELAY_FOR_ACTION}`]: readDelayForPauseReason,
+    [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
+}
 
 const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
@@ -589,8 +669,10 @@ type CallFlowInput = {
     externalId: string | undefined
     payload: unknown
     executionMode: string | undefined
-    waitForResponse: boolean
+    waitForResponse: boolean | 'unknown'
 }
+
+type PauseMarkers = Map<string, QadamMetadataModel | undefined>
 
 type PausingStep = {
     flowName: string
@@ -599,8 +681,9 @@ type PausingStep = {
 }
 
 type FlowNode = {
+    flowName: string
     expectsArguments: boolean
-    pausingStep: PausingStep | null
+    qadamSteps: QadamStep[]
     inlineChildren: string[]
 }
 

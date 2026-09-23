@@ -1,5 +1,6 @@
-import { FlowRetryStrategy, FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
+import { FlowRetryStrategy, FlowRunStatus, FlowVersionState, isNil, PauseType, RunEnvironment } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
+import { waitpointService } from '../../../../../src/app/flows/flow-run/waitpoint/waitpoint-service'
 import { db } from '../../../../helpers/db'
 import { createMockFlow, createMockFlowRun, createMockFlowVersion } from '../../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../../helpers/test-context'
@@ -101,6 +102,116 @@ describe('Retry flow run', () => {
         const body = response.json()
         expect(body.id).not.toBe(flowRun.id)
         expect(body.flowId).toBe(flowRun.flowId)
+    })
+
+    it('should copy a re-verified parentWaitpointId forward when retrying ON_LATEST_VERSION (#521)', async () => {
+        const parentFlow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', parentFlow)
+        const parentFlowVersion = createMockFlowVersion({ flowId: parentFlow.id })
+        await db.save('flow_version', parentFlowVersion)
+        const parentRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: parentFlow.id,
+            flowVersionId: parentFlowVersion.id,
+            status: FlowRunStatus.PAUSED,
+        })
+        await db.save('flow_run', parentRun)
+        const { waitpoint } = await waitpointService(app.log).createForPause({
+            flowRunId: parentRun.id,
+            projectId: ctx.project.id,
+            callerRunId: parentRun.id,
+            stepName: 'callFlow',
+            type: PauseType.WEBHOOK,
+            version: 'V1',
+        })
+
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+        const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })
+        await db.save('flow_version', flowVersion)
+        const childRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.FAILED,
+            environment: RunEnvironment.TESTING,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+            parentWaitpointId: waitpoint.id,
+        })
+        await db.save('flow_run', childRun)
+
+        const response = await ctx.post(`/v1/flow-runs/${childRun.id}/retry`, {
+            strategy: FlowRetryStrategy.ON_LATEST_VERSION,
+            projectId: ctx.project.id,
+        })
+
+        expect(response.statusCode).toBe(200)
+        const body = response.json()
+        expect(body.id).not.toBe(childRun.id)
+        expect(body.parentRunId).toBe(parentRun.id)
+        expect(body.failParentOnFailure).toBe(true)
+        expect(body.parentWaitpointId).toBe(waitpoint.id)
+    })
+
+    it('drops a retried run\'s parentWaitpointId when the parent waitpoint no longer re-verifies (already completed)', async () => {
+        const parentFlow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', parentFlow)
+        const parentFlowVersion = createMockFlowVersion({ flowId: parentFlow.id })
+        await db.save('flow_version', parentFlowVersion)
+        const parentRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: parentFlow.id,
+            flowVersionId: parentFlowVersion.id,
+            status: FlowRunStatus.PAUSED,
+        })
+        await db.save('flow_run', parentRun)
+        const { waitpoint } = await waitpointService(app.log).createForPause({
+            flowRunId: parentRun.id,
+            projectId: ctx.project.id,
+            callerRunId: parentRun.id,
+            stepName: 'callFlow',
+            type: PauseType.WEBHOOK,
+            version: 'V1',
+        })
+        // Simulates the parent's own waitpoint already having been completed (e.g. by an earlier
+        // sibling child) between the original run and this retry.
+        await waitpointService(app.log).complete({
+            flowRunId: parentRun.id,
+            projectId: ctx.project.id,
+            waitpointId: waitpoint.id,
+            resumePayload: null,
+        })
+
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+        const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })
+        await db.save('flow_version', flowVersion)
+        const childRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.FAILED,
+            environment: RunEnvironment.TESTING,
+            parentRunId: parentRun.id,
+            failParentOnFailure: true,
+            parentWaitpointId: waitpoint.id,
+        })
+        await db.save('flow_run', childRun)
+
+        const response = await ctx.post(`/v1/flow-runs/${childRun.id}/retry`, {
+            strategy: FlowRetryStrategy.ON_LATEST_VERSION,
+            projectId: ctx.project.id,
+        })
+
+        expect(response.statusCode).toBe(200)
+        const body = response.json()
+        expect(body.parentRunId).toBe(parentRun.id)
+        expect(body.failParentOnFailure).toBe(false)
+        // `resolveVerifiedParent` returns `undefined`, but the field round-trips through a
+        // nullable Postgres column via `flowRunRepo().save()`, so the serialized response holds
+        // `null` rather than an absent key — `isNil` treats both as "not verified" here.
+        expect(isNil(body.parentWaitpointId)).toBe(true)
     })
 
     it('should return 400 for invalid flow run id', async () => {

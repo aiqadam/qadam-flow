@@ -18,6 +18,7 @@ import {
 import { ActionPreviewCard } from './action-preview-card';
 import { ChatInput } from './chat-input';
 import { ChatModelPicker } from './chat-model-picker';
+import { ChatProjectPicker } from './chat-project-picker';
 import { ConnectionPickerCard } from './connection-picker-card';
 import {
   ConnectionRequiredData,
@@ -38,6 +39,9 @@ export function ChatBottomBar({
   placeholder,
   modelName,
   onModelChange,
+  projectId,
+  onProjectChange,
+  isProjectLocked = false,
 }: ChatBottomBarProps) {
   const pendingPlanPart = useChatStoreContext((s) =>
     chatStoreSelectors.pendingPlanApproval({
@@ -174,12 +178,24 @@ export function ChatBottomBar({
         onInputChange={onInputChange}
         placeholder={placeholder ?? t('Reply...')}
         leftActions={
-          onModelChange && (
-            <ChatModelPicker
-              modelName={modelName ?? null}
-              onModelChange={onModelChange}
-              disabled={isStreaming}
-            />
+          (onProjectChange || onModelChange) && (
+            <>
+              {onProjectChange && (
+                <ChatProjectPicker
+                  projectId={projectId ?? null}
+                  onProjectChange={onProjectChange}
+                  locked={isProjectLocked}
+                  disabled={isStreaming}
+                />
+              )}
+              {onModelChange && (
+                <ChatModelPicker
+                  modelName={modelName ?? null}
+                  onModelChange={onModelChange}
+                  disabled={isStreaming}
+                />
+              )}
+            </>
           )
         }
       />
@@ -249,4 +265,7 @@ type ChatBottomBarProps = {
   placeholder?: string;
   modelName?: string | null;
   onModelChange?: (modelName: string) => void;
+  projectId?: string | null;
+  onProjectChange?: (projectId: string) => void;
+  isProjectLocked?: boolean;
 };

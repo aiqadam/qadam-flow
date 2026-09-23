@@ -74,6 +74,12 @@ export type WorkerMachineWithStatus = z.infer<typeof WorkerMachineWithStatus>
 export const ConsumeJobRequest = z.object({
     jobId: z.string(),
     jobData: JobData,
+    // 0 only on a job's genuine first delivery to any worker. Computed by the broker as
+    // `job.attemptsMade + job.stalledCounter` (job-broker.ts), NOT BullMQ's own
+    // `job.attemptsStarted` — that field also increments on a rate-limiter re-queue to `delayed`,
+    // which would make a still-fresh first delivery read as "not first" (#510).
+    // Consumers (e.g. execute-flow.ts's dispatch-deadline gate) use `=== 0` to distinguish a true
+    // first delivery from either a failed-and-retried job or a stalled-job re-delivery.
     attempsStarted: z.number(),
     engineToken: z.string(),
     token: z.string(),

@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetOnePopulated = vi.fn()
 const mockList = vi.fn()
+const mockGetMetadata = vi.fn()
 
 vi.mock('../../../../src/app/flows/flow/flow.service', () => ({
     flowService: vi.fn(() => ({
@@ -27,7 +28,7 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 
 vi.mock('../../../../src/app/qadams/metadata/qadam-metadata-service', () => ({
     qadamMetadataService: vi.fn(() => ({
-        get: vi.fn().mockResolvedValue({ name: '@aiqadam/qadam-subflows', version: '0.4.14' }),
+        get: mockGetMetadata,
     })),
 }))
 
@@ -118,10 +119,15 @@ async function validate(): Promise<string> {
     return (result.content?.[0] as { text: string }).text
 }
 
+// Pins resolve to a version whose metadata carries no `pauses` marker — the pre-#426 case, which
+// every check below exercises through the frozen table and the three conditional evaluators.
+const PRE_MARKER_METADATA = { name: '@aiqadam/qadam-subflows', version: '0.4.14', actions: {} }
+
 describe('ap_validate_flow — callFlow checks', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mockList.mockResolvedValue({ data: [], next: null, previous: null })
+        mockGetMetadata.mockResolvedValue(PRE_MARKER_METADATA)
     })
 
     it('flags a callFlow step whose payload is empty while the callee declares arguments', async () => {
@@ -405,5 +411,167 @@ describe('ap_validate_flow — callFlow checks', () => {
         await validate()
 
         expect(mockList).toHaveBeenCalledWith(expect.objectContaining({ projectIds: ['project-1'] }))
+    })
+})
+
+// #426: the pausing fact lives on the action (`pauses` on createAction), read off the pinned
+// version's metadata. The frozen table covers only pins predating the marker.
+describe('ap_validate_flow — inline_pause reads the action\'s pauses marker (#426)', () => {
+    const PARENT_INLINE = flowWith({
+        displayName: 'Parent',
+        externalId: 'parent',
+        firstAction: callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'inline', payload: { key: 'greeting' } }),
+    })
+
+    function childWith(step: unknown) {
+        return { data: [flowWith({ displayName: 'Child', externalId: 'child', firstAction: step })], next: null, previous: null }
+    }
+
+    function metadataWith(actions: Record<string, unknown>) {
+        return { name: '@aiqadam/qadam-anything', version: '0.4.14', actions }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetOnePopulated.mockResolvedValue(PARENT_INLINE)
+    })
+
+    it('flags an action from a qadam this check has never heard of when its metadata declares pauses: true', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({ name: 'step_1', qadamName: '@aiqadam/qadam-new-chat', actionName: 'ask_and_wait', input: {} })))
+        mockGetMetadata.mockResolvedValue(metadataWith({ ask_and_wait: { displayName: 'Ask and wait', pauses: true } }))
+
+        const text = await validate()
+
+        expect(text).toContain('Inline Subflows That Pause')
+        expect(text).toContain('Ask and wait')
+        expect(text).toContain('always pauses')
+    })
+
+    it('reports a conditional action it has no evaluator for as "may pause" instead of assuming safe', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({ name: 'step_1', qadamName: '@aiqadam/qadam-new-chat', actionName: 'maybe_wait', input: {} })))
+        mockGetMetadata.mockResolvedValue(metadataWith({ maybe_wait: { displayName: 'Maybe wait', pauses: 'conditional' } }))
+
+        const text = await validate()
+
+        expect(text).toContain('Inline Subflows That Pause')
+        expect(text).toContain('cannot evaluate it, so it may pause')
+    })
+
+    it('leaves an unmarked action alone when its metadata carries an actions map without the marker and the table does not list it', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({ name: 'step_1', qadamName: '@aiqadam/qadam-tables', actionName: 'find_records', input: {} })))
+        mockGetMetadata.mockResolvedValue(metadataWith({ find_records: { displayName: 'Find records' } }))
+
+        const text = await validate()
+
+        expect(text).toContain('ready to publish')
+    })
+
+    // The #425 grep missed both `request_action_*` actions (they wait through a shared helper);
+    // for a pin predating the marker the frozen table is the only thing that can still catch them.
+    it('falls back to the frozen table for a pin whose metadata predates the marker', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({ name: 'step_1', qadamName: '@aiqadam/qadam-slack', actionName: 'request_action_message', input: {} })))
+        mockGetMetadata.mockResolvedValue(metadataWith({ request_action_message: { displayName: 'Request Action in A Channel' } }))
+
+        const text = await validate()
+
+        expect(text).toContain('a Slack action request')
+    })
+
+    it('falls back to the frozen table when the metadata lookup fails', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({ name: 'step_1', qadamName: '@aiqadam/qadam-approval', actionName: 'wait_for_approval', input: {} })))
+        mockGetMetadata.mockRejectedValue(new Error('pool exhausted'))
+
+        const text = await validate()
+
+        expect(text).toContain('a Wait for Approval')
+    })
+
+    it('does not build a second table: a marked action is judged by the marker even when the table also lists it', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({ name: 'step_1', qadamName: '@aiqadam/qadam-approval', actionName: 'wait_for_approval', input: {} })))
+        mockGetMetadata.mockResolvedValue(metadataWith({ wait_for_approval: { displayName: 'Wait for Approval', pauses: true } }))
+
+        const text = await validate()
+
+        expect(text).toContain('always pauses')
+    })
+
+    it('resolves each distinct pin once across the whole call graph', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({
+            name: 'step_1', qadamName: '@aiqadam/qadam-tables', actionName: 'find_records', input: {},
+            nextAction: qadamStep({ name: 'step_2', qadamName: '@aiqadam/qadam-tables', actionName: 'find_records', input: {} }),
+        })))
+        mockGetMetadata.mockResolvedValue(metadataWith({ find_records: { displayName: 'Find records' } }))
+
+        await validate()
+
+        // One pin (`@aiqadam/qadam-tables@0.4.14`) for the two steps, plus the parent's own pin
+        // resolutions for the `qadam_version` category — never one call per step.
+        const markerLookups = mockGetMetadata.mock.calls.filter(([args]) => args.name === '@aiqadam/qadam-tables')
+        expect(markerLookups).toHaveLength(1)
+    })
+})
+
+// The second gap #426 names: the conditional cases read their Checkbox as a literal, and did not
+// even agree with each other on which literals count. Now one reader, one policy — a template is
+// reported, a literal is parsed the same way for both.
+describe('ap_validate_flow — conditional pause props read consistently (#426)', () => {
+    const PARENT_INLINE = flowWith({
+        displayName: 'Parent',
+        externalId: 'parent',
+        firstAction: callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'inline', payload: { key: 'greeting' } }),
+    })
+
+    function childWith(step: unknown) {
+        return { data: [flowWith({ displayName: 'Child', externalId: 'child', firstAction: step })], next: null, previous: null }
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetOnePopulated.mockResolvedValue(PARENT_INLINE)
+        mockGetMetadata.mockResolvedValue(PRE_MARKER_METADATA)
+    })
+
+    it('reports a template-bound wait_until_ready rather than assuming it is off', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({
+            name: 'step_1', qadamName: '@aiqadam/qadam-assemblyai', actionName: 'transcribe',
+            input: { wait_until_ready: '{{trigger[\'output\'].wait}}' },
+        })))
+
+        const text = await validate()
+
+        expect(text).toContain('not known until run time, so it may pause')
+    })
+
+    it('reads the string literal "true" on waitForResponse the way it already read it on wait_until_ready', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({
+            name: 'step_1', qadamName: '@aiqadam/qadam-subflows', actionName: 'callFlow',
+            input: { flow: { externalId: 'grandchild' }, executionMode: 'queue', flowProps: { payload: {} }, waitForResponse: 'true' },
+        })))
+
+        const text = await validate()
+
+        expect(text).toContain('Queue-mode Call Flow that waits')
+    })
+
+    it('reports a template-bound waitForResponse on a Queue-mode callFlow', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({
+            name: 'step_1', qadamName: '@aiqadam/qadam-subflows', actionName: 'callFlow',
+            input: { flow: { externalId: 'grandchild' }, executionMode: 'queue', flowProps: { payload: {} }, waitForResponse: '{{step_0[\'output\'].wait}}' },
+        })))
+
+        const text = await validate()
+
+        expect(text).toContain('"wait for response" is not known until run time')
+    })
+
+    it('treats the string literal "false" as off', async () => {
+        mockList.mockResolvedValue(childWith(qadamStep({
+            name: 'step_1', qadamName: '@aiqadam/qadam-assemblyai', actionName: 'transcribe',
+            input: { wait_until_ready: 'false' },
+        })))
+
+        const text = await validate()
+
+        expect(text).toContain('ready to publish')
     })
 })

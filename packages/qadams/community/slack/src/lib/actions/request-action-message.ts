@@ -16,6 +16,7 @@ import { requestAction } from '../common/request-action';
 export const requestActionMessageAction = createAction({
   auth: slackAuth,
   name: 'request_action_message',
+  pauses: true,
   displayName: 'Request Action in A Channel',
   description:
     'Send a message in a channel and wait until an action is selected',

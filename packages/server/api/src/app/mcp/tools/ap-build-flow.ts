@@ -32,6 +32,8 @@ const stepSpec = z.object({
     loopItems: z.string().optional(),
     continueOnFailure: z.boolean().optional(),
     retryOnFailure: z.boolean().optional(),
+    logInput: z.boolean().optional().describe(mcpUtils.LOG_INPUT_HINT),
+    logOutput: z.boolean().optional().describe(mcpUtils.LOG_OUTPUT_HINT),
     parentStepName: z.string().optional().describe('Name of the parent step to nest this step inside (e.g. the loop step name). If omitted, step is added after the previous step.'),
     stepLocationRelativeToParent: z.enum([
         StepLocationRelativeToParent.AFTER,
@@ -153,7 +155,11 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                     const normalizedInput = await mcpUtils.normalizeAgentFlowToolIds({ input: rewritten.input, projectId, log })
                     const rewrittenStep = { ...step, input: normalizedInput, loopItems: rewritten.loopItems }
                     const skeleton = buildSkeleton({ step: rewrittenStep, name: stepName, resolvedPieceVersion, resolvedPieceName })
-                    const parseResult = UpdateActionRequest.safeParse(skeleton)
+                    const parseResult = UpdateActionRequest.safeParse({
+                        ...skeleton,
+                        ...(step.logInput !== undefined && { logInput: step.logInput }),
+                        ...(step.logOutput !== undefined && { logOutput: step.logOutput }),
+                    })
                     if (!parseResult.success) {
                         skippedSteps.push(step.displayName)
                         continue

@@ -1,4 +1,4 @@
-import { apId, FileType, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch } from '@aiqadam/shared'
+import { FileType, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch } from '@aiqadam/shared'
 import { Job, Queue, Worker } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
@@ -142,12 +142,24 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         return false
     }
 
-    const logsFileId = await resolveWritableLogsFileId({ log, job, runMetadata })
-    const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
+    const projectId = runMetadata.projectId
+    if (isNil(projectId)) {
+        // TypeORM drops an undefined criterion from a find rather than matching on it, so the
+        // lookups below would read the run by id alone, whichever project owns it, and carry that
+        // row into the finish side effects.
+        log.warn({
+            jobId: job.id,
+            runId: job.data.runId,
+        }, '[runsMetadataQueue#worker] Runs metadata carries no projectId, dropping it')
+        await consumeProcessedMetadata({ key, runMetadata })
+        return false
+    }
+    const logsFileId = await resolveWritableLogsFileId({ log, job, projectId, runMetadata })
+    const existingFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId, projectId })
     let savedFlowRun: FlowRun
     if (!isNil(existingFlowRun)) {
-        await updateFlowRunIgnoringDanglingLogsFile({ runId: job.data.runId, runMetadata, logsFileId, log, job })
-        const updatedFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId })
+        await updateFlowRunIgnoringDanglingLogsFile({ runId: job.data.runId, projectId, runMetadata, logsFileId, log, job })
+        const updatedFlowRun = await flowRunRepo().findOneBy({ id: job.data.runId, projectId })
         if (isNil(updatedFlowRun)) {
             log.info({
                 jobId: job.id,
@@ -159,13 +171,27 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
         savedFlowRun = updatedFlowRun
     }
     else {
+        // Deliberately unscoped: the run id is the table's primary key, so this asks whether the id
+        // is taken at all. If it is, the row belongs to another project, and `save` below would
+        // upsert it — rewriting that project's run, its projectId included, from metadata that does
+        // not speak for it (#512).
+        const claimedByAnotherProject = await flowRunRepo().existsBy({ id: job.data.runId })
+        if (claimedByAnotherProject) {
+            log.warn({
+                jobId: job.id,
+                runId: job.data.runId,
+                projectId,
+            }, '[runsMetadataQueue#worker] Run belongs to another project, dropping its metadata')
+            await consumeProcessedMetadata({ key, runMetadata })
+            return false
+        }
         const flowId = runMetadata.flowId
-        const flowExists = !isNil(flowId) && await flowService(log).exists(flowId)
+        const flowExists = !isNil(flowId) && await flowService(log).exists({ id: flowId, projectId })
         if (!flowExists) {
             log.info({
                 jobId: job.id,
                 runId: job.data.runId,
-            }, '[runsMetadataQueue#worker] Flow does not exist (deleted), skipping job')
+            }, '[runsMetadataQueue#worker] Flow does not exist in the run\'s project (deleted?), skipping job')
             await consumeProcessedMetadata({ key, runMetadata })
             return false
         }
@@ -180,6 +206,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     if (shouldMarkParentAsFailed) {
         await markParentRunAsFailed({
             parentRunId,
+            parentWaitpointId: savedFlowRun.parentWaitpointId,
             childRunId: savedFlowRun.id,
             projectId: savedFlowRun.projectId,
             log,
@@ -192,7 +219,7 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     }
 
     if (savedFlowRun.status === FlowRunStatus.PAUSED) {
-        const latestWaitpoint = await waitpointService(log).getByFlowRunId(savedFlowRun.id)
+        const latestWaitpoint = await waitpointService(log).getByFlowRunId({ flowRunId: savedFlowRun.id, projectId: savedFlowRun.projectId })
         const isPreCompleted = !isNil(latestWaitpoint)
             && latestWaitpoint.status === WaitpointStatus.COMPLETED
         if (isPreCompleted) {
@@ -231,11 +258,10 @@ async function consumeProcessedMetadata({ key, runMetadata }: ConsumeProcessedMe
     await distributedStore.delete(key)
 }
 
-async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
+async function resolveWritableLogsFileId({ log, job, projectId, runMetadata }: ResolveWritableLogsFileIdParams): Promise<string | undefined> {
     if (isNil(runMetadata.logsFileId)) {
         return undefined
     }
-    const projectId = runMetadata.projectId ?? job.data.projectId
     const exists = await fileService(log).exists({
         projectId,
         fileId: runMetadata.logsFileId,
@@ -252,8 +278,8 @@ async function resolveWritableLogsFileId({ log, job, runMetadata }: ResolveWrita
     return undefined
 }
 
-async function updateFlowRunIgnoringDanglingLogsFile({ runId, runMetadata, logsFileId, log, job }: UpdateFlowRunParams): Promise<void> {
-    const { error } = await tryCatch(() => flowRunRepo().update(runId, buildFlowRunUpdate({ runMetadata, logsFileId })))
+async function updateFlowRunIgnoringDanglingLogsFile({ runId, projectId, runMetadata, logsFileId, log, job }: UpdateFlowRunParams): Promise<void> {
+    const { error } = await tryCatch(() => flowRunRepo().update({ id: runId, projectId }, buildFlowRunUpdate({ runMetadata, logsFileId })))
     if (isNil(error)) {
         return
     }
@@ -264,15 +290,15 @@ async function updateFlowRunIgnoringDanglingLogsFile({ runId, runMetadata, logsF
             runId: job.data.runId,
             logsFileId,
         }, '[runsMetadataQueue#worker] Logs file gone mid-write, retrying status update without it')
-        await flowRunRepo().update(runId, buildFlowRunUpdate({ runMetadata, logsFileId: undefined }))
+        await flowRunRepo().update({ id: runId, projectId }, buildFlowRunUpdate({ runMetadata, logsFileId: undefined }))
         return
     }
     throw error
 }
 
+// No projectId: the row was matched on it, and a run never changes project.
 function buildFlowRunUpdate({ runMetadata, logsFileId }: BuildFlowRunUpdateParams) {
     return {
-        ...spreadIfDefined('projectId', runMetadata.projectId),
         ...spreadIfDefined('flowId', runMetadata.flowId),
         ...spreadIfDefined('flowVersionId', runMetadata.flowVersionId),
         ...spreadIfDefined('environment', runMetadata.environment),
@@ -311,15 +337,44 @@ function isLogsFileForeignKeyViolation(error: unknown): boolean {
 
 async function markParentRunAsFailed({
     parentRunId,
+    parentWaitpointId,
     childRunId,
     projectId,
     log,
 }: MarkParentRunAsFailedParams): Promise<void> {
+    // A child predating `flow_run.parentWaitpointId` (#521 impact item 3 hardening) carries
+    // `failParentOnFailure` with no stored proof to complete exactly. Falling back to whatever
+    // waitpoint the parent happens to hold right now (the previous behavior) would reopen the
+    // vulnerability this column exists to close — a replay, or an unrelated retry that changed the
+    // parent's current waitpoint, could complete the wrong one. So a legacy child completes
+    // nothing here; its parent stays PAUSED until manually retried or cancelled. The migration
+    // (`AddParentWaitpointIdToFlowRun`) backfills this once for rows already in Postgres at
+    // deploy time, matched against the parent's own single PENDING WEBHOOK waitpoint where
+    // exactly one exists — this branch is the fallback for what the backfill could not resolve
+    // (zero or multiple candidate waitpoints on the parent), plus any row that reaches this
+    // state some other way: a job queued by the old API before the deploy but not landed in
+    // Postgres until after the migration ran, or a split-version deploy where an old-code
+    // instance still creates children without this column while new-code instances are already
+    // reading it. Recovery for any of these is the same as before: retry or cancel the parent.
+    if (isNil(parentWaitpointId)) {
+        log.warn({ parentRunId, childRunId, projectId }, '[markParentRunAsFailed] Child run has failParentOnFailure but no stored parentWaitpointId (predates this check, or was never verified); completing nothing')
+        return
+    }
+
     const flowRun = await flowRunRepo().findOneBy({
         id: parentRunId,
+        projectId,
     })
 
-    if (isNil(flowRun) || isFlowRunStateTerminal({ status: flowRun.status, ignoreInternalError: false })) {
+    if (isNil(flowRun)) {
+        // parentRunId can come straight from the public webhook's `ap-parent-run-id` header
+        // with no project check (webhook-request-converter.ts), so the child's own project is
+        // the only trustworthy scope for this read.
+        log.warn({ parentRunId, childRunId, projectId }, '[markParentRunAsFailed] Parent run not found in the child\'s project, skipping')
+        return
+    }
+
+    if (isFlowRunStateTerminal({ status: flowRun.status, ignoreInternalError: false })) {
         return
     }
 
@@ -336,11 +391,16 @@ async function markParentRunAsFailed({
         queryParams: {},
     }
 
-    const existingWaitpoint = await waitpointService(log).getByFlowRunId(parentRunId)
+    // Completes exactly `parentWaitpointId` and nothing else — `complete()` is a no-op unless
+    // that id is still the PENDING row on `parentRunId`, so a replayed proof (this waitpoint
+    // already COMPLETED) or a stale one (superseded by a later retry) is silently harmless rather
+    // than completing whatever waitpoint the parent happens to hold at this later moment. No
+    // `getByFlowRunId` fallback here on purpose: falling back to whatever waitpoint the parent
+    // happens to hold right now would reopen the vulnerability `parentWaitpointId` exists to close.
     const result = await waitpointService(log).complete({
         flowRunId: parentRunId,
         projectId: flowRun.projectId,
-        waitpointId: existingWaitpoint?.id ?? apId(),
+        waitpointId: parentWaitpointId,
         resumePayload: errorPayload,
     })
 
@@ -355,6 +415,7 @@ async function markParentRunAsFailed({
 
 type MarkParentRunAsFailedParams = {
     parentRunId: string
+    parentWaitpointId: string | undefined
     childRunId: string
     projectId: string
     log: FastifyBaseLogger
@@ -374,11 +435,13 @@ type ConsumeProcessedMetadataParams = {
 type ResolveWritableLogsFileIdParams = {
     log: FastifyBaseLogger
     job: Job<RunsMetadataJobData>
+    projectId: string
     runMetadata: RunsMetadataUpsertData
 }
 
 type UpdateFlowRunParams = {
     runId: string
+    projectId: string
     runMetadata: RunsMetadataUpsertData
     logsFileId: string | undefined
     log: FastifyBaseLogger

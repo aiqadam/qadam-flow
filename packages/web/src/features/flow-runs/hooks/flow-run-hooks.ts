@@ -159,6 +159,19 @@ export const flowRunMutations = {
               closeButton: true,
               dismissible: true,
             });
+          } else if (
+            apError.code === ErrorCode.VALIDATION &&
+            apError.params.message
+          ) {
+            // The backend's message is dynamic, per-run text (e.g. why a redacted-trigger run
+            // can't be retried) rather than a static UI string, so it is shown as-is rather than
+            // routed through t() — the same choice FailedRetryRunsDialog makes for the bulk path.
+            toast.error(t('Retry failed'), {
+              description: apError.params.message,
+              duration: 5000,
+              closeButton: true,
+              dismissible: true,
+            });
           }
           return;
         }

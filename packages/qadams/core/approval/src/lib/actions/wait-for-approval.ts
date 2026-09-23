@@ -4,6 +4,7 @@ import { ExecutionType, MarkdownVariant } from '@aiqadam/shared';
 export const waitForApprovalLink = createAction({
   auth: QadamAuth.None(),
   name: 'wait_for_approval',
+  pauses: true,
   displayName: 'Wait for Approval',
   description: 'Pauses the flow and wait for the approval from the user',
   props: {

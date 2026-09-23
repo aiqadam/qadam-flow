@@ -182,6 +182,28 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
               ),
               duration: 3000,
             });
+          } else if (status === 504) {
+            // A run that had not started yet by the deadline is now failed, not merely
+            // slow (#510) — resubmitting could double-execute one that did start, so
+            // this must not claim the submission is safely "still running". Anonymous
+            // form submitters can't open the (builder-only) run history, so the copy
+            // doesn't point them at it; a longer duration gives them time to read it.
+            toast.info(
+              t(
+                "The flow did not finish in time and may still be running. Please don't resubmit right away.",
+              ),
+              { duration: 8000 },
+            );
+          } else if (status === 503) {
+            // Unlike the 504 branch above, the submission was NOT accepted here — the
+            // sync webhook refused it outright — so this must not share the 504's
+            // toast.info styling, which reads as "received, just still working on it".
+            toast.error(
+              t(
+                'The service is temporarily busy. Please try again in a moment.',
+              ),
+              { duration: 3000 },
+            );
           } else {
             toast.error(t('The flow failed to execute.'), {
               duration: 3000,

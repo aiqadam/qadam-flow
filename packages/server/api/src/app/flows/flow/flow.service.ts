@@ -277,9 +277,10 @@ export const flowService = (log: FastifyBaseLogger) => ({
         }))
         return paginationHelper.createPage(populatedFlows, paginationResult.cursor)
     },
-    async exists(id: FlowId): Promise<boolean> {
+    async exists({ id, projectId }: ExistsParams): Promise<boolean> {
         return flowRepo().existsBy({
             id,
+            projectId,
         })
     },
     async getOneById(id: string): Promise<Flow | null> {
@@ -871,6 +872,11 @@ type GetOneParams = {
     id: FlowId
     projectId: ProjectId
     entityManager?: EntityManager
+}
+
+type ExistsParams = {
+    id: FlowId
+    projectId: ProjectId
 }
 
 type GetOnePopulatedParams = GetOneParams & {

@@ -30,6 +30,7 @@ export type SubmitPayloadsRequest = {
     streamStepProgress: StreamStepProgress
     parentRunId?: string
     failParentOnFailure?: boolean
+    parentWaitpointId?: string
 }
 
 export type SavePayloadRequest = {

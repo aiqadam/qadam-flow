@@ -34,6 +34,8 @@ const addStepInput = z.object({
     loopItems: z.string().optional(),
     continueOnFailure: z.boolean().optional(),
     retryOnFailure: z.boolean().optional(),
+    logInput: z.boolean().optional(),
+    logOutput: z.boolean().optional(),
 })
 
 export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -57,10 +59,12 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
             loopItems: z.string().optional().describe('For LOOP steps: expression for items to iterate (e.g. "{{step_1[\'output\'].items}}").'),
             continueOnFailure: z.boolean().optional().describe('For CODE/PIECE steps: set true on the step that can fail (the one whose failure you want to react to), NOT on the recovery step. Defaults to false. When true the flow keeps running on failure and the step gains On success / On failure branches — add handler steps into them with stepLocationRelativeToParent INSIDE_ON_SUCCESS_BRANCH / INSIDE_ON_FAILURE_BRANCH and parentStepName = this step.'),
             retryOnFailure: z.boolean().optional().describe('For CODE/PIECE steps: whether to retry this step on failure. Defaults to false.'),
+            logInput: z.boolean().optional().describe(mcpUtils.LOG_INPUT_HINT),
+            logOutput: z.boolean().optional().describe(mcpUtils.LOG_OUTPUT_HINT),
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {
-            const { flowId, parentStepName, stepLocationRelativeToParent, branchIndex, stepType, displayName, qadamName, actionName, input, auth, sourceCode, packageJson, loopItems, continueOnFailure, retryOnFailure } = addStepInput.parse(args)
+            const { flowId, parentStepName, stepLocationRelativeToParent, branchIndex, stepType, displayName, qadamName, actionName, input, auth, sourceCode, packageJson, loopItems, continueOnFailure, retryOnFailure, logInput, logOutput } = addStepInput.parse(args)
 
             const [flow, project] = await Promise.all([
                 flowService(log).getOnePopulated({ id: flowId, projectId: mcp.projectId }),
@@ -181,7 +185,11 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                 }
             }
 
-            const parseResult = UpdateActionRequest.safeParse(skeletonAction)
+            const parseResult = UpdateActionRequest.safeParse({
+                ...skeletonAction,
+                ...(logInput !== undefined && { logInput }),
+                ...(logOutput !== undefined && { logOutput }),
+            })
             if (!parseResult.success) {
                 const message = parseResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join('; ')
                 return {

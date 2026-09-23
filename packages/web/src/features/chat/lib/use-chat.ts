@@ -203,9 +203,11 @@ type SendStatus =
 export function useAgentChat({
   onTitleUpdate,
   onConversationCreated,
+  defaultProjectId,
 }: {
   onTitleUpdate?: (title: string) => void;
   onConversationCreated?: (conversationId: string) => void;
+  defaultProjectId?: string | null;
 } = {}) {
   const store = useChatStoreApi();
 
@@ -213,6 +215,7 @@ export function useAgentChat({
     null,
   );
   const [modelName, setModelNameState] = useState<string | null>(null);
+  const [projectId, setProjectIdState] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isPollingForAgentReply, setIsPollingForAgentReply] = useState(false);
   const pollDeadlineRef = useRef(0);
@@ -236,6 +239,9 @@ export function useAgentChat({
   const lastSentFileNamesRef = useRef<string[]>([]);
   const conversationIdRef = useRef<string | null>(null);
   const modelNameRef = useRef<string | null>(null);
+  const projectIdRef = useRef<string | null>(null);
+  const defaultProjectIdRef = useRef(defaultProjectId);
+  defaultProjectIdRef.current = defaultProjectId;
   const onTitleUpdateRef = useRef(onTitleUpdate);
   onTitleUpdateRef.current = onTitleUpdate;
   const onConversationCreatedRef = useRef(onConversationCreated);
@@ -377,11 +383,27 @@ export function useAgentChat({
     // else will ever look again: the answer lands in the database and the open tab never shows it
     // (#289). Handing the wait to the poll is what closes that, and the poll ends itself as soon as
     // the conversation leaves STREAMING.
-    onStreamError: ({ conversationId: convId }) => {
+    //
+    // The error itself is moved onto the send status rather than left on the stream: the reconcile
+    // ends in `clearStreamingState`, which wipes the stream's error a moment after it was set, and a
+    // run the server reported as failed then read as a turn that silently ended with no reply. The
+    // send status is what the next send or a conversation switch resets, so the reason stays up
+    // until the user acts on it. It is withdrawn once the server says the run did not fail — still
+    // going (a stream ending is not a run failing, and the poll below is about to show its answer)
+    // or already finished, which this side's own timeout can race.
+    onStreamError: ({ conversationId: convId, errorMessage }) => {
+      const failure: SendStatus = { type: 'error', message: errorMessage };
+      updateSendStatus(failure);
       reconcileAndClearRef.current(convId);
       void tryCatch(async () => {
         const conv = await chatApi.getConversation(convId);
         if (isNil(conv) || conversationIdRef.current !== convId) return;
+        if (
+          conv.status !== ChatConversationStatus.ERROR &&
+          sendStatusRef.current === failure
+        ) {
+          updateSendStatus({ type: 'idle' });
+        }
         if (conv.status === ChatConversationStatus.STREAMING) {
           // The server's own bound, imported rather than restated: it stops honouring a STREAMING
           // conversation this long after its last heartbeat, so a poll that outlives it is waiting
@@ -470,10 +492,16 @@ export function useAgentChat({
     async ({
       title,
       modelName,
-    }: { title?: string | null; modelName?: string | null } = {}) => {
+      projectId,
+    }: {
+      title?: string | null;
+      modelName?: string | null;
+      projectId?: string | null;
+    } = {}) => {
       const conv = await chatApi.createConversation({
         title: title ?? null,
         modelName: modelName ?? null,
+        projectId: projectId ?? null,
       });
       conversationIdRef.current = conv.id;
       setConversationIdState(conv.id);
@@ -534,6 +562,9 @@ export function useAgentChat({
           const conv = await createConversation({
             title: content.slice(0, 100),
             modelName: modelNameRef.current,
+            // The default is sent explicitly so the conversation works in the project the picker
+            // showed, not in whatever the server's own fallback happens to choose.
+            projectId: projectIdRef.current ?? defaultProjectIdRef.current,
           });
           onConversationCreatedRef.current?.(conv.id);
         });
@@ -634,6 +665,8 @@ export function useAgentChat({
       });
       modelNameRef.current = convResult.data.modelName ?? null;
       setModelNameState(convResult.data.modelName ?? null);
+      projectIdRef.current = convResult.data.projectId ?? null;
+      setProjectIdState(convResult.data.projectId ?? null);
       if (convResult.data.status === ChatConversationStatus.STREAMING) {
         const lastAssistantIdx = mapped.findLastIndex(
           (m) => m.role === 'assistant',
@@ -796,9 +829,30 @@ export function useAgentChat({
     setModelNameState(newModelName);
   }, []);
 
+  const setProjectId = useCallback(async (newProjectId: string) => {
+    const convId = conversationIdRef.current;
+    if (!convId) {
+      projectIdRef.current = newProjectId;
+      setProjectIdState(newProjectId);
+      return;
+    }
+    // Persist-then-reflect, for the same reason as `setModelName`. The server also refuses the
+    // change once the conversation has started, so a failure here is not only a network one.
+    const { error } = await tryCatch(() =>
+      chatApi.updateConversation(convId, { projectId: newProjectId }),
+    );
+    if (error) {
+      toast.error(t('Could not switch projects. Please try again.'));
+      return;
+    }
+    projectIdRef.current = newProjectId;
+    setProjectIdState(newProjectId);
+  }, []);
+
   return {
     conversationId,
     modelName,
+    projectId,
     messages,
     isStreaming,
     wasCancelled,
@@ -808,5 +862,6 @@ export function useAgentChat({
     cancelStream,
     setConversationId,
     setModelName,
+    setProjectId,
   };
 }

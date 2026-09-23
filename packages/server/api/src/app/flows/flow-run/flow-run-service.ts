@@ -2,6 +2,7 @@ import { apDayjs } from '@aiqadam/server-utils'
 import {
     apId,
     Cursor,
+    EngineHttpResponse,
     ErrorCode,
     ExecuteFlowJobData,
     ExecutionType,
@@ -15,6 +16,7 @@ import {
     FlowRunId,
     FlowRunStatus,
     FlowRunWithRetryError,
+    FlowVersion,
     FlowVersionId,
     isFlowRunStateTerminal,
     isNil,
@@ -28,15 +30,20 @@ import {
     RunInternalError,
     SampleDataFileType,
     SeekPage,
+    StepOutput,
     StepOutputStatus,
     StreamStepProgress,
+    tryCatch,
     WorkerJobType,
 } from '@aiqadam/shared'
 import { context, propagation, trace } from '@opentelemetry/api'
 import { FastifyBaseLogger } from 'fastify'
+import { StatusCodes } from 'http-status-codes'
 import pLimit from 'p-limit'
 import { ArrayContains, In, IsNull, Not, Repository, SelectQueryBuilder } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
+import { getPendingRunOwnerKey } from '../../database/redis/keys'
+import { distributedStore } from '../../database/redis-connections'
 import { fileService } from '../../file/file.service'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
@@ -52,13 +59,82 @@ import { sampleDataService } from '../step-run/sample-data.service'
 import { FlowRunEntity } from './flow-run-entity'
 import { flowRunSideEffects } from './flow-run-side-effects'
 import { runsMetadataQueue } from './flow-runs-queue'
+import { waitpointService } from './waitpoint/waitpoint-service'
 
 const CANCELLABLE_STATUSES: FlowRunStatus[] = [FlowRunStatus.PAUSED, FlowRunStatus.QUEUED]
 
+/**
+ * Mirrors `REDACTED_VALUE` in `packages/server/engine/src/lib/helper/log-redaction.ts`. The api
+ * package cannot import that module directly: `@aiqadam/engine`'s `package.json` declares no
+ * `main`/`exports` entry, and the monorepo's own tsconfig path for the bare specifier resolves
+ * to `packages/server/engine/src/main.ts` — the sandbox worker's own bootstrap, which pulls in
+ * `isolated-vm` and other sandbox-only dependencies that must never load inside the api process.
+ * Duplicated here as the single place `retry()` checks for it.
+ */
+const REDACTED_TRIGGER_OUTPUT_VALUE = '**REDACTED**'
 
 const tracer = trace.getTracer('flow-run-service')
+const PENDING_RUN_OWNER_TTL_SECONDS = system.getNumberOrThrow(AppSystemProp.FLOW_TIMEOUT_SECONDS)
 export const WEBHOOK_TIMEOUT_MS = system.getNumberOrThrow(AppSystemProp.WEBHOOK_TIMEOUT_SECONDS) * 1000
+/**
+ * What a sync caller gets when AP_WEBHOOK_TIMEOUT_SECONDS runs out. Since the engine answers every
+ * terminal verdict itself (flow.operation.ts), this is normally a run that is still queued,
+ * executing or paused — or one whose answer never arrived (a failed publish) — so it must not read
+ * as success the way the old empty 204 did (#509), and the body says only that it may be running.
+ *
+ * 504 rather than 408 or 503: the caller was not slow and we are not overloaded; the run behind us
+ * did not answer in time. No `Retry-After`, deliberately — a retry starts the flow again from the
+ * trigger, so inviting one duplicates every side effect a non-idempotent flow has already made.
+ *
+ * No `runId` either, for the same reason the failure 500 omits it: the legacy resume route
+ * (`/:id/requests/:requestId`) accepts the run id alone as its credential, and a run can be paused
+ * when this fires, so disclosing it would let the webhook caller resume — approve — its own run.
+ */
+export const SYNC_RUN_TIMEOUT_RESPONSE: EngineHttpResponse = {
+    status: StatusCodes.GATEWAY_TIMEOUT,
+    body: { message: 'The flow run did not respond within the time limit. It may still be running.' },
+    headers: {},
+}
 export const flowRunRepo = repoFactory<FlowRun>(FlowRunEntity)
+// V0 legacy resume needs pauseMetadata, which is deliberately excluded from the public FlowRun
+// schema (see flow-run-entity.ts), and does not need findFlowRunOrThrow's flowVersion join (that
+// join exists only to populate flowVersion.displayName for API responses; nothing on the legacy
+// resume path reads it). repoFactory caches by entity name, so this is the same physical
+// `flow_run` repository as flowRunRepo above, just retyped and queried without the join.
+const flowRunLegacyResumeRepo = repoFactory<LegacyResumeFlowRun>(FlowRunEntity)
+
+/**
+ * A PRODUCTION run's row reaches Postgres through the runs-metadata queue rather than the request
+ * that created it (`queueOrCreateInstantly`), so a parent accepted milliseconds ago is legitimately
+ * absent from the table while that flush is still pending. Under load that failed ~46% of a burst's
+ * runs on a parent that did exist (#509); TESTING writes the row synchronously, which is why a
+ * manual test never reproduced it.
+ *
+ * The fallback reads `pending_run_owner:<id>`, which the API writes below when it accepts the run. It
+ * must not read the `runs_metadata:` hash instead: `workerRpc.uploadRunLog` merges into that key with
+ * an engine-supplied runId and projectId and no ownership check, so a compromised engine could mint
+ * one for a foreign run — precisely the attachment this check exists to block.
+ *
+ * Shared by the inline-subflow depth guard (`inlineFlowRunService`) and by `resolveVerifiedParent`
+ * below — both need "does this run belong to this project" answered the same way.
+ */
+export async function findParentRun({ parentRunId, projectId, log }: FindParentRunParams): Promise<ParentRun | null> {
+    const persistedParentRun = await flowRunRepo().findOneBy({ id: parentRunId, projectId })
+    if (!isNil(persistedParentRun)) {
+        return { parentRunId: persistedParentRun.parentRunId, persisted: true }
+    }
+
+    const { data: pendingOwner, error } = await tryCatch(() => distributedStore.get<PendingRunOwner>(getPendingRunOwnerKey(parentRunId)))
+    if (!isNil(error)) {
+        // Fail closed: an unverifiable parent must never be accepted on the strength of a Redis blip.
+        log.warn({ parentRunId, projectId, err: error }, '[flowRunService#findParentRun] Failed to read the pending run owner, treating parent as unverified')
+        return null
+    }
+    if (isNil(pendingOwner) || pendingOwner.projectId !== projectId) {
+        return null
+    }
+    return { parentRunId: pendingOwner.parentRunId, persisted: false }
+}
 
 export const flowRunService = (log: FastifyBaseLogger) => ({
     async upsert({ id, projectId }: { id: FlowRunId, projectId: ProjectId }): Promise<FlowRun> {
@@ -139,7 +215,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         }
 
         const { data, cursor: newCursor } = await paginator.paginate(query)
-        return paginationHelper.createPage<FlowRun>(data, newCursor)
+        return paginationHelper.createPage<FlowRun>(data.map(withDispatchWaitMs), newCursor)
     },
     async retry({ flowRunId, strategy, projectId }: RetryParams): Promise<FlowRun> {
         const oldFlowRun = await flowRunService(log).getOnePopulatedOrThrow({
@@ -167,6 +243,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const flowVersion = await flowVersionService(log).getOneOrThrow(oldFlowRun.flowVersionId)
                 const triggerStep = oldFlowRun.steps?.[flowVersion.trigger.name]
                 const triggerFailed = triggerStep?.status === StepOutputStatus.FAILED
+                assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion: flowVersion, triggerStep })
 
                 await flowRunRepo().update({
                     id: oldFlowRun.id,
@@ -205,9 +282,14 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const latestFlowVersion = await flowVersionService(log).getLatestLockedVersionOrThrow(
                     oldFlowRun.flowId,
                 )
+                // The redaction check is against the version the run actually executed on, not
+                // the latest one being retried to — that's the version whose `trigger.logOutput`
+                // was in effect when this run's log was written.
+                const ranOnVersion = await flowVersionService(log).getOneOrThrow(oldFlowRun.flowVersionId)
                 const triggerStep = oldFlowRun.steps?.[latestFlowVersion.trigger.name]
                 const triggerFailed = triggerStep?.status === StepOutputStatus.FAILED
                 const payload = triggerStep?.output
+                assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion, triggerStep: oldFlowRun.steps?.[ranOnVersion.trigger.name] })
                 return this.start({
                     flowId: oldFlowRun.flowId,
                     payload,
@@ -222,6 +304,13 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     projectId: oldFlowRun.projectId,
                     failParentOnFailure: oldFlowRun.failParentOnFailure,
                     parentRunId: oldFlowRun.parentRunId,
+                    // Safe to copy verbatim: `start` -> `queueOrCreateInstantly` re-verifies it
+                    // via `resolveVerifiedParent` before it is ever persisted on the new run, so a
+                    // waitpoint the original parent has since completed is dropped here rather
+                    // than carried forward — and even if it weren't, `markParentRunAsFailed`
+                    // completes exactly this id (`complete()` is a no-op on anything else), so a
+                    // stale/consumed waitpoint could never complete the wrong one either way.
+                    parentWaitpointId: oldFlowRun.parentWaitpointId,
                 })
             }
         }
@@ -238,7 +327,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
             excludeFlowRunIds,
         })
         const cancelParentFlowRuns = await Promise.allSettled(flowRuns.map(flowRun => cancelSingleRun(log, flowRun, platformId)))
-        const childFlows = await getAllChildRuns(flowRuns.map(flowRun => flowRun.id))
+        const childFlows = await getAllChildRuns({ parentRunIds: flowRuns.map(flowRun => flowRun.id), projectId })
         log.info({
             flowRunsCount: flowRuns.length,
             childFlowCount: childFlows.length,
@@ -298,9 +387,11 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         flowVersionId,
         parentRunId,
         failParentOnFailure,
+        parentWaitpointId,
         platformId,
         stepNameToTest,
         environment,
+        syncDeadline,
     }: StartParams): Promise<FlowRun> {
         return tracer.startActiveSpan('flowRun.start', {
             attributes: {
@@ -322,6 +413,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     parentRunId,
                     flowId,
                     failParentOnFailure,
+                    parentWaitpointId,
                     stepNameToTest,
                     environment,
                 }, log)
@@ -336,6 +428,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     workerHandlerId,
                     httpRequestId,
                     streamStepProgress,
+                    syncDeadline,
                 }, log)
 
                 span.setAttribute('flowRun.queued', true)
@@ -413,7 +506,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
             ...(params.projectId ? { projectId: params.projectId } : {}),
         }).getOne()
 
-        return flowRun
+        return isNil(flowRun) ? flowRun : withDispatchWaitMs(flowRun)
     },
     async getOneOrThrow(params: GetOneParams): Promise<FlowRun> {
         const flowRun = await this.getOne(params)
@@ -472,6 +565,25 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
 })
 
 
+/**
+ * Refuses a retry whose old run cannot supply a real trigger payload to replay, for either
+ * strategy — see the three mechanisms documented in flow-runs.md's Logs Storage and Retry
+ * Strategies sections: a redacted trigger's terminal log backup, a redacted failed-trigger's
+ * preserved raw event, and RESUME hydrating a redacted trigger step from the log. `ranOnVersion`
+ * must be the flow version the OLD run actually executed on (its `trigger.logOutput` reflects
+ * the setting in effect when the log was written, not whatever the trigger is configured to do
+ * now) — never the latest/target version, which may have logging on even though this run's own
+ * log holds `**REDACTED**`.
+ */
+function assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion, triggerStep }: AssertTriggerPayloadRetryableParams): void {
+    const triggerOutputRedacted = triggerStep?.output === REDACTED_TRIGGER_OUTPUT_VALUE
+    if (ranOnVersion.trigger.logOutput !== false && !triggerOutputRedacted) {
+        return
+    }
+    const message = `Can't retry run ${oldFlowRun.id}: its trigger payload was not kept in the run log because logging was turned off for the trigger. Re-trigger the flow with a fresh event, or turn trigger logging back on for future runs before retrying.`
+    throw new QadamFlowError({ code: ErrorCode.VALIDATION, params: { message } }, message)
+}
+
 async function cancelSingleRun(log: FastifyBaseLogger, flowRun: FlowRun, platformId: string): Promise<void> {
     await jobQueue(log).removeOneTimeJob({
         jobId: flowRun.id,
@@ -488,7 +600,13 @@ async function cancelSingleRun(log: FastifyBaseLogger, flowRun: FlowRun, platfor
     }, 'Flow run cancelled')
 }
 
-async function getAllChildRuns(parentRunIds: string[]): Promise<FlowRun[]> {
+/**
+ * Scoped by projectId at the anchor AND on every recursive hop — without it, a descendant chain that
+ * crosses into another project (e.g. a webhook-forged `parentRunId`, see #521) would let one
+ * project's bulk cancel reach into another project's runs. `parentRunIds` are already all from
+ * `projectId` (filterFlowRunsAndApplyFilters), so this only ever walks that project's own tree.
+ */
+async function getAllChildRuns({ parentRunIds, projectId }: GetAllChildRunsParams): Promise<FlowRun[]> {
     if (parentRunIds.length === 0) {
         return []
     }
@@ -498,20 +616,23 @@ async function getAllChildRuns(parentRunIds: string[]): Promise<FlowRun[]> {
             SELECT *
             FROM flow_run
             WHERE "parentRunId" = ANY($1)
-              AND status = ANY($2)
+              AND "projectId" = $2
+              AND status = ANY($3)
 
             UNION ALL
 
             SELECT f.*
             FROM flow_run f
             INNER JOIN descendants d ON f."parentRunId" = d.id
-            WHERE f.status = ANY($2)
+            WHERE f."projectId" = $2
+              AND f.status = ANY($3)
         )
         SELECT * FROM descendants;
     `
 
     const params = [
         parentRunIds,
+        projectId,
         CANCELLABLE_STATUSES,
     ]
 
@@ -613,6 +734,7 @@ export async function addToQueue(params: AddToQueueParams, log: FastifyBaseLogge
         sampleData: params.sampleData,
         logsFileId,
         traceContext,
+        syncDeadline: params.syncDeadline,
     }
     const data: ExecuteFlowJobData = params.executionType === ExecutionType.RESUME
         ? {
@@ -648,6 +770,41 @@ export async function findFlowRunOrThrow(flowRunId: FlowRunId): Promise<FlowRun>
     return flowRun
 }
 
+/**
+ * Resolves the run for the V0 legacy resume routes (`/:id/requests/:requestId[/sync]`). If the
+ * run has no PENDING V0 waitpoint, this is the ONLY read: resume-service's no-waitpoint legacy
+ * branch (legacyResume/legacySyncResume) takes the resolved row as a parameter and never
+ * re-fetches it. That closes a check-then-use gap that used to exist there — findPendingV0Waitpoint
+ * resolving the run, then legacyResume/legacySyncResume resolving it again — where the #509
+ * runsMetadataQueue drain lag could insert a PAUSED row, or the real waitpoint row, in between the
+ * two reads, so a request that saw "no V0 waitpoint yet" on the first read could still land in the
+ * no-waitpoint branch on the second. A single un-joined read (dropping findFlowRunOrThrow's
+ * flowVersion join, unused here) returns everything that branch needs — the eligibility guard's
+ * inputs (status, pauseMetadata) and everything enqueueResume needs to dispatch the resume
+ * (flowId, flowVersionId, environment, logsFileId, stepNameToTest).
+ *
+ * If the run DOES have a PENDING V0 waitpoint, the controller still re-resolves it a second time
+ * inside resumeFromWaitpoint (via findFlowRunOrThrow) before completing that waitpoint. That
+ * second read is safe from the same race: handleResumeSignal locks that exact waitpoint id
+ * (pessimistic write) and deletes it in the same transaction before its onReady callback enqueues
+ * the resume, so a second, unrelated waitpoint appearing between the two reads cannot be silently
+ * swapped in — there is nothing analogous to fix on that branch.
+ */
+export async function findFlowRunForLegacyResume({ flowRunId }: FindFlowRunForLegacyResumeParams): Promise<LegacyResumeFlowRun> {
+    const flowRun = await flowRunLegacyResumeRepo().findOneBy({ id: flowRunId })
+    if (isNil(flowRun)) {
+        throw new QadamFlowError({
+            code: ErrorCode.ENTITY_NOT_FOUND,
+            params: {
+                entityType: 'flow_run',
+                entityId: flowRunId,
+                message: 'Flow run not found',
+            },
+        })
+    }
+    return flowRun
+}
+
 function queryBuilderForFlowRun(repo: Repository<FlowRun>): SelectQueryBuilder<FlowRun> {
     return repo.createQueryBuilder('flow_run')
         .leftJoinAndSelect('flow_run.flowVersion', 'flowVersion')
@@ -666,21 +823,84 @@ async function readLogsFile(log: FastifyBaseLogger, logsFileId: string, projectI
     return JSON.parse(result.data.toString('utf-8'))
 }
 
+/**
+ * A `parentRunId` reaching this point can be caller-controlled — the `ap-parent-run-id` webhook
+ * header rides job data all the way from a public, unauthenticated route through to here for both
+ * the sync and async webhook paths (`webhook.service.ts#handleSync`, `execute-webhook.ts` →
+ * `submitPayloads`) — and must never be attached on the strength of the caller's word alone: it can
+ * name a run in any project, which would let that project's own cancel/waitpoint machinery reach a
+ * foreign run (#521). This is the single choke point every `start()` caller funnels through, so
+ * verifying here (rather than at webhook ingress) covers every route without duplicating the check.
+ * A parent that fails verification is dropped, together with `failParentOnFailure` — the run must
+ * still start, just unparented; the caller gets no signal either way.
+ *
+ * `parentWaitpointId` is re-verified here too, not just at webhook ingress: `submitPayloads` is a
+ * WORKER-authenticated RPC method, callable directly by any worker, not only as the tail end of
+ * the webhook job `execute-webhook.ts` builds — so a `parentWaitpointId` reaching here has not
+ * necessarily passed through `webhook.service.ts#resolveParentAttachment`'s
+ * `existsPendingWebhookWaitpoint` check at all. Without re-checking it here, an unverified id
+ * would still be persisted and later handed to `waitpointService.complete()` as-is, which matches
+ * on id + PENDING status only, not on waitpoint type — so an id naming some *other* PENDING
+ * waitpoint on the same (now-verified) parent, e.g. a DELAY or an unrelated approval step, could
+ * be completed by an ordinary child failure instead of only ever the parent's own WEBHOOK
+ * waitpoint. Re-running the same check the legitimate call-flow proof already passed at ingress is
+ * therefore harmless for the real path (the parent is still waiting on its own WEBHOOK waitpoint
+ * at run-creation time — nothing can have completed it yet, since completion only ever happens
+ * later, when this very child terminates) and closes the gap for a WORKER principal calling
+ * `submitPayloads` directly.
+ */
+async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentWaitpointId, projectId, log }: ResolveVerifiedParentParams): Promise<ResolvedParent> {
+    if (isNil(parentRunId)) {
+        return { parentRunId: undefined, failParentOnFailure, parentWaitpointId: undefined }
+    }
+    const verifiedParent = await findParentRun({ parentRunId, projectId, log })
+    if (isNil(verifiedParent)) {
+        log.warn({ parentRunId, projectId }, '[flowRunService#resolveVerifiedParent] Dropping parentRunId: the named run does not belong to this project')
+        // `false`, not `undefined`: queueOrCreateInstantly defaults a genuinely-absent
+        // failParentOnFailure to `true` (`failParentOnFailure ?? true`), so `undefined` here would
+        // read as "no preference" and re-enable exactly the flag this branch exists to drop.
+        return { parentRunId: undefined, failParentOnFailure: false, parentWaitpointId: undefined }
+    }
+    // A waitpoint id is only ever meaningful alongside a `true` failParentOnFailure — dropping it
+    // otherwise keeps `flow_run.parentWaitpointId` from persisting a value nothing will ever read.
+    if (!failParentOnFailure || isNil(parentWaitpointId)) {
+        return { parentRunId, failParentOnFailure, parentWaitpointId: undefined }
+    }
+    const provenWaitpoint = await waitpointService(log).existsPendingWebhookWaitpoint({
+        id: parentWaitpointId,
+        flowRunId: parentRunId,
+        projectId,
+    })
+    if (!provenWaitpoint) {
+        log.warn({ parentRunId }, '[flowRunService#resolveVerifiedParent] Dropping failParentOnFailure: parentWaitpointId did not re-verify against a PENDING WEBHOOK waitpoint on this parent')
+        return { parentRunId, failParentOnFailure: false, parentWaitpointId: undefined }
+    }
+    return { parentRunId, failParentOnFailure, parentWaitpointId }
+}
+
 async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogger): Promise<FlowRun> {
     const now = new Date().toISOString()
+    const { parentRunId, failParentOnFailure, parentWaitpointId } = await resolveVerifiedParent({
+        parentRunId: params.parentRunId,
+        failParentOnFailure: params.failParentOnFailure,
+        parentWaitpointId: params.parentWaitpointId,
+        projectId: params.projectId,
+        log,
+    })
     const flowRun: FlowRun = {
         id: apId(),
         projectId: params.projectId,
         flowId: params.flowId,
         flowVersionId: params.flowVersionId,
         environment: params.environment,
-        parentRunId: params.parentRunId,
+        parentRunId,
+        parentWaitpointId,
         // Only a subflow child (parentRunId set) has a meaningful dispatch mode —
         // a top-level run isn't dispatched by a parent at all. This is the queue
         // path specifically; the inline path writes its own run row directly in
         // inlineFlowRunService.start, never through here.
-        dispatchMode: isNil(params.parentRunId) ? undefined : FlowRunDispatchMode.enum.QUEUE,
-        failParentOnFailure: params.failParentOnFailure ?? true,
+        dispatchMode: isNil(parentRunId) ? undefined : FlowRunDispatchMode.enum.QUEUE,
+        failParentOnFailure: failParentOnFailure ?? true,
         status: FlowRunStatus.QUEUED,
         stepNameToTest: params.stepNameToTest,
         created: now,
@@ -693,9 +913,46 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         case RunEnvironment.TESTING:
             return flowRunRepo().save(flowRun)
         case RunEnvironment.PRODUCTION:
+            // The row itself is owed by the runs-metadata queue, so for the length of that flush
+            // the run exists everywhere except the table. An inline subflow dispatched in the
+            // meantime still has to prove its parent belongs to its own project, and this is the
+            // only record of that written by the API rather than by anything the engine can reach
+            // (#509). Scoped to the run's own outside limit — past FLOW_TIMEOUT_SECONDS the run
+            // cannot still be executing, so the record has nothing left to authorize.
+            await distributedStore.put(getPendingRunOwnerKey(flowRun.id), {
+                projectId: flowRun.projectId,
+                parentRunId: flowRun.parentRunId,
+            }, PENDING_RUN_OWNER_TTL_SECONDS)
             await runsMetadataQueue(log).add(flowRun)
             return flowRun
     }
+}
+
+/**
+ * `dispatchWaitMs` is the time between this run becoming eligible for dispatch and the engine
+ * actually beginning execution — `startTime - created`, computed here rather than stored, so no
+ * migration is needed and the definition can't drift from what's actually on the row.
+ *
+ * Two cases where the raw `startTime - created` gap does not mean "queue wait", both documented
+ * rather than special-cased away (#510):
+ *
+ * - INLINE dispatch mode (`inline-flow-run.service.ts`) sets `startTime` equal to `created` at row
+ *   creation, since an inline child starts executing synchronously in its parent's own engine
+ *   process. The gap is correctly 0 by construction; nothing here needs to special-case it.
+ * - A FROM_FAILED_STEP retry reuses the same run row and resets `startTime` to the moment the retry
+ *   was queued, while `created` still holds the run's ORIGINAL creation time. `dispatchWaitMs` on a
+ *   retried run therefore measures elapsed time since the original attempt, not the latest retry's
+ *   own queue wait — informative for the run's lifetime, but not a live per-dispatch health metric
+ *   across retries. Resetting `created` on retry was considered and rejected: `created` is this
+ *   row's audit trail of when it first came into existence, and list/filter queries
+ *   (`createdAfter`/`createdBefore` above) rely on it staying put.
+ */
+function withDispatchWaitMs(flowRun: FlowRun): FlowRun {
+    if (isNil(flowRun.startTime)) {
+        return { ...flowRun, dispatchWaitMs: null }
+    }
+    const waitMs = apDayjs(flowRun.startTime).diff(apDayjs(flowRun.created))
+    return { ...flowRun, dispatchWaitMs: waitMs >= 0 ? waitMs : null }
 }
 
 export function isOutsideRetentionWindow(createdTime: string, retentionDays: number): boolean {
@@ -709,9 +966,45 @@ type CreateParams = {
     triggeredBy?: string
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
+    parentWaitpointId?: string
     stepNameToTest?: string
     flowId: FlowId
     environment: RunEnvironment
+}
+
+type GetAllChildRunsParams = {
+    parentRunIds: string[]
+    projectId: ProjectId
+}
+
+type ResolveVerifiedParentParams = {
+    parentRunId: FlowRunId | undefined
+    failParentOnFailure: boolean | undefined
+    parentWaitpointId: string | undefined
+    projectId: ProjectId
+    log: FastifyBaseLogger
+}
+
+type ResolvedParent = {
+    parentRunId: FlowRunId | undefined
+    failParentOnFailure: boolean | undefined
+    parentWaitpointId: string | undefined
+}
+
+export type FindParentRunParams = {
+    parentRunId: string
+    projectId: string
+    log: FastifyBaseLogger
+}
+
+export type ParentRun = {
+    parentRunId?: string
+    persisted: boolean
+}
+
+type PendingRunOwner = {
+    projectId: string
+    parentRunId?: string
 }
 
 type ListParams = {
@@ -743,6 +1036,7 @@ type AddToQueueParamsCommon = {
     httpRequestId: string | undefined
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
+    syncDeadline?: string
 }
 
 export type AddToQueueParams = AddToQueueParamsCommon & (
@@ -760,6 +1054,7 @@ type StartParams = {
     projectId: ProjectId
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
+    parentWaitpointId?: string
     stepNameToTest?: string
     executeTrigger: boolean
     executionType: ExecutionType.BEGIN
@@ -767,6 +1062,7 @@ type StartParams = {
     httpRequestId: string | undefined
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
+    syncDeadline?: string
 }
 
 
@@ -788,6 +1084,12 @@ type RetryParams = {
     flowRunId: FlowRunId
     strategy: FlowRetryStrategy
     projectId: ProjectId
+}
+
+type AssertTriggerPayloadRetryableParams = {
+    oldFlowRun: FlowRun
+    ranOnVersion: FlowVersion
+    triggerStep: StepOutput | undefined
 }
 
 type CancelParams = {
@@ -832,6 +1134,17 @@ type CountByStatusParams = {
     projectId: ProjectId
     createdAfter?: string
     createdBefore?: string
+}
+
+export type FindFlowRunForLegacyResumeParams = {
+    flowRunId: FlowRunId
+}
+
+// pauseMetadata is a pre-shim (before 2026-04-13) column, deliberately excluded from the public
+// FlowRun schema — see flow-run-entity.ts. Everything else here is exactly what FlowRun already
+// carries; this is the same row, just also exposing that one legacy column.
+export type LegacyResumeFlowRun = FlowRun & {
+    pauseMetadata?: unknown
 }
 
 type FilterFlowRunsAndApplyFiltersParams = {

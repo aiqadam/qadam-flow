@@ -36,6 +36,10 @@ type Waitpoint = {
 type CreateForPauseParams = {
     flowRunId: ApId
     projectId: ApId
+    // The EnginePrincipal's own id (the BullMQ job id, which for an EXECUTE_FLOW job equals its
+    // top-level flow run's id — see access-token-manager.ts/job-broker.ts). Used to bind the
+    // request to the caller's own run instead of trusting flowRunId/projectId from the body alone.
+    callerRunId: ApId
     stepName: string
     type: `${PauseType}`
     version: WaitpointVersion
@@ -56,6 +60,7 @@ type CompleteParams = {
     waitpointId: ApId
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
+    httpRequestId?: string
 }
 
 type CompleteResult = {
@@ -70,13 +75,36 @@ type HandleResumeSignalParams = {
     projectId: ApId
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
+    httpRequestId?: string
     onReady: (waitpoint: Waitpoint) => Promise<void>
 }
 
 type FindPendingByVersionParams = {
     flowRunId: ApId
+    projectId: ApId
     version: WaitpointVersion
 }
 
+type GetByFlowRunIdParams = {
+    flowRunId: ApId
+    projectId: ApId
+}
+
+type DeleteByFlowRunIdParams = {
+    flowRunId: ApId
+    projectId: ApId
+}
+
+type HasAnyWaitpointParams = {
+    flowRunId: ApId
+    projectId: ApId
+}
+
+type ExistsPendingWebhookWaitpointParams = {
+    id: ApId
+    flowRunId: ApId
+    projectId: ApId
+}
+
 export { WaitpointStatus, WaitpointVersionEnum }
-export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, HandleResumeSignalParams }
+export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, GetByFlowRunIdParams, DeleteByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, ExistsPendingWebhookWaitpointParams }

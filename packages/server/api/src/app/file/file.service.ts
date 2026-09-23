@@ -14,7 +14,7 @@ import {
 } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
-import { In, LessThanOrEqual } from 'typeorm'
+import { In, IsNull, LessThanOrEqual } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { exceptionHandler } from '../helper/exception-handler'
 import { JwtAudience, jwtUtils } from '../helper/jwt-utils'
@@ -33,13 +33,92 @@ const EXECUTION_DATA_RETENTION_DAYS = system.getNumberOrThrow(AppSystemProp.EXEC
 
 type BaseFile = Pick<File, 'id' | 'projectId' | 'platformId' | 'type' | 'fileName' | 'compression' | 'size' | 'metadata' | 'created' | 'updated'>
 
+type UpsertOwnedFileParams = {
+    baseFile: BaseFile
+    location: FileLocation
+    data: Buffer | null
+    s3Key: string | null
+}
+
+// A caller (e.g. the engine, via PUT /v1/files/:fileId) picks the id, and TypeORM's
+// `.save()` upserts on that primary key with no ownership check — an engine token for
+// project A could overwrite a file row owned by project B just by guessing/learning its
+// id (#517). This is a single INSERT ... ON CONFLICT DO UPDATE ... WHERE statement so the
+// ownership check and the write are atomic: two API replicas racing on the same id cannot
+// both pass a separate "does it exist" check and then both write, because Postgres
+// evaluates the WHERE against the row as it stands inside this one statement.
+//
+// Ownership: a project-owned row (projectId not null) is matched by projectId ALONE —
+// several current callers (sample-data.service.ts, trigger-event.service.ts) never pass
+// platformId at all, so a NULL platformId already on the row must never block its own
+// project from re-saving it; COALESCE backfills platformId from the caller once it's
+// available, rather than requiring it to already match. A platform-level row (projectId
+// null, e.g. flow-version-backup.service.ts's unscoped rows) requires an exact platformId
+// match instead — `IS NOT DISTINCT FROM` treats two NULLs as equal there — and a
+// project-scoped caller can never claim one (the second WHERE branch requires
+// EXCLUDED.projectId IS NULL too). A mismatch makes the WHERE false, the DO UPDATE becomes
+// a no-op, and RETURNING yields zero rows.
+const upsertOwnedFile = async ({ baseFile, location, data, s3Key }: UpsertOwnedFileParams): Promise<File> => {
+    const rows: { id: string }[] = await fileRepo().query(
+        `INSERT INTO "file" ("id", "created", "updated", "projectId", "platformId", "data", "location", "fileName", "size", "metadata", "s3Key", "type", "compression")
+         VALUES ($1, now(), now(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT ("id") DO UPDATE SET
+             "updated" = now(),
+             "data" = EXCLUDED."data",
+             "location" = EXCLUDED."location",
+             "fileName" = COALESCE(EXCLUDED."fileName", "file"."fileName"),
+             "size" = EXCLUDED."size",
+             "metadata" = COALESCE(EXCLUDED."metadata", "file"."metadata"),
+             "s3Key" = EXCLUDED."s3Key",
+             "type" = EXCLUDED."type",
+             "compression" = EXCLUDED."compression",
+             "platformId" = COALESCE("file"."platformId", EXCLUDED."platformId")
+         WHERE (
+             "file"."projectId" IS NOT NULL AND "file"."projectId" = EXCLUDED."projectId"
+         ) OR (
+             "file"."projectId" IS NULL AND EXCLUDED."projectId" IS NULL
+             AND "file"."platformId" IS NOT DISTINCT FROM EXCLUDED."platformId"
+         )
+         RETURNING "id"`,
+        [
+            baseFile.id,
+            baseFile.projectId ?? null,
+            baseFile.platformId ?? null,
+            data,
+            location,
+            baseFile.fileName ?? null,
+            baseFile.size ?? null,
+            isNil(baseFile.metadata) ? null : JSON.stringify(baseFile.metadata),
+            s3Key,
+            baseFile.type,
+            baseFile.compression,
+        ],
+    )
+    if (rows.length === 0) {
+        throw new QadamFlowError({
+            code: ErrorCode.AUTHORIZATION,
+            params: {
+                message: 'File id belongs to a different project or platform',
+            },
+        }, `Refused to save file ${baseFile.id}: it belongs to a different project/platform than the caller (projectId=${baseFile.projectId ?? 'null'}, platformId=${baseFile.platformId ?? 'null'})`)
+    }
+    // Re-read through the repo rather than return the raw RETURNING row: this keeps the
+    // returned File shaped exactly like every other fileRepo() read in this module, instead
+    // of a second, ad hoc column mapping for this one call site. The WHERE clause above
+    // already guarantees the row is the caller's, but the re-read is filtered by the
+    // caller's own projectId/platformId anyway, per data-isolation.md, rather than by id
+    // alone.
+    return fileRepo().findOneByOrFail({
+        id: baseFile.id,
+        ...(!isNil(baseFile.projectId)
+            ? { projectId: baseFile.projectId }
+            : { platformId: isNil(baseFile.platformId) ? IsNull() : baseFile.platformId }),
+    })
+}
+
 const saveFileToDb = async (baseFile: BaseFile, data: SaveParams['data']) => {
     assertNotNullOrUndefined(data, 'data is required')
-    return fileRepo().save({
-        ...baseFile,
-        location: FileLocation.DB,
-        data,
-    })
+    return upsertOwnedFile({ baseFile, location: FileLocation.DB, data, s3Key: null })
 }
 export const fileService = (log: FastifyBaseLogger) => ({
     async save(params: SaveParams): Promise<File> {
@@ -63,17 +142,27 @@ export const fileService = (log: FastifyBaseLogger) => ({
             case FileLocation.S3: {
                 try {
                     const s3Key = await s3Helper(log).constructS3Key(params.platformId, params.projectId, params.type, baseFile.id)
+                    // The ownership-checked upsert runs BEFORE the upload, not after: the S3 key
+                    // template is `platform/${platformId}/${type}/${fileId}` when platformId is
+                    // set, which ignores projectId entirely, so two projects on the same platform
+                    // can compute the identical "fresh" key for the same fileId — constructS3Key's
+                    // own scoped lookup cannot prevent that collision by itself. Refusing here,
+                    // before any bytes move, is what actually stops a foreign id from landing on
+                    // (or being overwritten by) another project's object (#517).
+                    const savedFile = await upsertOwnedFile({ baseFile, location: FileLocation.S3, data: null, s3Key })
                     if (!isNil(params.data)) {
                         await s3Helper(log).uploadFile(s3Key, params.data)
                     }
-                    const savedFile = await fileRepo().save({
-                        ...baseFile,
-                        location: FileLocation.S3,
-                        s3Key,
-                    })
                     return savedFile
                 }
                 catch (error) {
+                    // An ownership refusal is a QadamFlowError raised by upsertOwnedFile itself,
+                    // not an S3 infrastructure failure — it must propagate, never be swallowed into
+                    // the DB fallback below (which would otherwise let the caller take the row over
+                    // via the DB path after being refused on the S3 path).
+                    if (error instanceof QadamFlowError) {
+                        throw error
+                    }
                     exceptionHandler.handle(error, log)
                     return saveFileToDb(baseFile, params.data)
                 }

@@ -19,6 +19,7 @@ import { getBotToken, SlackAuthValue } from '../common/auth-helpers';
 export const requestSendApprovalMessageAction = createAction({
   auth: slackAuth,
   name: 'request_approval_message',
+  pauses: true,
   displayName: 'Request Approval in a Channel',
   description:
     'Send approval message to a channel and then wait until the message is approved or disapproved',

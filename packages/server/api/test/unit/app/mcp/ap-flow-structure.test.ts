@@ -261,3 +261,51 @@ describe('ap_flow_structure — a step input preview containing a nested array s
         expect(JSON.parse(inner)).toEqual(input)
     })
 })
+
+// A reviewer has to be able to see which steps redact their run log without running the flow
+// (#505). Only an explicit opt-out is rendered — the default case must add nothing.
+describe('ap_flow_structure — run-log opt-outs (#505)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockGet.mockResolvedValue({ name: '@aiqadam/qadam-test-email', version: HEALTHY_VERSION })
+    })
+
+    it('labels a step and a trigger that opt out, in text and in structuredContent', async () => {
+        const flow = flowWith({ firstAction: { ...pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }), logOutput: false } })
+        const trigger = (flow as { version: { trigger: Record<string, unknown> } }).version.trigger
+        trigger.logOutput = false
+        mockGetOnePopulated.mockResolvedValue(flow)
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        const lines = text.split('\n')
+        expect(lines.find(line => line.includes('[TRIGGER] trigger'))).toContain('[LOG OFF: output]')
+        expect(lines.find(line => line.startsWith('- step_1'))).toContain('[LOG OFF: output]')
+        const steps = result.structuredContent?.steps as Record<string, unknown>[]
+        expect(steps.find(s => s.name === 'trigger')).toMatchObject({ logOutput: false })
+        expect(steps.find(s => s.name === 'step_1')).toMatchObject({ logOutput: false })
+    })
+
+    it('lists both flags when a step turns off input and output', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            firstAction: { ...pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }), logInput: false, logOutput: false },
+        }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).toContain('[LOG OFF: input, output]')
+    })
+
+    it('says nothing for a step that logs by default', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({ firstAction: pieceStep({ name: 'step_1', qadamVersion: HEALTHY_VERSION }) }))
+
+        const result = await callTool()
+
+        const text = (result.content?.[0] as { text: string }).text
+        expect(text).not.toContain('LOG OFF')
+        expect(JSON.stringify(result.structuredContent?.steps)).not.toContain('logOutput')
+    })
+})

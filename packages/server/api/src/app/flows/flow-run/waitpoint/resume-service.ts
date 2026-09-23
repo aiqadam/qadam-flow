@@ -12,12 +12,13 @@ import {
     RunEnvironment,
     StreamStepProgress,
     tryCatch,
+    WebhookPauseMetadata,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { projectService } from '../../../project/project-service'
 import { engineResponseWatcher } from '../../../workers/engine-response-watcher'
-import { addToQueue, findFlowRunOrThrow, flowRunService, WEBHOOK_TIMEOUT_MS } from '../flow-run-service'
+import { addToQueue, findFlowRunOrThrow, flowRunService, LegacyResumeFlowRun, SYNC_RUN_TIMEOUT_RESPONSE, WEBHOOK_TIMEOUT_MS } from '../flow-run-service'
 import { flowRunSideEffects } from '../flow-run-side-effects'
 import { waitpointService } from './waitpoint-service'
 import { Waitpoint, WaitpointResumePayload } from './waitpoint-types'
@@ -48,6 +49,7 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             projectId: flowRun.projectId,
             resumePayload: resumePayload ?? null,
             workerHandlerId,
+            httpRequestId,
             onReady: async (waitpoint) => {
                 await enqueueResume({
                     flowRun,
@@ -61,9 +63,16 @@ export const resumeService = (log: FastifyBaseLogger) => ({
         return { flowRun, stale: !processed }
     },
 
-    async legacyResume({ flowRunId, resumePayload, workerHandlerId }: LegacyResumeParams): Promise<ResumeFromWaitpointResult> {
-        const flowRun = await findFlowRunOrThrow(flowRunId)
-        if (flowRun.status !== FlowRunStatus.PAUSED) {
+    async legacyResume({ flowRun, resumePayload, workerHandlerId }: LegacyResumeParams): Promise<ResumeFromWaitpointResult> {
+        // flowRun is resolved exactly once, by the controller, before either the "has a PENDING
+        // V0 waitpoint" branch or this no-waitpoint branch is chosen — see
+        // findFlowRunForLegacyResume's own comment for why that closes the #509-drain-lag /
+        // check-then-use gap that used to exist between those two reads. There is deliberately no
+        // ENTITY_NOT_FOUND tolerance here any more: the controller already proved the row exists
+        // before calling this, so a missing row at this point would be a genuine error, not a
+        // benign race.
+        const eligible = await isEligibleForLegacyNoWaitpointResume({ flowRun, log })
+        if (!eligible) {
             return { flowRun, stale: true }
         }
         await enqueueResume({ flowRun, resumePayload, workerHandlerId }, log)
@@ -85,15 +94,28 @@ export const resumeService = (log: FastifyBaseLogger) => ({
         }
 
         const syncServerId = engineResponseWatcher(log).getServerId()
-        const { stale } = await this.resumeFromWaitpoint({
+        // Register the listener before enqueueing the resume: the engine can answer as soon as
+        // the job is enqueued, and if that happens before oneTimeListener runs, the response is
+        // delivered to nobody and the caller times out. The returned cancel() is bound to this
+        // exact registration (never a key-based lookup), so every early exit below can tear it
+        // down without risking cancelling a different request's listener that has since
+        // registered under the same key (see engineResponseWatcher#oneTimeListener).
+        const listener = engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+
+        const { data, error } = await tryCatch(() => this.resumeFromWaitpoint({
             flowRunId: runId,
             waitpointId,
             resumePayload: payload,
             workerHandlerId: syncServerId,
             httpRequestId: correlationId,
-        })
+        }))
+        if (error) {
+            listener.cancel()
+            throw error
+        }
 
-        if (stale) {
+        if (data.stale) {
+            listener.cancel()
             return {
                 status: StatusCodes.GONE,
                 body: { message: 'This link has expired. The action may have already been processed.' },
@@ -101,29 +123,30 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             }
         }
 
-        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, {
-            status: StatusCodes.NO_CONTENT,
-            body: {},
-            headers: {},
-        })
+        return listener.promise
     },
 
-    async legacySyncResume({ runId, payload, correlationId }: LegacySyncResumeParams): Promise<EngineHttpResponse> {
-        const flowRun = await findFlowRunOrThrow(runId)
-        if (flowRun.status !== FlowRunStatus.PAUSED) {
+    async legacySyncResume({ flowRun, payload, correlationId }: LegacySyncResumeParams): Promise<EngineHttpResponse> {
+        // See legacyResume's comment above: flowRun is already resolved once by the controller,
+        // so there is no ENTITY_NOT_FOUND case to tolerate here any more.
+        const eligible = await isEligibleForLegacyNoWaitpointResume({ flowRun, log })
+        if (!eligible) {
             return {
-                status: StatusCodes.CONFLICT,
-                body: { message: 'Flow run is not paused', flowRunStatus: flowRun.status },
+                status: StatusCodes.GONE,
+                body: { message: 'This link has expired. The action may have already been processed.' },
                 headers: {},
             }
         }
         const syncServerId = engineResponseWatcher(log).getServerId()
-        await enqueueResume({ flowRun, resumePayload: payload, workerHandlerId: syncServerId, httpRequestId: correlationId }, log)
-        return engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, {
-            status: StatusCodes.NO_CONTENT,
-            body: {},
-            headers: {},
-        })
+        const listener = engineResponseWatcher(log).oneTimeListener<EngineHttpResponse>(correlationId, true, WEBHOOK_TIMEOUT_MS, SYNC_RUN_TIMEOUT_RESPONSE)
+
+        const { error } = await tryCatch(() => enqueueResume({ flowRun, resumePayload: payload, workerHandlerId: syncServerId, httpRequestId: correlationId }, log))
+        if (error) {
+            listener.cancel()
+            throw error
+        }
+
+        return listener.promise
     },
 })
 
@@ -145,6 +168,43 @@ async function enqueueResume(params: EnqueueResumeParams, log: FastifyBaseLogger
     await flowRunSideEffects(log).onResume(flowRun)
 }
 
+/**
+ * Gate for the V0 no-waitpoint legacy branch (a run whose PENDING waitpoint lookup came back
+ * empty). Since the piece-API shim (buildLegacyPauseHook, 2026-04-12) every legacy `run.pause()`
+ * call creates a real V0 waitpoint row itself — and process.exit(1)s if that write fails — so a
+ * run can only reach this branch with zero waitpoint rows if it was paused by a pre-shim engine.
+ * All three conditions must hold, or the caller is told the link is stale:
+ *
+ * 1. status is PAUSED — anything else (including terminal states) is stale here, not a 409; the
+ *    only place that still answers "flow run is not paused" with a 409 is the V1
+ *    handleSyncResumeFlow/resumeFromWaitpoint path, which this branch is not.
+ * 2. pauseMetadata parses as a pre-shim WEBHOOK pause. Nothing written to pauseMetadata since the
+ *    shim shipped (grep-verified — flow-run-entity.ts's column is @deprecated and no code path
+ *    writes it any more), so a shim-era or later PAUSED run has it NULL and fails this parse; only
+ *    a genuine pre-shim WEBHOOK pause can pass. DELAY pauses are deliberately excluded: a DELAY
+ *    pause is never resumed by this HTTP route at all — refill-paused-jobs.ts only reschedules
+ *    RESUME_DELAY_WAITPOINT for a run that already has a DELAY waitpoint *row* (it skips any
+ *    paused run whose waitpoint is nil or not DELAY; it never creates one). A pre-shim DELAY run
+ *    that never got a waitpoint row is resumed by its original delayed job, or not at all — this
+ *    route was never in that path — so a DELAY pauseMetadata reaching here is not this route's
+ *    legitimate case.
+ * 3. the run has no waitpoint row at all, of any status or version — not just no PENDING V0 one.
+ *    A PENDING V1 (or COMPLETED/other) waitpoint means a real, narrower resume URL already exists
+ *    for this run's current pause; this legacy branch must not offer a second, run-id-only way to
+ *    resume it (see the resume-flow-run.test.ts "V0: should take legacy path when only V1
+ *    waitpoint exists" tests for the scenario this closes).
+ */
+async function isEligibleForLegacyNoWaitpointResume({ flowRun, log }: IsEligibleForLegacyNoWaitpointResumeParams): Promise<boolean> {
+    if (flowRun.status !== FlowRunStatus.PAUSED) {
+        return false
+    }
+    if (!WebhookPauseMetadata.safeParse(flowRun.pauseMetadata).success) {
+        return false
+    }
+    const hasWaitpoint = await waitpointService(log).hasAnyWaitpoint({ flowRunId: flowRun.id, projectId: flowRun.projectId })
+    return !hasWaitpoint
+}
+
 type SyncResumePayload = {
     body?: unknown
     headers?: Record<string, string>
@@ -159,7 +219,7 @@ type HandleSyncResumeFlowParams = {
 }
 
 type LegacySyncResumeParams = {
-    runId: string
+    flowRun: LegacyResumeFlowRun
     payload: SyncResumePayload
     correlationId: string
 }
@@ -173,9 +233,14 @@ type ResumeFromWaitpointParams = {
 }
 
 type LegacyResumeParams = {
-    flowRunId: FlowRunId
+    flowRun: LegacyResumeFlowRun
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
+}
+
+type IsEligibleForLegacyNoWaitpointResumeParams = {
+    flowRun: LegacyResumeFlowRun
+    log: FastifyBaseLogger
 }
 
 type ResumeFromWaitpointResult = {

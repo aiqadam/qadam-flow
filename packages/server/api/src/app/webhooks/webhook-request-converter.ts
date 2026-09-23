@@ -1,4 +1,5 @@
 import {
+    ApId,
     ApMultipartFile,
     EventPayload,
     FAIL_PARENT_ON_FAILURE_HEADER,
@@ -6,13 +7,29 @@ import {
     FileType,
     FlowRun,
     isMultipartFile,
+    isNil,
     PARENT_RUN_ID_HEADER,
+    tryCatchSync,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyRequest } from 'fastify'
 import mime from 'mime-types'
+import { z } from 'zod'
 import { fileService } from '../file/file.service'
 import { filesService } from '../file/files-service'
 import { projectService } from '../project/project-service'
+
+// Every call-flow release sends `body: { data, callbackUrl }`, and `callbackUrl` is the same
+// `/v1/flow-runs/<flowRunId>/waitpoints/<waitpointId>[/sync]` URL `waitpoint-controller.ts` hands
+// back from the create call — present exactly when the caller is actually waiting on a response,
+// same as `FAIL_PARENT_ON_FAILURE_HEADER`. Reading the proof from here, instead of a new header,
+// means every already-published call-flow version supplies it: a new header would need a qadam
+// version bump before any existing flow's call-flow step could ever send it, silently stranding
+// every already-deployed flow's parent PAUSED until `AP_PAUSED_FLOW_TIMEOUT_DAYS`'s cap (which
+// only applies to DELAY waitpoints in the first place; a WEBHOOK waitpoint has no such cap at all).
+const CALLBACK_URL_WAITPOINT_PATH_PATTERN = /\/v1\/flow-runs\/(?<flowRunId>[^/]+)\/waitpoints\/(?<waitpointId>[^/]+?)(?:\/sync)?\/?$/
+// Default (strip) mode is enough: only `callbackUrl` is ever read off the parsed result, so
+// there is nothing to preserve unknown keys for. `.passthrough()` is deprecated in zod 4.
+const CallbackUrlBody = z.object({ callbackUrl: z.string() })
 
 const BINARY_CONTENT_TYPE_PATTERNS = [
     /^image\//,
@@ -46,11 +63,43 @@ export async function convertRequest(
     }
 }
 
-export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun, 'parentRunId' | 'failParentOnFailure'> {
+export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun, 'parentRunId' | 'failParentOnFailure'> & { parentWaitpointId?: string } {
+    const parentRunIdHeader = request.headers[PARENT_RUN_ID_HEADER]
+    const parentRunId = typeof parentRunIdHeader === 'string' ? parentRunIdHeader : undefined
     return {
-        parentRunId: request.headers[PARENT_RUN_ID_HEADER] as string,
+        parentRunId,
         failParentOnFailure: request.headers[FAIL_PARENT_ON_FAILURE_HEADER] === 'true',
+        parentWaitpointId: extractParentWaitpointIdFromBody({ body: request.body, parentRunId }),
     }
+}
+
+/**
+ * Requires the callback URL's own `flowRunId` to equal `parentRunId` (already read from the
+ * `ap-parent-run-id` header above) — a `callbackUrl` naming a different run proves nothing about
+ * the run this request claims as its parent, so it must not be accepted as that run's proof.
+ */
+function extractParentWaitpointIdFromBody({ body, parentRunId }: ExtractParentWaitpointIdFromBodyParams): string | undefined {
+    if (isNil(parentRunId)) {
+        return undefined
+    }
+    const parsedBody = CallbackUrlBody.safeParse(body)
+    if (!parsedBody.success) {
+        return undefined
+    }
+    const { data: url } = tryCatchSync(() => new URL(parsedBody.data.callbackUrl))
+    if (isNil(url)) {
+        return undefined
+    }
+    const match = CALLBACK_URL_WAITPOINT_PATH_PATTERN.exec(url.pathname)
+    if (isNil(match) || isNil(match.groups)) {
+        return undefined
+    }
+    const parsedFlowRunId = ApId.safeParse(match.groups.flowRunId)
+    const parsedWaitpointId = ApId.safeParse(match.groups.waitpointId)
+    if (!parsedFlowRunId.success || !parsedWaitpointId.success || parsedFlowRunId.data !== parentRunId) {
+        return undefined
+    }
+    return parsedWaitpointId.data
 }
 
 async function convertBody(
@@ -144,6 +193,11 @@ async function saveStepFileAndConstructUrl(params: SaveStepFileParams): Promise<
         fileType: FileType.FLOW_STEP_FILE,
         platformId,
     })
+}
+
+type ExtractParentWaitpointIdFromBodyParams = {
+    body: unknown
+    parentRunId: string | undefined
 }
 
 type SaveMultipartFileAsUrlParams = {

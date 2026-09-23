@@ -1,6 +1,7 @@
 import { httpClient } from '@aiqadam/qadams-common'
 import { AIProviderName, INVALID_AWS_REGION_MESSAGE, INVALID_AZURE_RESOURCE_NAME_MESSAGE } from '@aiqadam/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { generateText } from 'ai'
 import { createAIModel, createEmbeddingModel } from '../../src/lib/common/ai-sdk'
 
 const API_URL = 'https://cloud.example.com/api/'
@@ -254,4 +255,72 @@ describe('createEmbeddingModel provider addressing', () => {
       })).rejects.toThrow(INVALID_AZURE_RESOURCE_NAME_MESSAGE)
     },
   )
+})
+
+// The same model object backs a Run Agent step's own turns and the engine's per-tool property
+// extraction (`engine/src/lib/tools/index.ts`), so the body is checked on the wire, through the real
+// SDK: a Qwen model on vLLM must receive `enable_thinking: false` on every call, not just some.
+describe('createAIModel CUSTOM extraBody', () => {
+  function stubChatCompletion() {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      id: 'chatcmpl-1',
+      object: 'chat.completion',
+      created: 0,
+      model: 'Qwen/Qwen3.8-27B',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchSpy)
+    return fetchSpy
+  }
+
+  function sentBody(fetchSpy: ReturnType<typeof stubChatCompletion>): Record<string, unknown> {
+    const init = (fetchSpy.mock.calls[0] as unknown[])[1] as { body: string }
+    return JSON.parse(init.body)
+  }
+
+  async function generateWith(config: Record<string, unknown>) {
+    stubProviderConfigRoute({
+      id: ROW_ID,
+      provider: AIProviderName.CUSTOM,
+      config: { baseUrl: 'https://vllm.example.com/v1', apiKeyHeader: 'Authorization', models: [], ...config },
+    })
+    const fetchSpy = stubChatCompletion()
+    const model = await createAIModel(languageModelParams({
+      providerId: ROW_ID,
+      provider: AIProviderName.CUSTOM,
+      modelId: 'Qwen/Qwen3.8-27B',
+    }))
+    await generateText({ model, prompt: 'hi' })
+    return sentBody(fetchSpy)
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('sends the row\'s extraBody alongside the SDK\'s own fields', async () => {
+    const body = await generateWith({ extraBody: { chat_template_kwargs: { enable_thinking: false }, top_k: 20 } })
+
+    expect(body).toMatchObject({
+      model: 'Qwen/Qwen3.8-27B',
+      chat_template_kwargs: { enable_thinking: false },
+      top_k: 20,
+    })
+    expect(body['messages']).toEqual([{ role: 'user', content: 'hi' }])
+  })
+
+  it('never lets extraBody replace the model or the conversation', async () => {
+    const body = await generateWith({ extraBody: { model: 'attacker/model', messages: [] } })
+
+    expect(body['model']).toBe('Qwen/Qwen3.8-27B')
+    expect(body['messages']).toEqual([{ role: 'user', content: 'hi' }])
+  })
+
+  it('sends an unchanged body for a row without extraBody', async () => {
+    const body = await generateWith({})
+
+    expect(body).not.toHaveProperty('chat_template_kwargs')
+    expect(body['model']).toBe('Qwen/Qwen3.8-27B')
+  })
 })

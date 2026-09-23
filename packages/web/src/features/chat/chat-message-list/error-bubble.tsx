@@ -1,4 +1,5 @@
 import { ApErrorParams, ChatUIResponse, ErrorCode } from '@aiqadam/shared';
+import { t } from 'i18next';
 import { BotIcon, CircleX, RotateCcw } from 'lucide-react';
 import React from 'react';
 
@@ -9,12 +10,32 @@ import {
   ChatBubbleMessage,
 } from '../chat-bubble';
 
+export const FLOW_STILL_RUNNING = 'FLOW_STILL_RUNNING';
+export const FLOW_RUN_FAILED = 'FLOW_RUN_FAILED';
+export const CHAT_SERVICE_UNAVAILABLE = 'CHAT_SERVICE_UNAVAILABLE';
+
 const formatError = (
   projectId: string | undefined | null,
   flowId: string,
-  error: ApErrorParams,
+  error: ChatSendingError,
 ) => {
   switch (error.code) {
+    case FLOW_STILL_RUNNING:
+      return (
+        <span>
+          {t(
+            "The flow did not finish in time and may still be running. Its reply will not appear in this chat — please don't resend right away.",
+          )}
+        </span>
+      );
+    case FLOW_RUN_FAILED:
+      return <span>{t('The flow failed to execute.')}</span>;
+    case CHAT_SERVICE_UNAVAILABLE:
+      return (
+        <span>
+          {t('The service is temporarily busy. Please try again in a moment.')}
+        </span>
+      );
     case ErrorCode.NO_CHAT_RESPONSE:
       return projectId ? (
         <span>
@@ -54,7 +75,7 @@ const formatError = (
 interface ErrorBubbleProps {
   chatUI: ChatUIResponse | null | undefined;
   flowId: string;
-  sendingError: ApErrorParams;
+  sendingError: ChatSendingError;
   sendMessage: (arg0: { isRetrying: boolean; message?: any }) => void;
 }
 
@@ -77,17 +98,26 @@ export const ErrorBubble = ({
     <ChatBubbleMessage className="text-destructive">
       {formatError(chatUI?.projectId, flowId, sendingError)}
     </ChatBubbleMessage>
-    <div className="flex gap-1">
-      <ChatBubbleAction
-        variant="outline"
-        className="size-5 mt-2"
-        icon={<RotateCcw className="size-3" />}
-        onClick={() => {
-          sendMessage({ isRetrying: true });
-        }}
-      />
-    </div>
+    {sendingError.code !== FLOW_STILL_RUNNING && (
+      // A retry would start the still-running flow a second time.
+      <div className="flex gap-1">
+        <ChatBubbleAction
+          variant="outline"
+          className="size-5 mt-2"
+          icon={<RotateCcw className="size-3" />}
+          onClick={() => {
+            sendMessage({ isRetrying: true });
+          }}
+        />
+      </div>
+    )}
   </ChatBubble>
 );
 
 ErrorBubble.displayName = 'ErrorBubble';
+
+export type ChatSendingError =
+  | ApErrorParams
+  | { code: typeof FLOW_STILL_RUNNING }
+  | { code: typeof FLOW_RUN_FAILED }
+  | { code: typeof CHAT_SERVICE_UNAVAILABLE };

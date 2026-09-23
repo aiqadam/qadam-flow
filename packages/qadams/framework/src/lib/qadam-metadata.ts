@@ -1,6 +1,6 @@
 import { QadamPropertyMap } from "./property";
 import { WebhookRenewConfiguration } from "./trigger/trigger";
-import { ErrorHandlingOptionsParam } from "./action/action";
+import { ErrorHandlingOptionsParam, PauseBehaviour } from "./action/action";
 import { QadamAuthProperty } from "./property/authentication";
 import { z } from "zod";
 import { LocalesEnum, PackageType, QadamCategory, QadamType, TriggerStrategy, TriggerTestStrategy, WebhookHandshakeConfiguration } from "@aiqadam/shared";
@@ -65,6 +65,7 @@ export const ActionBase = z.object({
   outputSchema: z.custom<OutputSchema>().optional(),
   audience: Audience.optional(),
   aiMetadata: AiMetadata.optional(),
+  pauses: PauseBehaviour.optional(),
 })
 
 export type ActionBase = {
@@ -77,6 +78,7 @@ export type ActionBase = {
   outputSchema?: OutputSchema;
   audience?: Audience;
   aiMetadata?: AiMetadata;
+  pauses?: PauseBehaviour;
 }
 
 export const TriggerBase = z.object({
@@ -93,7 +95,7 @@ export const TriggerBase = z.object({
   outputSchema: z.custom<OutputSchema>().optional(),
   aiMetadata: AiMetadata.optional(),
 })
-export type TriggerBase = Omit<ActionBase, 'audience'> & {
+export type TriggerBase = Omit<ActionBase, 'audience' | 'pauses'> & {
   type: TriggerStrategy;
   sampleData: unknown,
   handshakeConfiguration?: WebhookHandshakeConfiguration;

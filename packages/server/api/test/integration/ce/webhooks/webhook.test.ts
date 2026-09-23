@@ -1,10 +1,16 @@
 import { FlowStatus, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import * as flowRunServiceModule from '../../../../src/app/flows/flow-run/flow-run-service'
+import * as webhookBackpressureServiceModule from '../../../../src/app/webhooks/webhook-backpressure-service'
+import * as engineResponseWatcherModule from '../../../../src/app/workers/engine-response-watcher'
+import { createHandlers } from '../../../../src/app/workers/rpc/worker-rpc-service'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
 import { createMockFlow, createMockFlowVersion, mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
+
+const { engineResponseWatcher } = engineResponseWatcherModule
 
 let app: FastifyInstance | null = null
 const MOCK_FLOW_ID = '8hfKOpm3kY1yAi1ApYOa1'
@@ -412,5 +418,155 @@ describe('Webhook Service', () => {
             body: { test: true },
         })
         expect(response?.statusCode).toBe(StatusCodes.OK)
+    })
+
+    it('registers the sync listener before starting the run, so an immediate engine response is not dropped', async () => {
+        const { mockProject, mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+        const mockFlow = createMockFlow({
+            projectId: mockProject.id,
+            status: FlowStatus.ENABLED,
+        })
+        await db.save('flow', [mockFlow])
+        const mockFlowVersion = createMockFlowVersion({
+            flowId: mockFlow.id,
+        })
+        await db.save('flow_version', [mockFlowVersion])
+        await db.update('flow', mockFlow.id, {
+            publishedVersionId: mockFlowVersion.id,
+        })
+        const mockToken = await generateMockToken({
+            type: PrincipalType.USER,
+            platform: {
+                id: mockPlatform.id,
+            },
+            id: mockOwner.id,
+        })
+
+        const listenOrder = vi.fn()
+        const startOrder = vi.fn()
+        // start()'s httpRequestId (webhookRequestId) is minted internally and only surfaced on
+        // the response headers once the run finishes — capture it off the start() call instead,
+        // the same way the resume ordering test reads its id off the queued job. Spying on
+        // addToQueue itself would not work here: flowRunService.start() calls addToQueue from
+        // within the same source file, so it never goes through the exported binding this spy
+        // replaces — only a cross-module call site (webhook.service.ts importing flowRunService)
+        // is actually interceptable this way.
+        let capturedHttpRequestId: string | undefined
+
+        const originalFlowRunService = flowRunServiceModule.flowRunService
+        const flowRunServiceSpy = vi.spyOn(flowRunServiceModule, 'flowRunService')
+            .mockImplementation((log): ReturnType<typeof flowRunServiceModule.flowRunService> => {
+                const real = originalFlowRunService(log)
+                return {
+                    ...real,
+                    async start(params: Parameters<typeof real.start>[0]) {
+                        startOrder()
+                        capturedHttpRequestId = params.httpRequestId
+                        return real.start(params)
+                    },
+                }
+            })
+
+        const originalEngineResponseWatcher = engineResponseWatcherModule.engineResponseWatcher
+        const watcherSpy = vi.spyOn(engineResponseWatcherModule, 'engineResponseWatcher')
+            .mockImplementation((log): ReturnType<typeof engineResponseWatcherModule.engineResponseWatcher> => {
+                const real = originalEngineResponseWatcher(log)
+                return {
+                    ...real,
+                    oneTimeListener<T>(requestId: string, timeoutRequest: boolean, timeoutMs: number | undefined, defaultResponse: T) {
+                        listenOrder()
+                        return real.oneTimeListener<T>(requestId, timeoutRequest, timeoutMs, defaultResponse)
+                    },
+                }
+            })
+
+        try {
+            const responsePromise = app?.inject({
+                method: 'POST',
+                url: `/api/v1/webhooks/${mockFlow.id}/sync`,
+                headers: {
+                    authorization: `Bearer ${mockToken}`,
+                },
+                body: { test: true },
+            })
+
+            const start = Date.now()
+            while (capturedHttpRequestId === undefined && Date.now() - start < 5000) {
+                await new Promise((resolve) => setTimeout(resolve, 20))
+            }
+            if (capturedHttpRequestId === undefined) {
+                throw new Error('Timed out waiting for the webhook run to be queued')
+            }
+
+            const workerHandlerId = engineResponseWatcher(app!.log).getServerId()
+            await createHandlers(app!.log).sendFlowResponse({
+                workerHandlerId,
+                httpRequestId: capturedHttpRequestId,
+                runResponse: { status: 200, body: { ok: true }, headers: {} },
+            })
+
+            const response = await responsePromise
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json()).toEqual({ ok: true })
+
+            expect(listenOrder).toHaveBeenCalledTimes(1)
+            expect(startOrder).toHaveBeenCalledTimes(1)
+            // The listener must be registered before the run is started — otherwise an engine
+            // response published the instant the run is queued reaches no one (same class of
+            // bug as #519's resume paths).
+            expect(listenOrder.mock.invocationCallOrder[0]).toBeLessThan(startOrder.mock.invocationCallOrder[0])
+        }
+        finally {
+            flowRunServiceSpy.mockRestore()
+            watcherSpy.mockRestore()
+        }
+    })
+
+    it('refuses a sync webhook with 503 and a Retry-After header when the instance is saturated (#510)', async () => {
+        const { mockProject, mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+        const mockFlow = createMockFlow({
+            projectId: mockProject.id,
+            status: FlowStatus.ENABLED,
+        })
+        await db.save('flow', [mockFlow])
+        const mockFlowVersion = createMockFlowVersion({
+            flowId: mockFlow.id,
+        })
+        await db.save('flow_version', [mockFlowVersion])
+        await db.update('flow', mockFlow.id, {
+            publishedVersionId: mockFlowVersion.id,
+        })
+        const mockToken = await generateMockToken({
+            type: PrincipalType.USER,
+            platform: {
+                id: mockPlatform.id,
+            },
+            id: mockOwner.id,
+        })
+
+        // Real saturation needs 40+ concurrent callers against a live worker registry — impractical
+        // in this suite. Stubbing checkCapacity() directly exercises the same contract handleSync
+        // relies on without needing a real worker or a real backlog.
+        const backpressureSpy = vi.spyOn(webhookBackpressureServiceModule, 'webhookBackpressureService')
+            .mockReturnValue({
+                checkCapacity: vi.fn().mockResolvedValue({ ok: false, retryAfterSeconds: 7 }),
+            })
+
+        try {
+            const response = await app?.inject({
+                method: 'POST',
+                url: `/api/v1/webhooks/${mockFlow.id}/sync`,
+                headers: {
+                    authorization: `Bearer ${mockToken}`,
+                },
+                body: { test: true },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.SERVICE_UNAVAILABLE)
+            expect(response?.headers['retry-after']).toBe('7')
+        }
+        finally {
+            backpressureSpy.mockRestore()
+        }
     })
 })

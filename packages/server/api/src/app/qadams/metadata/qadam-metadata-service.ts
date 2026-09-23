@@ -6,6 +6,7 @@ import {
     ErrorCode,
     EXACT_VERSION_REGEX,
     isNil,
+    isOfficialQadamName,
     LocalesEnum,
     PackageType,
     PlatformId,
@@ -127,6 +128,21 @@ export const qadamMetadataService = (log: FastifyBaseLogger) => {
             archiveId,
             publishCacheRefresh = true,
         }: CreateParams): Promise<QadamMetadataSchema> {
+            // #503: a platform-scoped row under the official scope is a shadowing attempt, not a
+            // qadam. In the default UNSANDBOXED mode a CUSTOM qadam installs into the workspace
+            // every tenant shares, and the engine loader used to prefer that installed copy over
+            // the bundled build — so `@aiqadam/qadam-slack` uploaded by one platform ran in place
+            // of the real one for everyone on the worker. The loader now prefers the bundled build
+            // at the same `name@version`; refusing the name here keeps the row from existing at
+            // all, which is what #477's official-vs-official install into that same directory needs.
+            if (!isNil(platformId) && isOfficialQadamName(qadamMetadata.name)) {
+                throw new QadamFlowError({
+                    code: ErrorCode.VALIDATION,
+                    params: {
+                        message: `qadam_name_reserved_for_official_qadams name=${qadamMetadata.name}`,
+                    },
+                })
+            }
             const existingMetadata = await qadamRepos().findOneBy({
                 name: qadamMetadata.name,
                 version: qadamMetadata.version,

@@ -37,9 +37,12 @@ the **worker**, over the existing engine↔worker socket (`WorkerContract`, the 
 
 The worker, in turn, calls a new worker→API RPC, `startInlineFlowRun`
 (`packages/server/api/src/app/workers/rpc/inline-flow-run.service.ts`), passing the **worker's own
-trusted current-job context** (`callerProjectId`, `callerPlatformId`, `parentRunId`, `environment`
-— captured from `ExecuteFlowJobData` at the top of `execute-flow.ts`, never anything the engine
-supplied) alongside the caller-chosen `flowId`. The API handler:
+trusted current-job context** (`callerProjectId`, `callerPlatformId`, `environment` — captured
+from `ExecuteFlowJobData` at the top of `execute-flow.ts`, never anything the engine supplied)
+alongside the caller-chosen `flowId`. `parentRunId` is the one engine-supplied field (the run the
+call is nested under, which for a nested inline call is the immediate inline parent); the worker
+refuses it unless it is the job's own run or an inline child that job already started (#525, see
+"Engine RPC Run Scope" in `workers.md`). The API handler:
 
 1. Resolves the flow scoped by that trusted `callerProjectId` (`flowService.getOneOrThrow({ id,
    projectId })`) — a flow in another project simply isn't found, closing the gap the dropped
@@ -48,8 +51,12 @@ supplied) alongside the caller-chosen `flowId`. The API handler:
    `callableFlow` (a crafted flow JSON could otherwise target a non-callable trigger).
 3. Computes nesting depth via a recursive `parentRunId` ancestry query (see "Depth guard" below)
    and rejects past `INLINE_SUBFLOW_DEPTH_LIMIT` (50).
-4. Creates the child `FlowRun` row (`parentRunId` set, `failParentOnFailure: true`) and fires the
-   same `flowRunSideEffects.onStart` audit event any other run gets.
+4. Creates the child `FlowRun` row (`parentRunId` set, `failParentOnFailure: false`) and fires the
+   same `flowRunSideEffects.onStart` audit event any other run gets. `failParentOnFailure` is
+   deliberately `false` here, unlike a queue/webhook subflow child: an inline call runs in the
+   parent's own engine process, and a failure is returned synchronously right there
+   (`callFlowInline` catches the FAILED verdict itself) — there is no waitpoint and no later,
+   out-of-band `markParentRunAsFailed` completion for this dispatch mode to ever perform (#521).
 
 Only *after* that succeeds does the worker provision the child's pieces onto **the same sandbox
 filesystem already in use** (`provisionFlowPieces`, reused as-is from `flow-helpers.ts`) and hand
@@ -129,14 +136,21 @@ Error(JSON.stringify(data))` when `waitForResponse` is set) — no new error-han
 - `packages/server/engine/src/lib/handler/context/engine-constants.ts` — `isInlineChild`,
   `inlineDepth`
 - `packages/server/engine/src/lib/helper/flow-run-progress-reporter.ts` — inline-child guard
-- `packages/server/worker/src/lib/execute/sandbox-manager.ts` — `InlineJobContext` (mutable,
-  updated per `acquire()`, read fresh by the RPC handler — sandboxes can be reused across jobs)
+- `packages/server/worker/src/lib/execute/sandbox-manager.ts` — `SandboxJobContext` (mutable,
+  updated per `acquire()`, read fresh by the RPC handlers — sandboxes can be reused across jobs)
+- `packages/server/worker/src/lib/execute/engine-run-scope.ts` — records each child run id
+  `resolveInlineFlow` starts, so the child's own `uploadRunLog`/progress RPCs pass the worker's
+  run-scope check (#512)
 - `packages/server/worker/src/lib/execute/create-sandbox-for-job.ts` — `resolveInlineFlow`
-  `WorkerContract` handler: calls the API, then provisions child pieces locally
+  `WorkerContract` handler: checks `parentRunId` against the run scope, calls the API, then
+  provisions child pieces locally
 - `packages/server/worker/src/lib/execute/jobs/execute-flow.ts` — passes the trusted job context
   into `sandboxManager.acquire()`
 - `packages/server/api/src/app/workers/rpc/inline-flow-run.service.ts` — project-scoped resolve +
-  depth-guard + child `FlowRun` creation
+  depth-guard + child `FlowRun` creation. `findParentRun` (persisted row, falling back to
+  `pending_run_owner:<id>` for the #509 ordering trap) now lives in `flow-run-service.ts`, exported,
+  and is shared with the webhook-parent verification in `queueOrCreateInstantly` (#521) — this file
+  imports it rather than keeping its own copy.
 - `packages/server/api/src/app/workers/rpc/worker-rpc-service.ts` — wires `startInlineFlowRun`
 - `packages/shared/src/lib/automation/engine/requests.ts` — `ResolveInlineFlowRequest/Result`,
   `INLINE_SUBFLOW_DEPTH_LIMIT`
@@ -186,7 +200,7 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   process, via a recursive `flowExecutor` call — no queue job, no waitpoint.
 - **Queue subflow**: The pre-existing path — child dispatched as a worker job, parent paused on a
   waitpoint, resumed by an HTTP callback.
-- **Inline job context**: The worker's own trusted `{projectId, platformId, parentRunId,
+- **Inline job context**: The worker's own trusted `{runId, projectId, platformId,
   environment}` for the job currently occupying a sandbox slot — the only source `resolveInlineFlow`
   may use to scope a target; never derived from anything the engine/sandbox supplies.
 
@@ -199,15 +213,22 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   `packages/server/api/src/app/mcp/tools/ap-validate-flow.ts`. The static check reads the callee's
   **draft** version, because it exists to judge what the author is about to publish; the runtime
   check in `inline-flow-executor.ts` remains the authority for what actually executes, and neither
-  replaces the other. Its known limit: the pausing actions it recognises are an **allowlist**
-  (`ALWAYS_PAUSING_ACTIONS`, eleven entries, plus three conditional cases: `delayFor` above its 10s
-  threshold, assemblyai `transcribe` when `wait_until_ready` is set, and a Queue-mode `callFlow`
-  that waits for a response),
-  derived by grepping every qadam for `waitForWaitpoint`. A qadam added later that pauses will
-  validate green and still fail at run time. Making this exhaustive needs a declared marker on the
-  action rather than a table — tracked in #426, together with the narrower gap that the conditional
-  cases (`wait_until_ready`, `waitForResponse`) are read as literals and so miss a value bound to a
-  template expression.
+  replaces the other. Since #426 the check asks the action, not a table: every action that waits on
+  a waitpoint declares `pauses: true | 'conditional'` on `createAction` (framework `ActionBase`),
+  the validator reads it off the **pinned version's** metadata (one lookup per distinct pin across
+  the call graph), and `tools/ci/check-pause-markers.mjs` fails CI on a file that calls
+  `waitForWaitpoint` whose action lacks the marker, on a consumer of a waiting helper that lacks
+  it, and on a stale marker. `'conditional'` is decided by one of three evaluators (`delayFor`
+  above its 10s threshold, `transcribe` when `wait_until_ready` is set, a Queue-mode `callFlow`
+  that waits for a response); a `'conditional'` action with no evaluator is reported as "may
+  pause" rather than assumed safe — the policy `delayFor` already applied to an unknown duration.
+  The two Checkbox props are read by one reader: a template expression is reported as unknown, the
+  literals `true`/`'true'` and `false`/`'false'` are parsed the same way for both. What remains of
+  the old allowlist is `LEGACY_PAUSING_ACTIONS`, **frozen**: consulted only for a pin whose
+  metadata predates the marker (or could not be read), so flows built before #426 do not lose the
+  check. It gained exactly two rows on freezing — Slack's `request_action_message` /
+  `request_action_direct_message`, which wait through `common/request-action.ts` and were missed
+  by the grep that built the original list; the marker scan is what would have caught that.
 - No live step-by-step streaming for an inline child in "Test Flow" mode — only the parent's own
   steps stream live; the child's full step history is still persisted and visible once it finishes.
 - Narrow race: the child `FlowRun` row is created by the API (`inlineFlowRunService.start`) before

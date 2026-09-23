@@ -48,6 +48,15 @@ vi.mock('../../src/lib/engine-file-api', () => ({
     },
 }))
 
+const { mockSendFlowResponse } = vi.hoisted(() => ({
+    mockSendFlowResponse: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../src/lib/worker-socket', () => ({
+    workerSocket: {
+        getWorkerClient: () => ({ sendFlowResponse: mockSendFlowResponse }),
+    },
+}))
+
 const { mockCreateWaitpoint } = vi.hoisted(() => ({
     mockCreateWaitpoint: vi.fn(),
 }))
@@ -57,6 +66,7 @@ vi.mock('../../src/lib/qadam-context/waitpoint-client', () => ({
     },
 }))
 
+import { flowExecutor } from '../../src/lib/handler/flow-executor'
 import { flowOperation } from '../../src/lib/operations/flow.operation'
 
 function makeFlowVersion(): FlowVersion {
@@ -688,6 +698,105 @@ describe('flow operation invariants', () => {
                 engineToken: 'test-token',
                 fileId: 'resume-file-1',
             })
+        })
+    })
+
+    describe('sync caller response on a terminal verdict', () => {
+        it('answers the waiting caller with a 500 rather than leaving it to time out', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockRejectedValue(new ConnectionNotFoundError('missing-conn'))
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            await flowOperation.execute(operation)
+
+            expect(mockSendFlowResponse).toHaveBeenCalledTimes(1)
+            const sent = mockSendFlowResponse.mock.calls[0][0]
+            expect(sent.workerHandlerId).toBe('handler-1')
+            expect(sent.httpRequestId).toBe('req-1')
+            expect(sent.runResponse.status).toBe(500)
+            // No step names, no error text, no terminal status: the endpoint is reachable by
+            // anyone holding the flow id. No run id: a retried run can pause, and the legacy resume
+            // route takes the id alone as its credential.
+            expect(sent.runResponse.body).toEqual({
+                message: 'The flow run did not complete successfully.',
+            })
+        })
+
+        it('stays silent when no sync caller is waiting', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockRejectedValue(new ConnectionNotFoundError('missing-conn'))
+
+            await flowOperation.execute(makeBeginOperation({ executeTrigger: true }))
+
+            expect(mockSendFlowResponse).not.toHaveBeenCalled()
+        })
+
+        it('answers a run that succeeded without responding with an immediate empty 204', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockReset()
+            mockExecuteTrigger.mockResolvedValue({ output: [{ ok: true }] })
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            await flowOperation.execute(operation)
+
+            const finalSendUpdate = mockSendUpdate.mock.calls[mockSendUpdate.mock.calls.length - 1][0]
+            expect(finalSendUpdate.flowExecutorContext.verdict.status).toBe(FlowRunStatus.SUCCEEDED)
+            expect(mockSendFlowResponse).toHaveBeenCalledTimes(1)
+            const sent = mockSendFlowResponse.mock.calls[0][0]
+            expect(sent.workerHandlerId).toBe('handler-1')
+            expect(sent.httpRequestId).toBe('req-1')
+            // Exactly what the watcher's timeout used to hand back for this case — the chat's
+            // NO_CHAT_RESPONSE hint and the form's success toast both key off an empty 2xx.
+            expect(sent.runResponse).toEqual({ status: 204, body: {}, headers: {} })
+        })
+
+        it('stays silent on a paused run, whose response belongs to the waitpoint or the timeout', async () => {
+            mockSendFlowResponse.mockClear()
+            mockExecuteTrigger.mockReset()
+            mockExecuteTrigger.mockResolvedValue({ output: [{ ok: true }] })
+            const executeFromTrigger = vi.spyOn(flowExecutor, 'executeFromTrigger').mockImplementationOnce(
+                async ({ executionState }) => executionState.setVerdict({ status: FlowRunStatus.PAUSED }),
+            )
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            await flowOperation.execute(operation)
+
+            expect(executeFromTrigger).toHaveBeenCalledTimes(1)
+            const finalSendUpdate = mockSendUpdate.mock.calls[mockSendUpdate.mock.calls.length - 1][0]
+            expect(finalSendUpdate.flowExecutorContext.verdict.status).toBe(FlowRunStatus.PAUSED)
+            expect(mockSendFlowResponse).not.toHaveBeenCalled()
+            executeFromTrigger.mockRestore()
+        })
+
+        it('never lets a failed publish break the run', async () => {
+            mockSendFlowResponse.mockClear()
+            mockSendFlowResponse.mockRejectedValueOnce(new Error('pubsub down'))
+            mockExecuteTrigger.mockRejectedValue(new ConnectionNotFoundError('missing-conn'))
+
+            const operation = makeBeginOperation({
+                executeTrigger: true,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+            })
+
+            const response = await flowOperation.execute(operation)
+
+            expect(response.status).toBe(EngineResponseStatus.OK)
         })
     })
 })

@@ -21,6 +21,7 @@ import {
     isNil,
     isValidAwsRegion,
     isValidAzureResourceName,
+    mergeOpenAICompatibleExtraBody,
     OpenAICompatibleProviderConfig,
     PersistedChatPart,
     PersistedChatPartType,
@@ -94,7 +95,7 @@ function createChatModel({ provider, auth, config, modelId }: {
         }
         case AIProviderName.CUSTOM: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            const { apiKeyHeader, baseUrl, defaultHeaders } = config as OpenAICompatibleProviderConfig
+            const { apiKeyHeader, baseUrl, defaultHeaders, extraBody } = config as OpenAICompatibleProviderConfig
             return createOpenAICompatible({
                 name: 'openai-compatible',
                 fetch: safeHttp.fetch,
@@ -103,6 +104,7 @@ function createChatModel({ provider, auth, config, modelId }: {
                     ...(defaultHeaders ?? {}),
                     [apiKeyHeader]: apiKey,
                 },
+                transformRequestBody: (body) => mergeOpenAICompatibleExtraBody({ body, extraBody }),
             }).chatModel(modelId)
         }
         case AIProviderName.MISTRAL:

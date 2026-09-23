@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { safeHttp } from '@aiqadam/server-utils'
-import { isNil, partition, QadamPackage, QadamType, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { isNil, OFFICIAL_QADAM_SCOPE_PREFIX, partition, QadamPackage, QadamType, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { parse as parseJsonc } from 'jsonc-parser'
 import { Logger } from 'pino'
 
@@ -137,11 +137,11 @@ const NPM_SIGNING_KEYS: Record<string, string> = {
     'SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U': 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY6Ya7W++7aUPzvMTrezH6Ycx3c+HOKYCcNGybJZSCJq/fd7Qa8uuAKtdIkUQtQiEKERhAmE5lMMJhP8OkDOa2g==',
 }
 
-// Only the official scope. A community qadam's third-party dependencies resolve through the same
-// install and many of them are unsigned — older packages predate npm's signing entirely — so
-// extending this to the whole graph would fail installs that work today. It is also not what
-// #482 asks for: the threat it names is names no administrator chose.
-const OFFICIAL_QADAM_SCOPE_PREFIX = '@aiqadam/'
+// Only the official scope (`OFFICIAL_QADAM_SCOPE_PREFIX`, shared with the API's registration
+// check). A community qadam's third-party dependencies resolve through the same install and many
+// of them are unsigned — older packages predate npm's signing entirely — so extending this to the
+// whole graph would fail installs that work today. It is also not what #482 asks for: the threat
+// it names is names no administrator chose.
 // Deliberately without the trailing slash that `qadam-installer.ts`'s same-named constant carries:
 // that one is written into an `.npmrc` scope mapping, this one is joined with path segments. #478
 // makes the registry configurable and will have to change BOTH — two values under one name is the
@@ -254,9 +254,9 @@ const collectOfficialEntries = (lockfile: unknown): LockfileReading => {
 // member regardless of `--filter` — but the workspace is shared by every tenant on this worker
 // (`getCustomPiecesPath` returns the common cache in the default UNSANDBOXED mode). Throwing on
 // any refusal anywhere therefore had a failure mode both reviewers found independently: one
-// platform registers a CUSTOM ARCHIVE qadam under an `@aiqadam/` name — `qadamMetadataService`
-// applies no name validation and scopes uniqueness by platformId — which writes a tarball entry
-// under an official-scope key. Every later install into that workspace then threw, for every
+// platform registers a CUSTOM ARCHIVE qadam under an `@aiqadam/` name — refused by the API since
+// #503, but a row registered before that, or an API still on an older image, can still reach a
+// worker — which writes a tarball entry under an official-scope key. Every later install into that workspace then threw, for every
 // tenant, forever, and the rollback removed the innocent current batch while the offending entry
 // (whose own directory is still there, so bun does not prune it) stayed put.
 //

@@ -18,6 +18,8 @@ import {
   ChatIntro,
   ImageDialog,
   ChatMessageList,
+  ChatSendingError,
+  chatSendingErrorUtils,
   Messages,
 } from '@/features/chat';
 import { humanInputApi } from '@/features/forms';
@@ -92,7 +94,9 @@ export function FlowChat({
 
   const previousInputRef = useRef('');
   const previousFilesRef = useRef<File[]>([]);
-  const [sendingError, setSendingError] = useState<ApErrorParams | null>(null);
+  const [sendingError, setSendingError] = useState<ChatSendingError | null>(
+    null,
+  );
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
 
@@ -201,9 +205,17 @@ export function FlowChat({
     },
 
     onError: (error: AxiosError) => {
-      const errorData = error.response?.data as ApErrorParams;
+      const errorData = chatSendingErrorUtils.classify({
+        status: error.response?.status,
+        data: error.response?.data,
+      });
       setSendingError(errorData);
-      onError?.(errorData);
+      // `onError` is typed to only ever receive a real `ApErrorParams` (or null), so the
+      // web-local sentinel kinds (still-running/failed/overloaded) are deliberately not
+      // forwarded to it — same as the pre-existing FLOW_STILL_RUNNING behaviour.
+      onError?.(
+        chatSendingErrorUtils.isApErrorParams(errorData) ? errorData : null,
+      );
       scrollToBottom();
     },
   });

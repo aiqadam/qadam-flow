@@ -45,6 +45,24 @@ describe('logRedaction.buildStepLogPolicy', () => {
         ]))
     })
 
+    // The trigger's payload is where personal data arrives (a Telegram contact share carries a
+    // phone number), and until #505 nothing could redact it: only action steps were collected.
+    it('collects the trigger\'s own logOutput opt-out, with its input always logged', () => {
+        const policy = logRedaction.buildStepLogPolicy({
+            trigger: { ...buildTrigger({ nextAction: undefined }), logOutput: false },
+        })
+
+        expect(policy).toEqual(new Map([
+            ['trigger', { logInput: true, logOutput: false }],
+        ]))
+    })
+
+    it('adds no entry for a trigger that does not opt out', () => {
+        const policy = logRedaction.buildStepLogPolicy({ trigger: buildTrigger({ nextAction: undefined }) })
+
+        expect(policy.size).toBe(0)
+    })
+
     // Blocking finding: a step literally named `__proto__` (admitted by `STEP_NAME_REGEX`, and
     // surviving `ap_import_flow` verbatim) that opts out of logging its output must still show up
     // as an entry `hasPolicy` can see. On a bare `Record` with a bracket assignment, `policy['__proto__']

@@ -5,8 +5,12 @@ import {
     FlowTriggerType,
     INLINE_SUBFLOW_DEPTH_LIMIT,
     RunEnvironment,
+    spreadIfDefined,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
+import { getPendingRunOwnerKey } from '../../../../../src/app/database/redis/keys'
+import { distributedStore } from '../../../../../src/app/database/redis-connections'
+import { redisMetadataKey } from '../../../../../src/app/workers/job'
 import { inlineFlowRunService } from '../../../../../src/app/workers/rpc/inline-flow-run.service'
 import { db } from '../../../../helpers/db'
 import {
@@ -82,6 +86,32 @@ async function seedRunChain(length: number, projectId: string): Promise<string> 
         lastId = id
     }
     return lastId
+}
+
+/**
+ * Mirrors what `queueOrCreateInstantly` leaves behind for a PRODUCTION run: the API-written
+ * ownership record, with the Postgres row still owed by the runs-metadata queue.
+ */
+async function seedPendingRunOwner({ projectId, parentRunId }: { projectId: string, parentRunId?: string }): Promise<string> {
+    const id = apId()
+    await distributedStore.put(getPendingRunOwnerKey(id), { projectId, ...spreadIfDefined('parentRunId', parentRunId) }, 600)
+    return id
+}
+
+/**
+ * What a compromised engine can mint on its own: `workerRpc.uploadRunLog` merges an
+ * engine-supplied runId/projectId into the runs-metadata hash with no ownership check. It must
+ * never stand in for the ownership record.
+ */
+async function seedForgeableRunMetadata({ projectId }: { projectId: string }): Promise<string> {
+    const id = apId()
+    await distributedStore.merge(redisMetadataKey(id), {
+        id,
+        projectId,
+        status: FlowRunStatus.RUNNING,
+        requestId: apId(),
+    })
+    return id
 }
 
 describe('inlineFlowRunService', () => {
@@ -203,5 +233,123 @@ describe('inlineFlowRunService', () => {
         })
         expect(childRun?.parentRunId).toBe(parentRun)
         expect(childRun?.projectId).toBe(mockProject.id)
+    })
+
+    describe('parent run still pending its Postgres flush', () => {
+        it('accepts a parent that exists only as an ownership record', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            const parentRunId = await seedPendingRunOwner({ projectId: mockProject.id })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result.ok).toBe(true)
+            if (!result.ok) return
+            // The parent is real but unpersisted, so its own row cannot be walked: the depth must
+            // still count it rather than reading as a root.
+            expect(result.inlineDepth).toBe(2)
+        })
+
+        it('still rejects an ownership record belonging to another project', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const { mockProject: otherProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            const parentRunId = await seedPendingRunOwner({ projectId: otherProject.id })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual(expect.objectContaining({ ok: false }))
+        })
+
+        it('still rejects a parent that exists in neither Postgres nor Redis', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId: apId(),
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual(expect.objectContaining({ ok: false }))
+        })
+
+        it('counts the pending parent against the depth limit instead of restarting the chain', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            // One hop short of the limit in Postgres, with the pending parent supplying the last
+            // one: seeding from the grandparent is what stops the guard under-counting by one.
+            const grandParentRunId = await seedRunChain(INLINE_SUBFLOW_DEPTH_LIMIT - 1, mockProject.id)
+            const parentRunId = await seedPendingRunOwner({ projectId: mockProject.id, parentRunId: grandParentRunId })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            // Asserting the reason, not just the rejection: "parent not found" would also pass.
+            expect(result).toEqual({ ok: false, error: `Inline subflow nesting exceeded the maximum depth of ${INLINE_SUBFLOW_DEPTH_LIMIT}.` })
+        })
+
+        it('refuses a runs-metadata hash, which a compromised engine can mint for any run id', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            const parentRunId = await seedForgeableRunMetadata({ projectId: mockProject.id })
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual(expect.objectContaining({ ok: false }))
+            // `merge` sets no TTL and only Postgres is truncated between tests.
+            await distributedStore.delete(redisMetadataKey(parentRunId))
+        })
+
+        it('counts a fully pending ancestor chain instead of resetting the guard at each hop', async () => {
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const flow = await createCallableFlow(mockProject.id)
+            // Every hop unpersisted: walking only one level would read the chain as depth 2.
+            let ancestorId = await seedPendingRunOwner({ projectId: mockProject.id })
+            for (let hop = 0; hop < INLINE_SUBFLOW_DEPTH_LIMIT; hop++) {
+                ancestorId = await seedPendingRunOwner({ projectId: mockProject.id, parentRunId: ancestorId })
+            }
+
+            const result = await inlineFlowRunService(app!.log).start({
+                callerProjectId: mockProject.id,
+                callerPlatformId: mockPlatform.id,
+                parentRunId: ancestorId,
+                environment: RunEnvironment.PRODUCTION,
+                flowId: flow.id,
+                payload: {},
+            })
+
+            expect(result).toEqual({ ok: false, error: `Inline subflow nesting exceeded the maximum depth of ${INLINE_SUBFLOW_DEPTH_LIMIT}.` })
+        })
     })
 })

@@ -12,7 +12,7 @@ import {
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flowService } from '../../flows/flow/flow.service'
-import { flowRunRepo } from '../../flows/flow-run/flow-run-service'
+import { findParentRun, flowRunRepo, ParentRun } from '../../flows/flow-run/flow-run-service'
 import { flowRunSideEffects } from '../../flows/flow-run/flow-run-side-effects'
 import { flowVersionService } from '../../flows/flow-version/flow-version.service'
 import { projectService } from '../../project/project-service'
@@ -57,12 +57,12 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
         // value. Otherwise a compromised engine process could attach a child under a
         // foreign project's run (a data-isolation violation) or dodge the depth
         // guard by naming an unrelated run with a short ancestry chain.
-        const parentRun = await flowRunRepo().findOneBy({ id: request.parentRunId, projectId: request.callerProjectId })
+        const parentRun = await findParentRun({ parentRunId: request.parentRunId, projectId: request.callerProjectId, log })
         if (isNil(parentRun)) {
             return { ok: false, error: 'The parent run could not be verified.' }
         }
 
-        const inlineDepth = await computeChildDepth(request.parentRunId)
+        const inlineDepth = await computeInlineDepth({ parentRun, parentRunId: request.parentRunId, projectId: request.callerProjectId, log })
         if (inlineDepth > INLINE_SUBFLOW_DEPTH_LIMIT) {
             return { ok: false, error: `Inline subflow nesting exceeded the maximum depth of ${INLINE_SUBFLOW_DEPTH_LIMIT}.` }
         }
@@ -76,7 +76,17 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
             environment: request.environment,
             parentRunId: request.parentRunId,
             dispatchMode: FlowRunDispatchMode.enum.INLINE,
-            failParentOnFailure: true,
+            // Never `true`: an inline call runs in the SAME engine process as its parent, and a
+            // failure is returned synchronously to the parent's own execution right there
+            // (`callFlowInline` in `inline-flow-executor.ts` catches the FAILED verdict itself and
+            // hands `{ status: 'error', ... }` straight back) — there is no waitpoint, no queue
+            // job, no later out-of-band completion for `markParentRunAsFailed` to perform. Setting
+            // this `true` did nothing functionally, since an inline child never has a
+            // `parentWaitpointId` to complete either way — but it made every ordinary inline
+            // failure log `markParentRunAsFailed`'s "legacy row, completing nothing" warning as if
+            // something were actually wrong (#521). `false` here reflects reality: inline dispatch
+            // is never the "fail parent via waitpoint" contract to begin with.
+            failParentOnFailure: false,
             status: FlowRunStatus.RUNNING,
             // Execution starts synchronously right after this row is created — unlike a
             // queued run, there is no separate dequeue moment to mark as the real start.
@@ -101,6 +111,33 @@ export const inlineFlowRunService = (log: FastifyBaseLogger) => ({
     },
 })
 
+/**
+ * `computeChildDepth` walks the ancestry in one recursive query, so it can only start from a row
+ * that is already in Postgres. A parent still awaiting its flush would otherwise read as a root and
+ * silently reset the guard, so walk the pending hops first and hand the walk over as soon as an
+ * ancestor is persisted. The loop is bounded by the limit it enforces.
+ */
+async function computeInlineDepth({ parentRun, parentRunId, projectId, log }: ComputeInlineDepthParams): Promise<number> {
+    if (parentRun.persisted) {
+        return computeChildDepth(parentRunId)
+    }
+
+    let pendingHops = 1
+    let ancestorId = parentRun.parentRunId
+    while (!isNil(ancestorId) && pendingHops <= INLINE_SUBFLOW_DEPTH_LIMIT) {
+        const ancestor = await findParentRun({ parentRunId: ancestorId, projectId, log })
+        if (isNil(ancestor)) {
+            break
+        }
+        if (ancestor.persisted) {
+            return await computeChildDepth(ancestorId) + pendingHops
+        }
+        pendingHops += 1
+        ancestorId = ancestor.parentRunId
+    }
+    return pendingHops + 1
+}
+
 async function computeChildDepth(parentRunId: string): Promise<number> {
     const query = `
         WITH RECURSIVE ancestors AS (
@@ -119,4 +156,11 @@ async function computeChildDepth(parentRunId: string): Promise<number> {
     const results = await flowRunRepo().query(query, [parentRunId, INLINE_SUBFLOW_DEPTH_LIMIT + 1]) as { depth: string | null }[]
     const ancestorChainLength = Number(results[0]?.depth ?? 0)
     return ancestorChainLength + 1
+}
+
+type ComputeInlineDepthParams = {
+    parentRun: ParentRun
+    parentRunId: string
+    projectId: string
+    log: FastifyBaseLogger
 }

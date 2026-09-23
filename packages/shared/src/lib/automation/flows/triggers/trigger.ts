@@ -36,6 +36,10 @@ const commonProps = {
     displayName: z.string(),
     nextAction: z.any().optional(),
     lastUpdatedDate: z.string(),
+    // Opt-out from the run log for the trigger's payload (#505, the trigger counterpart of the
+    // action-level `logOutput` in `action.ts`). There is no `logInput` here on purpose: what the
+    // log records as a trigger's input is its configuration, not the payload that carries user data.
+    logOutput: z.boolean().optional(),
 }
 
 

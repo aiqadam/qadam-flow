@@ -15,6 +15,8 @@ type FlowValue = {
 
 export const callFlow = createAction({
   name: 'callFlow',
+  // Pauses only in Queue mode with `waitForResponse`; an inline call runs in-process.
+  pauses: 'conditional',
   displayName: 'Call Flow',
   description: 'Call a flow that has "Callable Flow" trigger',
   props: {

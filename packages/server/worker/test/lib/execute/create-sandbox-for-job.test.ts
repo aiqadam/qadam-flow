@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ApEnvironment, ExecutionMode, NetworkMode } from '@aiqadam/shared'
+import { ApEnvironment, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMock, getGlobalCacheCommonPathMock, getGlobalCodeCachePathMock, getEnginePathMock } = vi.hoisted(() => ({
+const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMock, getGlobalCacheCommonPathMock, getGlobalCodeCachePathMock, getEnginePathMock, provisionFlowPiecesMock } = vi.hoisted(() => ({
     getSettingsMock: vi.fn(),
     createSandboxMock: vi.fn(),
     isolateProcessMock: vi.fn(() => ({ create: vi.fn() })),
@@ -9,6 +9,7 @@ const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMoc
     getGlobalCacheCommonPathMock: vi.fn(() => '/tmp/cache/common'),
     getGlobalCodeCachePathMock: vi.fn(() => '/tmp/cache/codes'),
     getEnginePathMock: vi.fn(() => '/tmp/cache/common/main.js'),
+    provisionFlowPiecesMock: vi.fn(),
 }))
 
 vi.mock('../../../src/lib/config/worker-settings', () => ({
@@ -35,7 +36,12 @@ vi.mock('../../../src/lib/cache/cache-paths', () => ({
     getEnginePath: getEnginePathMock,
 }))
 
+vi.mock('../../../src/lib/execute/utils/flow-helpers', () => ({
+    provisionFlowPieces: provisionFlowPiecesMock,
+}))
+
 import { createSandboxForJob } from '../../../src/lib/execute/create-sandbox-for-job'
+import { SandboxJobContext } from '../../../src/lib/execute/sandbox-manager'
 
 type Settings = {
     PUBLIC_URL: string
@@ -277,5 +283,226 @@ describe('createSandboxForJob', () => {
                 process.env = originalProcessEnv
             }
         })
+    })
+})
+
+// The engine is untrusted: every run-scoped RPC it makes is checked against the job the worker
+// dequeued before it reaches the API (#512).
+describe('engine RPC run scope', () => {
+    const JOB: SandboxJobContext = {
+        runId: 'run-own',
+        projectId: 'project-own',
+        platformId: 'platform-own',
+        environment: RunEnvironment.PRODUCTION,
+        workerHandlerId: 'handler-own',
+        httpRequestId: 'request-own',
+    }
+
+    function buildApiClient() {
+        return {
+            uploadRunLog: vi.fn().mockResolvedValue(undefined),
+            updateRunProgress: vi.fn().mockResolvedValue(undefined),
+            updateStepProgress: vi.fn().mockResolvedValue(undefined),
+            sendFlowResponse: vi.fn().mockResolvedValue(undefined),
+            startInlineFlowRun: vi.fn().mockResolvedValue({
+                ok: true,
+                flowVersion: { flowId: 'child-flow' },
+                childRunId: 'run-child',
+                childLogsFileId: 'logs-child',
+                inlineDepth: 1,
+            }),
+        }
+    }
+
+    function setup({ jobContext }: { jobContext: () => SandboxJobContext | null }) {
+        getSettingsMock.mockReturnValue(buildSettings())
+        const client = buildApiClient()
+        createSandboxForJob({ log, apiClient: client as never, boxId: 1, reusable: true, proxyPort: null, getCurrentJobContext: jobContext })
+        const handlers: WorkerContract = createSandboxMock.mock.calls[0][4]
+        return { client, handlers }
+    }
+
+    function uploadFor({ runId, projectId }: { runId: string, projectId: string }) {
+        return { runId, projectId, status: FlowRunStatus.RUNNING }
+    }
+
+    function stepProgressFor({ runId, projectId }: { runId: string, projectId: string }) {
+        return {
+            projectId,
+            stepResponse: { runId, success: true, input: {}, output: {}, standardError: '', standardOutput: '' },
+        }
+    }
+
+    function runProgressFor({ runId, projectId }: { runId: string, projectId: string }): UpdateRunProgressRequest {
+        const now = new Date().toISOString()
+        return {
+            flowRun: {
+                id: runId,
+                projectId,
+                flowId: 'flow-own',
+                flowVersionId: 'flow-version-own',
+                status: FlowRunStatus.RUNNING,
+                environment: RunEnvironment.PRODUCTION,
+                failParentOnFailure: false,
+                logsFileId: null,
+                archivedAt: null,
+                tags: [],
+                created: now,
+                updated: now,
+            },
+        }
+    }
+
+    const refused = expect.objectContaining({ error: expect.objectContaining({ code: ErrorCode.AUTHORIZATION }) })
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        createSandboxMock.mockReturnValue({ id: 'sb' })
+        provisionFlowPiecesMock.mockResolvedValue({ provisioned: true })
+    })
+
+    it('forwards uploadRunLog for the job\'s own run', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+        const input = uploadFor({ runId: 'run-own', projectId: 'project-own' })
+
+        await handlers.uploadRunLog(input)
+
+        expect(client.uploadRunLog).toHaveBeenCalledWith(input)
+    })
+
+    it.each([
+        ['another run in the same project', { runId: 'run-foreign', projectId: 'project-own' }],
+        ['its own run moved into another project', { runId: 'run-own', projectId: 'project-foreign' }],
+        ['another project\'s run', { runId: 'run-foreign', projectId: 'project-foreign' }],
+    ])('refuses uploadRunLog for %s', async (_label, target) => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.uploadRunLog(uploadFor(target))).rejects.toEqual(refused)
+        expect(client.uploadRunLog).not.toHaveBeenCalled()
+    })
+
+    it('refuses every run-scoped RPC when no flow job occupies the sandbox', async () => {
+        const { client, handlers } = setup({ jobContext: () => null })
+
+        await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-own', projectId: 'project-own' }))).rejects.toEqual(refused)
+        await expect(handlers.updateStepProgress(stepProgressFor({ runId: 'run-own', projectId: 'project-own' }))).rejects.toEqual(refused)
+        await expect(handlers.sendFlowResponse({ workerHandlerId: 'handler-own', httpRequestId: 'request-own', runResponse: { status: 200, body: {}, headers: {} } })).rejects.toEqual(refused)
+        expect(client.uploadRunLog).not.toHaveBeenCalled()
+        expect(client.updateStepProgress).not.toHaveBeenCalled()
+        expect(client.sendFlowResponse).not.toHaveBeenCalled()
+    })
+
+    it('refuses updateRunProgress addressed to another project', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.updateRunProgress(runProgressFor({ runId: 'run-own', projectId: 'project-foreign' }))).rejects.toEqual(refused)
+        expect(client.updateRunProgress).not.toHaveBeenCalled()
+
+        await handlers.updateRunProgress(runProgressFor({ runId: 'run-own', projectId: 'project-own' }))
+        expect(client.updateRunProgress).toHaveBeenCalledTimes(1)
+    })
+
+    it('accepts an inline child only after the job itself spawned it', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+        const childUpload = uploadFor({ runId: 'run-child', projectId: 'project-own' })
+
+        await expect(handlers.uploadRunLog(childUpload)).rejects.toEqual(refused)
+
+        const resolved = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+        expect(resolved.ok).toBe(true)
+
+        await handlers.uploadRunLog(childUpload)
+        await handlers.updateStepProgress(stepProgressFor({ runId: 'run-child', projectId: 'project-own' }))
+        expect(client.uploadRunLog).toHaveBeenCalledWith(childUpload)
+        expect(client.updateStepProgress).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not record a child whose inline start was refused', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+        client.startInlineFlowRun.mockResolvedValue({ ok: false, error: 'not found' })
+
+        await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+
+        await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-child', projectId: 'project-own' }))).rejects.toEqual(refused)
+    })
+
+    // Every inline child fails its parent on failure, so a parent outside the job's own run tree would
+    // let the engine fail and resume an unrelated paused run in the same project (#525).
+    it('refuses resolveInlineFlow under another run in the same project without calling the API', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-foreign' })).rejects.toEqual(refused)
+        expect(client.startInlineFlowRun).not.toHaveBeenCalled()
+        expect(provisionFlowPiecesMock).not.toHaveBeenCalled()
+    })
+
+    it('starts an inline child under the job\'s own run', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        const resolved = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+
+        expect(resolved.ok).toBe(true)
+        expect(client.startInlineFlowRun).toHaveBeenCalledWith(expect.objectContaining({ parentRunId: 'run-own', callerProjectId: 'project-own' }))
+    })
+
+    it('starts a nested inline child under an inline child the job recorded', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+        await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+        client.startInlineFlowRun.mockResolvedValueOnce({
+            ok: true,
+            flowVersion: { flowId: 'grandchild-flow' },
+            childRunId: 'run-grandchild',
+            childLogsFileId: 'logs-grandchild',
+            inlineDepth: 2,
+        })
+
+        const nested = await handlers.resolveInlineFlow({ flowId: 'grandchild-flow', payload: {}, parentRunId: 'run-child' })
+        const deeper = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-grandchild' })
+
+        expect(nested.ok).toBe(true)
+        expect(deeper.ok).toBe(true)
+        expect(client.startInlineFlowRun).toHaveBeenNthCalledWith(2, expect.objectContaining({ parentRunId: 'run-child' }))
+        expect(client.startInlineFlowRun).toHaveBeenNthCalledWith(3, expect.objectContaining({ parentRunId: 'run-grandchild' }))
+    })
+
+    it('refuses resolveInlineFlow when no flow job occupies the sandbox', async () => {
+        const { client, handlers } = setup({ jobContext: () => null })
+
+        const resolved = await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+
+        expect(resolved.ok).toBe(false)
+        expect(client.startInlineFlowRun).not.toHaveBeenCalled()
+    })
+
+    it('forgets the previous job\'s runs when a reused sandbox takes the next job', async () => {
+        let current: SandboxJobContext = JOB
+        const { client, handlers } = setup({ jobContext: () => current })
+        await handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-own' })
+
+        current = { ...JOB, runId: 'run-next' }
+
+        await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-own', projectId: 'project-own' }))).rejects.toEqual(refused)
+        await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-child', projectId: 'project-own' }))).rejects.toEqual(refused)
+        await handlers.uploadRunLog(uploadFor({ runId: 'run-next', projectId: 'project-own' }))
+        expect(client.uploadRunLog).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards sendFlowResponse only for the job\'s own sync request', async () => {
+        const runResponse = { status: 200, body: {}, headers: {} }
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.sendFlowResponse({ workerHandlerId: 'handler-own', httpRequestId: 'request-foreign', runResponse })).rejects.toEqual(refused)
+        await expect(handlers.sendFlowResponse({ workerHandlerId: 'handler-foreign', httpRequestId: 'request-own', runResponse })).rejects.toEqual(refused)
+        expect(client.sendFlowResponse).not.toHaveBeenCalled()
+
+        await handlers.sendFlowResponse({ workerHandlerId: 'handler-own', httpRequestId: 'request-own', runResponse })
+        expect(client.sendFlowResponse).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses sendFlowResponse for an async job, which has no sync caller to answer', async () => {
+        const { client, handlers } = setup({ jobContext: () => ({ ...JOB, workerHandlerId: null, httpRequestId: null }) })
+
+        await expect(handlers.sendFlowResponse({ workerHandlerId: 'handler-own', httpRequestId: 'request-own', runResponse: { status: 200, body: {}, headers: {} } })).rejects.toEqual(refused)
+        expect(client.sendFlowResponse).not.toHaveBeenCalled()
     })
 })

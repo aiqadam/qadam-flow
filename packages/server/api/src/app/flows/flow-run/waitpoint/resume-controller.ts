@@ -1,13 +1,20 @@
 import {
     ALL_PRINCIPAL_TYPES,
+    apId,
     ApId,
+    ErrorCode,
+    QadamFlowError,
+    tryCatch,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyReply } from 'fastify'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
+import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { securityAccess } from '../../../core/security/authorization/fastify-security'
+import { findFlowRunForLegacyResume, LegacyResumeFlowRun } from '../flow-run-service'
 import { resumeService } from './resume-service'
 import { waitpointService } from './waitpoint-service'
+import { Waitpoint } from './waitpoint-types'
 
 export const resumeController: FastifyPluginAsyncZod = async (app) => {
     app.all('/:id/waitpoints/:waitpointId', ResumeByWaitpointRequest, async (req, reply) => {
@@ -19,38 +26,80 @@ export const resumeController: FastifyPluginAsyncZod = async (app) => {
     app.all('/:id/waitpoints/:waitpointId/sync', ResumeByWaitpointRequest, async (req, reply) => {
         const headers = req.headers as Record<string, string>
         const queryParams = req.query as Record<string, string>
-        await handleSyncResume({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, body: req.body, headers, queryParams, log: req.log, reply, correlationId: req.params.waitpointId })
+        // waitpointId is unique per waitpoint but NOT per request: a duplicate/retried request
+        // (double-click, client retry, link-scanner prefetch) hitting the same waitpoint would
+        // otherwise share this key with the original request and collide in
+        // engineResponseWatcher's listener map. Mint a fresh id per request instead.
+        await handleSyncResume({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
     })
 
     /**
-     * @deprecated Deprecated since 2026-04-13. can be only removed after all paused jobs after deployment of this version to sink.
-     * Handles resume for V0 waitpoints created by legacy pieces using run.pause() + generateResumeUrl().
-     * The requestId param is NOT validated — flowRunId (an unguessable apId) provides access control.
+     * @deprecated Legacy resume route for V0 waitpoints created by pieces still on the pre-shim
+     * `run.pause()` + `generateResumeUrl()` API. flowRunId (an unguessable apId) is this route's
+     * only credential — requestId is never validated.
+     *
+     * If a PENDING V0 waitpoint exists for the run, this resumes through the same path the V1
+     * waitpoint routes use. Otherwise it falls through to the no-waitpoint legacy branch
+     * (resumeService#legacyResume), which requires ALL of: the run is PAUSED; its pauseMetadata
+     * parses as a pre-shim WEBHOOK pause; and the run has NO waitpoint row at all, of any status
+     * or version — see resumeService#isEligibleForLegacyNoWaitpointResume. That third condition
+     * is what stops this route from being used to resume a run's later, unrelated PENDING
+     * waitpoint (V0 or V1) by anyone who only holds an earlier approval link for the same run —
+     * every resume URL, V0 or V1, embeds the run id, so an earlier link is enough to reach this
+     * route for the run's current pause too.
+     *
+     * Removable once no PAUSED run can predate the piece-API pause shim (buildLegacyPauseHook,
+     * deployed 2026-04-13), which is the point every `run.pause()` call started creating a real
+     * waitpoint row itself (and process.exit(1)-ing if that write failed) — so only a run paused
+     * by a pre-shim engine can still reach this branch. That is bounded by this platform's
+     * configured execution-data retention: FILE_CLEANUP_TRIGGER purges FLOW_RUN_LOG files past
+     * AP_EXECUTION_DATA_RETENTION_DAYS, and PAUSED_FLOW_TIMEOUT_DAYS is capped at that same
+     * retention (system-validator.ts), so a pre-shim paused run cannot outlive it. Safe removal
+     * date = shim deploy date (2026-04-13) + this deployment's configured retention (30 days by
+     * default) — later if any deployment raised retention above the default.
      */
     app.all('/:id/requests/:requestId', V0ResumeFlowRunRequest, async (req, reply) => {
         const headers = req.headers as Record<string, string>
         const queryParams = req.query as Record<string, string>
-        const waitpoint = await waitpointService(req.log).findPendingByVersion({ flowRunId: req.params.id, version: 'V0' })
+        const flowRun = await resolveV0FlowRun({ flowRunId: req.params.id, log: req.log })
+        if (!flowRun) {
+            await reply.send({ message: 'This link has expired. The action may have already been processed.' })
+            return
+        }
+        const waitpoint = await findPendingV0Waitpoint({ flowRun, log: req.log })
         if (waitpoint) {
-            await handleAsyncResume({ flowRunId: req.params.id, waitpointId: waitpoint.id, body: req.body, headers, queryParams, log: req.log, reply })
+            await handleAsyncResume({ flowRunId: flowRun.id, waitpointId: waitpoint.id, body: req.body, headers, queryParams, log: req.log, reply })
         }
         else {
-            await handleLegacyAsyncResume({ flowRunId: req.params.id, body: req.body, headers, queryParams, log: req.log, reply })
+            await handleLegacyAsyncResume({ flowRun, body: req.body, headers, queryParams, log: req.log, reply })
         }
     })
 
     /**
-     * @deprecated Deprecated since 2026-04-13. can be only removed after all paused jobs after deployment of this version to sink.
+     * @deprecated See the sibling `/:id/requests/:requestId` route above — same eligibility rules
+     * and same removal condition, just the synchronous variant (410 GONE instead of a 200
+     * "expired" body for a stale/ineligible resume).
      */
     app.all('/:id/requests/:requestId/sync', V0ResumeFlowRunRequest, async (req, reply) => {
         const headers = req.headers as Record<string, string>
         const queryParams = req.query as Record<string, string>
-        const waitpoint = await waitpointService(req.log).findPendingByVersion({ flowRunId: req.params.id, version: 'V0' })
+        const flowRun = await resolveV0FlowRun({ flowRunId: req.params.id, log: req.log })
+        if (!flowRun) {
+            await reply.status(StatusCodes.GONE).send({ message: 'This link has expired. The action may have already been processed.' })
+            return
+        }
+        const waitpoint = await findPendingV0Waitpoint({ flowRun, log: req.log })
+        // Each sync resume needs its own key into engineResponseWatcher's process-wide listener
+        // map. waitpoint.workerHandlerId is the SERVER_ID shared by every V0 waitpoint on this
+        // server, and req.params.requestId is caller-chosen and unvalidated (see this route's
+        // own JSDoc above) — either one used as the key lets two concurrent callers collide and
+        // receive each other's response. Mint a fresh id per request instead, the way the
+        // non-V0 waitpoint route above does.
         if (waitpoint) {
-            await handleSyncResume({ flowRunId: req.params.id, waitpointId: waitpoint.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: waitpoint.workerHandlerId ?? waitpoint.id })
+            await handleSyncResume({ flowRunId: flowRun.id, waitpointId: waitpoint.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
         }
         else {
-            await handleLegacySyncResume({ flowRunId: req.params.id, body: req.body, headers, queryParams, log: req.log, reply, correlationId: req.params.requestId })
+            await handleLegacySyncResume({ flowRun, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
         }
     })
 }
@@ -78,9 +127,9 @@ async function handleSyncResume({ flowRunId, waitpointId, body, headers, queryPa
     await reply.status(response.status).headers(response.headers).send(response.body)
 }
 
-async function handleLegacyAsyncResume({ flowRunId, body, headers, queryParams, log, reply }: LegacyResumeHandlerParams): Promise<void> {
+async function handleLegacyAsyncResume({ flowRun, body, headers, queryParams, log, reply }: LegacyResumeHandlerParams): Promise<void> {
     const { stale } = await resumeService(log).legacyResume({
-        flowRunId,
+        flowRun,
         resumePayload: { body, headers, queryParams },
     })
     if (stale) {
@@ -90,13 +139,42 @@ async function handleLegacyAsyncResume({ flowRunId, body, headers, queryParams, 
     await reply.send({ message: 'Your response has been recorded. You can close this page now.' })
 }
 
-async function handleLegacySyncResume({ flowRunId, body, headers, queryParams, log, reply, correlationId }: LegacyResumeHandlerParams & { correlationId: string }): Promise<void> {
+async function handleLegacySyncResume({ flowRun, body, headers, queryParams, log, reply, correlationId }: LegacyResumeHandlerParams & { correlationId: string }): Promise<void> {
     const response = await resumeService(log).legacySyncResume({
-        runId: flowRunId,
+        flowRun,
         payload: { body, headers, queryParams },
         correlationId,
     })
     await reply.status(response.status).headers(response.headers).send(response.body)
+}
+
+/**
+ * Resolves the run exactly ONCE for both V0 legacy routes, before either branch (has a PENDING
+ * V0 waitpoint / no-waitpoint legacy fallback) is chosen. Previously this controller resolved the
+ * run once to look up a PENDING V0 waitpoint, then legacyResume/legacySyncResume resolved it
+ * *again* if none was found — leaving a window between the two reads where the #509
+ * runsMetadataQueue drain lag (or a legitimate concurrent waitpoint creation) could land a row
+ * that the first read missed, letting the no-waitpoint legacy branch resume a run that by the
+ * second read already had a real waitpoint. A single resolve-and-pass-down closes that window.
+ *
+ * A run that no longer exists is not an error here: both V0 routes reply "stale" directly, the
+ * same tolerance resumeFromWaitpoint already applies on the non-legacy waitpoint routes, for the
+ * same drain-lag reason — a resume can legitimately arrive after its own run's row is gone.
+ */
+async function resolveV0FlowRun({ flowRunId, log }: ResolveV0FlowRunParams): Promise<LegacyResumeFlowRun | null> {
+    const { data: flowRun, error: notFoundError } = await tryCatch(() => findFlowRunForLegacyResume({ flowRunId }))
+    if (notFoundError) {
+        if (notFoundError instanceof QadamFlowError && notFoundError.error.code === ErrorCode.ENTITY_NOT_FOUND) {
+            log.info({ flowRunId }, '[resumeController#resolveV0FlowRun] Flow run not found, treating resume as stale')
+            return null
+        }
+        throw notFoundError
+    }
+    return flowRun
+}
+
+async function findPendingV0Waitpoint({ flowRun, log }: FindPendingV0WaitpointParams): Promise<Waitpoint | null> {
+    return waitpointService(log).findPendingByVersion({ flowRunId: flowRun.id, projectId: flowRun.projectId, version: 'V0' })
 }
 
 const ResumeByWaitpointRequest = {
@@ -134,10 +212,20 @@ type AsyncResumeHandlerParams = {
 }
 
 type LegacyResumeHandlerParams = {
-    flowRunId: string
+    flowRun: LegacyResumeFlowRun
     body: unknown
     headers: Record<string, string>
     queryParams: Record<string, string>
     log: FastifyBaseLogger
     reply: FastifyReply
+}
+
+type ResolveV0FlowRunParams = {
+    flowRunId: string
+    log: FastifyBaseLogger
+}
+
+type FindPendingV0WaitpointParams = {
+    flowRun: LegacyResumeFlowRun
+    log: FastifyBaseLogger
 }

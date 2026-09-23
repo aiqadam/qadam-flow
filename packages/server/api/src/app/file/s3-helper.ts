@@ -14,7 +14,20 @@ import { fileRepo } from './file.service'
 export const s3Helper = (log: FastifyBaseLogger) => ({
     async constructS3Key(platformId: string | undefined, projectId: ProjectId | undefined, type: FileType, fileId: string): Promise<string> {
         const existingFile = await fileRepo().findOneBy({ id: fileId })
-        if (!isNil(existingFile?.s3Key)) {
+        // Same ownership rule as upsertOwnedFile's WHERE clause in file.service.ts: a
+        // project-owned row matches by projectId alone, ignoring any platformId already
+        // stored on it (sample-data.service.ts and trigger-event.service.ts never pass
+        // platformId), and a platform-level row (projectId null) matches only an equally
+        // unscoped caller with the same platformId. fileService.save's own ownership check
+        // runs before any upload now (#517), so reusing a foreign row's s3Key here can no
+        // longer cause an overwrite by itself — this stays consistent with that rule anyway
+        // so there is only one definition of "the caller's own row" in this feature.
+        const ownsExistingFile = !isNil(existingFile) && (
+            !isNil(existingFile.projectId)
+                ? existingFile.projectId === projectId
+                : isNil(projectId) && existingFile.platformId === (platformId ?? null)
+        )
+        if (ownsExistingFile && !isNil(existingFile?.s3Key)) {
             return existingFile.s3Key
         }
         if (!isNil(platformId)) {

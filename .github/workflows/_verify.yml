@@ -320,6 +320,15 @@ jobs:
       - name: Check StaticDropdown defaultValue against declared options
         run: npm run check-dropdown-defaults
 
+      # #426: every action that waits on a waitpoint must declare `pauses` on createAction —
+      # ap_validate_flow's inline_pause check reads it instead of a hardcoded table. Same
+      # static-scan shape as the dropdown check above.
+      - name: Test the pause-marker checker
+        run: tools/ci/test-pause-markers-check.sh
+
+      - name: Check pausing actions declare the pauses marker
+        run: npm run check-pause-markers
+
       # Reject-case fixtures for the migration metadata gate below (#445). Needs
       # ts-node/semver from node_modules, so it sits down here rather than with
       # the pure-shell suite above.

@@ -1,6 +1,8 @@
 import { assertNotNullOrUndefined } from '../../core/common'
 import { ErrorCode, QadamFlowError } from '../../core/common/qadam-flow-error'
 
+export const OFFICIAL_QADAM_SCOPE_PREFIX = '@aiqadam/'
+
 /**
  * @param {string} qadamName - starts with `@aiqadam/qadam-`
  * @param {string} qadamVersion - the version of the qadam
@@ -30,6 +32,15 @@ export const getQadamNameFromAlias = (alias: string): string => {
  */
 export const trimVersionFromAlias = (alias: string): string => {
     return alias.split('-').slice(0, -1).join('-')
+}
+
+/**
+ * Whether a package name sits in the `@aiqadam` scope that bundled (OFFICIAL) qadams ship under.
+ * Lower-cased before the check: npm rejects an upper-cased name, but an uploaded archive's
+ * `package.json` can carry one, and a lookalike must not slip past as "not official".
+ */
+export const isOfficialQadamName = (name: string): boolean => {
+    return name.toLowerCase().startsWith(OFFICIAL_QADAM_SCOPE_PREFIX)
 }
 
 

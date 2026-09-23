@@ -29,9 +29,12 @@ if you want to generate sample data without triggering the flow, append \`/test\
 const syncMarkdown = `**Synchronous Requests:**
 
 If you expect a response from this webhook, add \`/sync\` to the end of the URL.
-If it takes more than {{webhookTimeoutSeconds}} seconds, it will return a 408 Request Timeout response.
+If the flow fails, it returns a 500 response.
+If it is still running after {{webhookTimeoutSeconds}} seconds, it returns a 504 Gateway Timeout response. A run already in progress keeps going; a run that had not started yet fails outright instead of running late. Either way, retrying the request starts the flow again from the beginning.
 
-To return data, add an Webhook step to your flow with the Return Response action.
+The instance may also answer 503 instead of accepting the request at all, if it cannot start the run within the timeout window. That response includes a \`Retry-After\` header.
+
+To return data, add a Webhook step to your flow with the Return Response action. A flow that finishes without one returns 204 No Content.
 `;
 
 enum AuthType {

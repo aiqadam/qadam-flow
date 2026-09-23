@@ -63,6 +63,12 @@ export const FlowRun = z.object({
     projectId: z.string(),
     flowId: z.string(),
     parentRunId: z.string().optional(),
+    // The exact WEBHOOK waitpoint this child proved it descends from at ingress (#521 impact item
+    // 3), persisted so a later failure can complete precisely that waitpoint — never whatever
+    // waitpoint the parent happens to hold at that later moment, which a replay or an unrelated
+    // retry could have changed underneath it. Absent on a run that never carried
+    // `failParentOnFailure`, and on any run created before this field existed.
+    parentWaitpointId: z.string().optional(),
     dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),
     triggeredBy: z.string().optional(),
@@ -75,6 +81,11 @@ export const FlowRun = z.object({
     status: z.nativeEnum(FlowRunStatus),
     startTime: z.string().nullish(),
     finishTime: z.string().nullish(),
+    // Derived, never persisted: the elapsed time between this row becoming eligible for dispatch
+    // and the engine actually beginning execution (`startTime - created`, computed at read time in
+    // flowRunService — see the comment there for the full definition and its two documented
+    // exceptions: INLINE dispatch mode, and a FROM_FAILED_STEP retry).
+    dispatchWaitMs: z.number().nullish(),
     environment: z.nativeEnum(RunEnvironment),
     // The steps data may be missing if the flow has not started yet,
     // or if the run is older than AP_EXECUTION_DATA_RETENTION_DAYS and its execution data has been purged.

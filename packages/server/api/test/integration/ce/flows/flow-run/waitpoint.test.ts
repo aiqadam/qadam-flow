@@ -51,6 +51,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -68,6 +69,7 @@ describe('Waitpoint service', () => {
 
             const step1Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_1',
                 type: PauseType.WEBHOOK,
@@ -83,6 +85,7 @@ describe('Waitpoint service', () => {
 
             const step2Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_2',
                 type: PauseType.WEBHOOK,
@@ -100,6 +103,7 @@ describe('Waitpoint service', () => {
 
             const firstPause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -116,6 +120,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -133,6 +138,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
@@ -154,6 +160,7 @@ describe('Waitpoint service', () => {
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'webhook_step',
                 type: PauseType.WEBHOOK,
@@ -175,6 +182,7 @@ describe('Waitpoint service', () => {
 
             const pauseResult = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -241,6 +249,7 @@ describe('Waitpoint service', () => {
 
             const step1Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_1',
                 type: PauseType.WEBHOOK,
@@ -273,6 +282,7 @@ describe('Waitpoint service', () => {
 
             const step2Pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'step_2',
                 type: PauseType.WEBHOOK,
@@ -293,6 +303,7 @@ describe('Waitpoint service', () => {
             for (const stepName of stepNames) {
                 const pause = await waitpointService(app.log).createForPause({
                     flowRunId: flowRun.id,
+                    callerRunId: flowRun.id,
                     projectId: ctx.project.id,
                     stepName,
                     type: PauseType.WEBHOOK,
@@ -338,19 +349,21 @@ describe('Waitpoint service', () => {
 
             await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
                 version: 'V0',
             })
 
-            await waitpointService(app.log).deleteByFlowRunId(flowRun.id)
+            await waitpointService(app.log).deleteByFlowRunId({ flowRunId: flowRun.id, projectId: ctx.project.id })
 
             const deleted = await db.findOneBy('waitpoint', { flowRunId: flowRun.id })
             expect(deleted).toBeNull()
 
             const result = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
@@ -361,11 +374,30 @@ describe('Waitpoint service', () => {
             expect(result.inserted).toBe(true)
             expect(result.waitpoint.type).toBe(PauseType.DELAY)
         })
+
+        it('should not delete a waitpoint belonging to another project', async () => {
+            const { flowRun } = await createFlowRun()
+
+            await waitpointService(app.log).createForPause({
+                flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
+                projectId: ctx.project.id,
+                stepName: 'approval',
+                type: PauseType.WEBHOOK,
+                version: 'V0',
+            })
+
+            const otherCtx = await createTestContext(app)
+            await waitpointService(app.log).deleteByFlowRunId({ flowRunId: flowRun.id, projectId: otherCtx.project.id })
+
+            const stillThere = await db.findOneBy('waitpoint', { flowRunId: flowRun.id })
+            expect(stillThere).not.toBeNull()
+        })
     })
 
     describe('getByFlowRunId', () => {
         it('should return null when no waitpoint exists', async () => {
-            const result = await waitpointService(app.log).getByFlowRunId(apId())
+            const result = await waitpointService(app.log).getByFlowRunId({ flowRunId: apId(), projectId: ctx.project.id })
             expect(result).toBeNull()
         })
 
@@ -374,15 +406,33 @@ describe('Waitpoint service', () => {
 
             await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
                 version: 'V0',
             })
 
-            const result = await waitpointService(app.log).getByFlowRunId(flowRun.id)
+            const result = await waitpointService(app.log).getByFlowRunId({ flowRunId: flowRun.id, projectId: ctx.project.id })
             expect(result).not.toBeNull()
             expect(result!.flowRunId).toBe(flowRun.id)
+        })
+
+        it('should not return a waitpoint belonging to another project', async () => {
+            const { flowRun } = await createFlowRun()
+
+            await waitpointService(app.log).createForPause({
+                flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
+                projectId: ctx.project.id,
+                stepName: 'approval',
+                type: PauseType.WEBHOOK,
+                version: 'V0',
+            })
+
+            const otherCtx = await createTestContext(app)
+            const result = await waitpointService(app.log).getByFlowRunId({ flowRunId: flowRun.id, projectId: otherCtx.project.id })
+            expect(result).toBeNull()
         })
     })
 
@@ -392,6 +442,7 @@ describe('Waitpoint service', () => {
 
             const pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -453,6 +504,7 @@ describe('Waitpoint service', () => {
 
             const pauseResult = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -482,6 +534,7 @@ describe('Waitpoint service', () => {
 
             const pause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -555,6 +608,7 @@ describe('Waitpoint service', () => {
 
             await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -584,6 +638,7 @@ describe('Waitpoint service', () => {
 
             const delayPause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'delay_step',
                 type: PauseType.DELAY,
@@ -593,9 +648,10 @@ describe('Waitpoint service', () => {
             const staleWaitpointId = delayPause.waitpoint.id
 
             // Simulate: delay resolved early, flow continued and paused on approval (new waitpoint)
-            await waitpointService(app.log).deleteByFlowRunId(flowRun.id)
+            await waitpointService(app.log).deleteByFlowRunId({ flowRunId: flowRun.id, projectId: ctx.project.id })
             const approvalPause = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval_step',
                 type: PauseType.WEBHOOK,
@@ -629,6 +685,7 @@ describe('Waitpoint service', () => {
 
             const pauseResult = await waitpointService(app.log).createForPause({
                 flowRunId: flowRun.id,
+                callerRunId: flowRun.id,
                 projectId: ctx.project.id,
                 stepName: 'approval',
                 type: PauseType.WEBHOOK,
@@ -665,7 +722,7 @@ describe('Waitpoint service', () => {
                 workerHandlerId: null,
             })
 
-            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, version: 'V0' })
+            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, projectId: ctx.project.id, version: 'V0' })
             expect(result).not.toBeNull()
             expect(result!.flowRunId).toBe(flowRun.id)
             expect(result!.version).toBe('V0')
@@ -686,7 +743,7 @@ describe('Waitpoint service', () => {
                 workerHandlerId: null,
             })
 
-            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, version: 'V0' })
+            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, projectId: ctx.project.id, version: 'V0' })
             expect(result).toBeNull()
         })
 
@@ -705,8 +762,74 @@ describe('Waitpoint service', () => {
                 workerHandlerId: null,
             })
 
-            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, version: 'V0' })
+            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, projectId: ctx.project.id, version: 'V0' })
             expect(result).toBeNull()
+        })
+
+        it('should not return a pending V0 waitpoint belonging to another project', async () => {
+            const { flowRun } = await createFlowRun()
+
+            await db.save('waitpoint', {
+                id: apId(),
+                flowRunId: flowRun.id,
+                projectId: ctx.project.id,
+                stepName: 'approval',
+                type: 'WEBHOOK',
+                version: 'V0',
+                status: 'PENDING',
+                httpRequestId: null,
+                workerHandlerId: null,
+            })
+
+            const otherCtx = await createTestContext(app)
+            const result = await waitpointService(app.log).findPendingByVersion({ flowRunId: flowRun.id, projectId: otherCtx.project.id, version: 'V0' })
+            expect(result).toBeNull()
+        })
+    })
+
+    describe('hasAnyWaitpoint', () => {
+        it('should return false when no waitpoint exists', async () => {
+            const result = await waitpointService(app.log).hasAnyWaitpoint({ flowRunId: apId(), projectId: ctx.project.id })
+            expect(result).toBe(false)
+        })
+
+        it('should return true regardless of waitpoint status or version', async () => {
+            const { flowRun } = await createFlowRun()
+
+            await db.save('waitpoint', {
+                id: apId(),
+                flowRunId: flowRun.id,
+                projectId: ctx.project.id,
+                stepName: 'approval',
+                type: 'WEBHOOK',
+                version: 'V1',
+                status: 'COMPLETED',
+                httpRequestId: null,
+                workerHandlerId: null,
+            })
+
+            const result = await waitpointService(app.log).hasAnyWaitpoint({ flowRunId: flowRun.id, projectId: ctx.project.id })
+            expect(result).toBe(true)
+        })
+
+        it('should not count a waitpoint belonging to another project', async () => {
+            const { flowRun } = await createFlowRun()
+
+            await db.save('waitpoint', {
+                id: apId(),
+                flowRunId: flowRun.id,
+                projectId: ctx.project.id,
+                stepName: 'approval',
+                type: 'WEBHOOK',
+                version: 'V0',
+                status: 'PENDING',
+                httpRequestId: null,
+                workerHandlerId: null,
+            })
+
+            const otherCtx = await createTestContext(app)
+            const result = await waitpointService(app.log).hasAnyWaitpoint({ flowRunId: flowRun.id, projectId: otherCtx.project.id })
+            expect(result).toBe(false)
         })
     })
 })
