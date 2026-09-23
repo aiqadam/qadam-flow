@@ -40,8 +40,12 @@ export function ChatProjectPicker({
     return null;
   }
 
+  // A locked conversation with no project lost it to a deletion (the FK is ON DELETE SET NULL);
+  // naming the default there would claim a project the server will refuse to run in.
   const selectedProject = isNil(projectId)
-    ? defaultProject
+    ? locked
+      ? undefined
+      : defaultProject
     : projects.find((project) => project.id === projectId);
   const label = isNil(selectedProject)
     ? t('Project')

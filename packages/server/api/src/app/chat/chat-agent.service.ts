@@ -464,7 +464,8 @@ async function resolveProjectId({ conversation, log }: { conversation: ChatConve
     // (`projectService.getOneForUser`): their own personal project, and only then the first of the
     // list. `getAllForUser` orders by type then display name, so without this a user on a
     // multi-project platform silently gets whichever team project sorts first — and the choice is
-    // permanent, since nothing in this scope can repin a conversation.
+    // permanent once this run pins it, since a conversation can only be repinned while it is still
+    // empty (`repinProject`).
     const defaultProject = projects.find((project) => project.ownerId === conversation.userId && project.type === ProjectType.PERSONAL)
         ?? projects[0]
     if (isNil(defaultProject)) {

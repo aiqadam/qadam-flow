@@ -143,4 +143,12 @@ describe('ChatProjectPicker', () => {
     expect(combobox()?.textContent).toContain('Marketing');
     expect(combobox()?.disabled).toBe(true);
   });
+
+  it('does not name the default for a locked conversation whose project is gone', async () => {
+    projects = [personal, marketing];
+
+    await mountPicker({ projectId: null, locked: true });
+
+    expect(combobox()?.textContent).not.toContain('Personal Project');
+  });
 });

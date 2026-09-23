@@ -167,7 +167,9 @@ export type CreateChatConversationRequest = z.infer<typeof CreateChatConversatio
 export const UpdateChatConversationRequest = z.object({
     title: Nullable(z.string()).optional(),
     modelName: Nullable(z.string()).optional(),
-    projectId: Nullable(z.string()).optional(),
+    // Not nullable, unlike on create: clearing the pick would let a run that already resolved the
+    // old project pin it anyway, because `admitRun` cannot tell a cleared row from a fresh one.
+    projectId: z.string().optional(),
 })
 export type UpdateChatConversationRequest = z.infer<typeof UpdateChatConversationRequest>
 

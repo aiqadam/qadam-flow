@@ -1,4 +1,4 @@
-import { apId, ChatConversationStatus, DefaultProjectRole, PersistedChatPartType, PersistedChatRole, Project } from '@aiqadam/shared'
+import { apId, ChatConversationStatus, DefaultProjectRole, ErrorCode, PersistedChatPartType, PersistedChatRole, Project } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { chatConversationService } from '../../../../src/app/chat/chat-conversation.service'
@@ -230,6 +230,17 @@ describe('Chat conversations API', () => {
             expect(saved?.projectId).toBeNull()
         })
 
+        it('does not accept clearing the project of a conversation', async () => {
+            const project = await saveTeamProject(ctx.platform.id)
+            const conversation = await createConversation(ctx, { projectId: project.id })
+
+            const response = await ctx.post(`/v1/chat/conversations/${conversation['id']}`, { projectId: null })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const saved = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversation['id'] })
+            expect(saved?.projectId).toBe(project.id)
+        })
+
         it('refuses to repin a conversation that has already run', async () => {
             const id = await startedConversation()
             const project = await saveTeamProject(ctx.platform.id)
@@ -264,7 +275,9 @@ describe('Chat conversations API', () => {
                 runId: apId(),
                 log: app!.log,
                 userMessage: { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'hi' }] },
-            })).rejects.toThrow()
+            })).rejects.toMatchObject({
+                error: { code: ErrorCode.VALIDATION, params: { message: expect.stringContaining('changed while your message was being sent') } },
+            })
 
             const saved = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversation['id'] })
             expect(saved).toMatchObject({ projectId: project.id, status: ChatConversationStatus.IDLE, uiMessages: null })
