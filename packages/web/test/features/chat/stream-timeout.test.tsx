@@ -388,3 +388,57 @@ describe('the fallback poll after a stream ends with no reply', () => {
     expect(harness.state.getMessagesCalls).toBe(callsOnceAbandoned);
   });
 });
+
+describe('a run the server reports as failed', () => {
+  const REASON =
+    'The selected model does not support tool calling, which the assistant needs to work with your flows.';
+
+  it('keeps the reason on screen after the transcript is reconciled', async () => {
+    await mountChat();
+    await sendMessage();
+
+    harness.state.conversationStatus = 'ERROR';
+    emitChatEvent({
+      conversationId: 'conv-1',
+      type: ChatAgentEventType.ERROR,
+      data: { message: REASON, code: 'PROVIDER_TOOLS_NOT_SUPPORTED' },
+    });
+    await advance(10_000);
+
+    expect(chat?.error).toBe(REASON);
+    expect(chat?.isStreaming).toBe(false);
+  });
+
+  it('clears the reason when the next message is sent', async () => {
+    await mountChat();
+    await sendMessage();
+    harness.state.conversationStatus = 'ERROR';
+    emitChatEvent({
+      conversationId: 'conv-1',
+      type: ChatAgentEventType.ERROR,
+      data: { message: REASON },
+    });
+    await advance(100);
+
+    harness.state.conversationStatus = 'STREAMING';
+    await sendMessage();
+
+    expect(chat?.error).toBeNull();
+  });
+
+  // A dropped socket or this side's own timeout ends the stream but not the run; the poll is about
+  // to show the answer, so an error left next to it would be a false alarm.
+  it('withdraws the error when the run turns out to be still going', async () => {
+    await mountChat();
+    await sendMessage();
+
+    emitChatEvent({
+      conversationId: 'conv-1',
+      type: ChatAgentEventType.ERROR,
+      data: { message: 'the socket dropped' },
+    });
+    await advance(100);
+
+    expect(chat?.error).toBeNull();
+  });
+});
