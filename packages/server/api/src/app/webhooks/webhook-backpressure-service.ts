@@ -30,7 +30,10 @@ const DEFAULT_SLOTS_PER_WORKER = 1
  */
 export const webhookBackpressureService = (log: FastifyBaseLogger) => ({
     async checkCapacity(): Promise<BackpressureResult> {
-        const enabled = system.getBoolean(AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_ENABLED) ?? true
+        // No `?? true` fallback: SYNC_WEBHOOK_BACKPRESSURE_ENABLED already has a hardcoded
+        // default of 'true' in systemPropDefaultValues (system.ts), so getBoolean never actually
+        // resolves to undefined here.
+        const enabled = system.getBoolean(AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_ENABLED)
         if (!enabled) {
             return { ok: true }
         }

@@ -316,7 +316,11 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 span.setAttribute('webhook.backpressureRejected', true)
                 return {
                     status: StatusCodes.SERVICE_UNAVAILABLE,
-                    body: { message: 'The instance is at capacity for synchronous webhook runs and this one would not start in time. Retry after the given delay, or switch this webhook to async.' },
+                    // Budget-neutral: this instance refuses the run before it is even created, so the
+                    // message must hold regardless of the caller's own wait budget — the default
+                    // AP_WEBHOOK_TIMEOUT_SECONDS for a plain sync webhook, or a longer override such as
+                    // MCP's 5-minute budget.
+                    body: { message: 'The instance is at capacity for synchronous webhook runs and this one would not start before its caller stops waiting. Retry after the given delay, or switch this webhook to async.' },
                     headers: { 'Retry-After': String(capacity.retryAfterSeconds) },
                 }
             }

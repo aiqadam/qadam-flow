@@ -11,6 +11,11 @@ export type JobContext = {
     apiClient: WorkerToApiContract
     sandboxManager: SandboxManager
     jobId: string
+    // BullMQ's own delivery counter for this job (`Job.attemptsMade`, surfaced as
+    // `ConsumeJobRequest.attempsStarted` by the broker) — 0 on the very first delivery, 1+ on a
+    // retry or a stalled-job re-delivery. Handlers use it to gate a check that must only ever run
+    // once per job, not once per delivery (#510).
+    attemptsStarted: number
     engineToken: string
     internalApiUrl: string
     publicApiUrl: string

@@ -2,6 +2,7 @@ import { FlowStatus, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import * as flowRunServiceModule from '../../../../src/app/flows/flow-run/flow-run-service'
+import * as webhookBackpressureServiceModule from '../../../../src/app/webhooks/webhook-backpressure-service'
 import * as engineResponseWatcherModule from '../../../../src/app/workers/engine-response-watcher'
 import { createHandlers } from '../../../../src/app/workers/rpc/worker-rpc-service'
 import { generateMockToken } from '../../../helpers/auth'
@@ -518,6 +519,54 @@ describe('Webhook Service', () => {
         finally {
             flowRunServiceSpy.mockRestore()
             watcherSpy.mockRestore()
+        }
+    })
+
+    it('refuses a sync webhook with 503 and a Retry-After header when the instance is saturated (#510)', async () => {
+        const { mockProject, mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+        const mockFlow = createMockFlow({
+            projectId: mockProject.id,
+            status: FlowStatus.ENABLED,
+        })
+        await db.save('flow', [mockFlow])
+        const mockFlowVersion = createMockFlowVersion({
+            flowId: mockFlow.id,
+        })
+        await db.save('flow_version', [mockFlowVersion])
+        await db.update('flow', mockFlow.id, {
+            publishedVersionId: mockFlowVersion.id,
+        })
+        const mockToken = await generateMockToken({
+            type: PrincipalType.USER,
+            platform: {
+                id: mockPlatform.id,
+            },
+            id: mockOwner.id,
+        })
+
+        // Real saturation needs 40+ concurrent callers against a live worker registry — impractical
+        // in this suite. Stubbing checkCapacity() directly exercises the same contract handleSync
+        // relies on without needing a real worker or a real backlog.
+        const backpressureSpy = vi.spyOn(webhookBackpressureServiceModule, 'webhookBackpressureService')
+            .mockReturnValue({
+                checkCapacity: vi.fn().mockResolvedValue({ ok: false, retryAfterSeconds: 7 }),
+            })
+
+        try {
+            const response = await app?.inject({
+                method: 'POST',
+                url: `/api/v1/webhooks/${mockFlow.id}/sync`,
+                headers: {
+                    authorization: `Bearer ${mockToken}`,
+                },
+                body: { test: true },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.SERVICE_UNAVAILABLE)
+            expect(response?.headers['retry-after']).toBe('7')
+        }
+        finally {
+            backpressureSpy.mockRestore()
         }
     })
 })

@@ -34,6 +34,11 @@ function numberValidator(value: string | undefined) {
     return isValid ? true : 'Value must be a valid number'
 }
 
+function positiveIntegerValidator(value: string | undefined) {
+    const isValid = !isNil(value) && Number.isInteger(Number(value)) && Number(value) > 0
+    return isValid ? true : 'Value must be a positive integer'
+}
+
 function stringValidator(value: string) {
     const isValid = typeof value === 'string' && value.length > 0
     return isValid ? true : 'Value must be a non-empty string'
@@ -72,7 +77,7 @@ const systemPropValidators: {
     [AppSystemProp.SENTRY_DSN]: urlValidator,
     [AppSystemProp.RUNS_METADATA_UPDATE_CONCURRENCY]: numberValidator,
     [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_ENABLED]: booleanValidator,
-    [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS]: numberValidator,
+    [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS]: positiveIntegerValidator,
     [AppSystemProp.LOKI_PASSWORD]: stringValidator,
     [AppSystemProp.LOKI_URL]: urlValidator,
     [AppSystemProp.LOKI_USERNAME]: stringValidator,

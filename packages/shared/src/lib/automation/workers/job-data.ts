@@ -119,11 +119,13 @@ const ExecuteFlowJobDataCommon = z.object({
     logsFileId: z.string(),
     traceContext: z.record(z.string(), z.string()).optional(),
     // Set only for a sync webhook's initial BEGIN dispatch (webhook.service.ts#handleSync), to the
-    // ISO instant `AP_WEBHOOK_TIMEOUT_SECONDS` (or a per-call override) after acceptance — the same
-    // deadline the sync HTTP caller itself is bound by. A worker that dequeues the job after this
+    // ISO instant `AP_WEBHOOK_TIMEOUT_SECONDS` (or a per-call override, e.g. MCP's longer budget) after
+    // acceptance — the same deadline the sync HTTP caller itself is bound by. That includes
+    // `/:flowId/draft/sync` and MCP's `returnsResponse` path, which both go through `handleSync` too:
+    // there is no test/draft exemption. A worker that dequeues the job's first delivery after this
     // instant has passed fails it explicitly (FlowRunStatus.FAILED) instead of executing a run its
     // caller has already stopped waiting for (#510). Absent for every other dispatch path (retry,
-    // async webhook, manual trigger, test run), which carry no such caller deadline.
+    // async webhook, manual trigger), which carry no such caller deadline.
     syncDeadline: z.string().optional(),
 })
 
