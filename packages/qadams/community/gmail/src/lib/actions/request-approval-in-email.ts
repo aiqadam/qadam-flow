@@ -13,6 +13,7 @@ import { assertNotNullOrUndefined, ExecutionType } from '@aiqadam/shared';
 export const requestApprovalInEmail = createAction({
   auth: gmailAuth,
   name: 'request_approval_in_mail',
+  pauses: true,
   displayName: 'Request Approval in Email',
   description:
     'Send approval request email and then wait until the email is approved or disapproved',

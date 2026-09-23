@@ -20,6 +20,18 @@ export const ErrorHandlingOptionsParam = z.object({
 })
 export type ErrorHandlingOptionsParam = z.infer<typeof ErrorHandlingOptionsParam>
 
+/**
+ * Declares that an action waits on a waitpoint (`ctx.run.waitForWaitpoint`) and so pauses the
+ * run. `true`: every execution pauses. `'conditional'`: whether it pauses depends on the step's
+ * configuration (a Delay above its in-process threshold, a Checkbox that asks to wait). Creating
+ * a waitpoint is not pausing — an action that calls `createWaitpoint` and returns must not
+ * declare this. The static pre-publish check (`ap_validate_flow`'s `inline_pause`) reads it to
+ * tell an author that an inline subflow cannot run this step (#426); `tools/ci/check-pause-markers.mjs`
+ * fails CI when a file that calls `waitForWaitpoint` defines an action without it.
+ */
+export const PauseBehaviour = z.union([z.literal(true), z.literal('conditional')])
+export type PauseBehaviour = z.infer<typeof PauseBehaviour>
+
 type CreateActionParams<QadamAuth extends QadamAuthProperty | QadamAuthProperty[] | undefined, ActionProps extends InputPropertyMap> = {
   /**
    * A dummy parameter used to infer {@code QadamAuth} type
@@ -39,6 +51,7 @@ type CreateActionParams<QadamAuth extends QadamAuthProperty | QadamAuthProperty[
   outputSchema?: OutputSchema
   audience?: Audience
   aiMetadata?: AiMetadata
+  pauses?: PauseBehaviour
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,6 +68,7 @@ export class IAction<QadamAuth extends QadamAuthProperty | QadamAuthProperty[] |
     public readonly outputSchema?: OutputSchema,
     public readonly audience?: Audience,
     public readonly aiMetadata?: AiMetadata,
+    public readonly pauses?: PauseBehaviour,
   ) { }
 }
 
@@ -90,5 +104,6 @@ export const createAction = <
     params.outputSchema,
     params.audience,
     params.aiMetadata,
+    params.pauses,
   )
 }

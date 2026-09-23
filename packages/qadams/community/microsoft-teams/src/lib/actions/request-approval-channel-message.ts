@@ -11,6 +11,7 @@ import { ChatMessage } from '@microsoft/microsoft-graph-types';
 export const requestApprovalInChannel = createAction({
   auth: microsoftTeamsAuth,
   name: 'request_approval_in_channel',
+  pauses: true,
   displayName: 'Request Approval in Channel',
   description: 'Send approval message to a channel and then wait until the message is approved or disapproved',
   audience: 'both',

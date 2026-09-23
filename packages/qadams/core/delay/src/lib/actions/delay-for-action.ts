@@ -16,6 +16,8 @@ enum TimeUnit {
 
 export const delayForAction = createAction({
   name: 'delayFor',
+  // Pauses only above the in-process threshold in `run`; below it the engine sleeps in place.
+  pauses: 'conditional',
   displayName: 'Delay For',
   description: 'Delays the execution of the next action for a given duration',
   errorHandlingOptions: {

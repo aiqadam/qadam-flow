@@ -5,6 +5,7 @@ import { markdownDescription } from '../common';
 
 export const delayUntilAction = createAction({
   name: 'delay_until',
+  pauses: true,
   displayName: 'Delay Until',
   description:
     'Delays the execution of the next action until a given timestamp',

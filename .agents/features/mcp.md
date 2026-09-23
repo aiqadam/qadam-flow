@@ -54,7 +54,9 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
   issue categories: `step_validity`, `qadam_version` (a pinned qadam version this installation
   cannot resolve, #432), `template_reference`, `empty_branch`, and — since #391 — `subflow_payload`
   (a `callFlow` step calling a child with no arguments) and `inline_pause` (an
-  `executionMode: "inline"` step whose callee can pause, found by walking the call graph).
+  `executionMode: "inline"` step whose callee can pause, found by walking the call graph and
+  reading each action's `pauses` marker off its pinned metadata — #426; see
+  [inline-subflows.md](./inline-subflows.md) for the frozen pre-marker fallback).
 - `ap_research_pieces`, `ap_get_piece_props` — piece discovery and schema
 - `ap_resolve_property_options`, `ap_resolve_property_chain` — dropdown/property resolution
 - `ap_list_connections` — list app connections
