@@ -26,6 +26,8 @@ const RESOLVABLE_PROP_TYPES = new Set<PropertyType>([
 
 const LOG_INPUT_HINT = 'Whether this step\'s input is written to the run log. Defaults to true. Set false when the input carries personal or secret data: the persisted log shows **REDACTED** while the step still runs on the real value.'
 const LOG_OUTPUT_HINT = 'Whether this step\'s output is written to the run log. Defaults to true. Set false when the output carries personal or secret data (e.g. tables-update-record returns the whole row): the persisted log shows **REDACTED** while the value still flows to the next step.'
+// Mirrors the engine's FILE processor (#388): anything else fails the step at run time.
+const FILE_VALUE_HINT = 'FILE — pass an http(s) URL (e.g. {{step_1[\'output\'].file}}) or a data:<mime>;base64,<data> URI. Objects and bare base64 are rejected.'
 const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].message}}.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
@@ -168,6 +170,9 @@ function buildPropSummaries(props: QadamPropertyMap, depth = 0): PropSummary[] {
             }
             if (prop.type === PropertyType.DYNAMIC) {
                 summary.note = 'DYNAMIC — call ap_get_piece_props with auth+input to resolve sub-fields.'
+            }
+            if (prop.type === PropertyType.FILE) {
+                summary.note = FILE_VALUE_HINT
             }
             if (prop.type === PropertyType.ARRAY && 'properties' in prop && isObject(prop.properties) && depth < MAX_PROP_DEPTH) {
                 const arraySubProps: QadamPropertyMap = prop.properties

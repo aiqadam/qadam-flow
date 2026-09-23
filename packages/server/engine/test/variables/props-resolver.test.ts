@@ -1,5 +1,5 @@
 import { createServer, Server } from 'http'
-import { ApFile, LATEST_CONTEXT_VERSION, QadamAuth, Property } from '@aiqadam/qadams-framework'
+import { ApFile, LATEST_CONTEXT_VERSION, Property, QadamAuth } from '@aiqadam/qadams-framework'
 import { AppConnectionStatus, FlowActionType, FlowTriggerType, formulaEvaluator, GenericStepOutput, PropertyExecutionType, PropertySettings, StepOutputStatus } from '@aiqadam/shared'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { StepExecutionPath } from '../../src/lib/handler/context/step-execution-path'
@@ -73,7 +73,9 @@ const buildStateWithFailedStep = (stepName: string, message: string) =>
 
 
 describe('Props resolver', () => {
-
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
 
     test('Test resolve inside nested loops', async () => {
 
@@ -437,7 +439,7 @@ describe('Props resolver', () => {
 
     test('error channel exposes the failure message via bracket path', async () => {
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_4['error']['message']}}",
+            unresolvedInput: '{{step_4[\'error\'][\'message\']}}',
             executionState: await buildStateWithFailedStep('step_4', 'Custom Runtime Error'),
         })
         expect(resolvedInput).toEqual('Custom Runtime Error')
@@ -499,7 +501,7 @@ describe('Props resolver', () => {
             iteration: 0,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_8['error']['message']}}",
+            unresolvedInput: '{{step_8[\'error\'][\'message\']}}',
             executionState: stateWithLoopFailure,
         })
         expect(resolvedInput).toEqual('inner failure')
@@ -520,7 +522,7 @@ describe('Props resolver', () => {
             ],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0]['cells']['1eS2ijJLdyl7YPvLZLdl9']['value']}}",
+            unresolvedInput: '{{step_1[\'output\'][0][\'cells\'][\'1eS2ijJLdyl7YPvLZLdl9\'][\'value\']}}',
             executionState: stateWithTablesOutput,
         })
         expect(resolvedInput).toEqual('hello')
@@ -541,7 +543,7 @@ describe('Props resolver', () => {
             ],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0].cells.1eS2ijJLdyl7YPvLZLdl9.value}}",
+            unresolvedInput: '{{step_1[\'output\'][0].cells.1eS2ijJLdyl7YPvLZLdl9.value}}',
             executionState: stateWithTablesOutput,
         })
         expect(resolvedInput).toEqual('dotfail')
@@ -562,7 +564,7 @@ describe('Props resolver', () => {
             ],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0].cells['1eS2ijJLdyl7YPvLZLdl9'].value}}",
+            unresolvedInput: '{{step_1[\'output\'][0].cells[\'1eS2ijJLdyl7YPvLZLdl9\'].value}}',
             executionState: stateWithTablesOutput,
         })
         expect(resolvedInput).toEqual('world')
@@ -599,7 +601,7 @@ describe('Props resolver', () => {
             iteration: 0,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_3['output']['item']['a']}}",
+            unresolvedInput: '{{step_3[\'output\'][\'item\'][\'a\']}}',
             executionState: stateInsideLoop,
         })
         expect(resolvedInput).toEqual(42)
@@ -613,7 +615,7 @@ describe('Props resolver', () => {
             output: null,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output']}}",
+            unresolvedInput: '{{step_1[\'output\']}}',
             executionState: stateWithNullOutput,
         })
         expect(resolvedInput).toEqual('')
@@ -627,7 +629,7 @@ describe('Props resolver', () => {
             output: 42,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output']}}",
+            unresolvedInput: '{{step_1[\'output\']}}',
             executionState: stateWithPrimitive,
         })
         expect(resolvedInput).toEqual(42)
@@ -641,7 +643,7 @@ describe('Props resolver', () => {
             output: ['a', 'b', 'c'],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0]}}",
+            unresolvedInput: '{{step_1[\'output\'][0]}}',
             executionState: stateWithArray,
         })
         expect(resolvedInput).toEqual('a')
@@ -830,19 +832,20 @@ describe('Props resolver', () => {
                 required: true,
             }),
         }
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
         expect(processedInput).toEqual({
             base64: null,
             base64WithMime: new ApFile('unknown.png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAiAAAAC4CAYAAADaI1cbAAA0h0lEQVR4AezdA5AlPx7A8Zxt27Z9r5PB2SidWTqbr26S9Hr/tm3btu3723eDJD3r15ec17vzXr+Z', 'base64'), 'png'),
         })
         expect(errors).toEqual({
             'base64': [
-                'Expected file url or base64 with mimeType, received: iVBORw0KGgoAAAANSUhEUgAAAiAAAAC4CAYAAADaI1cbAAA0h0lEQVR4AezdA5AlPx7A8Zxt27Z9r5PB2SidWTqbr26S9Hr/tm3btu3723eDJD3r15ec17vzXr+Z',
+                'Expected a file as an http(s) URL or a data:<mime>;base64,<data> URI, received: "iVBORw0KGgoAAAANSUhEUgAAAiAAAAC4CAYAAADa…"',
             ],
         })
     })
 
     it('should resolve files inside the array properties', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<svg/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } }))
         const input = {
             documents: [
                 {
@@ -863,7 +866,7 @@ describe('Props resolver', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
         expect(processedInput.documents[0].file).toBeDefined()
         expect(processedInput.documents[0].file.extension).toBe('svg')
         expect(processedInput.documents[0].file.filename).toBe('logo.svg')
@@ -893,19 +896,20 @@ describe('Props resolver', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
         expect(processedInput.documents[0].file).toBeNull()
         expect(errors).toEqual({
             'documents': {
                 properties: [{
                     file: [
-                        'Expected file url or base64 with mimeType, received: invalid-url',
+                        'Expected a file as an http(s) URL or a data:<mime>;base64,<data> URI, received: "invalid-url"',
                     ],
                 }],
             },
         })
     })
     it('should return images for image url', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<svg/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } }))
         const input = {
             file: 'https://flow.aiqadam.org/assets/logo.svg?token=123',
         }
@@ -916,15 +920,15 @@ describe('Props resolver', () => {
             }),
 
         }
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
         expect(processedInput.file).toBeDefined()
         expect(processedInput.file.extension).toBe('svg')
         expect(processedInput.file.filename).toBe('logo.svg')
         expect(errors).toEqual({})
     })
 
-    // Test with invalid url
     it('should return error for invalid data', async () => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } }))
         const input = {
             file: 'https://google.com',
             nullFile: null,
@@ -944,7 +948,7 @@ describe('Props resolver', () => {
                 required: false,
             }),
         }
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
 
         expect(processedInput.file).toBeDefined()
         expect(processedInput.file.extension).toBe('html')
@@ -954,7 +958,7 @@ describe('Props resolver', () => {
 
         expect(errors).toEqual({
             'nullFile': [
-                'Expected file url or base64 with mimeType, received: null',
+                'Expected a file as an http(s) URL or a data:<mime>;base64,<data> URI, received: null',
             ],
         })
     })
@@ -968,20 +972,26 @@ describe('Props resolver', () => {
             },
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, {
-            price: Property.Number({
-                displayName: 'Price',
-                required: true,
-            }),
-        }, QadamAuth.CustomAuth({
-            required: true,
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({
+            resolvedInput: input,
             props: {
-                age: Property.Number({
-                    displayName: 'age',
+                price: Property.Number({
+                    displayName: 'Price',
                     required: true,
                 }),
             },
-        }), true, {})
+            auth: QadamAuth.CustomAuth({
+                required: true,
+                props: {
+                    age: Property.Number({
+                        displayName: 'age',
+                        required: true,
+                    }),
+                },
+            }),
+            requireAuth: true,
+            propertySettings: {},
+        })
 
         expect(processedInput).toEqual({
             auth: {
@@ -1002,10 +1012,16 @@ describe('Props resolver', () => {
                 required: true,
             }),
         }
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.CustomAuth({
-            required: true,
-            props: {},
-        }), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({
+            resolvedInput: input,
+            props,
+            auth: QadamAuth.CustomAuth({
+                required: true,
+                props: {},
+            }),
+            requireAuth: false,
+            propertySettings: {},
+        })
 
         expect(processedInput).toEqual({
             price: 0,
@@ -1056,7 +1072,7 @@ describe('Props resolver', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, propertySettings)
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings })
 
         expect(processedInput.dynamicProp.items).toEqual([
             { id: 1, name: 'Item 1' },
@@ -1092,7 +1108,7 @@ describe('Array Flatter Processor', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
 
         expect(processedInput.items).toEqual([
             { id: 1, name: 'Item 1' },
@@ -1125,7 +1141,7 @@ describe('Array Flatter Processor', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
 
         expect(processedInput.items).toEqual([
             { id: 1, name: 'Single Item' },
@@ -1158,7 +1174,7 @@ describe('Array Flatter Processor', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
 
         expect(processedInput.items).toEqual([
             { id: 1, name: 'Item 1' },
@@ -1192,7 +1208,7 @@ describe('Array Flatter Processor', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
 
         expect(processedInput.items).toEqual([
             { id: '123', name: 'Item Name' },
@@ -1225,7 +1241,7 @@ describe('Array Flatter Processor', () => {
             }),
         }
 
-        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators(input, props, QadamAuth.None(), false, {})
+        const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({ resolvedInput: input, props, auth: QadamAuth.None(), requireAuth: false, propertySettings: {} })
 
         expect(processedInput.items).toEqual([
             { id: '1', name: 'item1' },

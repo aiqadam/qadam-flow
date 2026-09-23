@@ -1,3 +1,4 @@
+import { Property } from '@aiqadam/qadams-framework'
 import { describe, expect, it } from 'vitest'
 import { mcpUtils } from '../../../../src/app/mcp/tools/mcp-utils'
 
@@ -129,5 +130,30 @@ describe('mcpUtils.wrapTruncatedUntrustedValue — the truncation marker must st
         const result = mcpUtils.wrapTruncatedUntrustedValue({ value: long, max: 5 })
         expect(result.endsWith('... (truncated)')).toBe(true)
         expect(result).toBe(`⟦${'x'.repeat(5)}⟧... (truncated)`)
+    })
+})
+
+// #388: the engine accepts a FILE only as an http(s) URL or a data URI, and fails the step on
+// anything else. The summary is the one place an MCP client learns that before it runs the flow,
+// and it must reach FILE fields nested inside ARRAY items, which is where form uploads live.
+describe('mcpUtils.buildPropSummaries — FILE props say which values the engine accepts', () => {
+    it('notes the accepted forms on a top-level FILE and on one nested in an ARRAY', () => {
+        const summaries = mcpUtils.buildPropSummaries({
+            attachment: Property.File({ displayName: 'Attachment', required: true }),
+            parts: Property.Array({
+                displayName: 'Parts',
+                required: false,
+                properties: {
+                    file: Property.File({ displayName: 'File', required: false }),
+                },
+            }),
+        })
+
+        const attachment = summaries.find((summary) => summary.name === 'attachment')
+        const nested = summaries.find((summary) => summary.name === 'parts')?.items?.find((summary) => summary.name === 'file')
+        for (const summary of [attachment, nested]) {
+            expect(summary?.note).toContain('http(s) URL')
+            expect(summary?.note).toContain('data:<mime>;base64,<data>')
+        }
     })
 })
