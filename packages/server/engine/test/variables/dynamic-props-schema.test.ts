@@ -1,5 +1,5 @@
-import { ApFile, Property, PropertyContext, QadamAuth } from '@aiqadam/qadams-framework'
-import { PropertyExecutionType, PropertySettings } from '@aiqadam/shared'
+import { ApFile, InputPropertyMap, Property, PropertyContext, QadamAuth } from '@aiqadam/qadams-framework'
+import { EngineGenericError, PropertyExecutionType, PropertySettings } from '@aiqadam/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { propsProcessor } from '../../src/lib/variables/props-processor'
 
@@ -132,6 +132,23 @@ describe('propsProcessor — DYNAMIC props without a stored schema', () => {
         expect(String(logged.mock.calls[0]?.[0])).toContain('[Engine#')
     })
 
+    // Same contract as executeProps: an ENGINE error is a bug and must page, not be passed over.
+    it('rethrows an ENGINE ExecutionError from props()', async () => {
+        const engineError = new EngineGenericError('BrokenEngine', 'engine bug')
+        const propsFn = vi.fn(async () => {
+            throw engineError
+        })
+
+        await expect(propsProcessor.applyProcessorsAndValidators({
+            resolvedInput: { media: { photo: 'data:image/png;base64,aGVsbG8=' } },
+            props: buildProps(propsFn),
+            auth: QadamAuth.None(),
+            requireAuth: false,
+            propertySettings: {},
+            propertyContext: PROPERTY_CONTEXT,
+        })).rejects.toBe(engineError)
+    })
+
     it('reports a nested validation error for a non-FILE sub-field', async () => {
         const propsFn = vi.fn(async () => ({
             count: Property.Number({ displayName: 'Count', required: true }),
@@ -171,7 +188,7 @@ describe('propsProcessor — DYNAMIC props without a stored schema', () => {
         expect(processedInput.media.photo).toBeNull()
         expect(errors).toEqual({
             media: {
-                photo: ['Failed to download file from https://files.example.com/v1/files/abc: HTTP 401'],
+                photo: ['Failed to download file from https://files.example.com/…/abc: HTTP 401'],
             },
         })
         expect(JSON.stringify(errors)).not.toContain('secret-jwt')
@@ -212,7 +229,7 @@ describe('propsProcessor — DYNAMIC props without a stored schema', () => {
     })
 })
 
-function buildProps(propsFn: () => Promise<Record<string, unknown>>) {
+function buildProps(propsFn: () => Promise<InputPropertyMap>): InputPropertyMap {
     return {
         media: Property.DynamicProperties({
             auth: undefined,

@@ -19,6 +19,11 @@ export const fileProcessor: ProcessorFn = async (_property, value) => {
     if (isNil(url)) {
         throw new PropertyProcessingError({ message: `Expected a file as ${FILE_VALUE_FORMS}, received: "${previewString(value)}"` })
     }
+    // fetch refuses such a URL anyway, and its error message echoes the whole href — password
+    // included — into the step error, which is persisted and shown to anyone who can open the run.
+    if (url.username !== '' || url.password !== '') {
+        throw new PropertyProcessingError({ message: 'A file URL must not embed credentials (user:password@host); put them in a header or a signed URL instead' })
+    }
     return downloadFile(url)
 }
 
@@ -44,8 +49,7 @@ function parseHttpUrl(value: string): URL | null {
 }
 
 async function downloadFile(url: URL): Promise<ApFile> {
-    // Platform file URLs carry `?token=<JWT>`; the query never belongs in a step error.
-    const location = `${url.origin}${url.pathname}`
+    const location = describeLocation(url)
     const { data: response, error: fetchError } = await tryCatch(() => fetch(url))
     if (isNil(response)) {
         throw new PropertyProcessingError({ message: `Failed to download file from ${location}: ${describeFetchError({ error: fetchError, url })}`, cause: fetchError })
@@ -71,12 +75,32 @@ async function downloadFile(url: URL): Promise<ApFile> {
     )
 }
 
+// A step error is persisted and shown to anyone who can open the run, and a file URL is a bearer
+// credential in more places than its query: platform file URLs carry `?token=<JWT>`, and Telegram's
+// are `api.telegram.org/file/bot<token>/<path>`. Only the origin and the file name survive.
+function describeLocation(url: URL): string {
+    const segments = url.pathname.split('/').filter((segment) => segment.length > 0)
+    const lastSegment = segments[segments.length - 1] ?? ''
+    return `${url.origin}${segments.length > 1 ? '/…/' : '/'}${lastSegment}`
+}
+
 // undici reports every network failure as `TypeError: fetch failed` and keeps the reason
-// (ECONNREFUSED, ENOTFOUND, an SSRF block) on `cause`.
+// (ECONNREFUSED, ENOTFOUND, an SSRF block) on `cause`. Either may quote the URL back.
 function describeFetchError({ error, url }: { error: unknown, url: URL }): string {
     const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error
     const message = cause instanceof Error ? cause.message : String(cause)
-    return url.search.length > 0 ? message.split(url.search).join('') : message
+    const location = describeLocation(url)
+    const withoutHref = replaceAll({ text: message, search: url.href, replacement: location })
+    const withoutPath = replaceAll({ text: withoutHref, search: `${url.origin}${url.pathname}`, replacement: location })
+    return scrubUserinfo(replaceAll({ text: withoutPath, search: url.search, replacement: '' }))
+}
+
+function replaceAll({ text, search, replacement }: { text: string, search: string, replacement: string }): string {
+    return search.length > 0 ? text.split(search).join(replacement) : text
+}
+
+function scrubUserinfo(text: string): string {
+    return text.replace(USERINFO_REGEX, '//')
 }
 
 function describeNonString(value: unknown): string {
@@ -90,7 +114,7 @@ function describeNonString(value: unknown): string {
 }
 
 function previewString(value: string): string {
-    const withoutQuery = value.split('?')[0]
+    const withoutQuery = scrubUserinfo(value.split('?')[0])
     return withoutQuery.length > PREVIEW_LENGTH ? `${withoutQuery.slice(0, PREVIEW_LENGTH)}…` : withoutQuery
 }
 
@@ -135,6 +159,8 @@ const DATA_URI_PREFIX = /^data:/i
 // `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and `;charset=utf-8` all match.
 const DATA_URI_REGEX = /^data:([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+)(?:;[A-Za-z0-9!#$&^_.+-]+=[^;,]*)*;base64,(.+)$/i
 const PREVIEW_LENGTH = 40
+// `scheme://user:password@host` → `scheme://host`, wherever a URL appears inside a message.
+const USERINFO_REGEX = /\/\/[^/\s@]*@/g
 
 const MIME_EXTENSIONS: Record<string, string> = {
     'application/json': 'json',

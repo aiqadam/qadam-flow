@@ -62,7 +62,7 @@ describe('fileProcessor', () => {
             vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"message":"unauthorized"}', { status: 401 }))
             const error = await captureError(fileProcessor(REQUIRED_FILE, 'https://api.example.com/v1/files/abc?token=eyJhbGciOiJIUzI1NiJ9.secret'))
             expect(error).toBeInstanceOf(PropertyProcessingError)
-            expect(error.message).toBe('Failed to download file from https://api.example.com/v1/files/abc: HTTP 401')
+            expect(error.message).toBe('Failed to download file from https://api.example.com/…/abc: HTTP 401')
             expect(error.message).not.toContain('eyJhbGciOiJIUzI1NiJ9')
         })
 
@@ -75,10 +75,38 @@ describe('fileProcessor', () => {
             expect(error.message).toBe('Failed to download file from https://files.invalid/a.png: getaddrinfo ENOTFOUND files.invalid')
         })
 
-        it('strips the query from a network error message that echoes the URL', async () => {
-            vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('connect failed for https://files.example.com/a.png?token=secret'))
-            const error = await captureError(fileProcessor(REQUIRED_FILE, 'https://files.example.com/a.png?token=secret'))
-            expect(error.message).not.toContain('token=secret')
+        it('scrubs a network error message that echoes the URL back', async () => {
+            const url = 'https://api.telegram.org/file/bot123456:SECRET-TOKEN/photos/file_1.jpg?token=secret-jwt'
+            vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError(`connect failed for ${url} (via https://proxy-user:proxy-pass@proxy.example.com/)`))
+            const error = await captureError(fileProcessor(REQUIRED_FILE, url))
+            expect(error.message).toBe('Failed to download file from https://api.telegram.org/…/file_1.jpg: connect failed for https://api.telegram.org/…/file_1.jpg (via https://proxy.example.com/)')
+        })
+
+        // Telegram's file URLs put the bot token in the path, not the query.
+        it('reports only the origin and the file name of the URL', async () => {
+            vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('gone', { status: 404 }))
+            const error = await captureError(fileProcessor(REQUIRED_FILE, 'https://api.telegram.org/file/bot123456:SECRET-TOKEN/photos/file_1.jpg'))
+            expect(error.message).toBe('Failed to download file from https://api.telegram.org/…/file_1.jpg: HTTP 404')
+            expect(error.message).not.toContain('SECRET-TOKEN')
+        })
+
+        // Node's fetch throws `Request cannot be constructed from a URL that includes credentials:
+        // <full href>` for these, with no cause, so the password would land in the step error.
+        it('rejects a URL with embedded credentials before fetching, without echoing them', async () => {
+            const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            for (const url of ['https://user:hunter2@files.example.com/a.png', 'https://hunter2@files.example.com/a.png']) {
+                const error = await captureError(fileProcessor(REQUIRED_FILE, url))
+                expect(error).toBeInstanceOf(PropertyProcessingError)
+                expect(error.message).toContain('must not embed credentials')
+                expect(error.message).not.toContain('hunter2')
+            }
+            expect(fetchSpy).not.toHaveBeenCalled()
+        })
+
+        it('scrubs credentials from the preview of a URL with an unsupported scheme', async () => {
+            const error = await captureError(fileProcessor(REQUIRED_FILE, 'ftp://user:hunter2@files.example.com/a.png'))
+            expect(error.message).toContain('received: "ftp://files.example.com/a.png"')
+            expect(error.message).not.toContain('hunter2')
         })
 
         it('does not accept schemes other than http(s)', async () => {

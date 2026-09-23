@@ -1,6 +1,7 @@
 import { ApFile, Property, TriggerStrategy } from '@aiqadam/qadams-framework'
 import { FlowTriggerType, FlowVersionState, TriggerHookType } from '@aiqadam/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ResolvedExecuteTriggerOperation } from '../../src/lib/handler/context/engine-constants'
 import { triggerHelper } from '../../src/lib/helper/trigger-helper'
 import { generateMockEngineConstants } from '../handler/test-helper'
 
@@ -11,7 +12,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../../src/lib/helper/qadam-loader', () => ({
     qadamLoader: {
-        getQadamAndTriggerOrThrow: async () => ({
+        getQadamAndTriggerOrThrow: async (): Promise<Record<string, unknown>> => ({
             qadam: { auth: undefined },
             qadamTrigger: {
                 type: TriggerStrategy.POLLING,
@@ -69,7 +70,7 @@ describe('triggerHelper.executeTrigger — DYNAMIC props without a stored schema
     })
 })
 
-function buildRunParams(input: Record<string, unknown>) {
+function buildRunParams(input: Record<string, unknown>): ResolvedExecuteTriggerOperation<TriggerHookType.RUN> {
     return {
         hookType: TriggerHookType.RUN,
         test: false,
@@ -79,16 +80,28 @@ function buildRunParams(input: Record<string, unknown>) {
         internalApiUrl: 'http://127.0.0.1:3000/',
         platformId: 'platformId',
         timeoutInSeconds: 10,
+        webhookUrl: 'http://127.0.0.1:4200/api/v1/webhooks/flowId',
         triggerPayload: {},
         flowVersion: {
             id: 'flowVersionId',
+            created: '2026-01-01T00:00:00.000Z',
+            updated: '2026-01-01T00:00:00.000Z',
             flowId: 'flowId',
+            displayName: 'Flow',
+            updatedBy: null,
+            valid: true,
+            schemaVersion: null,
+            agentIds: [],
             state: FlowVersionState.DRAFT,
+            connectionIds: [],
+            backupFiles: null,
+            notes: [],
             trigger: {
                 name: 'trigger',
                 type: FlowTriggerType.PIECE,
                 valid: true,
                 displayName: 'Trigger',
+                lastUpdatedDate: '2026-01-01T00:00:00.000Z',
                 settings: {
                     qadamName: '@aiqadam/qadam-test',
                     qadamVersion: '0.0.1',

@@ -1,5 +1,5 @@
 import { DynamicProperties, getAuthPropertyForValue, InputPropertyMap, PropertyContext, PropertyType, QadamAuthProperty, QadamProperty, QadamPropertyMap, StaticPropsValue } from '@aiqadam/qadams-framework'
-import { AppConnectionValue, AUTHENTICATION_PROPERTY_NAME, isNil, isObject, PropertySettings, tryCatch } from '@aiqadam/shared'
+import { AppConnectionValue, AUTHENTICATION_PROPERTY_NAME, ExecutionError, ExecutionErrorType, isNil, isObject, PropertySettings, tryCatch } from '@aiqadam/shared'
 import { processors } from './processors'
 import { arrayZipperProcessor } from './processors/array-zipper'
 import { FILE_VALUE_FORMS } from './processors/file'
@@ -16,7 +16,7 @@ export const propsProcessor = {
     }: ApplyProcessorsAndValidatorsParams): Promise<{ processedInput: StaticPropsValue<QadamPropertyMap>, errors: PropsValidationError }> => {
         const processedInput = { ...resolvedInput }
         const errors: PropsValidationError = {}
-        const processingErrors: Record<string, string[]> = {}
+        const processingErrors = new Map<string, string[]>()
         const authValue: AppConnectionValue | undefined = resolvedInput[AUTHENTICATION_PROPERTY_NAME]
         if (authValue && requireAuth) {
             const authPropsToProcess = getAuthPropsToProcess(authValue, auth)
@@ -35,7 +35,7 @@ export const propsProcessor = {
             }
         }
         for (const [key, value] of Object.entries(resolvedInput)) {
-            const property = props[key]
+            const property = getOwn({ record: props, key })
             if (isNil(property)) {
                 continue
             }
@@ -44,7 +44,7 @@ export const propsProcessor = {
                     key,
                     property,
                     value,
-                    storedSchema: propertySettings[key]?.schema,
+                    storedSchema: getOwn({ record: propertySettings, key })?.schema,
                     resolvedInput,
                     propertyContext,
                 })
@@ -90,7 +90,7 @@ export const propsProcessor = {
                 const { data: processedValue, error: processorError } = await tryCatch(async () => processor(property, processedInput[key]))
                 if (processorError instanceof PropertyProcessingError) {
                     processedInput[key] = null
-                    processingErrors[key] = [processorError.message]
+                    processingErrors.set(key, [processorError.message])
                 }
                 else if (!isNil(processorError)) {
                     throw processorError
@@ -102,12 +102,13 @@ export const propsProcessor = {
         }
 
         for (const [key, value] of Object.entries(processedInput)) {
-            const property = props[key]
+            const property = getOwn({ record: props, key })
             if (isNil(property)) {
                 continue
             }
-            if (!isNil(processingErrors[key])) {
-                errors[key] = processingErrors[key]
+            const processingError = processingErrors.get(key)
+            if (!isNil(processingError)) {
+                errors[key] = processingError
                 continue
             }
 
@@ -133,6 +134,10 @@ async function resolveDynamicSchema({ key, property, value, storedSchema, resolv
         return undefined
     }
     const { data: schema, error } = await tryCatch(() => property.props(resolvedInput, propertyContext))
+    if (error instanceof ExecutionError && error.type === ExecutionErrorType.ENGINE) {
+        // Same contract as executeProps' tryCatchAndThrowOnEngineError: an engine bug must page.
+        throw error
+    }
     if (!isNil(error)) {
         // Not a step failure: `props()` often calls the third-party API, and before #388 nothing
         // at run time depended on it succeeding. Marker-first so the engine redacts the error
@@ -141,6 +146,12 @@ async function resolveDynamicSchema({ key, property, value, storedSchema, resolv
         return undefined
     }
     return schema ?? undefined
+}
+
+// Keys come from the step's input — user data — so a bare index would resolve `constructor`,
+// `toString` or `__proto__` off Object.prototype and treat it as a declared property.
+function getOwn<T>({ record, key }: { record: Record<string, T>, key: string }): T | undefined {
+    return Object.hasOwn(record, key) ? record[key] : undefined
 }
 
 const validateProperty = (property: QadamProperty, value: unknown, originalValue: unknown): string[] => {

@@ -1,5 +1,5 @@
 import { createServer, Server } from 'http'
-import { ApFile, LATEST_CONTEXT_VERSION, QadamAuth, Property } from '@aiqadam/qadams-framework'
+import { ApFile, LATEST_CONTEXT_VERSION, Property, QadamAuth } from '@aiqadam/qadams-framework'
 import { AppConnectionStatus, FlowActionType, FlowTriggerType, formulaEvaluator, GenericStepOutput, PropertyExecutionType, PropertySettings, StepOutputStatus } from '@aiqadam/shared'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { StepExecutionPath } from '../../src/lib/handler/context/step-execution-path'
@@ -439,7 +439,7 @@ describe('Props resolver', () => {
 
     test('error channel exposes the failure message via bracket path', async () => {
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_4['error']['message']}}",
+            unresolvedInput: '{{step_4[\'error\'][\'message\']}}',
             executionState: await buildStateWithFailedStep('step_4', 'Custom Runtime Error'),
         })
         expect(resolvedInput).toEqual('Custom Runtime Error')
@@ -501,7 +501,7 @@ describe('Props resolver', () => {
             iteration: 0,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_8['error']['message']}}",
+            unresolvedInput: '{{step_8[\'error\'][\'message\']}}',
             executionState: stateWithLoopFailure,
         })
         expect(resolvedInput).toEqual('inner failure')
@@ -522,7 +522,7 @@ describe('Props resolver', () => {
             ],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0]['cells']['1eS2ijJLdyl7YPvLZLdl9']['value']}}",
+            unresolvedInput: '{{step_1[\'output\'][0][\'cells\'][\'1eS2ijJLdyl7YPvLZLdl9\'][\'value\']}}',
             executionState: stateWithTablesOutput,
         })
         expect(resolvedInput).toEqual('hello')
@@ -543,7 +543,7 @@ describe('Props resolver', () => {
             ],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0].cells.1eS2ijJLdyl7YPvLZLdl9.value}}",
+            unresolvedInput: '{{step_1[\'output\'][0].cells.1eS2ijJLdyl7YPvLZLdl9.value}}',
             executionState: stateWithTablesOutput,
         })
         expect(resolvedInput).toEqual('dotfail')
@@ -564,7 +564,7 @@ describe('Props resolver', () => {
             ],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0].cells['1eS2ijJLdyl7YPvLZLdl9'].value}}",
+            unresolvedInput: '{{step_1[\'output\'][0].cells[\'1eS2ijJLdyl7YPvLZLdl9\'].value}}',
             executionState: stateWithTablesOutput,
         })
         expect(resolvedInput).toEqual('world')
@@ -601,7 +601,7 @@ describe('Props resolver', () => {
             iteration: 0,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_3['output']['item']['a']}}",
+            unresolvedInput: '{{step_3[\'output\'][\'item\'][\'a\']}}',
             executionState: stateInsideLoop,
         })
         expect(resolvedInput).toEqual(42)
@@ -615,7 +615,7 @@ describe('Props resolver', () => {
             output: null,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output']}}",
+            unresolvedInput: '{{step_1[\'output\']}}',
             executionState: stateWithNullOutput,
         })
         expect(resolvedInput).toEqual('')
@@ -629,7 +629,7 @@ describe('Props resolver', () => {
             output: 42,
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output']}}",
+            unresolvedInput: '{{step_1[\'output\']}}',
             executionState: stateWithPrimitive,
         })
         expect(resolvedInput).toEqual(42)
@@ -643,7 +643,7 @@ describe('Props resolver', () => {
             output: ['a', 'b', 'c'],
         }))
         const { resolvedInput } = await propsResolverService.resolve({
-            unresolvedInput: "{{step_1['output'][0]}}",
+            unresolvedInput: '{{step_1[\'output\'][0]}}',
             executionState: stateWithArray,
         })
         expect(resolvedInput).toEqual('a')

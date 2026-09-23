@@ -59,18 +59,19 @@ unprocessed as it was before.
 File inputs, wherever they appear, are also stricter. The engine accepts only an `http(s)` URL,
 such as `{{step_1['output'].file}}`, or a `data:<mime>;base64,<data>` URI. A download that fails now
 fails the step with the reason, for example
-`Failed to download file from https://example.com/report.pdf: HTTP 401`. The URL's query string is
-left out of the message, because platform file URLs carry an access token there.
+`Failed to download file from https://example.com/…/report.pdf: HTTP 401`. The message shows only
+the URL's origin and file name, because file URLs can carry an access token in their query string
+or path. A URL with a username or password in it (`https://user:password@host/…`) is refused.
 
 - **An invalid inner value in a step built outside the builder now fails the step.** It used to pass
   through silently. The step's error lists the field and the problem, in the same format as any
   other input validation error.
 - **A file value that is not an `http(s)` URL or a `data:` URI now fails the step.** This covers
   objects such as `{ "url": …, "filename": … }`, bare base64 without a `data:` prefix, and other
-  schemes such as `file://` or `memory://`. Before, the qadam received an empty file. An empty value
-  in an optional file input is still allowed.
-- **A file download that fails now fails the step.** A network error or a non-2xx response used to
-  hand the qadam an empty file, or the error page itself as the file's content.
+  schemes such as `file://` or `memory://`. Before, the qadam received no file at all. An empty
+  value in an optional file input is still allowed.
+- **A file download that fails now fails the step.** Before, a network error left the qadam with no
+  file at all, and a non-2xx response handed it the error page as the file's content.
 - **Steps without a stored shape make one extra call per run.** The shape is worked out on every run
   of those steps, and for some qadams that means a call to the third-party service. Steps saved in
   the builder are unaffected.

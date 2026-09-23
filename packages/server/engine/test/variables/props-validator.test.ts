@@ -1,4 +1,4 @@
-import { QadamAuth, Property } from '@aiqadam/qadams-framework'
+import { Property, QadamAuth } from '@aiqadam/qadams-framework'
 import { propsProcessor } from '../../src/lib/variables/props-processor'
 describe('Property Validation', () => {
     describe('required properties', () => {
@@ -360,9 +360,9 @@ describe('Property Validation', () => {
 
             const { errors } = await propsProcessor.applyProcessorsAndValidators({
                 resolvedInput: {
-                        text: null,
-                        number: undefined,
-                    },
+                    text: null,
+                    number: undefined,
+                },
                 props,
                 auth: QadamAuth.None(),
                 requireAuth: false,
@@ -399,12 +399,12 @@ describe('Property Validation', () => {
 
             const { errors } = await propsProcessor.applyProcessorsAndValidators({
                 resolvedInput: {
-                        string: 42,
-                        number: 'not a number',
-                        boolean: 'not a boolean',
-                        array: 'not an array',
-                        object: 'not an object',
-                    },
+                    string: 42,
+                    number: 'not a number',
+                    boolean: 'not a boolean',
+                    array: 'not an array',
+                    object: 'not an object',
+                },
                 props,
                 auth: QadamAuth.None(),
                 requireAuth: false,

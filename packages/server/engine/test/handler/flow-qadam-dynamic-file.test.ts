@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, Server } from 'http'
-import { FlowRunStatus, StepOutputStatus } from '@aiqadam/shared'
+import { FlowRunStatus, QadamAction, StepOutputStatus } from '@aiqadam/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { qadamExecutor } from '../../src/lib/handler/qadam-executor'
@@ -69,13 +69,13 @@ describe('qadamExecutor — FILE nested in DynamicProperties with no stored sche
             throw new Error('Expected a FAILED verdict')
         }
         expect(result.steps.upload.status).toBe(StepOutputStatus.FAILED)
-        expect(verdict.failedStep.message).toContain(`Failed to download file from ${baseUrl}/files/abc: HTTP 401`)
+        expect(verdict.failedStep.message).toContain(`Failed to download file from ${baseUrl}/…/abc: HTTP 401`)
         expect(verdict.failedStep.message).not.toContain('secret-jwt')
         expect(uploads).toHaveLength(0)
     }, 30000)
 })
 
-function buildFormDataUpload({ url, fileFieldValue }: { url: string, fileFieldValue: string }) {
+function buildFormDataUpload({ url, fileFieldValue }: { url: string, fileFieldValue: string }): QadamAction {
     return buildQadamAction({
         name: 'upload',
         qadamName: '@aiqadam/qadam-http',
