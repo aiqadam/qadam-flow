@@ -152,7 +152,17 @@ async function tryDequeue(worker: BullMQWorker, queueName: string, log: FastifyB
     return {
         jobId,
         jobData: migratedData,
-        attempsStarted: job.attemptsMade,
+        // `job.attemptsMade` alone is 0 on a true first delivery, but ALSO 0 on a stalled-job
+        // re-delivery: BullMQ only increments `attemptsMade` in moveToFinished (i.e. on a reported
+        // failure that triggers a retry), while a stall is detected and requeued entirely in
+        // `moveStalledJobsToWait`, which never touches `attemptsMade` — it increments
+        // `stalledCounter` instead. Summing the two gives a value that is 0 only on a genuine first
+        // delivery and non-zero for either a failed-retry or a stalled re-delivery. Deliberately NOT
+        // `job.attemptsStarted` (BullMQ's own field for "times moved to active"): that also
+        // increments when the rate-limiter interceptor sends a job back to `delayed`
+        // (rate-limiter-interceptor.ts), which would wrongly mark a still-fresh first delivery as
+        // "not first" the moment it is rate-limited once (#510).
+        attempsStarted: job.attemptsMade + job.stalledCounter,
         engineToken,
         token,
         queueName,

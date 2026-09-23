@@ -424,6 +424,7 @@ async function executeJob(apiClient: WorkerToApiContract, job: ConsumeJobRequest
             apiClient,
             sandboxManager: sbManager,
             jobId: job.jobId,
+            attemptsStarted: job.attempsStarted,
             engineToken: job.engineToken,
             internalApiUrl: apiUrl,
             publicApiUrl: ensurePublicApiUrl(publicUrl),

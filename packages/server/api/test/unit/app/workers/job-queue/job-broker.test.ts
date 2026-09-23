@@ -52,7 +52,13 @@ const mockLog: FastifyBaseLogger = {
     level: 'info',
 } as unknown as FastifyBaseLogger
 
-function createMockJob(id: string, data?: Record<string, unknown>, deferredFailure?: string): Job {
+function createMockJob({ id, data, deferredFailure, attemptsMade, stalledCounter }: {
+    id: string
+    data?: Record<string, unknown>
+    deferredFailure?: string
+    attemptsMade?: number
+    stalledCounter?: number
+}): Job {
     return {
         id,
         name: `job-name-${id}`,
@@ -70,7 +76,8 @@ function createMockJob(id: string, data?: Record<string, unknown>, deferredFailu
             execute: true,
             ...data,
         },
-        attemptsMade: 0,
+        attemptsMade: attemptsMade ?? 0,
+        stalledCounter: stalledCounter ?? 0,
         deferredFailure,
         moveToDelayed: vi.fn().mockResolvedValue(undefined),
         moveToFailed: vi.fn().mockResolvedValue(undefined),
@@ -90,7 +97,7 @@ describe('tryDequeue', () => {
     })
 
     it('should return job when interceptor allows', async () => {
-        const job = createMockJob('job-1')
+        const job = createMockJob({ id: 'job-1' })
         vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
         mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
 
@@ -111,7 +118,7 @@ describe('tryDequeue', () => {
     // id here — for a BEGIN dispatch and a RESUME re-dispatch alike, since both go through the same
     // ONE_TIME job path (`jobId: params.id` in job-queue.ts) and the same tryDequeue.
     it('should mint the engine token with jobId equal to the dequeued job\'s own id', async () => {
-        const job = createMockJob('job-1')
+        const job = createMockJob({ id: 'job-1' })
         vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
         mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
 
@@ -122,8 +129,8 @@ describe('tryDequeue', () => {
     })
 
     it('should retry when interceptor rejects then return next allowed job', async () => {
-        const jobA = createMockJob('job-a')
-        const jobB = createMockJob('job-b')
+        const jobA = createMockJob({ id: 'job-a' })
+        const jobB = createMockJob({ id: 'job-b' })
 
         vi.mocked(mockWorker.getNextJob)
             .mockResolvedValueOnce(jobA)
@@ -143,7 +150,7 @@ describe('tryDequeue', () => {
     })
 
     it('should return null when no jobs remain after rejection', async () => {
-        const job = createMockJob('job-1')
+        const job = createMockJob({ id: 'job-1' })
 
         vi.mocked(mockWorker.getNextJob)
             .mockResolvedValueOnce(job)
@@ -160,7 +167,7 @@ describe('tryDequeue', () => {
     })
 
     it('should handle multiple consecutive rejections then return null', async () => {
-        const jobs = [createMockJob('j1'), createMockJob('j2'), createMockJob('j3')]
+        const jobs = [createMockJob({ id: 'j1' }), createMockJob({ id: 'j2' }), createMockJob({ id: 'j3' })]
 
         const getNextJobMock = vi.mocked(mockWorker.getNextJob)
         for (const j of jobs) {
@@ -181,8 +188,8 @@ describe('tryDequeue', () => {
     })
 
     it('should set priority on delayed job when interceptor specifies it', async () => {
-        const jobA = createMockJob('job-a')
-        const jobB = createMockJob('job-b')
+        const jobA = createMockJob({ id: 'job-a' })
+        const jobB = createMockJob({ id: 'job-b' })
 
         vi.mocked(mockWorker.getNextJob)
             .mockResolvedValueOnce(jobA)
@@ -199,7 +206,7 @@ describe('tryDequeue', () => {
     })
 
     it('should fail job with deferredFailure and skip interceptors', async () => {
-        const zombieJob = createMockJob('zombie-1', undefined, 'job stalled more than allowable limit')
+        const zombieJob = createMockJob({ id: 'zombie-1', deferredFailure: 'job stalled more than allowable limit' })
 
         vi.mocked(mockWorker.getNextJob)
             .mockResolvedValueOnce(zombieJob)
@@ -220,9 +227,9 @@ describe('tryDequeue', () => {
     })
 
     it('should keep draining when moveToFailed throws on a deferred-failure job', async () => {
-        const zombieJob = createMockJob('zombie-2', undefined, 'job stalled more than allowable limit')
+        const zombieJob = createMockJob({ id: 'zombie-2', deferredFailure: 'job stalled more than allowable limit' })
         vi.mocked(zombieJob.moveToFailed).mockRejectedValueOnce(new Error('Missing lock'))
-        const liveJob = createMockJob('live-1')
+        const liveJob = createMockJob({ id: 'live-1' })
 
         vi.mocked(mockWorker.getNextJob)
             .mockResolvedValueOnce(zombieJob)
@@ -244,5 +251,41 @@ describe('tryDequeue', () => {
 
         expect(result).toBeNull()
         expect(mockWorker.getNextJob).toHaveBeenCalledTimes(1)
+    })
+
+    describe('attempsStarted (#510)', () => {
+        it('is 0 on a genuine first delivery (attemptsMade 0, stalledCounter 0)', async () => {
+            const job = createMockJob({ id: 'job-1', attemptsMade: 0, stalledCounter: 0 })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.attempsStarted).toBe(0)
+        })
+
+        it('is non-zero on a stalled job\'s re-delivery, even though BullMQ never bumped attemptsMade for a stall', async () => {
+            // BullMQ only increments attemptsMade in moveToFinished (a reported failure that
+            // triggers a retry) — a stall is detected and requeued entirely in
+            // moveStalledJobsToWait, which increments stalledCounter instead and never touches
+            // attemptsMade. A stalled re-delivery therefore arrives with attemptsMade still 0.
+            const job = createMockJob({ id: 'job-1', attemptsMade: 0, stalledCounter: 1 })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.attempsStarted).toBe(1)
+        })
+
+        it('is non-zero on a failed-and-retried delivery', async () => {
+            const job = createMockJob({ id: 'job-1', attemptsMade: 1, stalledCounter: 0 })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.attempsStarted).toBe(1)
+        })
     })
 })

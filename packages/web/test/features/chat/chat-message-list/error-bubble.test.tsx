@@ -6,8 +6,10 @@ import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  CHAT_SERVICE_UNAVAILABLE,
   ChatSendingError,
   ErrorBubble,
+  FLOW_RUN_FAILED,
   FLOW_STILL_RUNNING,
 } from '@/features/chat/chat-message-list/error-bubble';
 
@@ -54,13 +56,19 @@ describe('ErrorBubble', () => {
     root = undefined;
   });
 
-  it('tells the user a timed-out flow is still running and offers no retry', async () => {
+  it('tells the user a timed-out flow may still be running and offers no retry', async () => {
     await mountBubble({ sendingError: { code: FLOW_STILL_RUNNING } });
 
+    // #510: a run that hadn't started by the deadline is now failed, not "still
+    // running" — the copy must not claim the run is safely in progress, and must not
+    // point at the run history, which an anonymous chat user can't open.
     expect(container?.textContent).toContain(
-      'The flow is still running and did not reply in time.',
+      'The flow did not finish in time and may still be running.',
     );
-    // A retry would start the still-running flow a second time.
+    expect(container?.textContent).toContain(
+      'Its reply will not appear in this chat',
+    );
+    // A retry could double-execute a run that did start.
     expect(container?.querySelector('button')).toBeNull();
   });
 
@@ -77,5 +85,21 @@ describe('ErrorBubble', () => {
       retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(sendMessage).toHaveBeenCalledWith({ isRetrying: true });
+  });
+
+  it('tells the user the flow run itself failed, and offers a retry', async () => {
+    await mountBubble({ sendingError: { code: FLOW_RUN_FAILED } });
+
+    expect(container?.textContent).toContain('The flow failed to execute.');
+    expect(container?.querySelector('button')).not.toBeNull();
+  });
+
+  it('tells the user the service is overloaded, and offers a retry', async () => {
+    await mountBubble({ sendingError: { code: CHAT_SERVICE_UNAVAILABLE } });
+
+    expect(container?.textContent).toContain(
+      'The service is temporarily busy. Please try again in a moment.',
+    );
+    expect(container?.querySelector('button')).not.toBeNull();
   });
 });

@@ -20,7 +20,7 @@
  *   - Engine must be built (cache/<version>/common/main.js)
  *   - bun must be available for piece installation
  */
-import { FlowActionType, FlowOperationType, FlowRunStatus, FlowTriggerType, FlowVersionState, PackageType, PopulatedFlow, QadamType, RunEnvironment } from '@aiqadam/shared'
+import { ExecutionType, FlowActionType, FlowOperationType, FlowRunStatus, FlowTriggerType, FlowVersionState, PackageType, PopulatedFlow, QadamType, RunEnvironment, StreamStepProgress } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { worker } from '../../../../../../worker/src/lib/worker'
@@ -117,8 +117,12 @@ async function pollFlowRunToCompletion({ flowRunId, projectId }: { flowRunId: st
 /**
  * Webhook trigger + one code step, published. Deliberately has no respond step: the sync route's
  * answer for it is exactly the "finished, nothing to say" case.
+ *
+ * `sleepMs`, when given, makes the code step sleep before returning — used to prove a run that has
+ * already started dispatch keeps executing to a real terminal status even after its sync caller has
+ * been answered a 504 (#510).
  */
-async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof createTestContext>> }): Promise<PopulatedFlow> {
+async function createPublishedEchoFlow({ ctx, sleepMs }: { ctx: Awaited<ReturnType<typeof createTestContext>>, sleepMs?: number }): Promise<PopulatedFlow> {
     // Step 1: Create the flow
     const createResponse = await ctx.post('/v1/flows', {
         displayName: 'Golden Path Flow',
@@ -149,7 +153,7 @@ async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof
 
     expect(updateTriggerResponse.statusCode).toBe(StatusCodes.OK)
 
-    // Step 3: Add a code action that echoes back the incoming message
+    // Step 3: Add a code action that echoes back the incoming message, optionally sleeping first
     const addActionResponse = await ctx.post(`/v1/flows/${flow.id}`, {
         type: FlowOperationType.ADD_ACTION,
         request: {
@@ -159,9 +163,9 @@ async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof
                 displayName: 'Code Step',
                 name: 'step_1',
                 settings: {
-                    input: { body: '{{trigger.body}}' },
+                    input: { body: '{{trigger.body}}', sleepMs: sleepMs ?? 0 },
                     sourceCode: {
-                        code: 'export const code = async (inputs) => { return { success: true, message: inputs.body?.message || "no message" }; }',
+                        code: 'export const code = async (inputs) => { if (inputs.sleepMs > 0) { await new Promise((resolve) => setTimeout(resolve, inputs.sleepMs)); } return { success: true, message: inputs.body?.message || "no message" }; }',
                         packageJson: '{}',
                     },
                 },
@@ -213,6 +217,13 @@ describe('Golden-path API journey', () => {
         expect(result.steps.step_1.output).toEqual(
             expect.objectContaining({ success: true, message: 'no message' }),
         )
+
+        // #510: dispatchWaitMs is derived from startTime - created and surfaced on the read path.
+        const flowRunResponse = await ctx.get(`/v1/flow-runs/${flowRunId}`)
+        expect(flowRunResponse.statusCode).toBe(StatusCodes.OK)
+        const dispatchWaitMs = flowRunResponse.json().dispatchWaitMs
+        expect(typeof dispatchWaitMs).toBe('number')
+        expect(dispatchWaitMs).toBeGreaterThanOrEqual(0)
     }, 120_000)
 
     it('answers a sync webhook on a flow with no respond step with an immediate 204, not the timeout', async () => {
@@ -239,12 +250,16 @@ describe('Golden-path API journey', () => {
         expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
     }, 120_000)
 
-    it('answers a sync webhook that outlives its timeout with a 504 that invites no retry and names no run', async () => {
+    it('answers a sync webhook that outlives its timeout with a 504, and the run itself fails explicitly rather than executing late (#510)', async () => {
         await saveWebhookQadamMetadata()
         const ctx = await createTestContext(app)
         const flow = await createPublishedEchoFlow({ ctx })
 
         // No engine answers within 1 ms, so this is the watcher's own default and nothing else.
+        // The same 1 ms is also the run's own dispatch deadline (`syncDeadline`, computed from this
+        // same `timeoutMs`), and dequeuing a BullMQ job inherently takes longer than that — so the
+        // worker is guaranteed to see the deadline already passed and fail the run explicitly,
+        // rather than execute it after this caller has already been answered.
         const response = await webhookService.handleWebhook({
             flowId: flow.id,
             async: false,
@@ -268,10 +283,99 @@ describe('Golden-path API journey', () => {
         })
         expect(Object.keys(response.headers)).toEqual(['x-webhook-id'])
 
-        // The 504 says the run may still be going; it must, and must finish on its own.
         const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
         const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
+        expect(result.status).toBe(FlowRunStatus.FAILED)
+        expect(result.steps).toEqual({})
+    }, 120_000)
+
+    it('fails a sync run explicitly, without executing, once its dispatch deadline has already passed (#510)', async () => {
+        await saveWebhookQadamMetadata()
+        const ctx = await createTestContext(app)
+        const flow = await createPublishedEchoFlow({ ctx })
+
+        await flowRunService(app.log).start({
+            flowId: flow.id,
+            flowVersionId: flow.version.id,
+            projectId: flow.projectId,
+            platformId: ctx.platform.id,
+            environment: RunEnvironment.PRODUCTION,
+            payload: { message: 'hello world' },
+            executeTrigger: true,
+            executionType: ExecutionType.BEGIN,
+            streamStepProgress: StreamStepProgress.NONE,
+            workerHandlerId: undefined,
+            httpRequestId: undefined,
+            failParentOnFailure: undefined,
+            // Already elapsed: the worker must refuse to execute this at all, however soon it
+            // dequeues the job, rather than run it late for a caller that has stopped waiting.
+            syncDeadline: new Date(Date.now() - 60_000).toISOString(),
+        })
+
+        // A PRODUCTION run's row reaches Postgres via the runs-metadata queue, not the request
+        // that created it (see flow-run-service.ts) — wait for it to land before polling it.
+        const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
+        const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
+
+        expect(result.status).toBe(FlowRunStatus.FAILED)
+        // The code step never ran: the deadline check happens before the flow version is even
+        // fetched, so no step output exists at all.
+        expect(result.steps).toEqual({})
+
+        // #510: the internalError attached on the deadline path must
+        // actually be persisted, not just passed to reportFlowStatus. Read it back the same way a
+        // real caller would — GET as a platform admin (ctx's default owner is one), the only
+        // principal `internalError` is exposed to at all (flow-run-controller.ts).
+        const flowRunResponse = await ctx.get(`/v1/flow-runs/${flowRunId}`)
+        expect(flowRunResponse.statusCode).toBe(StatusCodes.OK)
+        const persistedInternalError = flowRunResponse.json().internalError
+        expect(persistedInternalError).toBeDefined()
+        expect(persistedInternalError.source).toBe('WORKER')
+        expect(persistedInternalError.message).toContain('Dispatch deadline exceeded')
+    }, 120_000)
+
+    it('keeps a run going to a real SUCCEEDED after its sync caller already got a 504 (#510)', async () => {
+        await saveWebhookQadamMetadata()
+        const ctx = await createTestContext(app)
+        // Long enough that dispatch comfortably completes and execution begins before the deadline,
+        // short enough that the sync watcher's own timeout (also `timeoutMs`) fires well before the
+        // step's 8s sleep finishes — so the caller is answered 504 while the run is still executing.
+        // The 1500ms margin between timeoutMs and the sleep (vs. dispatch/start) is intentionally
+        // generous to avoid flaking on a loaded CI runner.
+        const flow = await createPublishedEchoFlow({ ctx, sleepMs: 8000 })
+
+        const response = await webhookService.handleWebhook({
+            flowId: flow.id,
+            async: false,
+            saveSampleData: false,
+            flowVersionToRun: WebhookFlowVersionToRun.LOCKED_FALL_BACK_TO_LATEST,
+            data: async () => ({
+                body: { message: 'hello world' },
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                queryParams: {},
+            }),
+            logger: app.log,
+            execute: true,
+            failParentOnFailure: false,
+            timeoutMs: 2000,
+        })
+
+        expect(response.status).toBe(StatusCodes.GATEWAY_TIMEOUT)
+
+        // The run had already started before its own deadline (also `timeoutMs` after acceptance)
+        // passed, so the worker's dispatch-deadline gate never applies to it — it keeps executing
+        // exactly as before #510, all the way to a real terminal status.
+        const flowRunId = await waitForFirstFlowRunId({ ctx, flowId: flow.id })
+        const result = await pollFlowRunToCompletion({ flowRunId, projectId: ctx.project.id })
+
         expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+        // The step ran to completion (not just "was reported success without executing"): its own
+        // output is present, proving the sandbox actually ran the code rather than the run being
+        // fast-forwarded to a terminal status.
+        expect(result.steps.step_1.output).toEqual(
+            expect.objectContaining({ success: true }),
+        )
     }, 120_000)
 
     it('create flow → webhook trigger → code action → test via draft sync webhook', async () => {

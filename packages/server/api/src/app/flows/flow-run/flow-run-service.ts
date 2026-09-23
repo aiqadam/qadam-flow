@@ -204,7 +204,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         }
 
         const { data, cursor: newCursor } = await paginator.paginate(query)
-        return paginationHelper.createPage<FlowRun>(data, newCursor)
+        return paginationHelper.createPage<FlowRun>(data.map(withDispatchWaitMs), newCursor)
     },
     async retry({ flowRunId, strategy, projectId }: RetryParams): Promise<FlowRun> {
         const oldFlowRun = await flowRunService(log).getOnePopulatedOrThrow({
@@ -374,6 +374,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         platformId,
         stepNameToTest,
         environment,
+        syncDeadline,
     }: StartParams): Promise<FlowRun> {
         return tracer.startActiveSpan('flowRun.start', {
             attributes: {
@@ -410,6 +411,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     workerHandlerId,
                     httpRequestId,
                     streamStepProgress,
+                    syncDeadline,
                 }, log)
 
                 span.setAttribute('flowRun.queued', true)
@@ -487,7 +489,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
             ...(params.projectId ? { projectId: params.projectId } : {}),
         }).getOne()
 
-        return flowRun
+        return isNil(flowRun) ? flowRun : withDispatchWaitMs(flowRun)
     },
     async getOneOrThrow(params: GetOneParams): Promise<FlowRun> {
         const flowRun = await this.getOne(params)
@@ -696,6 +698,7 @@ export async function addToQueue(params: AddToQueueParams, log: FastifyBaseLogge
         sampleData: params.sampleData,
         logsFileId,
         traceContext,
+        syncDeadline: params.syncDeadline,
     }
     const data: ExecuteFlowJobData = params.executionType === ExecutionType.RESUME
         ? {
@@ -889,6 +892,33 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
     }
 }
 
+/**
+ * `dispatchWaitMs` is the time between this run becoming eligible for dispatch and the engine
+ * actually beginning execution — `startTime - created`, computed here rather than stored, so no
+ * migration is needed and the definition can't drift from what's actually on the row.
+ *
+ * Two cases where the raw `startTime - created` gap does not mean "queue wait", both documented
+ * rather than special-cased away (#510):
+ *
+ * - INLINE dispatch mode (`inline-flow-run.service.ts`) sets `startTime` equal to `created` at row
+ *   creation, since an inline child starts executing synchronously in its parent's own engine
+ *   process. The gap is correctly 0 by construction; nothing here needs to special-case it.
+ * - A FROM_FAILED_STEP retry reuses the same run row and resets `startTime` to the moment the retry
+ *   was queued, while `created` still holds the run's ORIGINAL creation time. `dispatchWaitMs` on a
+ *   retried run therefore measures elapsed time since the original attempt, not the latest retry's
+ *   own queue wait — informative for the run's lifetime, but not a live per-dispatch health metric
+ *   across retries. Resetting `created` on retry was considered and rejected: `created` is this
+ *   row's audit trail of when it first came into existence, and list/filter queries
+ *   (`createdAfter`/`createdBefore` above) rely on it staying put.
+ */
+function withDispatchWaitMs(flowRun: FlowRun): FlowRun {
+    if (isNil(flowRun.startTime)) {
+        return { ...flowRun, dispatchWaitMs: null }
+    }
+    const waitMs = apDayjs(flowRun.startTime).diff(apDayjs(flowRun.created))
+    return { ...flowRun, dispatchWaitMs: waitMs >= 0 ? waitMs : null }
+}
+
 export function isOutsideRetentionWindow(createdTime: string, retentionDays: number): boolean {
     if (!createdTime) return false
     return apDayjs(createdTime).add(retentionDays, 'day').isBefore(apDayjs())
@@ -970,6 +1000,7 @@ type AddToQueueParamsCommon = {
     httpRequestId: string | undefined
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
+    syncDeadline?: string
 }
 
 export type AddToQueueParams = AddToQueueParamsCommon & (
@@ -995,6 +1026,7 @@ type StartParams = {
     httpRequestId: string | undefined
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
+    syncDeadline?: string
 }
 
 

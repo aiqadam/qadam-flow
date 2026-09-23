@@ -104,7 +104,7 @@ function makeResumeJobData(overrides?: Partial<ExecuteFlowJobData>): ExecuteFlow
     }
 }
 
-function makeMockContext(apiOverrides?: Record<string, Mock>) {
+function makeMockContext(apiOverrides?: Record<string, Mock>, attemptsStarted = 0) {
     const mockSandbox = {
         start: vi.fn(),
         execute: vi.fn().mockResolvedValue({ status: 'OK' }),
@@ -126,6 +126,7 @@ function makeMockContext(apiOverrides?: Record<string, Mock>) {
             release: vi.fn(),
             invalidate: vi.fn(),
         },
+        attemptsStarted,
         engineToken: 'test-token',
         internalApiUrl: 'http://localhost:3000',
         publicApiUrl: 'http://localhost:4200',
@@ -353,6 +354,71 @@ describe('executeFlowJob', () => {
             expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(
                 expect.objectContaining({ status: FlowRunStatus.FAILED }),
             )
+        })
+    })
+
+    describe('sync webhook dispatch deadline (#510)', () => {
+        it('fails the run explicitly with a handled OK status, without ever reaching the sandbox, once its deadline has passed on the first delivery', async () => {
+            const ctx = makeMockContext(undefined, 0)
+            const data = makeResumeJobData({
+                executionType: ExecutionType.BEGIN,
+                workerHandlerId: 'handler-1',
+                httpRequestId: 'req-1',
+                syncDeadline: new Date(Date.now() - 1000).toISOString(),
+            })
+
+            const result = await executeFlowJob.execute(ctx, data)
+
+            expect(result.kind).toBe(JobResultKind.FIRE_AND_FORGET)
+            // A deadline miss is a handled outcome, not an error needing a BullMQ retry.
+            expect(result.status).toBe(EngineResponseStatus.OK)
+            expect(ctx.sandboxManager.acquire).not.toHaveBeenCalled()
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    status: FlowRunStatus.FAILED,
+                    internalError: expect.objectContaining({ source: 'WORKER' }),
+                    // #510: without logsFileId, worker-rpc-service.ts never reaches
+                    // ensureLogsFileExists, and the internalError above is built but never
+                    // persisted anywhere a caller could read it back.
+                    logsFileId: data.logsFileId,
+                }),
+            )
+            expect(ctx.apiClient.sendFlowResponse).toHaveBeenCalledWith(
+                expect.objectContaining({ workerHandlerId: 'handler-1', httpRequestId: 'req-1' }),
+            )
+        })
+
+        it('executes normally once the deadline has not yet passed', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({
+                executionType: ExecutionType.BEGIN,
+                syncDeadline: new Date(Date.now() + 60_000).toISOString(),
+            })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.sandboxManager.acquire).toHaveBeenCalled()
+        })
+
+        it('is never checked on a dispatch with no syncDeadline (retry, async webhook, manual trigger)', async () => {
+            const ctx = makeMockContext()
+            const data = makeResumeJobData({ executionType: ExecutionType.BEGIN, syncDeadline: undefined })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.sandboxManager.acquire).toHaveBeenCalled()
+        })
+
+        it('does NOT fail a re-delivered job even with an expired deadline — only the first delivery is gated', async () => {
+            const ctx = makeMockContext(undefined, 1)
+            const data = makeResumeJobData({
+                executionType: ExecutionType.BEGIN,
+                syncDeadline: new Date(Date.now() - 1000).toISOString(),
+            })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.sandboxManager.acquire).toHaveBeenCalled()
         })
     })
 })

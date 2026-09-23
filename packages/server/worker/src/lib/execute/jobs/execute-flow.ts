@@ -27,6 +27,48 @@ import { provisionFlowPieces } from '../utils/flow-helpers'
 export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResult> = {
     jobType: WorkerJobType.EXECUTE_FLOW,
     async execute(ctx: JobContext, data: ExecuteFlowJobData): Promise<FireAndForgetJobResult> {
+        // Checked before any other work, so a run that already missed its caller's deadline never
+        // reaches the sandbox at all — only a run that has not yet started is affected; one already
+        // executing keeps going exactly as before (#510). `syncDeadline` is only ever set on a sync
+        // webhook's initial BEGIN dispatch (webhook.service.ts#handleSync) — that includes
+        // `/:flowId/draft/sync` and MCP's `returnsResponse` path, both of which also go through
+        // `handleSync` — so every OTHER dispatch path (retry, async webhook, manual trigger) is
+        // untouched by this check.
+        //
+        // Gated to the first delivery only (`ctx.attemptsStarted === 0`): a mid-execution throw or a
+        // stalled-job re-delivery both come back through this same handler with the *original*
+        // `syncDeadline` still in the job data, long since expired. Without this gate a re-delivery of
+        // a run that is genuinely still executing (or already reported its own terminal status) would
+        // be wrongly marked FAILED here, overwriting whatever real outcome it already recorded — the
+        // deadline is a caller-visible promise about the FIRST attempt to start, not about every retry
+        // BullMQ makes on the worker's own behalf.
+        //
+        // A plain wall-clock comparison assumes the dispatching API server and this worker have
+        // synchronized clocks (NTP) — a worker running meaningfully behind could let a truly-expired
+        // run through, and one running ahead could reject one that was still in its caller's budget.
+        if (ctx.attemptsStarted === 0 && !isNil(data.syncDeadline) && Date.now() > new Date(data.syncDeadline).getTime()) {
+            ctx.log.warn({ runId: data.runId, syncDeadline: data.syncDeadline }, 'Sync webhook run exceeded its dispatch deadline before starting; failing explicitly instead of executing late')
+            await reportFlowStatus({
+                ctx,
+                data,
+                status: FlowRunStatus.FAILED,
+                internalError: {
+                    source: RunInternalErrorSource.WORKER,
+                    message: `Dispatch deadline exceeded before execution could start (syncDeadline: ${data.syncDeadline})`,
+                    occurredAt: new Date().toISOString(),
+                },
+                // Without this, the internalError above is built but never persisted:
+                // worker-rpc-service.ts only writes internalError inside its
+                // `if (!isNil(input.logsFileId))` branch (ensureLogsFileExists), the same way the
+                // provisioning-throw path above passes it.
+                logsFileId: data.logsFileId,
+            })
+            // A handled outcome, not an error needing a retry — returning INTERNAL_ERROR here would
+            // burn a second BullMQ attempt (and its ~8 minute backoff) on a run that has already been
+            // failed explicitly and reported to its caller.
+            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK }
+        }
+
         const timeoutInSeconds = workerSettings.getSettings().FLOW_TIMEOUT_SECONDS
 
         const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })

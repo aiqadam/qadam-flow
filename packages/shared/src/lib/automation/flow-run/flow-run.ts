@@ -81,6 +81,11 @@ export const FlowRun = z.object({
     status: z.nativeEnum(FlowRunStatus),
     startTime: z.string().nullish(),
     finishTime: z.string().nullish(),
+    // Derived, never persisted: the elapsed time between this row becoming eligible for dispatch
+    // and the engine actually beginning execution (`startTime - created`, computed at read time in
+    // flowRunService — see the comment there for the full definition and its two documented
+    // exceptions: INLINE dispatch mode, and a FROM_FAILED_STEP retry).
+    dispatchWaitMs: z.number().nullish(),
     environment: z.nativeEnum(RunEnvironment),
     // The steps data may be missing if the flow has not started yet,
     // or if the run is older than AP_EXECUTION_DATA_RETENTION_DAYS and its execution data has been purged.
