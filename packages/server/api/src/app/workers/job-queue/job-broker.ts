@@ -161,7 +161,7 @@ async function tryDequeue(worker: BullMQWorker, queueName: string, log: FastifyB
         // `job.attemptsStarted` (BullMQ's own field for "times moved to active"): that also
         // increments when the rate-limiter interceptor sends a job back to `delayed`
         // (rate-limiter-interceptor.ts), which would wrongly mark a still-fresh first delivery as
-        // "not first" the moment it is rate-limited once (#510 review round 2).
+        // "not first" the moment it is rate-limited once (#510).
         attempsStarted: job.attemptsMade + job.stalledCounter,
         engineToken,
         token,

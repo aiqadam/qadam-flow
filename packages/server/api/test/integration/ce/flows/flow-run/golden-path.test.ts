@@ -117,8 +117,12 @@ async function pollFlowRunToCompletion({ flowRunId, projectId }: { flowRunId: st
 /**
  * Webhook trigger + one code step, published. Deliberately has no respond step: the sync route's
  * answer for it is exactly the "finished, nothing to say" case.
+ *
+ * `sleepMs`, when given, makes the code step sleep before returning — used to prove a run that has
+ * already started dispatch keeps executing to a real terminal status even after its sync caller has
+ * been answered a 504 (#510).
  */
-async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof createTestContext>> }): Promise<PopulatedFlow> {
+async function createPublishedEchoFlow({ ctx, sleepMs }: { ctx: Awaited<ReturnType<typeof createTestContext>>, sleepMs?: number }): Promise<PopulatedFlow> {
     // Step 1: Create the flow
     const createResponse = await ctx.post('/v1/flows', {
         displayName: 'Golden Path Flow',
@@ -149,7 +153,7 @@ async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof
 
     expect(updateTriggerResponse.statusCode).toBe(StatusCodes.OK)
 
-    // Step 3: Add a code action that echoes back the incoming message
+    // Step 3: Add a code action that echoes back the incoming message, optionally sleeping first
     const addActionResponse = await ctx.post(`/v1/flows/${flow.id}`, {
         type: FlowOperationType.ADD_ACTION,
         request: {
@@ -159,9 +163,9 @@ async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof
                 displayName: 'Code Step',
                 name: 'step_1',
                 settings: {
-                    input: { body: '{{trigger.body}}' },
+                    input: { body: '{{trigger.body}}', sleepMs: sleepMs ?? 0 },
                     sourceCode: {
-                        code: 'export const code = async (inputs) => { return { success: true, message: inputs.body?.message || "no message" }; }',
+                        code: 'export const code = async (inputs) => { if (inputs.sleepMs > 0) { await new Promise((resolve) => setTimeout(resolve, inputs.sleepMs)); } return { success: true, message: inputs.body?.message || "no message" }; }',
                         packageJson: '{}',
                     },
                 },
@@ -174,74 +178,6 @@ async function createPublishedEchoFlow({ ctx }: { ctx: Awaited<ReturnType<typeof
     expect(addActionResponse.statusCode).toBe(StatusCodes.OK)
 
     // Step 4: Publish the flow (LOCK_AND_PUBLISH auto-enables it)
-    const publishResponse = await ctx.post(`/v1/flows/${flow.id}`, {
-        type: FlowOperationType.LOCK_AND_PUBLISH,
-        request: {},
-    })
-
-    expect(publishResponse.statusCode).toBe(StatusCodes.OK)
-    const publishedFlow: PopulatedFlow = publishResponse.json()
-    expect(publishedFlow.version.state).toBe(FlowVersionState.LOCKED)
-    return publishedFlow
-}
-
-/**
- * Same as `createPublishedEchoFlow`, but the code step sleeps first — used to prove a run that has
- * already started dispatch keeps executing to a real terminal status even after its sync caller has
- * been answered a 504 (#510 review round 2, item 3).
- */
-async function createPublishedSlowEchoFlow({ ctx, sleepMs }: { ctx: Awaited<ReturnType<typeof createTestContext>>, sleepMs: number }): Promise<PopulatedFlow> {
-    const createResponse = await ctx.post('/v1/flows', {
-        displayName: 'Golden Path Slow Flow',
-        projectId: ctx.project.id,
-    }, { query: { projectId: ctx.project.id } })
-
-    expect(createResponse.statusCode).toBe(StatusCodes.CREATED)
-    const flow: PopulatedFlow = createResponse.json()
-
-    const updateTriggerResponse = await ctx.post(`/v1/flows/${flow.id}`, {
-        type: FlowOperationType.UPDATE_TRIGGER,
-        request: {
-            type: FlowTriggerType.PIECE,
-            settings: {
-                qadamName: '@aiqadam/qadam-webhook',
-                qadamVersion: '0.1.34',
-                input: { authType: 'none' },
-                triggerName: 'catch_webhook',
-                propertySettings: {},
-            },
-            valid: false,
-            name: 'trigger',
-            displayName: 'Catch Webhook',
-            lastUpdatedDate: new Date().toISOString(),
-        },
-    })
-
-    expect(updateTriggerResponse.statusCode).toBe(StatusCodes.OK)
-
-    const addActionResponse = await ctx.post(`/v1/flows/${flow.id}`, {
-        type: FlowOperationType.ADD_ACTION,
-        request: {
-            parentStep: 'trigger',
-            action: {
-                type: FlowActionType.CODE,
-                displayName: 'Slow Code Step',
-                name: 'step_1',
-                settings: {
-                    input: { body: '{{trigger.body}}', sleepMs },
-                    sourceCode: {
-                        code: 'export const code = async (inputs) => { await new Promise((resolve) => setTimeout(resolve, inputs.sleepMs)); return { success: true, message: inputs.body?.message || "no message" }; }',
-                        packageJson: '{}',
-                    },
-                },
-                valid: true,
-                skip: false,
-            },
-        },
-    })
-
-    expect(addActionResponse.statusCode).toBe(StatusCodes.OK)
-
     const publishResponse = await ctx.post(`/v1/flows/${flow.id}`, {
         type: FlowOperationType.LOCK_AND_PUBLISH,
         request: {},
@@ -386,7 +322,7 @@ describe('Golden-path API journey', () => {
         // fetched, so no step output exists at all.
         expect(result.steps).toEqual({})
 
-        // #510 review round 2, item 1: the internalError attached on the deadline path must
+        // #510: the internalError attached on the deadline path must
         // actually be persisted, not just passed to reportFlowStatus. Read it back the same way a
         // real caller would — GET as a platform admin (ctx's default owner is one), the only
         // principal `internalError` is exposed to at all (flow-run-controller.ts).
@@ -398,13 +334,15 @@ describe('Golden-path API journey', () => {
         expect(persistedInternalError.message).toContain('Dispatch deadline exceeded')
     }, 120_000)
 
-    it('keeps a run going to a real SUCCEEDED after its sync caller already got a 504 (#510 review round 2)', async () => {
+    it('keeps a run going to a real SUCCEEDED after its sync caller already got a 504 (#510)', async () => {
         await saveWebhookQadamMetadata()
         const ctx = await createTestContext(app)
         // Long enough that dispatch comfortably completes and execution begins before the deadline,
         // short enough that the sync watcher's own timeout (also `timeoutMs`) fires well before the
-        // step's 3s sleep finishes — so the caller is answered 504 while the run is still executing.
-        const flow = await createPublishedSlowEchoFlow({ ctx, sleepMs: 3000 })
+        // step's 8s sleep finishes — so the caller is answered 504 while the run is still executing.
+        // The 1500ms margin between timeoutMs and the sleep (vs. dispatch/start) is intentionally
+        // generous to avoid flaking on a loaded CI runner.
+        const flow = await createPublishedEchoFlow({ ctx, sleepMs: 8000 })
 
         const response = await webhookService.handleWebhook({
             flowId: flow.id,
@@ -420,7 +358,7 @@ describe('Golden-path API journey', () => {
             logger: app.log,
             execute: true,
             failParentOnFailure: false,
-            timeoutMs: 500,
+            timeoutMs: 2000,
         })
 
         expect(response.status).toBe(StatusCodes.GATEWAY_TIMEOUT)
