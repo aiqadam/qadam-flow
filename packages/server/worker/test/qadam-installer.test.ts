@@ -714,8 +714,10 @@ describe('qadamInstaller', () => {
     })
 
     // A lockfile that exists but cannot be read is not an absent one. Collapsing the two makes the
-    // rollback delete a file whose contents it never captured — Finding 1's blast radius reached
-    // through a transient EACCES/EIO instead of through the flag.
+    // rollback delete a file whose contents it never captured — the flag-off lockfile delete,
+    // reached through a transient EACCES/EIO instead of through the flag. And the failure must
+    // come before the install writes its member into the shared workspace, or that half-written
+    // member is left for every later install's workspaces glob.
     it('OFFICIAL_QADAMS_INSTALL_ENABLED on — an unreadable lockfile fails the install rather than being deleted', async () => {
         officialQadamsInstallEnabled = true
         const official = makeOfficialQadam('@aiqadam/qadam-tables')
@@ -729,5 +731,6 @@ describe('qadamInstaller', () => {
 
         expect(mockInstall).not.toHaveBeenCalled()
         expect(await pathExists(lockfile)).toBe(true)
+        expect(await pathExists(qadamDirPath(official))).toBe(false)
     })
 })

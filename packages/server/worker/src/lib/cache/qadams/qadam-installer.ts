@@ -132,6 +132,12 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 pieces: qadamsToInstall.map(piece => `${piece.qadamName}-${piece.qadamVersion}`),
             }, '[qadamInstaller] acquired lock and starting to install qadams')
 
+            // Before anything below writes into the workspace, so a snapshot that cannot be taken
+            // fails the install with no half-written member left for the workspaces glob to pick
+            // up. Nothing below touches `bun.lock` — only bun does — so these are the same bytes a
+            // read just before `bun install` would see.
+            const before = await readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, log })
+
             await createInstallWorkspaceFiles({
                 path: rootWorkspace,
                 qadamsToInstall,
@@ -143,8 +149,6 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 rootWorkspace,
                 qadamPackage: piece,
             })))
-
-            const before = await readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, log })
 
             await tracer.startActiveSpan('qadamInstaller.bunInstall', async (span) => {
                 try {
@@ -373,8 +377,8 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before,
     await markQadamsAsUsed(rootWorkspace, installed)
 }
 
-// Everything about the workspace that a rollback has to be able to put back. Captured immediately
-// before `bun install`, inside the same file lock.
+// Everything about the workspace that a rollback has to be able to put back. Captured inside the
+// same file lock as `bun install`, before the install writes anything into the workspace.
 //
 // `lockfileContents` is the reason this is a snapshot rather than just the key set. `bun install`
 // REWRITES `bun.lock` before the integrity pass ever reads it, and the old rollback removed only

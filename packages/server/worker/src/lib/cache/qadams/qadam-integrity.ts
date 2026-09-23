@@ -142,11 +142,10 @@ const NPM_SIGNING_KEYS: Record<string, string> = {
 // of them are unsigned — older packages predate npm's signing entirely — so extending this to the
 // whole graph would fail installs that work today. It is also not what #482 asks for: the threat
 // it names is names no administrator chose.
-// Deliberately without the trailing slash that `qadam-installer.ts`'s same-named constant carries:
-// that one is written into an `.npmrc` scope mapping, this one is joined with path segments. #478
-// makes the registry configurable and will have to change BOTH — two values under one name is the
-// trap worth flagging here rather than hiding behind a shared constant each use would have to
-// re-normalise anyway.
+//
+// `qadam-installer.ts` carries its own `OFFICIAL_QADAM_REGISTRY_URL`, written into the install
+// workspace's `.npmrc`; this one is joined with path segments to read version documents. #478
+// makes the registry configurable and will have to change BOTH.
 const OFFICIAL_QADAM_REGISTRY_URL = 'https://registry.npmjs.org'
 // A registry entry in bun's text lockfile is `[spec, registry, dependencies, integrity]`. The
 // other arities are not variations to tolerate — see `classifyEntry`.
