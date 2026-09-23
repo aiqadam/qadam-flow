@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "Signing Request Created": "Signaturanfrage erstellt",
   "Signing Request Sent": "Signaturanfrage gesendet",
   "Signing Request Opened by All": "Signaturanfrage geöffnet von allen",

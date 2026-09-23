@@ -79,6 +79,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Avatar Video Event (Success)": "New Avatar Video Event (Success)",
   "New Avatar Video Event (Fail)": "New Avatar Video Event (Fail)",
   "Triggers when a video is generated successfully.": "Triggers when a video is generated successfully.",

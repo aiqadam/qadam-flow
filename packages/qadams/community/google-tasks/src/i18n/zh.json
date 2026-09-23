@@ -32,6 +32,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Task": "New Task",
   "Triggers when a task is created": "Triggers when a task is created"
 }

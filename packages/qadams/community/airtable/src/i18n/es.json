@@ -86,6 +86,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Record": "Nuevo registro",
   "New or Updated Record": "Registro nuevo o actualizado",
   "Triggers when a new record is added to the selected table.": "Se activa cuando se añade un nuevo registro a la tabla seleccionada.",

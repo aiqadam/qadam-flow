@@ -48,6 +48,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New File": "Neue Datei",
   "Trigger when a new file is uploaded.": "Auslösen wenn eine neue Datei hochgeladen wird."
 }

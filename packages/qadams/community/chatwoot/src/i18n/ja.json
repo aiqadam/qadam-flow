@@ -38,6 +38,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Incoming Message": "新しい受信メッセージ",
   "Triggers when a contact sends a new message in a Chatwoot conversation": "連絡先がChatwoot会話で新しいメッセージを送信したときにトリガーします"
 }

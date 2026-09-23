@@ -64,6 +64,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Submission": "Neue Einreichung",
   "Triggers when Webflow Site receives a new submission": "Auslöser wenn die Webflow Site eine neue Einreichung erhält",
   "Form Name": "Formularname",

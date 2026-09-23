@@ -24,6 +24,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "Event Scheduled": "Evento Programado",
   "Event Canceled": "Evento cancelado",
   "Triggers when a new Calendly event is scheduled": "Dispara cuando se programe un nuevo evento de Calendly",

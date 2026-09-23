@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Signing Request Created": "Signing Request Created",
   "Signing Request Sent": "Signing Request Sent",
   "Signing Request Opened by All": "Signing Request Opened by All",

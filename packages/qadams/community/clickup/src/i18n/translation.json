@@ -225,6 +225,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "Task Created": "Task Created",
   "Task Updated": "Task Updated",
   "Task Deleted": "Task Deleted",

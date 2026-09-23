@@ -77,6 +77,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Email Received": "Neue E-Mail erhalten",
   "Triggers when a new email is received in a specified folder (or inbox).": "Wird ausgelöst, wenn eine neue E-Mail in einem bestimmten Ordner (oder Posteingang) empfangen wird.",
   "Select the folder to watch. If empty, watches the inbox/all messages based on API default.": "Wählen Sie den zu beobachtenden Ordner. Wenn leer, beobachtet der Posteingang/alle Nachrichten basierend auf der API-Standardeinstellung."

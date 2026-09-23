@@ -84,6 +84,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New or Updated Contact": "新規または更新された連絡先",
   "Triggers when a contact is created or updated in Microsoft 365 People.": "連絡先が Microsoft 365 Peopleで作成または更新されたときにトリガーされます。"
 }

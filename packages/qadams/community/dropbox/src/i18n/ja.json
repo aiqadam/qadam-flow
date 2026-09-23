@@ -108,6 +108,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Folder": "新規フォルダ",
   "Triggers when a new folder is created inside a watched Dropbox folder.": "監視対象の Dropbox フォルダー内に新しいフォルダーが作成されたときにトリガーされます。",
   "Watched Folder Path": "監視フォルダパス",

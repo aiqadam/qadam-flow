@@ -65,6 +65,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New Task Created": "Nieuwe taak aangemaakt",
   "Triggers when a new task is created in a selected project.": "Triggert wanneer een nieuwe taak wordt aangemaakt in een geselecteerd project.",
   "Project": "Project",

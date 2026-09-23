@@ -108,6 +108,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Folder": "Nova Pasta",
   "Triggers when a new folder is created inside a watched Dropbox folder.": "Aciona quando uma nova pasta é criada dentro de uma pasta do Dropbox observada.",
   "Watched Folder Path": "Caminho da pasta assistida",

@@ -128,6 +128,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "Traffic Spike": "Traffic Spike",
   "Triggers once when current visitors exceed a threshold, then resets when they drop below it": "Löst einmal aus, wenn aktuelle Besucher einen Schwellenwert überschreiten, dann wird zurückgesetzt, wenn sie darunter fallen",
   "Visitor Threshold": "Besucher-Grenzwert",

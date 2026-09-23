@@ -66,6 +66,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New room": "New room",
   "New meeting": "New meeting",
   "Triggers when a new room is created": "Triggers when a new room is created",

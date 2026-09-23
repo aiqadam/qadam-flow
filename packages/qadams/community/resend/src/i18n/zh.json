@@ -125,6 +125,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Email Event": "Email Event",
   "Triggers when a selected email or contact event occurs in Resend": "Triggers when a selected email or contact event occurs in Resend",
   "Events": "Events",

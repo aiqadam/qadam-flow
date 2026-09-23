@@ -46,6 +46,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Message Received": "Message Received",
   "Triggers when Telnyx delivers a message.received webhook event.": "Triggers when Telnyx delivers a message.received webhook event.",
   "Markdown": "Markdown",

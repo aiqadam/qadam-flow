@@ -70,6 +70,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Post": "Nouveau message",
   "Triggers when a new post is published": "Déclenche quand un nouveau message est publié",
   "Authors": "Auteurs"

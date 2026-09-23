@@ -126,5 +126,6 @@
   "HEAD": "黑色",
   "JSON": "JSON",
   "Form Data": "表单数据",
-  "Raw": "原始文件"
+  "Raw": "原始文件",
+  "Binary": "二进制"
 }

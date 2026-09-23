@@ -225,6 +225,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Task Created": "タスクが作成されました",
   "Task Updated": "タスクを更新しました",
   "Task Deleted": "タスクが削除されました",

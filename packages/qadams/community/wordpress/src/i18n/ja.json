@@ -70,6 +70,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Post": "新規投稿",
   "Triggers when a new post is published": "新しい投稿が公開されたときにトリガーします",
   "Authors": "著者"

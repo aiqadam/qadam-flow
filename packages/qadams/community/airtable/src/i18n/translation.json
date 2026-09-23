@@ -86,6 +86,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New Record": "New Record",
   "New or Updated Record": "New or Updated Record",
   "Triggers when a new record is added to the selected table.": "Triggers when a new record is added to the selected table.",

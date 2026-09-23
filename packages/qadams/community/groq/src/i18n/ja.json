@@ -62,5 +62,6 @@
   "HEAD": "頭",
   "None": "なし",
   "Form Data": "フォームデータ",
-  "Raw": "Raw"
+  "Raw": "Raw",
+  "Binary": "バイナリ"
 }

@@ -62,5 +62,6 @@
   "HEAD": "HEAD",
   "None": "None",
   "Form Data": "Form Data",
-  "Raw": "Raw"
+  "Raw": "Raw",
+  "Binary": "Binary"
 }

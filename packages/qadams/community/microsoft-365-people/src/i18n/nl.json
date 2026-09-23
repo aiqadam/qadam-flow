@@ -84,6 +84,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New or Updated Contact": "Nieuw of bijgewerkt contact",
   "Triggers when a contact is created or updated in Microsoft 365 People.": "Triggert wanneer een contact wordt aangemaakt of bijgewerkt in Microsoft 365 mensen."
 }

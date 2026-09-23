@@ -123,6 +123,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Issue": "Nova issue",
   "Updated Issue": "Issue atualizada",
   "Triggers when a new issue is created in any project you can access.": "Aciona quando uma nova issue é criada em qualquer projeto que você possa acessar.",

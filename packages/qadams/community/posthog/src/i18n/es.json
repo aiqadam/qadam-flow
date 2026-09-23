@@ -57,6 +57,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Event": "Nuevo evento",
   "Triggers when a new event is captured in PostHog": "Dispara cuando un nuevo evento es capturado en PostHog",
   "Event Name Filter": "Filtro de nombre de evento",

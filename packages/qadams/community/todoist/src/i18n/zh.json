@@ -48,6 +48,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Task Completed": "Task Completed",
   "Triggers when a new task is completed": "Triggers when a new task is completed",
   "Leave it blank if you want to get completed tasks from all your projects.": "Leave it blank if you want to get completed tasks from all your projects."

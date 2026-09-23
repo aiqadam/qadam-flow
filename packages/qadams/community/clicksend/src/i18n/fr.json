@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Incoming SMS": "Nouveau SMS entrant",
   "Triggers when a new SMS message is received.": "Déclenche quand un nouveau SMS est reçu."
 }

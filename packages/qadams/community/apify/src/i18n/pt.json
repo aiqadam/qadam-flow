@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "Watch Actor Runs": "Assista o ator roda",
   "Watch Task Runs": "Assistir à Tarefa Executa",
   "Triggers a Flow on Apify Actor run events": "Aciona um fluxo em eventos de execução do Apify Actor",

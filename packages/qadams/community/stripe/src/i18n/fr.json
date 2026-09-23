@@ -183,6 +183,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Payment": "Nouveau paiement",
   "New Customer": "Nouveau client",
   "Payment Failed": "Échec du paiement",

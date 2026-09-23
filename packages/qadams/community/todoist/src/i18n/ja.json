@@ -48,6 +48,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Task Completed": "タスクが完了しました",
   "Triggers when a new task is completed": "新しいタスクが完了したときにトリガーします",
   "Leave it blank if you want to get completed tasks from all your projects.": "すべてのプロジェクトから完了したタスクを取得したい場合は、空白のままにしてください。"

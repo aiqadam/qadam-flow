@@ -141,6 +141,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Bitlink Created": "新しいビットリンクが作成されました",
   "Fires when a new Bitlink is created.": "新しいBitlinkが作成されたときに発生します。",
   "Polling Interval": "ポーリング間隔",

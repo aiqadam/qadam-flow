@@ -23,6 +23,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Submission": "新しい提出",
   "Triggers when Typeform receives a new submission": "Typeformが新しい提出物を受け取ったときにトリガー",
   "Form": "フォーム",

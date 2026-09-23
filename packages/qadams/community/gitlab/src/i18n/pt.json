@@ -28,6 +28,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Project Issue Event": "Novo Evento de Issue Projeto",
   "Triggers on project issue events when an issue is created or when an existing issue is updated, closed, or reopened.": "Aciona em eventos de issue de projeto quando uma issue é criada ou quando uma issue existente é atualizada, fechada ou reaberta.",
   "Issue Event": "Evento de issue",

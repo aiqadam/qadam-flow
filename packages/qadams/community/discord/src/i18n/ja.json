@@ -98,6 +98,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New message": "新しいメッセージ",
   "New Member": "新規メンバー",
   "Triggers when a message is sent in a channel": "チャンネルでメッセージが送信されたときにトリガーします",

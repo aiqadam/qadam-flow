@@ -24,6 +24,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Event Scheduled": "Event Scheduled",
   "Event Canceled": "Event Canceled",
   "Triggers when a new Calendly event is scheduled": "Triggers when a new Calendly event is scheduled",

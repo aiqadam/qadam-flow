@@ -70,6 +70,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New Post": "New Post",
   "Triggers when a new post is published": "Triggers when a new post is published",
   "Authors": "Authors"

@@ -79,6 +79,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Avatar Video Event (Success)": "新しいアバターのビデオイベント（成功）",
   "New Avatar Video Event (Fail)": "新しいアバタービデオイベント（失敗）",
   "Triggers when a video is generated successfully.": "ビデオが正常に生成されたときにトリガーします。",

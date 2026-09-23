@@ -108,6 +108,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Folder": "New Folder",
   "Triggers when a new folder is created inside a watched Dropbox folder.": "Déclenche lorsqu'un nouveau dossier est créé dans un dossier Dropbox surveillé.",
   "Watched Folder Path": "Chemin du dossier surveillé",

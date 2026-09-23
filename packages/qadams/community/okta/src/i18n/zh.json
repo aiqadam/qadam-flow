@@ -72,6 +72,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Event": "New Event",
   "Fires when a new Okta event is generated": "Fires when a new Okta event is generated",
   "Event Types to Monitor": "Event Types to Monitor",

@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "Signing Request Created": "Signing Request Created",
   "Signing Request Sent": "Signing Request Sent",
   "Signing Request Opened by All": "Signing Request Opened by All",

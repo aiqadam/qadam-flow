@@ -29,6 +29,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Submission": "新しい提出",
   "Triggers when someone submits a response to your form. Each form field is returned as a separate field using the question label as the key.": "誰かがあなたのフォームに応答を送信したときにトリガーします。各フォームフィールドは、キーとして質問ラベルを使用して別のフィールドとして返されます。",
   "Form": "フォーム"

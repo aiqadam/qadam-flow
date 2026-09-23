@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New Incoming SMS": "New Incoming SMS",
   "Triggers when a new SMS message is received.": "Triggers when a new SMS message is received."
 }

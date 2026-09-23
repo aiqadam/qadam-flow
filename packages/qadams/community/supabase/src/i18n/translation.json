@@ -107,6 +107,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New Row": "New Row",
   "Fires when a new row is created in a table": "Fires when a new row is created in a table",
   "Markdown": "Markdown",

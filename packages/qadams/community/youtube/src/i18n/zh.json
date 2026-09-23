@@ -24,6 +24,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Video In Channel": "New Video In Channel",
   "Runs when a new video is added to a YouTube channel": "Runs when a new video is added to a YouTube channel",
   "Channel ID, URL, or handle": "Channel ID, URL, or handle",

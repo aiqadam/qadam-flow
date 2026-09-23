@@ -65,6 +65,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Task Created": "Nueva tarea creada",
   "Triggers when a new task is created in a selected project.": "Se activa cuando se crea una nueva tarea en un proyecto seleccionado.",
   "Project": "Projekt",

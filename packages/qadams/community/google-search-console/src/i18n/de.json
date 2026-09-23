@@ -65,5 +65,6 @@
   "None": "Keine",
   "JSON": "JSON",
   "Form Data": "Formulardaten",
-  "Raw": "Rohe"
+  "Raw": "Rohe",
+  "Binary": "Binär"
 }

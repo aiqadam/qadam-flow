@@ -128,6 +128,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "Traffic Spike": "Pic de Trafic",
   "Triggers once when current visitors exceed a threshold, then resets when they drop below it": "Déclenche une fois quand les visiteurs actuels dépassent un seuil, puis se réinitialise quand ils tombent sous le seuil",
   "Visitor Threshold": "Seuil de visiteur",

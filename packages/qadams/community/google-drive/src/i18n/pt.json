@@ -128,6 +128,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New File": "Novo arquivo",
   "New Folder": "Nova Pasta",
   "Trigger when a new file is uploaded.": "Dispara quando um novo arquivo é carregado.",

@@ -24,6 +24,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "Event Scheduled": "Afspraak gepland",
   "Event Canceled": "Afspraak Geannuleerd",
   "Triggers when a new Calendly event is scheduled": "Triggert wanneer een nieuwe gebeurtenis is gepland",

@@ -66,6 +66,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New room": "新しい部屋",
   "New meeting": "新しいミーティング",
   "Triggers when a new room is created": "新しいルームが作成されたときにトリガーします",

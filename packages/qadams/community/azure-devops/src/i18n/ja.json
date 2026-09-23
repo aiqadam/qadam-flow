@@ -68,6 +68,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New or Updated Work Item (Instant)": "新規または更新された作業項目 (即時)",
   "New or Updated Work Item (Polling)": "新規または更新された作業項目 (ポーリング)",
   "Fires instantly when a work item is created, updated, or commented on in Azure DevOps via a Service Hooks subscription. Requires a public webhook URL reachable from Azure DevOps.": "Service Hooks サブスクリプションを介して Azure DevOps で作業項目が作成、更新、コメントされたときにすぐに発生します。 Azure DevOpsからアクセス可能なパブリック Web フックURLが必要です。",

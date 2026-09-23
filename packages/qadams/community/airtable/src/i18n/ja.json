@@ -86,6 +86,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Record": "新しいレコード",
   "New or Updated Record": "新規または更新されたレコード",
   "Triggers when a new record is added to the selected table.": "選択したテーブルに新しいレコードが追加されたときにトリガーされます。",

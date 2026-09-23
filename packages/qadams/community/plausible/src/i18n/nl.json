@@ -128,6 +128,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "Traffic Spike": "Dataverkeer spike",
   "Triggers once when current visitors exceed a threshold, then resets when they drop below it": "Triggert eenmaal wanneer de huidige bezoekers een drempel overschrijden, reset dan wanneer ze hieronder komen",
   "Visitor Threshold": "Bezoeker drempel",

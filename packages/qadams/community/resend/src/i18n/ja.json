@@ -125,6 +125,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Email Event": "Eメールイベント",
   "Triggers when a selected email or contact event occurs in Resend": "再送信で選択した電子メールまたは連絡先イベントが発生した場合に発生します",
   "Events": "イベント",

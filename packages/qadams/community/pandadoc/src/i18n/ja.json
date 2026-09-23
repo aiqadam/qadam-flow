@@ -382,6 +382,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Document Completed": "ドキュメントが完了しました",
   "Document State Changed": "ドキュメントの状態が変更されました",
   "Document Updated": "ドキュメントが更新されました",

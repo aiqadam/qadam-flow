@@ -126,5 +126,6 @@
   "HEAD": "HEAD",
   "JSON": "JSON",
   "Form Data": "Formulardaten",
-  "Raw": "Rohe"
+  "Raw": "Rohe",
+  "Binary": "Binär"
 }

@@ -138,6 +138,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "Subscription Created": "Subscription Created",
   "Subscription Cancelled": "Subscription Cancelled",
   "Subscription Renewed": "Subscription Renewed",

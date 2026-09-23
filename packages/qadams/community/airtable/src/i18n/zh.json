@@ -86,6 +86,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Record": "New Record",
   "New or Updated Record": "New or Updated Record",
   "Triggers when a new record is added to the selected table.": "Triggers when a new record is added to the selected table.",

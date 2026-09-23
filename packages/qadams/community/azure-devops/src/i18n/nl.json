@@ -68,6 +68,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New or Updated Work Item (Instant)": "Nieuw of bijgewerkt werkartikel (Direct)",
   "New or Updated Work Item (Polling)": "Nieuw of bijgewerkt werkitem (Polling)",
   "Fires instantly when a work item is created, updated, or commented on in Azure DevOps via a Service Hooks subscription. Requires a public webhook URL reachable from Azure DevOps.": "Vuurt onmiddellijk af wanneer een werkitem is aangemaakt, bijgewerkt of commentaar gegeven in Azure DevOps via een Service Hooks abonnement. Vereist een openbare webhook URL bereikbaar vanuit Azure DevOps.",

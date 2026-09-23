@@ -84,6 +84,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New or Updated Contact": "New or Updated Contact",
   "Triggers when a contact is created or updated in Microsoft 365 People.": "Triggers when a contact is created or updated in Microsoft 365 People."
 }

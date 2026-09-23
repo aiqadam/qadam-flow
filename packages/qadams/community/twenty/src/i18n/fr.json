@@ -74,6 +74,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Person": "Nouvelle Personne",
   "New Company": "Nouvelle entreprise",
   "Triggers when a new person is created in Twenty CRM.": "Déclenche quand une nouvelle personne est créée dans Vingt CRM.",
