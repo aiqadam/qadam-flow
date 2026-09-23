@@ -69,6 +69,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New or Updated Record": "Neuer oder aktualisierter Datensatz",
   "Triggers when a new record is added or modified.": "Wird ausgelöst, wenn ein neuer Datensatz hinzugefügt oder geändert wird."
 }

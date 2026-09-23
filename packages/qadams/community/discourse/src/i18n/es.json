@@ -57,5 +57,6 @@
   "None": "Ninguna",
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
-  "Raw": "Rápido"
+  "Raw": "Rápido",
+  "Binary": "Binario"
 }

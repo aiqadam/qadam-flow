@@ -126,5 +126,6 @@
   "HEAD": "頭",
   "JSON": "JSON",
   "Form Data": "フォームデータ",
-  "Raw": "Raw"
+  "Raw": "Raw",
+  "Binary": "バイナリ"
 }

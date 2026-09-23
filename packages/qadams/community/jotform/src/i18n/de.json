@@ -29,6 +29,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Submission": "Neue Einreichung",
   "Triggers when someone submits a response to your form. Each form field is returned as a separate field using the question label as the key.": "Wird ausgelöst, wenn jemand eine Antwort auf Ihr Formular absendet. Jedes Formularfeld wird als separates Feld mit der Fragebezeichnung als Schlüssel zurückgegeben.",
   "Form": "Formular"

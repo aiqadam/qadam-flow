@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Row": "新しい行",
   "Updated Row": "更新行",
   "Query Job Completed (With Row Data)": "クエリ作業が完了しました (行データを使用)",

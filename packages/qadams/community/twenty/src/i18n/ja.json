@@ -74,6 +74,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Person": "新しい人",
   "New Company": "新規会社",
   "Triggers when a new person is created in Twenty CRM.": "Twenty CRM で新しい人が作成されたときにトリガーします。",

@@ -29,6 +29,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New Submission": "New Submission",
   "Triggers when someone submits a response to your form. Each form field is returned as a separate field using the question label as the key.": "Triggers when someone submits a response to your form. Each form field is returned as a separate field using the question label as the key.",
   "Form": "Form"

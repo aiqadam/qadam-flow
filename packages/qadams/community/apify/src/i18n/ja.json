@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Watch Actor Runs": "アクターの実行を見る",
   "Watch Task Runs": "タスクの実行を見る",
   "Triggers a Flow on Apify Actor run events": "Apifyアクターの実行時にフローをトリガーする",

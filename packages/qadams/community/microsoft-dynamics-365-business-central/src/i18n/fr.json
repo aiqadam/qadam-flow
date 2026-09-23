@@ -69,6 +69,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New or Updated Record": "Nouvel enregistrement ou mis à jour",
   "Triggers when a new record is added or modified.": "Déclenche lorsqu'un nouvel enregistrement est ajouté ou modifié."
 }

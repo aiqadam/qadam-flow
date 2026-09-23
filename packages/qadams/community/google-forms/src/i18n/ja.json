@@ -23,6 +23,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Response": "新しい回答",
   "Triggers when there is new response": "新しい応答があるときにトリガーします",
   "Form": "フォーム",

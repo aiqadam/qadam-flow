@@ -48,6 +48,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New File": "Nieuw bestand",
   "Trigger when a new file is uploaded.": "Trigger wanneer een nieuw bestand wordt geüpload."
 }

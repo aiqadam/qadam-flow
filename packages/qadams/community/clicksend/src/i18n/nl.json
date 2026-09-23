@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New Incoming SMS": "Nieuwe inkomende SMS",
   "Triggers when a new SMS message is received.": "Triggert wanneer een nieuw SMS-bericht wordt ontvangen."
 }

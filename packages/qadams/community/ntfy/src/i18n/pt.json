@@ -47,5 +47,6 @@
   "None": "Nenhuma",
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
-  "Raw": "RAW"
+  "Raw": "RAW",
+  "Binary": "Binário"
 }

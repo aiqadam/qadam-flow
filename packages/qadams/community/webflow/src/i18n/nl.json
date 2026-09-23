@@ -64,6 +64,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New Submission": "Nieuwe inzending",
   "Triggers when Webflow Site receives a new submission": "Triggert wanneer Webflow Site een nieuwe uitwerking ontvangt",
   "Form Name": "Formulier naam",

@@ -29,6 +29,7 @@
   "Form Data": "Formulardaten",
   "JSON": "JSON",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "Retry on all errors (4xx, 5xx)": "Alle Fehler wiederholen (4xx, 5xx)",
   "Retry on internal errors (5xx)": "Bei internen Fehlern wiederholen (5xx)",
   "Do not retry": "Nicht wiederholen",

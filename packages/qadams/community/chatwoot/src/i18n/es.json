@@ -38,6 +38,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Incoming Message": "Nuevo mensaje entrante",
   "Triggers when a contact sends a new message in a Chatwoot conversation": "Disparadores cuando un contacto envía un nuevo mensaje en una conversación de Chatwoot"
 }

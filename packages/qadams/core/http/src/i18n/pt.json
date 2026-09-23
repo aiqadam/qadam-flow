@@ -29,6 +29,7 @@
   "Form Data": "Dados de Formulário",
   "JSON": "JSON",
   "Raw": "RAW",
+  "Binary": "Binário",
   "Retry on all errors (4xx, 5xx)": "Repetir todos os erros (4xx, 5xx)",
   "Retry on internal errors (5xx)": "Tentar novamente em erros internos (5xx)",
   "Do not retry": "Não tente novamente",

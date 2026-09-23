@@ -123,6 +123,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Issue": "Nouveau problème",
   "Updated Issue": "Problème mis à jour",
   "Triggers when a new issue is created in any project you can access.": "Déclenche lorsqu'un nouveau ticket est créé dans n'importe quel projet auquel vous pouvez accéder.",

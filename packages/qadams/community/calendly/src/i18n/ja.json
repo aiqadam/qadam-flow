@@ -24,6 +24,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Event Scheduled": "予定されたイベント",
   "Event Canceled": "イベントがキャンセルされました",
   "Triggers when a new Calendly event is scheduled": "新しいカレンダーイベントがスケジュールされたときにトリガーします",

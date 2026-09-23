@@ -56,6 +56,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Document": "Neues Dokument",
   "Triggers when a new document is added to a specific folder(optional).": "Wird ausgelöst, wenn ein neues Dokument einem bestimmten Ordner hinzugefügt wird (optional)."
 }

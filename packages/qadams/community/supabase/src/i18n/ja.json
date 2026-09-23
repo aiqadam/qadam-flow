@@ -107,6 +107,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Row": "新しい行",
   "Fires when a new row is created in a table": "テーブルに新しい行が作成されたときに発行されます。",
   "Markdown": "Markdown",

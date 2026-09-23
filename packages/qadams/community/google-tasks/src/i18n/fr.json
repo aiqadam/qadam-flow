@@ -32,6 +32,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Task": "Nouvelle tâche",
   "Triggers when a task is created": "Déclenche quand une tâche est créée"
 }

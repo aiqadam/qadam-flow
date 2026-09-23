@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Incoming SMS": "New Incoming SMS",
   "Triggers when a new SMS message is received.": "Triggers when a new SMS message is received."
 }

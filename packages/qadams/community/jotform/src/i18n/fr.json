@@ -29,6 +29,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Submission": "Nouvelle soumission",
   "Triggers when someone submits a response to your form. Each form field is returned as a separate field using the question label as the key.": "Déclenche quand quelqu'un soumet une réponse à votre formulaire. Chaque champ de formulaire est retourné comme un champ séparé en utilisant l'étiquette de la question comme clé.",
   "Form": "Forme"

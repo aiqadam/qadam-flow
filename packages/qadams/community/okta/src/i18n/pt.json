@@ -72,6 +72,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Event": "Novo evento",
   "Fires when a new Okta event is generated": "Atira quando um novo evento de Okta é gerado",
   "Event Types to Monitor": "Tipos de Evento para Monitorar",

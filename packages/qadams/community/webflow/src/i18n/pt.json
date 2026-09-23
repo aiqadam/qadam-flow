@@ -64,6 +64,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Submission": "Nova Submissão",
   "Triggers when Webflow Site receives a new submission": "Aciona quando o site receber uma nova submissão",
   "Form Name": "Nome do formulário",

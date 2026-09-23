@@ -79,6 +79,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Avatar Video Event (Success)": "Nuevo evento de video avatar (éxito)",
   "New Avatar Video Event (Fail)": "Nuevo evento de video de avatar (falla)",
   "Triggers when a video is generated successfully.": "Dispara cuando un video se genera correctamente.",

@@ -28,6 +28,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Project Issue Event": "新しいプロジェクト課題イベント",
   "Triggers on project issue events when an issue is created or when an existing issue is updated, closed, or reopened.": "課題が作成されたとき、または既存の課題が更新、閉じ、または再開されたときに、プロジェクトの課題イベントをトリガーします。",
   "Issue Event": "課題イベント",

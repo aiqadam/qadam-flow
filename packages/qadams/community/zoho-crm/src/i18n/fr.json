@@ -36,6 +36,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Contact": "Nouveau contact",
   "Triggers when a new contact is created": "Déclenche lorsqu'un nouveau contact est créé"
 }

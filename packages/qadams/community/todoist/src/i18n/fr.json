@@ -48,6 +48,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "Task Completed": "Tâche terminée",
   "Triggers when a new task is completed": "Déclenche quand une nouvelle tâche est terminée",
   "Leave it blank if you want to get completed tasks from all your projects.": "Laissez vide si vous voulez obtenir des tâches terminées de tous vos projets."

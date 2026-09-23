@@ -108,6 +108,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Folder": "Nueva carpeta",
   "Triggers when a new folder is created inside a watched Dropbox folder.": "Dispara cuando se crea una nueva carpeta dentro de una carpeta de Dropbox observada.",
   "Watched Folder Path": "Ruta de la carpeta vista",

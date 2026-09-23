@@ -32,6 +32,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Task": "新しいタスク",
   "Triggers when a task is created": "タスクが作成されたときにトリガーします"
 }

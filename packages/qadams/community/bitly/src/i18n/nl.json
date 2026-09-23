@@ -141,6 +141,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New Bitlink Created": "Nieuwe Bitlink aangemaakt",
   "Fires when a new Bitlink is created.": "Vuurt wanneer een nieuwe Bitlink is aangemaakt.",
   "Polling Interval": "Polling Interval",

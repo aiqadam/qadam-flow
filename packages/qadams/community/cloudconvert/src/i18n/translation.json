@@ -197,6 +197,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New Job Event": "New Job Event",
   "Job Finished": "Job Finished",
   "Job Failed": "Job Failed",

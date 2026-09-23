@@ -98,6 +98,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New message": "Nova mensagem",
   "New Member": "Novo Membro",
   "Triggers when a message is sent in a channel": "Dispara quando uma mensagem é enviada em um canal",

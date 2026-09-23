@@ -382,6 +382,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Document Completed": "Document Completed",
   "Document State Changed": "Document State Changed",
   "Document Updated": "Document Updated",

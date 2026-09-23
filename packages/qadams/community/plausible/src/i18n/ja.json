@@ -128,6 +128,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Traffic Spike": "Traffic Spike",
   "Triggers once when current visitors exceed a threshold, then resets when they drop below it": "現在の訪問者が閾値を超えた場合に一度トリガーし、その下にドロップするとリセットします",
   "Visitor Threshold": "訪問者のしきい値",

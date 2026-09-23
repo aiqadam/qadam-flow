@@ -382,6 +382,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "Document Completed": "Document terminé",
   "Document State Changed": "État du document modifié",
   "Document Updated": "Document mis à jour",

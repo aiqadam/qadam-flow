@@ -36,6 +36,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Contact": "新しい連絡先",
   "Triggers when a new contact is created": "新しい連絡先が作成されたときにトリガーします"
 }

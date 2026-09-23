@@ -38,6 +38,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Incoming Message": "Nouveau message entrant",
   "Triggers when a contact sends a new message in a Chatwoot conversation": "Déclenche lorsqu'un contact envoie un nouveau message dans une conversation Chatwoot"
 }

@@ -107,6 +107,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Row": "Nova linha",
   "Fires when a new row is created in a table": "Atira quando uma nova linha é criada em uma tabela",
   "Markdown": "Markdown",

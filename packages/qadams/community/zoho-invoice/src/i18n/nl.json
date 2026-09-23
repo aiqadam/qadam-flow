@@ -30,6 +30,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New Invoice": "Nieuwe factuur",
   "Trigger when a new invoice is received.": "Trigger wanneer een nieuwe factuur is ontvangen."
 }

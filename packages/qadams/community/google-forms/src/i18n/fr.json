@@ -23,6 +23,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Response": "Nouvelle réponse",
   "Triggers when there is new response": "Se déclenche lorsqu'il y a une nouvelle réponse",
   "Form": "Formulaire",

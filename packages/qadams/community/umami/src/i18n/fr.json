@@ -79,6 +79,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Event": "Nouvel événement",
   "New Session": "Nouvelle session",
   "Triggers when a new custom event is recorded on a website.": "Se déclenche lorsqu'un nouvel événement personnalisé est enregistré sur un site.",

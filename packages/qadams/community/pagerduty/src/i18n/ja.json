@@ -74,6 +74,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Incident": "新しい事件",
   "Incident Resolved": "インシデントを解決しました",
   "Incident Acknowledged": "インシデントが承認されました",

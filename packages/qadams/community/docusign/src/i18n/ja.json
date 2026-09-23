@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "Signing Request Created": "署名リクエストが作成されました",
   "Signing Request Sent": "署名リクエストが送信されました",
   "Signing Request Opened by All": "すべてによって開かれた署名リクエスト",

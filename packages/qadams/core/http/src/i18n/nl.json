@@ -29,6 +29,7 @@
   "Form Data": "Formulieren gegevens",
   "JSON": "JSON",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "Retry on all errors (4xx, 5xx)": "Opnieuw proberen bij alle fouten (4xx, 5xx)",
   "Retry on internal errors (5xx)": "Opnieuw proberen bij interne fouten (5xx)",
   "Do not retry": "Probeer het niet opnieuw",

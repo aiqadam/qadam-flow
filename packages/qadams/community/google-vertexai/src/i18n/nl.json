@@ -60,5 +60,6 @@
   "None": "geen",
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
-  "Raw": "Onbewerkte"
+  "Raw": "Onbewerkte",
+  "Binary": "Binair"
 }

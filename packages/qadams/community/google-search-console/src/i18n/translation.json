@@ -65,5 +65,6 @@
   "None": "None",
   "JSON": "JSON",
   "Form Data": "Form Data",
-  "Raw": "Raw"
+  "Raw": "Raw",
+  "Binary": "Binary"
 }

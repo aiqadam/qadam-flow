@@ -38,6 +38,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Incoming Message": "Neue eingehende Nachricht",
   "Triggers when a contact sends a new message in a Chatwoot conversation": "Löst aus, wenn ein Kontakt eine neue Nachricht in einer Chatwoot-Unterhaltung sendet"
 }

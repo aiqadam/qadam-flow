@@ -33,5 +33,6 @@
   "None": "Aucun",
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
-  "Raw": "Brut"
+  "Raw": "Brut",
+  "Binary": "Binaire"
 }

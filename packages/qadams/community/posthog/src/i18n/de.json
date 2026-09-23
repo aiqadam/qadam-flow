@@ -57,6 +57,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Event": "Neues Ereignis",
   "Triggers when a new event is captured in PostHog": "Wird ausgelöst, wenn ein neues Ereignis in PostHog erfasst wird",
   "Event Name Filter": "Ereignisnamen-Filter",

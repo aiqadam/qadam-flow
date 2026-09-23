@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Incoming SMS": "新しいSMS着信",
   "Triggers when a new SMS message is received.": "新しいSMSメッセージを受信したときにトリガーします."
 }

@@ -141,6 +141,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Bitlink Created": "Novo Bitlink criado",
   "Fires when a new Bitlink is created.": "Atira quando um novo Bitlink é criado.",
   "Polling Interval": "Intervalo de votação",

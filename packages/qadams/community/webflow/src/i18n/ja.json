@@ -64,6 +64,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Submission": "新しい提出",
   "Triggers when Webflow Site receives a new submission": "Webflow Site が新しい提出物を受信したときにトリガーします",
   "Form Name": "フォーム名",

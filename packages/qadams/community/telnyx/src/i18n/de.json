@@ -46,6 +46,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "Message Received": "Nachricht empfangen",
   "Triggers when Telnyx delivers a message.received webhook event.": "Trigger wenn Telnyx liefert eine Nachricht.empfangen webhook Event.",
   "Markdown": "Markdown",

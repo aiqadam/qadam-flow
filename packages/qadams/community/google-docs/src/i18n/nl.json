@@ -56,6 +56,7 @@
   "JSON": "JSON",
   "Form Data": "Formulieren gegevens",
   "Raw": "Onbewerkte",
+  "Binary": "Binair",
   "New Document": "Nieuw Document",
   "Triggers when a new document is added to a specific folder(optional).": "Triggert wanneer een nieuw document wordt toegevoegd aan een specifieke map (optioneel)."
 }

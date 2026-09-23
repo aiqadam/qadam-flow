@@ -125,6 +125,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "Email Event": "Evento de Email",
   "Triggers when a selected email or contact event occurs in Resend": "Dispara cuando se produce un correo electrónico o evento de contacto seleccionado en Reenviar",
   "Events": "Eventos",

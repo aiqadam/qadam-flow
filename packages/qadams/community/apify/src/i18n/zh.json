@@ -81,6 +81,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "Watch Actor Runs": "Watch Actor Runs",
   "Watch Task Runs": "Watch Task Runs",
   "Triggers a Flow on Apify Actor run events": "Triggers a Flow on Apify Actor run events",

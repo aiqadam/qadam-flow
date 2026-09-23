@@ -79,6 +79,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Event": "新しいイベント",
   "New Session": "新しいセッション",
   "Triggers when a new custom event is recorded on a website.": "新しいカスタムイベントがウェブサイトに記録されたときに発生します。",

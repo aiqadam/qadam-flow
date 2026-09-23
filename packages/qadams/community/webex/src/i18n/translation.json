@@ -66,6 +66,7 @@
   "JSON": "JSON",
   "Form Data": "Form Data",
   "Raw": "Raw",
+  "Binary": "Binary",
   "New room": "New room",
   "New meeting": "New meeting",
   "Triggers when a new room is created": "Triggers when a new room is created",

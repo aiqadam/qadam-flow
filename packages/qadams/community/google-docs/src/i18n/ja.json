@@ -56,6 +56,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Document": "新しいドキュメント",
   "Triggers when a new document is added to a specific folder(optional).": "新しいドキュメントが特定のフォルダに追加されたときにトリガーします(任意)。"
 }

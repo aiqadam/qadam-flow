@@ -56,6 +56,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Document": "Nouveau document",
   "Triggers when a new document is added to a specific folder(optional).": "Déclenche lorsqu'un nouveau document est ajouté à un dossier spécifique (optionnel)."
 }

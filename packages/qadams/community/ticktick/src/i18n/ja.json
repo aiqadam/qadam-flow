@@ -65,6 +65,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Task Created": "新しいタスクが作成されました",
   "Triggers when a new task is created in a selected project.": "選択したプロジェクトで新しいタスクが作成されたときにトリガーされます。",
   "Project": "プロジェクト",

@@ -83,6 +83,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Row": "Neue Zeile",
   "Updated Row": "Aktualisierte Zeile",
   "Query Job Completed (With Row Data)": "Abfragejob abgeschlossen (mit Zeilendaten)",

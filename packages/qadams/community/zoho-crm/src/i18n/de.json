@@ -36,6 +36,7 @@
   "JSON": "JSON",
   "Form Data": "Formulardaten",
   "Raw": "Rohe",
+  "Binary": "Binär",
   "New Contact": "Neuer Kontakt",
   "Triggers when a new contact is created": "Wird ausgelöst, wenn ein neuer Kontakt erstellt wird"
 }

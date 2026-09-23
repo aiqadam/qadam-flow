@@ -23,6 +23,7 @@
   "JSON": "JSON",
   "Form Data": "Données du formulaire",
   "Raw": "Brut",
+  "Binary": "Binaire",
   "New Submission": "Nouvelle soumission",
   "Triggers when Typeform receives a new submission": "Déclenche lorsque le formulaire de type reçoit une nouvelle soumission",
   "Form": "Formulaire",

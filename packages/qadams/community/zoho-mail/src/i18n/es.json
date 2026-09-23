@@ -77,6 +77,7 @@
   "JSON": "JSON",
   "Form Data": "Datos de Formulario",
   "Raw": "Rápido",
+  "Binary": "Binario",
   "New Email Received": "Nuevo email recibido",
   "Triggers when a new email is received in a specified folder (or inbox).": "Se activa cuando se recibe un nuevo correo electrónico en una carpeta (o bandeja de entrada).",
   "Select the folder to watch. If empty, watches the inbox/all messages based on API default.": "Seleccione la carpeta a ver. Si está vacía, observa la bandeja de entrada o todos los mensajes basados en el valor predeterminado de la API."

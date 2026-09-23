@@ -24,6 +24,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Video In Channel": "チャンネル内の新しいビデオ",
   "Runs when a new video is added to a YouTube channel": "YouTubeチャンネルに新しいビデオが追加されたときに実行されます。",
   "Channel ID, URL, or handle": "チャンネル ID、URL、または指示先",

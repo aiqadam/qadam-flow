@@ -30,6 +30,7 @@
   "JSON": "JSON",
   "Form Data": "Dados de Formulário",
   "Raw": "RAW",
+  "Binary": "Binário",
   "New Invoice": "Nova fatura",
   "Trigger when a new invoice is received.": "Acionar quando uma nova fatura for recebida."
 }

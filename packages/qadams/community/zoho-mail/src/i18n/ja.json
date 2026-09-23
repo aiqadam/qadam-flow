@@ -77,6 +77,7 @@
   "JSON": "JSON",
   "Form Data": "フォームデータ",
   "Raw": "Raw",
+  "Binary": "バイナリ",
   "New Email Received": "新しいメールを受信しました",
   "Triggers when a new email is received in a specified folder (or inbox).": "指定したフォルダ(または受信トレイ)に新しいメールを受信したときにトリガーします。",
   "Select the folder to watch. If empty, watches the inbox/all messages based on API default.": "監視するフォルダを選択します。空の場合は、API のデフォルトに基づいて受信トレイ/すべてのメッセージを監視します。"

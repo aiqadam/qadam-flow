@@ -141,6 +141,7 @@
   "JSON": "JSON",
   "Form Data": "表单数据",
   "Raw": "原始文件",
+  "Binary": "二进制",
   "New Bitlink Created": "New Bitlink Created",
   "Fires when a new Bitlink is created.": "Fires when a new Bitlink is created.",
   "Polling Interval": "Polling Interval",
