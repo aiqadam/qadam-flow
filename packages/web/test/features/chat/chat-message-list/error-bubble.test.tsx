@@ -56,13 +56,15 @@ describe('ErrorBubble', () => {
     root = undefined;
   });
 
-  it('tells the user a timed-out flow is still running and offers no retry', async () => {
+  it('tells the user a timed-out flow may still be running and offers no retry', async () => {
     await mountBubble({ sendingError: { code: FLOW_STILL_RUNNING } });
 
+    // #510: a run that hadn't started by the deadline is now failed, not "still
+    // running" — the copy must not claim the run is safely in progress.
     expect(container?.textContent).toContain(
-      'The flow is still running and did not reply in time.',
+      'The flow did not finish in time. It may still be running',
     );
-    // A retry would start the still-running flow a second time.
+    // A retry could double-execute a run that did start.
     expect(container?.querySelector('button')).toBeNull();
   });
 

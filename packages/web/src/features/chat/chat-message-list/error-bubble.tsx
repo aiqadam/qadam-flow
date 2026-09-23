@@ -24,7 +24,7 @@ const formatError = (
       return (
         <span>
           {t(
-            'The flow is still running and did not reply in time. Its reply will not appear in this chat.',
+            'The flow did not finish in time. It may still be running — check the run history before retrying.',
           )}
         </span>
       );

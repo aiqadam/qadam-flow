@@ -1,19 +1,21 @@
 import { ErrorCode } from '@aiqadam/shared';
 import { describe, expect, it } from 'vitest';
 
+import { chatSendingErrorUtils } from '@/features/chat/chat-message-list/classify-sending-error';
 import {
   CHAT_SERVICE_UNAVAILABLE,
   FLOW_RUN_FAILED,
   FLOW_STILL_RUNNING,
 } from '@/features/chat/chat-message-list/error-bubble';
-import { chatSendingErrorUtils } from '@/features/chat/chat-message-list/classify-sending-error';
 
 describe('chatSendingErrorUtils.classify', () => {
   it('classifies a 504 as still-running, ignoring the message-only body', () => {
     expect(
       chatSendingErrorUtils.classify({
         status: 504,
-        data: { message: 'The flow run did not respond within the time limit.' },
+        data: {
+          message: 'The flow run did not respond within the time limit.',
+        },
       }),
     ).toEqual({ code: FLOW_STILL_RUNNING });
   });
@@ -37,13 +39,19 @@ describe('chatSendingErrorUtils.classify', () => {
   });
 
   it('falls back to the coded ApErrorParams body for any other status', () => {
-    const data = { code: ErrorCode.ENTITY_NOT_FOUND, params: { entityType: 'flow' } };
+    const data = {
+      code: ErrorCode.ENTITY_NOT_FOUND,
+      params: { entityType: 'flow' },
+    };
     expect(chatSendingErrorUtils.classify({ status: 404, data })).toEqual(data);
   });
 
   it('returns null when the body has no code and the status is not 500/503/504', () => {
     expect(
-      chatSendingErrorUtils.classify({ status: 400, data: { message: 'bad request' } }),
+      chatSendingErrorUtils.classify({
+        status: 400,
+        data: { message: 'bad request' },
+      }),
     ).toBeNull();
   });
 

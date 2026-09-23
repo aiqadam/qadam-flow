@@ -183,8 +183,13 @@ const ApForm = ({ form, useDraft }: ApFormProps) => {
               duration: 3000,
             });
           } else if (status === 504) {
+            // A run that had not started yet by the deadline is now failed, not merely
+            // slow (#510) — retrying could double-execute one that did start, so this
+            // must not claim the submission is safely "still running".
             toast.info(
-              t('Your submission was received. The flow is still running.'),
+              t(
+                'The flow did not finish in time. It may still be running — check the run history before retrying.',
+              ),
               { duration: 3000 },
             );
           } else if (status === 503) {

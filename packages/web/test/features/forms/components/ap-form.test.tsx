@@ -114,8 +114,8 @@ describe('ApForm toggle input label', () => {
   it('resolves the toggle label to the checkbox it is next to, via getElementById(htmlFor)', async () => {
     await mount();
 
-    const label = [...(container?.querySelectorAll('label') ?? [])].find(
-      (el) => el.textContent?.includes('Enable notifications'),
+    const label = [...(container?.querySelectorAll('label') ?? [])].find((el) =>
+      el.textContent?.includes('Enable notifications'),
     );
     expect(label).toBeDefined();
 
@@ -130,8 +130,8 @@ describe('ApForm toggle input label', () => {
   it('toggles the checkbox when its label is clicked', async () => {
     await mount();
 
-    const label = [...(container?.querySelectorAll('label') ?? [])].find(
-      (el) => el.textContent?.includes('Enable notifications'),
+    const label = [...(container?.querySelectorAll('label') ?? [])].find((el) =>
+      el.textContent?.includes('Enable notifications'),
     );
     const forId = label?.getAttribute('for');
     const control = forId
@@ -153,7 +153,10 @@ describe('ApForm submission errors', () => {
   const submitAndFlush = async (): Promise<void> => {
     const submitButton = [
       ...(container?.querySelectorAll('button[type="submit"]') ?? []),
-    ][0] as HTMLButtonElement | undefined;
+    ].find(
+      (element): element is HTMLButtonElement =>
+        element instanceof HTMLButtonElement,
+    );
     await act(async () => {
       submitButton?.dispatchEvent(
         new MouseEvent('click', { bubbles: true, cancelable: true }),
@@ -169,7 +172,10 @@ describe('ApForm submission errors', () => {
     vi.mocked(humanInputApi.submitForm).mockRejectedValueOnce(
       Object.assign(new Error('Service Unavailable'), {
         isAxiosError: true,
-        response: { status: 503, data: { message: 'Too many concurrent runs.' } },
+        response: {
+          status: 503,
+          data: { message: 'Too many concurrent runs.' },
+        },
       }),
     );
 
@@ -183,7 +189,7 @@ describe('ApForm submission errors', () => {
     expect(toastSpies.info).not.toHaveBeenCalled();
   });
 
-  it('shows the still-running toast.info on a 504', async () => {
+  it('shows the honest "may still be running" toast.info on a 504', async () => {
     vi.mocked(humanInputApi.submitForm).mockRejectedValueOnce(
       Object.assign(new Error('Gateway Timeout'), {
         isAxiosError: true,
@@ -194,8 +200,10 @@ describe('ApForm submission errors', () => {
     await mount();
     await submitAndFlush();
 
+    // #510: a run that hadn't started by the deadline is now failed, not "still
+    // running" — the toast must not claim the submission is safely in progress.
     expect(toastSpies.info).toHaveBeenCalledWith(
-      'Your submission was received. The flow is still running.',
+      'The flow did not finish in time. It may still be running — check the run history before retrying.',
       expect.objectContaining({ duration: 3000 }),
     );
     expect(toastSpies.error).not.toHaveBeenCalled();
