@@ -20,6 +20,7 @@ import { BackfillLogoFlowLockup1789800000000 } from './migration/postgres/178980
 import { AddTableKeyDeclaration1789832775045 } from './migration/postgres/1789832775045-AddTableKeyDeclaration'
 import { AddParentWaitpointIdToFlowRun1790116373829 } from './migration/postgres/1790116373829-AddParentWaitpointIdToFlowRun'
 import { BackfillParentWaitpointIdFlowRun1790200000000 } from './migration/postgres/1790200000000-BackfillParentWaitpointIdFlowRun'
+import { DeleteCustomQadamsUnderOfficialScope1790300000000 } from './migration/postgres/1790300000000-DeleteCustomQadamsUnderOfficialScope'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -47,6 +48,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddTableKeyDeclaration1789832775045,
         AddParentWaitpointIdToFlowRun1790116373829,
         BackfillParentWaitpointIdFlowRun1790200000000,
+        DeleteCustomQadamsUnderOfficialScope1790300000000,
     ]
 }
 

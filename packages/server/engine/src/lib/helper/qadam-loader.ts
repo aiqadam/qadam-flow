@@ -2,12 +2,17 @@ import fs from 'fs/promises'
 import path from 'path'
 import { Action, Qadam, QadamPropertyMap, Trigger } from '@aiqadam/qadams-framework'
 import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias } from '@aiqadam/shared'
+import { z } from 'zod'
 import { utils } from '../utils'
 
 // Bundled qadams are baked into the image, so a resolved path cannot change while the
 // process lives. Both caches hold the in-flight promise so concurrent steps share one walk.
 const qadamPathCache = new Map<string, Promise<string>>()
-let distIndexCache: Promise<Map<string, string>> | null = null
+let distIndexCache: Promise<Map<string, DistPackageEntry>> | null = null
+// Exact-version aliases only (`name-1.2.3`, plus a prerelease/build suffix). A dev qadam is
+// resolved by bare name and has no version to compare.
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+].*)?$/
+const distPackageJsonSchema = z.object({ name: z.string(), version: z.string().optional() })
 
 export const qadamLoader = {
     loadQadamOrThrow: async (
@@ -153,6 +158,16 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
             return devPath
         }
     }
+    // #503: an installed copy at the SAME `name@version` as a bundled build is never a legitimate
+    // provider — official qadams are not installed (`needsInstalling` in the worker), so the only
+    // way that directory exists is a CUSTOM qadam a platform registered under an official name,
+    // landing in the workspace every tenant shares. The bundled build wins outright there. An
+    // installed copy at a DIFFERENT version keeps winning: that is the side-by-side case #477
+    // needs once official versions are registry-installed next to the bundled one.
+    const bundledAtSameVersion = await findBundledBuildAtAliasVersion(packageName)
+    if (!isNil(bundledAtSameVersion)) {
+        return bundledAtSameVersion
+    }
     const installedPath = await traverseAllParentFoldersToFindQadam(packageName)
     if (!isNil(installedPath)) {
         return installedPath
@@ -164,13 +179,27 @@ async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathPar
     throw new EngineGenericError('QadamNotFoundError', `Qadam not found for package: ${packageName}`)
 }
 
+async function findBundledBuildAtAliasVersion(packageName: string): Promise<string | null> {
+    const name = trimVersionFromAlias(packageName)
+    const version = packageName.slice(name.length + 1)
+    if (!SEMVER_PATTERN.test(version)) {
+        return null
+    }
+    const distIndex = await getDistIndex({ refresh: false })
+    const bundled = distIndex.get(name)
+    if (isNil(bundled) || bundled.version !== version) {
+        return null
+    }
+    return bundled.indexPath
+}
+
 async function findInDistFolder({ packageName, refreshIndex }: FindInDistFolderParams): Promise<string | null> {
     const distIndex = await getDistIndex({ refresh: refreshIndex })
     const target = trimVersionFromAlias(packageName)
-    return distIndex.get(packageName) ?? distIndex.get(target) ?? null
+    return (distIndex.get(packageName) ?? distIndex.get(target))?.indexPath ?? null
 }
 
-async function getDistIndex({ refresh }: { refresh: boolean }): Promise<Map<string, string>> {
+async function getDistIndex({ refresh }: { refresh: boolean }): Promise<Map<string, DistPackageEntry>> {
     if (!refresh && !isNil(distIndexCache)) {
         return distIndexCache
     }
@@ -184,7 +213,7 @@ async function getDistIndex({ refresh }: { refresh: boolean }): Promise<Map<stri
     return building
 }
 
-async function buildDistIndex(): Promise<Map<string, string>> {
+async function buildDistIndex(): Promise<Map<string, DistPackageEntry>> {
     const sourceQadamsPath = path.resolve('packages/qadams')
     if (!await utils.folderExists(sourceQadamsPath)) {
         return new Map()
@@ -192,11 +221,11 @@ async function buildDistIndex(): Promise<Map<string, string>> {
     const distPackageJsonPaths = await findDistPackageJsonFiles(sourceQadamsPath)
     const entries = await Promise.all(distPackageJsonPaths.map(readDistPackageEntry))
 
-    const distIndex = new Map<string, string>()
+    const distIndex = new Map<string, DistPackageEntry>()
     for (const entry of entries) {
         // First match wins, matching the order the sequential scan used to return in.
         if (!isNil(entry) && !distIndex.has(entry.name)) {
-            distIndex.set(entry.name, entry.indexPath)
+            distIndex.set(entry.name, entry)
         }
     }
     return distIndex
@@ -205,23 +234,17 @@ async function buildDistIndex(): Promise<Map<string, string>> {
 async function readDistPackageEntry(packageJsonPath: string): Promise<DistPackageEntry | null> {
     const { data } = await utils.tryCatchAndThrowOnEngineError(async () => {
         const content = await fs.readFile(packageJsonPath, 'utf-8')
-        const name = extractPackageName(JSON.parse(content))
-        if (isNil(name)) {
+        const parsed = distPackageJsonSchema.safeParse(JSON.parse(content))
+        if (!parsed.success) {
             return null
         }
         return {
-            name,
+            name: parsed.data.name,
+            version: parsed.data.version ?? null,
             indexPath: path.join(path.dirname(packageJsonPath), 'src', 'index.js'),
         }
     })
     return data ?? null
-}
-
-function extractPackageName(packageJson: unknown): string | null {
-    if (typeof packageJson !== 'object' || isNil(packageJson) || !('name' in packageJson)) {
-        return null
-    }
-    return typeof packageJson.name === 'string' ? packageJson.name : null
 }
 
 async function findDistPackageJsonFiles(dirPath: string): Promise<string[]> {
@@ -282,6 +305,9 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
 
 type DistPackageEntry = {
     name: string
+    // `null` when the bundled package.json carries no version — such a build can never claim an
+    // alias's version, so it never wins the #503 same-version check.
+    version: string | null
     indexPath: string
 }
 

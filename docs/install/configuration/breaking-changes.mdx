@@ -40,6 +40,26 @@ The gate then passes and prints the tagger's name, email and reason into the job
 
 ### What has changed?
 
+#### A custom qadam registered under the `@aiqadam/` scope is refused, and existing ones are removed
+
+A platform admin could upload a custom qadam whose `package.json` name sat in the official
+`@aiqadam/` scope — `@aiqadam/qadam-slack`, say. In the default execution mode that qadam installed
+into the workspace every tenant on the worker shares, and the engine preferred the installed copy
+over the qadam built into the image. One platform's upload therefore ran in place of the real
+Slack qadam for **every** platform on that worker
+([#503](https://github.com/aiqadam/qadam-flow/issues/503)).
+
+Two changes close this. `POST /v1/qadams` now refuses a custom qadam whose name starts with
+`@aiqadam/` (any letter case) with a `409` and `code: VALIDATION`. And the engine now loads the
+bundled build for any qadam whose exact `name@version` the image carries, whatever has been
+installed under that alias.
+
+The migration `DeleteCustomQadamsUnderOfficialScope` deletes every platform-scoped `qadam_metadata`
+row under that scope. A flow step that used one of those qadams stops resolving its qadam and fails
+at its next run. If you registered such a qadam on purpose — a fork of an official one — re-upload
+it under a name outside the `@aiqadam/` scope and repoint the affected steps. The uploaded archive
+`file` rows are not deleted.
+
 #### A failing HTTP step no longer echoes its request body, so `request.body` is gone from that output
 
 `HttpError` — thrown by `httpClient` in `@aiqadam/qadams-common`, which most qadams use for outbound
