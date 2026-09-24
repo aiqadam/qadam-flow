@@ -7,7 +7,6 @@ import fastifyStatic from '@fastify/static'
 import fastify, { FastifyInstance } from 'fastify'
 import { fastifyRawBody } from 'fastify-raw-body'
 import fastifySocketIO from 'fastify-socket'
-import { validatorCompiler } from 'fastify-type-provider-zod'
 import qs from 'qs'
 import { Socket } from 'socket.io'
 import { getAdapter, setupApp } from './app'
@@ -18,6 +17,7 @@ import { errorHandler } from './helper/error-handler'
 import { exceptionHandler } from './helper/exception-handler'
 import { networkUtils } from './helper/network-utils'
 import { rejectedPromiseHandler } from './helper/promise-handler'
+import { requestValidator } from './helper/request-validator'
 import { system } from './helper/system/system'
 import { AppSystemProp } from './helper/system/system-props'
 import { mcpOAuthHttpController, mcpPlatformHttpController } from './mcp/oauth/mcp-oauth.controller'
@@ -123,7 +123,7 @@ async function setupBaseApp(): Promise<FastifyInstance> {
         },
     })
 
-    app.setValidatorCompiler(validatorCompiler)
+    app.setValidatorCompiler(requestValidator.compiler)
     app.setSerializerCompiler(({ schema: maybeSchema }) => {
         const schema = resolveZodSchema(maybeSchema)
         return (data) => {
