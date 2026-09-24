@@ -9,12 +9,14 @@
 | Action | A single executable step within a flow that performs an operation (HTTP call, data transform, code execution, etc.). | task, command | Flow, Step, Piece |
 | Agent | A flow step type that runs an LLM-driven autonomous loop, calling tools until it produces a final answer. | AI step, bot | AgentTool, AgentResult, Knowledge Base |
 | AgentTool | A discriminated union of the four tool types attachable to an agent step: Piece, Flow, MCP, or Knowledge Base. | — | Agent, PredefinedInputsStructure |
+| Concurrent loop | A `LOOP_ON_ITEMS` step with `execution.mode: CONCURRENT`, running up to `maxConcurrency` iterations at once, optionally at a declared rate; its iterations cannot pause. | parallel loop, fan-out | Iteration fork, Loop collector |
 | Draft | The editable FlowVersion state; only one draft exists per flow at a time. | — | FlowVersion, Published, LOCK_AND_PUBLISH |
 | Flow | A named automation consisting of a trigger and one or more action steps, stored as a versioned JSONB graph. | workflow, automation, pipeline, scenario | FlowVersion, Trigger, Action, Run |
 | FlowOperationRequest | The discriminated union of all 26 modification types dispatched to the single flow update endpoint. | — | Flow, FlowVersion |
 | FlowRun | A single execution instance of a published flow, tracking status, logs, timing, and step results. | execution, job, run instance | Flow, FlowRunStatus, LogsFile |
 | FlowRunStatus | The state machine for a run: QUEUED, RUNNING, PAUSED, SUCCEEDED, FAILED, TIMEOUT, CANCELED, and others. | — | FlowRun |
 | FlowVersion | An immutable (once locked) snapshot of a flow's trigger + action graph; DRAFT is editable, LOCKED is published. | version, revision | Flow, Draft, Published |
+| Iteration fork | The context one loop iteration runs in: its own path and verdict over the run's shared journal, so iterations can run concurrently. | — | Concurrent loop, Iteration status |
 | Iteration status | A loop's per-iteration record (`S` succeeded, `F` failed) that lets a RESUME skip a finished iteration without entering its body. | watermark, cursor | Loop collector, Keep bodies |
 | Keep bodies | A loop setting (`ALL` / `FAILED_ONLY` / `NONE`) for which finished iterations keep their step outputs; the rest are blanked to `{}`, never removed. | retain iterations | Iteration status, Loop collector |
 | Folder | A grouping container for organizing flows and tables within a project. | directory, category | Flow, Table |

@@ -42,6 +42,14 @@ export class FlowExecutorContext {
     errorViewCache: Map<string, StepErrorView>
     slicingEnabled: boolean
     stepLogPolicy: Map<string, StepLogPolicy>
+    // The items each running loop iterates over, shared by every copy of this context like the
+    // journal. A loop's `item`/`index` used to be read off its one shared output, which is only
+    // right while a single iteration runs at a time (#387): an iteration now reads its own item by
+    // its path.
+    loopItems: Map<string, readonly unknown[]>
+    // Set on the context an iteration of a CONCURRENT loop runs in: such an iteration cannot pause,
+    // and its verdict is not the run's.
+    isConcurrentFork: boolean
 
     /**
      * Execution time in milliseconds
@@ -61,6 +69,8 @@ export class FlowExecutorContext {
         this.errorViewCache = copyFrom?.errorViewCache ?? new Map()
         this.slicingEnabled = copyFrom?.slicingEnabled ?? true
         this.stepLogPolicy = copyFrom?.stepLogPolicy ?? new Map()
+        this.loopItems = copyFrom?.loopItems ?? new Map()
+        this.isConcurrentFork = copyFrom?.isConcurrentFork ?? false
     }
 
     static empty(params?: FlowExecutorContextInit): FlowExecutorContext {
@@ -181,6 +191,20 @@ export class FlowExecutorContext {
         return executionJournal.getStep({ stepName, path: path ?? this.currentPath.path, steps: this.steps })
     }
 
+    public setLoopItems({ loopName, items }: { loopName: string, items: readonly unknown[] }): void {
+        this.loopItems.set(loopItemsKey({ parentPath: this.currentPath.path, loopName }), items)
+    }
+
+    // The context one iteration runs in: its own path and verdict over the shared journal.
+    public forkForIteration({ loopName, iteration, concurrent }: { loopName: string, iteration: number, concurrent: boolean }): FlowExecutorContext {
+        return new FlowExecutorContext({
+            ...this,
+            currentPath: this.currentPath.loopIteration({ loopName, iteration }),
+            verdict: { status: FlowRunStatus.RUNNING },
+            isConcurrentFork: this.isConcurrentFork || concurrent,
+        })
+    }
+
     public setCurrentPath(currentStatePath: StepExecutionPath): FlowExecutorContext {
         return new FlowExecutorContext({
             ...this,
@@ -202,6 +226,13 @@ export class FlowExecutorContext {
         })
     }
 
+    public addStepsExecuted(count: number): FlowExecutorContext {
+        return new FlowExecutorContext({
+            ...this,
+            stepsCount: this.stepsCount + count,
+        })
+    }
+
     public incrementStepsExecuted(): FlowExecutorContext {
         return new FlowExecutorContext({
             ...this,
@@ -220,11 +251,19 @@ export class FlowExecutorContext {
         let flattened: Record<string, unknown> = await extractStepView({ steps: referencedSteps, engineApi: this.engineApi, cache: this.resolvedStepOutputCache, errorViewCache: this.errorViewCache })
         let targetMap = this.steps
 
-        for (const [stepName, iteration] of this.currentPath.path) {
+        const path = this.currentPath.path
+        for (let depth = 0; depth < path.length; depth++) {
+            const [stepName, iteration] = path[depth]
             const stepOutput = executionJournal.getOwnStep({ target: targetMap, stepName })
             if (isNil(stepOutput) || !stepOutput.output || stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
                 throw new EngineGenericError('NotInstanceOfLoopOnItemsStepOutputError', '[ExecutionState#getTargetMap] Not instance of Loop On Items step output')
             }
+            flattened = withIterationItem({
+                view: flattened,
+                loopName: stepName,
+                iteration,
+                items: this.loopItems.get(loopItemsKey({ parentPath: path.slice(0, depth), loopName: stepName })),
+            })
             targetMap = stepOutput.output.iterations[iteration]
             flattened = {
                 ...flattened,
@@ -233,6 +272,28 @@ export class FlowExecutorContext {
         }
         return flattened
     }
+}
+
+function loopItemsKey({ parentPath, loopName }: { parentPath: readonly [string, number][], loopName: string }): string {
+    return JSON.stringify([parentPath, loopName])
+}
+
+function withIterationItem({ view, loopName, iteration, items }: WithIterationItemParams): Record<string, unknown> {
+    const loopView = executionJournal.getOwnStep({ target: view, stepName: loopName })
+    if (isNil(items) || !isRecord(loopView) || !isRecord(loopView.output)) {
+        return view
+    }
+    const withItem: Record<string, unknown> = { ...view }
+    executionJournal.setOwnStep({
+        target: withItem,
+        stepName: loopName,
+        value: { ...loopView, output: { ...loopView.output, item: items[iteration], index: iteration + 1 } },
+    })
+    return withItem
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 async function extractStepView({ steps, engineApi, cache, errorViewCache }: ExtractStepViewParams): Promise<Record<string, unknown>> {
@@ -314,6 +375,13 @@ export type FlowVerdict = {
 export type EngineApiConfig = {
     engineToken: string
     internalApiUrl: string
+}
+
+type WithIterationItemParams = {
+    view: Record<string, unknown>
+    loopName: string
+    iteration: number
+    items: readonly unknown[] | undefined
 }
 
 type ExtractStepViewParams = {

@@ -800,3 +800,83 @@ describe('flow operation invariants', () => {
         })
     })
 })
+
+// #41: a finished loop iteration is never entered again, so a FROM_FAILED_STEP retry must not drop
+// its continue-on-failure steps — nothing would re-run them, and the log would just lose them.
+// A failed iteration still has its FAILED steps dropped, so the retry runs them again.
+describe('RESUME restoration of loop iterations on a retry', () => {
+    const loopFlowVersion = (): FlowVersion => {
+        const approval: FlowAction = {
+            name: 'step_1',
+            displayName: 'Approval',
+            type: FlowActionType.PIECE,
+            skip: false,
+            valid: true,
+            settings: {
+                input: {},
+                qadamName: '@aiqadam/qadam-approval',
+                qadamVersion: '1.0.0',
+                actionName: 'wait_for_approval',
+                propertySettings: {},
+                errorHandlingOptions: { continueOnFailure: { value: true }, retryOnFailure: { value: false } },
+            },
+        }
+        const loop: FlowAction = {
+            name: 'loop',
+            displayName: 'Loop',
+            type: FlowActionType.LOOP_ON_ITEMS,
+            skip: false,
+            valid: true,
+            settings: { items: '{{ [1] }}' },
+            firstLoopAction: approval,
+        }
+        return { ...makeFlowVersion(), trigger: { ...makeFlowVersion().trigger, nextAction: loop } }
+    }
+
+    const retryWith = async (iterationStatus: string[]): Promise<void> => {
+        mockDownload.mockReset()
+        mockCreateWaitpoint.mockReset()
+        mockSendUpdate.mockClear()
+        mockCreateWaitpoint.mockResolvedValue({ id: 'wp', resumeUrl: 'http://localhost:4200/api/v1/flow-runs/run-1/waitpoints/wp' })
+        mockDownload.mockResolvedValue(new TextEncoder().encode(JSON.stringify({
+            executionState: {
+                steps: {
+                    trigger_1: { type: FlowTriggerType.EMPTY, status: StepOutputStatus.SUCCEEDED, input: {}, output: {} },
+                    loop: {
+                        type: FlowActionType.LOOP_ON_ITEMS,
+                        status: StepOutputStatus.SUCCEEDED,
+                        input: {},
+                        output: {
+                            item: 1,
+                            index: 1,
+                            iterations: [{ step_1: { type: FlowActionType.PIECE, status: StepOutputStatus.FAILED, input: {}, errorMessage: 'declined' } }],
+                            iterationStatus,
+                            failures: [],
+                        },
+                    },
+                },
+                tags: [],
+            },
+        })))
+        await flowOperation.execute({
+            ...makeResumeOperation(),
+            flowVersion: loopFlowVersion(),
+            resumePayload: { type: 'inline', value: null },
+            resumeReason: ResumeReason.RETRY,
+        })
+    }
+
+    it('keeps the failed continue-on-failure step of a succeeded iteration and does not re-run it', async () => {
+        await retryWith(['S'])
+
+        expect(mockCreateWaitpoint).not.toHaveBeenCalled()
+        const lastUpdate = mockSendUpdate.mock.calls[mockSendUpdate.mock.calls.length - 1][0]
+        expect(lastUpdate.flowExecutorContext.steps.loop.output.iterations[0].step_1.status).toBe(StepOutputStatus.FAILED)
+    })
+
+    it('drops the failed step of a failed iteration so the retry runs it again', async () => {
+        await retryWith(['F'])
+
+        expect(mockCreateWaitpoint).toHaveBeenCalled()
+    })
+})

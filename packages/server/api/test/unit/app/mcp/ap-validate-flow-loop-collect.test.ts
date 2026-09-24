@@ -107,3 +107,55 @@ describe('ap_validate_flow — loop collect references', () => {
         expect(issues[0]).toContain('does not exist')
     })
 })
+
+// #387: an iteration of a CONCURRENT loop cannot pause. The engine refuses the step at run time;
+// ap_validate_flow says so before publish.
+describe('ap_validate_flow — pausing steps in concurrent loops', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
+
+    const delayStep = {
+        name: 'wait',
+        displayName: 'Wait',
+        valid: true,
+        lastUpdatedDate: '2024-01-01T00:00:00Z',
+        type: FlowActionType.PIECE,
+        settings: { qadamName: '@aiqadam/qadam-delay', qadamVersion: '0.4.14', actionName: 'delayFor', input: { unit: 'seconds', delayFor: 60 }, propertySettings: {} },
+    }
+
+    const flowWithDelayInLoop = (mode: 'CONCURRENT' | 'SEQUENTIAL'): Record<string, unknown> => {
+        const base = flowWithLoop({ collectValue: '{{wait.output}}' }) as { version: { trigger: { nextAction: Record<string, unknown> } } }
+        const loop = base.version.trigger.nextAction
+        return {
+            ...base,
+            version: {
+                ...base.version,
+                trigger: {
+                    ...base.version.trigger,
+                    nextAction: { ...loop, settings: { items: '{{trigger.output.items}}', execution: { mode } }, firstLoopAction: delayStep },
+                },
+            },
+        }
+    }
+
+    const issuesOf = async (category: string): Promise<string[]> => {
+        const result = await apValidateFlowTool(mcp, log).execute({ flowId: 'flow-1' })
+        const issues = (result.structuredContent as { issues: { category: string, message: string }[] }).issues
+        return issues.filter((issue) => issue.category === category).map((issue) => issue.message)
+    }
+
+    it('flags a step that pauses inside a CONCURRENT loop', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithDelayInLoop('CONCURRENT'))
+
+        const issues = await issuesOf('concurrent_pause')
+        expect(issues).toHaveLength(1)
+        expect(issues[0]).toContain('CONCURRENT loop')
+    })
+
+    it('says nothing about the same step in a SEQUENTIAL loop', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithDelayInLoop('SEQUENTIAL'))
+
+        expect(await issuesOf('concurrent_pause')).toEqual([])
+    })
+})

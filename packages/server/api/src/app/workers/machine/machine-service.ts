@@ -37,6 +37,7 @@ async function buildSettingsResponse(_log: FastifyBaseLogger): Promise<WorkerSet
         APP_WEBHOOK_SECRETS: system.getOrThrow(AppSystemProp.APP_WEBHOOK_SECRETS),
         MAX_FLOW_RUN_LOG_SIZE_MB: system.getNumberOrThrow(AppSystemProp.MAX_FLOW_RUN_LOG_SIZE_MB),
         MAX_FILE_SIZE_MB: system.getNumberOrThrow(AppSystemProp.MAX_FILE_SIZE_MB),
+        LOOP_MAX_CONCURRENCY: system.getNumberOrThrow(AppSystemProp.LOOP_MAX_CONCURRENCY),
         SANDBOX_MEMORY_LIMIT: system.getOrThrow(AppSystemProp.SANDBOX_MEMORY_LIMIT),
         SANDBOX_PROPAGATED_ENV_VARS: system.get(AppSystemProp.SANDBOX_PROPAGATED_ENV_VARS)?.split(',').map(f => f.trim()) ?? [],
         DEV_QADAMS: system.get(AppSystemProp.DEV_QADAMS)?.split(',') ?? [],

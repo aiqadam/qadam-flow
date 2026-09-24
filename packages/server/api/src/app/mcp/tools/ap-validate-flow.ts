@@ -4,6 +4,7 @@ import {
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    LoopExecutionMode,
     LoopOnItemsAction,
     McpToolDefinition,
     Permission,
@@ -39,7 +40,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
-                const [callFlowIssues, qadamVersionIssues] = await Promise.all([
+                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -51,8 +52,14 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         platformId,
                         log,
                     }),
+                    validateConcurrentLoops({
+                        trigger: flow.version.trigger,
+                        flowName: flow.version.displayName,
+                        platformId,
+                        log,
+                    }),
                 ])
-                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues] }
+                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues] }
                 return {
                     content: [{ type: 'text', text: formatValidationResult({ result, flowDisplayName: flow.version.displayName }) }],
                     structuredContent: {
@@ -314,6 +321,42 @@ function readFlowNode(flow: { version: { displayName: string, trigger: Step } })
         return isNil(childExternalId) ? [] : [childExternalId]
     })
     return { flowName: flow.version.displayName, qadamSteps, inlineChildren, expectsArguments }
+}
+
+// An iteration of a CONCURRENT loop cannot pause (#387): the engine refuses the step at run time,
+// before any waitpoint exists. This reports the same thing before publish, reading the same
+// `pauses` markers the inline check reads. The run-time refusal stays the authority — a
+// 'conditional' action this check cannot evaluate is reported as "may pause".
+async function validateConcurrentLoops({ trigger, flowName, platformId, log }: {
+    trigger: Step
+    flowName: string
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<ValidationIssue[]> {
+    const bodies = flowStructureUtil.getAllSteps(trigger)
+        .filter((step): step is LoopOnItemsAction => step.type === FlowActionType.LOOP_ON_ITEMS && step.settings.execution?.mode === LoopExecutionMode.CONCURRENT)
+        .flatMap(loop => isNil(loop.firstLoopAction) ? [] : [{
+            loop,
+            qadamSteps: flowStructureUtil.getAllSteps(loop.firstLoopAction)
+                .filter(step => !('skip' in step && step.skip === true))
+                .filter((step): step is QadamStep => step.type === FlowActionType.PIECE),
+        }])
+    if (bodies.length === 0) {
+        return []
+    }
+    const graph = new Map<string, FlowNode>(bodies.map(({ loop, qadamSteps }) => [loop.name, { flowName, expectsArguments: false, qadamSteps, inlineChildren: [] }]))
+    const markers = await loadPauseMarkers({ graph, platformId, log })
+    return bodies.flatMap(({ loop, qadamSteps }) => qadamSteps.flatMap((step): ValidationIssue[] => {
+        const reason = readPauseReason({ step, metadata: markers.get(qadamPinUtil.pinOf({ step })) })
+        if (isNil(reason)) {
+            return []
+        }
+        return [{
+            category: 'concurrent_pause',
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} is inside the CONCURRENT loop ${mcpUtils.wrapUntrustedValue(loop.displayName)} but pauses (${reason}). An iteration of a CONCURRENT loop cannot pause — set the loop's execution mode to SEQUENTIAL, or move the step out of the loop.`,
+        }]
+    }))
 }
 
 // Whether an action pauses is declared by the action itself (`pauses` on `createAction`, #426),
@@ -633,7 +676,7 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
@@ -641,6 +684,7 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     empty_branch: 'Empty Branches',
     subflow_payload: 'Subflow Payloads',
     inline_pause: 'Inline Subflows That Pause',
+    concurrent_pause: 'Pausing Steps In Concurrent Loops',
 }
 
 function formatValidationResult({ result, flowDisplayName }: { result: ValidationResult, flowDisplayName: string }): string {
@@ -679,7 +723,7 @@ function formatValidationResult({ result, flowDisplayName }: { result: Validatio
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause'
+    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
 }

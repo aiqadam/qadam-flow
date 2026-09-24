@@ -12,6 +12,7 @@ import {
   AppConnectionScope,
   AppConnectionType,
   CodeActionSchema,
+  formErrors,
   LoopOnItemsActionSchema,
   Metadata,
   QadamActionSchema,
@@ -464,6 +465,31 @@ export const formUtils = {
           z.object({
             settings: z.object({
               items: z.string().min(1),
+              // Same rule as the server's loop validator: an enabled collector needs a value, or
+              // the step is saved valid here and publishing then rejects it (#41).
+              collect: z
+                .object({ value: z.string().min(1, formErrors.required) })
+                .optional(),
+              execution: z
+                .looseObject({
+                  maxConcurrency: z
+                    .number()
+                    .int('Enter a whole number of at least 1')
+                    .min(1, 'Enter a whole number of at least 1')
+                    .optional(),
+                  rateLimit: z
+                    .object({
+                      count: z
+                        .number()
+                        .int('Enter a whole number of at least 1')
+                        .min(1, 'Enter a whole number of at least 1'),
+                      perSeconds: z
+                        .number()
+                        .positive('Enter a number greater than 0'),
+                    })
+                    .optional(),
+                })
+                .optional(),
             }),
           }).shape,
         );

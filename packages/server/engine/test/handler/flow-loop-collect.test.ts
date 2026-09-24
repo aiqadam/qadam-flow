@@ -1,7 +1,8 @@
-import { FlowAction, FlowActionType, FlowRunStatus, LoopIterationStatus, LoopKeepBodies, LoopOnItemsAction, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
+import { FlowAction, FlowActionType, FlowRunStatus, LoopExecutionMode, LoopIterationStatus, LoopKeepBodies, LoopOnItemsAction, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
 import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
+import { waitpointClient } from '../../src/lib/qadam-context/waitpoint-client'
 import { buildCodeAction, buildQadamAction, buildSimpleLoopAction, generateMockEngineConstants } from './test-helper'
 
 // #41: a loop collects one value per iteration, positionally, without a CODE step walking
@@ -166,6 +167,81 @@ describe('loop collector', () => {
             constants: generateMockEngineConstants({ stepNames: ['loop'], stepNameToTest: 'loop' }),
         })
         expect(readLoop(result).output?.collected).toEqual([1])
+    })
+})
+
+
+describe('loop collector — stop, nesting and pauses', () => {
+    beforeEach(() => {
+        vi.spyOn(EngineConstants.prototype, 'devQadams', 'get').mockReturnValue([])
+    })
+
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    const collecting = ({ name, items, value, firstLoopAction, execution }: { name: string, items: string, value: string, firstLoopAction: FlowAction, execution?: LoopOnItemsAction['settings']['execution'] }): LoopOnItemsAction => {
+        const loop = buildSimpleLoopAction({ name, loopItems: items, firstLoopAction })
+        return { ...loop, settings: { ...loop.settings, collect: { value }, execution } }
+    }
+
+    it('records an iteration that stopped the flow as succeeded, not failed', async () => {
+        const stop = buildQadamAction({
+            name: 'respond',
+            qadamName: '@aiqadam/qadam-webhook',
+            actionName: 'return_response',
+            input: { respond: 'stop', responseType: 'json', fields: { status: 200, headers: {}, body: { done: true } } },
+        })
+        const result = await flowExecutor.execute({
+            action: collecting({ name: 'loop', items: '{{ [1, 2] }}', value: '{{ loop.output.item }}', firstLoopAction: stop }),
+            executionState: FlowExecutorContext.empty(),
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'respond'] }),
+        })
+        const loop = readLoop(result).output
+
+        expect(result.verdict.status).toBe(FlowRunStatus.SUCCEEDED)
+        expect(loop?.iterationStatus).toEqual([LoopIterationStatus.SUCCEEDED])
+        expect(loop?.failures).toEqual([])
+        expect(loop?.collected).toEqual([1])
+    })
+
+    it('gives each concurrent outer iteration its own items for the inner loop', async () => {
+        const inner = collecting({
+            name: 'inner',
+            items: '{{ [loop.output.item * 10, loop.output.item * 10 + 1] }}',
+            value: '{{ inner.output.item }}',
+            firstLoopAction: buildQadamAction({ name: 'map', qadamName: '@aiqadam/qadam-data-mapper', actionName: 'advanced_mapping', input: { mapping: { v: '{{ inner.output.item }}' } } }),
+        })
+        const outer = collecting({
+            name: 'loop',
+            items: '{{ [1, 2, 3] }}',
+            value: '{{ inner.output.collected }}',
+            firstLoopAction: inner,
+            execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 3 },
+        })
+
+        const result = await flowExecutor.execute({
+            action: outer,
+            executionState: FlowExecutorContext.empty(),
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'inner', 'map'] }),
+        })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
+        expect(readLoop(result).output?.collected).toEqual([[10, 11], [20, 21], [30, 31]])
+    })
+
+    it('leaves a paused iteration unrecorded so a resume enters it again', async () => {
+        vi.spyOn(waitpointClient, 'create').mockResolvedValue({ id: 'wp', resumeUrl: 'http://localhost:4200/api/v1/flow-runs/run-1/waitpoints/wp' })
+        const delay = buildQadamAction({ name: 'wait', qadamName: '@aiqadam/qadam-delay', actionName: 'delayFor', input: { unit: 'seconds', delayFor: 60 } })
+
+        const result = await flowExecutor.execute({
+            action: collecting({ name: 'loop', items: '{{ [1, 2] }}', value: '{{ loop.output.item }}', firstLoopAction: delay }),
+            executionState: FlowExecutorContext.empty(),
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'wait'] }),
+        })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.PAUSED)
+        expect(readLoop(result).output?.iterationStatus).toEqual([])
     })
 })
 

@@ -1,3 +1,4 @@
+import { memoryLock } from '@aiqadam/server-utils'
 import { ExecutionMode, FlowRunStatus, isNil, maxSocketHttpBufferSizeBytes, NetworkMode, ResolveInlineFlowResult, WorkerContract, WorkerToApiContract } from '@aiqadam/shared'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
@@ -120,13 +121,19 @@ async function resolveInlineFlow(params: {
         return started
     }
 
-    const provisioned = await provisionFlowPieces({
-        flowVersion: started.flowVersion,
-        platformId: jobContext.platformId,
-        flowId: started.flowVersion.flowId,
-        projectId: jobContext.projectId,
-        log,
-        apiClient,
+    // A CONCURRENT loop can start several inline children of one job at once, all provisioning onto
+    // the same sandbox filesystem (#387) — the same class of race #372 fixed across replicas. The
+    // installer's own file lock covers `bun install`, not the rest of provisioning.
+    const provisioned = await memoryLock.runExclusive({
+        key: `inline-provision-${jobContext.runId}`,
+        fn: () => provisionFlowPieces({
+            flowVersion: started.flowVersion,
+            platformId: jobContext.platformId,
+            flowId: started.flowVersion.flowId,
+            projectId: jobContext.projectId,
+            log,
+            apiClient,
+        }),
     })
     if (!provisioned.provisioned) {
         // The child FlowRun row already exists (created above) — leaving it RUNNING
@@ -190,6 +197,7 @@ function baseEnv({ settings, networkMode }: { settings: WorkerSettings, networkM
         AP_EXECUTION_MODE: settings.EXECUTION_MODE,
         AP_MAX_FLOW_RUN_LOG_SIZE_MB: String(settings.MAX_FLOW_RUN_LOG_SIZE_MB),
         AP_MAX_FILE_SIZE_MB: String(settings.MAX_FILE_SIZE_MB),
+        ...(settings.LOOP_MAX_CONCURRENCY !== undefined ? { AP_LOOP_MAX_CONCURRENCY: String(settings.LOOP_MAX_CONCURRENCY) } : {}),
         NODE_PATH: '/usr/src/node_modules',
         AP_NETWORK_MODE: networkMode,
     }

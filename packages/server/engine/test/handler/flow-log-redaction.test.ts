@@ -99,3 +99,44 @@ describe('loop collector log redaction', () => {
         expect(logRedaction.buildStepLogPolicy({ trigger }).get('loop')).toBeUndefined()
     })
 })
+
+// The whole iteration is in scope while `collect.value` runs, so naming an unlogged step is not
+// the only way to read it; one loop can also collect another's results.
+describe('loop collector log redaction — indirect reads', () => {
+    const triggerWith = (nextAction: FlowTrigger['nextAction']): FlowTrigger => ({
+        name: 'trigger',
+        displayName: 'Trigger',
+        type: FlowTriggerType.EMPTY,
+        valid: true,
+        lastUpdatedDate: '2024-01-01T00:00:00Z',
+        settings: {},
+        nextAction,
+    })
+    const collectingLoop = ({ name, value, firstLoopAction, nextAction }: { name: string, value: string, firstLoopAction?: FlowTrigger['nextAction'], nextAction?: FlowTrigger['nextAction'] }): LoopOnItemsAction => {
+        const base = buildSimpleLoopAction({ name, loopItems: '{{ [1] }}', firstLoopAction })
+        return { ...base, settings: { ...base.settings, collect: { value } }, nextAction }
+    }
+    const unlogged = { ...buildQadamAction({ name: 'secret', qadamName: '@aiqadam/qadam-data-mapper', actionName: 'advanced_mapping', input: {} }), logOutput: false }
+
+    it('redacts a loop whose body holds an unlogged step it does not name', () => {
+        const policy = logRedaction.buildStepLogPolicy({ trigger: triggerWith(collectingLoop({ name: 'loop', value: '{{ Array.from(arguments) }}', firstLoopAction: unlogged })) })
+
+        expect(policy.get('loop')?.redactCollected).toBe(true)
+    })
+
+    it('redacts a loop that collects a redacted loop', () => {
+        const inner = collectingLoop({ name: 'first', value: '{{ secret.output }}', firstLoopAction: unlogged })
+        const trigger = triggerWith({ ...inner, nextAction: collectingLoop({ name: 'second', value: '{{ first.output.collected }}' }) })
+
+        const policy = logRedaction.buildStepLogPolicy({ trigger })
+
+        expect(policy.get('first')?.redactCollected).toBe(true)
+        expect(policy.get('second')?.redactCollected).toBe(true)
+    })
+
+    it('redacts a loop that collects connections or variables', () => {
+        const policy = logRedaction.buildStepLogPolicy({ trigger: triggerWith(collectingLoop({ name: 'loop', value: "{{ connections['key'] }}" })) })
+
+        expect(policy.get('loop')?.redactCollected).toBe(true)
+    })
+})

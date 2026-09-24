@@ -30,6 +30,23 @@ export enum LoopKeepBodies {
     NONE = 'NONE',
 }
 
+// How a loop runs its iterations (#387, #374). `SEQUENTIAL` is how every loop ran before.
+export enum LoopExecutionMode {
+    SEQUENTIAL = 'SEQUENTIAL',
+    CONCURRENT = 'CONCURRENT',
+}
+
+export enum LoopIterationFailurePolicy {
+    STOP = 'STOP',
+    CONTINUE = 'CONTINUE',
+}
+
+// What a loop does when an iteration fails with a provider-requested wait (`error.retryAfterSeconds`).
+export enum LoopRateLimitedPolicy {
+    WAIT_AND_RETRY = 'WAIT_AND_RETRY',
+    FAIL = 'FAIL',
+}
+
 export enum BranchExecutionType {
     FALLBACK = 'FALLBACK',
     CONDITION = 'CONDITION',
@@ -122,6 +139,27 @@ export const LoopCollectSettings = z.object({
 })
 export type LoopCollectSettings = z.infer<typeof LoopCollectSettings>
 
+// Bounds on what a request can ask the engine for; the operator's own ceiling on concurrency
+// (`AP_LOOP_MAX_CONCURRENCY`) is applied by the engine on top.
+export const LOOP_MAX_CONCURRENCY = 100
+const LOOP_MAX_RATE_LIMIT_COUNT = 10000
+const LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS = 86400
+const LOOP_MAX_RATE_LIMITED_RETRIES = 100
+
+export const LoopExecutionSettings = z.object({
+    mode: z.enum(LoopExecutionMode),
+    maxConcurrency: z.number().int().min(1).max(LOOP_MAX_CONCURRENCY).optional(),
+    rateLimit: z.object({
+        count: z.number().int().min(1).max(LOOP_MAX_RATE_LIMIT_COUNT),
+        perSeconds: z.number().positive().max(LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS),
+    }).optional(),
+    onRateLimited: z.enum(LoopRateLimitedPolicy).optional(),
+    maxRateLimitRetries: z.number().int().min(0).max(LOOP_MAX_RATE_LIMITED_RETRIES).optional(),
+    onIterationFailure: z.enum(LoopIterationFailurePolicy).optional(),
+    tolerateFailures: z.boolean().optional(),
+})
+export type LoopExecutionSettings = z.infer<typeof LoopExecutionSettings>
+
 export const LoopOnItemsActionSettings = z.object({
     ...commonActionSettings,
     items: z.string(),
@@ -129,6 +167,7 @@ export const LoopOnItemsActionSettings = z.object({
     // iteration kept.
     collect: LoopCollectSettings.optional(),
     keepBodies: z.enum(LoopKeepBodies).optional(),
+    execution: LoopExecutionSettings.optional(),
 })
 export type LoopOnItemsActionSettings = z.infer<
   typeof LoopOnItemsActionSettings

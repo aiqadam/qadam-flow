@@ -8,6 +8,7 @@ import {
     isNil,
     isObject,
     LoopCollectSettings,
+    LoopExecutionSettings,
     LoopKeepBodies,
     McpToolDefinition,
     Note,
@@ -177,6 +178,10 @@ function formatStepSettings(step: Step, includeInput: boolean): string[] {
         const keepBodies = z.enum(LoopKeepBodies).safeParse(settings.keepBodies)
         if (keepBodies.success) {
             lines.push(`  loopKeepBodies: ${keepBodies.data}`)
+        }
+        const execution = LoopExecutionSettings.safeParse(settings.execution)
+        if (execution.success) {
+            lines.push(`  loopExecution: ${JSON.stringify(execution.data)}`)
         }
     }
     return lines

@@ -18,7 +18,7 @@ describe.skipIf(!process.env.ENGINE_BENCH)('loop overhead benchmark', () => {
         vi.restoreAllMocks()
     })
 
-    it.each(benchCounts())('%i iterations × 2 steps', async (count) => {
+    it.each(benchCounts().flatMap((count) => [{ count, collecting: false }, { count, collecting: true }]))('$count iterations × 2 steps, collecting: $collecting', async ({ count, collecting }) => {
         const items = Array.from({ length: count }, (_, i) => ({ chatId: 100000 + i, text: `message number ${i} `.repeat(8) }))
         const plainLoop = buildSimpleLoopAction({
             name: 'loop',
@@ -39,7 +39,7 @@ describe.skipIf(!process.env.ENGINE_BENCH)('loop overhead benchmark', () => {
             },
         })
         // Collects one field per iteration, the way a bulk send reports what it sent (#41, #387).
-        const loop = { ...plainLoop, settings: { ...plainLoop.settings, collect: { value: '{{ send.output.result.message_id }}' } } }
+        const loop = collecting ? { ...plainLoop, settings: { ...plainLoop.settings, collect: { value: '{{ send.output.result.message_id }}' } } } : plainLoop
         const state = await FlowExecutorContext.empty().upsertStep('trigger', GenericStepOutput.create({
             type: FlowActionType.CODE,
             status: StepOutputStatus.SUCCEEDED,
@@ -52,7 +52,7 @@ describe.skipIf(!process.env.ENGINE_BENCH)('loop overhead benchmark', () => {
         const elapsedMs = performance.now() - startedAt
 
         expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
-        console.info(`[loop-bench] n=${count} total=${elapsedMs.toFixed(0)}ms perIteration=${(elapsedMs / count).toFixed(2)}ms`)
+        console.info(`[loop-bench] n=${count} collecting=${collecting} total=${elapsedMs.toFixed(0)}ms perIteration=${(elapsedMs / count).toFixed(2)}ms`)
     }, 600000)
 })
 

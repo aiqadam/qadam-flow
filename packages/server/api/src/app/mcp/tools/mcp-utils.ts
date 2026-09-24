@@ -1,5 +1,5 @@
 import { PropertyType, QadamMetadataModel, QadamPropertyMap } from '@aiqadam/qadams-framework'
-import { AgentQadamProps, AgentToolType, BranchOperator, ErrorCode, FlowActionType, flowStructureUtil, isNil, isObject, LoopCollectSettings, LoopKeepBodies, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
+import { AgentQadamProps, AgentToolType, BranchOperator, ErrorCode, FlowActionType, flowStructureUtil, isNil, isObject, LoopCollectSettings, LoopExecutionSettings, LoopKeepBodies, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
 import type { RouterAction, Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -34,8 +34,10 @@ const LOOP_COLLECT_INPUT_SCHEMA = z.object({
     skipFailed: z.boolean().optional(),
 })
 const LOOP_KEEP_BODIES_INPUT_SCHEMA = z.enum(LoopKeepBodies)
+const LOOP_EXECUTION_INPUT_SCHEMA = LoopExecutionSettings
+const LOOP_EXECUTION_HINT = 'For LOOP steps: how iterations run (#387). mode SEQUENTIAL (default) runs one at a time; CONCURRENT runs up to maxConcurrency at once (capped by the server\'s AP_LOOP_MAX_CONCURRENCY) and only speeds up waiting on the network — a step that pauses (Delay above 10s, approvals, a Queue-mode Call Flow that waits) is refused inside a CONCURRENT loop. rateLimit { count, perSeconds } spaces iteration starts evenly (e.g. { count: 25, perSeconds: 1 } for a provider allowing 30/s). When a step fails with a provider-requested wait (error.retryAfterSeconds, e.g. an HTTP 429), onRateLimited WAIT_AND_RETRY (default) pauses every iteration for that long and retries the item up to maxRateLimitRetries (default 5); FAIL treats it as a failure. onIterationFailure STOP (default) stops at the first failed item; CONTINUE tries every item and then fails the step listing the failures, unless tolerateFailures is true — use that to branch on {{loopStep[\'output\'].failures}} after the loop.'
 const LOOP_COLLECT_HINT = 'For LOOP steps: collect one value per iteration into the loop output, so a step after the loop reads a flat list instead of walking iterations. `value` is a template evaluated at the end of each iteration, in that iteration\'s scope (e.g. "{{step_7[\'output\'].body.text}}" or "{{ { name: step_7[\'output\'].body.filename, text: step_7[\'output\'].body.text } }}"). After the loop read {{loopStep[\'output\'].collected}} — positional: entry i belongs to item i and is null for an iteration that failed or was skipped — and {{loopStep[\'output\'].failures}} (one { index, stepName, description } per failed iteration). skipFailed: also leave out an iteration in which a continue-on-failure step failed.'
-const LOOP_KEEP_BODIES_HINT = 'For LOOP steps: which iteration bodies the run log keeps once an iteration is done. ALL (default) keeps every step output; FAILED_ONLY keeps only iterations with a failed step; NONE keeps none. Use FAILED_ONLY or NONE for loops over thousands of items so the run stays under the log size limit — collected, failures and the loop\'s own item/index are kept either way.'
+const LOOP_KEEP_BODIES_HINT = 'For LOOP steps: which iteration bodies the run log keeps once an iteration is done. ALL (default) keeps every step output; FAILED_ONLY keeps iterations in which any step failed; NONE keeps only iterations that did not finish (an iteration that fails is always kept, since a retry needs it). Use FAILED_ONLY or NONE for loops over thousands of items so the run stays under the log size limit — collected, failures and the loop\'s own item/index are kept either way.'
 const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].description}} (readable text), {{stepName[\'error\'].status}} (HTTP status) or {{stepName[\'error\'].retryAfterSeconds}} (the wait a provider asked for on a 429); {{stepName[\'error\'].message}} is the raw stored error string.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
@@ -632,6 +634,8 @@ export const mcpUtils = {
     STEP_REFERENCE_HINT,
     LOOP_COLLECT_INPUT_SCHEMA,
     LOOP_KEEP_BODIES_INPUT_SCHEMA,
+    LOOP_EXECUTION_INPUT_SCHEMA,
+    LOOP_EXECUTION_HINT,
     LOOP_COLLECT_HINT,
     LOOP_KEEP_BODIES_HINT,
     LOG_INPUT_HINT,

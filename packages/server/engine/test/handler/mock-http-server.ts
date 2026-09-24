@@ -3,14 +3,33 @@ import { createServer } from 'http'
 const startMockHttpServer = async (): Promise<{
   baseUrl: string
   hits: Map<string, number>
+  arrivals: { path: string, at: number }[]
+  concurrency: { current: number, max: number }
   close: () => Promise<void>
 }> => {
   const hits = new Map<string, number>()
+  const arrivals: { path: string, at: number }[] = []
+  const concurrency = { current: 0, max: 0 }
   const server = createServer((req, res) => {
     const path = req.url ?? ''
     const hit = (hits.get(path) ?? 0) + 1
     hits.set(path, hit)
+    arrivals.push({ path, at: Date.now() })
     res.setHeader('content-type', 'application/json')
+
+    // Answers after `ms`, counting how many requests are open at once — what a CONCURRENT loop's
+    // cap is measured by (#387).
+    if (path.startsWith('/slow')) {
+      const ms = Number(new URL(path, 'http://mock').searchParams.get('ms') ?? '100')
+      concurrency.current += 1
+      concurrency.max = Math.max(concurrency.max, concurrency.current)
+      setTimeout(() => {
+        concurrency.current -= 1
+        res.statusCode = 200
+        res.end(JSON.stringify({ ok: true, path }))
+      }, ms)
+      return
+    }
 
     // Telegram's shape for a 429: the wait is both in `parameters.retry_after` and in the
     // `Retry-After` header (tdlib/telegram-bot-api `Query::set_retry_after_error`).
@@ -57,7 +76,7 @@ const startMockHttpServer = async (): Promise<{
   const close = (): Promise<void> =>
     new Promise((resolve) => server.close(() => resolve()))
 
-  return { baseUrl, hits, close }
+  return { baseUrl, hits, arrivals, concurrency, close }
 }
 
 export const mockHttpServer = { start: startMockHttpServer }

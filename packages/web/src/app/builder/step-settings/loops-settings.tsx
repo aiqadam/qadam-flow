@@ -1,6 +1,13 @@
-import { isNil, LoopKeepBodies, LoopOnItemsAction } from '@aiqadam/shared';
+import {
+  isNil,
+  LoopExecutionMode,
+  LoopIterationFailurePolicy,
+  LoopKeepBodies,
+  LoopOnItemsAction,
+  LoopRateLimitedPolicy,
+} from '@aiqadam/shared';
 import { t } from 'i18next';
-import { ListChecks } from 'lucide-react';
+import { Gauge, ListChecks } from 'lucide-react';
 import React from 'react';
 import { useFormContext } from 'react-hook-form';
 
@@ -13,6 +20,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -55,6 +63,7 @@ const LoopsSettings = React.memo(({ readonly }: LoopsSettingsProps) => {
         )}
       />
       <LoopResultSettings readonly={readonly} />
+      <LoopExecutionSettingsForm readonly={readonly} />
     </div>
   );
 });
@@ -87,7 +96,8 @@ const LoopResultSettings = ({ readonly }: LoopsSettingsProps) => {
                 form.setValue(
                   'settings.collect',
                   checked ? { value: '' } : undefined,
-                  { shouldDirty: true },
+                  // The step is saved from the form resolver, which runs only on validation.
+                  { shouldDirty: true, shouldValidate: true },
                 )
               }
             />
@@ -168,10 +178,10 @@ const LoopResultSettings = ({ readonly }: LoopsSettingsProps) => {
                   {t('Every item')}
                 </SelectItem>
                 <SelectItem value={LoopKeepBodies.FAILED_ONLY}>
-                  {t('Items where a step failed')}
+                  {t('Items where any step failed')}
                 </SelectItem>
                 <SelectItem value={LoopKeepBodies.NONE}>
-                  {t('No items')}
+                  {t('Only items that did not finish')}
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -184,6 +194,260 @@ const LoopResultSettings = ({ readonly }: LoopsSettingsProps) => {
           </FormItem>
         )}
       />
+    </div>
+  );
+};
+
+// #387 / #374: how iterations run — concurrently, at a declared rate, and what a failed item does.
+const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
+  const form = useFormContext<LoopOnItemsAction>();
+  const execution = form.watch('settings.execution');
+  const mode = execution?.mode ?? LoopExecutionMode.SEQUENTIAL;
+  const rateLimited = !isNil(execution?.rateLimit);
+  const continuing =
+    execution?.onIterationFailure === LoopIterationFailurePolicy.CONTINUE;
+  const update = (patch: Partial<NonNullable<typeof execution>>) =>
+    form.setValue(
+      'settings.execution',
+      { mode, ...execution, ...patch },
+      { shouldDirty: true, shouldValidate: true },
+    );
+
+  return (
+    <div className={cn('flex flex-col mt-2', GAP_SIZE_FOR_STEP_SETTINGS)}>
+      <div className="text-xs font-semibold tracking-wide text-muted-foreground flex items-center gap-1">
+        <Gauge className="w-4 h-4" />
+        <span>{t('Execution')}</span>
+      </div>
+      <FormItem className="flex flex-col gap-2">
+        <FormLabel>{t('Run items')}</FormLabel>
+        <Select
+          disabled={readonly}
+          value={mode}
+          onValueChange={(value) =>
+            update({
+              mode:
+                value === LoopExecutionMode.CONCURRENT
+                  ? LoopExecutionMode.CONCURRENT
+                  : LoopExecutionMode.SEQUENTIAL,
+            })
+          }
+        >
+          <FormControl>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+          </FormControl>
+          <SelectContent>
+            <SelectItem value={LoopExecutionMode.SEQUENTIAL}>
+              {t('One at a time')}
+            </SelectItem>
+            <SelectItem value={LoopExecutionMode.CONCURRENT}>
+              {t('Several at once')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        {mode === LoopExecutionMode.CONCURRENT && (
+          <ReadMoreDescription
+            text={t(
+              'Speeds up steps that wait on another service. Steps that pause the run, like a long Delay or an approval, cannot run inside this loop.',
+            )}
+          />
+        )}
+      </FormItem>
+      {mode === LoopExecutionMode.CONCURRENT && (
+        <FormField
+          control={form.control}
+          name="settings.execution.maxConcurrency"
+          render={({ field }) => (
+            <FormItem className="flex flex-col gap-2">
+              <FormLabel>{t('Items at a time')}</FormLabel>
+              <Input
+                disabled={readonly}
+                type="number"
+                min={1}
+                value={field.value ?? ''}
+                placeholder="10"
+                onChange={(event) =>
+                  update({
+                    maxConcurrency:
+                      event.target.value === ''
+                        ? undefined
+                        : Number(event.target.value),
+                  })
+                }
+              />
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+      <FormItem>
+        <FormLabel
+          htmlFor="loopRateLimit"
+          className="flex items-center gap-1 h-7.5 max-h-7.5"
+        >
+          <FormControl>
+            <Switch
+              disabled={readonly}
+              id="loopRateLimit"
+              checked={rateLimited}
+              onCheckedChange={(checked) =>
+                update({
+                  rateLimit: checked ? { count: 10, perSeconds: 1 } : undefined,
+                })
+              }
+            />
+          </FormControl>
+          <span className="ml-2">{t('Limit the rate')}</span>
+        </FormLabel>
+        <ReadMoreDescription
+          text={t(
+            'Starts items no faster than the rate you set, and pauses every item when the service asks to slow down.',
+          )}
+        />
+      </FormItem>
+      {rateLimited && (
+        <div className="flex gap-2">
+          <FormField
+            control={form.control}
+            name="settings.execution.rateLimit.count"
+            render={({ field }) => (
+              <FormItem className="flex flex-col gap-2 flex-1">
+                <FormLabel>{t('Items')}</FormLabel>
+                <Input
+                  disabled={readonly}
+                  type="number"
+                  min={1}
+                  value={field.value ?? ''}
+                  onChange={(event) =>
+                    update({
+                      rateLimit: {
+                        count: Number(event.target.value),
+                        perSeconds: execution?.rateLimit?.perSeconds ?? 1,
+                      },
+                    })
+                  }
+                />
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="settings.execution.rateLimit.perSeconds"
+            render={({ field }) => (
+              <FormItem className="flex flex-col gap-2 flex-1">
+                <FormLabel>{t('Per seconds')}</FormLabel>
+                <Input
+                  disabled={readonly}
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={field.value ?? ''}
+                  onChange={(event) =>
+                    update({
+                      rateLimit: {
+                        count: execution?.rateLimit?.count ?? 1,
+                        perSeconds: Number(event.target.value),
+                      },
+                    })
+                  }
+                />
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      )}
+      {rateLimited && (
+        <FormItem>
+          <FormLabel
+            htmlFor="loopWaitWhenRateLimited"
+            className="flex items-center gap-1 h-7.5 max-h-7.5"
+          >
+            <FormControl>
+              <Switch
+                disabled={readonly}
+                id="loopWaitWhenRateLimited"
+                checked={
+                  execution?.onRateLimited !== LoopRateLimitedPolicy.FAIL
+                }
+                onCheckedChange={(checked) =>
+                  update({
+                    onRateLimited: checked
+                      ? LoopRateLimitedPolicy.WAIT_AND_RETRY
+                      : LoopRateLimitedPolicy.FAIL,
+                  })
+                }
+              />
+            </FormControl>
+            <span className="ml-2">
+              {t('Wait and retry when the service asks to slow down')}
+            </span>
+          </FormLabel>
+        </FormItem>
+      )}
+      <FormItem className="flex flex-col gap-2">
+        <FormLabel>{t('When an item fails')}</FormLabel>
+        <Select
+          disabled={readonly}
+          value={
+            continuing
+              ? LoopIterationFailurePolicy.CONTINUE
+              : LoopIterationFailurePolicy.STOP
+          }
+          onValueChange={(value) =>
+            update({
+              onIterationFailure:
+                value === LoopIterationFailurePolicy.CONTINUE
+                  ? LoopIterationFailurePolicy.CONTINUE
+                  : LoopIterationFailurePolicy.STOP,
+            })
+          }
+        >
+          <FormControl>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+          </FormControl>
+          <SelectContent>
+            <SelectItem value={LoopIterationFailurePolicy.STOP}>
+              {t('Stop the loop')}
+            </SelectItem>
+            <SelectItem value={LoopIterationFailurePolicy.CONTINUE}>
+              {t('Continue with the other items')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </FormItem>
+      {continuing && (
+        <FormItem>
+          <FormLabel
+            htmlFor="loopTolerateFailures"
+            className="flex items-center gap-1 h-7.5 max-h-7.5"
+          >
+            <FormControl>
+              <Switch
+                disabled={readonly}
+                id="loopTolerateFailures"
+                checked={execution?.tolerateFailures === true}
+                onCheckedChange={(checked) =>
+                  update({ tolerateFailures: checked })
+                }
+              />
+            </FormControl>
+            <span className="ml-2">
+              {t('Keep running the flow when items fail')}
+            </span>
+          </FormLabel>
+          <ReadMoreDescription
+            text={t(
+              'Otherwise the loop fails once every item was tried. Turn this on to handle the failures in later steps, using failures on the loop output.',
+            )}
+          />
+        </FormItem>
+      )}
     </div>
   );
 };

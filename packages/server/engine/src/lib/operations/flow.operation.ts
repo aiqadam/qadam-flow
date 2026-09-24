@@ -16,6 +16,7 @@ import {
     GenericStepOutput,
     isFlowRunStateTerminal,
     isNil,
+    LoopIterationStatus,
     LoopStepOutput,
     ResumePayload,
     ResumeReason,
@@ -240,11 +241,15 @@ async function insertSuccessStepsOrPausedRecursively({ stepOutput, isWaitpointRe
     if (stepOutput.type === FlowActionType.LOOP_ON_ITEMS) {
         const loopOutput = new LoopStepOutput(stepOutput)
         const iterations = loopOutput.output?.iterations ?? []
+        const iterationStatus = loopOutput.output?.iterationStatus ?? []
         const newIterations: Record<string, StepOutput>[] = []
-        for (const iteration of iterations) {
+        for (const [index, iteration] of iterations.entries()) {
+            // A finished iteration is never entered again (#41), so a retry would not re-run its
+            // continue-on-failure steps; dropping them would only erase them from the log.
+            const keepsFailedSteps = isWaitpointResume || iterationStatus[index] === LoopIterationStatus.SUCCEEDED
             const newSteps: Record<string, StepOutput> = {}
             for (const [step, output] of Object.entries(iteration)) {
-                const newOutput = await insertSuccessStepsOrPausedRecursively({ stepOutput: output, isWaitpointResume })
+                const newOutput = await insertSuccessStepsOrPausedRecursively({ stepOutput: output, isWaitpointResume: keepsFailedSteps })
                 if (!isNil(newOutput)) {
                     executionJournal.setOwnStep({ target: newSteps, stepName: step, value: newOutput })
                 }
