@@ -11,6 +11,13 @@ import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseRes
 
 const waitpointRepo = repoFactory(WaitpointEntity)
 
+// One job per waitpoint, not per run: a durable loop (#387) creates its next DELAY waitpoint while
+// the job that resumed it may still be active, and a job id already taken is silently not re-added —
+// that run would never wake up again.
+export const waitpointJobIds = {
+    resumeDelay: ({ flowRunId, waitpointId }: { flowRunId: string, waitpointId: string }): string => `resume-delay-${flowRunId}-${waitpointId}`,
+}
+
 export const waitpointService = (log: FastifyBaseLogger) => ({
     async createForPause(params: CreateForPauseParams): Promise<CreateForPauseResult> {
         await assertCallerOwnsRun({ flowRunId: params.flowRunId, projectId: params.projectId, callerRunId: params.callerRunId, log })
@@ -57,7 +64,7 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
                     job: {
                         name: SystemJobName.RESUME_DELAY_WAITPOINT,
                         data: { flowRunId: params.flowRunId, projectId: params.projectId, waitpointId: id },
-                        jobId: `resume-delay-${params.flowRunId}`,
+                        jobId: waitpointJobIds.resumeDelay({ flowRunId: params.flowRunId, waitpointId: id }),
                     },
                     schedule: {
                         type: 'one-time',

@@ -81,6 +81,7 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
                 failedStep: { name: action.name, displayName: action.displayName, message: errorMessage },
             })
         }
+        const resumingFromCheckpoint = stepOutput.status === StepOutputStatus.PAUSED && !isNil(previousCheckpoint)
         if (stepOutput.status === StepOutputStatus.PAUSED) {
             stepOutput = new LoopStepOutput({ ...stepOutput, status: StepOutputStatus.SUCCEEDED })
         }
@@ -92,8 +93,10 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
         const failures = stepOutput.output?.failures ?? []
         const collected = stepOutput.output?.collected
         // Carried across checkpoints, or a provider that keeps asking for a long wait would get a
-        // fresh set of retries with every execution and never let the item fail.
-        const rateLimitedRetries = new Map<number, number>(Object.entries(previousCheckpoint?.rateLimitedRetries ?? {}).map(([index, count]) => [Number(index), count]))
+        // fresh set of retries with every execution and never let the item fail. Only a checkpoint
+        // resume reads them: a later manual retry of a finished loop starts every item afresh.
+        const carriedRetries = resumingFromCheckpoint ? previousCheckpoint.rateLimitedRetries ?? {} : {}
+        const rateLimitedRetries = new Map<number, number>(Object.entries(carriedRetries).map(([index, count]) => [Number(index), count]))
 
         const recordOutcome = ({ index, outcome }: { index: number, outcome: IterationOutcome }): void => {
             if (isNil(outcome.status)) {
@@ -211,10 +214,11 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
 
             const retryAfterSeconds = outcome.status === LoopIterationStatus.FAILED ? retryAfterOf(outcome.executionState.verdict) : undefined
             const retriesSoFar = rateLimitedRetries.get(index) ?? 0
-            // A wait longer than a sandbox slot may sleep is taken paused, which only a durable loop
-            // can do; otherwise the item fails with the wait on its error, as a single step does.
+            // A wait longer than a sandbox slot may sleep, or than the run has left, is taken paused,
+            // which only a durable loop can do; otherwise the item fails with the wait on its error,
+            // as a single step does.
             const waitFitsThisExecution = !isNil(retryAfterSeconds)
-                && retryAfterSeconds * 1000 <= (canCheckpoint ? MAX_DURABLE_RATE_LIMIT_WAIT_MS : MAX_IN_PROCESS_RATE_LIMIT_WAIT_MS)
+                && retryAfterSeconds * 1000 <= (canCheckpoint ? MAX_DURABLE_RATE_LIMIT_WAIT_MS : Math.min(MAX_IN_PROCESS_RATE_LIMIT_WAIT_MS, remainingBudgetMs(constants)))
             if (!isNil(retryAfterSeconds) && waitFitsThisExecution && retriesSoFar < maxRateLimitRetries && isNil(terminal)) {
                 rateLimitedRetries.set(index, retriesSoFar + 1)
                 limiter.pause({ seconds: retryAfterSeconds })

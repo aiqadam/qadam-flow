@@ -223,6 +223,20 @@ describe('concurrent loop', () => {
         expect(elapsedMs).toBeLessThan(5000)
     }, 20000)
 
+    it('fails an item with its own 429 when the provider wait is longer than the run has left', async () => {
+        const { result, loop, elapsedMs } = await run(loopOf({
+            count: 1,
+            execution: { mode: LoopExecutionMode.SEQUENTIAL, onRateLimited: LoopRateLimitedPolicy.WAIT_AND_RETRY },
+            body: request({ path: '/telegram-429?retryAfter=30&case=past-budget&item={{loop.output.item}}' }),
+        }))
+
+        expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
+        expect(loop?.iterationStatus).toEqual([LoopIterationStatus.FAILED])
+        expect(loop?.failures?.[0]).toMatchObject({ index: 0, stepName: 'send' })
+        expect(mockServer.hits.get('/telegram-429?retryAfter=30&case=past-budget&item=0')).toBe(1)
+        expect(elapsedMs).toBeLessThan(5000)
+    }, 20000)
+
     // An inline child called from a concurrent iteration carries that fact in its constants.
     it('runs a CONCURRENT loop one item at a time inside an inline child of a concurrent iteration', async () => {
         const result = await flowExecutor.execute({
