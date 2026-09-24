@@ -280,7 +280,9 @@ async function resolveStepOutput(step: StepOutput, engineApi: EngineApiConfig | 
 }
 
 function withTruncatedInput<T extends BaseStepOutput>(stepOutput: T): T {
-    const truncated = loggingUtils.maybeTruncateInput(stepOutput.input)
+    const truncated = stepOutput.type === FlowActionType.LOOP_ON_ITEMS
+        ? loggingUtils.maybeTruncateLoopInput(stepOutput.input)
+        : loggingUtils.maybeTruncateInput(stepOutput.input)
     if (truncated === stepOutput.input) {
         return stepOutput
     }

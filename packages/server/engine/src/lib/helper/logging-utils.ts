@@ -12,6 +12,15 @@ const ERROR_OFFSET = 256 * 1024
 const MAX_LOG_SIZE = Number(process.env.AP_MAX_FLOW_RUN_LOG_SIZE_MB ?? DEFAULT_MAX_LOG_SIZE_MB) * 1024 * 1024
 const MAX_SIZE_FOR_ALL_ENTRIES = MAX_LOG_SIZE - ERROR_OFFSET
 
+const truncatedLoopInputs = new WeakMap<Record<string, unknown>, unknown>()
+
+const logSizeTrackers = new WeakMap<Record<string, StepOutput>, LogSizeTracker>()
+
+const FIRST_FORCED_WALK_AFTER_UPSERTS = 256
+
+// `{}` plus the separating comma.
+const EMPTY_ITERATION_BYTES = 3
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -29,29 +38,45 @@ export const loggingUtils = {
         if (!isPlainRecord(input)) {
             return input
         }
-        // A loop re-writes its own step every iteration with the same resolved `input`, so without
-        // this the whole `items` list was stringified once per iteration (#387).
-        const memo = truncatedInputs.get(input)
-        if (!isNil(memo) && memo.threshold === threshold) {
-            return memo.result
+        return truncateRecord({ input, threshold })
+    },
+    // A loop re-writes its own step every iteration with the same resolved `input`, so without the
+    // memo the whole `items` list was stringified once per iteration (#387). Only the loop's own
+    // input is memoized: a qadam step's input is written before and after `run()`, and the action
+    // can grow it in between, which a memo would log untruncated.
+    maybeTruncateLoopInput(input: unknown): unknown {
+        if (!isPlainRecord(input)) {
+            return input
         }
-        const result = truncateRecord({ input, threshold })
-        truncatedInputs.set(input, { threshold, result })
+        const memo = truncatedLoopInputs.get(input)
+        if (!isNil(memo)) {
+            return memo
+        }
+        const result = truncateRecord({ input, threshold: INPUT_TRUNCATE_THRESHOLD_BYTES })
+        truncatedLoopInputs.set(input, result)
         return result
     },
     maxLogSizeMb: MAX_LOG_SIZE / (1024 * 1024),
     // Walking the whole journal after every step made a loop quadratic: at 800 iterations 84% of
     // the run was this check (#387). The walk now happens only when the size last measured plus an
-    // upper bound on everything written since could cross the cap; anything below that is proven
-    // within it without looking.
+    // upper bound on everything written since could cross the cap, and on a doubling schedule of
+    // writes. The bound only sees writes: a qadam that grows an object already in the journal in
+    // place is invisible to it, and the schedule — plus the walk `isWithinSizeLimitAfterFullWalk`
+    // does when a run ends — keeps that from going unnoticed. Walks at doubling intervals cost
+    // O(final size) in total, so the check stays linear.
     isWithinSizeLimit(steps: Record<string, StepOutput>, maxSize: number = MAX_SIZE_FOR_ALL_ENTRIES): boolean {
         const tracked = logSizeTrackers.get(steps)
-        if (!isNil(tracked) && tracked.measuredBytes + tracked.growthBoundBytes <= maxSize) {
+        const provablyWithin = !isNil(tracked)
+            && tracked.upsertsSinceWalk < tracked.walkEveryUpserts
+            && tracked.measuredBytes + tracked.growthBoundBytes <= maxSize
+        if (provablyWithin) {
             return true
         }
-        const measuredBytes = sizeofUtils.recursiveSizeof(steps)
-        logSizeTrackers.set(steps, { measuredBytes, growthBoundBytes: 0 })
-        return measuredBytes <= maxSize
+        return walkAndRecord({ steps, maxSize, walkEveryUpserts: isNil(tracked) ? FIRST_FORCED_WALK_AFTER_UPSERTS : tracked.walkEveryUpserts * 2 })
+    },
+    isWithinSizeLimitAfterFullWalk(steps: Record<string, StepOutput>, maxSize: number = MAX_SIZE_FOR_ALL_ENTRIES): boolean {
+        const tracked = logSizeTrackers.get(steps)
+        return walkAndRecord({ steps, maxSize, walkEveryUpserts: tracked?.walkEveryUpserts ?? FIRST_FORCED_WALK_AFTER_UPSERTS })
     },
     // Called for every write into a journal. Only journals already measured are tracked: a journal
     // restored on RESUME, or written to before its first check, is measured in full on that check.
@@ -61,7 +86,14 @@ export const loggingUtils = {
             return
         }
         tracked.growthBoundBytes += upsertGrowthBound({ stepName, stepOutput, previous })
+        tracked.upsertsSinceWalk += 1
     },
+}
+
+function walkAndRecord({ steps, maxSize, walkEveryUpserts }: { steps: Record<string, StepOutput>, maxSize: number, walkEveryUpserts: number }): boolean {
+    const measuredBytes = sizeofUtils.recursiveSizeof(steps)
+    logSizeTrackers.set(steps, { measuredBytes, growthBoundBytes: 0, upsertsSinceWalk: 0, walkEveryUpserts })
+    return measuredBytes <= maxSize
 }
 
 function truncateRecord({ input, threshold }: { input: Record<string, unknown>, threshold: number }): unknown {
@@ -101,12 +133,12 @@ function readRecord(value: unknown): Record<string, unknown> {
     return isPlainRecord(value) ? value : {}
 }
 
-const truncatedInputs = new WeakMap<Record<string, unknown>, { threshold: number, result: unknown }>()
-
-const logSizeTrackers = new WeakMap<Record<string, StepOutput>, { measuredBytes: number, growthBoundBytes: number }>()
-
-// `{}` plus the separating comma.
-const EMPTY_ITERATION_BYTES = 3
+type LogSizeTracker = {
+    measuredBytes: number
+    growthBoundBytes: number
+    upsertsSinceWalk: number
+    walkEveryUpserts: number
+}
 
 type RecordUpsertParams = {
     steps: Record<string, StepOutput>

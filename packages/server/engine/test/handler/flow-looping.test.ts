@@ -93,8 +93,8 @@ describe('flow with looping', () => {
 })
 
 // #387: the log-size check used to walk the whole journal after every step, which made a loop
-// quadratic in its item count (52 ms per iteration at 3000). The walk now runs a bounded number of
-// times per run, whatever the item count.
+// quadratic in its item count (52 ms per iteration at 3000). The walk now runs a logarithmic number
+// of times in the item count.
 describe('loop log-size check cost', () => {
     afterEach(() => {
         vi.restoreAllMocks()
@@ -125,7 +125,9 @@ describe('loop log-size check cost', () => {
         const loopOut = result.steps.loop as LoopStepOutput
         expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
         expect(loopOut.output?.iterations).toHaveLength(300)
+        // ~600 writes: the first check, then walks on a doubling schedule (256, 512, ...) — logarithmic
+        // in the writes. Before the fix this was one walk per step, 301.
         const fullWalks = walk.mock.calls.filter(([value]) => value === executionState.steps)
-        expect(fullWalks.length).toBeLessThanOrEqual(2)
+        expect(fullWalks.length).toBeLessThanOrEqual(4)
     }, 60000)
 })

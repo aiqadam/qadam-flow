@@ -1,9 +1,12 @@
 import {
     FlowActionType,
     GenericStepOutput,
+    LoopStepOutput,
     StepOutput,
     StepOutputStatus,
 } from '@aiqadam/shared'
+import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
+import { StepExecutionPath } from '../../src/lib/handler/context/step-execution-path'
 import { loggingUtils } from '../../src/lib/helper/logging-utils'
 import { sizeofUtils } from '../../src/lib/helper/sizeof'
 
@@ -87,7 +90,7 @@ describe('loggingUtils.isWithinSizeLimit', () => {
 // #387: the full walk is skipped only while a measured size plus an upper bound on what was
 // written since is provably under the cap; past that it measures again, so the cap still holds.
 describe('loggingUtils.isWithinSizeLimit — amortized walk', () => {
-    const smallStep = (payload: string) => GenericStepOutput.create({
+    const smallStep = (payload: string): GenericStepOutput<FlowActionType.PIECE, { payload: string }> => GenericStepOutput.create({
         type: FlowActionType.PIECE,
         status: StepOutputStatus.SUCCEEDED,
         input: {},
@@ -134,5 +137,68 @@ describe('loggingUtils.isWithinSizeLimit — amortized walk', () => {
         const steps: Record<string, StepOutput> = { big: smallStep('x'.repeat(4096)) }
 
         expect(loggingUtils.isWithinSizeLimit(steps, 1024)).toBe(false)
+    })
+})
+
+// The loop branch of the bound is the one that does arithmetic rather than sizing what was written:
+// a loop step is re-written every iteration carrying all past iterations. Driven the way
+// `loop-executor` drives it, the bound must never come out below the real size.
+describe('loggingUtils.isWithinSizeLimit — loop writes', () => {
+    it('never reports a journal under its real size while a loop runs', async () => {
+        let context = FlowExecutorContext.empty()
+        expect(loggingUtils.isWithinSizeLimit(context.steps, 1024 * 1024)).toBe(true)
+        let loop = LoopStepOutput.init({ input: { items: 'x'.repeat(100) } })
+
+        for (let i = 0; i < 40; i++) {
+            loop = loop.setItemAndIndex({ item: { value: i }, index: i + 1 }).addIteration()
+            context = await context.upsertStep('loop', loop)
+            context = context.setCurrentPath(StepExecutionPath.empty().loopIteration({ loopName: 'loop', iteration: i }))
+            context = await context.upsertStep('inner', GenericStepOutput.create({
+                type: FlowActionType.PIECE,
+                status: StepOutputStatus.SUCCEEDED,
+                input: {},
+                output: { payload: 'y'.repeat(50) },
+            }))
+            context = context.setCurrentPath(StepExecutionPath.empty())
+
+            const realSize = sizeofUtils.recursiveSizeof(context.steps)
+            expect(loggingUtils.isWithinSizeLimit(context.steps, realSize - 1)).toBe(false)
+            expect(loggingUtils.isWithinSizeLimit(context.steps, 1024 * 1024)).toBe(true)
+        }
+    })
+})
+
+// The bound only sees writes. A qadam that grows an object already in the journal in place is
+// caught by a walk on a doubling schedule of writes, and by the walk when the run ends.
+describe('loggingUtils.isWithinSizeLimit — objects grown in place', () => {
+    const grownInPlace = (): { steps: Record<string, StepOutput>, output: { list: string[] } } => {
+        const output = { list: ['small'] }
+        const steps: Record<string, StepOutput> = {
+            source: GenericStepOutput.create({ type: FlowActionType.PIECE, status: StepOutputStatus.SUCCEEDED, input: {}, output }),
+        }
+        expect(loggingUtils.isWithinSizeLimit(steps, 64 * 1024)).toBe(true)
+        output.list.push('x'.repeat(128 * 1024))
+        return { steps, output }
+    }
+
+    it('catches it on the next scheduled walk', () => {
+        const { steps } = grownInPlace()
+
+        const results = Array.from({ length: 300 }, (_, i) => {
+            const step = GenericStepOutput.create({ type: FlowActionType.PIECE, status: StepOutputStatus.SUCCEEDED, input: {}, output: i })
+            loggingUtils.recordUpsert({ steps, stepName: `step_${i}`, stepOutput: step, previous: undefined })
+            steps[`step_${i}`] = step
+            return loggingUtils.isWithinSizeLimit(steps, 64 * 1024)
+        })
+
+        expect(results[0]).toBe(true)
+        expect(results[results.length - 1]).toBe(false)
+    })
+
+    it('catches it on the walk a finished run does', () => {
+        const { steps } = grownInPlace()
+
+        expect(loggingUtils.isWithinSizeLimit(steps, 64 * 1024)).toBe(true)
+        expect(loggingUtils.isWithinSizeLimitAfterFullWalk(steps, 64 * 1024)).toBe(false)
     })
 })
