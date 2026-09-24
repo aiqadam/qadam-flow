@@ -1,4 +1,4 @@
-import { StepOutput } from '@aiqadam/shared'
+import { BaseStepOutput, FlowActionType, isNil, StepOutput } from '@aiqadam/shared'
 import { utils } from '../utils'
 import { sizeofUtils } from './sizeof'
 
@@ -29,18 +29,88 @@ export const loggingUtils = {
         if (!isPlainRecord(input)) {
             return input
         }
-        let copy: Record<string, unknown> | undefined
-        for (const [key, value] of Object.entries(input)) {
-            const size = utils.sizeof(value)
-            if (size > threshold) {
-                copy ??= { ...input }
-                copy[key] = `(truncated, original size ${formatSize(size)})`
-            }
+        // A loop re-writes its own step every iteration with the same resolved `input`, so without
+        // this the whole `items` list was stringified once per iteration (#387).
+        const memo = truncatedInputs.get(input)
+        if (!isNil(memo) && memo.threshold === threshold) {
+            return memo.result
         }
-        return copy ?? input
+        const result = truncateRecord({ input, threshold })
+        truncatedInputs.set(input, { threshold, result })
+        return result
     },
     maxLogSizeMb: MAX_LOG_SIZE / (1024 * 1024),
+    // Walking the whole journal after every step made a loop quadratic: at 800 iterations 84% of
+    // the run was this check (#387). The walk now happens only when the size last measured plus an
+    // upper bound on everything written since could cross the cap; anything below that is proven
+    // within it without looking.
     isWithinSizeLimit(steps: Record<string, StepOutput>, maxSize: number = MAX_SIZE_FOR_ALL_ENTRIES): boolean {
-        return sizeofUtils.recursiveSizeof(steps) <= maxSize
+        const tracked = logSizeTrackers.get(steps)
+        if (!isNil(tracked) && tracked.measuredBytes + tracked.growthBoundBytes <= maxSize) {
+            return true
+        }
+        const measuredBytes = sizeofUtils.recursiveSizeof(steps)
+        logSizeTrackers.set(steps, { measuredBytes, growthBoundBytes: 0 })
+        return measuredBytes <= maxSize
     },
+    // Called for every write into a journal. Only journals already measured are tracked: a journal
+    // restored on RESUME, or written to before its first check, is measured in full on that check.
+    recordUpsert({ steps, stepName, stepOutput, previous }: RecordUpsertParams): void {
+        const tracked = logSizeTrackers.get(steps)
+        if (isNil(tracked)) {
+            return
+        }
+        tracked.growthBoundBytes += upsertGrowthBound({ stepName, stepOutput, previous })
+    },
+}
+
+function truncateRecord({ input, threshold }: { input: Record<string, unknown>, threshold: number }): unknown {
+    let copy: Record<string, unknown> | undefined
+    for (const [key, value] of Object.entries(input)) {
+        const size = utils.sizeof(value)
+        if (size > threshold) {
+            copy ??= { ...input }
+            copy[key] = `(truncated, original size ${formatSize(size)})`
+        }
+    }
+    return copy ?? input
+}
+
+// Growth never exceeds the size of what was written, because the journal only replaces a step's
+// entry. A loop step is re-written every iteration while carrying every past iteration, so its
+// bound is its own shell plus the empty slots it added; each step inside an iteration is counted
+// when it is written.
+function upsertGrowthBound({ stepName, stepOutput, previous }: Omit<RecordUpsertParams, 'steps'>): number {
+    const keyBytes = utils.sizeof(stepName) + 2
+    if (stepOutput.type !== FlowActionType.LOOP_ON_ITEMS) {
+        return keyBytes + sizeofUtils.recursiveSizeof(stepOutput)
+    }
+    const iterations = readIterations(stepOutput.output)
+    const previousIterations = readIterations(previous?.output)
+    const addedSlots = Math.max(0, iterations.length - previousIterations.length)
+    const shell = { ...stepOutput, output: { ...readRecord(stepOutput.output), iterations: [] } }
+    return keyBytes + sizeofUtils.recursiveSizeof(shell) + addedSlots * EMPTY_ITERATION_BYTES
+}
+
+function readIterations(output: unknown): unknown[] {
+    const iterations = readRecord(output)['iterations']
+    return Array.isArray(iterations) ? iterations : []
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+    return isPlainRecord(value) ? value : {}
+}
+
+const truncatedInputs = new WeakMap<Record<string, unknown>, { threshold: number, result: unknown }>()
+
+const logSizeTrackers = new WeakMap<Record<string, StepOutput>, { measuredBytes: number, growthBoundBytes: number }>()
+
+// `{}` plus the separating comma.
+const EMPTY_ITERATION_BYTES = 3
+
+type RecordUpsertParams = {
+    steps: Record<string, StepOutput>
+    stepName: string
+    stepOutput: BaseStepOutput
+    previous: StepOutput | undefined
 }

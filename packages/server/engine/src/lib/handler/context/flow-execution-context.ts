@@ -153,6 +153,7 @@ export class FlowExecutorContext {
                 errorMessage: truncated.errorMessage,
             })
         }
+        loggingUtils.recordUpsert({ steps: this.steps, stepName, stepOutput: finalized, previous: this.getStepOutput(stepName) })
         const steps = executionJournal.upsertStep({ stepName, stepOutput: finalized, path: this.currentPath.path, steps: this.steps })
         return new FlowExecutorContext({
             ...this,

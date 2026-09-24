@@ -191,6 +191,7 @@ LoopStepResult
         return new LoopStepOutput({
             ...this,
             output: {
+                ...this.output,
                 item,
                 index,
                 iterations: this.output?.iterations ?? [],
@@ -202,6 +203,7 @@ LoopStepResult
         return new LoopStepOutput({
             ...this,
             output: {
+                ...this.output,
                 item: this.output?.item,
                 index: this.output?.index,
                 iterations: [...(this.output?.iterations ?? []), {}],
