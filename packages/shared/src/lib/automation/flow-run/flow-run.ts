@@ -69,6 +69,9 @@ export const FlowRun = z.object({
     // retry could have changed underneath it. Absent on a run that never carried
     // `failParentOnFailure`, and on any run created before this field existed.
     parentWaitpointId: z.string().optional(),
+    // The join slot (#374) this child answers when its parent waits on a join waitpoint. Written
+    // once, at creation, after the same re-verification as `parentWaitpointId`.
+    parentSlotId: z.string().optional(),
     dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),
     triggeredBy: z.string().optional(),

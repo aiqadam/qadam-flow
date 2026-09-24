@@ -20,11 +20,13 @@
 | FlowVersion | An immutable (once locked) snapshot of a flow's trigger + action graph; DRAFT is editable, LOCKED is published. | version, revision | Flow, Draft, Published |
 | Iteration fork | The context one loop iteration runs in: its own path and verdict over the run's shared journal, so iterations can run concurrently. | — | Concurrent loop, Iteration status |
 | Iteration status | A loop's per-iteration record (`S` succeeded, `F` failed) that lets a RESUME skip a finished iteration without entering its body. | watermark, cursor | Loop collector, Keep bodies |
+| Join waitpoint | One WEBHOOK waitpoint that N queue-mode children answer, each through its own slot, resuming its run once when its failure policy decides. | barrier, fan-in wait | Slot, Waitpoint |
 | Keep bodies | A loop setting (`ALL` / `FAILED_ONLY` / `NONE`) for which finished iterations keep their step outputs; the rest are blanked to `{}`, never removed. | retain iterations | Iteration status, Loop collector |
 | Folder | A grouping container for organizing flows and tables within a project. | directory, category | Flow, Table |
 | Loop collector | A loop's `collect.value` template, evaluated at the end of each iteration into a positional `collected[]`, with failed iterations listed compactly in `failures[]`. | aggregator, reducer | Iteration status, Keep bodies |
 | Published | A LOCKED FlowVersion pointed to by `flow.publishedVersionId`; the version that runs in production. | live, active version | Draft, FlowVersion, Trigger Source |
 | Sample Data | Captured step input/output stored as File entities per flow version, used for testing downstream steps. | test data, mock data | FlowVersion, Step Run |
+| Slot | One child's place in a join waitpoint: its own callback URL, whose id is the secret that lets only that child answer, first answer wins. | lane, branch | Join waitpoint |
 | Step | Generic term for any node in a flow graph — either a trigger or an action. | node, block | Action, Trigger |
 | Trigger | The entry point of a flow that initiates execution via webhook, polling, app event, or manual invocation. | event source, starter | TriggerStrategy, TriggerSource |
 | TriggerSource | The external registration (webhook URL, polling job, app-event subscription) that fires a flow. | — | Trigger, TriggerStrategy |

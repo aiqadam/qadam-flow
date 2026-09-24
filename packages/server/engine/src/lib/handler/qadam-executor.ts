@@ -296,6 +296,9 @@ function createWaitpointHook({ constants, stepName, hookParams, concurrentFork }
             throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
         }
         pausedFlowLimits.assertResumeWithinTimeout(req.resumeDateTime)
+        if (!isNil(req.join?.timeoutSeconds)) {
+            pausedFlowLimits.assertResumeWithinTimeout(new Date(Date.now() + req.join.timeoutSeconds * 1000).toISOString())
+        }
         if (!isNil(req.responseToSend)) {
             hookParams.hookResponse = { ...hookParams.hookResponse, responseToSend: req.responseToSend }
         }
@@ -312,6 +315,7 @@ function createWaitpointHook({ constants, stepName, hookParams, concurrentFork }
             workerHandlerId: constants.workerHandlerId ?? undefined,
             httpRequestId: constants.httpRequestId ?? undefined,
             internal: req.internal,
+            join: req.join,
         })
         return {
             ...result,

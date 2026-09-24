@@ -1,5 +1,5 @@
-import { FlowTriggerType, isNil, PopulatedFlow } from "@aiqadam/shared";
-import { FlowsContext, ListFlowsContextParams } from "@aiqadam/qadams-framework";
+import { FlowStatus, FlowTriggerType, isNil, PopulatedFlow } from "@aiqadam/shared";
+import { FlowsContext, ListFlowsContextParams, Property, QadamAuth } from "@aiqadam/qadams-framework";
 
 
 export const callableFlowKey = (runId: string) => `callableFlow_${runId}`;
@@ -14,6 +14,39 @@ export type CallableFlowResponse = {
 }
 
 export const MOCK_CALLBACK_IN_TEST_FLOW_URL = 'MOCK';
+
+export type CallableFlowValue = {
+    externalId: string;
+    exampleData: unknown;
+};
+
+// Published flows with a "Callable Flow" trigger; disabled ones are listed, marked, and refused at run time.
+export function callableFlowDropdown() {
+    return Property.Dropdown<CallableFlowValue>({
+        auth: QadamAuth.None(),
+        displayName: 'Flow',
+        description: 'The flow to execute. Published flows with a "Callable Flow" trigger appear here; disabled flows are marked "(inactive)" and cannot be executed until they are enabled.',
+        required: true,
+        options: async (_, context) => {
+            const flows = await listFlowsWithSubflowTrigger({
+                flowsContext: context.flows,
+            });
+            return {
+                options: flows.map((flow) => ({
+                    value: {
+                        externalId: flow.externalId ?? flow.id,
+                        exampleData: flow.version.trigger.settings.input.exampleData,
+                    },
+                    label:
+                        flow.status === FlowStatus.ENABLED
+                            ? flow.version.displayName
+                            : `${flow.version.displayName} (inactive)`,
+                })),
+            };
+        },
+        refreshers: [],
+    });
+}
 
 export async function listFlowsWithSubflowTrigger({
     flowsContext,

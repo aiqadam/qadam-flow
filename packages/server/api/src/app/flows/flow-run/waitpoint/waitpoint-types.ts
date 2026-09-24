@@ -1,4 +1,4 @@
-import { ApId, FlowRunStatus, PauseType, RespondResponse, WaitpointVersion } from '@aiqadam/shared'
+import { ApId, FlowRunStatus, JoinWaitpointConfig, PauseType, RespondResponse, WaitpointVersion } from '@aiqadam/shared'
 
 enum WaitpointStatus {
     PENDING = 'PENDING',
@@ -8,6 +8,13 @@ enum WaitpointStatus {
 enum WaitpointVersionEnum {
     V0 = 'V0',
     V1 = 'V1',
+}
+
+enum WaitpointSlotStatus {
+    PENDING = 'PENDING',
+    SUCCEEDED = 'SUCCEEDED',
+    FAILED = 'FAILED',
+    TIMED_OUT = 'TIMED_OUT',
 }
 
 type WaitpointResumePayload = {
@@ -31,6 +38,21 @@ type Waitpoint = {
     workerHandlerId: string | null
     httpRequestId: string | null
     resumePayload: WaitpointResumePayload | null
+    join: JoinWaitpointConfig | null
+}
+
+type WaitpointSlot = {
+    id: ApId
+    created: string
+    updated: string
+    waitpointId: ApId
+    flowRunId: ApId
+    projectId: ApId
+    slotIndex: number
+    status: WaitpointSlotStatus
+    // The answer's `data`, serialized: it is only ever read back whole, into the join's aggregate.
+    payload: string | null
+    childRunId: ApId | null
 }
 
 type CreateForPauseParams = {
@@ -47,11 +69,13 @@ type CreateForPauseParams = {
     responseToSend?: RespondResponse
     workerHandlerId?: string
     httpRequestId?: string
+    join?: JoinWaitpointConfig
 }
 
 type CreateForPauseResult = {
     inserted: boolean
     waitpoint: Waitpoint
+    slots: WaitpointSlot[]
 }
 
 type CompleteParams = {
@@ -106,5 +130,5 @@ type ExistsPendingWebhookWaitpointParams = {
     projectId: ApId
 }
 
-export { WaitpointStatus, WaitpointVersionEnum }
-export type { Waitpoint, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, GetByFlowRunIdParams, DeleteByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, ExistsPendingWebhookWaitpointParams }
+export { WaitpointSlotStatus, WaitpointStatus, WaitpointVersionEnum }
+export type { Waitpoint, WaitpointSlot, WaitpointResumePayload, CreateForPauseParams, CreateForPauseResult, CompleteParams, CompleteResult, FindPendingByVersionParams, GetByFlowRunIdParams, DeleteByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, ExistsPendingWebhookWaitpointParams }

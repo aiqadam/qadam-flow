@@ -311,6 +311,9 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     // completes exactly this id (`complete()` is a no-op on anything else), so a
                     // stale/consumed waitpoint could never complete the wrong one either way.
                     parentWaitpointId: oldFlowRun.parentWaitpointId,
+                    // Re-verified the same way; a slot the first attempt already answered is no
+                    // longer PENDING, so the retried run is created without it.
+                    parentSlotId: oldFlowRun.parentSlotId,
                 })
             }
         }
@@ -388,6 +391,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         parentRunId,
         failParentOnFailure,
         parentWaitpointId,
+        parentSlotId,
         platformId,
         stepNameToTest,
         environment,
@@ -414,6 +418,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     flowId,
                     failParentOnFailure,
                     parentWaitpointId,
+                    parentSlotId,
                     stepNameToTest,
                     environment,
                 }, log)
@@ -849,9 +854,9 @@ async function readLogsFile(log: FastifyBaseLogger, logsFileId: string, projectI
  * later, when this very child terminates) and closes the gap for a WORKER principal calling
  * `submitPayloads` directly.
  */
-async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentWaitpointId, projectId, log }: ResolveVerifiedParentParams): Promise<ResolvedParent> {
+async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, projectId, log }: ResolveVerifiedParentParams): Promise<ResolvedParent> {
     if (isNil(parentRunId)) {
-        return { parentRunId: undefined, failParentOnFailure, parentWaitpointId: undefined }
+        return { parentRunId: undefined, failParentOnFailure, parentWaitpointId: undefined, parentSlotId: undefined }
     }
     const verifiedParent = await findParentRun({ parentRunId, projectId, log })
     if (isNil(verifiedParent)) {
@@ -859,31 +864,35 @@ async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentW
         // `false`, not `undefined`: queueOrCreateInstantly defaults a genuinely-absent
         // failParentOnFailure to `true` (`failParentOnFailure ?? true`), so `undefined` here would
         // read as "no preference" and re-enable exactly the flag this branch exists to drop.
-        return { parentRunId: undefined, failParentOnFailure: false, parentWaitpointId: undefined }
+        return { parentRunId: undefined, failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
     }
     // A waitpoint id is only ever meaningful alongside a `true` failParentOnFailure — dropping it
     // otherwise keeps `flow_run.parentWaitpointId` from persisting a value nothing will ever read.
     if (!failParentOnFailure || isNil(parentWaitpointId)) {
-        return { parentRunId, failParentOnFailure, parentWaitpointId: undefined }
+        return { parentRunId, failParentOnFailure, parentWaitpointId: undefined, parentSlotId: undefined }
     }
-    const provenWaitpoint = await waitpointService(log).existsPendingWebhookWaitpoint({
-        id: parentWaitpointId,
-        flowRunId: parentRunId,
+    const proof = await waitpointService(log).findVerifiedParentJoinSlot({
+        parentRunId,
+        parentWaitpointId,
+        parentSlotId,
         projectId,
     })
-    if (!provenWaitpoint) {
-        log.warn({ parentRunId }, '[flowRunService#resolveVerifiedParent] Dropping failParentOnFailure: parentWaitpointId did not re-verify against a PENDING WEBHOOK waitpoint on this parent')
-        return { parentRunId, failParentOnFailure: false, parentWaitpointId: undefined }
+    // A join waitpoint (#374) is proven only together with one of its own PENDING slots: its id alone
+    // is in every child's callback URL, and must not let a child answer, or fail, the whole join.
+    if (!proof.waitpointProven || (proof.isJoin && !proof.slotProven)) {
+        log.warn({ parentRunId }, '[flowRunService#resolveVerifiedParent] Dropping failParentOnFailure: parentWaitpointId (and parentSlotId, for a join) did not re-verify against a PENDING WEBHOOK waitpoint on this parent')
+        return { parentRunId, failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
     }
-    return { parentRunId, failParentOnFailure, parentWaitpointId }
+    return { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId: proof.isJoin ? parentSlotId : undefined }
 }
 
 async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogger): Promise<FlowRun> {
     const now = new Date().toISOString()
-    const { parentRunId, failParentOnFailure, parentWaitpointId } = await resolveVerifiedParent({
+    const { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId } = await resolveVerifiedParent({
         parentRunId: params.parentRunId,
         failParentOnFailure: params.failParentOnFailure,
         parentWaitpointId: params.parentWaitpointId,
+        parentSlotId: params.parentSlotId,
         projectId: params.projectId,
         log,
     })
@@ -895,6 +904,7 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         environment: params.environment,
         parentRunId,
         parentWaitpointId,
+        parentSlotId,
         // Only a subflow child (parentRunId set) has a meaningful dispatch mode —
         // a top-level run isn't dispatched by a parent at all. This is the queue
         // path specifically; the inline path writes its own run row directly in
@@ -967,6 +977,7 @@ type CreateParams = {
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
     parentWaitpointId?: string
+    parentSlotId?: string
     stepNameToTest?: string
     flowId: FlowId
     environment: RunEnvironment
@@ -981,6 +992,7 @@ type ResolveVerifiedParentParams = {
     parentRunId: FlowRunId | undefined
     failParentOnFailure: boolean | undefined
     parentWaitpointId: string | undefined
+    parentSlotId: string | undefined
     projectId: ProjectId
     log: FastifyBaseLogger
 }
@@ -989,6 +1001,7 @@ type ResolvedParent = {
     parentRunId: FlowRunId | undefined
     failParentOnFailure: boolean | undefined
     parentWaitpointId: string | undefined
+    parentSlotId: string | undefined
 }
 
 export type FindParentRunParams = {
@@ -1055,6 +1068,7 @@ type StartParams = {
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
     parentWaitpointId?: string
+    parentSlotId?: string
     stepNameToTest?: string
     executeTrigger: boolean
     executionType: ExecutionType.BEGIN

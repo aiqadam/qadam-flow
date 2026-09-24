@@ -56,6 +56,7 @@ export const webhookService = {
         parentRunId,
         failParentOnFailure,
         parentWaitpointId,
+        parentSlotId,
         timeoutMs,
     }: HandleWebhookParams): Promise<EngineHttpResponse> {
         return tracer.startActiveSpan('webhook.service.handle', {
@@ -137,10 +138,11 @@ export const webhookService = {
                 // webhooks, and failing it would complete and resume a stranger's paused run
                 // (#521 impact item 3). Verifying once, centrally, before branching into
                 // sync/async, means neither path has to repeat it.
-                const { failParentOnFailure: verifiedFailParentOnFailure, parentWaitpointId: verifiedParentWaitpointId } = await resolveParentAttachment({
+                const { failParentOnFailure: verifiedFailParentOnFailure, parentWaitpointId: verifiedParentWaitpointId, parentSlotId: verifiedParentSlotId } = await resolveParentAttachment({
                     parentRunId,
                     failParentOnFailure,
                     parentWaitpointId,
+                    parentSlotId,
                     projectId: flow.projectId,
                     logger: pinoLogger,
                 })
@@ -176,6 +178,7 @@ export const webhookService = {
                         parentRunId,
                         failParentOnFailure: verifiedFailParentOnFailure,
                         parentWaitpointId: verifiedParentWaitpointId,
+                        parentSlotId: verifiedParentSlotId,
                     })
                 }
 
@@ -197,6 +200,7 @@ export const webhookService = {
                     parentRunId,
                     failParentOnFailure: verifiedFailParentOnFailure,
                     parentWaitpointId: verifiedParentWaitpointId,
+                    parentSlotId: verifiedParentSlotId,
                     timeoutMs,
                 })
                 return {
@@ -226,7 +230,7 @@ async function handleAsync(params: AsyncWebhookParams): Promise<EngineHttpRespon
         },
     }, async (span) => {
         try {
-            const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, webhookHeader, saveSampleData, execute, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, platformId } = params
+            const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, webhookHeader, saveSampleData, execute, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId } = params
 
             span.setAttribute('webhook.platformId', platformId)
 
@@ -254,6 +258,7 @@ async function handleAsync(params: AsyncWebhookParams): Promise<EngineHttpRespon
                     parentRunId,
                     failParentOnFailure,
                     parentWaitpointId,
+                    parentSlotId,
                     traceContext,
                 },
             })
@@ -283,7 +288,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
         },
     }, async (span) => {
         try {
-            const { payload, projectId, flow, logger, webhookRequestId, workerHandlerId, flowVersionIdToRun, runEnvironment, saveSampleData, flowVersionToRun, parentRunId, failParentOnFailure, parentWaitpointId, platformId, timeoutMs } = params
+            const { payload, projectId, flow, logger, webhookRequestId, workerHandlerId, flowVersionIdToRun, runEnvironment, saveSampleData, flowVersionToRun, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId, timeoutMs } = params
 
             if (saveSampleData) {
                 rejectedPromiseHandler(savePayload({
@@ -297,6 +302,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                     parentRunId,
                     failParentOnFailure,
                     parentWaitpointId,
+                    parentSlotId,
                 }), logger)
             }
 
@@ -354,6 +360,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 parentRunId,
                 failParentOnFailure,
                 parentWaitpointId,
+                parentSlotId,
                 syncDeadline,
             }))
             if (error) {
@@ -373,7 +380,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
 }
 
 async function savePayload(params: Omit<AsyncWebhookParams, 'saveSampleData' | 'webhookHeader' | 'execute'>): Promise<void> {
-    const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, platformId } = params
+    const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId } = params
     await handleAsync({
         flow,
         logger,
@@ -388,6 +395,7 @@ async function savePayload(params: Omit<AsyncWebhookParams, 'saveSampleData' | '
         parentRunId,
         failParentOnFailure,
         parentWaitpointId,
+        parentSlotId,
     })
     await triggerSourceService(logger).disable({ flowId: flow.id, projectId: flow.projectId, simulate: true, ignoreError: true })
 }
@@ -411,8 +419,8 @@ async function savePayload(params: Omit<AsyncWebhookParams, 'saveSampleData' | '
  * Anything that fails to verify silently drops `failParentOnFailure` (and the waitpoint id with
  * it) — the run still starts, unattached to any waitpoint completion.
  */
-async function resolveParentAttachment({ parentRunId, failParentOnFailure, parentWaitpointId, projectId, logger }: ResolveParentAttachmentParams): Promise<ResolvedParentAttachment> {
-    const dropped: ResolvedParentAttachment = { failParentOnFailure: false, parentWaitpointId: undefined }
+async function resolveParentAttachment({ parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, projectId, logger }: ResolveParentAttachmentParams): Promise<ResolvedParentAttachment> {
+    const dropped: ResolvedParentAttachment = { failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
     if (!failParentOnFailure || isNil(parentRunId)) {
         return dropped
     }
@@ -420,14 +428,16 @@ async function resolveParentAttachment({ parentRunId, failParentOnFailure, paren
         logger.warn({ parentRunId }, '[webhookService#resolveParentAttachment] Dropping failParentOnFailure: no parent waitpoint proof was presented')
         return dropped
     }
-    const proven = await waitpointService(logger).existsPendingWebhookWaitpoint({ id: parentWaitpointId, flowRunId: parentRunId, projectId })
-    if (!proven) {
+    // A join waitpoint (#374) additionally needs one of its own PENDING slots: its id is in every
+    // child's callback URL, so on its own it proves nothing about which child this is.
+    const proof = await waitpointService(logger).findVerifiedParentJoinSlot({ parentRunId, parentWaitpointId, parentSlotId, projectId })
+    if (!proof.waitpointProven || (proof.isJoin && !proof.slotProven)) {
         // Deliberately not logging `parentWaitpointId` alongside `parentRunId`: that pair is a
         // resume URL for the parent run.
         logger.warn({ parentRunId }, '[webhookService#resolveParentAttachment] Dropping failParentOnFailure: parent waitpoint proof did not match')
         return dropped
     }
-    return { failParentOnFailure: true, parentWaitpointId }
+    return { failParentOnFailure: true, parentWaitpointId, parentSlotId: proof.isJoin ? parentSlotId : undefined }
 }
 
 type HandleWebhookParams = {
@@ -443,6 +453,7 @@ type HandleWebhookParams = {
     parentRunId?: string
     failParentOnFailure: boolean
     parentWaitpointId?: string
+    parentSlotId?: string
     timeoutMs?: number
 }
 
@@ -450,6 +461,7 @@ type ResolveParentAttachmentParams = {
     parentRunId: string | undefined
     failParentOnFailure: boolean
     parentWaitpointId: string | undefined
+    parentSlotId: string | undefined
     projectId: ProjectId
     logger: FastifyBaseLogger
 }
@@ -457,6 +469,7 @@ type ResolveParentAttachmentParams = {
 type ResolvedParentAttachment = {
     failParentOnFailure: boolean
     parentWaitpointId: string | undefined
+    parentSlotId: string | undefined
 }
 
 type AsyncWebhookParams = {
@@ -473,6 +486,7 @@ type AsyncWebhookParams = {
     parentRunId?: string
     failParentOnFailure: boolean
     parentWaitpointId?: string
+    parentSlotId?: string
 }
 
 type SyncWebhookParams = {
@@ -491,5 +505,6 @@ type SyncWebhookParams = {
     parentRunId?: string
     failParentOnFailure: boolean
     parentWaitpointId?: string
+    parentSlotId?: string
     timeoutMs?: number
 }

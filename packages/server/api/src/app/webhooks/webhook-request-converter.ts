@@ -26,7 +26,9 @@ import { projectService } from '../project/project-service'
 // version bump before any existing flow's call-flow step could ever send it, silently stranding
 // every already-deployed flow's parent PAUSED until `AP_PAUSED_FLOW_TIMEOUT_DAYS`'s cap (which
 // only applies to DELAY waitpoints in the first place; a WEBHOOK waitpoint has no such cap at all).
-const CALLBACK_URL_WAITPOINT_PATH_PATTERN = /\/v1\/flow-runs\/(?<flowRunId>[^/]+)\/waitpoints\/(?<waitpointId>[^/]+?)(?:\/sync)?\/?$/
+// A join waitpoint's child (#374) gets its own slot's URL instead, `.../waitpoints/<waitpointId>/slots/<slotId>`:
+// the slot id is what proves which of the join's children this is.
+const CALLBACK_URL_WAITPOINT_PATH_PATTERN = /\/v1\/flow-runs\/(?<flowRunId>[^/]+)\/waitpoints\/(?<waitpointId>[^/]+?)(?:\/slots\/(?<slotId>[^/]+?)|\/sync)?\/?$/
 // Default (strip) mode is enough: only `callbackUrl` is ever read off the parsed result, so
 // there is nothing to preserve unknown keys for. `.passthrough()` is deprecated in zod 4.
 const CallbackUrlBody = z.object({ callbackUrl: z.string() })
@@ -63,13 +65,15 @@ export async function convertRequest(
     }
 }
 
-export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun, 'parentRunId' | 'failParentOnFailure'> & { parentWaitpointId?: string } {
+export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun, 'parentRunId' | 'failParentOnFailure'> & { parentWaitpointId?: string, parentSlotId?: string } {
     const parentRunIdHeader = request.headers[PARENT_RUN_ID_HEADER]
     const parentRunId = typeof parentRunIdHeader === 'string' ? parentRunIdHeader : undefined
+    const proof = extractParentWaitpointProofFromBody({ body: request.body, parentRunId })
     return {
         parentRunId,
         failParentOnFailure: request.headers[FAIL_PARENT_ON_FAILURE_HEADER] === 'true',
-        parentWaitpointId: extractParentWaitpointIdFromBody({ body: request.body, parentRunId }),
+        parentWaitpointId: proof?.waitpointId,
+        parentSlotId: proof?.slotId,
     }
 }
 
@@ -78,7 +82,7 @@ export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun,
  * `ap-parent-run-id` header above) — a `callbackUrl` naming a different run proves nothing about
  * the run this request claims as its parent, so it must not be accepted as that run's proof.
  */
-function extractParentWaitpointIdFromBody({ body, parentRunId }: ExtractParentWaitpointIdFromBodyParams): string | undefined {
+function extractParentWaitpointProofFromBody({ body, parentRunId }: ExtractParentWaitpointIdFromBodyParams): ParentWaitpointProof | undefined {
     if (isNil(parentRunId)) {
         return undefined
     }
@@ -99,7 +103,14 @@ function extractParentWaitpointIdFromBody({ body, parentRunId }: ExtractParentWa
     if (!parsedFlowRunId.success || !parsedWaitpointId.success || parsedFlowRunId.data !== parentRunId) {
         return undefined
     }
-    return parsedWaitpointId.data
+    if (isNil(match.groups.slotId)) {
+        return { waitpointId: parsedWaitpointId.data }
+    }
+    const parsedSlotId = ApId.safeParse(match.groups.slotId)
+    if (!parsedSlotId.success) {
+        return undefined
+    }
+    return { waitpointId: parsedWaitpointId.data, slotId: parsedSlotId.data }
 }
 
 async function convertBody(
@@ -198,6 +209,11 @@ async function saveStepFileAndConstructUrl(params: SaveStepFileParams): Promise<
 type ExtractParentWaitpointIdFromBodyParams = {
     body: unknown
     parentRunId: string | undefined
+}
+
+type ParentWaitpointProof = {
+    waitpointId: string
+    slotId?: string
 }
 
 type SaveMultipartFileAsUrlParams = {

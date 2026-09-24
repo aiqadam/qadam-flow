@@ -71,7 +71,7 @@ const RUNS_METADATA_UPSERT_KEYS: (keyof RunsMetadataUpsertData)[] = [
     'id', 'projectId', 'created', 'flowId', 'flowVersionId', 'environment',
     'triggeredBy', 'startTime', 'finishTime', 'status', 'tags',
     'failedStep', 'stepNameToTest', 'parentRunId', 'failParentOnFailure',
-    'parentWaitpointId', 'logsFileId', 'updated', 'stepsCount', 'requestId',
+    'parentWaitpointId', 'parentSlotId', 'logsFileId', 'updated', 'stepsCount', 'requestId',
     'dispatchMode',
 ]
 
@@ -123,6 +123,8 @@ export type RunsMetadataUpsertData = {
     // `RunsMetadataUpsertData` literal never sets it either, so the engine can never write it
     // through this queue after the row is created (#521).
     parentWaitpointId?: string
+    // Same rule as `parentWaitpointId`: creation-time only, never updated through this queue (#374).
+    parentSlotId?: string
     logsFileId?: string | null
     updated?: string
     stepsCount?: number

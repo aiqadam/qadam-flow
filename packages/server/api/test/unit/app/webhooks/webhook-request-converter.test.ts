@@ -59,7 +59,7 @@ describe('extractHeaderFromRequest', () => {
     })
 
     // Pins the `parsedFlowRunId.data !== parentRunId` check in
-    // `extractParentWaitpointIdFromBody` (webhook-request-converter.ts): the header names the
+    // `extractParentWaitpointProofFromBody` (webhook-request-converter.ts): the header names the
     // run the caller claims as parent, and the callbackUrl's own embedded flowRunId must agree —
     // a callbackUrl proving something about a *different* run must never be accepted as this
     // run's proof.
@@ -131,6 +131,61 @@ describe('extractHeaderFromRequest', () => {
 
             const result = extractHeaderFromRequest(request)
             expect(result.parentWaitpointId).toBe(waitpointId)
+        })
+
+        // #374: a join child's callback is its own slot's URL; the slot id is what proves which child it is.
+        it('extracts the waitpoint and slot ids from a join slot callbackUrl when the run matches', () => {
+            const parentRunId = apId()
+            const waitpointId = apId()
+            const slotId = apId()
+            const request = {
+                headers: {
+                    [PARENT_RUN_ID_HEADER]: parentRunId,
+                },
+                body: {
+                    data: {},
+                    callbackUrl: `http://app:80/api/v1/flow-runs/${parentRunId}/waitpoints/${waitpointId}/slots/${slotId}`,
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.parentWaitpointId).toBe(waitpointId)
+            expect(result.parentSlotId).toBe(slotId)
+        })
+
+        it('extracts no proof at all from a slot callbackUrl whose slot id is not an id', () => {
+            const parentRunId = apId()
+            const request = {
+                headers: {
+                    [PARENT_RUN_ID_HEADER]: parentRunId,
+                },
+                body: {
+                    data: {},
+                    callbackUrl: `http://app:80/api/v1/flow-runs/${parentRunId}/waitpoints/${apId()}/slots/not-an-id`,
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.parentWaitpointId).toBeUndefined()
+            expect(result.parentSlotId).toBeUndefined()
+        })
+
+        it('extracts no slot id from a plain waitpoint callbackUrl', () => {
+            const parentRunId = apId()
+            const waitpointId = apId()
+            const request = {
+                headers: {
+                    [PARENT_RUN_ID_HEADER]: parentRunId,
+                },
+                body: {
+                    data: {},
+                    callbackUrl: `http://app:80/api/v1/flow-runs/${parentRunId}/waitpoints/${waitpointId}`,
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.parentWaitpointId).toBe(waitpointId)
+            expect(result.parentSlotId).toBeUndefined()
         })
     })
 })

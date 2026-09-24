@@ -4,6 +4,7 @@ import {
   AppConnectionValue,
   ExecutionType,
   FlowRunId,
+  JoinWaitpointConfig,
   PopulatedFlow,
   ProjectId,
   RespondResponse,
@@ -194,12 +195,17 @@ export type CreateWaitpointParams = {
   // from this same server instance, never by a human or external service —
   // see CreateWaitpointRequest in @aiqadam/shared for the full rationale.
   internal?: boolean;
+  // A join (#374): one waitpoint that `slots` queue-mode children answer, each through its own URL
+  // in `slotResumeUrls`. It resumes the run once, with every answer, when `failurePolicy` decides.
+  join?: JoinWaitpointConfig;
 };
 
 export type CreateWaitpointResult = {
   id: string;
   resumeUrl: string;
   buildResumeUrl: (params: { queryParams: Record<string, string>, sync?: boolean }) => string;
+  // One per slot, in slot order, when the waitpoint is a join.
+  slotResumeUrls?: string[];
 };
 
 export type CreateWaitpointHook = (params: CreateWaitpointParams) => Promise<CreateWaitpointResult>;

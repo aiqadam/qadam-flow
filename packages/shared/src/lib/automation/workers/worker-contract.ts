@@ -31,6 +31,7 @@ export type SubmitPayloadsRequest = {
     parentRunId?: string
     failParentOnFailure?: boolean
     parentWaitpointId?: string
+    parentSlotId?: string
 }
 
 export type SavePayloadRequest = {

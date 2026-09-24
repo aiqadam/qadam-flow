@@ -10,6 +10,7 @@ import { telemetry } from '../../helper/telemetry.utils'
 import { engineResponseWatcher } from '../../workers/engine-response-watcher'
 import { flowRunController } from './flow-run-controller'
 import { flowRunRepo } from './flow-run-service'
+import { joinWaitpointService } from './waitpoint/join-waitpoint-service'
 import { resumeController } from './waitpoint/resume-controller'
 import { resumeService } from './waitpoint/resume-service'
 import { waitpointController } from './waitpoint/waitpoint-controller'
@@ -71,6 +72,9 @@ export const flowRunModule: FastifyPluginAsync = async (app) => {
     })
     systemJobHandlers.registerJobHandler(SystemJobName.RESUME_DELAY_WAITPOINT, async (data: SystemJobData<SystemJobName.RESUME_DELAY_WAITPOINT>) => {
         await resumeService(app.log).resumeDelayWaitpoint(data)
+    })
+    systemJobHandlers.registerJobHandler(SystemJobName.JOIN_WAITPOINT_TIMEOUT, async (data: SystemJobData<SystemJobName.JOIN_WAITPOINT_TIMEOUT>) => {
+        await joinWaitpointService(app.log).expire(data)
     })
     await engineResponseWatcher(app.log).init()
 }

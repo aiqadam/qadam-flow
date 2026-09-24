@@ -55,6 +55,7 @@ export const SubmitPayloadsRequest = z.object({
     parentRunId: z.string().optional(),
     failParentOnFailure: z.boolean().optional(),
     parentWaitpointId: z.string().optional(),
+    parentSlotId: z.string().optional(),
     platformId: z.string(),
 })
 
