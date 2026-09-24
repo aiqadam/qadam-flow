@@ -202,3 +202,33 @@ describe('loggingUtils.isWithinSizeLimit — objects grown in place', () => {
         expect(loggingUtils.isWithinSizeLimitAfterFullWalk(steps, 64 * 1024)).toBe(false)
     })
 })
+
+// A bound that over-counts triggers walks of its own; those must not push the forced schedule out,
+// or in-place growth would go unseen for arbitrarily long.
+describe('loggingUtils.isWithinSizeLimit — forced schedule', () => {
+    it('forces a walk at a fixed write count even after walks the bound caused', () => {
+        const output = { list: ['small'] }
+        const steps: Record<string, StepOutput> = {
+            source: GenericStepOutput.create({ type: FlowActionType.PIECE, status: StepOutputStatus.SUCCEEDED, input: {}, output }),
+        }
+        const cap = 64 * 1024
+        expect(loggingUtils.isWithinSizeLimit(steps, cap)).toBe(true)
+
+        const bulky = GenericStepOutput.create({ type: FlowActionType.PIECE, status: StepOutputStatus.SUCCEEDED, input: {}, output: 'x'.repeat(8 * 1024) })
+        for (let i = 0; i < 40; i++) {
+            loggingUtils.recordUpsert({ steps, stepName: 'overwritten', stepOutput: bulky, previous: undefined })
+            steps.overwritten = bulky
+            expect(loggingUtils.isWithinSizeLimit(steps, cap)).toBe(true)
+        }
+
+        output.list.push('x'.repeat(128 * 1024))
+        const small = GenericStepOutput.create({ type: FlowActionType.PIECE, status: StepOutputStatus.SUCCEEDED, input: {}, output: 1 })
+        const results = Array.from({ length: 256 }, () => {
+            loggingUtils.recordUpsert({ steps, stepName: 'tick', stepOutput: small, previous: undefined })
+            steps.tick = small
+            return loggingUtils.isWithinSizeLimit(steps, cap)
+        })
+
+        expect(results[results.length - 1]).toBe(false)
+    })
+})

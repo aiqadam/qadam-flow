@@ -60,23 +60,29 @@ export const loggingUtils = {
     // Walking the whole journal after every step made a loop quadratic: at 800 iterations 84% of
     // the run was this check (#387). The walk now happens only when the size last measured plus an
     // upper bound on everything written since could cross the cap, and on a doubling schedule of
-    // writes. The bound only sees writes: a qadam that grows an object already in the journal in
+    // total writes. The bound only sees writes: a qadam that grows an object already in the journal in
     // place is invisible to it, and the schedule — plus the walk `isWithinSizeLimitAfterFullWalk`
     // does when a run ends — keeps that from going unnoticed. Walks at doubling intervals cost
     // O(final size) in total, so the check stays linear.
     isWithinSizeLimit(steps: Record<string, StepOutput>, maxSize: number = MAX_SIZE_FOR_ALL_ENTRIES): boolean {
         const tracked = logSizeTrackers.get(steps)
-        const provablyWithin = !isNil(tracked)
-            && tracked.upsertsSinceWalk < tracked.walkEveryUpserts
-            && tracked.measuredBytes + tracked.growthBoundBytes <= maxSize
-        if (provablyWithin) {
+        if (isNil(tracked)) {
+            return walkAndRecord({ steps, maxSize, totalUpserts: 0, nextForcedWalkAt: FIRST_FORCED_WALK_AFTER_UPSERTS })
+        }
+        // The schedule follows the total write count, never why the last walk happened: a bound
+        // that over-counts (a loop re-counts its `item` every iteration) must not push the next
+        // forced walk out.
+        if (tracked.totalUpserts >= tracked.nextForcedWalkAt) {
+            return walkAndRecord({ steps, maxSize, totalUpserts: tracked.totalUpserts, nextForcedWalkAt: tracked.totalUpserts * 2 })
+        }
+        if (tracked.measuredBytes + tracked.growthBoundBytes <= maxSize) {
             return true
         }
-        return walkAndRecord({ steps, maxSize, walkEveryUpserts: isNil(tracked) ? FIRST_FORCED_WALK_AFTER_UPSERTS : tracked.walkEveryUpserts * 2 })
+        return walkAndRecord({ steps, maxSize, totalUpserts: tracked.totalUpserts, nextForcedWalkAt: tracked.nextForcedWalkAt })
     },
     isWithinSizeLimitAfterFullWalk(steps: Record<string, StepOutput>, maxSize: number = MAX_SIZE_FOR_ALL_ENTRIES): boolean {
         const tracked = logSizeTrackers.get(steps)
-        return walkAndRecord({ steps, maxSize, walkEveryUpserts: tracked?.walkEveryUpserts ?? FIRST_FORCED_WALK_AFTER_UPSERTS })
+        return walkAndRecord({ steps, maxSize, totalUpserts: tracked?.totalUpserts ?? 0, nextForcedWalkAt: tracked?.nextForcedWalkAt ?? FIRST_FORCED_WALK_AFTER_UPSERTS })
     },
     // Called for every write into a journal. Only journals already measured are tracked: a journal
     // restored on RESUME, or written to before its first check, is measured in full on that check.
@@ -86,13 +92,23 @@ export const loggingUtils = {
             return
         }
         tracked.growthBoundBytes += upsertGrowthBound({ stepName, stepOutput, previous })
-        tracked.upsertsSinceWalk += 1
+        tracked.totalUpserts += 1
+    },
+    // For a write that does not go through `upsertStep`: a loop appends to its own bookkeeping
+    // arrays in place rather than copying them every iteration.
+    recordGrowth({ steps, bytes }: { steps: Record<string, StepOutput>, bytes: number }): void {
+        const tracked = logSizeTrackers.get(steps)
+        if (isNil(tracked)) {
+            return
+        }
+        tracked.growthBoundBytes += bytes
+        tracked.totalUpserts += 1
     },
 }
 
-function walkAndRecord({ steps, maxSize, walkEveryUpserts }: { steps: Record<string, StepOutput>, maxSize: number, walkEveryUpserts: number }): boolean {
+function walkAndRecord({ steps, maxSize, totalUpserts, nextForcedWalkAt }: WalkAndRecordParams): boolean {
     const measuredBytes = sizeofUtils.recursiveSizeof(steps)
-    logSizeTrackers.set(steps, { measuredBytes, growthBoundBytes: 0, upsertsSinceWalk: 0, walkEveryUpserts })
+    logSizeTrackers.set(steps, { measuredBytes, growthBoundBytes: 0, totalUpserts, nextForcedWalkAt })
     return measuredBytes <= maxSize
 }
 
@@ -120,7 +136,9 @@ function upsertGrowthBound({ stepName, stepOutput, previous }: Omit<RecordUpsert
     const iterations = readIterations(stepOutput.output)
     const previousIterations = readIterations(previous?.output)
     const addedSlots = Math.max(0, iterations.length - previousIterations.length)
-    const shell = { ...stepOutput, output: { ...readRecord(stepOutput.output), iterations: [] } }
+    // `collected`, `failures` and `iterationStatus` grow with the item count too, and are appended
+    // to in place; the loop executor records what it appends (`recordGrowth`).
+    const shell = { ...stepOutput, output: { ...readRecord(stepOutput.output), iterations: [], collected: [], failures: [], iterationStatus: [] } }
     return keyBytes + sizeofUtils.recursiveSizeof(shell) + addedSlots * EMPTY_ITERATION_BYTES
 }
 
@@ -136,8 +154,15 @@ function readRecord(value: unknown): Record<string, unknown> {
 type LogSizeTracker = {
     measuredBytes: number
     growthBoundBytes: number
-    upsertsSinceWalk: number
-    walkEveryUpserts: number
+    totalUpserts: number
+    nextForcedWalkAt: number
+}
+
+type WalkAndRecordParams = {
+    steps: Record<string, StepOutput>
+    maxSize: number
+    totalUpserts: number
+    nextForcedWalkAt: number
 }
 
 type RecordUpsertParams = {

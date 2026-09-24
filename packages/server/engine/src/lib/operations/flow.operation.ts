@@ -31,7 +31,6 @@ import { FlowExecutorContext } from '../handler/context/flow-execution-context'
 import { testExecutionContext } from '../handler/context/test-execution-context'
 import { flowExecutor } from '../handler/flow-executor'
 import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
-import { loggingUtils } from '../helper/logging-utils'
 import { triggerHelper } from '../helper/trigger-helper'
 import { utils } from '../utils'
 import { workerSocket } from '../worker-socket'
@@ -42,7 +41,7 @@ export const flowOperation = {
         const input = await resolveExecuteFlowOperation(operation)
         const constants = EngineConstants.fromExecuteFlowInput(input)
         const executed = (await executieSingleStepOrFlowOperation(input, constants)).finishExecution()
-        const output: FlowExecutorContext = enforceLogSizeLimitOnCompletion({ executionState: executed, input })
+        const output: FlowExecutorContext = flowExecutor.enforceLogSizeLimitOnCompletion({ executionState: executed, flowVersion: input.flowVersion })
         await flowRunProgressReporter.sendUpdate({
             engineConstants: constants,
             flowExecutorContext: output,
@@ -214,26 +213,6 @@ async function getFlowExecutionState(input: ResolvedExecuteFlowOperation, consta
         }
     }
     return flowContext
-}
-
-// The per-step guard answers from an upper bound on what was written, which cannot see a qadam
-// growing an object already in the journal in place (#387). One full walk before the verdict is
-// final means such a run is still reported as LOG_SIZE_EXCEEDED instead of shipping an oversized
-// log.
-function enforceLogSizeLimitOnCompletion({ executionState, input }: { executionState: FlowExecutorContext, input: ResolvedExecuteFlowOperation }): FlowExecutorContext {
-    if (executionState.verdict.status === FlowRunStatus.LOG_SIZE_EXCEEDED || loggingUtils.isWithinSizeLimitAfterFullWalk(executionState.steps)) {
-        return executionState
-    }
-    const lastStepName = executionJournal.findLastStepWithStatus(executionState.steps, undefined) ?? input.flowVersion.trigger.name
-    const lastStep = flowStructureUtil.getStep(lastStepName, input.flowVersion.trigger)
-    return executionState.setVerdict({
-        status: FlowRunStatus.LOG_SIZE_EXCEEDED,
-        failedStep: {
-            name: lastStepName,
-            displayName: lastStep?.displayName ?? lastStepName,
-            message: 'Flow run logs size exceeded',
-        },
-    })
 }
 
 async function runOrReturnPayload(input: ResolvedBeginExecuteFlowOperation, constants: EngineConstants): Promise<TriggerPayload> {

@@ -131,6 +131,7 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         throw error
     }
 
+    finalContext = flowExecutor.enforceLogSizeLimitOnCompletion({ executionState: finalContext, flowVersion })
     await finalizeInlineChildRun({ constants: childConstants, finalContext })
 
     return toCallFlowResult(finalContext)
