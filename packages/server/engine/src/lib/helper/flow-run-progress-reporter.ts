@@ -45,10 +45,11 @@ export const flowRunProgressReporter = {
             if (params.startTime) {
                 savedStartTime = params.startTime
             }
-            // An iteration of a CONCURRENT loop reports its steps, but its verdict is not the run's:
-            // under `onIterationFailure: CONTINUE` a failed iteration would otherwise reach the
-            // server as a FAILED run in the next flush. The loop reports the merged verdict itself.
-            const reportedContext = flowExecutorContext.isConcurrentFork
+            // A loop iteration reports its steps, but its verdict is not the run's: a failed item the
+            // loop goes on from (CONTINUE, or a rate-limit retry) would otherwise reach the server as
+            // a FAILED run in the next flush — failing a subflow's parent and firing run-finished
+            // side effects mid-run. The loop reports the merged verdict itself.
+            const reportedContext = flowExecutorContext.isIterationFork
                 ? flowExecutorContext.setVerdict({ status: FlowRunStatus.RUNNING })
                 : flowExecutorContext
             latestUpdateParams = { ...params, flowExecutorContext: reportedContext }

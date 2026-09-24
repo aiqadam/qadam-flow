@@ -227,6 +227,36 @@ describe('ap_validate_flow — callFlow checks', () => {
         expect(text).toContain('Delay longer than 10 seconds')
     })
 
+    // #387: a durable loop checkpoints by pausing the run, which an inline child cannot do.
+    it('flags an inline callFlow whose child holds a durable loop', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWith({
+            displayName: 'Parent',
+            externalId: 'parent',
+            firstAction: callFlowStep({ name: 'step_1', externalId: 'child', executionMode: 'inline', payload: { key: 'greeting' } }),
+        }))
+        mockList.mockResolvedValue({
+            data: [flowWith({
+                displayName: 'Child',
+                externalId: 'child',
+                firstAction: {
+                    name: 'loop_1',
+                    displayName: 'Send to everyone',
+                    valid: true,
+                    lastUpdatedDate: '2024-01-01T00:00:00Z',
+                    type: FlowActionType.LOOP_ON_ITEMS,
+                    settings: { items: '{{trigger.output.items}}', execution: { mode: 'SEQUENTIAL', durable: true } },
+                },
+            })],
+            next: null,
+            previous: null,
+        })
+
+        const text = await validate()
+
+        expect(text).toContain('Inline Subflows That Pause')
+        expect(text).toContain('durable loop')
+    })
+
     it('leaves an inline callFlow alone when the child only sleeps in process', async () => {
         mockGetOnePopulated.mockResolvedValue(flowWith({
             displayName: 'Parent',

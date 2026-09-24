@@ -160,6 +160,13 @@ describe('loop collector', () => {
         expect(loop.output?.collected).toEqual(['kept-0', 4])
     })
 
+    it('collects one value per item from a loop with no steps in its body', async () => {
+        const loop = buildSimpleLoopAction({ name: 'loop', loopItems: '{{ [{ id: 1 }, { id: 2 }] }}' })
+        const { loop: output } = await run({ action: { ...loop, settings: { ...loop.settings, collect: { value: '{{ loop.output.item.id }}' } } } })
+
+        expect(output.output?.collected).toEqual([1, 2])
+    })
+
     it('shows the shape of collected when the loop step alone is tested', async () => {
         const result = await flowExecutor.execute({
             action: loopWith({ settings: { collect: { value: '{{ loop.output.item }}' } }, firstLoopAction: mapStep }),

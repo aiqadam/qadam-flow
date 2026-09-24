@@ -1,6 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { isNil, LoopExecutionSettings } from '@aiqadam/shared'
 
+const MAX_TIMER_MS = 2_147_483_647
+
 // One per running loop (#387). Iterations start at most `count` per `perSeconds`, spaced evenly
 // rather than in bursts — a provider's per-second ceiling is what the spacing protects. A
 // provider's own `retry_after` pauses every iteration of the loop, not only the one it answered:
@@ -21,7 +23,8 @@ export const loopRateLimiter = {
                         nextStartAt = now + intervalMs
                         return
                     }
-                    await sleep(startAt - now)
+                    // Node clamps a longer timer to 1 ms and warns on every wake-up.
+                    await sleep(Math.min(startAt - now, MAX_TIMER_MS))
                 }
             },
             pause({ seconds }: { seconds: number }): void {

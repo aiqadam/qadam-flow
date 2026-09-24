@@ -86,6 +86,7 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: flowVersion.trigger }),
         isInlineChild: true,
         inlineDepth: parentConstants.inlineDepth + 1,
+        executionStartedAt: parentConstants.executionStartedAt,
     })
 
     const withTriggerStep = await FlowExecutorContext.empty({

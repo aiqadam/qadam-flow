@@ -150,6 +150,9 @@ export type LoopStepResult = {
     // One entry per finished iteration. A RESUME skips an `S` iteration without entering its body,
     // which is what makes a blanked body (`keepBodies`) safe to replay.
     iterationStatus?: LoopIterationStatus[]
+    // Set once a durable loop has paused itself (#387): why and how often, and the item list it
+    // must find again when it resumes.
+    checkpoint?: LoopCheckpoint
 }
 
 export class LoopStepOutput extends GenericStepOutput<
@@ -231,4 +234,18 @@ export type LoopIterationFailure = {
 export enum LoopIterationStatus {
     SUCCEEDED = 'S',
     FAILED = 'F',
+}
+
+export type LoopCheckpoint = {
+    count: number
+    lastAt: string
+    reason: LoopCheckpointReason
+    itemsCount: number
+    itemsHash: string
+}
+
+export enum LoopCheckpointReason {
+    BUDGET = 'BUDGET',
+    LOG_SIZE = 'LOG_SIZE',
+    RATE_LIMIT = 'RATE_LIMIT',
 }

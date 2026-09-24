@@ -33,6 +33,8 @@ type EngineConstantsParams = {
     stepLogPolicy?: Map<string, StepLogPolicy>
     isInlineChild?: boolean
     inlineDepth?: number
+    // When this execution's `timeoutInSeconds` budget started. An inline child shares its parent's.
+    executionStartedAt?: number
 }
 
 const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
@@ -71,6 +73,7 @@ export class EngineConstants {
     public readonly stepLogPolicy: Map<string, StepLogPolicy>
     public readonly isInlineChild: boolean
     public readonly inlineDepth: number
+    public readonly executionStartedAt: number
     private project: Project | null = null
 
     public get isRunningApTests(): boolean {
@@ -120,6 +123,7 @@ export class EngineConstants {
         this.stepLogPolicy = params.stepLogPolicy ?? new Map()
         this.isInlineChild = params.isInlineChild ?? false
         this.inlineDepth = params.inlineDepth ?? 0
+        this.executionStartedAt = params.executionStartedAt ?? Date.now()
     }
   
     public static fromExecuteFlowInput(input: ResolvedExecuteFlowOperation): EngineConstants {

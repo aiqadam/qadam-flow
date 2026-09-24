@@ -2,13 +2,14 @@ import {
   isNil,
   LoopExecutionMode,
   LoopIterationFailurePolicy,
+  LOOP_MAX_CONCURRENCY,
   LoopKeepBodies,
   LoopOnItemsAction,
   LoopRateLimitedPolicy,
 } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Gauge, ListChecks } from 'lucide-react';
-import React from 'react';
+import React, { useState } from 'react';
 import { useFormContext } from 'react-hook-form';
 
 import { ApMarkdown } from '@/components/custom/markdown';
@@ -32,6 +33,8 @@ import { Switch } from '@/components/ui/switch';
 import { cn, GAP_SIZE_FOR_STEP_SETTINGS } from '@/lib/utils';
 
 import { TextInputWithMentions } from '../qadam-properties/text-input-with-mentions';
+
+import { loopSettingsUtils } from './loop-settings-utils';
 
 const markdown = t(
   'Select the items to iterate over from the previous step by clicking on the **Items** input, which should be a **list** of items.\n\nThe loop will iterate over each item in the list and execute the next step for every item.',
@@ -262,20 +265,13 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
           render={({ field }) => (
             <FormItem className="flex flex-col gap-2">
               <FormLabel>{t('Items at a time')}</FormLabel>
-              <Input
+              <BoundedNumberInput
                 disabled={readonly}
-                type="number"
-                min={1}
-                value={field.value ?? ''}
+                value={field.value}
                 placeholder="10"
-                onChange={(event) =>
-                  update({
-                    maxConcurrency:
-                      event.target.value === ''
-                        ? undefined
-                        : Number(event.target.value),
-                  })
-                }
+                bounds={{ min: 1, max: LOOP_MAX_CONCURRENCY, integer: true }}
+                allowEmpty
+                onCommit={(maxConcurrency) => update({ maxConcurrency })}
               />
               <FormMessage />
             </FormItem>
@@ -315,15 +311,14 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
             render={({ field }) => (
               <FormItem className="flex flex-col gap-2 flex-1">
                 <FormLabel>{t('Items')}</FormLabel>
-                <Input
+                <BoundedNumberInput
                   disabled={readonly}
-                  type="number"
-                  min={1}
-                  value={field.value ?? ''}
-                  onChange={(event) =>
+                  value={field.value}
+                  bounds={{ min: 1, max: 10000, integer: true }}
+                  onCommit={(count) =>
                     update({
                       rateLimit: {
-                        count: Number(event.target.value),
+                        count: count ?? 1,
                         perSeconds: execution?.rateLimit?.perSeconds ?? 1,
                       },
                     })
@@ -339,17 +334,20 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
             render={({ field }) => (
               <FormItem className="flex flex-col gap-2 flex-1">
                 <FormLabel>{t('Per seconds')}</FormLabel>
-                <Input
+                <BoundedNumberInput
                   disabled={readonly}
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={field.value ?? ''}
-                  onChange={(event) =>
+                  value={field.value}
+                  bounds={{
+                    min: 0,
+                    max: 86400,
+                    integer: false,
+                    exclusiveMin: true,
+                  }}
+                  onCommit={(perSeconds) =>
                     update({
                       rateLimit: {
                         count: execution?.rateLimit?.count ?? 1,
-                        perSeconds: Number(event.target.value),
+                        perSeconds: perSeconds ?? 1,
                       },
                     })
                   }
@@ -388,6 +386,27 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
           </FormLabel>
         </FormItem>
       )}
+      <FormItem>
+        <FormLabel
+          htmlFor="loopDurable"
+          className="flex items-center gap-1 h-7.5 max-h-7.5"
+        >
+          <FormControl>
+            <Switch
+              disabled={readonly}
+              id="loopDurable"
+              checked={execution?.durable === true}
+              onCheckedChange={(checked) => update({ durable: checked })}
+            />
+          </FormControl>
+          <span className="ml-2">{t('Continue past the run time limit')}</span>
+        </FormLabel>
+        <ReadMoreDescription
+          text={t(
+            'Before the run runs out of time, the loop pauses between items and continues with a fresh time budget, so it can work through more items than fit in one run. An item that was running when the run was stopped some other way may be sent again on retry.',
+          )}
+        />
+      </FormItem>
       <FormItem className="flex flex-col gap-2">
         <FormLabel>{t('When an item fails')}</FormLabel>
         <Select
@@ -451,5 +470,69 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
     </div>
   );
 };
+
+// Keeps what the user types as text and commits only a value the API accepts; an out-of-range
+// value is shown as an error in place instead of being saved.
+function BoundedNumberInput({
+  value,
+  onCommit,
+  bounds,
+  allowEmpty = false,
+  disabled,
+  placeholder,
+}: {
+  value: number | undefined;
+  onCommit: (value: number | undefined) => void;
+  bounds: {
+    min: number;
+    max: number;
+    integer: boolean;
+    exclusiveMin?: boolean;
+  };
+  allowEmpty?: boolean;
+  disabled: boolean;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(isNil(value) ? '' : String(value));
+  const blank = loopSettingsUtils.isBlank(text);
+  const invalid =
+    (!blank || !allowEmpty) && !loopSettingsUtils.isValid({ text, ...bounds });
+  return (
+    <>
+      <Input
+        disabled={disabled}
+        type="number"
+        value={text}
+        placeholder={placeholder}
+        onChange={(event) => {
+          const next = event.target.value;
+          setText(next);
+          const parsed = loopSettingsUtils.parseBoundedNumber({
+            text: next,
+            ...bounds,
+          });
+          if (!isNil(parsed)) {
+            onCommit(parsed);
+          } else if (allowEmpty && loopSettingsUtils.isBlank(next)) {
+            onCommit(undefined);
+          }
+        }}
+      />
+      {invalid && (
+        <p className="text-xs text-destructive">
+          {bounds.integer
+            ? t('Enter a whole number from {min} to {max}', {
+                min: bounds.min,
+                max: bounds.max,
+              })
+            : t('Enter a number above {min} and up to {max}', {
+                min: bounds.min,
+                max: bounds.max,
+              })}
+        </p>
+      )}
+    </>
+  );
+}
 
 export { LoopsSettings };

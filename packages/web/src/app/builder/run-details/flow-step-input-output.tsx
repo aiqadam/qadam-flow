@@ -13,6 +13,10 @@ import {
   StepOutputType,
   RunInternalError,
   tryParseFriendlyQadamError,
+  FlowAction,
+  FlowTrigger,
+  LoopKeepBodies,
+  StepOutput,
 } from '@aiqadam/shared';
 import { useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
@@ -232,6 +236,7 @@ export const FlowStepInputOutput = () => {
         viewMode="run"
       />
       <ScrollArea className="flex-1 p-3">
+        <LoopRunNote step={selectedStep} stepOutput={selectedStepOutput} />
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as RunActiveTab)}
@@ -397,4 +402,52 @@ function handleRunFailureOrEmptyLog(
     );
   }
   return null;
+}
+
+// #387 / #41: a durable loop paused at a checkpoint reads as "waiting" otherwise, and a loop that
+// keeps fewer step details shows blank iterations that look like steps that never ran.
+function LoopRunNote({
+  step,
+  stepOutput,
+}: {
+  step: FlowAction | FlowTrigger;
+  stepOutput: StepOutput;
+}) {
+  if (
+    step.type !== FlowActionType.LOOP_ON_ITEMS ||
+    stepOutput.type !== FlowActionType.LOOP_ON_ITEMS
+  ) {
+    return null;
+  }
+  const checkpoint = stepOutput.output?.checkpoint;
+  const pausedAtCheckpoint =
+    stepOutput.status === StepOutputStatus.PAUSED && !isNil(checkpoint);
+  const keepsFewerDetails =
+    !isNil(step.settings.keepBodies) &&
+    step.settings.keepBodies !== LoopKeepBodies.ALL;
+  if (!pausedAtCheckpoint && !keepsFewerDetails) {
+    return null;
+  }
+  return (
+    <div className="flex items-start gap-2 mb-3 text-xs text-muted-foreground">
+      <Info className="size-4 shrink-0" />
+      <div className="flex flex-col gap-1">
+        {pausedAtCheckpoint && (
+          <span>
+            {t(
+              'Paused at checkpoint {count} to continue with a fresh time budget. It resumes automatically.',
+              { count: checkpoint.count },
+            )}
+          </span>
+        )}
+        {keepsFewerDetails && (
+          <span>
+            {t(
+              'This loop keeps step details only for some items, so other items show no steps. Their results are in collected on the loop output.',
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }

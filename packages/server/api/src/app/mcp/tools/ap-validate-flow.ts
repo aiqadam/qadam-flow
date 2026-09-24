@@ -320,7 +320,11 @@ function readFlowNode(flow: { version: { displayName: string, trigger: Step } })
         const childExternalId = readCallFlowInput(step).externalId
         return isNil(childExternalId) ? [] : [childExternalId]
     })
-    return { flowName: flow.version.displayName, qadamSteps, inlineChildren, expectsArguments }
+    // A durable loop checkpoints by pausing the run (#387), which an inline child cannot do.
+    const durableLoops = steps
+        .filter((step): step is LoopOnItemsAction => step.type === FlowActionType.LOOP_ON_ITEMS && step.settings.execution?.durable === true)
+        .map(loop => loop.displayName)
+    return { flowName: flow.version.displayName, qadamSteps, inlineChildren, expectsArguments, durableLoops }
 }
 
 // An iteration of a CONCURRENT loop cannot pause (#387): the engine refuses the step at run time,
@@ -344,13 +348,16 @@ async function validateConcurrentLoops({ trigger, flowName, platformId, log }: {
     if (bodies.length === 0) {
         return []
     }
-    const graph = new Map<string, FlowNode>(bodies.map(({ loop, qadamSteps }) => [loop.name, { flowName, expectsArguments: false, qadamSteps, inlineChildren: [] }]))
+    const graph = new Map<string, FlowNode>(bodies.map(({ loop, qadamSteps }) => [loop.name, { flowName, expectsArguments: false, qadamSteps, inlineChildren: [], durableLoops: [] }]))
     const markers = await loadPauseMarkers({ graph, platformId, log })
+    // A step inside nested CONCURRENT loops is in both bodies; it is reported once, under the outer.
+    const reported = new Set<string>()
     return bodies.flatMap(({ loop, qadamSteps }) => qadamSteps.flatMap((step): ValidationIssue[] => {
         const reason = readPauseReason({ step, metadata: markers.get(qadamPinUtil.pinOf({ step })) })
-        if (isNil(reason)) {
+        if (isNil(reason) || reported.has(step.name)) {
             return []
         }
+        reported.add(step.name)
         return [{
             category: 'concurrent_pause',
             stepName: step.name,
@@ -383,6 +390,10 @@ async function loadPauseMarkers({ graph, platformId, log }: {
 }
 
 function findPausingStepIn({ node, markers }: { node: FlowNode, markers: PauseMarkers }): PausingStep | null {
+    const durableLoop = node.durableLoops[0]
+    if (!isNil(durableLoop)) {
+        return { flowName: node.flowName, stepDisplayName: durableLoop, reason: 'a durable loop, which pauses the run to checkpoint when it runs out of time' }
+    }
     return node.qadamSteps.reduce<PausingStep | null>((found, step) => {
         if (!isNil(found)) {
             return found
@@ -640,7 +651,7 @@ const DELAY_UNIT_MS: Record<string, number> = {
     hours: 60 * 60 * 1000,
     days: 24 * 60 * 60 * 1000,
 }
-const UNRESOLVED_FLOW: FlowNode = { flowName: '', qadamSteps: [], inlineChildren: [], expectsArguments: false }
+const UNRESOLVED_FLOW: FlowNode = { flowName: '', qadamSteps: [], inlineChildren: [], expectsArguments: false, durableLoops: [] }
 const ASSEMBLYAI_QADAM = '@aiqadam/qadam-assemblyai'
 const ASSEMBLYAI_TRANSCRIBE_ACTION = 'transcribe'
 // FROZEN. Consulted only for a step pinned to a qadam version whose metadata carries no `pauses`
@@ -750,6 +761,7 @@ type FlowNode = {
     expectsArguments: boolean
     qadamSteps: QadamStep[]
     inlineChildren: string[]
+    durableLoops: string[]
 }
 
 type ValidationResult = {

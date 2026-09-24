@@ -18,6 +18,8 @@ const logSizeTrackers = new WeakMap<Record<string, StepOutput>, LogSizeTracker>(
 
 const FIRST_FORCED_WALK_AFTER_UPSERTS = 256
 
+const CHECKPOINT_LOG_SIZE_FRACTION = 0.8
+
 // `{}` plus the separating comma.
 const EMPTY_ITERATION_BYTES = 3
 
@@ -81,6 +83,11 @@ export const loggingUtils = {
             return true
         }
         return walkAndRecord({ steps, maxSize, totalUpserts: tracked.totalUpserts, nextForcedWalkAt: tracked.nextForcedWalkAt })
+    },
+    // A durable loop checkpoints before the cap, not at it (#387): the run pauses with room left, so
+    // the iterations still in flight when it decides can land without failing the run.
+    isWithinCheckpointLimit(steps: Record<string, StepOutput>): boolean {
+        return loggingUtils.isWithinSizeLimit(steps, MAX_SIZE_FOR_ALL_ENTRIES * CHECKPOINT_LOG_SIZE_FRACTION)
     },
     isWithinSizeLimitAfterFullWalk(steps: Record<string, StepOutput>, maxSize: number = MAX_SIZE_FOR_ALL_ENTRIES): boolean {
         const tracked = logSizeTrackers.get(steps)

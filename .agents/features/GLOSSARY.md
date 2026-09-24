@@ -9,7 +9,9 @@
 | Action | A single executable step within a flow that performs an operation (HTTP call, data transform, code execution, etc.). | task, command | Flow, Step, Piece |
 | Agent | A flow step type that runs an LLM-driven autonomous loop, calling tools until it produces a final answer. | AI step, bot | AgentTool, AgentResult, Knowledge Base |
 | AgentTool | A discriminated union of the four tool types attachable to an agent step: Piece, Flow, MCP, or Knowledge Base. | — | Agent, PredefinedInputsStructure |
+| Checkpoint | A durable loop pausing itself at an item boundary on a DELAY waitpoint, to resume with a fresh execution budget; recorded as `output.checkpoint`. | cursor, savepoint | Durable loop, Iteration status |
 | Concurrent loop | A `LOOP_ON_ITEMS` step with `execution.mode: CONCURRENT`, running up to `maxConcurrency` iterations at once, optionally at a declared rate; its iterations cannot pause. | parallel loop, fan-out | Iteration fork, Loop collector |
+| Durable loop | A top-level loop with `execution.durable`, which takes checkpoints instead of running out of `FLOW_TIMEOUT_SECONDS`. | resumable loop, long-running loop | Checkpoint |
 | Draft | The editable FlowVersion state; only one draft exists per flow at a time. | — | FlowVersion, Published, LOCK_AND_PUBLISH |
 | Flow | A named automation consisting of a trigger and one or more action steps, stored as a versioned JSONB graph. | workflow, automation, pipeline, scenario | FlowVersion, Trigger, Action, Run |
 | FlowOperationRequest | The discriminated union of all 26 modification types dispatched to the single flow update endpoint. | — | Flow, FlowVersion |

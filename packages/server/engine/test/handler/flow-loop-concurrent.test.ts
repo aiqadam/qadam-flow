@@ -1,4 +1,4 @@
-import { FlowAction, FlowActionType, FlowRunStatus, LoopExecutionMode, LoopExecutionSettings, LoopIterationFailurePolicy, LoopOnItemsAction, LoopStepResult } from '@aiqadam/shared'
+import { FlowAction, FlowActionType, FlowRunStatus, LoopExecutionMode, LoopExecutionSettings, LoopIterationFailurePolicy, LoopIterationStatus, LoopOnItemsAction, LoopRateLimitedPolicy, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
 import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
@@ -99,7 +99,7 @@ describe('concurrent loop', () => {
     it('pauses every iteration for the retry-after a provider asked for, and retries the one it answered', async () => {
         const { result, loop, elapsedMs } = await run(loopOf({
             count: 4,
-            execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 2 },
+            execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 2, onRateLimited: LoopRateLimitedPolicy.WAIT_AND_RETRY },
             body: request({ path: '/telegram-429?retryAfter=1&recoverAfter={{ loop.output.item === 0 ? 1 : 0 }}&item={{loop.output.item}}' }),
         }))
 
@@ -147,5 +147,89 @@ describe('concurrent loop', () => {
         expect(createWaitpoint).not.toHaveBeenCalled()
         expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
         expect(loop?.failures?.[0]?.description).toContain('CONCURRENT loop')
+    }, 20000)
+
+    // Only a loop that opted into rate handling waits on a provider; one authored before #387 fails
+    // on a 429 as it always did.
+    it('does not retry a rate-limited item when the loop did not ask for rate handling', async () => {
+        const { result } = await run(loopOf({
+            count: 1,
+            execution: { mode: LoopExecutionMode.SEQUENTIAL },
+            body: request({ path: '/telegram-429?retryAfter=1&recoverAfter=1&case=plain&item={{loop.output.item}}' }),
+        }))
+
+        expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
+        expect(mockServer.hits.get('/telegram-429?retryAfter=1&recoverAfter=1&case=plain&item=0')).toBe(1)
+    }, 20000)
+
+    it('retries a rate-limited item in a SEQUENTIAL loop that asked for it', async () => {
+        const { result, loop } = await run(loopOf({
+            count: 1,
+            execution: { mode: LoopExecutionMode.SEQUENTIAL, onRateLimited: LoopRateLimitedPolicy.WAIT_AND_RETRY },
+            body: request({ path: '/telegram-429?retryAfter=1&recoverAfter=1&case=sequential&item={{loop.output.item}}' }),
+        }))
+
+        expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
+        expect(loop?.collected).toEqual([0])
+        expect(mockServer.hits.get('/telegram-429?retryAfter=1&recoverAfter=1&case=sequential&item=0')).toBe(2)
+    }, 20000)
+
+    it('fails an item at once when the wait a provider asks for would outlast the sandbox slot', async () => {
+        const { result, elapsedMs } = await run(loopOf({
+            count: 1,
+            execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 2, onRateLimited: LoopRateLimitedPolicy.WAIT_AND_RETRY },
+            body: request({ path: '/telegram-429?retryAfter=9999999&case=huge&item={{loop.output.item}}' }),
+        }))
+
+        expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
+        expect(elapsedMs).toBeLessThan(5000)
+    }, 20000)
+
+    it('runs a CONCURRENT loop nested in a concurrent iteration one item at a time', async () => {
+        const innerBase = buildSimpleLoopAction({ name: 'inner', loopItems: '{{ [0, 1, 2] }}', firstLoopAction: request({ path: '/slow?ms=100&outer={{loop.output.item}}&inner={{inner.output.item}}' }) })
+        const inner: LoopOnItemsAction = { ...innerBase, settings: { ...innerBase.settings, execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 3 } } }
+        const outerBase = buildSimpleLoopAction({ name: 'loop', loopItems: '{{ [0, 1] }}', firstLoopAction: inner })
+        const outer: LoopOnItemsAction = { ...outerBase, settings: { ...outerBase.settings, execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 2 } } }
+
+        const result = await flowExecutor.execute({ action: outer, executionState: FlowExecutorContext.empty(), constants: generateMockEngineConstants({ stepNames: ['loop', 'inner', 'send'] }) })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
+        expect(mockServer.concurrency.max).toBe(2)
+        expect(mockServer.arrivals).toHaveLength(6)
+    }, 20000)
+
+    // A waitpoint resume keeps FAILED steps, and replay treats them as done: re-entering a failed
+    // item would run the rest of it without the failed step and record it as succeeded.
+    it('does not re-enter an already failed item when a paused run resumes', async () => {
+        const restoredState = await FlowExecutorContext.empty().upsertStep('loop', new LoopStepOutput({
+            type: FlowActionType.LOOP_ON_ITEMS,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+            output: {
+                item: 0,
+                index: 1,
+                iterations: [{ send: { type: FlowActionType.PIECE, status: StepOutputStatus.FAILED, input: {}, errorMessage: 'boom' } }],
+                iterationStatus: [LoopIterationStatus.FAILED],
+                failures: [{ index: 0, stepName: 'send', description: 'boom' }],
+                collected: [null],
+            },
+        }))
+
+        const result = await flowExecutor.execute({
+            action: loopOf({
+                count: 2,
+                execution: { mode: LoopExecutionMode.SEQUENTIAL, onIterationFailure: LoopIterationFailurePolicy.CONTINUE, tolerateFailures: true },
+                body: request({ path: '/slow?ms=5&case=resume&item={{loop.output.item}}' }),
+            }),
+            executionState: restoredState,
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'send'] }),
+        })
+        const step = result.steps.loop
+        const loop = step?.type === FlowActionType.LOOP_ON_ITEMS ? step.output : undefined
+
+        expect(mockServer.hits.get('/slow?ms=5&case=resume&item=0')).toBeUndefined()
+        expect(mockServer.hits.get('/slow?ms=5&case=resume&item=1')).toBe(1)
+        expect(loop?.iterationStatus).toEqual([LoopIterationStatus.FAILED, LoopIterationStatus.SUCCEEDED])
+        expect(loop?.failures?.map((failure) => failure.index)).toEqual([0])
     }, 20000)
 })

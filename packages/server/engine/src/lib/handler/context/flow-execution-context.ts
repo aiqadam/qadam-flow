@@ -47,9 +47,11 @@ export class FlowExecutorContext {
     // right while a single iteration runs at a time (#387): an iteration now reads its own item by
     // its path.
     loopItems: Map<string, readonly unknown[]>
-    // Set on the context an iteration of a CONCURRENT loop runs in: such an iteration cannot pause,
-    // and its verdict is not the run's.
+    // Set on the context an iteration of a CONCURRENT loop runs in: such an iteration cannot pause.
     isConcurrentFork: boolean
+    // Set on the context any loop iteration runs in: its verdict is the iteration's, not the run's,
+    // so it is never reported to the server as the run's status.
+    isIterationFork: boolean
 
     /**
      * Execution time in milliseconds
@@ -71,6 +73,7 @@ export class FlowExecutorContext {
         this.stepLogPolicy = copyFrom?.stepLogPolicy ?? new Map()
         this.loopItems = copyFrom?.loopItems ?? new Map()
         this.isConcurrentFork = copyFrom?.isConcurrentFork ?? false
+        this.isIterationFork = copyFrom?.isIterationFork ?? false
     }
 
     static empty(params?: FlowExecutorContextInit): FlowExecutorContext {
@@ -202,7 +205,12 @@ export class FlowExecutorContext {
             currentPath: this.currentPath.loopIteration({ loopName, iteration }),
             verdict: { status: FlowRunStatus.RUNNING },
             isConcurrentFork: this.isConcurrentFork || concurrent,
+            isIterationFork: true,
         })
+    }
+
+    public clearLoopItems({ loopName }: { loopName: string }): void {
+        this.loopItems.delete(loopItemsKey({ parentPath: this.currentPath.path, loopName }))
     }
 
     public setCurrentPath(currentStatePath: StepExecutionPath): FlowExecutorContext {

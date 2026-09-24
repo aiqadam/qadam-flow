@@ -157,6 +157,9 @@ export const LoopExecutionSettings = z.object({
     maxRateLimitRetries: z.number().int().min(0).max(LOOP_MAX_RATE_LIMITED_RETRIES).optional(),
     onIterationFailure: z.enum(LoopIterationFailurePolicy).optional(),
     tolerateFailures: z.boolean().optional(),
+    // A loop that outlives one execution budget (#387): before `FLOW_TIMEOUT_SECONDS` runs out it
+    // pauses itself at an iteration boundary and resumes with a fresh budget.
+    durable: z.boolean().optional(),
 })
 export type LoopExecutionSettings = z.infer<typeof LoopExecutionSettings>
 

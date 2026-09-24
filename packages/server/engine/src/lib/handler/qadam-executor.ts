@@ -1,9 +1,9 @@
 import { ActionContext, backwardCompatabilityContextUtils, ConstructToolParams, CreateWaitpointHook, CreateWaitpointParams, CreateWaitpointResult, InputPropertyMap, QadamAuthProperty, QadamPropertyMap, RespondHook, RespondHookParams, StaticPropsValue, StopHook, StopHookParams, TagsManager, WaitForWaitpointHook } from '@aiqadam/qadams-framework'
-import { AUTHENTICATION_PROPERTY_NAME, EngineGenericError, ExecutionType, FlowActionType, FlowRunStatus, GenericStepOutput, isNil, PausedFlowTimeoutError, QadamAction, RespondResponse, StepOutputStatus } from '@aiqadam/shared'
+import { AUTHENTICATION_PROPERTY_NAME, EngineGenericError, ExecutionType, FlowActionType, FlowRunStatus, GenericStepOutput, isNil, QadamAction, RespondResponse, StepOutputStatus } from '@aiqadam/shared'
 import type { ToolSet } from 'ai'
-import dayjs from 'dayjs'
 import { continueIfFailureHandler, runWithExponentialBackoff } from '../helper/error-handling'
 import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
+import { pausedFlowLimits } from '../helper/paused-flow-limits'
 import { qadamLoader } from '../helper/qadam-loader'
 import { createFileUploader } from '../qadam-context/file-uploader'
 import { createFlowsContext } from '../qadam-context/flows'
@@ -17,8 +17,6 @@ import { workerSocket } from '../worker-socket'
 import { ActionHandler, BaseExecutor } from './base-executor'
 import { EngineConstants } from './context/engine-constants'
 import { callFlowInline } from './inline-flow-executor'
-
-const AP_PAUSED_FLOW_TIMEOUT_DAYS = Number(process.env.AP_PAUSED_FLOW_TIMEOUT_DAYS)
 
 const CONCURRENT_LOOP_PAUSE_ERROR = 'This step pauses the run, which an iteration of a CONCURRENT loop cannot do. Run the loop SEQUENTIAL, or move this step out of the loop.'
 
@@ -297,7 +295,7 @@ function createWaitpointHook({ constants, stepName, hookParams, concurrentFork }
         if (concurrentFork) {
             throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
         }
-        assertDelayWithinTimeout(req.resumeDateTime)
+        pausedFlowLimits.assertResumeWithinTimeout(req.resumeDateTime)
         if (!isNil(req.responseToSend)) {
             hookParams.hookResponse = { ...hookParams.hookResponse, responseToSend: req.responseToSend }
         }
@@ -338,12 +336,3 @@ function createWaitForWaitpointHook({ hookParams, concurrentFork }: { hookParams
     }
 }
 
-function assertDelayWithinTimeout(resumeDateTime?: string): void {
-    if (isNil(resumeDateTime)) {
-        return
-    }
-    const diffInDays = dayjs(resumeDateTime).diff(dayjs(), 'days')
-    if (diffInDays > AP_PAUSED_FLOW_TIMEOUT_DAYS) {
-        throw new PausedFlowTimeoutError(undefined, AP_PAUSED_FLOW_TIMEOUT_DAYS)
-    }
-}
