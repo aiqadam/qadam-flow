@@ -51,12 +51,39 @@ export const columnUtils = {
     if (columnUtils.isUnconfigured(value)) {
       return undefined;
     }
-    const identifiers = toIdentifiers(value);
+    const identifiers = toIdentifiers({ rawColumns: value, label: 'Columns', emptyMeaning: 'leave it empty to return every column' });
     if (identifiers.length === 0) {
       throw new Error(`Columns is set but names no column. Remove it to return every column, or name the columns to return. Available columns: ${columnUtils.describeAvailable(fields)}.`);
     }
     const resolved = identifiers.map((identifier) => columnUtils.resolveColumn({ identifier, fields, position: 'Columns' }).id);
     return [...new Set(resolved)];
+  },
+
+  // Turns a Clear Columns list into the ids of the cells to empty (#506).
+  //
+  // The opposite fail direction from toWireFieldIds, deliberately: there, a value
+  // that names nothing must not widen back to every column; here, naming nothing
+  // clears nothing, which is the safe side — a `{{...}}` binding resolving to an
+  // empty list leaves the record as it was. An unknown column still raises, because
+  // dropping it would silently keep the very value the author asked to remove.
+  toClearFieldIds({ rawColumns, fields, position }: { rawColumns: unknown; fields: Field[]; position: string }): string[] {
+    const value = unwrapJsonList(rawColumns);
+    if (columnUtils.isUnconfigured(value)) {
+      return [];
+    }
+    const identifiers = toIdentifiers({ rawColumns: value, label: position, emptyMeaning: 'leave it empty to clear nothing' });
+    const resolved = identifiers.map((identifier) => columnUtils.resolveColumn({ identifier, fields, position }).id);
+    return [...new Set(resolved)];
+  },
+
+  // "Set it and clear it" has no single reading, so it is refused rather than
+  // resolved by a precedence rule the author would have to know about.
+  assertNotSetAndCleared({ setFieldIds, clearFieldIds, fields, position }: { setFieldIds: string[]; clearFieldIds: string[]; fields: Field[]; position: string }): void {
+    const set = new Set(setFieldIds);
+    const both = fields.filter((field) => clearFieldIds.includes(field.id) && set.has(field.id));
+    if (both.length > 0) {
+      throw new Error(`${position} both sets and clears ${both.map((field) => `"${field.name}"`).join(', ')}. Remove the value to clear the column, or remove it from Clear Columns to set it.`);
+    }
   },
 };
 
@@ -73,14 +100,14 @@ function unwrapJsonList(rawColumns: unknown): unknown {
   return error === null && Array.isArray(data) ? data : rawColumns;
 }
 
-function toIdentifiers(rawColumns: unknown): string[] {
+function toIdentifiers({ rawColumns, label, emptyMeaning }: { rawColumns: unknown; label: string; emptyMeaning: string }): string[] {
   if (!Array.isArray(rawColumns) && typeof rawColumns === 'object') {
-    throw new Error('Columns is not a list of column names. Pass a list of column names, or leave it empty to return every column.');
+    throw new Error(`${label} is not a list of column names. Pass a list of column names, or ${emptyMeaning}.`);
   }
   const candidates = Array.isArray(rawColumns) ? rawColumns : String(rawColumns).split(',');
   return candidates.map((candidate) => {
     if (candidate === null || candidate === undefined || typeof candidate === 'object') {
-      throw new Error('Columns holds a value that is not a column name or id. Pass a list of column names, or leave it empty to return every column.');
+      throw new Error(`${label} holds a value that is not a column name or id. Pass a list of column names, or ${emptyMeaning}.`);
     }
     return String(candidate).trim();
   }).filter((identifier) => identifier.length > 0);

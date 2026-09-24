@@ -19,12 +19,16 @@
   "The records to create.": "Записи для создания.",
   "The IDs of the records to delete": "ID удаляемых записей",
   "The ID of the record to do the action on.": "ID записи, на которую нужно выполнить действие.",
-  "The values to update. Leave empty to keep current value.": "Значения для обновления. Оставьте пустым, чтобы сохранить текущее значение.",
+  "The values to update. Leave empty to keep current value — use Clear Columns to empty a cell.": "Значения для обновления. Оставьте пустым, чтобы сохранить текущее значение, — чтобы очистить ячейку, используйте «Очистить столбцы».",
   "Maximum number of records to return (default no limit).": "Максимальное количество возвращаемых записей (без ограничения по умолчанию).",
   "New Record Created": "Создана новая запись",
   "Record Updated": "Запись обновлена",
   "Record Deleted": "Запись удалена",
   "Triggers when a new record is added to the selected table.": "Включает при добавлении новой записи в выбранную таблицу.",
   "Triggers when a record is updated in the selected table.": "Включает при обновлении записи в выбранной таблице.",
-  "Triggers when a record is deleted from the selected table.": "Включает при удалении записи из выбранной таблицы."
+  "Triggers when a record is deleted from the selected table.": "Включает при удалении записи из выбранной таблицы.",
+  "Clear Columns": "Очистить столбцы",
+  "Columns to empty. A value left empty in Values keeps the current one, so this is the way to unset a cell — for example to remove a date. A column cannot be both cleared and given a value.": "Столбцы, которые нужно очистить. Пустое значение в «Значениях» сохраняет текущее, поэтому очистить ячейку — например, удалить дату — можно только здесь. Столбец нельзя одновременно очистить и задать ему значение.",
+  "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it, or name the column in Clear Columns to empty it.": "Записи для обновления. В каждой нужны ID записи и значения; оставьте значение пустым, чтобы сохранить его, или укажите столбец в «Очистить столбцы», чтобы очистить.",
+  "The records to insert or update. Every record must set each key column. A value left empty keeps the current one on an update; name a column in Clear Columns to empty it.": "Записи для вставки или обновления. Каждая запись должна задавать все ключевые столбцы. Пустое значение при обновлении сохраняет текущее; укажите столбец в «Очистить столбцы», чтобы очистить его."
 }

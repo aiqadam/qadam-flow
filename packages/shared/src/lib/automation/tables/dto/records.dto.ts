@@ -47,6 +47,20 @@ export const MAX_RECORDS_PER_BATCH = 1000
 // because an operator raised that.
 export const MAX_KEY_FIELDS = 200
 
+// The write-side twin of `fieldIds` on ListRecordsRequest / GetRecordRequest (#506):
+// which columns the RESPONSE carries, never which ones are written. Absent means every
+// column. Unlike the query-string form, a JSON body can carry `[]`, and an empty
+// projection reads as "every column" to one caller and "no columns" to another, so it is
+// rejected rather than guessed. Same declared-here-not-at-the-end exception as above.
+//
+// Bounded twice, because a query string is bounded by the header limit and a JSON body
+// only by the body parser's, which is megabytes: the count by MAX_PROJECTED_FIELDS and
+// each element by ApId, since unknown ids are echoed into the rejection message. The
+// count is not MAX_KEY_FIELDS — that one is sized to a key's width — and is well above
+// any real projection: past the table's own column count a projection names nothing new.
+const MAX_PROJECTED_FIELDS = 1000
+const writeProjection = z.array(ApId).min(1, formErrors.required).max(MAX_PROJECTED_FIELDS).optional()
+
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
     records: z.array(z.object({
@@ -57,6 +71,7 @@ export const UpdateRecordsRequest = z.object({
         })),
     })).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
     agentUpdate: z.boolean().optional(),
+    fieldIds: writeProjection,
 })
 
 export type UpdateRecordsRequest = z.infer<typeof UpdateRecordsRequest>
@@ -143,6 +158,7 @@ export const UpdateRecordRequest = z.object({
     // gives eq/neq/in/not_in and — the case the ticket names as "is empty" —
     // not_exists.
     precondition: z.array(Filter).min(1, formErrors.required).optional(),
+    fieldIds: writeProjection,
 })
 
 export type UpdateRecordRequest = z.infer<typeof UpdateRecordRequest>
@@ -159,6 +175,7 @@ export const UpsertRecordsRequest = z.object({
         fieldId: z.string(),
         value: coerceToString,
     }))).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
+    fieldIds: writeProjection,
 })
 
 export type UpsertRecordsRequest = z.infer<typeof UpsertRecordsRequest>

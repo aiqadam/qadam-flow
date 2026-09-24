@@ -26,6 +26,8 @@ type FormattedRecord = {
     value: unknown;
   }>;
 }
+const CLEAR_COLUMNS_DESCRIPTION = 'Columns to empty. A value left empty in Values keeps the current one, so this is the way to unset a cell — for example to remove a date. A column cannot be both cleared and given a value.';
+
 const getFieldTypeText = (fieldType: FieldType) => {
   switch (fieldType) {
     case FieldType.STATIC_DROPDOWN:
@@ -85,22 +87,22 @@ export const tablesCommon = {
     description: 'Columns to return. Leave empty to return every column. Step outputs are recorded verbatim in the run log, so reading only the columns you need is also what keeps the rest out of it.',
     required: false,
     refreshers: ['table_id'],
-    options: async (propsValue, context) => {
-      const tableExternalId = propsValue['table_id'];
-      if (typeof tableExternalId !== 'string' || tableExternalId.length === 0) {
-        return { options: [], disabled: true, placeholder: 'Select a table first.' };
-      }
-      try {
-        const tableId = await resolveTableId({ tableExternalId, context });
-        const fields = await fetchTableFields({ tableId, context });
-        return { options: fields.map((field) => ({ label: field.name, value: field.externalId })) };
-      }
-      catch (e) {
-        console.error('Error fetching fields:', e);
-        return { options: [], disabled: true, placeholder: 'Error loading columns. Please try again.' };
-      }
-    },
+    options: async (propsValue, context) => loadColumnOptions({ tableExternalId: propsValue['table_id'], context }),
   }),
+
+  // A list separate from Values rather than a meaning for "" there (#506): an empty
+  // value keeps meaning "don't change", so a `{{...}}` binding that resolves empty
+  // never starts erasing data in flows written before this existed.
+  clear_columns: Property.MultiSelectDropdown({
+    auth: QadamAuth.None(),
+    displayName: 'Clear Columns',
+    description: CLEAR_COLUMNS_DESCRIPTION,
+    required: false,
+    refreshers: ['table_id'],
+    options: async (propsValue, context) => loadColumnOptions({ tableExternalId: propsValue['table_id'], context }),
+  }),
+
+  clearColumnsDescription: CLEAR_COLUMNS_DESCRIPTION,
 
   async getTableFields({ tableId, context }: { tableId: string, context: ServerContext }): Promise<Field[]> {
     return memoisePerRun({
@@ -397,6 +399,21 @@ export const csvUtils = {
 // the same id. Those executions skip the cache entirely — the id never changes, so an entry made
 // under it would never be evicted by a newer run and a schema edit would stay invisible.
 const runMetadataCache = new Map<string, RunMetadata>();
+
+const loadColumnOptions = async ({ tableExternalId, context }: { tableExternalId: unknown, context: ProjectServerContext }) => {
+  if (typeof tableExternalId !== 'string' || tableExternalId.length === 0) {
+    return { options: [], disabled: true, placeholder: 'Select a table first.' };
+  }
+  try {
+    const tableId = await resolveTableId({ tableExternalId, context });
+    const fields = await fetchTableFields({ tableId, context });
+    return { options: fields.map((field) => ({ label: field.name, value: field.externalId })) };
+  }
+  catch (e) {
+    console.error('Error fetching fields:', e);
+    return { options: [], disabled: true, placeholder: 'Error loading columns. Please try again.' };
+  }
+};
 
 const getRunMetadata = (cacheKey: string): RunMetadata => {
   const cached = runMetadataCache.get(cacheKey);

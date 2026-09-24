@@ -3,6 +3,7 @@ import { tablesCommon } from '../common';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
 import { PopulatedRecord, UpdateRecordRequest } from '@aiqadam/shared';
 import { filterUtils } from '../common/filters';
+import { columnUtils } from '../common/columns';
 
 // Spelled out because the conflict it produces is a normal outcome to branch on,
 // not a bug: another run got there first.
@@ -39,7 +40,7 @@ export const updateRecord = createAction({
     values: Property.DynamicProperties({
       auth: QadamAuth.None(),
       displayName: 'Values',
-      description: 'The values to update. Leave empty to keep current value.',
+      description: 'The values to update. Leave empty to keep current value — use Clear Columns to empty a cell.',
       required: true,
       refreshers: ['table_id'],
       props: async ({ table_id }, context) => {
@@ -52,28 +53,41 @@ export const updateRecord = createAction({
         return tablesCommon.createFieldProperties({ tableId, context });
       },
     }),
+    clear_columns: tablesCommon.clear_columns,
+    columns: tablesCommon.columns,
   },
   async run(context) {
-    const { table_id: tableExternalId, record_id, values, only_if } = context.propsValue;
+    const { table_id: tableExternalId, record_id, values, only_if, clear_columns, columns } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
 
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
     const fieldValidations = tablesCommon.createFieldValidations(tableFields);
-    await propsValidation.validateZod(values, fieldValidations);
 
-    const cells: UpdateRecordRequest['cells'] = Object.entries(values)
-      .filter(([_, value]) => value !== null && value !== undefined && value !== '')
+    // Filtered before validating, as update-records and upsert-records already do: an
+    // empty value means "keep", so there is nothing to validate — validating the raw
+    // map is what failed a DATE column left empty with "Invalid date" (#506).
+    const setValues = Object.fromEntries(
+      Object.entries(values).filter(([_, value]) => value !== null && value !== undefined && value !== ''),
+    );
+    await propsValidation.validateZod(setValues, fieldValidations);
+
+    const setCells: NonNullable<UpdateRecordRequest['cells']> = Object.entries(setValues)
       .map(([fieldExternalId, value]) => ({
         fieldId: tableFields.find((field) => field.externalId === fieldExternalId)?.id ?? '',
         value,
       })).filter((cell) => cell.fieldId !== '');
 
+    const clearFieldIds = columnUtils.toClearFieldIds({ rawColumns: clear_columns, fields: tableFields, position: 'Clear Columns' });
+    columnUtils.assertNotSetAndCleared({ setFieldIds: setCells.map((cell) => cell.fieldId), clearFieldIds, fields: tableFields, position: 'This update' });
+
     const precondition = filterUtils.toWireFilters({ rawFilters: only_if, fields: tableFields });
+    const fieldIds = columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields });
 
     const request: UpdateRecordRequest = {
-      cells,
+      cells: [...setCells, ...clearFieldIds.map((fieldId) => ({ fieldId, value: '' }))],
       tableId,
       ...(precondition.length === 0 ? {} : { precondition }),
+      ...(fieldIds === undefined ? {} : { fieldIds }),
     };
 
     const response = await httpClient.sendRequest({

@@ -1,7 +1,9 @@
-import { apId, FieldType, FilterOperator, MAX_KEY_FIELDS } from '@aiqadam/shared'
+import { apId, FieldType, FilterOperator, MAX_KEY_FIELDS, TableWebhookEventType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import qs from 'qs'
+import { recordService } from '../../../../src/app/tables/record/record.service'
+import { tableService } from '../../../../src/app/tables/table/table.service'
 import { db } from '../../../helpers/db'
 import { describeWithAuth } from '../../../helpers/describe-with-auth'
 import {
@@ -1419,6 +1421,232 @@ describe('Record API', () => {
         })
     })
 
+    // #506: the write routes gained the read side's projection (#407). Its two
+    // invariants carry over — an unknown column fails CLOSED, and a withheld column's
+    // name never appears — plus one of their own: the check runs before anything is
+    // written, and the webhooks still see the whole row.
+    describeWithAuth('Write projection (fieldIds on update / batch / upsert)', () => app!, (setup) => {
+        it('update returns only the projected columns, and still writes the rest', async () => {
+            const ctx = await setup()
+            const { table, name, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: phone.id, value: '+998911111111' }],
+                fieldIds: [name.id],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(Object.keys(body.cells)).toEqual([name.id])
+            expect(JSON.stringify(body)).not.toContain('+998911111111')
+            expect(JSON.stringify(body)).not.toContain(phone.name)
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[phone.id].value).toBe('+998911111111')
+        })
+
+        it('update rejects an unknown column before writing anything', async () => {
+            const ctx = await setup()
+            const { table, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: phone.id, value: '+998911111111' }],
+                fieldIds: [apId()],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[phone.id].value).toBe('+998900000000')
+        })
+
+        // A JSON body, unlike a query string, can carry `[]`, and an empty projection
+        // reads as "every column" to one caller and "no columns" to another.
+        it('update rejects an empty projection rather than guessing what it means', async () => {
+            const ctx = await setup()
+            const { table, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: phone.id, value: '+998911111111' }],
+                fieldIds: [],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        // A JSON body is bounded only by the body parser, so the schema bounds both the
+        // count and each element — unknown ids are echoed into the 409's message.
+        it.each([
+            ['an element that is not an id', () => ['x'.repeat(10_000)]],
+            ['more ids than any projection needs', () => Array.from({ length: 1001 }, () => apId())],
+        ])('update rejects %s at the schema', async (_label, fieldIds) => {
+            const ctx = await setup()
+            const { table, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: phone.id, value: '+998911111111' }],
+                fieldIds: fieldIds(),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[phone.id].value).toBe('+998900000000')
+        })
+
+        it('update without fieldIds returns every column, as before', async () => {
+            const ctx = await setup()
+            const { table, name, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: phone.id, value: '+998911111111' }],
+            })
+
+            expect(Object.keys(response?.json().cells).sort()).toEqual([name.id, phone.id].sort())
+        })
+
+        // Every write route hands its records to the webhooks after replying. A flow
+        // listening on the table must not start receiving whatever subset the writing
+        // step read back.
+        it.each([
+            ['update', ({ table, record, name, phone }: PersonRecord) => ({ url: `/v1/records/${record.id}`, body: { tableId: table.id, cells: [{ fieldId: phone.id, value: '+998911111111' }], fieldIds: [name.id] } })],
+            ['batch update', ({ table, record, name, phone }: PersonRecord) => ({ url: '/v1/records/batch', body: { tableId: table.id, records: [{ id: record.id, cells: [{ fieldId: phone.id, value: '+998911111111' }] }], fieldIds: [name.id] } })],
+            ['upsert', ({ table, name, phone }: PersonRecord) => ({ url: '/v1/records/upsert', body: { tableId: table.id, keyFieldIds: [name.id], records: [[{ fieldId: name.id, value: 'Ada' }, { fieldId: phone.id, value: '+998911111111' }]], fieldIds: [name.id] } })],
+        ])('%s hands the webhooks the whole record while the response is projected', async (_route, buildRequest) => {
+            const ctx = await setup()
+            const person = await createPersonRecord(ctx)
+            const { table, name, phone } = person
+            const now = new Date().toISOString()
+            vi.spyOn(tableService, 'getWebhooks').mockResolvedValue([{ id: apId(), created: now, updated: now, projectId: ctx.project.id, tableId: table.id, events: [TableWebhookEventType.RECORD_UPDATED], flowId: apId() }])
+            const triggerWebhooks = vi.spyOn(recordService, 'triggerWebhooks').mockResolvedValue(undefined)
+
+            try {
+                const { url, body } = buildRequest(person)
+                const response = await ctx.post(url, body)
+
+                expect(response?.statusCode).toBe(StatusCodes.OK)
+                expect(JSON.stringify(response?.json())).not.toContain(phone.name)
+                await vi.waitFor(() => expect(triggerWebhooks).toHaveBeenCalledTimes(1))
+                expect(triggerWebhooks.mock.calls[0][0].data).toMatchObject({
+                    record: {
+                        cells: {
+                            [name.id]: { fieldName: name.name, value: 'Ada' },
+                            [phone.id]: { fieldName: phone.name, value: '+998911111111' },
+                        },
+                    },
+                })
+            }
+            finally {
+                vi.restoreAllMocks()
+            }
+        })
+
+        it('batch update returns only the projected columns', async () => {
+            const ctx = await setup()
+            const { table, name, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [{ id: record.id, cells: [{ fieldId: phone.id, value: '+998911111111' }] }],
+                fieldIds: [name.id],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(Object.keys(response?.json()[0].cells)).toEqual([name.id])
+            expect(JSON.stringify(response?.json())).not.toContain(phone.name)
+        })
+
+        it('batch update rejects an unknown column before writing anything', async () => {
+            const ctx = await setup()
+            const { table, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post('/v1/records/batch', {
+                tableId: table.id,
+                records: [{ id: record.id, cells: [{ fieldId: phone.id, value: '+998911111111' }] }],
+                fieldIds: [apId()],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[phone.id].value).toBe('+998900000000')
+        })
+
+        it('upsert returns only the projected columns, for a created and an updated row alike', async () => {
+            const ctx = await setup()
+            const { table, name, phone } = await createPersonRecord(ctx)
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [name.id],
+                records: [
+                    [{ fieldId: name.id, value: 'Ada' }, { fieldId: phone.id, value: '+998911111111' }],
+                    [{ fieldId: name.id, value: 'Grace' }, { fieldId: phone.id, value: '+998922222222' }],
+                ],
+                fieldIds: [name.id],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const body = response?.json()
+            expect(body.map((result: { action: string }) => result.action)).toEqual(['updated', 'created'])
+            for (const result of body) {
+                expect(Object.keys(result.record.cells)).toEqual([name.id])
+            }
+            expect(JSON.stringify(body)).not.toContain(phone.name)
+        })
+
+        // Both upsert branches load the schema separately — the declared-key one in its
+        // own function — so each has its own check to lose.
+        it.each([
+            ['without a declared key', false],
+            ['with a declared key', true],
+        ])('upsert %s rejects an unknown column before inserting anything', async (_label, declareKey) => {
+            const ctx = await setup()
+            const { table, name, phone } = await createPersonRecord(ctx)
+            if (declareKey) {
+                const declared = await ctx.post(`/v1/tables/${table.id}/key`, { keyFieldIds: [name.id] })
+                expect(declared?.statusCode).toBe(StatusCodes.OK)
+            }
+
+            const response = await ctx.post('/v1/records/upsert', {
+                tableId: table.id,
+                keyFieldIds: [name.id],
+                records: [[{ fieldId: name.id, value: 'Grace' }, { fieldId: phone.id, value: '+998922222222' }]],
+                fieldIds: [apId()],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.CONFLICT)
+            const all = await ctx.get('/v1/records', { tableId: table.id })
+            expect(all?.json().data.length).toBe(1)
+        })
+    })
+
+    // #506: the qadam's Clear Columns sends an empty value, so this is the contract it
+    // rests on — an empty write is a real clear, not a skipped cell, and "is empty"
+    // conditions see it as empty afterwards.
+    describeWithAuth('POST /v1/records/:id (Clearing a cell)', () => app!, (setup) => {
+        it('empties a DATE cell and makes it match not_exists', async () => {
+            const ctx = await setup()
+            const { table, field: cancelledAt } = await createTableWithTypedField({ ctx, type: FieldType.DATE })
+            const record = await createRecordWithCell({ ctx, tableId: table.id, fieldId: cancelledAt.id, value: '2026-09-21T10:00:00.000Z' })
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: cancelledAt.id, value: '' }],
+                precondition: [{ fieldId: cancelledAt.id, operator: FilterOperator.EXISTS }],
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().cells[cancelledAt.id].value).toBe('')
+            const empty = await ctx.inject({
+                method: 'GET',
+                url: `/api/v1/records?${qs.stringify({ tableId: table.id, filters: [{ fieldId: cancelledAt.id, operator: FilterOperator.NOT_EXISTS }] })}`,
+            })
+            expect(empty?.json().data.map((row: { id: string }) => row.id)).toEqual([record.id])
+        })
+    })
+
     describeWithAuth('DELETE /v1/records (Delete)', () => app!, (setup) => {
         it('should delete records by IDs', async () => {
             const ctx = await setup()
@@ -1531,6 +1759,21 @@ async function createTableWithTypedField({ ctx, type }: { ctx: TestContext, type
     return { table, field }
 }
 
+async function createPersonRecord(ctx: TestContext): Promise<PersonRecord> {
+    const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
+    const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
+    phone.type = FieldType.TEXT
+    await db.save('field', phone)
+    const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
+    await db.save('record', record)
+    for (const [fieldId, value] of [[name.id, 'Ada'], [phone.id, '+998900000000']] as const) {
+        const cell = createMockCell({ recordId: record.id, fieldId, projectId: ctx.project.id })
+        cell.value = value
+        await db.save('cell', cell)
+    }
+    return { table, name, phone, record }
+}
+
 async function createRecordWithCell({ ctx, tableId, fieldId, value }: { ctx: TestContext, tableId: string, fieldId: string, value: string }) {
     const record = createMockRecord({ tableId, projectId: ctx.project.id })
     await db.save('record', record)
@@ -1538,4 +1781,11 @@ async function createRecordWithCell({ ctx, tableId, fieldId, value }: { ctx: Tes
     cell.value = value
     await db.save('cell', cell)
     return record
+}
+
+type PersonRecord = {
+    table: ReturnType<typeof createMockTable>
+    name: ReturnType<typeof createMockField>
+    phone: ReturnType<typeof createMockField>
+    record: ReturnType<typeof createMockRecord>
 }

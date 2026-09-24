@@ -234,7 +234,7 @@ export const recordService = {
             const declaredKeyFieldIds = table.keyFieldIds
             if (!isNil(declaredKeyFieldIds) && declaredKeyFieldIds.length > 0) {
                 assertRequestKeyMatchesDeclaredKey({ requestKeyFieldIds: keyFieldIds, declaredKeyFieldIds })
-                return upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFieldIds: declaredKeyFieldIds, records })
+                return upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFieldIds: declaredKeyFieldIds, records, projection: request.fieldIds })
             }
 
             // A Postgres transaction-scoped lock, not the Redis distributedLock.
@@ -249,6 +249,7 @@ export const recordService = {
             const existingFields = await entityManager.getRepository(FieldEntity).find({ where: { projectId, tableId } })
             const fieldIds = new Set(existingFields.map((field) => field.id))
             assertKeyFieldsBelongToTable({ keyFieldIds, fieldIds, tableId })
+            resolveProjectedFields({ fieldIds: request.fieldIds, fields: existingFields, tableId })
 
             const keyOf = tableKey.buildReader({ keyFieldIds })
             const existingByKey = await indexExistingRecordsByKey({ entityManager, projectId, tableId, keyFieldIds, keyOf })
@@ -365,6 +366,7 @@ export const recordService = {
                 where: { projectId, tableId },
             })
             batchFields = existingFields
+            resolveProjectedFields({ fieldIds: request.fieldIds, fields: existingFields, tableId })
             const fieldIds = new Set(existingFields.map((field) => field.id))
             const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
 
@@ -502,6 +504,7 @@ export const recordService = {
                     // order from create, for the same table.
                     order: { created: 'ASC' },
                 })
+            resolveProjectedFields({ fieldIds: request.fieldIds, fields: existingFields, tableId })
             const fieldsById = new Map(existingFields.map((field) => [field.id, field]))
 
             if (request.cells && request.cells.length > 0) {
@@ -637,6 +640,24 @@ export const recordService = {
         }
 
         return formatRecordsAndFetchField({ records: deletedRecords, tableId, projectId, entityManager })
+    },
+
+    // The response half of a write's projection (#506), applied by the caller after the
+    // write returns rather than inside update()/updateMany()/upsert(): the controller hands
+    // the same records to the ON_NEW_RECORD / ON_UPDATE_RECORD webhooks, and a flow
+    // listening on the table must keep receiving every column whatever the writing step
+    // asked to read back. The ids were already checked against the table inside the
+    // write's transaction, before any cell was written, and every field is back-filled by
+    // formatRecords — so picking by id emits exactly the projected set and no other names.
+    projectForResponse({ record, fieldIds }: { record: PopulatedRecord, fieldIds: string[] | undefined }): PopulatedRecord {
+        if (isNil(fieldIds)) {
+            return record
+        }
+        const requested = new Set(fieldIds)
+        return {
+            ...record,
+            cells: Object.fromEntries(Object.entries(record.cells).filter(([fieldId]) => requested.has(fieldId))),
+        }
     },
 
     async triggerWebhooks({
@@ -1034,10 +1055,11 @@ function assertRequestKeyMatchesDeclaredKey({ requestKeyFieldIds, declaredKeyFie
 // unique index rather than this process's advisory lock — real per-row concurrency,
 // where two overlapping requests racing on the same key resolve at the database
 // instead of one blocking behind the other's table-wide lock.
-async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFieldIds, records }: { entityManager: EntityManager, projectId: string, tableId: string, keyFieldIds: string[], records: { fieldId: string, value: string | null }[][] }): Promise<UpsertResult[]> {
+async function upsertWithDeclaredKey({ entityManager, projectId, tableId, keyFieldIds, records, projection }: { entityManager: EntityManager, projectId: string, tableId: string, keyFieldIds: string[], records: { fieldId: string, value: string | null }[][], projection: string[] | undefined }): Promise<UpsertResult[]> {
     const existingFields = await entityManager.getRepository(FieldEntity).find({ where: { projectId, tableId } })
     const fieldIds = new Set(existingFields.map((field) => field.id))
     assertKeyFieldsBelongToTable({ keyFieldIds, fieldIds, tableId })
+    resolveProjectedFields({ fieldIds: projection, fields: existingFields, tableId })
 
     const validRecords = records.map((cells) => cells.filter((cellData) => fieldIds.has(cellData.fieldId)))
     assertEveryRecordCarriesTheKey({ records: validRecords, keyFieldIds })
@@ -1206,8 +1228,13 @@ function resolveProjectedFields({ fieldIds, fields, tableId }: { fieldIds: strin
     if (isNil(fieldIds)) {
         return fields
     }
+    // Sets rather than `unique()` and `fields.some`: both of those are quadratic in a
+    // caller-supplied list, and this runs on the write routes too (#506), inside a
+    // transaction holding the table's key lock — a slow rejection there blocks the
+    // event loop and every writer queued on that table.
+    const known = new Set(fields.map((field) => field.id))
     const requested = new Set(fieldIds)
-    const unknownFieldIds = unique(fieldIds.filter((fieldId) => !fields.some((field) => field.id === fieldId)))
+    const unknownFieldIds = [...requested].filter((fieldId) => !known.has(fieldId))
     if (unknownFieldIds.length > 0) {
         // Bounded for the same reason its sibling in record-filter.ts is: the
         // whole list is caller-supplied and this message rides on Error.message

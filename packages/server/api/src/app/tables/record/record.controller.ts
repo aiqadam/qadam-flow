@@ -64,7 +64,8 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             request: request.body,
             projectId: request.projectId,
         })
-        await reply.status(StatusCodes.OK).send(records)
+        const { fieldIds } = request.body
+        await reply.status(StatusCodes.OK).send(records.map((record) => recordService.projectForResponse({ record, fieldIds })))
         await recordSideEffects(fastify.log).handleRecordsEvent({
             tableId: request.body.tableId,
             projectId: request.projectId,
@@ -80,7 +81,8 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             request: request.body,
             projectId: request.projectId,
         })
-        await reply.status(StatusCodes.OK).send(results)
+        const { fieldIds } = request.body
+        await reply.status(StatusCodes.OK).send(results.map((result) => ({ ...result, record: recordService.projectForResponse({ record: result.record, fieldIds }) })))
 
         for (const [records, event] of splitByUpsertOutcome(results)) {
             await recordSideEffects(fastify.log).handleRecordsEvent({
@@ -99,7 +101,7 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             request: request.body,
             projectId: request.projectId,
         })
-        await reply.status(StatusCodes.OK).send(record)
+        await reply.status(StatusCodes.OK).send(recordService.projectForResponse({ record, fieldIds: request.body.fieldIds }))
         await recordSideEffects(fastify.log).handleRecordsEvent({
             tableId: request.body.tableId,
             projectId: request.projectId,
