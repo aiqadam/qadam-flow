@@ -58,10 +58,8 @@ export const BoundedArray = <T extends z.ZodType>({ element, max, min, nonEmpty 
 }
 
 function withLowerBound<T extends z.ZodType>({ array, min, nonEmpty }: LowerBoundParams<T>): z.ZodArray<T> {
-    if (nonEmpty) {
-        return array.min(1, formErrors.required)
-    }
-    return min === undefined ? array : array.min(min)
+    const required = nonEmpty ? array.min(1, formErrors.required) : array
+    return min === undefined ? required : required.min(min)
 }
 
 function rejectOversizedOrFirstInvalid({ value, ctx, element, max, scanned }: RejectParams): unknown {

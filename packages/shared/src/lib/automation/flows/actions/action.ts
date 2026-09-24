@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import { BoundedArray, STEP_NAME_REGEX } from '../../../core/common'
+import { formErrors } from '../../../form-errors'
 import { VersionType } from '../../qadams'
 import { PropertySettings } from '../properties'
 import { SampleDataSetting } from '../sample-data'
 
 // Caps on a router's arrays, sized to bound what a request can make the schema parse (see
 // BoundedArray), not to shape flows — each is far above a real router.
-export const MAX_ROUTER_BRANCHES = 1000
+const MAX_ROUTER_BRANCHES = 1000
 export const MAX_BRANCH_CONDITION_GROUPS = 1000
 export const MAX_CONDITIONS_PER_GROUP = 1000
 
@@ -249,12 +250,20 @@ function buildBranchConditionValid(addMinLength: boolean) {
 // such a branch can never run and its children are unreachable — publishing one is always an
 // authoring mistake, and accepting it is what let #429 ship routers whose every real branch was
 // dead code.
+//
+// The validating variant (`addMinLength`) is not a BoundedArray: it never parses a request
+// body — requests use the non-validating one — and it backs the builder's router form, which
+// marks every invalid branch, so it must report every issue rather than stop at the first.
 function buildBranchConditionGroups(addMinLength: boolean) {
-    return BoundedArray({
-        element: BoundedArray({ element: buildBranchConditionValid(addMinLength), max: MAX_CONDITIONS_PER_GROUP, nonEmpty: addMinLength }),
-        max: MAX_BRANCH_CONDITION_GROUPS,
-        nonEmpty: addMinLength,
-    })
+    if (!addMinLength) {
+        return BoundedArray({
+            element: BoundedArray({ element: buildBranchConditionValid(false), max: MAX_CONDITIONS_PER_GROUP }),
+            max: MAX_BRANCH_CONDITION_GROUPS,
+        })
+    }
+    return z.array(
+        z.array(buildBranchConditionValid(true)).min(1, formErrors.required).max(MAX_CONDITIONS_PER_GROUP),
+    ).min(1, formErrors.required).max(MAX_BRANCH_CONDITION_GROUPS)
 }
 
 export const ValidBranchCondition = buildBranchConditionValid(true)
@@ -280,21 +289,23 @@ export type BranchSingleValueCondition = z.infer<
 >
 
 
-export const RouterBranchesSchema = (addMinLength: boolean) =>
-    BoundedArray({
-        element: z.discriminatedUnion('branchType', [
-            z.object({
-                conditions: buildBranchConditionGroups(addMinLength),
-                branchType: z.literal(BranchExecutionType.CONDITION),
-                branchName: z.string(),
-            }),
-            z.object({
-                branchType: z.literal(BranchExecutionType.FALLBACK),
-                branchName: z.string(),
-            }),
-        ]),
-        max: MAX_ROUTER_BRANCHES,
-    })
+// Bounded like buildBranchConditionGroups, and for the same reason only when not validating.
+export const RouterBranchesSchema = (addMinLength: boolean) => {
+    const branch = z.discriminatedUnion('branchType', [
+        z.object({
+            conditions: buildBranchConditionGroups(addMinLength),
+            branchType: z.literal(BranchExecutionType.CONDITION),
+            branchName: z.string(),
+        }),
+        z.object({
+            branchType: z.literal(BranchExecutionType.FALLBACK),
+            branchName: z.string(),
+        }),
+    ])
+    return addMinLength
+        ? z.array(branch).max(MAX_ROUTER_BRANCHES)
+        : BoundedArray({ element: branch, max: MAX_ROUTER_BRANCHES })
+}
 
 export const RouterActionSettings = z.object({
     ...commonActionSettings,

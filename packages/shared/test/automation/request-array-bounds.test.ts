@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BulkCancelFlowRequestBody } from '../../src/lib/automation/flow-run/test-flow-run-request'
+import { BranchExecutionType, RouterBranchesSchema } from '../../src/lib/automation/flows/actions/action'
 import { FlowOperationRequest, FlowOperationType } from '../../src/lib/automation/flows/operations'
 import { CreateFieldRequest } from '../../src/lib/automation/tables/dto/fields.dto'
 import { UpdateRecordRequest } from '../../src/lib/automation/tables/dto/records.dto'
@@ -64,6 +65,21 @@ describe('request array bounds', () => {
         })
 
         expect(result.error?.issues).toHaveLength(1)
+    })
+
+    it('reports every invalid branch in the validating router schema the builder form uses', () => {
+        const branch = { branchType: BranchExecutionType.CONDITION, branchName: 'b', conditions: [] }
+
+        const result = RouterBranchesSchema(true).safeParse([branch, branch])
+
+        expect(result.error?.issues.map((issue) => issue.path[0])).toEqual([0, 1])
+    })
+
+    it('applies both min and nonEmpty', () => {
+        const schema = BoundedArray({ element: z.number(), min: 2, max: 3, nonEmpty: true })
+
+        expect(schema.safeParse([1]).success).toBe(false)
+        expect(schema.safeParse([1, 2]).success).toBe(true)
     })
 
     it('supports an exact length and documents it', () => {

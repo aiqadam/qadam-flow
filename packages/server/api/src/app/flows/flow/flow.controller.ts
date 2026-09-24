@@ -1,6 +1,7 @@
 import { ApId, ApplicationEventName,
     CountFlowsRequest,
     CreateFlowRequest,
+    ErrorCode,
     FlowOperationRequest,
     FlowOperationType,
     FlowStatus,
@@ -13,6 +14,7 @@ import { ApId, ApplicationEventName,
     Permission,
     PopulatedFlow,
     PrincipalType,
+    QadamFlowError,
     SeekPage,
     SERVICE_KEY_SECURITY_OPENAPI,
     SharedTemplate,
@@ -75,7 +77,9 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
         // An imported flow may be on an older schema version, so it is migrated before the
         // schema sees it — which also means before the body has been validated at all.
         preValidation: async (request) => {
-            if (request.body?.type !== FlowOperationType.IMPORT_FLOW) {
+            // An id the params schema will reject must not reach the authorization lookup
+            // first: leave it for validation to answer with a 400.
+            if (request.body?.type !== FlowOperationType.IMPORT_FLOW || !ApId.safeParse(request.params.id).success) {
                 return
             }
             // The migration reads the database, and this hook runs ahead of preHandler's
@@ -92,11 +96,19 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
                 notes: body.request.notes ?? [],
                 valid: false,
             }))
-            // A body the migration cannot walk is left as sent, for the schema to reject with
-            // a 400 rather than this hook failing the request with a 500.
+            // Never fall through with the body as sent: the current schema is loose where the
+            // migrations work (step inputs, qadam names), so an old flow can pass validation
+            // unmigrated, and the import would then store it without any migration applied.
             if (isNil(migratedFlowTemplate)) {
-                request.log.warn({ err: error }, '[flowController] imported flow could not be migrated before validation')
-                return
+                request.log.warn({ err: error }, '[flowController] imported flow could not be migrated')
+                throw new QadamFlowError({
+                    code: ErrorCode.FLOW_MIGRATION_FAILED,
+                    params: {
+                        // An imported template has no flow version of its own yet.
+                        flowVersionId: '',
+                        message: 'The imported flow could not be migrated to the current schema version',
+                    },
+                })
             }
             body.request = {
                 ...body.request,
