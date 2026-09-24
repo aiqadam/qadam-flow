@@ -164,8 +164,9 @@ function validateRouter(settings: Record<string, unknown> | undefined): McpToolR
         }
     }
     // `settings` comes straight from the tool call, and the validating schema reports every
-    // invalid branch; bound the shape first with the request-side schema, which stops at the
-    // first bad branch, so a huge branch list costs one element's worth of issues.
+    // invalid branch; bound the shape first with the request-side schema, which caps the branch
+    // count and stops at the first malformed branch. Well-formed but invalid branches still
+    // cost an issue each — at most MAX_ROUTER_BRANCHES of them — so the list is capped too.
     const shape = RouterSettingsShape.safeParse(settings)
     const result = shape.success ? RouterActionSettingsWithValidation.safeParse(settings) : shape
     if (result.success) {
@@ -174,7 +175,7 @@ function validateRouter(settings: Record<string, unknown> | undefined): McpToolR
             structuredContent: { valid: true, errors: [] },
         }
     }
-    const errors = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`)
+    const errors = result.error.issues.slice(0, MAX_REPORTED_ISSUES).map(i => `${i.path.join('.')}: ${i.message}`)
     return {
         content: [{
             type: 'text',
