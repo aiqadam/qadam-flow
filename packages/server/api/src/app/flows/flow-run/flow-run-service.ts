@@ -946,7 +946,7 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
             // is logged instead of replacing it, and the join's timeout still bounds the slot.
             const { error: releaseError } = await tryCatch(() => waitpointService(log).releaseSlotClaim({ slotId: parentSlotId, projectId: params.projectId, childRunId: id }))
             if (releaseError) {
-                log.error({ error: releaseError, parentRunId }, '[flowRunService#queueOrCreateInstantly] Could not release the join slot claim of a run that was not created')
+                log.error({ err: releaseError, parentRunId }, '[flowRunService#queueOrCreateInstantly] Could not release the join slot claim of a run that was not created')
             }
         }
         throw error
