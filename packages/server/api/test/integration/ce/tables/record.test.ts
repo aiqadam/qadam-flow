@@ -1507,8 +1507,6 @@ describe('Record API', () => {
             expect(Object.keys(response?.json().cells).sort()).toEqual([name.id, phone.id].sort())
         })
 
-        // The same record goes to the ON_UPDATE_RECORD webhooks. A flow listening on
-        // the table must not start receiving whatever subset the writing step read back.
         // Every write route hands its records to the webhooks after replying. A flow
         // listening on the table must not start receiving whatever subset the writing
         // step read back.
