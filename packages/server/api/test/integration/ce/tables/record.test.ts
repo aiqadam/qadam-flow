@@ -1475,6 +1475,26 @@ describe('Record API', () => {
             expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
+        // A JSON body is bounded only by the body parser, so the schema bounds both the
+        // count and each element — unknown ids are echoed into the 409's message.
+        it.each([
+            ['an element that is not an id', () => ['x'.repeat(10_000)]],
+            ['more ids than any projection needs', () => Array.from({ length: 1001 }, () => apId())],
+        ])('update rejects %s at the schema', async (_label, fieldIds) => {
+            const ctx = await setup()
+            const { table, phone, record } = await createPersonRecord(ctx)
+
+            const response = await ctx.post(`/v1/records/${record.id}`, {
+                tableId: table.id,
+                cells: [{ fieldId: phone.id, value: '+998911111111' }],
+                fieldIds: fieldIds(),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            const stored = await ctx.get(`/v1/records/${record.id}`)
+            expect(stored?.json().cells[phone.id].value).toBe('+998900000000')
+        })
+
         it('update without fieldIds returns every column, as before', async () => {
             const ctx = await setup()
             const { table, name, phone, record } = await createPersonRecord(ctx)
@@ -1489,25 +1509,36 @@ describe('Record API', () => {
 
         // The same record goes to the ON_UPDATE_RECORD webhooks. A flow listening on
         // the table must not start receiving whatever subset the writing step read back.
-        it('hands the webhooks the whole record while the response is projected', async () => {
+        // Every write route hands its records to the webhooks after replying. A flow
+        // listening on the table must not start receiving whatever subset the writing
+        // step read back.
+        it.each([
+            ['update', ({ table, record, name, phone }: PersonRecord) => ({ url: `/v1/records/${record.id}`, body: { tableId: table.id, cells: [{ fieldId: phone.id, value: '+998911111111' }], fieldIds: [name.id] } })],
+            ['batch update', ({ table, record, name, phone }: PersonRecord) => ({ url: '/v1/records/batch', body: { tableId: table.id, records: [{ id: record.id, cells: [{ fieldId: phone.id, value: '+998911111111' }] }], fieldIds: [name.id] } })],
+            ['upsert', ({ table, name, phone }: PersonRecord) => ({ url: '/v1/records/upsert', body: { tableId: table.id, keyFieldIds: [name.id], records: [[{ fieldId: name.id, value: 'Ada' }, { fieldId: phone.id, value: '+998911111111' }]], fieldIds: [name.id] } })],
+        ])('%s hands the webhooks the whole record while the response is projected', async (_route, buildRequest) => {
             const ctx = await setup()
-            const { table, name, phone, record } = await createPersonRecord(ctx)
+            const person = await createPersonRecord(ctx)
+            const { table, name, phone } = person
             const now = new Date().toISOString()
-            vi.spyOn(tableService, 'getWebhooks').mockResolvedValue([{ id: apId(), created: now, updated: now, projectId: ctx.project.id, tableId: table.id, events: [TableWebhookEventType.UPDATE_RECORD], flowId: apId() }])
+            vi.spyOn(tableService, 'getWebhooks').mockResolvedValue([{ id: apId(), created: now, updated: now, projectId: ctx.project.id, tableId: table.id, events: [TableWebhookEventType.RECORD_UPDATED], flowId: apId() }])
             const triggerWebhooks = vi.spyOn(recordService, 'triggerWebhooks').mockResolvedValue(undefined)
 
             try {
-                const response = await ctx.post(`/v1/records/${record.id}`, {
-                    tableId: table.id,
-                    cells: [{ fieldId: phone.id, value: '+998911111111' }],
-                    fieldIds: [name.id],
-                })
+                const { url, body } = buildRequest(person)
+                const response = await ctx.post(url, body)
 
-                expect(Object.keys(response?.json().cells)).toEqual([name.id])
+                expect(response?.statusCode).toBe(StatusCodes.OK)
+                expect(JSON.stringify(response?.json())).not.toContain(phone.name)
                 await vi.waitFor(() => expect(triggerWebhooks).toHaveBeenCalledTimes(1))
-                const sent = triggerWebhooks.mock.calls[0][0].data as { record: { cells: Record<string, { value: string }> } }
-                expect(Object.keys(sent.record.cells).sort()).toEqual([name.id, phone.id].sort())
-                expect(sent.record.cells[phone.id].value).toBe('+998911111111')
+                expect(triggerWebhooks.mock.calls[0][0].data).toMatchObject({
+                    record: {
+                        cells: {
+                            [name.id]: { fieldName: name.name, value: 'Ada' },
+                            [phone.id]: { fieldName: phone.name, value: '+998911111111' },
+                        },
+                    },
+                })
             }
             finally {
                 vi.restoreAllMocks()
@@ -1730,7 +1761,7 @@ async function createTableWithTypedField({ ctx, type }: { ctx: TestContext, type
     return { table, field }
 }
 
-async function createPersonRecord(ctx: TestContext) {
+async function createPersonRecord(ctx: TestContext): Promise<PersonRecord> {
     const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
     const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
     phone.type = FieldType.TEXT
@@ -1752,4 +1783,11 @@ async function createRecordWithCell({ ctx, tableId, fieldId, value }: { ctx: Tes
     cell.value = value
     await db.save('cell', cell)
     return record
+}
+
+type PersonRecord = {
+    table: ReturnType<typeof createMockTable>
+    name: ReturnType<typeof createMockField>
+    phone: ReturnType<typeof createMockField>
+    record: ReturnType<typeof createMockRecord>
 }

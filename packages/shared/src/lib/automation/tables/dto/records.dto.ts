@@ -52,7 +52,14 @@ export const MAX_KEY_FIELDS = 200
 // column. Unlike the query-string form, a JSON body can carry `[]`, and an empty
 // projection reads as "every column" to one caller and "no columns" to another, so it is
 // rejected rather than guessed. Same declared-here-not-at-the-end exception as above.
-const writeProjection = z.array(z.string()).min(1, formErrors.required).optional()
+//
+// Bounded twice, because a query string is bounded by the header limit and a JSON body
+// only by the body parser's, which is megabytes: the count by MAX_PROJECTED_FIELDS and
+// each element by ApId, since unknown ids are echoed into the rejection message. The
+// count is not MAX_KEY_FIELDS — that one is sized to a key's width — and is well above
+// any real projection: past the table's own column count a projection names nothing new.
+const MAX_PROJECTED_FIELDS = 1000
+const writeProjection = z.array(ApId).min(1, formErrors.required).max(MAX_PROJECTED_FIELDS).optional()
 
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),

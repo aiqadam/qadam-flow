@@ -1228,8 +1228,13 @@ function resolveProjectedFields({ fieldIds, fields, tableId }: { fieldIds: strin
     if (isNil(fieldIds)) {
         return fields
     }
+    // Sets rather than `unique()` and `fields.some`: both of those are quadratic in a
+    // caller-supplied list, and this runs on the write routes too (#506), inside a
+    // transaction holding the table's key lock — a slow rejection there blocks the
+    // event loop and every writer queued on that table.
+    const known = new Set(fields.map((field) => field.id))
     const requested = new Set(fieldIds)
-    const unknownFieldIds = unique(fieldIds.filter((fieldId) => !fields.some((field) => field.id === fieldId)))
+    const unknownFieldIds = [...requested].filter((fieldId) => !known.has(fieldId))
     if (unknownFieldIds.length > 0) {
         // Bounded for the same reason its sibling in record-filter.ts is: the
         // whole list is caller-supplied and this message rides on Error.message
