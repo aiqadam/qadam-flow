@@ -4,6 +4,7 @@
  */
 import { apId, CreateWaitpointResponse, ExecutionType, FlowRun, FlowRunStatus, FlowVersionState, JoinFailurePolicy, PrincipalType, RunEnvironment, StreamStepProgress } from '@aiqadam/shared'
 import { FastifyInstance, LightMyRequestResponse } from 'fastify'
+import { Repository } from 'typeorm'
 import { flowRunService } from '../../../../../src/app/flows/flow-run/flow-run-service'
 import { joinWaitpointService } from '../../../../../src/app/flows/flow-run/waitpoint/join-waitpoint-service'
 import { WaitpointSlotStatus, WaitpointStatus } from '../../../../../src/app/flows/flow-run/waitpoint/waitpoint-types'
@@ -51,9 +52,29 @@ describe('Join waitpoint', () => {
             payload: { flowRunId: run.id, projectId, stepName: 'fan_out', type: 'DELAY', version: 'V1', resumeDateTime: new Date(Date.now() + 60_000).toISOString(), join: { slots: 2, failurePolicy: 'ALL_SETTLED' } },
         })
 
+        const timeoutTooLong = await createJoin({ engineToken, run, projectId, slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED, timeoutSeconds: 10 * 365 * 24 * 60 * 60 })
+
         expect(quorumTooLarge.statusCode).toBeGreaterThanOrEqual(400)
         expect(delayJoin.statusCode).toBeGreaterThanOrEqual(400)
+        expect(timeoutTooLong.statusCode).toBeGreaterThanOrEqual(400)
         expect(await db.findOneBy('waitpoint', { flowRunId: run.id })).toBeNull()
+    })
+
+    it('refuses a second pending join on the same run, but hands a step its own join again', async () => {
+        const { run, engineToken, projectId } = await setupParent()
+        const first: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()
+
+        const replay = await createJoin({ engineToken, run, projectId, slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })
+        const second = await postWaitpoint({
+            engineToken,
+            payload: { flowRunId: run.id, projectId, stepName: 'another_fan_out', type: 'WEBHOOK', version: 'V1', internal: true, join: { slots: 2, failurePolicy: 'ALL_SETTLED' } },
+        })
+
+        expect(replay.statusCode).toBe(201)
+        expect(replay.json().id).toBe(first.id)
+        expect(replay.json().slotResumeUrls).toEqual(first.slotResumeUrls)
+        expect(second.statusCode).toBeGreaterThanOrEqual(400)
+        expect(await db.find('waitpoint_slot', { flowRunId: run.id })).toHaveLength(2)
     })
 
     it('cannot be resumed through the plain waitpoint route, which every child could reach', async () => {
@@ -92,7 +113,12 @@ describe('Join waitpoint', () => {
         const { run, engineToken, projectId } = await setupParent({ status: FlowRunStatus.RUNNING })
         const join: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 20, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()
 
+        // Each answer decides from status counts; the answers themselves are read once, on completion.
+        const findBy = vi.spyOn(Repository.prototype, 'findBy')
         const responses = await Promise.all((join.slotResumeUrls ?? []).map((url, index) => answer({ url, body: { status: index % 5 === 0 ? 'error' : 'success', data: { index } } })))
+        const slotReads = findBy.mock.contexts.filter((repository) => repository instanceof Repository && repository.metadata.tableName === 'waitpoint_slot')
+        findBy.mockRestore()
+        expect(slotReads).toHaveLength(1)
 
         expect(responses.every((response) => response.json().message.includes('recorded'))).toBe(true)
         const completed = await db.findOneBy<{ status: string, resumePayload: { body: { status: string, data: { results: { status: string, data: { index: number } }[], succeeded: number, failed: number } } } }>('waitpoint', { id: join.id })

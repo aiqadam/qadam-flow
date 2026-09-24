@@ -88,25 +88,24 @@ export const joinWaitpointService = (log: FastifyBaseLogger) => ({
 })
 
 export const joinPolicy = {
-    // Decides from the slots as they stand; `expired` treats every unanswered slot as timed out.
-    decide({ join, slots, expired }: DecideParams): JoinDecision {
+    // Decides from the per-status counts alone, so an answer never has to read the other answers;
+    // `expired` treats every unanswered slot as timed out.
+    decide({ join, counts, expired }: DecideParams): JoinDecision {
+        const timedOut = counts.timedOut + (expired ? counts.pending : 0)
+        const unanswered = expired ? 0 : counts.pending
+        const outcome = decideOutcome({ join, total: counts.total, succeeded: counts.succeeded, failed: counts.failed + timedOut, unanswered })
+        return isNil(outcome) ? { done: false } : { done: true, status: outcome }
+    },
+    // The aggregate the run resumes with, in slot order; built once, when the join completes.
+    buildResult({ slots, expired }: BuildResultParams): JoinResult {
         const ordered = [...slots].sort((a, b) => a.slotIndex - b.slotIndex)
-        const succeeded = ordered.filter((slot) => slot.status === WaitpointSlotStatus.SUCCEEDED).length
-        const failed = ordered.filter((slot) => slot.status === WaitpointSlotStatus.FAILED).length
-        const pending = ordered.filter((slot) => slot.status === WaitpointSlotStatus.PENDING).length
-        const timedOut = ordered.filter((slot) => slot.status === WaitpointSlotStatus.TIMED_OUT).length + (expired ? pending : 0)
-        const unanswered = expired ? 0 : pending
-        const outcome = decideOutcome({ join, total: ordered.length, succeeded, failed: failed + timedOut, unanswered })
-        if (isNil(outcome)) {
-            return { done: false }
+        const results = ordered.map((slot) => toSlotResult({ slot, expired }))
+        return {
+            results,
+            succeeded: results.filter((result) => result.status === 'success').length,
+            failed: results.filter((result) => result.status === 'error').length,
+            timedOut: results.filter((result) => result.status === 'timeout').length,
         }
-        const result: JoinResult = {
-            results: ordered.map((slot) => toSlotResult({ slot, expired })),
-            succeeded,
-            failed,
-            timedOut,
-        }
-        return { done: true, body: { status: outcome, data: result } }
     },
 }
 
@@ -157,8 +156,8 @@ async function lockPendingJoin({ entityManager, flowRunId, waitpointId }: LockPe
 }
 
 async function completeIfDecided({ entityManager, waitpoint, join, expired }: CompleteIfDecidedParams): Promise<Waitpoint | null> {
-    const slots = await waitpointSlotRepo(entityManager).findBy({ waitpointId: waitpoint.id, projectId: waitpoint.projectId })
-    const decision = joinPolicy.decide({ join, slots, expired })
+    const counts = await countSlots({ entityManager, waitpoint })
+    const decision = joinPolicy.decide({ join, counts, expired })
     if (!decision.done) {
         return null
     }
@@ -168,10 +167,31 @@ async function completeIfDecided({ entityManager, waitpoint, join, expired }: Co
             { status: WaitpointSlotStatus.TIMED_OUT },
         )
     }
-    const resumePayload: WaitpointResumePayload = { body: decision.body, headers: {}, queryParams: {} }
+    // The only read of the answers themselves: up to 500 of them, each up to 64 KB, once per join.
+    const slots = await waitpointSlotRepo(entityManager).findBy({ waitpointId: waitpoint.id, projectId: waitpoint.projectId })
+    const body = { status: decision.status, data: joinPolicy.buildResult({ slots, expired }) }
+    const resumePayload: WaitpointResumePayload = { body, headers: {}, queryParams: {} }
     const completed: Waitpoint = { ...waitpoint, status: WaitpointStatus.COMPLETED, resumePayload }
     await waitpointRepo(entityManager).save(completed)
     return completed
+}
+
+async function countSlots({ entityManager, waitpoint }: { entityManager: EntityManager, waitpoint: Waitpoint }): Promise<SlotCounts> {
+    const rows: { status: string, count: string }[] = await waitpointSlotRepo(entityManager)
+        .createQueryBuilder('slot')
+        .select('slot.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where({ waitpointId: waitpoint.id, projectId: waitpoint.projectId })
+        .groupBy('slot.status')
+        .getRawMany()
+    const countOf = (status: WaitpointSlotStatus): number => Number(rows.find((row) => row.status === status)?.count ?? 0)
+    const counts = {
+        succeeded: countOf(WaitpointSlotStatus.SUCCEEDED),
+        failed: countOf(WaitpointSlotStatus.FAILED),
+        timedOut: countOf(WaitpointSlotStatus.TIMED_OUT),
+        pending: countOf(WaitpointSlotStatus.PENDING),
+    }
+    return { ...counts, total: counts.succeeded + counts.failed + counts.timedOut + counts.pending }
 }
 
 // The run may already be PAUSED (resume now) or still RUNNING (the waitpoint is COMPLETED, and the
@@ -237,8 +257,21 @@ type ExpireParams = {
 
 type DecideParams = {
     join: JoinWaitpointConfig
+    counts: SlotCounts
+    expired: boolean
+}
+
+type BuildResultParams = {
     slots: WaitpointSlot[]
     expired: boolean
+}
+
+type SlotCounts = {
+    succeeded: number
+    failed: number
+    timedOut: number
+    pending: number
+    total: number
 }
 
 type DecideOutcomeParams = {
@@ -251,7 +284,7 @@ type DecideOutcomeParams = {
 
 type JoinDecision =
     | { done: false }
-    | { done: true, body: { status: 'success' | 'error', data: JoinResult } }
+    | { done: true, status: 'success' | 'error' }
 
 type LockPendingJoinParams = {
     entityManager: EntityManager

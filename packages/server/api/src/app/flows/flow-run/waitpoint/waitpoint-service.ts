@@ -41,6 +41,9 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         // A join's slots are inserted with their waitpoint, so no child can ever see a waitpoint whose
         // slots are not there yet.
         const { waitpoint, slots } = await transaction(async (entityManager) => {
+            if (!isNil(params.join)) {
+                await assertNoOtherPendingJoin({ entityManager, params })
+            }
             await insertWaitpointRow({ entityManager, id, params })
             const current = await waitpointRepo(entityManager).findOneByOrFail({ flowRunId: params.flowRunId, projectId: params.projectId, stepName: params.stepName })
             if (isNil(params.join)) {
@@ -217,6 +220,20 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         return waitpointRepo().exists({ where: { id, flowRunId, join: Not(IsNull()) } })
     },
 })
+
+// A run waits on one join at a time — it pauses on it — so a second PENDING one under another step
+// name is not a pause but up to 500 more slot rows; the step's own replay reuses its waitpoint.
+async function assertNoOtherPendingJoin({ entityManager, params }: { entityManager: EntityManager, params: CreateForPauseParams }): Promise<void> {
+    const other = await waitpointRepo(entityManager).exists({
+        where: { flowRunId: params.flowRunId, projectId: params.projectId, status: WaitpointStatus.PENDING, join: Not(IsNull()), stepName: Not(params.stepName) },
+    })
+    if (other) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: 'This run is already waiting on another join waitpoint' },
+        })
+    }
+}
 
 async function insertWaitpointRow({ entityManager, id, params }: InsertWaitpointRowParams): Promise<void> {
     await waitpointRepo(entityManager)

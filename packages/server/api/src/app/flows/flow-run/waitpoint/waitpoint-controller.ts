@@ -3,6 +3,8 @@ import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { securityAccess } from '../../../core/security/authorization/fastify-security'
 import { domainHelper } from '../../../helper/domain-helper'
+import { system } from '../../../helper/system/system'
+import { AppSystemProp } from '../../../helper/system/system-props'
 import { waitpointService } from './waitpoint-service'
 
 export const waitpointController: FastifyPluginAsyncZod = async (app) => {
@@ -61,11 +63,14 @@ export const waitpointController: FastifyPluginAsyncZod = async (app) => {
 
 function assertValidJoin({ join, type }: { join: JoinWaitpointConfig, type: CreateWaitpointRequest['type'] }): void {
     const quorumFits = join.failurePolicy !== JoinFailurePolicy.enum.QUORUM || (!isNil(join.quorum) && join.quorum <= join.slots)
-    if (type !== PauseType.WEBHOOK || !quorumFits) {
+    // The same ceiling a DELAY pause has: a paused run is reaped past it anyway.
+    const maxTimeoutSeconds = system.getNumberOrThrow(AppSystemProp.PAUSED_FLOW_TIMEOUT_DAYS) * 24 * 60 * 60
+    const timeoutFits = isNil(join.timeoutSeconds) || join.timeoutSeconds <= maxTimeoutSeconds
+    if (type !== PauseType.WEBHOOK || !quorumFits || !timeoutFits) {
         throw new QadamFlowError({
             code: ErrorCode.VALIDATION,
             params: {
-                message: 'A join waitpoint must be a WEBHOOK waitpoint, and a QUORUM join needs a quorum no larger than its slots',
+                message: 'A join waitpoint must be a WEBHOOK waitpoint, a QUORUM join needs a quorum no larger than its slots, and its timeout cannot exceed AP_PAUSED_FLOW_TIMEOUT_DAYS',
             },
         })
     }

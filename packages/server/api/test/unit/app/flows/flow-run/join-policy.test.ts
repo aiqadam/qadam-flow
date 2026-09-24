@@ -3,72 +3,63 @@ import { describe, expect, it } from 'vitest'
 import { joinPolicy } from '../../../../../src/app/flows/flow-run/waitpoint/join-waitpoint-service'
 import { WaitpointSlot, WaitpointSlotStatus } from '../../../../../src/app/flows/flow-run/waitpoint/waitpoint-types'
 
-// #374: when a join waitpoint stops waiting, and what it resumes its run with.
+// #374: when a join waitpoint stops waiting, decided from counts alone, and what it resumes with.
 describe('joinPolicy.decide', () => {
     it('ALL_SETTLED waits for every slot, then succeeds whatever the answers', () => {
         const join = { slots: 3, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED }
-        expect(joinPolicy.decide({ join, slots: slotsOf(['S', 'F', 'P']), expired: false })).toEqual({ done: false })
-
-        const decision = joinPolicy.decide({ join, slots: slotsOf(['S', 'F', 'S']), expired: false })
-        expect(decision).toEqual({
-            done: true,
-            body: {
-                status: 'success',
-                data: {
-                    results: [
-                        { status: 'success', data: { index: 0 } },
-                        { status: 'error', data: { index: 1 } },
-                        { status: 'success', data: { index: 2 } },
-                    ],
-                    succeeded: 2,
-                    failed: 1,
-                    timedOut: 0,
-                },
-            },
-        })
+        expect(joinPolicy.decide({ join, counts: countsOf('SFP'), expired: false })).toEqual({ done: false })
+        expect(joinPolicy.decide({ join, counts: countsOf('SFS'), expired: false })).toEqual({ done: true, status: 'success' })
     })
 
-    it('FAIL_FAST decides at the first failure and reports unanswered slots as pending', () => {
+    it('FAIL_FAST decides at the first failure', () => {
         const join = { slots: 3, failurePolicy: JoinFailurePolicy.enum.FAIL_FAST }
-        expect(joinPolicy.decide({ join, slots: slotsOf(['S', 'P', 'P']), expired: false })).toEqual({ done: false })
-
-        const decision = joinPolicy.decide({ join, slots: slotsOf(['S', 'F', 'P']), expired: false })
-        expect(decision.done && decision.body.status).toBe('error')
-        expect(decision.done && decision.body.data.results.map((result) => result.status)).toEqual(['success', 'error', 'pending'])
+        expect(joinPolicy.decide({ join, counts: countsOf('SPP'), expired: false })).toEqual({ done: false })
+        expect(joinPolicy.decide({ join, counts: countsOf('SFP'), expired: false })).toEqual({ done: true, status: 'error' })
+        expect(joinPolicy.decide({ join, counts: countsOf('SSS'), expired: false })).toEqual({ done: true, status: 'success' })
     })
 
     it('QUORUM succeeds as soon as enough slots succeeded, and fails once the quorum is out of reach', () => {
         const join = { slots: 4, failurePolicy: JoinFailurePolicy.enum.QUORUM, quorum: 2 }
-        expect(joinPolicy.decide({ join, slots: slotsOf(['S', 'F', 'P', 'P']), expired: false })).toEqual({ done: false })
-
-        const reached = joinPolicy.decide({ join, slots: slotsOf(['S', 'F', 'S', 'P']), expired: false })
-        expect(reached.done && reached.body.status).toBe('success')
-
-        const outOfReach = joinPolicy.decide({ join, slots: slotsOf(['F', 'F', 'S', 'F']), expired: false })
-        expect(outOfReach.done && outOfReach.body.status).toBe('error')
+        expect(joinPolicy.decide({ join, counts: countsOf('SFPP'), expired: false })).toEqual({ done: false })
+        expect(joinPolicy.decide({ join, counts: countsOf('SFSP'), expired: false })).toEqual({ done: true, status: 'success' })
+        expect(joinPolicy.decide({ join, counts: countsOf('FFSF'), expired: false })).toEqual({ done: true, status: 'error' })
     })
 
-    it('on expiry treats every unanswered slot as timed out, and a failure policy counts it as a failure', () => {
-        const settled = joinPolicy.decide({ join: { slots: 3, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED }, slots: slotsOf(['S', 'P', 'P']), expired: true })
-        expect(settled.done && settled.body).toMatchObject({ status: 'success', data: { succeeded: 1, failed: 0, timedOut: 2 } })
-        expect(settled.done && settled.body.data.results.map((result) => result.status)).toEqual(['success', 'timeout', 'timeout'])
-
-        const failFast = joinPolicy.decide({ join: { slots: 2, failurePolicy: JoinFailurePolicy.enum.FAIL_FAST }, slots: slotsOf(['S', 'P']), expired: true })
-        expect(failFast.done && failFast.body.status).toBe('error')
-    })
-
-    it('orders results by slot, not by the order answers were stored', () => {
-        const slots = slotsOf(['S', 'F']).reverse()
-        const decision = joinPolicy.decide({ join: { slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED }, slots, expired: false })
-        expect(decision.done && decision.body.data.results).toEqual([
-            { status: 'success', data: { index: 0 } },
-            { status: 'error', data: { index: 1 } },
-        ])
+    it('on expiry treats every unanswered slot as timed out, which a failure policy counts as a failure', () => {
+        expect(joinPolicy.decide({ join: { slots: 3, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED }, counts: countsOf('SPP'), expired: true })).toEqual({ done: true, status: 'success' })
+        expect(joinPolicy.decide({ join: { slots: 2, failurePolicy: JoinFailurePolicy.enum.FAIL_FAST }, counts: countsOf('SP'), expired: true })).toEqual({ done: true, status: 'error' })
     })
 })
 
-function slotsOf(statuses: ('S' | 'F' | 'P')[]): WaitpointSlot[] {
-    return statuses.map((status, slotIndex) => ({
+describe('joinPolicy.buildResult', () => {
+    it('reports every answer in slot order, whatever order the rows came back in', () => {
+        const result = joinPolicy.buildResult({ slots: slotsOf('SFP').reverse(), expired: false })
+        expect(result).toEqual({
+            results: [
+                { status: 'success', data: { index: 0 } },
+                { status: 'error', data: { index: 1 } },
+                { status: 'pending', data: null },
+            ],
+            succeeded: 1,
+            failed: 1,
+            timedOut: 0,
+        })
+    })
+
+    it('reports unanswered slots as timed out on expiry', () => {
+        const result = joinPolicy.buildResult({ slots: slotsOf('SPT'), expired: true })
+        expect(result.results.map((entry) => entry.status)).toEqual(['success', 'timeout', 'timeout'])
+        expect(result.timedOut).toBe(2)
+    })
+})
+
+function countsOf(statuses: string): { succeeded: number, failed: number, timedOut: number, pending: number, total: number } {
+    const count = (letter: string): number => [...statuses].filter((status) => status === letter).length
+    return { succeeded: count('S'), failed: count('F'), timedOut: count('T'), pending: count('P'), total: statuses.length }
+}
+
+function slotsOf(statuses: string): WaitpointSlot[] {
+    return [...statuses].map((status, slotIndex) => ({
         id: `slot-${slotIndex}`,
         created: '2026-01-01T00:00:00.000Z',
         updated: '2026-01-01T00:00:00.000Z',
@@ -77,13 +68,14 @@ function slotsOf(statuses: ('S' | 'F' | 'P')[]): WaitpointSlot[] {
         projectId: 'project',
         slotIndex,
         status: STATUS[status],
-        payload: status === 'P' ? null : JSON.stringify({ index: slotIndex }),
+        payload: status === 'S' || status === 'F' ? JSON.stringify({ index: slotIndex }) : null,
         childRunId: null,
     }))
 }
 
-const STATUS = {
+const STATUS: Record<string, WaitpointSlotStatus> = {
     S: WaitpointSlotStatus.SUCCEEDED,
     F: WaitpointSlotStatus.FAILED,
     P: WaitpointSlotStatus.PENDING,
+    T: WaitpointSlotStatus.TIMED_OUT,
 }
