@@ -71,8 +71,9 @@ export const migrateV18TablesFieldIds: Migration = {
         // IMPORT_FLOW path the filter never runs at all: `migrateFlowVersionTemplate` hardcodes
         // `flowId: ''`, so the resolve below always yields `undefined` and the degrade is the
         // entire defence. That is the path this is most needed on — `flow.controller.ts` invokes
-        // it from `preValidation`, which runs BEFORE the auth middleware registered in `app.ts`,
-        // so before this change an unauthenticated request reached an unfiltered field query.
+        // it from `preValidation`, which runs after authentication but BEFORE authorization, so
+        // any authenticated caller of any project reaches it; before this change that caller
+        // reached an unfiltered field query.
         //
         // An undeterminable project therefore resolves NOTHING rather than failing: the migration
         // still runs and still pins `qadamVersion` below, but every `field.id` is left exactly as
