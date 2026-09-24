@@ -142,6 +142,52 @@ describe('Request validation', () => {
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
     })
+
+    describe('flow operations', () => {
+        it('does not run the flow import migration for a principal outside the flow\'s project', async () => {
+            const owner = await createTestContext(app!)
+            const outsider = await createTestContext(app!)
+            const flow = createMockFlow({ projectId: owner.project.id })
+            await db.save('flow', flow)
+            await db.save('flow_version', createMockFlowVersion({ flowId: flow.id }))
+
+            const response = await outsider.post(`/v1/flows/${flow.id}`, {
+                type: FlowOperationType.IMPORT_FLOW,
+                request: { displayName: 'x', schemaVersion: '1', trigger: 'not a trigger' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('answers 400, not 500, when an imported flow cannot be migrated', async () => {
+            const ctx = await createTestContext(app!)
+            const flow = createMockFlow({ projectId: ctx.project.id })
+            await db.save('flow', flow)
+            await db.save('flow_version', createMockFlowVersion({ flowId: flow.id }))
+
+            const response = await ctx.post(`/v1/flows/${flow.id}`, {
+                type: FlowOperationType.IMPORT_FLOW,
+                request: { displayName: 'x', schemaVersion: '1', trigger: 'not a trigger' },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('rejects an unknown operation type with one issue', async () => {
+            const ctx = await createTestContext(app!)
+            const flow = createMockFlow({ projectId: ctx.project.id })
+            await db.save('flow', flow)
+            await db.save('flow_version', createMockFlowVersion({ flowId: flow.id }))
+
+            const response = await ctx.post(`/v1/flows/${flow.id}`, {
+                type: 'NOT_AN_OPERATION',
+                request: { names: Array(10_000).fill(1) },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            expect(response?.body.length).toBeLessThan(1024)
+        })
+    })
 })
 
 // Before the cells array was bounded, this many invalid cells in one nested row made zod

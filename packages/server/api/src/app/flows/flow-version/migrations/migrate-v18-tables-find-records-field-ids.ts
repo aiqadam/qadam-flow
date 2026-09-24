@@ -71,9 +71,9 @@ export const migrateV18TablesFieldIds: Migration = {
         // IMPORT_FLOW path the filter never runs at all: `migrateFlowVersionTemplate` hardcodes
         // `flowId: ''`, so the resolve below always yields `undefined` and the degrade is the
         // entire defence. That is the path this is most needed on — `flow.controller.ts` invokes
-        // it from `preValidation`, which runs after authentication but BEFORE authorization, so
-        // any authenticated caller of any project reaches it; before this change that caller
-        // reached an unfiltered field query.
+        // it from `preValidation`, before the body is validated; before this change an
+        // unauthenticated request reached an unfiltered field query there. The hook now
+        // authorizes first, so only a member of the flow's project gets this far.
         //
         // An undeterminable project therefore resolves NOTHING rather than failing: the migration
         // still runs and still pins `qadamVersion` below, but every `field.id` is left exactly as
@@ -81,9 +81,10 @@ export const migrateV18TablesFieldIds: Migration = {
         // an ordinary template import. The visible cost, worth knowing: a schema-18 flow JSON
         // re-imported into the project that does own those fields keeps its raw ids and is stamped
         // past this migration, because the chain never re-enters a migration it has already run.
-        // Fixing that means giving `migrateFlowVersionTemplate` a trustworthy project, which means
-        // moving it out of `preValidation` where `request.projectId` is not yet populated — a
-        // larger change than this one, and not a regression in isolation terms.
+        // Fixing that means giving `migrateFlowVersionTemplate` a trustworthy project. The hook
+        // now authorizes before migrating, so `request.projectId` is populated there; what is
+        // left is threading it through the migration chain — a larger change than this one, and
+        // not a regression in isolation terms.
         const projectId = await flowMigrationUtil.resolveProjectId({ flowId: flowVersion.flowId, flowVersionId: flowVersion.id, log: system.globalLogger() })
         const fields = isNil(projectId)
             ? []

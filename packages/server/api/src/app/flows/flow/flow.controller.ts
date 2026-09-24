@@ -8,6 +8,7 @@ import { ApId, ApplicationEventName,
     FlowTrigger,
     GetFlowQueryParamsRequest,
     GetFlowTemplateRequestQuery,
+    isNil,
     ListFlowsRequest,
     Permission,
     PopulatedFlow,
@@ -15,6 +16,7 @@ import { ApId, ApplicationEventName,
     SeekPage,
     SERVICE_KEY_SECURITY_OPENAPI,
     SharedTemplate,
+    tryCatch,
 } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
@@ -23,6 +25,7 @@ import { authenticationUtils } from '../../authentication/authentication-utils'
 import { entitiesMustBeOwnedByCurrentProject } from '../../authentication/authorization'
 import { ProjectResourceType } from '../../core/security/authorization/common'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
+import { authorizationMiddleware } from '../../core/security/v2/authz/authorization-middleware'
 import { applicationEvents } from '../../helper/application-events'
 import { userService } from '../../user/user-service'
 import { migrateFlowVersionTemplate } from '../flow-version/migrations'
@@ -69,23 +72,38 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
                 id: ApId,
             }),
         },
+        // An imported flow may be on an older schema version, so it is migrated before the
+        // schema sees it — which also means before the body has been validated at all.
         preValidation: async (request) => {
-            if (request.body?.type === FlowOperationType.IMPORT_FLOW) {
-                const migratedFlowTemplate = await migrateFlowVersionTemplate({
-                    displayName: request.body.request.displayName,
-                    trigger: request.body.request.trigger,
-                    //because the target for the first migraiton is undefined not null
-                    schemaVersion: request.body.request.schemaVersion ?? undefined,
-                    notes: request.body.request.notes ?? [],
-                    valid: false,
-                })
-                request.body.request = {
-                    ...request.body.request,
-                    displayName: migratedFlowTemplate.displayName,
-                    trigger: migratedFlowTemplate.trigger,
-                    schemaVersion: migratedFlowTemplate.schemaVersion,
-                    notes: migratedFlowTemplate.notes,
-                }
+            if (request.body?.type !== FlowOperationType.IMPORT_FLOW) {
+                return
+            }
+            // The migration reads the database, and this hook runs ahead of preHandler's
+            // project-membership check; authorize first so only a member of the flow's project
+            // can make the server run it. The security config resolves the project from the
+            // route param, never the body, so this is safe before validation.
+            await authorizationMiddleware(request)
+            const { body } = request
+            const { data: migratedFlowTemplate, error } = await tryCatch(() => migrateFlowVersionTemplate({
+                displayName: body.request.displayName,
+                trigger: body.request.trigger,
+                //because the target for the first migraiton is undefined not null
+                schemaVersion: body.request.schemaVersion ?? undefined,
+                notes: body.request.notes ?? [],
+                valid: false,
+            }))
+            // A body the migration cannot walk is left as sent, for the schema to reject with
+            // a 400 rather than this hook failing the request with a 500.
+            if (isNil(migratedFlowTemplate)) {
+                request.log.warn({ err: error }, '[flowController] imported flow could not be migrated before validation')
+                return
+            }
+            body.request = {
+                ...body.request,
+                displayName: migratedFlowTemplate.displayName,
+                trigger: migratedFlowTemplate.trigger,
+                schemaVersion: migratedFlowTemplate.schemaVersion,
+                notes: migratedFlowTemplate.notes,
             }
         },
     }, async (request) => {
