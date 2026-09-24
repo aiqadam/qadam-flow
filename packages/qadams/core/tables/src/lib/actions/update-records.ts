@@ -1,5 +1,6 @@
 import { createAction, QadamAuth, Property } from '@aiqadam/qadams-framework';
 import { tablesCommon } from '../common';
+import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
 import { PopulatedRecord, UpdateRecordsRequest } from '@aiqadam/shared';
 
@@ -7,6 +8,9 @@ import { PopulatedRecord, UpdateRecordsRequest } from '@aiqadam/shared';
 // externalId is caller-settable — a column called `record_id` would otherwise shadow
 // this input and the row would be addressed by that column's value instead.
 const RECORD_ID_KEY = '__record_id';
+// Namespaced for the same reason, and per row because Values are per row: one batch
+// can reactivate some records and leave others alone (#506).
+const CLEAR_KEY = '__clear';
 
 export const updateRecords = createAction({
   name: 'tables-update-records',
@@ -18,7 +22,7 @@ export const updateRecords = createAction({
     values: Property.DynamicProperties({
       auth: QadamAuth.None(),
       displayName: 'Records',
-      description: 'The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.',
+      description: 'The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it, or name the column in Clear Columns to empty it.',
       required: true,
       refreshers: ['table_id'],
       props: async ({ table_id }, context) => {
@@ -32,6 +36,7 @@ export const updateRecords = createAction({
         if ('markdown' in fields) {
           return fields;
         }
+        const tableFields = await tablesCommon.getTableFields({ tableId, context });
 
         return {
           values: Property.Array({
@@ -44,14 +49,21 @@ export const updateRecords = createAction({
                 required: true,
               }),
               ...fields,
+              [CLEAR_KEY]: Property.StaticMultiSelectDropdown({
+                displayName: 'Clear Columns',
+                description: tablesCommon.clearColumnsDescription,
+                required: false,
+                options: { options: tableFields.map((field) => ({ label: field.name, value: field.externalId })) },
+              }),
             },
           }),
         };
       },
     }),
+    columns: tablesCommon.columns,
   },
   async run(context) {
-    const { table_id: tableExternalId, values } = context.propsValue;
+    const { table_id: tableExternalId, values, columns } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
     const fieldValidations = tablesCommon.createFieldValidations(tableFields);
@@ -72,20 +84,25 @@ export const updateRecords = createAction({
       // Same rule as the single-record action: an empty value keeps the current
       // one rather than writing an empty cell.
       const setValues = Object.fromEntries(
-        Object.entries(row).filter(([key, value]) => key !== RECORD_ID_KEY && value !== null && value !== undefined && value !== ''),
+        Object.entries(row).filter(([key, value]) => key !== RECORD_ID_KEY && key !== CLEAR_KEY && value !== null && value !== undefined && value !== ''),
       );
       await propsValidation.validateZod(setValues, fieldValidations);
 
+      const setCells = Object.entries(setValues).flatMap(([fieldExternalId, value]) => {
+        const field = tableFields.find((candidate) => candidate.externalId === fieldExternalId);
+        return field === undefined ? [] : [{ fieldId: field.id, value: value === null || value === undefined ? null : String(value) }];
+      });
+      const clearFieldIds = columnUtils.toClearFieldIds({ rawColumns: row[CLEAR_KEY], fields: tableFields, position: `${position} Clear Columns` });
+      columnUtils.assertNotSetAndCleared({ setFieldIds: setCells.map((cell) => cell.fieldId), clearFieldIds, fields: tableFields, position });
+
       records.push({
         id: recordId.trim(),
-        cells: Object.entries(setValues).flatMap(([fieldExternalId, value]) => {
-          const field = tableFields.find((candidate) => candidate.externalId === fieldExternalId);
-          return field === undefined ? [] : [{ fieldId: field.id, value: value === null || value === undefined ? null : String(value) }];
-        }),
+        cells: [...setCells, ...clearFieldIds.map((fieldId) => ({ fieldId, value: '' }))],
       });
     }
 
-    const request: UpdateRecordsRequest = { tableId, records };
+    const fieldIds = columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields });
+    const request: UpdateRecordsRequest = { tableId, records, ...(fieldIds === undefined ? {} : { fieldIds }) };
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.POST,

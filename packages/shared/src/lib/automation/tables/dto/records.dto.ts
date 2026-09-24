@@ -47,6 +47,13 @@ export const MAX_RECORDS_PER_BATCH = 1000
 // because an operator raised that.
 export const MAX_KEY_FIELDS = 200
 
+// The write-side twin of `fieldIds` on ListRecordsRequest / GetRecordRequest (#506):
+// which columns the RESPONSE carries, never which ones are written. Absent means every
+// column. Unlike the query-string form, a JSON body can carry `[]`, and an empty
+// projection reads as "every column" to one caller and "no columns" to another, so it is
+// rejected rather than guessed. Same declared-here-not-at-the-end exception as above.
+const writeProjection = z.array(z.string()).min(1, formErrors.required).optional()
+
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
     records: z.array(z.object({
@@ -57,6 +64,7 @@ export const UpdateRecordsRequest = z.object({
         })),
     })).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
     agentUpdate: z.boolean().optional(),
+    fieldIds: writeProjection,
 })
 
 export type UpdateRecordsRequest = z.infer<typeof UpdateRecordsRequest>
@@ -143,6 +151,7 @@ export const UpdateRecordRequest = z.object({
     // gives eq/neq/in/not_in and — the case the ticket names as "is empty" —
     // not_exists.
     precondition: z.array(Filter).min(1, formErrors.required).optional(),
+    fieldIds: writeProjection,
 })
 
 export type UpdateRecordRequest = z.infer<typeof UpdateRecordRequest>
@@ -159,6 +168,7 @@ export const UpsertRecordsRequest = z.object({
         fieldId: z.string(),
         value: coerceToString,
     }))).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
+    fieldIds: writeProjection,
 })
 
 export type UpsertRecordsRequest = z.infer<typeof UpsertRecordsRequest>

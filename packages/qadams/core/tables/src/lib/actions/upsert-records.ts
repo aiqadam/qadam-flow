@@ -4,6 +4,10 @@ import { columnUtils } from '../common/columns';
 import { AuthenticationType, httpClient, HttpMethod, propsValidation } from '@aiqadam/qadams-common';
 import { UpsertAction, UpsertRecordsRequest } from '@aiqadam/shared';
 
+// Namespaced because the sibling keys are column externalIds, which are caller-settable;
+// per row because Values are per row (#506).
+const CLEAR_KEY = '__clear';
+
 export const upsertRecords = createAction({
   name: 'tables-upsert-records',
   displayName: 'Upsert Record(s)',
@@ -36,7 +40,7 @@ export const upsertRecords = createAction({
     values: Property.DynamicProperties({
       auth: QadamAuth.None(),
       displayName: 'Records',
-      description: 'The records to insert or update. Every record must set each key column.',
+      description: 'The records to insert or update. Every record must set each key column. A value left empty keeps the current one on an update; name a column in Clear Columns to empty it.',
       required: true,
       refreshers: ['table_id'],
       props: async ({ table_id }, context) => {
@@ -50,20 +54,30 @@ export const upsertRecords = createAction({
         if ('markdown' in fields) {
           return fields;
         }
+        const tableFields = await tablesCommon.getTableFields({ tableId, context });
 
         return {
           values: Property.Array({
             displayName: 'Records',
             description: 'Add one or more records to insert or update',
             required: true,
-            properties: fields,
+            properties: {
+              ...fields,
+              [CLEAR_KEY]: Property.StaticMultiSelectDropdown({
+                displayName: 'Clear Columns',
+                description: tablesCommon.clearColumnsDescription,
+                required: false,
+                options: { options: tableFields.map((field) => ({ label: field.name, value: field.externalId })) },
+              }),
+            },
           }),
         };
       },
     }),
+    columns: tablesCommon.columns,
   },
   async run(context) {
-    const { table_id: tableExternalId, key_columns, values } = context.propsValue;
+    const { table_id: tableExternalId, key_columns, values, columns } = context.propsValue;
     const tableId = await tablesCommon.convertTableExternalIdToId(tableExternalId, context);
     const tableFields = await tablesCommon.getTableFields({ tableId, context });
     const fieldValidations = tablesCommon.createFieldValidations(tableFields);
@@ -79,19 +93,26 @@ export const upsertRecords = createAction({
     }
 
     const records: UpsertRecordsRequest['records'] = [];
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
+      const position = `Record #${index + 1}`;
       const setValues = Object.fromEntries(
-        Object.entries(row).filter(([, value]) => value !== null && value !== undefined && value !== ''),
+        Object.entries(row).filter(([key, value]) => key !== CLEAR_KEY && value !== null && value !== undefined && value !== ''),
       );
       await propsValidation.validateZod(setValues, fieldValidations);
 
-      records.push(Object.entries(setValues).flatMap(([fieldExternalId, value]) => {
+      const setCells = Object.entries(setValues).flatMap(([fieldExternalId, value]) => {
         const field = tableFields.find((candidate) => candidate.externalId === fieldExternalId);
         return field === undefined ? [] : [{ fieldId: field.id, value: String(value) }];
-      }));
+      });
+      const clearFieldIds = columnUtils.toClearFieldIds({ rawColumns: row[CLEAR_KEY], fields: tableFields, position: `${position} Clear Columns` });
+      columnUtils.assertNotSetAndCleared({ setFieldIds: setCells.map((cell) => cell.fieldId), clearFieldIds, fields: tableFields, position });
+      assertNoKeyColumnCleared({ keyFieldIds, clearFieldIds, fields: tableFields, position });
+
+      records.push([...setCells, ...clearFieldIds.map((fieldId) => ({ fieldId, value: '' }))]);
     }
 
-    const request: UpsertRecordsRequest = { tableId, keyFieldIds, records };
+    const fieldIds = columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields });
+    const request: UpsertRecordsRequest = { tableId, keyFieldIds, records, ...(fieldIds === undefined ? {} : { fieldIds }) };
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.POST,
@@ -111,3 +132,13 @@ export const upsertRecords = createAction({
     }));
   },
 });
+
+// An empty key column is not "no value" to the matcher: it is a key component that
+// matches the records whose column is also empty. Clearing one here would silently
+// change which record the row is matched to rather than empty a cell.
+function assertNoKeyColumnCleared({ keyFieldIds, clearFieldIds, fields, position }: { keyFieldIds: string[]; clearFieldIds: string[]; fields: { id: string; name: string }[]; position: string }): void {
+  const clearedKeys = fields.filter((field) => keyFieldIds.includes(field.id) && clearFieldIds.includes(field.id));
+  if (clearedKeys.length > 0) {
+    throw new Error(`${position} clears key column ${clearedKeys.map((field) => `"${field.name}"`).join(', ')}. A key column is what the record is matched on and cannot be cleared by an upsert; use Update Record for that.`);
+  }
+}

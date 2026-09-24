@@ -21,7 +21,7 @@
   "The records to create.": "The records to create.",
   "The IDs of the records to delete": "The IDs of the records to delete",
   "The ID of the record to do the action on.": "The ID of the record to do the action on.",
-  "The values to update. Leave empty to keep current value.": "The values to update. Leave empty to keep current value.",
+  "The values to update. Leave empty to keep current value — use Clear Columns to empty a cell.": "The values to update. Leave empty to keep current value — use Clear Columns to empty a cell.",
   "Maximum number of records to return (default no limit).": "Maximum number of records to return (default no limit).",
   "New Record Created": "New Record Created",
   "Record Updated": "Record Updated",
@@ -35,7 +35,7 @@
   "Columns to return. Leave empty to return every column. Step outputs are recorded verbatim in the run log, so reading only the columns you need is also what keeps the rest out of it.": "Columns to return. Leave empty to return every column. Step outputs are recorded verbatim in the run log, so reading only the columns you need is also what keeps the rest out of it.",
   "Update Record(s)": "Update Record(s)",
   "Update many records in one request, instead of one step execution per record.": "Update many records in one request, instead of one step execution per record.",
-  "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.": "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it.",
+  "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it, or name the column in Clear Columns to empty it.": "The records to update. Each entry needs the record ID and the values to set; leave a value empty to keep it, or name the column in Clear Columns to empty it.",
   "Add one or more records to update": "Add one or more records to update",
   "Record IDs": "Record IDs",
   "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.": "Fetch only these records, by id. Leave empty to search the whole table. Combined with filters, a record must satisfy both.",
@@ -43,10 +43,12 @@
   "Match records on a key and insert or update them, so a repeat does not create a duplicate.": "Match records on a key and insert or update them, so a repeat does not create a duplicate.",
   "Key Columns": "Key Columns",
   "The columns that identify a record. A row matching on these is updated; anything else is inserted.": "The columns that identify a record. A row matching on these is updated; anything else is inserted.",
-  "The records to insert or update. Every record must set each key column.": "The records to insert or update. Every record must set each key column.",
+  "The records to insert or update. Every record must set each key column. A value left empty keeps the current one on an update; name a column in Clear Columns to empty it.": "The records to insert or update. Every record must set each key column. A value left empty keeps the current one on an update; name a column in Clear Columns to empty it.",
   "Add one or more records to insert or update": "Add one or more records to insert or update",
   "Only If": "Only If",
   "Conditions": "Conditions",
   "Apply the update only if the record still matches these conditions, checked and written in one step. Use \"Does not exist\" to mean \"only if this column is still empty\" — that is how you write \"record it only the first time\". If a condition no longer holds the step fails with RECORD_PRECONDITION_FAILED rather than silently doing nothing.": "Apply the update only if the record still matches these conditions, checked and written in one step. Use \"Does not exist\" to mean \"only if this column is still empty\" — that is how you write \"record it only the first time\". If a condition no longer holds the step fails with RECORD_PRECONDITION_FAILED rather than silently doing nothing.",
-  "For \"In\" / \"Not In\", pass a comma-separated list or a list variable.": "For \"In\" / \"Not In\", pass a comma-separated list or a list variable."
+  "For \"In\" / \"Not In\", pass a comma-separated list or a list variable.": "For \"In\" / \"Not In\", pass a comma-separated list or a list variable.",
+  "Clear Columns": "Clear Columns",
+  "Columns to empty. A value left empty in Values keeps the current one, so this is the way to unset a cell — for example to remove a date. A column cannot be both cleared and given a value.": "Columns to empty. A value left empty in Values keeps the current one, so this is the way to unset a cell — for example to remove a date. A column cannot be both cleared and given a value."
 }
