@@ -61,8 +61,10 @@ describe('concurrent loop', () => {
         return { result, loop: step?.type === FlowActionType.LOOP_ON_ITEMS ? step.output : undefined, elapsedMs: Date.now() - startedAt }
     }
 
+    // Concurrency is proven by the peak of open requests, not by wall-clock time, which a slow runner
+    // stretches (the first test in the file also pays for loading the qadam).
     it('keeps at most maxConcurrency iterations in flight, and each reads its own item', async () => {
-        const { result, loop, elapsedMs } = await run(loopOf({
+        const { result, loop } = await run(loopOf({
             count: 10,
             execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 5 },
             body: request({ path: '/slow?ms=200&item={{loop.output.item}}' }),
@@ -70,7 +72,6 @@ describe('concurrent loop', () => {
 
         expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
         expect(mockServer.concurrency.max).toBe(5)
-        expect(elapsedMs).toBeLessThan(1500)
         expect(loop?.collected).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
         expect(new Set(mockServer.arrivals.map((arrival) => arrival.path)).size).toBe(10)
         expect(result.stepsCount).toBe(10)
