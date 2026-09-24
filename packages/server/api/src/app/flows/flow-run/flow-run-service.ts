@@ -942,7 +942,12 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         // A claim for a run that never came to exist would leave its slot unanswerable and never
         // re-dispatched; the retried request claims it again.
         if (!isNil(parentSlotId)) {
-            await waitpointService(log).releaseSlotClaim({ slotId: parentSlotId, projectId: params.projectId, childRunId: id })
+            // The creation error is the one the caller needs; a release failing in the same outage
+            // is logged instead of replacing it, and the join's timeout still bounds the slot.
+            const { error: releaseError } = await tryCatch(() => waitpointService(log).releaseSlotClaim({ slotId: parentSlotId, projectId: params.projectId, childRunId: id }))
+            if (releaseError) {
+                log.error({ error: releaseError, parentRunId }, '[flowRunService#queueOrCreateInstantly] Could not release the join slot claim of a run that was not created')
+            }
         }
         throw error
     }
