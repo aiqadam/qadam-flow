@@ -2081,6 +2081,7 @@
   "Otherwise the loop fails once every item was tried. Turn this on to handle the failures in later steps, using failures on the loop output.": "Иначе цикл завершится ошибкой, когда все элементы будут обработаны. Включите, чтобы обработать ошибки в следующих шагах через failures в выходе цикла.",
   "Enter a whole number of at least 1": "Введите целое число не меньше 1",
   "Enter a number greater than 0": "Введите число больше 0",
+  "This value is above the allowed maximum": "Значение больше допустимого максимума",
   "Paused at checkpoint {count} to continue with a fresh time budget. It resumes automatically.": "Остановлен на контрольной точке {count}, чтобы продолжить с новым бюджетом времени. Продолжится автоматически.",
   "This loop keeps step details only for some items, so other items show no steps. Their results are in collected on the loop output.": "Этот цикл сохраняет детали шагов только для части элементов, поэтому у остальных шаги не показаны. Их результаты — в collected в выходе цикла.",
   "Continue past the run time limit": "Продолжать после лимита времени запуска",

@@ -1,4 +1,4 @@
-import { FlowAction, FlowActionType, FlowRunStatus, LoopExecutionMode, LoopExecutionSettings, LoopIterationFailurePolicy, LoopIterationStatus, LoopOnItemsAction, LoopRateLimitedPolicy, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
+import { EngineGenericError, FlowAction, FlowActionType, FlowRunStatus, LoopExecutionMode, LoopExecutionSettings, LoopIterationFailurePolicy, LoopIterationStatus, LoopOnItemsAction, LoopRateLimitedPolicy, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
 import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
@@ -196,6 +196,67 @@ describe('concurrent loop', () => {
         expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
         expect(mockServer.concurrency.max).toBe(2)
         expect(mockServer.arrivals).toHaveLength(6)
+    }, 20000)
+
+    it('does not retry a rate-limited item when the loop says FAIL, even with a rate limit set', async () => {
+        const { result } = await run(loopOf({
+            count: 1,
+            execution: { mode: LoopExecutionMode.SEQUENTIAL, rateLimit: { count: 10, perSeconds: 1 }, onRateLimited: LoopRateLimitedPolicy.FAIL },
+            body: request({ path: '/telegram-429?retryAfter=1&recoverAfter=1&case=fail&item={{loop.output.item}}' }),
+        }))
+
+        expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
+        expect(mockServer.hits.get('/telegram-429?retryAfter=1&recoverAfter=1&case=fail&item=0')).toBe(1)
+    }, 20000)
+
+    it('fails at once instead of sleeping when the rate limit spaces the next item past the budget left', async () => {
+        const { result, elapsedMs } = await run(loopOf({
+            count: 2,
+            execution: { mode: LoopExecutionMode.SEQUENTIAL, rateLimit: { count: 1, perSeconds: 3600 } },
+            body: request({ path: '/slow?ms=5&case=spacing&item={{loop.output.item}}' }),
+        }))
+
+        expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
+        expect(result.verdict.status === FlowRunStatus.FAILED ? result.verdict.failedStep.message : '').toContain('spaces the next item past the time this run has left')
+        expect(mockServer.hits.get('/slow?ms=5&case=spacing&item=0')).toBe(1)
+        expect(mockServer.hits.get('/slow?ms=5&case=spacing&item=1')).toBeUndefined()
+        expect(elapsedMs).toBeLessThan(5000)
+    }, 20000)
+
+    // An inline child called from a concurrent iteration carries that fact in its constants.
+    it('runs a CONCURRENT loop one item at a time inside an inline child of a concurrent iteration', async () => {
+        const result = await flowExecutor.execute({
+            action: loopOf({ count: 4, execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 4 }, body: request({ path: '/slow?ms=100&case=inline&item={{loop.output.item}}' }) }),
+            executionState: FlowExecutorContext.empty(),
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'send'], insideConcurrentIteration: true }),
+        })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
+        expect(mockServer.concurrency.max).toBe(1)
+    }, 20000)
+
+    it('lets every in-flight item finish before an engine error in another one is rethrown', async () => {
+        const execute = flowExecutor.execute.bind(flowExecutor)
+        const settledItems: number[] = []
+        vi.spyOn(flowExecutor, 'execute').mockImplementation(async (params) => {
+            const path = params.executionState.currentPath.path
+            const index = path.length > 0 ? path[path.length - 1][1] : -1
+            if (params.action?.name === 'send' && index === 1) {
+                throw new EngineGenericError('TestEngineError', 'boom')
+            }
+            const result = await execute(params)
+            if (params.action?.name === 'send') {
+                settledItems.push(index)
+            }
+            return result
+        })
+
+        await expect(flowExecutor.execute({
+            action: loopOf({ count: 2, execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 2 }, body: request({ path: '/slow?ms=300&case=engine-error&item={{loop.output.item}}' }) }),
+            executionState: FlowExecutorContext.empty(),
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'send'] }),
+        })).rejects.toThrow('boom')
+        expect(settledItems).toEqual([0])
     }, 20000)
 
     // A waitpoint resume keeps FAILED steps, and replay treats them as done: re-entering a failed

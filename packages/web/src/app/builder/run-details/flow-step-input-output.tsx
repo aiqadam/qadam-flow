@@ -16,6 +16,7 @@ import {
   FlowAction,
   FlowTrigger,
   LoopKeepBodies,
+  loopSettingsDefaults,
   StepOutput,
 } from '@aiqadam/shared';
 import { useQuery } from '@tanstack/react-query';
@@ -423,8 +424,7 @@ function LoopRunNote({
   const pausedAtCheckpoint =
     stepOutput.status === StepOutputStatus.PAUSED && !isNil(checkpoint);
   const keepsFewerDetails =
-    !isNil(step.settings.keepBodies) &&
-    step.settings.keepBodies !== LoopKeepBodies.ALL;
+    loopSettingsDefaults.keepBodies(step.settings) !== LoopKeepBodies.ALL;
   if (!pausedAtCheckpoint && !keepsFewerDetails) {
     return null;
   }

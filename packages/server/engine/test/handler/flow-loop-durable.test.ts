@@ -1,4 +1,4 @@
-import { FlowAction, FlowActionType, FlowRunStatus, LoopCheckpointReason, LoopExecutionMode, LoopIterationStatus, LoopOnItemsAction, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
+import { FlowAction, FlowActionType, FlowRunStatus, LoopCheckpointReason, LoopExecutionMode, LoopIterationStatus, LoopOnItemsAction, LoopRateLimitedPolicy, LoopStepOutput, LoopStepResult, StepOutputStatus } from '@aiqadam/shared'
 import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
@@ -121,6 +121,28 @@ describe('durable loop', () => {
 
         expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
         expect(result.verdict.status === FlowRunStatus.FAILED ? result.verdict.failedStep.message : '').toContain('changed while it was paused')
+    }, 20000)
+
+    // A provider that keeps asking for a wait longer than a sandbox slot sleeps must not get a fresh
+    // retry allowance with every checkpoint, or the run would never end.
+    it('carries spent rate-limit retries across a checkpoint, so maxRateLimitRetries still ends the item', async () => {
+        const path = '/telegram-429?retryAfter=120&case=durable-retries&item={{loop.output.item}}'
+        const body = { ...send, settings: { ...send.settings, input: { ...send.settings.input, url: `${mockServer.baseUrl}${path}` } } }
+        const base = buildSimpleLoopAction({ name: 'loop', loopItems: '{{ [0] }}', firstLoopAction: body })
+        const action: LoopOnItemsAction = {
+            ...base,
+            settings: { ...base.settings, execution: { mode: LoopExecutionMode.SEQUENTIAL, durable: true, onRateLimited: LoopRateLimitedPolicy.WAIT_AND_RETRY, maxRateLimitRetries: 1 } },
+        }
+
+        const paused = await flowExecutor.execute({ action, executionState: FlowExecutorContext.empty(), constants: fresh() })
+        expect(paused.verdict.status).toBe(FlowRunStatus.PAUSED)
+        expect(readLoop(paused).output?.checkpoint).toMatchObject({ reason: LoopCheckpointReason.RATE_LIMIT, rateLimitedRetries: { 0: 1 } })
+
+        const result = await flowExecutor.execute({ action, executionState: await restored(paused), constants: fresh() })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.FAILED)
+        expect(mockServer.hits.get('/telegram-429?retryAfter=120&case=durable-retries&item=0')).toBe(2)
+        expect(waitpointClient.create).toHaveBeenCalledTimes(1)
     }, 20000)
 
     it('fails clearly instead of pausing when it runs as an inline subflow', async () => {

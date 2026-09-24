@@ -2081,6 +2081,7 @@
   "Otherwise the loop fails once every item was tried. Turn this on to handle the failures in later steps, using failures on the loop output.": "Әйтпесе барлық элемент өңделгенде цикл қатемен аяқталады. Қателерді келесі қадамдарда цикл нәтижесіндегі failures арқылы өңдеу үшін қосыңыз.",
   "Enter a whole number of at least 1": "Кемінде 1 болатын бүтін сан енгізіңіз",
   "Enter a number greater than 0": "0-ден үлкен сан енгізіңіз",
+  "This value is above the allowed maximum": "Мән рұқсат етілген ең үлкен мәннен асып кетті",
   "Paused at checkpoint {count} to continue with a fresh time budget. It resumes automatically.": "Жаңа уақыт бюджетімен жалғастыру үшін {count}-бақылау нүктесінде тоқтатылды. Автоматты түрде жалғасады.",
   "This loop keeps step details only for some items, so other items show no steps. Their results are in collected on the loop output.": "Бұл цикл қадам мәліметтерін тек кейбір элементтер үшін сақтайды, сондықтан басқаларында қадамдар көрсетілмейді. Олардың нәтижелері цикл нәтижесіндегі collected ішінде.",
   "Continue past the run time limit": "Іске қосу уақыт шегінен кейін де жалғастыру",

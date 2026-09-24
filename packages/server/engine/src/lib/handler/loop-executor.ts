@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { LATEST_CONTEXT_VERSION } from '@aiqadam/qadams-framework'
-import { executionJournal, FlowActionType, FlowRunStatus, isNil, LoopCheckpoint, LoopCheckpointReason, LoopExecutionMode, LoopExecutionSettings, LoopIterationFailure, LoopIterationFailurePolicy, LoopIterationStatus, LoopKeepBodies, LoopOnItemsAction, LoopRateLimitedPolicy, LoopStepOutput, StepOutput, StepOutputStatus, tryCatch } from '@aiqadam/shared'
-import { loggingUtils } from '../helper/logging-utils'
+import { EngineGenericError, executionJournal, FlowActionType, FlowRunStatus, isNil, LoopCheckpoint, LoopCheckpointReason, LoopExecutionMode, LoopExecutionSettings, LoopIterationFailure, LoopIterationFailurePolicy, LoopIterationStatus, LoopKeepBodies, LoopOnItemsAction, LoopRateLimitedPolicy, loopSettingsDefaults, LoopStepOutput, StepOutput, StepOutputStatus, tryCatch } from '@aiqadam/shared'
 import { LoopRateLimiter, loopRateLimiter } from '../helper/loop-rate-limiter'
 import { pausedFlowLimits } from '../helper/paused-flow-limits'
 import { sizeofUtils } from '../helper/sizeof'
@@ -70,9 +69,7 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
         const items = resolvedInput.items
         const execution = action.settings.execution
         const durable = execution?.durable === true
-        // A durable loop keeps only what a retry needs unless told otherwise: its whole point is a
-        // number of items that would not fit in one run's log.
-        const keepBodies = action.settings.keepBodies ?? (durable ? LoopKeepBodies.FAILED_ONLY : undefined)
+        const keepBodies = loopSettingsDefaults.keepBodies(action.settings)
         const previousCheckpoint = stepOutput.output?.checkpoint
         if (!isNil(previousCheckpoint) && (previousCheckpoint.itemsCount !== items.length || previousCheckpoint.itemsHash !== hashItems(items))) {
             // Resuming against a different list would skip or repeat items by position.
@@ -94,12 +91,16 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
         const iterationStatus = stepOutput.output?.iterationStatus ?? []
         const failures = stepOutput.output?.failures ?? []
         const collected = stepOutput.output?.collected
+        // Carried across checkpoints, or a provider that keeps asking for a long wait would get a
+        // fresh set of retries with every execution and never let the item fail.
+        const rateLimitedRetries = new Map<number, number>(Object.entries(previousCheckpoint?.rateLimitedRetries ?? {}).map(([index, count]) => [Number(index), count]))
 
         const recordOutcome = ({ index, outcome }: { index: number, outcome: IterationOutcome }): void => {
             if (isNil(outcome.status)) {
                 return
             }
             iterationStatus[index] = outcome.status
+            rateLimitedRetries.delete(index)
             const existingFailure = failures.findIndex((failure) => failure.index === index)
             if (existingFailure !== -1) {
                 failures.splice(existingFailure, 1)
@@ -134,16 +135,18 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
                     newExecutionContext = newExecutionContext.setVerdict(outcome.executionState.verdict)
                 }
             }
+            newExecutionContext.clearLoopItems({ loopName: action.name })
             return newExecutionContext.upsertStep(action.name, stepOutput.setDuration(performance.now() - stepStartTime))
         }
 
-        const concurrency = effectiveConcurrency({ execution, insideConcurrentIteration: newExecutionContext.isConcurrentFork })
+        const concurrency = effectiveConcurrency({ execution, insideConcurrentIteration: newExecutionContext.isConcurrentFork || constants.insideConcurrentIteration })
         const concurrent = concurrency > 1
         const limiter = loopRateLimiter.create({ rateLimit: execution?.rateLimit })
         const continueOnFailure = execution?.onIterationFailure === LoopIterationFailurePolicy.CONTINUE
         // Only a loop that opted into rate handling waits on a provider: a loop authored before #387
-        // fails on a 429 exactly as it did.
-        const handlesRateLimits = !isNil(execution?.rateLimit) || execution?.onRateLimited === LoopRateLimitedPolicy.WAIT_AND_RETRY
+        // fails on a 429 exactly as it did, and so does one that says FAIL.
+        const handlesRateLimits = execution?.onRateLimited !== LoopRateLimitedPolicy.FAIL
+            && (!isNil(execution?.rateLimit) || execution?.onRateLimited === LoopRateLimitedPolicy.WAIT_AND_RETRY)
         const maxRateLimitRetries = handlesRateLimits ? execution?.maxRateLimitRetries ?? DEFAULT_MAX_RATE_LIMIT_RETRIES : 0
         // A finished iteration is skipped without entering its body: its steps may have been
         // blanked (`keepBodies`), and a replay would otherwise run them again. A failed one is run
@@ -151,7 +154,6 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
         // waitpoint resume they are kept, and replay would treat them as done and run the rest of
         // the item without them.
         const pending = items.map((_, index) => index).filter((index) => isPending({ status: iterationStatus[index], iterationSteps: stepOutput.output?.iterations[index] }))
-        const rateLimitedRetries = new Map<number, number>()
         const inFlight = new Map<number, Promise<{ index: number, result: FlowExecutorContext }>>()
         const baseStepsCount = newExecutionContext.stepsCount
         let stepsExecuted = 0
@@ -163,19 +165,24 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
         const canCheckpoint = durable && newExecutionContext.currentPath.path.length === 0
         let checkpointReason: LoopCheckpointReason | undefined
         let finishedThisExecution = 0
+        let dispatchedThisExecution = 0
 
         while (pending.length > 0 || inFlight.size > 0) {
             while (isNil(terminal) && isNil(checkpointReason) && pending.length > 0 && inFlight.size < concurrency) {
-                // At least one item must finish per execution, or a budget too small for one item
-                // would checkpoint forever without progress.
-                if (canCheckpoint && finishedThisExecution > 0) {
-                    checkpointReason = checkpointNeeded({ constants, executionState: newExecutionContext, limiter })
+                // Checked before `acquire()`, so a long spacing is spent paused, not asleep in a slot.
+                if (canCheckpoint) {
+                    checkpointReason = checkpointNeeded({ constants, limiter, finishedThisExecution, dispatchedThisExecution })
                     if (!isNil(checkpointReason)) {
                         break
                     }
                 }
+                else if (limiter.msUntilNextStart() > remainingBudgetMs(constants)) {
+                    terminal = spacingOutlastsBudgetVerdict({ action })
+                    break
+                }
                 const index = pending.shift() ?? 0
                 await limiter.acquire()
+                dispatchedThisExecution += 1
                 await withIterationSlot(index)
                 lastDispatched = Math.max(lastDispatched, index)
                 const fork = newExecutionContext.forkForIteration({ loopName: action.name, iteration: index, concurrent })
@@ -192,7 +199,8 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
                 // An engine error in one item must not leave the others writing into the journal
                 // unobserved, nor surface later as an unhandled rejection.
                 await Promise.allSettled(inFlight.values())
-                throw iterationError
+                newExecutionContext.clearLoopItems({ loopName: action.name })
+                throw iterationError ?? new EngineGenericError('LoopIterationError', 'A loop iteration settled without a result')
             }
             const { index, result } = settled
             inFlight.delete(index)
@@ -241,7 +249,7 @@ export const loopExecutor: BaseExecutor<LoopOnItemsAction> = {
                 }
             }
             else {
-                stepOutput = await takeCheckpoint({ action, constants, stepOutput, reason: checkpointReason, items, limiter })
+                stepOutput = await takeCheckpoint({ action, constants, stepOutput, reason: checkpointReason, items, limiter, rateLimitedRetries })
                 terminal = { status: FlowRunStatus.PAUSED }
             }
         }
@@ -266,25 +274,43 @@ function effectiveConcurrency({ execution, insideConcurrentIteration }: { execut
 }
 
 // Checked before each new item starts, never mid-item: the checkpoint lands on an iteration
-// boundary once the items already running have finished.
-function checkpointNeeded({ constants, executionState, limiter }: CheckpointNeededParams): LoopCheckpointReason | undefined {
+// boundary once the items already running have finished. The journal's size is no reason to
+// checkpoint: a resume restores the whole journal, so a checkpoint would not make it any smaller.
+function checkpointNeeded({ constants, limiter, finishedThisExecution, dispatchedThisExecution }: CheckpointNeededParams): LoopCheckpointReason | undefined {
     const budgetMs = constants.timeoutInSeconds * 1000
     const marginMs = Math.min(Math.max(CHECKPOINT_MIN_MARGIN_MS, budgetMs * CHECKPOINT_MARGIN_FRACTION), budgetMs / 2)
-    if (budgetMs - (Date.now() - constants.executionStartedAt) < marginMs) {
+    // At least one item must finish per execution, or a budget too small for one item would
+    // checkpoint forever without progress.
+    if (finishedThisExecution > 0 && remainingBudgetMs(constants) < marginMs) {
         return LoopCheckpointReason.BUDGET
     }
-    if (!loggingUtils.isWithinCheckpointLimit(executionState.steps)) {
-        return LoopCheckpointReason.LOG_SIZE
-    }
-    if (limiter.msUntilNextStart() > MAX_IN_PROCESS_RATE_LIMIT_WAIT_MS) {
+    // A fresh execution's limiter lets its first item start at once, so every execution dispatches
+    // at least one item; a provider's repeated waits are bounded by the retries carried across.
+    if (dispatchedThisExecution > 0 && limiter.msUntilNextStart() > MAX_IN_PROCESS_RATE_LIMIT_WAIT_MS) {
         return LoopCheckpointReason.RATE_LIMIT
     }
     return undefined
 }
 
+function remainingBudgetMs(constants: EngineConstants): number {
+    return constants.timeoutInSeconds * 1000 - (Date.now() - constants.executionStartedAt)
+}
+
+// A loop that cannot checkpoint would sleep in its slot until the run times out; failing now says why.
+function spacingOutlastsBudgetVerdict({ action }: { action: LoopOnItemsAction }): FlowVerdict {
+    return {
+        status: FlowRunStatus.FAILED,
+        failedStep: {
+            name: action.name,
+            displayName: action.displayName,
+            message: JSON.stringify({ message: 'The rate limit spaces the next item past the time this run has left. Lower the rate limit window, or make the loop durable so it waits paused.' }),
+        },
+    }
+}
+
 // The loop pauses itself on a DELAY waitpoint under its own step name, so the existing resume path
 // brings it back with a fresh execution budget; a replay skips every finished item.
-async function takeCheckpoint({ action, constants, stepOutput, reason, items, limiter }: TakeCheckpointParams): Promise<LoopStepOutput> {
+async function takeCheckpoint({ action, constants, stepOutput, reason, items, limiter, rateLimitedRetries }: TakeCheckpointParams): Promise<LoopStepOutput> {
     const waitMs = reason === LoopCheckpointReason.RATE_LIMIT ? limiter.msUntilNextStart() : 0
     const resumeDateTime = new Date(Date.now() + waitMs).toISOString()
     pausedFlowLimits.assertResumeWithinTimeout(resumeDateTime)
@@ -306,6 +332,7 @@ async function takeCheckpoint({ action, constants, stepOutput, reason, items, li
         reason,
         itemsCount: items.length,
         itemsHash: hashItems(items),
+        ...(rateLimitedRetries.size > 0 ? { rateLimitedRetries: Object.fromEntries(rateLimitedRetries) } : {}),
     }
     return new LoopStepOutput({
         ...stepOutput,
@@ -476,13 +503,13 @@ async function evaluateIteration({ action, keepBodies, constants, executionState
     }
 }
 
-function shouldKeepBody({ keepBodies, hasFailedStep }: { keepBodies: LoopKeepBodies | undefined, hasFailedStep: boolean }): boolean {
+function shouldKeepBody({ keepBodies, hasFailedStep }: { keepBodies: LoopKeepBodies, hasFailedStep: boolean }): boolean {
     switch (keepBodies) {
         case LoopKeepBodies.NONE:
             return false
         case LoopKeepBodies.FAILED_ONLY:
             return hasFailedStep
-        default:
+        case LoopKeepBodies.ALL:
             return true
     }
 }
@@ -519,8 +546,9 @@ type LoopOnActionResolvedSettings = {
 
 type CheckpointNeededParams = {
     constants: EngineConstants
-    executionState: FlowExecutorContext
     limiter: LoopRateLimiter
+    finishedThisExecution: number
+    dispatchedThisExecution: number
 }
 
 type TakeCheckpointParams = {
@@ -530,6 +558,7 @@ type TakeCheckpointParams = {
     reason: LoopCheckpointReason
     items: readonly unknown[]
     limiter: LoopRateLimiter
+    rateLimitedRetries: ReadonlyMap<number, number>
 }
 
 type ContinueVerdictParams = {
@@ -542,7 +571,7 @@ type ContinueVerdictParams = {
 
 type EvaluateIterationParams = {
     action: LoopOnItemsAction
-    keepBodies: LoopKeepBodies | undefined
+    keepBodies: LoopKeepBodies
     constants: EngineConstants
     executionState: FlowExecutorContext
     iterationSteps: Record<string, StepOutput>

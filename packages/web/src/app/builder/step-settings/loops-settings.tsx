@@ -3,9 +3,12 @@ import {
   LoopExecutionMode,
   LoopIterationFailurePolicy,
   LOOP_MAX_CONCURRENCY,
+  LOOP_MAX_RATE_LIMIT_COUNT,
+  LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS,
   LoopKeepBodies,
   LoopOnItemsAction,
   LoopRateLimitedPolicy,
+  loopSettingsDefaults,
 } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Gauge, ListChecks } from 'lucide-react';
@@ -77,6 +80,7 @@ LoopsSettings.displayName = 'LoopsSettings';
 const LoopResultSettings = ({ readonly }: LoopsSettingsProps) => {
   const form = useFormContext<LoopOnItemsAction>();
   const collect = form.watch('settings.collect');
+  const execution = form.watch('settings.execution');
   const collecting = !isNil(collect);
 
   return (
@@ -168,7 +172,10 @@ const LoopResultSettings = ({ readonly }: LoopsSettingsProps) => {
             <FormLabel>{t('Keep step details for')}</FormLabel>
             <Select
               disabled={readonly}
-              value={field.value ?? LoopKeepBodies.ALL}
+              value={loopSettingsDefaults.keepBodies({
+                keepBodies: field.value,
+                execution,
+              })}
               onValueChange={field.onChange}
             >
               <FormControl>
@@ -314,7 +321,11 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
                 <BoundedNumberInput
                   disabled={readonly}
                   value={field.value}
-                  bounds={{ min: 1, max: 10000, integer: true }}
+                  bounds={{
+                    min: 1,
+                    max: LOOP_MAX_RATE_LIMIT_COUNT,
+                    integer: true,
+                  }}
                   onCommit={(count) =>
                     update({
                       rateLimit: {
@@ -339,7 +350,7 @@ const LoopExecutionSettingsForm = ({ readonly }: LoopsSettingsProps) => {
                   value={field.value}
                   bounds={{
                     min: 0,
-                    max: 86400,
+                    max: LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS,
                     integer: false,
                     exclusiveMin: true,
                   }}

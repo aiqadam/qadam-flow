@@ -142,8 +142,8 @@ export type LoopCollectSettings = z.infer<typeof LoopCollectSettings>
 // Bounds on what a request can ask the engine for; the operator's own ceiling on concurrency
 // (`AP_LOOP_MAX_CONCURRENCY`) is applied by the engine on top.
 export const LOOP_MAX_CONCURRENCY = 100
-const LOOP_MAX_RATE_LIMIT_COUNT = 10000
-const LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS = 86400
+export const LOOP_MAX_RATE_LIMIT_COUNT = 10000
+export const LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS = 86400
 const LOOP_MAX_RATE_LIMITED_RETRIES = 100
 
 export const LoopExecutionSettings = z.object({
@@ -175,6 +175,15 @@ export const LoopOnItemsActionSettings = z.object({
 export type LoopOnItemsActionSettings = z.infer<
   typeof LoopOnItemsActionSettings
 >
+
+// The engine, the builder and the run view must agree on what an unset `keepBodies` means.
+export const loopSettingsDefaults = {
+    // A durable loop keeps only what a retry needs unless told otherwise: its whole point is a
+    // number of items that would not fit in one run's log.
+    keepBodies(settings: Pick<LoopOnItemsActionSettings, 'keepBodies' | 'execution'>): LoopKeepBodies {
+        return settings.keepBodies ?? (settings.execution?.durable === true ? LoopKeepBodies.FAILED_ONLY : LoopKeepBodies.ALL)
+    },
+}
 
 export const LoopOnItemsActionSchema = z.object({
     ...commonActionProps,

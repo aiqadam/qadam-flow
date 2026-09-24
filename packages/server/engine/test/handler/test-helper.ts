@@ -31,6 +31,7 @@ export const generateMockEngineConstants = (params?: Partial<EngineConstants>): 
             logsFileId: params?.logsFileId,
             executionStartedAt: params?.executionStartedAt,
             isInlineChild: params?.isInlineChild,
+            insideConcurrentIteration: params?.insideConcurrentIteration,
         })
 }
 

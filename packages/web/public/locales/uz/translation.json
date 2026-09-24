@@ -2081,6 +2081,7 @@
   "Otherwise the loop fails once every item was tried. Turn this on to handle the failures in later steps, using failures on the loop output.": "Aks holda barcha elementlar sinab ko‘rilgach tsikl xato bilan tugaydi. Xatolarni keyingi qadamlarda tsikl natijasidagi failures orqali ishlash uchun yoqing.",
   "Enter a whole number of at least 1": "Kamida 1 bo‘lgan butun son kiriting",
   "Enter a number greater than 0": "0 dan katta son kiriting",
+  "This value is above the allowed maximum": "Qiymat ruxsat etilgan maksimaldan katta",
   "Paused at checkpoint {count} to continue with a fresh time budget. It resumes automatically.": "Yangi vaqt byudjeti bilan davom etish uchun {count}-nazorat nuqtasida to‘xtatildi. Avtomatik davom etadi.",
   "This loop keeps step details only for some items, so other items show no steps. Their results are in collected on the loop output.": "Bu tsikl qadam tafsilotlarini faqat ayrim elementlar uchun saqlaydi, shuning uchun boshqalarida qadamlar ko‘rsatilmaydi. Ularning natijalari tsikl natijasidagi collected ichida.",
   "Continue past the run time limit": "Ishga tushirish vaqt chegarasidan keyin ham davom etish",

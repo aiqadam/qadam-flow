@@ -242,10 +242,12 @@ export type LoopCheckpoint = {
     reason: LoopCheckpointReason
     itemsCount: number
     itemsHash: string
+    // Provider-requested retries (`maxRateLimitRetries`) already spent on items still pending, by
+    // item index — a checkpoint must not hand them a fresh allowance.
+    rateLimitedRetries?: Record<string, number>
 }
 
 export enum LoopCheckpointReason {
     BUDGET = 'BUDGET',
-    LOG_SIZE = 'LOG_SIZE',
     RATE_LIMIT = 'RATE_LIMIT',
 }

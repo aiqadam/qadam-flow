@@ -14,6 +14,8 @@ import {
   CodeActionSchema,
   formErrors,
   LOOP_MAX_CONCURRENCY,
+  LOOP_MAX_RATE_LIMIT_COUNT,
+  LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS,
   LoopOnItemsActionSchema,
   Metadata,
   QadamActionSchema,
@@ -479,7 +481,7 @@ export const formUtils = {
                     .min(1, 'Enter a whole number of at least 1')
                     .max(
                       LOOP_MAX_CONCURRENCY,
-                      'Enter a whole number of at least 1',
+                      'This value is above the allowed maximum',
                     )
                     .optional(),
                   rateLimit: z
@@ -488,11 +490,17 @@ export const formUtils = {
                         .number()
                         .int('Enter a whole number of at least 1')
                         .min(1, 'Enter a whole number of at least 1')
-                        .max(10000, 'Enter a whole number of at least 1'),
+                        .max(
+                          LOOP_MAX_RATE_LIMIT_COUNT,
+                          'This value is above the allowed maximum',
+                        ),
                       perSeconds: z
                         .number()
                         .positive('Enter a number greater than 0')
-                        .max(86400, 'Enter a number greater than 0'),
+                        .max(
+                          LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS,
+                          'This value is above the allowed maximum',
+                        ),
                     })
                     .optional(),
                 })
