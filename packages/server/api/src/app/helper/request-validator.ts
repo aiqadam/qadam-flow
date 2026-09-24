@@ -28,7 +28,12 @@ export const requestValidator: RequestValidator = {
                 return result
             }
             // A throwing schema can be a bug in the schema rather than bad input; keep it visible.
-            system.globalLogger().warn({ err: error }, '[requestValidator] schema threw during validation')
+            system.globalLogger().warn({
+                err: error,
+                method: routeSchema.method,
+                url: routeSchema.url,
+                httpPart: routeSchema.httpPart,
+            }, '[requestValidator] schema threw during validation')
             return { error: [unvalidatableInputIssue()] }
         }
     },

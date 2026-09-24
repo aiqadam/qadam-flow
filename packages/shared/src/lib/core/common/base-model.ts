@@ -49,12 +49,19 @@ export const OptionalArrayFromQuery = <T extends z.ZodType>(schema: T) =>
 // nested (and recursive, e.g. a flow graph) BoundedArrays cost a scan per array instead of
 // doubling per level. Skipping the scan never skips validation — the inner schema always
 // runs — it only gives up the early stop for an array this schema already found valid.
-export const BoundedArray = <T extends z.ZodType>({ element, max, nonEmpty = false }: BoundedArrayParams<T>) => {
+export const BoundedArray = <T extends z.ZodType>({ element, max, min, nonEmpty = false }: BoundedArrayParams<T>) => {
     const scanned = new WeakSet<unknown[]>()
     return z.preprocess(
         (value, ctx) => rejectOversizedOrFirstInvalid({ value, ctx, element, max, scanned }),
-        nonEmpty ? z.array(element).min(1, formErrors.required).max(max) : z.array(element).max(max),
+        withLowerBound({ array: z.array(element).max(max), min, nonEmpty }),
     )
+}
+
+function withLowerBound<T extends z.ZodType>({ array, min, nonEmpty }: LowerBoundParams<T>): z.ZodArray<T> {
+    if (nonEmpty) {
+        return array.min(1, formErrors.required)
+    }
+    return min === undefined ? array : array.min(min)
 }
 
 function rejectOversizedOrFirstInvalid({ value, ctx, element, max, scanned }: RejectParams): unknown {
@@ -84,7 +91,16 @@ function rejectOversizedOrFirstInvalid({ value, ctx, element, max, scanned }: Re
 type BoundedArrayParams<T extends z.ZodType> = {
     element: T
     max: number
+    // A plain lower bound, for an exact length (`min === max`). `nonEmpty` is the
+    // user-facing variant: it rejects `[]` with the `required` form error.
+    min?: number
     nonEmpty?: boolean
+}
+
+type LowerBoundParams<T extends z.ZodType> = {
+    array: z.ZodArray<T>
+    min: number | undefined
+    nonEmpty: boolean
 }
 
 type RejectParams = {

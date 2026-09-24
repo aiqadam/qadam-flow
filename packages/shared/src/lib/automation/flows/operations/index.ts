@@ -54,9 +54,8 @@ export enum FlowOperationType {
     UPDATE_SAMPLE_DATA_INFO = 'UPDATE_SAMPLE_DATA_INFO',
 }
 
-// Caps on what one flow operation can make the schema parse (see BoundedArray). Declared
-// ahead of the schemas that read them, against the end-of-file convention, because those
-// schemas are built while the module is evaluated (TS2448). Each is far above a real flow.
+// Caps on what one flow operation can make the schema parse (see BoundedArray); each is far
+// above a real flow.
 const MAX_STEP_NAMES_PER_OPERATION = 10_000
 const MAX_NOTES_PER_FLOW = 10_000
 

@@ -10,15 +10,13 @@ const coerceToString = z.preprocess(
 )
 
 // Every array a record write carries is a BoundedArray: length-checked before its elements
-// are parsed, and parsed only up to the first invalid element (see BoundedArray). Declared
-// here, against the end-of-file convention, for the same TS2448 reason as the constants
-// below. The width is not MAX_FIELDS_PER_TABLE — an operator prop shared cannot see — but
-// ten times its default, and past a table's column count a row names nothing new.
-export const MAX_CELLS_PER_RECORD = 1000
-
-// Not MAX_RECORDS_PER_BATCH: the web table import sends a whole file in one create, capped
-// client-side at the platform's MAX_RECORDS_PER_TABLE (10000 by default).
-export const MAX_RECORDS_PER_CREATE = 50_000
+// are parsed, and parsed only up to the first invalid element (see BoundedArray). That scan,
+// not these numbers, is what keeps an invalid body cheap; a valid one is bounded by the body
+// limit. So both caps are ceilings no install should reach, not product limits: shared
+// cannot see MAX_FIELDS_PER_TABLE / MAX_RECORDS_PER_TABLE, which an operator can raise, and
+// the web table import sends a whole file in one create, sliced only to the latter.
+export const MAX_CELLS_PER_RECORD = 10_000
+export const MAX_RECORDS_PER_CREATE = 1_000_000
 
 const RecordCells = BoundedArray({
     element: z.object({

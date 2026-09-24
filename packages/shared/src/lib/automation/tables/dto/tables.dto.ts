@@ -10,9 +10,8 @@ import { MAX_KEY_FIELDS } from './records.dto'
 
 export const SAFE_EXTERNAL_ID_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/
 
-// Declared ahead of its consumer for the same TS2448 reason as the records.dto constants.
-// Same basis as MAX_CELLS_PER_RECORD: ten times MAX_FIELDS_PER_TABLE's default.
-const MAX_FIELDS_PER_CREATE = 1000
+// A ceiling, not a product limit — same basis as MAX_CELLS_PER_RECORD in records.dto.
+const MAX_FIELDS_PER_CREATE = 10_000
 
 export const CreateTableRequest = z.object({
     projectId: z.string(),

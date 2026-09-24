@@ -14,8 +14,7 @@ const EMBEDDING_DIMENSIONS = 768
 // request can make the schema parse (see BoundedArray), well above any real batch.
 const MAX_CHUNKS_PER_REQUEST = 1000
 const MAX_FILES_PER_SEARCH = 1000
-const Embedding = BoundedArray({ element: z.number(), max: EMBEDDING_DIMENSIONS })
-    .pipe(z.array(z.number()).length(EMBEDDING_DIMENSIONS))
+const Embedding = BoundedArray({ element: z.number(), min: EMBEDDING_DIMENSIONS, max: EMBEDDING_DIMENSIONS })
 
 export const knowledgeBaseController: FastifyPluginAsyncZod = async (fastify) => {
 
