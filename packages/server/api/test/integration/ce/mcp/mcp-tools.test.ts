@@ -2150,6 +2150,38 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('✅')
     })
 
+    it('71b. ap_validate_step_config — ROUTER bounds a huge invalid branch list to one branch\'s issues', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+
+        const result = await apValidateStepConfigTool(mcp, mockLog).execute({
+            stepType: 'ROUTER',
+            settings: { branches: Array(200_000).fill({}), executionType: 'EXECUTE_FIRST_MATCH' },
+        })
+
+        expect(text(result)).toContain('⚠️')
+        expect(result.structuredContent?.errors).toHaveLength(1)
+    })
+
+    it('71c. ap_validate_step_config — ROUTER still reports every branch missing its conditions', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+
+        const result = await apValidateStepConfigTool(mcp, mockLog).execute({
+            stepType: 'ROUTER',
+            settings: {
+                branches: [
+                    { branchName: 'B1', branchType: 'CONDITION', conditions: [] },
+                    { branchName: 'B2', branchType: 'CONDITION', conditions: [] },
+                ],
+                executionType: 'EXECUTE_FIRST_MATCH',
+            },
+        })
+
+        expect(text(result)).toContain('branches.0.conditions')
+        expect(text(result)).toContain('branches.1.conditions')
+    })
+
     // ── Published flow warning ────────────────────────────────────────
 
     it('72. ap_add_step — warns when flow is published', async () => {

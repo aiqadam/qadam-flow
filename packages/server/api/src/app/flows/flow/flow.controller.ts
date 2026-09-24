@@ -101,6 +101,10 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
             // unmigrated, and the import would then store it without any migration applied.
             if (isNil(migratedFlowTemplate)) {
                 request.log.warn({ err: error }, '[flowController] imported flow could not be migrated')
+                // A body the current schema rejects anyway gets that schema's field-level 400.
+                if (!FlowOperationRequest.safeParse(body).success) {
+                    return
+                }
                 throw new QadamFlowError({
                     code: ErrorCode.FLOW_MIGRATION_FAILED,
                     params: {

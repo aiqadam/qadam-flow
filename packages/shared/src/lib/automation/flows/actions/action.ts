@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { BoundedArray, STEP_NAME_REGEX } from '../../../core/common'
-import { formErrors } from '../../../form-errors'
 import { VersionType } from '../../qadams'
 import { PropertySettings } from '../properties'
 import { SampleDataSetting } from '../sample-data'
@@ -250,20 +249,12 @@ function buildBranchConditionValid(addMinLength: boolean) {
 // such a branch can never run and its children are unreachable — publishing one is always an
 // authoring mistake, and accepting it is what let #429 ship routers whose every real branch was
 // dead code.
-//
-// The validating variant (`addMinLength`) is not a BoundedArray: it never parses a request
-// body — requests use the non-validating one — and it backs the builder's router form, which
-// marks every invalid branch, so it must report every issue rather than stop at the first.
 function buildBranchConditionGroups(addMinLength: boolean) {
-    if (!addMinLength) {
-        return BoundedArray({
-            element: BoundedArray({ element: buildBranchConditionValid(false), max: MAX_CONDITIONS_PER_GROUP }),
-            max: MAX_BRANCH_CONDITION_GROUPS,
-        })
-    }
-    return z.array(
-        z.array(buildBranchConditionValid(true)).min(1, formErrors.required).max(MAX_CONDITIONS_PER_GROUP),
-    ).min(1, formErrors.required).max(MAX_BRANCH_CONDITION_GROUPS)
+    return BoundedArray({
+        element: BoundedArray({ element: buildBranchConditionValid(addMinLength), max: MAX_CONDITIONS_PER_GROUP, nonEmpty: addMinLength }),
+        max: MAX_BRANCH_CONDITION_GROUPS,
+        nonEmpty: addMinLength,
+    })
 }
 
 export const ValidBranchCondition = buildBranchConditionValid(true)
@@ -289,7 +280,12 @@ export type BranchSingleValueCondition = z.infer<
 >
 
 
-// Bounded like buildBranchConditionGroups, and for the same reason only when not validating.
+// The validating variant (`addMinLength`) backs the builder's router form, which puts a marker
+// on every invalid branch, so its branch list reports every branch rather than stopping at the
+// first; within a branch the early stop is fine, since the form marks branches, not
+// conditions. It is not what request bodies are parsed with (they use the non-validating
+// variant); a caller that validates untrusted settings with it bounds them with that variant
+// first — see ap-validate-step-config.
 export const RouterBranchesSchema = (addMinLength: boolean) => {
     const branch = z.discriminatedUnion('branchType', [
         z.object({
