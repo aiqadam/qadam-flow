@@ -73,6 +73,7 @@ describe('Join waitpoint', () => {
         expect(replay.statusCode).toBe(201)
         expect(replay.json().id).toBe(first.id)
         expect(replay.json().slotResumeUrls).toEqual(first.slotResumeUrls)
+        expect(replay.json().dispatchedSlots).toEqual([])
         expect(second.statusCode).toBeGreaterThanOrEqual(400)
         expect(await db.find('waitpoint_slot', { flowRunId: run.id })).toHaveLength(2)
     })
@@ -151,6 +152,9 @@ describe('Join waitpoint', () => {
 
         await answer({ url: first, body: { status: 'error', data: { message: 'boom' } } })
         const late = await answer({ url: second, body: { status: 'success', data: 'late' } })
+        // A step run again after its join completed dispatches nothing.
+        const replay: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 3, failurePolicy: JoinFailurePolicy.enum.FAIL_FAST })).json()
+        expect(replay.dispatchedSlots).toEqual([0, 1, 2])
 
         const completed = await db.findOneBy<{ status: string, resumePayload: { body: { status: string, data: { results: { status: string }[] } } } }>('waitpoint', { id: join.id })
         expect(completed?.status).toBe(WaitpointStatus.COMPLETED)
@@ -219,11 +223,20 @@ describe('Join waitpoint', () => {
         const withoutSlot = await startChild({})
         const withForgedSlot = await startChild({ parentSlotId: apId() })
         const withSlot = await startChild({ parentSlotId: slotId })
+        // A second child for the same slot — a replayed dispatch — runs detached from the join.
+        const duplicate = await startChild({ parentSlotId: slotId })
 
         const stored = async (id: string) => db.findOneBy<{ failParentOnFailure: boolean, parentWaitpointId: string | null, parentSlotId: string | null }>('flow_run', { id })
         expect(await stored(withoutSlot.id)).toMatchObject({ failParentOnFailure: false, parentWaitpointId: null, parentSlotId: null })
         expect(await stored(withForgedSlot.id)).toMatchObject({ failParentOnFailure: false, parentWaitpointId: null, parentSlotId: null })
         expect(await stored(withSlot.id)).toMatchObject({ failParentOnFailure: true, parentWaitpointId: join.id, parentSlotId: slotId })
+        expect(await stored(duplicate.id)).toMatchObject({ failParentOnFailure: false, parentWaitpointId: null, parentSlotId: null })
+        expect(await db.findOneBy('waitpoint_slot', { id: slotId })).toMatchObject({ childRunId: withSlot.id })
+
+        // The parent step run again gets its join back with that slot marked as dispatched.
+        const replay: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 1, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()
+        expect(replay.id).toBe(join.id)
+        expect(replay.dispatchedSlots).toEqual([0])
     })
 })
 

@@ -6,6 +6,7 @@ import { domainHelper } from '../../../helper/domain-helper'
 import { system } from '../../../helper/system/system'
 import { AppSystemProp } from '../../../helper/system/system-props'
 import { waitpointService } from './waitpoint-service'
+import { WaitpointSlotStatus, WaitpointStatus } from './waitpoint-types'
 
 export const waitpointController: FastifyPluginAsyncZod = async (app) => {
     app.post('/', CreateWaitpointParams, async (request, reply) => {
@@ -56,7 +57,14 @@ export const waitpointController: FastifyPluginAsyncZod = async (app) => {
         return reply.status(StatusCodes.CREATED).send({
             id: waitpoint.id,
             resumeUrl,
-            ...(isNil(join) ? {} : { slotResumeUrls: slots.map((slot) => `${resumeUrl}/slots/${slot.id}`) }),
+            ...(isNil(join) ? {} : {
+                slotResumeUrls: slots.map((slot) => `${resumeUrl}/slots/${slot.id}`),
+                // A replayed step gets its own join back: these slots already have a child or an
+                // answer — all of them once the join has completed — and must not be dispatched again.
+                dispatchedSlots: slots
+                    .filter((slot) => waitpoint.status === WaitpointStatus.COMPLETED || slot.status !== WaitpointSlotStatus.PENDING || !isNil(slot.childRunId))
+                    .map((slot) => slot.slotIndex),
+            }),
         })
     })
 }

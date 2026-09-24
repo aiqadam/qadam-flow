@@ -7,6 +7,7 @@ import {
     JoinSlotResult,
     JoinWaitpointConfig,
     sanitizeObjectForPostgresql,
+    spreadIfDefined,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { EntityManager, IsNull, Not } from 'typeorm'
@@ -32,7 +33,7 @@ export const joinWaitpointService = (log: FastifyBaseLogger) => ({
             // own Return Response, changes nothing.
             const updated = await waitpointSlotRepo(entityManager).update(
                 { id: slotId, waitpointId: waitpoint.id, projectId: waitpoint.projectId, status: WaitpointSlotStatus.PENDING },
-                { status: answer.status, payload: capSlotData(answer.data), childRunId: childRunId ?? null },
+                { status: answer.status, payload: capSlotData(answer.data), ...spreadIfDefined('childRunId', childRunId) },
             )
             if ((updated.affected ?? 0) === 0) {
                 return { accepted: false, completed: null }

@@ -206,6 +206,8 @@ export type CreateWaitpointResult = {
   buildResumeUrl: (params: { queryParams: Record<string, string>, sync?: boolean }) => string;
   // One per slot, in slot order, when the waitpoint is a join.
   slotResumeUrls?: string[];
+  // Slots that already have a child or an answer — a step run again must not dispatch them twice.
+  dispatchedSlots?: number[];
 };
 
 export type CreateWaitpointHook = (params: CreateWaitpointParams) => Promise<CreateWaitpointResult>;

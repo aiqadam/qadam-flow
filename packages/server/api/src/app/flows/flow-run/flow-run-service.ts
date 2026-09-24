@@ -886,9 +886,24 @@ async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentW
     return { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId: proof.isJoin ? parentSlotId : undefined }
 }
 
+// A join slot (#374) belongs to the first child created for it: a parent step that is replayed
+// re-dispatches only the slots with no child yet, and a second child for the same slot runs
+// detached from the join instead of racing the first one's answer.
+async function claimJoinSlot({ verified, childRunId, projectId, log }: ClaimJoinSlotParams): Promise<ResolvedParent> {
+    if (isNil(verified.parentSlotId) || isNil(verified.parentWaitpointId)) {
+        return verified
+    }
+    const claimed = await waitpointService(log).claimSlot({ slotId: verified.parentSlotId, waitpointId: verified.parentWaitpointId, projectId, childRunId })
+    if (claimed) {
+        return verified
+    }
+    log.warn({ parentRunId: verified.parentRunId }, '[flowRunService#claimJoinSlot] Join slot already has a child; starting this run detached from the join')
+    return { parentRunId: verified.parentRunId, failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
+}
+
 async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogger): Promise<FlowRun> {
     const now = new Date().toISOString()
-    const { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId } = await resolveVerifiedParent({
+    const verified = await resolveVerifiedParent({
         parentRunId: params.parentRunId,
         failParentOnFailure: params.failParentOnFailure,
         parentWaitpointId: params.parentWaitpointId,
@@ -896,8 +911,10 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         projectId: params.projectId,
         log,
     })
+    const id = apId()
+    const { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId } = await claimJoinSlot({ verified, childRunId: id, projectId: params.projectId, log })
     const flowRun: FlowRun = {
-        id: apId(),
+        id,
         projectId: params.projectId,
         flowId: params.flowId,
         flowVersionId: params.flowVersionId,
@@ -993,6 +1010,13 @@ type ResolveVerifiedParentParams = {
     failParentOnFailure: boolean | undefined
     parentWaitpointId: string | undefined
     parentSlotId: string | undefined
+    projectId: ProjectId
+    log: FastifyBaseLogger
+}
+
+type ClaimJoinSlotParams = {
+    verified: ResolvedParent
+    childRunId: string
     projectId: ProjectId
     log: FastifyBaseLogger
 }

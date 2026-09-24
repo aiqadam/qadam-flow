@@ -20,12 +20,12 @@
   "Items": "Элементы",
   "A list with one payload per call, e.g. {{step_1['output'].rows}}. At most 500 items.": "Список с одними данными на каждый вызов, например {{step_1['output'].rows}}. Не более 500 элементов.",
   "When a call fails": "Если вызов завершился ошибкой",
-  "Wait for every call and report each result, stop waiting at the first failure, or succeed as soon as enough calls have succeeded.": "Дождаться всех вызовов и вернуть каждый результат, прекратить ожидание при первой ошибке или завершиться успешно, как только успешных вызовов достаточно.",
   "Wait for all and report each result": "Дождаться всех и вернуть каждый результат",
   "Fail at the first failure": "Завершиться ошибкой при первой ошибке",
   "Succeed once a quorum succeeded": "Успех, когда набран кворум",
   "Quorum": "Кворум",
   "With \"Succeed once a quorum succeeded\": how many calls must succeed.": "Для «Успех, когда набран кворум»: сколько вызовов должно завершиться успешно.",
   "Stop waiting after (seconds)": "Прекратить ожидание через (секунд)",
-  "Continue with the answers that arrived by then; the rest are reported as timed out. Leave empty to wait for every call.": "Продолжить с ответами, полученными к этому моменту; остальные будут отмечены как просроченные. Оставьте пустым, чтобы ждать все вызовы."
+  "Continue with the answers that arrived by then; the rest are reported as timed out. Leave empty to wait for every call.": "Продолжить с ответами, полученными к этому моменту; остальные будут отмечены как просроченные. Оставьте пустым, чтобы ждать все вызовы.",
+  "Wait for every call and report each result, stop waiting at the first failure, or succeed as soon as enough calls have succeeded. Calls still running when the step stops waiting are not stopped; their answers are ignored.": "Дождаться всех вызовов и вернуть каждый результат, прекратить ожидание при первой ошибке или завершиться успешно, как только успешных вызовов достаточно. Вызовы, которые ещё выполняются, когда шаг перестаёт ждать, не останавливаются; их ответы игнорируются."
 }

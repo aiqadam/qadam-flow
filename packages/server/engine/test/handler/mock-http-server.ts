@@ -78,6 +78,11 @@ const startMockHttpServer = async (): Promise<{
       res.end(JSON.stringify({}))
       return
     }
+    if (path.startsWith('/slots-down/')) {
+      res.statusCode = 503
+      res.end(JSON.stringify({}))
+      return
+    }
     if (path.startsWith('/slots/')) {
       res.statusCode = 200
       res.end(JSON.stringify({ message: 'recorded' }))

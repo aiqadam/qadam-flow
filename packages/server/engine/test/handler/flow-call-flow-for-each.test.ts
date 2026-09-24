@@ -46,11 +46,12 @@ describe('Call Flow for Each Item', () => {
         ...overrides,
     })
 
-    const stubJoin = (count: number): void => {
+    const stubJoin = (count: number, options?: { dispatchedSlots?: number[], slotPath?: string }): void => {
         vi.spyOn(waitpointClient, 'create').mockResolvedValue({
             id: 'join',
             resumeUrl: `${mockServer.baseUrl}/v1/flow-runs/run/waitpoints/join`,
-            slotResumeUrls: Array.from({ length: count }, (_, index) => `${mockServer.baseUrl}/slots/${index}`),
+            slotResumeUrls: Array.from({ length: count }, (_, index) => `${mockServer.baseUrl}${options?.slotPath ?? '/slots/'}${index}`),
+            dispatchedSlots: options?.dispatchedSlots,
         })
     }
 
@@ -80,6 +81,26 @@ describe('Call Flow for Each Item', () => {
         expect(slotAnswers).toHaveLength(1)
         expect(slotAnswers[0]).toMatchObject({ path: '/slots/0', body: { status: 'error' } })
     }, 20000)
+
+    // A step run again — its engine job retried — gets its own join back.
+    it('does not start a child again for a slot that already has one', async () => {
+        stubJoin(3, { dispatchedSlots: [0, 2] })
+
+        const result = await flowExecutor.execute({ action: fanOut({ items: [{ n: 0 }, { n: 1 }, { n: 2 }] }), executionState: FlowExecutorContext.empty(), constants: constants() })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.PAUSED)
+        const dispatched = mockServer.requests.filter((request) => request.path === '/v1/webhooks/child-flow')
+        expect(dispatched.map((request) => request.body)).toEqual([{ data: { n: 1 }, callbackUrl: `${mockServer.baseUrl}/slots/1` }])
+    }, 20000)
+
+    it('still pauses when the slot of a child that could not start cannot be answered either', async () => {
+        stubJoin(2, { slotPath: '/slots-down/' })
+
+        const result = await flowExecutor.execute({ action: fanOut({ items: [{ fail: true }, { n: 1 }] }), executionState: FlowExecutorContext.empty(), constants: constants() })
+
+        expect(result.verdict.status).toBe(FlowRunStatus.PAUSED)
+        expect(mockServer.requests.filter((request) => request.path === '/v1/webhooks/child-flow')).toHaveLength(2)
+    }, 60000)
 
     it('refuses more items than a join holds, and a quorum it could never reach, before creating anything', async () => {
         stubJoin(0)

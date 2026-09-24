@@ -34,7 +34,8 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         })
         if (!isNil(preCompleted)) {
             log.info({ flowRunId: params.flowRunId, stepName: params.stepName, existingStatus: preCompleted.status }, '[waitpointService#createForPause] Waitpoint already pre-completed for this step')
-            return { inserted: false, waitpoint: preCompleted, slots: [] }
+            const preCompletedSlots = isNil(preCompleted.join) ? [] : await waitpointSlotRepo().find({ where: { waitpointId: preCompleted.id, projectId: params.projectId }, order: { slotIndex: 'ASC' } })
+            return { inserted: false, waitpoint: preCompleted, slots: preCompletedSlots }
         }
 
         const id = apId()
@@ -216,6 +217,14 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         return { waitpointProven: true, isJoin: true, slotProven }
     },
 
+    async claimSlot({ slotId, waitpointId, projectId, childRunId }: ClaimSlotParams): Promise<boolean> {
+        const claimed = await waitpointSlotRepo().update(
+            { id: slotId, waitpointId, projectId, status: WaitpointSlotStatus.PENDING, childRunId: IsNull() },
+            { childRunId },
+        )
+        return (claimed.affected ?? 0) > 0
+    },
+
     async isJoinWaitpoint({ id, flowRunId }: IsJoinWaitpointParams): Promise<boolean> {
         return waitpointRepo().exists({ where: { id, flowRunId, join: Not(IsNull()) } })
     },
@@ -384,6 +393,13 @@ type VerifiedParentJoin = {
     waitpointProven: boolean
     isJoin: boolean
     slotProven: boolean
+}
+
+type ClaimSlotParams = {
+    slotId: ApId
+    waitpointId: ApId
+    projectId: ApId
+    childRunId: ApId
 }
 
 type IsJoinWaitpointParams = {

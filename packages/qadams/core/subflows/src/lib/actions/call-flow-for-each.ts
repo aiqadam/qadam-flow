@@ -29,7 +29,7 @@ export const callFlowForEach = createAction({
     }),
     failurePolicy: Property.StaticDropdown({
       displayName: 'When a call fails',
-      description: 'Wait for every call and report each result, stop waiting at the first failure, or succeed as soon as enough calls have succeeded.',
+      description: 'Wait for every call and report each result, stop waiting at the first failure, or succeed as soon as enough calls have succeeded. Calls still running when the step stops waiting are not stopped; their answers are ignored.',
       required: true,
       defaultValue: JoinFailurePolicy.enum.ALL_SETTLED,
       options: {
@@ -102,10 +102,15 @@ export const callFlowForEach = createAction({
     }
     context.run.waitForWaitpoint(waitpoint.id);
 
+    // A step run again gets its own join back; a slot that already has a child or an answer is not
+    // dispatched twice.
+    const dispatched = new Set(waitpoint.dispatchedSlots ?? []);
+    const toDispatch = items.map((_, index) => index).filter((index) => !dispatched.has(index));
     await forEachWithConcurrency({
-      count: items.length,
+      count: toDispatch.length,
       concurrency: DISPATCH_CONCURRENCY,
-      task: async (index) => {
+      task: async (position) => {
+        const index = toDispatch[position];
         const dispatched = await dispatchChild({
           url: `${context.server.apiUrl}v1/webhooks/${flow.id}`,
           parentRunId: context.run.id,
@@ -118,7 +123,7 @@ export const callFlowForEach = createAction({
         }
       },
     });
-    return { dispatched: items.length };
+    return { dispatched: toDispatch.length };
   },
 });
 
@@ -144,13 +149,20 @@ async function dispatchChild({ url, parentRunId, payload, callbackUrl }: Dispatc
   }
 }
 
+// Failing here would fail the step and strand the children already started; an unanswered slot is
+// left to the failure policy and `joinTimeoutSeconds` instead.
 async function answerSlot({ url, answer }: { url: string, answer: CallableFlowResponse }): Promise<void> {
-  await httpClient.sendRequest<CallableFlowResponse>({
-    method: HttpMethod.POST,
-    url,
-    body: answer,
-    retries: 3,
-  });
+  try {
+    await httpClient.sendRequest<CallableFlowResponse>({
+      method: HttpMethod.POST,
+      url,
+      body: answer,
+      retries: 3,
+    });
+  }
+  catch {
+    return;
+  }
 }
 
 async function forEachWithConcurrency({ count, concurrency, task }: ForEachWithConcurrencyParams): Promise<void> {

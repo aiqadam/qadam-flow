@@ -66,5 +66,7 @@ export const CreateWaitpointResponse = z.object({
     // One URL per join slot, in slot order; absent for an ordinary waitpoint. Each carries its own
     // secret, so a child holding one can answer only its own slot.
     slotResumeUrls: z.array(z.string()).optional(),
+    // Slot indexes that already have a child run or an answer, for a step that is run again.
+    dispatchedSlots: z.array(z.number()).optional(),
 })
 export type CreateWaitpointResponse = z.infer<typeof CreateWaitpointResponse>
