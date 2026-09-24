@@ -63,6 +63,18 @@ export const resumeService = (log: FastifyBaseLogger) => ({
         return { flowRun, stale: !processed }
     },
 
+    /**
+     * A DELAY waitpoint's job fires whatever state the run is in. A run still RUNNING/QUEUED — a
+     * durable loop's budget checkpoint (#387) is due at once, before the engine has even reported
+     * PAUSED — gets its waitpoint marked COMPLETED, and the PAUSED upload resumes it
+     * (runsMetadataQueue). Skipping such a run instead would strand it: its job is gone, and a
+     * PENDING waitpoint is never resumed by the upload. A missing or finished run is stale.
+     */
+    async resumeDelayWaitpoint({ flowRunId, projectId, waitpointId }: ResumeDelayWaitpointParams): Promise<void> {
+        const { stale } = await this.resumeFromWaitpoint({ flowRunId, waitpointId, resumePayload: null })
+        log.info({ flowRunId, projectId, waitpointId, stale }, '[resumeService#resumeDelayWaitpoint] Delay elapsed')
+    },
+
     async legacyResume({ flowRun, resumePayload, workerHandlerId }: LegacyResumeParams): Promise<ResumeFromWaitpointResult> {
         // flowRun is resolved exactly once, by the controller, before either the "has a PENDING
         // V0 waitpoint" branch or this no-waitpoint branch is chosen — see
@@ -230,6 +242,12 @@ type ResumeFromWaitpointParams = {
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
     httpRequestId?: string
+}
+
+type ResumeDelayWaitpointParams = {
+    flowRunId: FlowRunId
+    projectId: string
+    waitpointId: string
 }
 
 type LegacyResumeParams = {
