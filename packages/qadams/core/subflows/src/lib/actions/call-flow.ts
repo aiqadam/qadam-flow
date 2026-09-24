@@ -6,12 +6,7 @@ import {
 } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
 import { ExecutionType, FAIL_PARENT_ON_FAILURE_HEADER, FlowStatus, isNil, PARENT_RUN_ID_HEADER } from '@aiqadam/shared';
-import { CallableFlowRequest, CallableFlowResponse, findFlowByExternalIdOrThrow, listFlowsWithSubflowTrigger } from '../common';
-
-type FlowValue = {
-  externalId: string;
-  exampleData: unknown;
-};
+import { callableFlowDropdown, CallableFlowRequest, CallableFlowResponse, CallableFlowValue, findFlowByExternalIdOrThrow } from '../common';
 
 export const callFlow = createAction({
   name: 'callFlow',
@@ -20,30 +15,7 @@ export const callFlow = createAction({
   displayName: 'Call Flow',
   description: 'Call a flow that has "Callable Flow" trigger',
   props: {
-    flow: Property.Dropdown<FlowValue>({
-      auth: QadamAuth.None(),
-      displayName: 'Flow',
-      description: 'The flow to execute. Published flows with a "Callable Flow" trigger appear here; disabled flows are marked "(inactive)" and cannot be executed until they are enabled.',
-      required: true,
-      options: async (_, context) => {
-        const flows = await listFlowsWithSubflowTrigger({
-          flowsContext: context.flows,
-        });
-        return {
-          options: flows.map((flow) => ({
-            value: {
-              externalId: flow.externalId ?? flow.id,
-              exampleData: flow.version.trigger.settings.input.exampleData,
-            },
-            label:
-              flow.status === FlowStatus.ENABLED
-                ? flow.version.displayName
-                : `${flow.version.displayName} (inactive)`,
-          })),
-        };
-      },
-      refreshers: [],
-    }),
+    flow: callableFlowDropdown(),
     mode: Property.StaticDropdown({
       displayName: 'Mode',
       required: true,
@@ -70,7 +42,7 @@ export const callFlow = createAction({
       required: true,
       refreshers: ['flow', 'mode'],
       props: async (propsValue) => {
-        const castedFlowValue = propsValue['flow'] as unknown as FlowValue;
+        const castedFlowValue = propsValue['flow'] as unknown as CallableFlowValue;
         const mode = propsValue['mode'] as unknown as string;
         const fields: DynamicPropsValue = {};
 

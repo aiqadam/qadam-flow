@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks'
-import { EngineGenericError, ExecutionType, FlowAction, FlowActionType, FlowRunStatus, FlowTrigger, GenericStepOutput, isNil, StepOutputStatus } from '@aiqadam/shared'
+import { EngineGenericError, executionJournal, ExecutionType, FlowAction, FlowActionType, FlowRunStatus, flowStructureUtil, FlowTrigger, FlowVersion, GenericStepOutput, isNil, StepOutputStatus } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
 import { loggingUtils } from '../helper/logging-utils'
@@ -62,6 +62,25 @@ export const flowExecutor = {
             action: trigger.nextAction,
             executionState,
             constants,
+        })
+    },
+    // The per-step guard answers from an upper bound on what was written, which cannot see a qadam
+    // growing an object already in the journal in place (#387). One full walk before a run's verdict
+    // is final — a top-level run and an inline child alike — reports such a run as
+    // LOG_SIZE_EXCEEDED instead of shipping an oversized log as a success.
+    enforceLogSizeLimitOnCompletion({ executionState, flowVersion }: { executionState: FlowExecutorContext, flowVersion: FlowVersion }): FlowExecutorContext {
+        if (executionState.verdict.status === FlowRunStatus.LOG_SIZE_EXCEEDED || loggingUtils.isWithinSizeLimitAfterFullWalk(executionState.steps)) {
+            return executionState
+        }
+        const lastStepName = executionJournal.findLastStepWithStatus(executionState.steps, undefined) ?? flowVersion.trigger.name
+        const lastStep = flowStructureUtil.getStep(lastStepName, flowVersion.trigger)
+        return executionState.setVerdict({
+            status: FlowRunStatus.LOG_SIZE_EXCEEDED,
+            failedStep: {
+                name: lastStepName,
+                displayName: lastStep?.displayName ?? lastStepName,
+                message: 'Flow run logs size exceeded',
+            },
         })
     },
     async execute({ action, constants, executionState }: {

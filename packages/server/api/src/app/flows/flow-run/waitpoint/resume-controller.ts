@@ -12,14 +12,19 @@ import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { securityAccess } from '../../../core/security/authorization/fastify-security'
 import { findFlowRunForLegacyResume, LegacyResumeFlowRun } from '../flow-run-service'
+import { joinWaitpointService, SlotAnswer } from './join-waitpoint-service'
 import { resumeService } from './resume-service'
 import { waitpointService } from './waitpoint-service'
-import { Waitpoint } from './waitpoint-types'
+import { Waitpoint, WaitpointSlotStatus } from './waitpoint-types'
 
 export const resumeController: FastifyPluginAsyncZod = async (app) => {
     app.all('/:id/waitpoints/:waitpointId', ResumeByWaitpointRequest, async (req, reply) => {
         const headers = req.headers as Record<string, string>
         const queryParams = req.query as Record<string, string>
+        if (await refusesJoinWaitpoint({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, log: req.log })) {
+            await reply.send({ message: EXPIRED_LINK_MESSAGE })
+            return
+        }
         await handleAsyncResume({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, body: req.body, headers, queryParams, log: req.log, reply })
     })
 
@@ -30,7 +35,27 @@ export const resumeController: FastifyPluginAsyncZod = async (app) => {
         // (double-click, client retry, link-scanner prefetch) hitting the same waitpoint would
         // otherwise share this key with the original request and collide in
         // engineResponseWatcher's listener map. Mint a fresh id per request instead.
+        if (await refusesJoinWaitpoint({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, log: req.log })) {
+            await reply.status(StatusCodes.GONE).send({ message: EXPIRED_LINK_MESSAGE })
+            return
+        }
         await handleSyncResume({ flowRunId: req.params.id, waitpointId: req.params.waitpointId, body: req.body, headers, queryParams, log: req.log, reply, correlationId: apId() })
+    })
+
+    /**
+     * One child's answer to a join waitpoint (#374). The slot id is the credential: every child of
+     * the join sees the parent's run id and waitpoint id, but only its own slot id, so it can answer
+     * only its own slot. A first answer wins; a later one, or one for a slot that is not pending on a
+     * pending join, is reported as expired like any other stale resume link.
+     */
+    app.all('/:id/waitpoints/:waitpointId/slots/:slotId', ResumeBySlotRequest, async (req, reply) => {
+        const { accepted } = await joinWaitpointService(req.log).fillSlot({
+            flowRunId: req.params.id,
+            waitpointId: req.params.waitpointId,
+            slotId: req.params.slotId,
+            answer: toSlotAnswer(req.body),
+        })
+        await reply.send({ message: accepted ? RECORDED_MESSAGE : EXPIRED_LINK_MESSAGE })
     })
 
     /**
@@ -177,6 +202,50 @@ async function findPendingV0Waitpoint({ flowRun, log }: FindPendingV0WaitpointPa
     return waitpointService(log).findPendingByVersion({ flowRunId: flowRun.id, projectId: flowRun.projectId, version: 'V0' })
 }
 
+// A join waitpoint resumes only through its slots and resumes once, with the aggregate: a plain
+// resume would let any child, which knows the waitpoint id from its own callback URL, answer for all.
+async function refusesJoinWaitpoint({ flowRunId, waitpointId, log }: RefusesJoinWaitpointParams): Promise<boolean> {
+    const isJoin = await waitpointService(log).isJoinWaitpoint({ id: waitpointId, flowRunId })
+    if (isJoin) {
+        log.info({ flowRunId, waitpointId }, '[resumeController] Refused a plain resume of a join waitpoint')
+    }
+    return isJoin
+}
+
+// The shape `returnResponse` posts to its callback. Anything else posted to a slot is taken as a
+// successful answer carrying that body, as a plain waitpoint would take it.
+function toSlotAnswer(body: unknown): SlotAnswer {
+    const parsed = SlotCallbackBody.safeParse(body)
+    if (!parsed.success) {
+        return { status: WaitpointSlotStatus.SUCCEEDED, data: body ?? null }
+    }
+    return {
+        status: parsed.data.status === 'error' ? WaitpointSlotStatus.FAILED : WaitpointSlotStatus.SUCCEEDED,
+        data: parsed.data.data ?? null,
+    }
+}
+
+const EXPIRED_LINK_MESSAGE = 'This link has expired. The action may have already been processed.'
+const RECORDED_MESSAGE = 'Your response has been recorded. You can close this page now.'
+
+const SlotCallbackBody = z.object({
+    status: z.enum(['success', 'error']),
+    data: z.unknown(),
+})
+
+const ResumeBySlotRequest = {
+    config: {
+        security: securityAccess.unscoped(ALL_PRINCIPAL_TYPES),
+    },
+    schema: {
+        params: z.object({
+            id: ApId,
+            waitpointId: ApId,
+            slotId: ApId,
+        }),
+    },
+}
+
 const ResumeByWaitpointRequest = {
     config: {
         security: securityAccess.unscoped(ALL_PRINCIPAL_TYPES),
@@ -218,6 +287,12 @@ type LegacyResumeHandlerParams = {
     queryParams: Record<string, string>
     log: FastifyBaseLogger
     reply: FastifyReply
+}
+
+type RefusesJoinWaitpointParams = {
+    flowRunId: string
+    waitpointId: string
+    log: FastifyBaseLogger
 }
 
 type ResolveV0FlowRunParams = {

@@ -1,15 +1,26 @@
 import { apId, ApId, ErrorCode, FlowRunDispatchMode, FlowRunStatus, INLINE_SUBFLOW_DEPTH_LIMIT, isNil, PauseType, QadamFlowError } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
+import { EntityManager, IsNull, Not } from 'typeorm'
 import { repoFactory } from '../../../core/db/repo-factory'
 import { transaction } from '../../../core/db/transaction'
 import { SystemJobName } from '../../../helper/system-jobs/common'
 import { systemJobsSchedule } from '../../../helper/system-jobs/system-job'
 import { flowRunRepo } from '../flow-run-service'
 import { WaitpointEntity } from './waitpoint-entity'
-import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, DeleteByFlowRunIdParams, ExistsPendingWebhookWaitpointParams, FindPendingByVersionParams, GetByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, Waitpoint, WaitpointStatus } from './waitpoint-types'
+import { WaitpointSlotEntity } from './waitpoint-slot-entity'
+import { CompleteParams, CompleteResult, CreateForPauseParams, CreateForPauseResult, DeleteByFlowRunIdParams, ExistsPendingWebhookWaitpointParams, FindPendingByVersionParams, GetByFlowRunIdParams, HandleResumeSignalParams, HasAnyWaitpointParams, Waitpoint, WaitpointSlot, WaitpointSlotStatus, WaitpointStatus } from './waitpoint-types'
 
-const waitpointRepo = repoFactory(WaitpointEntity)
+export const waitpointRepo = repoFactory(WaitpointEntity)
+export const waitpointSlotRepo = repoFactory(WaitpointSlotEntity)
+
+// One job per waitpoint, not per run: a durable loop (#387) creates its next DELAY waitpoint while
+// the job that resumed it may still be active, and a job id already taken is silently not re-added —
+// that run would never wake up again.
+export const waitpointJobIds = {
+    resumeDelay: ({ flowRunId, waitpointId }: { flowRunId: string, waitpointId: string }): string => `resume-delay-${flowRunId}-${waitpointId}`,
+    joinTimeout: ({ waitpointId }: { waitpointId: string }): string => `join-timeout-${waitpointId}`,
+}
 
 export const waitpointService = (log: FastifyBaseLogger) => ({
     async createForPause(params: CreateForPauseParams): Promise<CreateForPauseResult> {
@@ -23,41 +34,36 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         })
         if (!isNil(preCompleted)) {
             log.info({ flowRunId: params.flowRunId, stepName: params.stepName, existingStatus: preCompleted.status }, '[waitpointService#createForPause] Waitpoint already pre-completed for this step')
-            return { inserted: false, waitpoint: preCompleted }
+            const preCompletedSlots = isNil(preCompleted.join) ? [] : await waitpointSlotRepo().find({ where: { waitpointId: preCompleted.id, projectId: params.projectId }, order: { slotIndex: 'ASC' } })
+            return { inserted: false, waitpoint: preCompleted, slots: preCompletedSlots }
         }
 
         const id = apId()
-        await waitpointRepo()
-            .createQueryBuilder()
-            .insert()
-            .into('waitpoint')
-            .values({
-                id,
-                flowRunId: params.flowRunId,
-                projectId: params.projectId,
-                stepName: params.stepName,
-                type: params.type,
-                version: params.version,
-                status: WaitpointStatus.PENDING,
-                resumeDateTime: params.resumeDateTime ?? null,
-                responseToSend: params.responseToSend ?? null,
-                workerHandlerId: params.workerHandlerId ?? null,
-                httpRequestId: params.httpRequestId ?? null,
-                resumePayload: null,
-            })
-            .orIgnore()
-            .execute()
-
-        const waitpoint = await waitpointRepo().findOneByOrFail({ flowRunId: params.flowRunId, projectId: params.projectId, stepName: params.stepName })
+        // A join's slots are inserted with their waitpoint, so no child can ever see a waitpoint whose
+        // slots are not there yet.
+        const { waitpoint, slots } = await transaction(async (entityManager) => {
+            if (!isNil(params.join)) {
+                await assertNoOtherPendingJoin({ entityManager, params })
+            }
+            await insertWaitpointRow({ entityManager, id, params })
+            const current = await waitpointRepo(entityManager).findOneByOrFail({ flowRunId: params.flowRunId, projectId: params.projectId, stepName: params.stepName })
+            if (isNil(params.join)) {
+                return { waitpoint: current, slots: [] }
+            }
+            if (current.id === id) {
+                return { waitpoint: current, slots: await insertSlots({ entityManager, waitpoint: current, count: params.join.slots }) }
+            }
+            return { waitpoint: current, slots: await waitpointSlotRepo(entityManager).find({ where: { waitpointId: current.id, projectId: params.projectId }, order: { slotIndex: 'ASC' } }) }
+        })
         const inserted = waitpoint.id === id
         if (inserted) {
-            log.info({ flowRunId: params.flowRunId, waitpointId: id }, '[waitpointService#createForPause] Waitpoint created')
+            log.info({ flowRunId: params.flowRunId, waitpointId: id, slots: slots.length }, '[waitpointService#createForPause] Waitpoint created')
             if (params.type === PauseType.DELAY && !isNil(params.resumeDateTime)) {
                 await systemJobsSchedule(log).upsertJob({
                     job: {
                         name: SystemJobName.RESUME_DELAY_WAITPOINT,
                         data: { flowRunId: params.flowRunId, projectId: params.projectId, waitpointId: id },
-                        jobId: `resume-delay-${params.flowRunId}`,
+                        jobId: waitpointJobIds.resumeDelay({ flowRunId: params.flowRunId, waitpointId: id }),
                     },
                     schedule: {
                         type: 'one-time',
@@ -65,11 +71,24 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
                     },
                 })
             }
+            if (!isNil(params.join?.timeoutSeconds)) {
+                await systemJobsSchedule(log).upsertJob({
+                    job: {
+                        name: SystemJobName.JOIN_WAITPOINT_TIMEOUT,
+                        data: { flowRunId: params.flowRunId, projectId: params.projectId, waitpointId: id },
+                        jobId: waitpointJobIds.joinTimeout({ waitpointId: id }),
+                    },
+                    schedule: {
+                        type: 'one-time',
+                        date: dayjs().add(params.join.timeoutSeconds, 'second'),
+                    },
+                })
+            }
         }
         else {
             log.info({ flowRunId: params.flowRunId, existingStatus: waitpoint.status }, '[waitpointService#createForPause] Waitpoint already exists')
         }
-        return { inserted, waitpoint }
+        return { inserted, waitpoint, slots }
     },
 
     async complete(params: CompleteParams): Promise<CompleteResult> {
@@ -79,7 +98,9 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
             const pending = await repo
                 .createQueryBuilder('waitpoint')
                 .setLock('pessimistic_write')
-                .where({ id: params.waitpointId, flowRunId: params.flowRunId, status: WaitpointStatus.PENDING })
+                // A join waitpoint completes only through its slots (#374): one child's resume signal,
+                // or its failure, must never complete the whole join.
+                .where({ id: params.waitpointId, flowRunId: params.flowRunId, status: WaitpointStatus.PENDING, join: IsNull() })
                 .getOne()
 
             if (isNil(pending)) {
@@ -177,7 +198,97 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
     async existsPendingWebhookWaitpoint({ id, flowRunId, projectId }: ExistsPendingWebhookWaitpointParams): Promise<boolean> {
         return waitpointRepo().existsBy({ id, flowRunId, projectId, status: WaitpointStatus.PENDING, type: PauseType.WEBHOOK })
     },
+
+    /**
+     * The proof behind a child's `parentSlotId` (#374), the join counterpart of
+     * `existsPendingWebhookWaitpoint`: `parentWaitpointId` must name a PENDING WEBHOOK join waitpoint
+     * on the parent, and `parentSlotId` a PENDING slot of that same waitpoint. A child holding one slot
+     * URL can prove only that slot — the slot id is the part of the URL no other child learns.
+     */
+    async findVerifiedParentJoinSlot({ parentRunId, parentWaitpointId, parentSlotId, projectId }: FindVerifiedParentJoinSlotParams): Promise<VerifiedParentJoin> {
+        const waitpoint = await waitpointRepo().findOneBy({ id: parentWaitpointId, flowRunId: parentRunId, projectId, status: WaitpointStatus.PENDING, type: PauseType.WEBHOOK })
+        if (isNil(waitpoint)) {
+            return { waitpointProven: false, isJoin: false, slotProven: false }
+        }
+        if (isNil(waitpoint.join)) {
+            return { waitpointProven: true, isJoin: false, slotProven: false }
+        }
+        const slotProven = !isNil(parentSlotId) && await waitpointSlotRepo().existsBy({ id: parentSlotId, waitpointId: waitpoint.id, projectId, status: WaitpointSlotStatus.PENDING })
+        return { waitpointProven: true, isJoin: true, slotProven }
+    },
+
+    async claimSlot({ slotId, waitpointId, projectId, childRunId }: ClaimSlotParams): Promise<boolean> {
+        const claimed = await waitpointSlotRepo().update(
+            { id: slotId, waitpointId, projectId, status: WaitpointSlotStatus.PENDING, childRunId: IsNull() },
+            { childRunId },
+        )
+        return (claimed.affected ?? 0) > 0
+    },
+
+    async releaseSlotClaim({ slotId, projectId, childRunId }: ReleaseSlotClaimParams): Promise<void> {
+        await waitpointSlotRepo().update({ id: slotId, projectId, childRunId, status: WaitpointSlotStatus.PENDING }, { childRunId: null })
+    },
+
+    async isJoinWaitpoint({ id, flowRunId }: IsJoinWaitpointParams): Promise<boolean> {
+        return waitpointRepo().exists({ where: { id, flowRunId, join: Not(IsNull()) } })
+    },
 })
+
+// A run waits on one join at a time — it pauses on it — so a second PENDING one under another step
+// name is not a pause but up to 500 more slot rows; the step's own replay reuses its waitpoint.
+async function assertNoOtherPendingJoin({ entityManager, params }: { entityManager: EntityManager, params: CreateForPauseParams }): Promise<void> {
+    const other = await waitpointRepo(entityManager).exists({
+        where: { flowRunId: params.flowRunId, projectId: params.projectId, status: WaitpointStatus.PENDING, join: Not(IsNull()), stepName: Not(params.stepName) },
+    })
+    if (other) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: 'This run is already waiting on another join waitpoint' },
+        })
+    }
+}
+
+async function insertWaitpointRow({ entityManager, id, params }: InsertWaitpointRowParams): Promise<void> {
+    await waitpointRepo(entityManager)
+        .createQueryBuilder()
+        .insert()
+        .into('waitpoint')
+        .values({
+            id,
+            flowRunId: params.flowRunId,
+            projectId: params.projectId,
+            stepName: params.stepName,
+            type: params.type,
+            version: params.version,
+            status: WaitpointStatus.PENDING,
+            resumeDateTime: params.resumeDateTime ?? null,
+            responseToSend: params.responseToSend ?? null,
+            workerHandlerId: params.workerHandlerId ?? null,
+            httpRequestId: params.httpRequestId ?? null,
+            resumePayload: null,
+            join: params.join ?? null,
+        })
+        .orIgnore()
+        .execute()
+}
+
+async function insertSlots({ entityManager, waitpoint, count }: InsertSlotsParams): Promise<WaitpointSlot[]> {
+    const now = new Date().toISOString()
+    const slots: WaitpointSlot[] = Array.from({ length: count }, (_, slotIndex) => ({
+        id: apId(),
+        created: now,
+        updated: now,
+        waitpointId: waitpoint.id,
+        flowRunId: waitpoint.flowRunId,
+        projectId: waitpoint.projectId,
+        slotIndex,
+        status: WaitpointSlotStatus.PENDING,
+        payload: null,
+        childRunId: null,
+    }))
+    await waitpointSlotRepo(entityManager).insert(slots)
+    return slots
+}
 
 /**
  * The engine token's own id is the BullMQ job id, which for an EXECUTE_FLOW job — a fresh BEGIN
@@ -261,4 +372,47 @@ type IsRunDescendantOfCallerJobParams = {
     flowRunId: ApId
     projectId: ApId
     callerRunId: ApId
+}
+
+type InsertWaitpointRowParams = {
+    entityManager: EntityManager
+    id: string
+    params: CreateForPauseParams
+}
+
+type InsertSlotsParams = {
+    entityManager: EntityManager
+    waitpoint: Waitpoint
+    count: number
+}
+
+type FindVerifiedParentJoinSlotParams = {
+    parentRunId: ApId
+    parentWaitpointId: ApId
+    parentSlotId: ApId | undefined
+    projectId: ApId
+}
+
+type VerifiedParentJoin = {
+    waitpointProven: boolean
+    isJoin: boolean
+    slotProven: boolean
+}
+
+type ClaimSlotParams = {
+    slotId: ApId
+    waitpointId: ApId
+    projectId: ApId
+    childRunId: ApId
+}
+
+type ReleaseSlotClaimParams = {
+    slotId: ApId
+    projectId: ApId
+    childRunId: ApId
+}
+
+type IsJoinWaitpointParams = {
+    id: ApId
+    flowRunId: ApId
 }

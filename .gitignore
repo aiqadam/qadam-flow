@@ -105,3 +105,6 @@ packages/tests-e2e/acceptance/certs/
 # never committed. (The CI-only compose overrides that mount it are staged via `COMPOSE_FILE`
 # pointing straight at tools/ci/*.docker-compose.yml, not copied into this directory.)
 /certs/
+
+# A local redis-server started for the CE tests writes its snapshot into its working directory.
+dump.rdb

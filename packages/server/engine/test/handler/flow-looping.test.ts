@@ -1,7 +1,9 @@
 import { FlowAction, FlowRunStatus, LoopStepOutput } from '@aiqadam/shared'
+import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import {  FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
-import { buildCodeAction, buildSimpleLoopAction, generateMockEngineConstants } from './test-helper'
+import { sizeofUtils } from '../../src/lib/helper/sizeof'
+import { buildCodeAction, buildQadamAction, buildSimpleLoopAction, generateMockEngineConstants } from './test-helper'
 
 
 describe('flow with looping', () => {
@@ -88,4 +90,44 @@ describe('flow with looping', () => {
         expect(result.steps.echo_step.output).toEqual({ 'key': 3 })
     })
 
+})
+
+// #387: the log-size check used to walk the whole journal after every step, which made a loop
+// quadratic in its item count (52 ms per iteration at 3000). The walk now runs a logarithmic number
+// of times in the item count.
+describe('loop log-size check cost', () => {
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    it('does not walk the whole journal once per step', async () => {
+        // A dev qadam re-scans every dist folder on each step; that is test-only cost, not the
+        // engine's, and would make this case take minutes.
+        vi.spyOn(EngineConstants.prototype, 'devQadams', 'get').mockReturnValue([])
+        const walk = vi.spyOn(sizeofUtils, 'recursiveSizeof')
+        const executionState = FlowExecutorContext.empty()
+
+        const result = await flowExecutor.execute({
+            action: buildSimpleLoopAction({
+                name: 'loop',
+                loopItems: '{{ Array.from({ length: 300 }, (_, i) => i) }}',
+                firstLoopAction: buildQadamAction({
+                    name: 'map',
+                    qadamName: '@aiqadam/qadam-data-mapper',
+                    actionName: 'advanced_mapping',
+                    input: { mapping: { value: '{{ loop.output.item }}' } },
+                }),
+            }),
+            executionState,
+            constants: generateMockEngineConstants({ stepNames: ['loop', 'map'] }),
+        })
+
+        const loopOut = result.steps.loop as LoopStepOutput
+        expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
+        expect(loopOut.output?.iterations).toHaveLength(300)
+        // ~600 writes: the first check, then walks on a doubling schedule (256, 512, ...) — logarithmic
+        // in the writes. Before the fix this was one walk per step, 301.
+        const fullWalks = walk.mock.calls.filter(([value]) => value === executionState.steps)
+        expect(fullWalks.length).toBeLessThanOrEqual(4)
+    }, 60000)
 })

@@ -10,6 +10,7 @@ import {
     Permission,
     QadamTrigger,
     RouterExecutionType,
+    spreadIfDefined,
     StepLocationRelativeToParent,
     UpdateActionRequest,
 } from '@aiqadam/shared'
@@ -30,6 +31,9 @@ const stepSpec = z.object({
     sourceCode: z.string().optional(),
     packageJson: z.string().optional(),
     loopItems: z.string().optional(),
+    loopCollect: mcpUtils.LOOP_COLLECT_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_COLLECT_HINT),
+    loopKeepBodies: mcpUtils.LOOP_KEEP_BODIES_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_KEEP_BODIES_HINT),
+    loopExecution: mcpUtils.LOOP_EXECUTION_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_EXECUTION_HINT),
     continueOnFailure: z.boolean().optional(),
     retryOnFailure: z.boolean().optional(),
     logInput: z.boolean().optional().describe(mcpUtils.LOG_INPUT_HINT),
@@ -82,6 +86,12 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                     const stepAuthError = mcpUtils.validateAuth(step.auth)
                     if (stepAuthError) {
                         return stepAuthError
+                    }
+                    // Rejected up front, as ap_add_step and ap_update_step reject it, rather than
+                    // dropped silently from a step that is not a loop.
+                    const hasLoopSetting = step.loopCollect !== undefined || step.loopKeepBodies !== undefined || step.loopExecution !== undefined
+                    if (hasLoopSetting && step.type !== FlowActionType.LOOP_ON_ITEMS) {
+                        return { content: [{ type: 'text', text: `❌ loopCollect, loopKeepBodies and loopExecution can only be set on LOOP_ON_ITEMS steps, but "${step.displayName}" is type ${step.type}.` }] }
                     }
                 }
 
@@ -151,9 +161,9 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                         resolvedPieceName = versionResult.normalizedPieceName
                     }
 
-                    const rewritten = mcpUtils.rewriteAllReferences({ input: step.input, loopItems: step.loopItems, trigger: latestTrigger })
+                    const rewritten = mcpUtils.rewriteAllReferences({ input: step.input, loopItems: step.loopItems, loopCollect: step.loopCollect, trigger: latestTrigger })
                     const normalizedInput = await mcpUtils.normalizeAgentFlowToolIds({ input: rewritten.input, projectId, log })
-                    const rewrittenStep = { ...step, input: normalizedInput, loopItems: rewritten.loopItems }
+                    const rewrittenStep = { ...step, input: normalizedInput, loopItems: rewritten.loopItems, loopCollect: rewritten.loopCollect }
                     const skeleton = buildSkeleton({ step: rewrittenStep, name: stepName, resolvedPieceVersion, resolvedPieceName })
                     const parseResult = UpdateActionRequest.safeParse({
                         ...skeleton,
@@ -271,7 +281,12 @@ function buildSkeleton({ step, name, resolvedPieceVersion, resolvedPieceName }: 
                 name,
                 displayName: step.displayName,
                 valid: false,
-                settings: { items: step.loopItems ?? '' },
+                settings: {
+                    items: step.loopItems ?? '',
+                    ...spreadIfDefined('collect', step.loopCollect),
+                    ...spreadIfDefined('keepBodies', step.loopKeepBodies),
+                    ...spreadIfDefined('execution', step.loopExecution),
+                },
             }
         case FlowActionType.ROUTER:
             return {

@@ -1,5 +1,6 @@
 import { createQadam, QadamAuth } from '@aiqadam/qadams-framework';
 import { callFlow } from './lib/actions/call-flow';
+import { callFlowForEach } from './lib/actions/call-flow-for-each';
 import { callableFlow } from './lib/triggers/callable-flow';
 import { response } from './lib/actions/respond';
 import { QadamCategory } from '@aiqadam/shared';
@@ -12,6 +13,6 @@ export const flows = createQadam({
   categories: [QadamCategory.CORE, QadamCategory.FLOW_CONTROL],
   logoUrl: '/assets/qadams/new-core/subflows.svg',
   authors: ['hazemadelkhalel'],
-  actions: [callFlow, response],
+  actions: [callFlow, callFlowForEach, response],
   triggers: [callableFlow],
 });

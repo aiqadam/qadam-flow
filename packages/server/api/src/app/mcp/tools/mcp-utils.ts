@@ -1,5 +1,5 @@
 import { PropertyType, QadamMetadataModel, QadamPropertyMap } from '@aiqadam/qadams-framework'
-import { AgentQadamProps, AgentToolType, BranchOperator, ErrorCode, FlowActionType, flowStructureUtil, isNil, isObject, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
+import { AgentQadamProps, AgentToolType, BranchOperator, ErrorCode, FlowActionType, flowStructureUtil, isNil, isObject, LoopCollectSettings, LoopExecutionSettings, LoopKeepBodies, McpServerType, McpToolResult, ProjectScopedMcpServer, singleValueConditions } from '@aiqadam/shared'
 import type { RouterAction, Step } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
@@ -28,7 +28,17 @@ const LOG_INPUT_HINT = 'Whether this step\'s input is written to the run log. De
 const LOG_OUTPUT_HINT = 'Whether this step\'s output is written to the run log. Defaults to true. Set false when the output carries personal or secret data (e.g. tables-update-record returns the whole row): the persisted log shows **REDACTED** while the value still flows to the next step.'
 // Mirrors the engine's FILE processor (#388): anything else fails the step at run time.
 const FILE_VALUE_HINT = 'FILE — pass an http(s) URL (e.g. {{step_1[\'output\'].file}}) or a data:<mime>;base64,<data> URI. Objects and bare base64 are rejected.'
-const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].message}}.'
+// #41. Shared by ap_add_step, ap_update_step and ap_build_flow so the three describe one contract.
+const LOOP_COLLECT_INPUT_SCHEMA = z.object({
+    value: z.string().min(1),
+    skipFailed: z.boolean().optional(),
+})
+const LOOP_KEEP_BODIES_INPUT_SCHEMA = z.enum(LoopKeepBodies)
+const LOOP_EXECUTION_INPUT_SCHEMA = LoopExecutionSettings
+const LOOP_EXECUTION_HINT = 'For LOOP steps: how iterations run (#387). mode SEQUENTIAL (default) runs one at a time; CONCURRENT runs up to maxConcurrency at once (capped by the server\'s AP_LOOP_MAX_CONCURRENCY) and only speeds up waiting on the network — a step that pauses (Delay above 10s, approvals, a Queue-mode Call Flow that waits) is refused inside a CONCURRENT loop. rateLimit { count, perSeconds } spaces iteration starts evenly (e.g. { count: 25, perSeconds: 1 } for a provider allowing 30/s). When a step fails with a provider-requested wait (error.retryAfterSeconds, e.g. an HTTP 429), onRateLimited WAIT_AND_RETRY pauses every iteration for that long and retries the item up to maxRateLimitRetries (default 5) — the default whenever rateLimit is set; without rateLimit or with FAIL, the item fails as any step does. onIterationFailure STOP (default) stops at the first failed item; CONTINUE tries every item and then fails the step listing the failures, unless tolerateFailures is true — use that to branch on {{loopStep[\'output\'].failures}} after the loop. durable: true lets a top-level loop outlive one run\'s time limit: before the budget runs out, or when the next start is more than 60s away, it pauses itself at an item boundary and resumes with a fresh budget, never repeating a finished item (the run shows PAUSED meanwhile; keepBodies defaults to FAILED_ONLY). A durable loop cannot run inside a subflow called in Inline mode.'
+const LOOP_COLLECT_HINT = 'For LOOP steps: collect one value per iteration into the loop output, so a step after the loop reads a flat list instead of walking iterations. `value` is a template evaluated at the end of each iteration, in that iteration\'s scope (e.g. "{{step_7[\'output\'].body.text}}" or "{{ { name: step_7[\'output\'].body.filename, text: step_7[\'output\'].body.text } }}"). After the loop read {{loopStep[\'output\'].collected}} — positional: entry i belongs to item i and is null for an iteration that failed or was skipped — and {{loopStep[\'output\'].failures}} (one { index, stepName, description } per failed iteration). skipFailed: also leave out an iteration in which a continue-on-failure step failed.'
+const LOOP_KEEP_BODIES_HINT = 'For LOOP steps: which iteration bodies the run log keeps once an iteration is done. ALL (default) keeps every step output; FAILED_ONLY keeps iterations in which any step failed; NONE keeps only iterations that did not finish (an iteration that fails is always kept, since a retry needs it). Use FAILED_ONLY or NONE for loops over thousands of items so the run stays under the log size limit — collected, failures and the loop\'s own item/index are kept either way.'
+const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].description}} (readable text), {{stepName[\'error\'].status}} (HTTP status) or {{stepName[\'error\'].retryAfterSeconds}} (the wait a provider asked for on a 429); {{stepName[\'error\'].message}} is the raw stored error string.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
     // Every branch below is sanitized, including the two that read a `params.message` written by
@@ -485,16 +495,18 @@ function isProjectScoped(mcp: ProjectScopedMcpServer): boolean {
     return mcp.type === McpServerType.PROJECT
 }
 
-function rewriteAllReferences<C = unknown>({ input, loopItems, conditions, trigger }: {
+function rewriteAllReferences<C = unknown>({ input, loopItems, loopCollect, conditions, trigger }: {
     input?: Record<string, unknown>
     loopItems?: string
+    loopCollect?: LoopCollectSettings
     conditions?: C
     trigger: Step
-}): { input?: Record<string, unknown>, loopItems?: string, conditions?: C } {
+}): { input?: Record<string, unknown>, loopItems?: string, loopCollect?: LoopCollectSettings, conditions?: C } {
     const stepNames = flowStructureUtil.getAllSteps(trigger).map(s => s.name)
     return {
         input: input ? expressionRewriter.rewriteDeep(input, stepNames, true) : undefined,
         loopItems: loopItems != null ? expressionRewriter.rewriteStepReferences({ input: loopItems, stepNames, idempotent: true }) : loopItems,
+        loopCollect: loopCollect != null ? { ...loopCollect, value: expressionRewriter.rewriteStepReferences({ input: loopCollect.value, stepNames, idempotent: true }) } : loopCollect,
         conditions: conditions ? expressionRewriter.rewriteDeep(conditions, stepNames, true) : conditions,
     }
 }
@@ -620,6 +632,12 @@ export const mcpUtils = {
     qadamPinIssue,
     RESOLVE_TIMEOUT_MS,
     STEP_REFERENCE_HINT,
+    LOOP_COLLECT_INPUT_SCHEMA,
+    LOOP_KEEP_BODIES_INPUT_SCHEMA,
+    LOOP_EXECUTION_INPUT_SCHEMA,
+    LOOP_EXECUTION_HINT,
+    LOOP_COLLECT_HINT,
+    LOOP_KEEP_BODIES_HINT,
     LOG_INPUT_HINT,
     LOG_OUTPUT_HINT,
     BRANCH_CONDITIONS_INPUT_SCHEMA,

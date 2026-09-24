@@ -49,3 +49,43 @@ describe('dataSelectorUtils.traverseStep — zipped array (flattenNestedKeys)', 
     ).toBe(false);
   });
 });
+
+// #387: the on-failure branch offers the structured error fields beside `message`, whose key and
+// path stay as they were so leaves picked before the change keep resolving.
+describe('dataSelectorUtils.traverseStep — continue-on-failure error leaves', () => {
+  const cofStep: FlowAction & { dfsIndex: number } = {
+    ...codeStep,
+    settings: {
+      ...codeStep.settings,
+      errorHandlingOptions: {
+        continueOnFailure: { value: true },
+        retryOnFailure: { value: false },
+      },
+    },
+  };
+
+  it('lists message, description, status and retryAfterSeconds under On failure', () => {
+    const tree = dataSelectorUtils.traverseStep(
+      cofStep,
+      { step_1: { ok: true } },
+      false,
+      'step_9',
+    );
+
+    const onFailure = tree.children?.find(
+      (child) => child.key === 'step_1_on_failure',
+    );
+    expect(onFailure?.children?.map((leaf) => leaf.key)).toEqual([
+      'step_1_error_message',
+      'step_1_error_description',
+      'step_1_error_status',
+      'step_1_error_retryAfterSeconds',
+    ]);
+    expect(collectPropertyPaths(onFailure ?? tree)).toEqual([
+      "step_1['error']['message']",
+      "step_1['error']['description']",
+      "step_1['error']['status']",
+      "step_1['error']['retryAfterSeconds']",
+    ]);
+  });
+});

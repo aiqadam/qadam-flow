@@ -12,6 +12,7 @@ export enum SystemJobName {
     HARD_DELETE_PROJECT = 'hard-delete-project',
     HARD_DELETE_PLATFORM = 'hard-delete-platform',
     RESUME_DELAY_WAITPOINT = 'resume-delay-waitpoint',
+    JOIN_WAITPOINT_TIMEOUT = 'join-waitpoint-timeout',
     APPLY_DELIVERY_MODE_CHANGE = 'apply-delivery-mode-change',
 }
 
@@ -33,6 +34,14 @@ type HardDeletePlatformSystemJobData = {
 }
 
 type ResumeDelayWaitpointSystemJobData = {
+    flowRunId: FlowRunId
+    projectId: ProjectId
+    waitpointId: string
+}
+
+// A join waitpoint (#374) that is still waiting on children when its `timeoutSeconds` ends resumes
+// its run with whatever answers arrived.
+type JoinWaitpointTimeoutSystemJobData = {
     flowRunId: FlowRunId
     projectId: ProjectId
     waitpointId: string
@@ -67,6 +76,7 @@ type SystemJobDataMap = {
     [SystemJobName.HARD_DELETE_PROJECT]: HardDeleteProjectSystemJobData
     [SystemJobName.HARD_DELETE_PLATFORM]: HardDeletePlatformSystemJobData
     [SystemJobName.RESUME_DELAY_WAITPOINT]: ResumeDelayWaitpointSystemJobData
+    [SystemJobName.JOIN_WAITPOINT_TIMEOUT]: JoinWaitpointTimeoutSystemJobData
     [SystemJobName.APPLY_DELIVERY_MODE_CHANGE]: ApplyDeliveryModeChangeSystemJobData
 }
 

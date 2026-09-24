@@ -2,7 +2,7 @@ import { promisify } from 'node:util'
 import { zstdCompress as zstdCompressCallback } from 'node:zlib'
 import { setTimeout } from 'timers/promises'
 import { OutputContext } from '@aiqadam/qadams-framework'
-import { DEFAULT_MCP_DATA, EngineGenericError, FileCompression, FileType, FlowActionType, GenericStepOutput, isFlowRunStateTerminal, isNil, logSerializer, RunEnvironment, StepOutputStatus, StepRunResponse, tryCatch, UpdateRunProgressRequest, UploadRunLogsRequest } from '@aiqadam/shared'
+import { DEFAULT_MCP_DATA, EngineGenericError, FileCompression, FileType, FlowActionType, FlowRunStatus, GenericStepOutput, isFlowRunStateTerminal, isNil, logSerializer, RunEnvironment, StepOutputStatus, StepRunResponse, tryCatch, UpdateRunProgressRequest, UploadRunLogsRequest } from '@aiqadam/shared'
 import { Mutex } from 'async-mutex'
 import dayjs from 'dayjs'
 import { engineFileApi } from '../engine-file-api'
@@ -45,7 +45,14 @@ export const flowRunProgressReporter = {
             if (params.startTime) {
                 savedStartTime = params.startTime
             }
-            latestUpdateParams = params
+            // A loop iteration reports its steps, but its verdict is not the run's: a failed item the
+            // loop goes on from (CONTINUE, or a rate-limit retry) would otherwise reach the server as
+            // a FAILED run in the next flush — failing a subflow's parent and firing run-finished
+            // side effects mid-run. The loop reports the merged verdict itself.
+            const reportedContext = flowExecutorContext.isIterationFork
+                ? flowExecutorContext.setVerdict({ status: FlowRunStatus.RUNNING })
+                : flowExecutorContext
+            latestUpdateParams = { ...params, flowExecutorContext: reportedContext }
             if (!stepNameToUpdate || !engineConstants.isTestFlow) { // live runs are updated by backup job
                 return
             }
@@ -66,7 +73,7 @@ export const flowRunProgressReporter = {
                     id: engineConstants.flowRunId,
                     created: dayjs().toISOString(),
                     updated: dayjs().toISOString(),
-                    status: flowExecutorContext.verdict.status,
+                    status: reportedContext.verdict.status,
                     environment: engineConstants.runEnvironment ?? RunEnvironment.TESTING,
                     failParentOnFailure: false,
                     triggeredBy: engineConstants.triggerQadamName,

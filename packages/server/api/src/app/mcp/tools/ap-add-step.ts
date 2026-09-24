@@ -9,6 +9,7 @@ import {
     Permission,
     ProjectScopedMcpServer,
     RouterExecutionType,
+    spreadIfDefined,
     StepLocationRelativeToParent,
     UpdateActionRequest,
 } from '@aiqadam/shared'
@@ -32,6 +33,9 @@ const addStepInput = z.object({
     sourceCode: z.string().optional(),
     packageJson: z.string().optional(),
     loopItems: z.string().optional(),
+    loopCollect: mcpUtils.LOOP_COLLECT_INPUT_SCHEMA.optional(),
+    loopKeepBodies: mcpUtils.LOOP_KEEP_BODIES_INPUT_SCHEMA.optional(),
+    loopExecution: mcpUtils.LOOP_EXECUTION_INPUT_SCHEMA.optional(),
     continueOnFailure: z.boolean().optional(),
     retryOnFailure: z.boolean().optional(),
     logInput: z.boolean().optional(),
@@ -57,6 +61,9 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
             sourceCode: z.string().optional().describe('For CODE steps: JavaScript/TypeScript source. Must export a `code` function.'),
             packageJson: z.string().optional().describe('For CODE steps: package.json as JSON string. Defaults to "{}".'),
             loopItems: z.string().optional().describe('For LOOP steps: expression for items to iterate (e.g. "{{step_1[\'output\'].items}}").'),
+            loopCollect: mcpUtils.LOOP_COLLECT_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_COLLECT_HINT),
+            loopKeepBodies: mcpUtils.LOOP_KEEP_BODIES_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_KEEP_BODIES_HINT),
+            loopExecution: mcpUtils.LOOP_EXECUTION_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_EXECUTION_HINT),
             continueOnFailure: z.boolean().optional().describe('For CODE/PIECE steps: set true on the step that can fail (the one whose failure you want to react to), NOT on the recovery step. Defaults to false. When true the flow keeps running on failure and the step gains On success / On failure branches — add handler steps into them with stepLocationRelativeToParent INSIDE_ON_SUCCESS_BRANCH / INSIDE_ON_FAILURE_BRANCH and parentStepName = this step.'),
             retryOnFailure: z.boolean().optional().describe('For CODE/PIECE steps: whether to retry this step on failure. Defaults to false.'),
             logInput: z.boolean().optional().describe(mcpUtils.LOG_INPUT_HINT),
@@ -64,7 +71,7 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {
-            const { flowId, parentStepName, stepLocationRelativeToParent, branchIndex, stepType, displayName, qadamName, actionName, input, auth, sourceCode, packageJson, loopItems, continueOnFailure, retryOnFailure, logInput, logOutput } = addStepInput.parse(args)
+            const { flowId, parentStepName, stepLocationRelativeToParent, branchIndex, stepType, displayName, qadamName, actionName, input, auth, sourceCode, packageJson, loopItems, loopCollect, loopKeepBodies, loopExecution, continueOnFailure, retryOnFailure, logInput, logOutput } = addStepInput.parse(args)
 
             const [flow, project] = await Promise.all([
                 flowService(log).getOnePopulated({ id: flowId, projectId: mcp.projectId }),
@@ -81,7 +88,16 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                 return authError
             }
 
-            const rewritten = mcpUtils.rewriteAllReferences({ input, loopItems, trigger: flow.version.trigger })
+            const loopOnlyParam = [
+                { name: 'loopCollect', value: loopCollect },
+                { name: 'loopKeepBodies', value: loopKeepBodies },
+                { name: 'loopExecution', value: loopExecution },
+            ].find((param) => param.value !== undefined)?.name
+            if (stepType !== FlowActionType.LOOP_ON_ITEMS && !isNil(loopOnlyParam)) {
+                return { content: [{ type: 'text', text: `❌ ${loopOnlyParam} can only be set on LOOP_ON_ITEMS steps, but this step is type ${stepType}.` }] }
+            }
+
+            const rewritten = mcpUtils.rewriteAllReferences({ input, loopItems, loopCollect, trigger: flow.version.trigger })
             const normalizedInput = await mcpUtils.normalizeAgentFlowToolIds({ input: rewritten.input, projectId: mcp.projectId, log })
 
             const resolvedInput = {
@@ -148,6 +164,9 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                         valid: false,
                         settings: {
                             items: rewritten.loopItems ?? '',
+                            ...spreadIfDefined('collect', rewritten.loopCollect),
+                            ...spreadIfDefined('keepBodies', loopKeepBodies),
+                            ...spreadIfDefined('execution', loopExecution),
                         },
                     }
                     break
@@ -217,7 +236,7 @@ export const apAddStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogge
                 })
 
                 const draftWarning = mcpUtils.publishedFlowWarning(flow.publishedVersionId)
-                const hasConfig = input !== undefined || auth !== undefined || sourceCode !== undefined || loopItems !== undefined
+                const hasConfig = input !== undefined || auth !== undefined || sourceCode !== undefined || loopItems !== undefined || loopCollect !== undefined || loopKeepBodies !== undefined || loopExecution !== undefined
                 const addedStep = flowStructureUtil.getStep(stepName, updatedFlow.version.trigger)
                 const stepValid = hasConfig && addedStep ? addedStep.valid : false
                 const structured = { stepName, displayName, valid: stepValid }

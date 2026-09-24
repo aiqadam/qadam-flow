@@ -115,6 +115,8 @@ export const WorkerSettingsResponse = z.object({
     APP_WEBHOOK_SECRETS: z.string(),
     MAX_FLOW_RUN_LOG_SIZE_MB: z.number(),
     MAX_FILE_SIZE_MB: z.number(),
+    // Optional so a worker and an API one release apart still agree on the shape (#387).
+    LOOP_MAX_CONCURRENCY: z.number().optional(),
     SANDBOX_MEMORY_LIMIT: z.string(),
     SANDBOX_PROPAGATED_ENV_VARS: z.array(z.string()),
     DEV_QADAMS: z.array(z.string()),

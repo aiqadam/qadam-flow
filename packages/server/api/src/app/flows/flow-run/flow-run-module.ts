@@ -1,4 +1,4 @@
-import { FlowRunStatus, TelemetryEventName } from '@aiqadam/shared'
+import { TelemetryEventName } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyPluginAsync } from 'fastify'
 import { Between } from 'typeorm'
@@ -9,7 +9,8 @@ import { systemJobsSchedule } from '../../helper/system-jobs/system-job'
 import { telemetry } from '../../helper/telemetry.utils'
 import { engineResponseWatcher } from '../../workers/engine-response-watcher'
 import { flowRunController } from './flow-run-controller'
-import { flowRunRepo, flowRunService } from './flow-run-service'
+import { flowRunRepo } from './flow-run-service'
+import { joinWaitpointService } from './waitpoint/join-waitpoint-service'
 import { resumeController } from './waitpoint/resume-controller'
 import { resumeService } from './waitpoint/resume-service'
 import { waitpointController } from './waitpoint/waitpoint-controller'
@@ -70,19 +71,10 @@ export const flowRunModule: FastifyPluginAsync = async (app) => {
         },
     })
     systemJobHandlers.registerJobHandler(SystemJobName.RESUME_DELAY_WAITPOINT, async (data: SystemJobData<SystemJobName.RESUME_DELAY_WAITPOINT>) => {
-        const flowRun = await flowRunService(app.log).getOneOrThrow({ id: data.flowRunId, projectId: data.projectId })
-        if (flowRun.status !== FlowRunStatus.PAUSED) {
-            app.log.info({ flowRunId: data.flowRunId, waitpointId: data.waitpointId, status: flowRun.status },
-                '[RESUME_DELAY_WAITPOINT] Flow not PAUSED, skipping')
-            return
-        }
-        app.log.info({ flowRunId: data.flowRunId, waitpointId: data.waitpointId },
-            '[RESUME_DELAY_WAITPOINT] Resuming flow')
-        await resumeService(app.log).resumeFromWaitpoint({
-            flowRunId: data.flowRunId,
-            waitpointId: data.waitpointId,
-            resumePayload: null,
-        })
+        await resumeService(app.log).resumeDelayWaitpoint(data)
+    })
+    systemJobHandlers.registerJobHandler(SystemJobName.JOIN_WAITPOINT_TIMEOUT, async (data: SystemJobData<SystemJobName.JOIN_WAITPOINT_TIMEOUT>) => {
+        await joinWaitpointService(app.log).expire(data)
     })
     await engineResponseWatcher(app.log).init()
 }

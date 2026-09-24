@@ -156,6 +156,7 @@ const extractHttpDetails = (error: Record<string, unknown>): HttpDetails | null 
     const responseBody = response['body']
     const headersValue = response['headers']
     const headers = isObjectRecord(headersValue) ? headersValue : undefined
+    const retryAfterSeconds = readRetryAfterSeconds(headers)
 
     const requestRaw = error['request']
     const request = isObjectRecord(requestRaw) ? requestRaw : undefined
@@ -175,7 +176,43 @@ const extractHttpDetails = (error: Record<string, unknown>): HttpDetails | null 
         requestUrl,
         requestMethod,
         apiMessage: extractApiMessage(responseBody),
+        retryAfterSeconds,
     }
+}
+
+// RFC 9110 §10.2.3: either delay-seconds or an HTTP-date. Header names are case-insensitive, and
+// not every source of `response.headers` normalises them the way axios does.
+const readRetryAfterSeconds = (headers: Record<string, unknown> | undefined): number | undefined => {
+    if (isNil(headers)) {
+        return undefined
+    }
+    const key = Object.keys(headers).find((name) => name.toLowerCase() === 'retry-after')
+    if (isNil(key)) {
+        return undefined
+    }
+    const raw = headers[key]
+    const value = Array.isArray(raw) ? raw[0] : raw
+    if (typeof value === 'number') {
+        return Number.isFinite(value) && value >= 0 ? Math.ceil(value) : undefined
+    }
+    if (!isString(value)) {
+        return undefined
+    }
+    const trimmed = value.trim()
+    // Fractional seconds are not RFC 9110 but some providers send them; round up so the wait is
+    // never shorter than asked. Only something that looks like a date goes to `Date.parse`, which
+    // otherwise accepts "1.5" or "-1" as a year.
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+        return Math.ceil(Number(trimmed))
+    }
+    if (!/[a-z]/i.test(trimmed)) {
+        return undefined
+    }
+    const date = Date.parse(trimmed)
+    if (Number.isNaN(date)) {
+        return undefined
+    }
+    return Math.max(0, Math.ceil((date - Date.now()) / 1000))
 }
 
 const readErrorName = (error: Record<string, unknown>): string | undefined => {
@@ -284,6 +321,7 @@ type HttpDetails = {
     requestUrl?: string
     requestMethod?: string
     apiMessage?: string
+    retryAfterSeconds?: number
 }
 
 export type FriendlyQadamError = {
@@ -297,6 +335,7 @@ export type FriendlyQadamError = {
     requestUrl?: string
     requestMethod?: string
     apiMessage?: string
+    retryAfterSeconds?: number
     raw?: string
 }
 

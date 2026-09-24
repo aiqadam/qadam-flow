@@ -149,6 +149,7 @@ export const executeWebhookJob: JobHandler<WebhookJobData, FireAndForgetJobResul
                     parentRunId: data.parentRunId,
                     failParentOnFailure: data.failParentOnFailure,
                     parentWaitpointId: data.parentWaitpointId,
+                    parentSlotId: data.parentSlotId,
                 })
             }
         }

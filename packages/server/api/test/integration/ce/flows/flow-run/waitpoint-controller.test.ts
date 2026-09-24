@@ -1,5 +1,7 @@
 import { apId, CreateWaitpointResponse, FlowRun, FlowRunDispatchMode, FlowRunStatus, FlowVersionState, PrincipalType, RunEnvironment } from '@aiqadam/shared'
 import { FastifyInstance, LightMyRequestResponse } from 'fastify'
+import { resumeService } from '../../../../../src/app/flows/flow-run/waitpoint/resume-service'
+import { waitpointJobIds } from '../../../../../src/app/flows/flow-run/waitpoint/waitpoint-service'
 import { systemJobsQueue } from '../../../../../src/app/helper/system-jobs/system-job'
 import { generateMockToken } from '../../../../helpers/auth'
 import { db } from '../../../../helpers/db'
@@ -101,8 +103,8 @@ describe('Waitpoint controller — engine project isolation (#516)', () => {
         const stored = await db.findOneBy('waitpoint', { flowRunId: runB.id })
         expect(stored).toBeNull()
 
-        const scheduledJob = await systemJobsQueue.getJob(`resume-delay-${runB.id}`)
-        expect(scheduledJob).toBeUndefined()
+        const scheduledJobs = (await systemJobsQueue.getDelayed()).filter((job) => 'flowRunId' in job.data && job.data.flowRunId === runB.id)
+        expect(scheduledJobs).toHaveLength(0)
     })
 
     it('rejects a same-project run that is not the caller\'s own run and not its descendant', async () => {
@@ -203,8 +205,47 @@ describe('Waitpoint controller — engine project isolation (#516)', () => {
         })
 
         expect(response.statusCode).toBe(201)
-        const scheduledJob = await systemJobsQueue.getJob(`resume-delay-${run.id}`)
-        expect(scheduledJob?.id).toBe(`resume-delay-${run.id}`)
+        const { id: waitpointId }: CreateWaitpointResponse = response.json()
+        const scheduledJob = await systemJobsQueue.getJob(waitpointJobIds.resumeDelay({ flowRunId: run.id, waitpointId }))
+        expect(scheduledJob?.data).toMatchObject({ flowRunId: run.id, waitpointId })
+    })
+
+    // A durable loop (#387) checkpoints repeatedly under its own step name, and can create its next
+    // DELAY waitpoint while the job that resumed the previous one is still active: every checkpoint
+    // needs a resume job of its own, or a later one is silently never scheduled.
+    it('schedules a resume job for every checkpoint a durable loop takes under the same step name', async () => {
+        const { mockProject, mockPlatform } = await mockAndSaveBasicSetup()
+        const run = await createFlowRunInProject({ projectId: mockProject.id, status: FlowRunStatus.PAUSED })
+        const engineToken = await generateEngineToken({ projectId: mockProject.id, platformId: mockPlatform.id, id: run.id })
+
+        const waitpointIds: string[] = []
+        for (let checkpoint = 0; checkpoint < 3; checkpoint++) {
+            const response = await postWaitpoint({
+                engineToken,
+                payload: {
+                    flowRunId: run.id,
+                    projectId: mockProject.id,
+                    stepName: 'loop',
+                    type: 'DELAY',
+                    version: 'V1',
+                    resumeDateTime: new Date(Date.now() + 60_000).toISOString(),
+                },
+            })
+            expect(response.statusCode).toBe(201)
+            const { id }: CreateWaitpointResponse = response.json()
+            waitpointIds.push(id)
+            // What the resume does between two checkpoints: the waitpoint is consumed, its job is not
+            // necessarily finished yet.
+            const { stale } = await resumeService(app.log).resumeFromWaitpoint({ flowRunId: run.id, waitpointId: id, resumePayload: null })
+            expect(stale).toBe(false)
+        }
+
+        expect(new Set(waitpointIds).size).toBe(3)
+        for (const waitpointId of waitpointIds) {
+            const job = await systemJobsQueue.getJob(waitpointJobIds.resumeDelay({ flowRunId: run.id, waitpointId }))
+            expect(job?.data).toMatchObject({ flowRunId: run.id, waitpointId })
+        }
+        expect(await db.findOneBy('waitpoint', { flowRunId: run.id })).toBeNull()
     })
 
     it('lets a top-level run pause even when its own flow_run row has not been flushed yet (#509 ordering trap)', async () => {

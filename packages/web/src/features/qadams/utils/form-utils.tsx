@@ -12,6 +12,10 @@ import {
   AppConnectionScope,
   AppConnectionType,
   CodeActionSchema,
+  formErrors,
+  LOOP_MAX_CONCURRENCY,
+  LOOP_MAX_RATE_LIMIT_COUNT,
+  LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS,
   LoopOnItemsActionSchema,
   Metadata,
   QadamActionSchema,
@@ -464,6 +468,43 @@ export const formUtils = {
           z.object({
             settings: z.object({
               items: z.string().min(1),
+              // Same rule as the server's loop validator: an enabled collector needs a value, or
+              // the step is saved valid here and publishing then rejects it (#41).
+              collect: z
+                .object({ value: z.string().min(1, formErrors.required) })
+                .optional(),
+              execution: z
+                .looseObject({
+                  maxConcurrency: z
+                    .number()
+                    .int('Enter a whole number of at least 1')
+                    .min(1, 'Enter a whole number of at least 1')
+                    .max(
+                      LOOP_MAX_CONCURRENCY,
+                      'This value is above the allowed maximum',
+                    )
+                    .optional(),
+                  rateLimit: z
+                    .object({
+                      count: z
+                        .number()
+                        .int('Enter a whole number of at least 1')
+                        .min(1, 'Enter a whole number of at least 1')
+                        .max(
+                          LOOP_MAX_RATE_LIMIT_COUNT,
+                          'This value is above the allowed maximum',
+                        ),
+                      perSeconds: z
+                        .number()
+                        .positive('Enter a number greater than 0')
+                        .max(
+                          LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS,
+                          'This value is above the allowed maximum',
+                        ),
+                    })
+                    .optional(),
+                })
+                .optional(),
             }),
           }).shape,
         );

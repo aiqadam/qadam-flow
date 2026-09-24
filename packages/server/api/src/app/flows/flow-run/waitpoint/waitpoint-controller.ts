@@ -1,13 +1,16 @@
-import { CreateWaitpointRequest, CreateWaitpointResponse, ErrorCode, QadamFlowError } from '@aiqadam/shared'
+import { CreateWaitpointRequest, CreateWaitpointResponse, ErrorCode, isNil, JoinFailurePolicy, JoinWaitpointConfig, PauseType, QadamFlowError } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { securityAccess } from '../../../core/security/authorization/fastify-security'
 import { domainHelper } from '../../../helper/domain-helper'
+import { system } from '../../../helper/system/system'
+import { AppSystemProp } from '../../../helper/system/system-props'
 import { waitpointService } from './waitpoint-service'
+import { WaitpointSlotStatus, WaitpointStatus } from './waitpoint-types'
 
 export const waitpointController: FastifyPluginAsyncZod = async (app) => {
     app.post('/', CreateWaitpointParams, async (request, reply) => {
-        const { flowRunId, projectId, stepName, type, version, resumeDateTime, responseToSend, workerHandlerId, httpRequestId, internal } = request.body
+        const { flowRunId, projectId, stepName, type, version, resumeDateTime, responseToSend, workerHandlerId, httpRequestId, internal, join } = request.body
         if (projectId !== request.principal.projectId) {
             throw new QadamFlowError({
                 code: ErrorCode.AUTHORIZATION,
@@ -16,7 +19,10 @@ export const waitpointController: FastifyPluginAsyncZod = async (app) => {
                 },
             })
         }
-        const { waitpoint } = await waitpointService(request.log).createForPause({
+        if (!isNil(join)) {
+            assertValidJoin({ join, type })
+        }
+        const { waitpoint, slots } = await waitpointService(request.log).createForPause({
             flowRunId,
             projectId,
             callerRunId: request.principal.id,
@@ -27,6 +33,7 @@ export const waitpointController: FastifyPluginAsyncZod = async (app) => {
             responseToSend: responseToSend ?? undefined,
             workerHandlerId: workerHandlerId ?? undefined,
             httpRequestId: httpRequestId ?? undefined,
+            join,
         })
         // An internal-only waitpoint (resumed exclusively by a POST from
         // inside this same deployment, e.g. callFlow's queue-mode wait-for-
@@ -50,8 +57,31 @@ export const waitpointController: FastifyPluginAsyncZod = async (app) => {
         return reply.status(StatusCodes.CREATED).send({
             id: waitpoint.id,
             resumeUrl,
+            ...(isNil(join) ? {} : {
+                slotResumeUrls: slots.map((slot) => `${resumeUrl}/slots/${slot.id}`),
+                // A replayed step gets its own join back: these slots already have a child or an
+                // answer — all of them once the join has completed — and must not be dispatched again.
+                dispatchedSlots: slots
+                    .filter((slot) => waitpoint.status === WaitpointStatus.COMPLETED || slot.status !== WaitpointSlotStatus.PENDING || !isNil(slot.childRunId))
+                    .map((slot) => slot.slotIndex),
+            }),
         })
     })
+}
+
+function assertValidJoin({ join, type }: { join: JoinWaitpointConfig, type: CreateWaitpointRequest['type'] }): void {
+    const quorumFits = join.failurePolicy !== JoinFailurePolicy.enum.QUORUM || (!isNil(join.quorum) && join.quorum <= join.slots)
+    // The same ceiling a DELAY pause has: a paused run is reaped past it anyway.
+    const maxTimeoutSeconds = system.getNumberOrThrow(AppSystemProp.PAUSED_FLOW_TIMEOUT_DAYS) * 24 * 60 * 60
+    const timeoutFits = isNil(join.timeoutSeconds) || join.timeoutSeconds <= maxTimeoutSeconds
+    if (type !== PauseType.WEBHOOK || !quorumFits || !timeoutFits) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: {
+                message: 'A join waitpoint must be a WEBHOOK waitpoint, a QUORUM join needs a quorum no larger than its slots, and its timeout cannot exceed AP_PAUSED_FLOW_TIMEOUT_DAYS',
+            },
+        })
+    }
 }
 
 const CreateWaitpointParams = {

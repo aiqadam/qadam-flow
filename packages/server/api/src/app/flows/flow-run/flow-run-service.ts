@@ -311,6 +311,9 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     // completes exactly this id (`complete()` is a no-op on anything else), so a
                     // stale/consumed waitpoint could never complete the wrong one either way.
                     parentWaitpointId: oldFlowRun.parentWaitpointId,
+                    // Re-verified the same way; a slot the first attempt already answered is no
+                    // longer PENDING, so the retried run is created without it.
+                    parentSlotId: oldFlowRun.parentSlotId,
                 })
             }
         }
@@ -388,6 +391,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         parentRunId,
         failParentOnFailure,
         parentWaitpointId,
+        parentSlotId,
         platformId,
         stepNameToTest,
         environment,
@@ -414,6 +418,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     flowId,
                     failParentOnFailure,
                     parentWaitpointId,
+                    parentSlotId,
                     stepNameToTest,
                     environment,
                 }, log)
@@ -849,9 +854,9 @@ async function readLogsFile(log: FastifyBaseLogger, logsFileId: string, projectI
  * later, when this very child terminates) and closes the gap for a WORKER principal calling
  * `submitPayloads` directly.
  */
-async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentWaitpointId, projectId, log }: ResolveVerifiedParentParams): Promise<ResolvedParent> {
+async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, projectId, log }: ResolveVerifiedParentParams): Promise<ResolvedParent> {
     if (isNil(parentRunId)) {
-        return { parentRunId: undefined, failParentOnFailure, parentWaitpointId: undefined }
+        return { parentRunId: undefined, failParentOnFailure, parentWaitpointId: undefined, parentSlotId: undefined }
     }
     const verifiedParent = await findParentRun({ parentRunId, projectId, log })
     if (isNil(verifiedParent)) {
@@ -859,42 +864,65 @@ async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentW
         // `false`, not `undefined`: queueOrCreateInstantly defaults a genuinely-absent
         // failParentOnFailure to `true` (`failParentOnFailure ?? true`), so `undefined` here would
         // read as "no preference" and re-enable exactly the flag this branch exists to drop.
-        return { parentRunId: undefined, failParentOnFailure: false, parentWaitpointId: undefined }
+        return { parentRunId: undefined, failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
     }
     // A waitpoint id is only ever meaningful alongside a `true` failParentOnFailure — dropping it
     // otherwise keeps `flow_run.parentWaitpointId` from persisting a value nothing will ever read.
     if (!failParentOnFailure || isNil(parentWaitpointId)) {
-        return { parentRunId, failParentOnFailure, parentWaitpointId: undefined }
+        return { parentRunId, failParentOnFailure, parentWaitpointId: undefined, parentSlotId: undefined }
     }
-    const provenWaitpoint = await waitpointService(log).existsPendingWebhookWaitpoint({
-        id: parentWaitpointId,
-        flowRunId: parentRunId,
+    const proof = await waitpointService(log).findVerifiedParentJoinSlot({
+        parentRunId,
+        parentWaitpointId,
+        parentSlotId,
         projectId,
     })
-    if (!provenWaitpoint) {
-        log.warn({ parentRunId }, '[flowRunService#resolveVerifiedParent] Dropping failParentOnFailure: parentWaitpointId did not re-verify against a PENDING WEBHOOK waitpoint on this parent')
-        return { parentRunId, failParentOnFailure: false, parentWaitpointId: undefined }
+    // A join waitpoint (#374) is proven only together with one of its own PENDING slots: its id alone
+    // is in every child's callback URL, and must not let a child answer, or fail, the whole join.
+    if (!proof.waitpointProven || (proof.isJoin && !proof.slotProven)) {
+        log.warn({ parentRunId }, '[flowRunService#resolveVerifiedParent] Dropping failParentOnFailure: parentWaitpointId (and parentSlotId, for a join) did not re-verify against a PENDING WEBHOOK waitpoint on this parent')
+        return { parentRunId, failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
     }
-    return { parentRunId, failParentOnFailure, parentWaitpointId }
+    return { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId: proof.isJoin ? parentSlotId : undefined }
+}
+
+// A join slot (#374) belongs to the first child created for it: a parent step that is replayed
+// re-dispatches only the slots with no child yet, and a second child for the same slot is not
+// attached to the join — its failure answers nothing. (It still carries the slot's callback URL, so
+// its own Return Response can answer; the first answer wins, and both process the same item.)
+async function claimJoinSlot({ verified, childRunId, projectId, log }: ClaimJoinSlotParams): Promise<ResolvedParent> {
+    if (isNil(verified.parentSlotId) || isNil(verified.parentWaitpointId)) {
+        return verified
+    }
+    const claimed = await waitpointService(log).claimSlot({ slotId: verified.parentSlotId, waitpointId: verified.parentWaitpointId, projectId, childRunId })
+    if (claimed) {
+        return verified
+    }
+    log.warn({ parentRunId: verified.parentRunId }, '[flowRunService#claimJoinSlot] Join slot already has a child; starting this run detached from the join')
+    return { parentRunId: verified.parentRunId, failParentOnFailure: false, parentWaitpointId: undefined, parentSlotId: undefined }
 }
 
 async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogger): Promise<FlowRun> {
     const now = new Date().toISOString()
-    const { parentRunId, failParentOnFailure, parentWaitpointId } = await resolveVerifiedParent({
+    const verified = await resolveVerifiedParent({
         parentRunId: params.parentRunId,
         failParentOnFailure: params.failParentOnFailure,
         parentWaitpointId: params.parentWaitpointId,
+        parentSlotId: params.parentSlotId,
         projectId: params.projectId,
         log,
     })
+    const id = apId()
+    const { parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId } = await claimJoinSlot({ verified, childRunId: id, projectId: params.projectId, log })
     const flowRun: FlowRun = {
-        id: apId(),
+        id,
         projectId: params.projectId,
         flowId: params.flowId,
         flowVersionId: params.flowVersionId,
         environment: params.environment,
         parentRunId,
         parentWaitpointId,
+        parentSlotId,
         // Only a subflow child (parentRunId set) has a meaningful dispatch mode —
         // a top-level run isn't dispatched by a parent at all. This is the queue
         // path specifically; the inline path writes its own run row directly in
@@ -909,7 +937,25 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         steps: {},
         triggeredBy: params.triggeredBy,
     }
-    switch (params.environment) {
+    const { data: created, error } = await tryCatch(() => persistOrQueueRun({ flowRun, environment: params.environment, log }))
+    if (error) {
+        // A claim for a run that never came to exist would leave its slot unanswerable and never
+        // re-dispatched; the retried request claims it again.
+        if (!isNil(parentSlotId)) {
+            // The creation error is the one the caller needs; a release failing in the same outage
+            // is logged instead of replacing it, and the join's timeout still bounds the slot.
+            const { error: releaseError } = await tryCatch(() => waitpointService(log).releaseSlotClaim({ slotId: parentSlotId, projectId: params.projectId, childRunId: id }))
+            if (releaseError) {
+                log.error({ err: releaseError, parentRunId }, '[flowRunService#queueOrCreateInstantly] Could not release the join slot claim of a run that was not created')
+            }
+        }
+        throw error
+    }
+    return created
+}
+
+async function persistOrQueueRun({ flowRun, environment, log }: PersistOrQueueRunParams): Promise<FlowRun> {
+    switch (environment) {
         case RunEnvironment.TESTING:
             return flowRunRepo().save(flowRun)
         case RunEnvironment.PRODUCTION:
@@ -967,6 +1013,7 @@ type CreateParams = {
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
     parentWaitpointId?: string
+    parentSlotId?: string
     stepNameToTest?: string
     flowId: FlowId
     environment: RunEnvironment
@@ -981,6 +1028,20 @@ type ResolveVerifiedParentParams = {
     parentRunId: FlowRunId | undefined
     failParentOnFailure: boolean | undefined
     parentWaitpointId: string | undefined
+    parentSlotId: string | undefined
+    projectId: ProjectId
+    log: FastifyBaseLogger
+}
+
+type PersistOrQueueRunParams = {
+    flowRun: FlowRun
+    environment: RunEnvironment
+    log: FastifyBaseLogger
+}
+
+type ClaimJoinSlotParams = {
+    verified: ResolvedParent
+    childRunId: string
     projectId: ProjectId
     log: FastifyBaseLogger
 }
@@ -989,6 +1050,7 @@ type ResolvedParent = {
     parentRunId: FlowRunId | undefined
     failParentOnFailure: boolean | undefined
     parentWaitpointId: string | undefined
+    parentSlotId: string | undefined
 }
 
 export type FindParentRunParams = {
@@ -1055,6 +1117,7 @@ type StartParams = {
     parentRunId?: FlowRunId
     failParentOnFailure: boolean | undefined
     parentWaitpointId?: string
+    parentSlotId?: string
     stepNameToTest?: string
     executeTrigger: boolean
     executionType: ExecutionType.BEGIN

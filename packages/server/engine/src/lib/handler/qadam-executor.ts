@@ -1,9 +1,9 @@
 import { ActionContext, backwardCompatabilityContextUtils, ConstructToolParams, CreateWaitpointHook, CreateWaitpointParams, CreateWaitpointResult, InputPropertyMap, QadamAuthProperty, QadamPropertyMap, RespondHook, RespondHookParams, StaticPropsValue, StopHook, StopHookParams, TagsManager, WaitForWaitpointHook } from '@aiqadam/qadams-framework'
-import { AUTHENTICATION_PROPERTY_NAME, EngineGenericError, ExecutionType, FlowActionType, FlowRunStatus, GenericStepOutput, isNil, PausedFlowTimeoutError, QadamAction, RespondResponse, StepOutputStatus } from '@aiqadam/shared'
+import { AUTHENTICATION_PROPERTY_NAME, EngineGenericError, ExecutionType, FlowActionType, FlowRunStatus, GenericStepOutput, isNil, QadamAction, RespondResponse, StepOutputStatus } from '@aiqadam/shared'
 import type { ToolSet } from 'ai'
-import dayjs from 'dayjs'
 import { continueIfFailureHandler, runWithExponentialBackoff } from '../helper/error-handling'
 import { flowRunProgressReporter } from '../helper/flow-run-progress-reporter'
+import { pausedFlowLimits } from '../helper/paused-flow-limits'
 import { qadamLoader } from '../helper/qadam-loader'
 import { createFileUploader } from '../qadam-context/file-uploader'
 import { createFlowsContext } from '../qadam-context/flows'
@@ -18,7 +18,7 @@ import { ActionHandler, BaseExecutor } from './base-executor'
 import { EngineConstants } from './context/engine-constants'
 import { callFlowInline } from './inline-flow-executor'
 
-const AP_PAUSED_FLOW_TIMEOUT_DAYS = Number(process.env.AP_PAUSED_FLOW_TIMEOUT_DAYS)
+const CONCURRENT_LOOP_PAUSE_ERROR = 'This step pauses the run, which an iteration of a CONCURRENT loop cannot do. Run the loop SEQUENTIAL, or move this step out of the loop.'
 
 export const qadamExecutor: BaseExecutor<QadamAction> = {
     async handle({
@@ -29,7 +29,7 @@ export const qadamExecutor: BaseExecutor<QadamAction> = {
         if (executionState.isCompleted({ stepName: action.name })) {
             return executionState
         }
-        const resultExecution = await runWithExponentialBackoff(executionState, action, constants, executeAction)
+        const resultExecution = await runWithExponentialBackoff({ executionState, action, constants, requestFunction: executeAction })
         return continueIfFailureHandler(resultExecution, action, constants)
     },
 }
@@ -60,6 +60,12 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
         })
 
         stepOutput.input = censoredInput
+
+        // Refused before `run()`: a waitpoint created and then abandoned would stay PENDING and could
+        // resume this run later with someone else's payload.
+        if (executionState.isConcurrentFork && qadamAction.pauses === true) {
+            throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
+        }
 
         const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({
             resolvedInput,
@@ -151,9 +157,9 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 id: constants.flowRunId,
                 stop: createStopHook(params),
                 respond: createRespondHook(params),
-                createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params }),
-                waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params }),
-                callFlowInline: (req) => callFlowInline({ constants, flowId: req.flowId, payload: req.payload }),
+                createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params, concurrentFork: executionState.isConcurrentFork }),
+                waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params, concurrentFork: executionState.isConcurrentFork }),
+                callFlowInline: (req) => callFlowInline({ constants, flowId: req.flowId, payload: req.payload, insideConcurrentIteration: executionState.isConcurrentFork }),
             },
             project: {
                 id: constants.projectId,
@@ -282,9 +288,17 @@ type CreateRespondHookParams = {
     hookResponse: HookResponse
 }
 
-function createWaitpointHook({ constants, stepName, hookParams }: { constants: EngineConstants, stepName: string, hookParams: { hookResponse: HookResponse } }): CreateWaitpointHook {
+function createWaitpointHook({ constants, stepName, hookParams, concurrentFork }: { constants: EngineConstants, stepName: string, hookParams: { hookResponse: HookResponse }, concurrentFork: boolean }): CreateWaitpointHook {
     return async (req: CreateWaitpointParams): Promise<CreateWaitpointResult> => {
-        assertDelayWithinTimeout(req.resumeDateTime)
+        // A `'conditional'` action only learns it pauses here (a Queue-mode Call Flow that waits for
+        // its response); refusing before the waitpoint exists leaves nothing PENDING behind (#387).
+        if (concurrentFork) {
+            throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
+        }
+        pausedFlowLimits.assertResumeWithinTimeout(req.resumeDateTime)
+        if (!isNil(req.join?.timeoutSeconds)) {
+            pausedFlowLimits.assertResumeWithinTimeout(new Date(Date.now() + req.join.timeoutSeconds * 1000).toISOString())
+        }
         if (!isNil(req.responseToSend)) {
             hookParams.hookResponse = { ...hookParams.hookResponse, responseToSend: req.responseToSend }
         }
@@ -301,6 +315,7 @@ function createWaitpointHook({ constants, stepName, hookParams }: { constants: E
             workerHandlerId: constants.workerHandlerId ?? undefined,
             httpRequestId: constants.httpRequestId ?? undefined,
             internal: req.internal,
+            join: req.join,
         })
         return {
             ...result,
@@ -313,8 +328,11 @@ function createWaitpointHook({ constants, stepName, hookParams }: { constants: E
     }
 }
 
-function createWaitForWaitpointHook({ hookParams }: { hookParams: { hookResponse: HookResponse } }): WaitForWaitpointHook {
+function createWaitForWaitpointHook({ hookParams, concurrentFork }: { hookParams: { hookResponse: HookResponse }, concurrentFork: boolean }): WaitForWaitpointHook {
     return (_waitpointId: string) => {
+        if (concurrentFork) {
+            throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
+        }
         hookParams.hookResponse = {
             ...hookParams.hookResponse,
             type: 'paused',
@@ -322,12 +340,3 @@ function createWaitForWaitpointHook({ hookParams }: { hookParams: { hookResponse
     }
 }
 
-function assertDelayWithinTimeout(resumeDateTime?: string): void {
-    if (isNil(resumeDateTime)) {
-        return
-    }
-    const diffInDays = dayjs(resumeDateTime).diff(dayjs(), 'days')
-    if (diffInDays > AP_PAUSED_FLOW_TIMEOUT_DAYS) {
-        throw new PausedFlowTimeoutError(undefined, AP_PAUSED_FLOW_TIMEOUT_DAYS)
-    }
-}

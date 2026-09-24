@@ -22,6 +22,31 @@ export enum RouterExecutionType {
     EXECUTE_FIRST_MATCH = 'EXECUTE_FIRST_MATCH',
 }
 
+// What a loop keeps of each iteration's step outputs once the iteration is done (#41). A body that
+// is not kept is blanked to `{}` rather than removed: iterations are addressed by position.
+export enum LoopKeepBodies {
+    ALL = 'ALL',
+    FAILED_ONLY = 'FAILED_ONLY',
+    NONE = 'NONE',
+}
+
+// How a loop runs its iterations (#387, #374). `SEQUENTIAL` is how every loop ran before.
+export enum LoopExecutionMode {
+    SEQUENTIAL = 'SEQUENTIAL',
+    CONCURRENT = 'CONCURRENT',
+}
+
+export enum LoopIterationFailurePolicy {
+    STOP = 'STOP',
+    CONTINUE = 'CONTINUE',
+}
+
+// What a loop does when an iteration fails with a provider-requested wait (`error.retryAfterSeconds`).
+export enum LoopRateLimitedPolicy {
+    WAIT_AND_RETRY = 'WAIT_AND_RETRY',
+    FAIL = 'FAIL',
+}
+
 export enum BranchExecutionType {
     FALLBACK = 'FALLBACK',
     CONDITION = 'CONDITION',
@@ -108,13 +133,57 @@ export const QadamActionSchema = z.object({
 })
 
 // Loop Items
+export const LoopCollectSettings = z.object({
+    value: z.string(),
+    skipFailed: z.boolean().optional(),
+})
+export type LoopCollectSettings = z.infer<typeof LoopCollectSettings>
+
+// Bounds on what a request can ask the engine for; the operator's own ceiling on concurrency
+// (`AP_LOOP_MAX_CONCURRENCY`) is applied by the engine on top.
+export const LOOP_MAX_CONCURRENCY = 100
+export const LOOP_MAX_RATE_LIMIT_COUNT = 10000
+export const LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS = 86400
+const LOOP_MAX_RATE_LIMITED_RETRIES = 100
+
+export const LoopExecutionSettings = z.object({
+    mode: z.enum(LoopExecutionMode),
+    maxConcurrency: z.number().int().min(1).max(LOOP_MAX_CONCURRENCY).optional(),
+    rateLimit: z.object({
+        count: z.number().int().min(1).max(LOOP_MAX_RATE_LIMIT_COUNT),
+        perSeconds: z.number().positive().max(LOOP_MAX_RATE_LIMIT_WINDOW_SECONDS),
+    }).optional(),
+    onRateLimited: z.enum(LoopRateLimitedPolicy).optional(),
+    maxRateLimitRetries: z.number().int().min(0).max(LOOP_MAX_RATE_LIMITED_RETRIES).optional(),
+    onIterationFailure: z.enum(LoopIterationFailurePolicy).optional(),
+    tolerateFailures: z.boolean().optional(),
+    // A loop that outlives one execution budget (#387): before `FLOW_TIMEOUT_SECONDS` runs out it
+    // pauses itself at an iteration boundary and resumes with a fresh budget.
+    durable: z.boolean().optional(),
+})
+export type LoopExecutionSettings = z.infer<typeof LoopExecutionSettings>
+
 export const LoopOnItemsActionSettings = z.object({
     ...commonActionSettings,
     items: z.string(),
+    // Both optional so every loop authored before #41 reads as it did: nothing collected, every
+    // iteration kept.
+    collect: LoopCollectSettings.optional(),
+    keepBodies: z.enum(LoopKeepBodies).optional(),
+    execution: LoopExecutionSettings.optional(),
 })
 export type LoopOnItemsActionSettings = z.infer<
   typeof LoopOnItemsActionSettings
 >
+
+// The engine, the builder and the run view must agree on what an unset `keepBodies` means.
+export const loopSettingsDefaults = {
+    // A durable loop keeps only what a retry needs unless told otherwise: its whole point is a
+    // number of items that would not fit in one run's log.
+    keepBodies(settings: Pick<LoopOnItemsActionSettings, 'keepBodies' | 'execution'>): LoopKeepBodies {
+        return settings.keepBodies ?? (settings.execution?.durable === true ? LoopKeepBodies.FAILED_ONLY : LoopKeepBodies.ALL)
+    },
+}
 
 export const LoopOnItemsActionSchema = z.object({
     ...commonActionProps,

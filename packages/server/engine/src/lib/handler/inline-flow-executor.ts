@@ -32,8 +32,8 @@ const zstdCompress = promisify(zstdCompressCallback)
 // and the child FlowRun row are all resolved by the WORKER (via resolveInlineFlow),
 // which scopes and depth-guards them from ITS OWN trusted job context — this
 // function never has to (and must never) trust a flowId's ownership on its own.
-export async function callFlowInline(params: { constants: EngineConstants, flowId: string, payload: unknown }): Promise<CallFlowInlineResult> {
-    const { constants: parentConstants, flowId, payload } = params
+export async function callFlowInline(params: { constants: EngineConstants, flowId: string, payload: unknown, insideConcurrentIteration: boolean }): Promise<CallFlowInlineResult> {
+    const { constants: parentConstants, flowId, payload, insideConcurrentIteration } = params
 
     const resolved = await utils.tryCatchAndThrowOnEngineError(() =>
         // `parentRunId: parentConstants.flowRunId` is the run THIS call is nested
@@ -86,6 +86,8 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: flowVersion.trigger }),
         isInlineChild: true,
         inlineDepth: parentConstants.inlineDepth + 1,
+        executionStartedAt: parentConstants.executionStartedAt,
+        insideConcurrentIteration: insideConcurrentIteration || parentConstants.insideConcurrentIteration,
     })
 
     const withTriggerStep = await FlowExecutorContext.empty({
@@ -131,6 +133,7 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         throw error
     }
 
+    finalContext = flowExecutor.enforceLogSizeLimitOnCompletion({ executionState: finalContext, flowVersion })
     await finalizeInlineChildRun({ constants: childConstants, finalContext })
 
     return toCallFlowResult(finalContext)

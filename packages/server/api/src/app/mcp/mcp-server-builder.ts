@@ -25,7 +25,7 @@ const MCP_SERVER_INSTRUCTIONS = `## Qadam Flow MCP Server
 
 ### Key patterns
 - **Auth**: ap_list_connections → get \`externalId\` → pass as \`auth\` param on ap_update_step/ap_update_trigger.
-- **Step refs**: \`{{stepName['output'].field}}\` — a step's data is nested under \`['output']\` (e.g. \`{{trigger['output'].body.email}}\`, \`{{step_1['output'].id}}\`). The trigger follows the same rule: use \`{{trigger['output'].field}}\`, never \`{{trigger.field}}\`. For a continue-on-failure step's error, use \`{{stepName['error'].message}}\`.
+- **Step refs**: \`{{stepName['output'].field}}\` — a step's data is nested under \`['output']\` (e.g. \`{{trigger['output'].body.email}}\`, \`{{step_1['output'].id}}\`). The trigger follows the same rule: use \`{{trigger['output'].field}}\`, never \`{{trigger.field}}\`. For a continue-on-failure step's error, use \`{{stepName['error'].description}}\` (human-readable text), \`{{stepName['error'].status}}\` (HTTP status) and \`{{stepName['error'].retryAfterSeconds}}\` (the provider's requested wait on a 429); \`{{stepName['error'].message}}\` is the raw stored error string.
 - **Step names**: \`trigger\`, \`step_1\`, \`step_2\`, etc. Use ap_flow_structure to see all names.
 - **Piece names**: full format (e.g. "@aiqadam/qadam-slack") for ap_add_step/ap_update_trigger. Short names work for lookup tools.
 - **Modifying steps**: use ap_update_step/ap_update_trigger. Never delete+recreate — loses sample data.

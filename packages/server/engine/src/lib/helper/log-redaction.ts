@@ -1,6 +1,10 @@
-import { BaseStepOutput, FlowAction, FlowActionType, FlowRunStatus, flowStructureUtil, FlowTrigger, isNil, LoopStepOutput, Step, StepOutput } from '@aiqadam/shared'
+import { BaseStepOutput, FlowAction, FlowActionType, FlowRunStatus, flowStructureUtil, FlowTrigger, isNil, LoopOnItemsAction, LoopStepOutput, Step, StepOutput } from '@aiqadam/shared'
 
 export const REDACTED_VALUE = '**REDACTED**'
+
+// Template scopes that resolve to secrets; a collector reading them is redacted like one reading an
+// unlogged step.
+const SECRET_SCOPES = ['connections', 'variables']
 
 export const logRedaction = {
     // A `Map`, not a `Record`: `step.name` comes straight from flow content, and
@@ -30,7 +34,7 @@ export const logRedaction = {
                 logOutput: step.logOutput ?? true,
             })
         }
-        return policy
+        return withCollectedRedaction({ trigger, policy })
     },
     // Applied when the step is written into the execution state. A step's own output is never
     // redacted here: `stepsForLog()` does that on the copy handed to the serializer, because the
@@ -78,17 +82,80 @@ function redactStepForLog({ stepName, step, stepLogPolicy }: RedactStepParams): 
         const loop = new LoopStepOutput(step)
         const iterations = loop.output?.iterations
         if (!isNil(iterations)) {
-            return loop.setIterations(iterations.map((iteration) =>
+            const redacted = loop.setIterations(iterations.map((iteration) =>
                 logRedaction.redactStepsForLog({ steps: iteration, stepLogPolicy }),
             ))
+            const collected = redacted.output?.collected
+            if (policy?.redactCollected !== true || isNil(collected) || isNil(redacted.output)) {
+                return redacted
+            }
+            return new LoopStepOutput({
+                ...redacted,
+                output: { ...redacted.output, collected: collected.map((value) => isNil(value) ? value : REDACTED_VALUE) },
+            })
         }
     }
     return step
 }
 
+// A loop's `collected` holds whatever its `collect.value` read, so a value that is kept out of the
+// log elsewhere must not reach it through the loop instead (#41). A loop is redacted when its
+// collector names a step that does not log its output (matched by substring, as the props
+// resolver finds referenced steps: over-matching only redacts more), names another redacted loop,
+// reads connections or variables, or has an unlogged step anywhere in its own body — the whole
+// iteration is in scope while `collect.value` runs, so naming the step is not the only way to read
+// it. Repeated until nothing changes, since one loop can collect another's results.
+function withCollectedRedaction({ trigger, policy }: { trigger: FlowTrigger, policy: Map<string, StepLogPolicy> }): Map<string, StepLogPolicy> {
+    const collectingLoops = flowStructureUtil.getAllSteps(trigger).filter(isCollectingLoop)
+    if (collectingLoops.length === 0) {
+        return policy
+    }
+    const withCollected = new Map(policy)
+    let changed = true
+    while (changed) {
+        changed = false
+        const unloggedSources = [...withCollected.entries()]
+            .filter(([, entry]) => !entry.logOutput || entry.redactCollected === true)
+            .map(([name]) => name)
+        for (const loop of collectingLoops) {
+            if (withCollected.get(loop.name)?.redactCollected === true) {
+                continue
+            }
+            if (!readsUnloggedData({ loop, unloggedSources })) {
+                continue
+            }
+            const existing = withCollected.get(loop.name)
+            withCollected.set(loop.name, {
+                logInput: existing?.logInput ?? true,
+                logOutput: existing?.logOutput ?? true,
+                redactCollected: true,
+            })
+            changed = true
+        }
+    }
+    return withCollected
+}
+
+function isCollectingLoop(step: Step): step is LoopOnItemsAction {
+    return step.type === FlowActionType.LOOP_ON_ITEMS && !isNil(step.settings.collect)
+}
+
+function readsUnloggedData({ loop, unloggedSources }: { loop: LoopOnItemsAction, unloggedSources: string[] }): boolean {
+    const collectValue = loop.settings.collect?.value ?? ''
+    if (SECRET_SCOPES.some((scope) => collectValue.includes(scope))) {
+        return true
+    }
+    if (unloggedSources.some((name) => name !== loop.name && collectValue.includes(name))) {
+        return true
+    }
+    const body = isNil(loop.firstLoopAction) ? [] : flowStructureUtil.getAllSteps(loop.firstLoopAction)
+    return body.some((step) => unloggedSources.includes(step.name))
+}
+
 export type StepLogPolicy = {
     logInput: boolean
     logOutput: boolean
+    redactCollected?: boolean
 }
 
 type BuildStepLogPolicyParams = {

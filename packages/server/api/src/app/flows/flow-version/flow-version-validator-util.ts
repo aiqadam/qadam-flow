@@ -25,6 +25,8 @@ import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-servi
 
 const loopSettingsValidator = LoopOnItemsActionSettings.and(z.object({
     items: z.string().min(1),
+    // A collector with nothing to collect is a half-configured step, not "collect nothing" (#41).
+    collect: z.object({ value: z.string().min(1) }).optional(),
 }))
 const routerSettingsValidator = RouterActionSettingsWithValidation
 const MAX_LOGGED_UNDECLARED_KEYS = 20

@@ -7,6 +7,7 @@ import {
     FlowRunId,
     FlowRunStatus,
     isFlowRunStateTerminal,
+    isNil,
     QadamFlowError,
     ResumeReason,
     RunEnvironment,
@@ -24,7 +25,7 @@ import { waitpointService } from './waitpoint-service'
 import { Waitpoint, WaitpointResumePayload } from './waitpoint-types'
 
 export const resumeService = (log: FastifyBaseLogger) => ({
-    async resumeFromWaitpoint({ flowRunId, waitpointId, resumePayload, workerHandlerId, httpRequestId }: ResumeFromWaitpointParams): Promise<ResumeFromWaitpointResult> {
+    async resumeFromWaitpoint({ flowRunId, projectId, waitpointId, resumePayload, workerHandlerId, httpRequestId }: ResumeFromWaitpointParams): Promise<ResumeFromWaitpointResult> {
         // A resume POST can legitimately arrive after its own flow run's row
         // is gone from under it — not because the run never existed, but
         // because a slow-to-respond original request raced a client-side
@@ -42,6 +43,12 @@ export const resumeService = (log: FastifyBaseLogger) => ({
             }
             throw notFound
         }
+        // A caller that knows the run's project (a server-side job) gets the lookup scoped to it; an
+        // HTTP resume knows only the run id, and the waitpoint id is its credential.
+        if (!isNil(projectId) && flowRun.projectId !== projectId) {
+            log.warn({ flowRunId, waitpointId }, '[resumeService#resumeFromWaitpoint] Run is not in the expected project, treating resume as stale')
+            return { flowRun: undefined, stale: true }
+        }
         const processed = await waitpointService(log).handleResumeSignal({
             flowRunId,
             waitpointId,
@@ -54,13 +61,27 @@ export const resumeService = (log: FastifyBaseLogger) => ({
                 await enqueueResume({
                     flowRun,
                     waitpoint,
-                    resumePayload,
+                    // A join waitpoint (#374) resumes only with the aggregate it stored when it
+                    // completed, never with whatever payload the signal that reached it carried.
+                    resumePayload: isNil(waitpoint.join) ? resumePayload : waitpoint.resumePayload,
                     workerHandlerId,
                     httpRequestId,
                 }, log)
             },
         })
         return { flowRun, stale: !processed }
+    },
+
+    /**
+     * A DELAY waitpoint's job fires whatever state the run is in. A run still RUNNING/QUEUED — a
+     * durable loop's budget checkpoint (#387) is due at once, before the engine has even reported
+     * PAUSED — gets its waitpoint marked COMPLETED, and the PAUSED upload resumes it
+     * (runsMetadataQueue). Skipping such a run instead would strand it: its job is gone, and a
+     * PENDING waitpoint is never resumed by the upload. A missing or finished run is stale.
+     */
+    async resumeDelayWaitpoint({ flowRunId, projectId, waitpointId }: ResumeDelayWaitpointParams): Promise<void> {
+        const { stale } = await this.resumeFromWaitpoint({ flowRunId, projectId, waitpointId, resumePayload: null })
+        log.info({ flowRunId, projectId, waitpointId, stale }, '[resumeService#resumeDelayWaitpoint] Delay elapsed')
     },
 
     async legacyResume({ flowRun, resumePayload, workerHandlerId }: LegacyResumeParams): Promise<ResumeFromWaitpointResult> {
@@ -226,10 +247,17 @@ type LegacySyncResumeParams = {
 
 type ResumeFromWaitpointParams = {
     flowRunId: FlowRunId
+    projectId?: string
     waitpointId: string
     resumePayload: WaitpointResumePayload
     workerHandlerId?: string
     httpRequestId?: string
+}
+
+type ResumeDelayWaitpointParams = {
+    flowRunId: FlowRunId
+    projectId: string
+    waitpointId: string
 }
 
 type LegacyResumeParams = {

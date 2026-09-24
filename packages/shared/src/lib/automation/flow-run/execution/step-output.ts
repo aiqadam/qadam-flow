@@ -142,6 +142,17 @@ export type LoopStepResult = {
     item: unknown
     index: number
     iterations: Record<string, StepOutput>[]
+    // #41. Positional: `collected[i]` belongs to item `i`, `null` where the iteration failed or was
+    // skipped, so retries and concurrency cannot reorder it.
+    collected?: unknown[]
+    // Compact: one entry per failed iteration, so its length is the number of failures.
+    failures?: LoopIterationFailure[]
+    // One entry per finished iteration. A RESUME skips an `S` iteration without entering its body,
+    // which is what makes a blanked body (`keepBodies`) safe to replay.
+    iterationStatus?: LoopIterationStatus[]
+    // Set once a durable loop has paused itself (#387): why and how often, and the item list it
+    // must find again when it resumes.
+    checkpoint?: LoopCheckpoint
 }
 
 export class LoopStepOutput extends GenericStepOutput<
@@ -191,6 +202,7 @@ LoopStepResult
         return new LoopStepOutput({
             ...this,
             output: {
+                ...this.output,
                 item,
                 index,
                 iterations: this.output?.iterations ?? [],
@@ -202,10 +214,40 @@ LoopStepResult
         return new LoopStepOutput({
             ...this,
             output: {
+                ...this.output,
                 item: this.output?.item,
                 index: this.output?.index,
                 iterations: [...(this.output?.iterations ?? []), {}],
             },
         })
     }
+}
+
+export type LoopIterationFailure = {
+    index: number
+    stepName: string
+    description: string
+}
+
+// One character each: a loop of tens of thousands of items carries one of these per item in its
+// persisted log.
+export enum LoopIterationStatus {
+    SUCCEEDED = 'S',
+    FAILED = 'F',
+}
+
+export type LoopCheckpoint = {
+    count: number
+    lastAt: string
+    reason: LoopCheckpointReason
+    itemsCount: number
+    itemsHash: string
+    // Provider-requested retries (`maxRateLimitRetries`) already spent on items still pending, by
+    // item index — a checkpoint must not hand them a fresh allowance.
+    rateLimitedRetries?: Record<string, number>
+}
+
+export enum LoopCheckpointReason {
+    BUDGET = 'BUDGET',
+    RATE_LIMIT = 'RATE_LIMIT',
 }

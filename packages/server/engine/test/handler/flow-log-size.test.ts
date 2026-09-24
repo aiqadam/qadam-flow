@@ -1,4 +1,4 @@
-import { ExecutionType, FlowRunStatus, FlowTriggerType, FlowVersionState, GenericStepOutput, StepOutputStatus } from '@aiqadam/shared'
+import { FlowRunStatus, FlowTriggerType, FlowVersionState, GenericStepOutput, StepOutputStatus } from '@aiqadam/shared'
 import { vi } from 'vitest'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
@@ -177,5 +177,64 @@ describe('flow executor log size exceeded', () => {
         })
 
         expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
+    })
+})
+
+// #387: the per-step guard answers from an upper bound on what was written, so an object a qadam
+// grows in place after it was written is only seen by a full walk. A finished run always gets one.
+describe('log size check when a run finishes', () => {
+    const trigger = {
+        name: 'trigger',
+        displayName: 'Trigger',
+        type: FlowTriggerType.EMPTY,
+        valid: true,
+        lastUpdatedDate: '2024-01-01T00:00:00Z',
+        settings: {},
+    }
+    const flowVersion = {
+        id: 'flowVersionId',
+        created: '2024-01-01T00:00:00Z',
+        updated: '2024-01-01T00:00:00Z',
+        flowId: 'flowId',
+        displayName: 'Test Flow',
+        trigger,
+        updatedBy: null,
+        valid: true,
+        schemaVersion: null,
+        agentIds: [],
+        state: FlowVersionState.DRAFT,
+        connectionIds: [],
+        backupFiles: null,
+        notes: [],
+    }
+
+    it('leaves a run within the cap as it is', async () => {
+        const executionState = await FlowExecutorContext.empty().upsertStep('trigger', GenericStepOutput.create({
+            type: FlowTriggerType.EMPTY,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+        }).setOutput({ data: 'small' }))
+
+        const result = flowExecutor.enforceLogSizeLimitOnCompletion({ executionState, flowVersion })
+
+        expect(result).toBe(executionState)
+    })
+
+    it('fails a run whose journal grew past the cap in place', async () => {
+        const output = { list: ['small'] }
+        const executionState = await FlowExecutorContext.empty().upsertStep('trigger', GenericStepOutput.create({
+            type: FlowTriggerType.EMPTY,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+        }).setOutput(output))
+        expect(flowExecutor.enforceLogSizeLimitOnCompletion({ executionState, flowVersion }).verdict.status).toBe(FlowRunStatus.RUNNING)
+
+        output.list.push('x'.repeat(51 * 1024 * 1024))
+        const result = flowExecutor.enforceLogSizeLimitOnCompletion({ executionState: executionState.finishExecution(), flowVersion })
+
+        expect(result.verdict).toEqual({
+            status: FlowRunStatus.LOG_SIZE_EXCEEDED,
+            failedStep: { name: 'trigger', displayName: 'Trigger', message: 'Flow run logs size exceeded' },
+        })
     })
 })

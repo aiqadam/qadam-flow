@@ -19,5 +19,18 @@
   "Execution Mode": "Execution Mode",
   "Queue dispatches the subflow as a separate worker job (default, works for every subflow). Inline runs it synchronously in the same engine process for much lower latency — use it for chains of lightweight subflows. The subflow must not pause (Delay, Human Input/Approval, or its own Queue-mode Call Flow) when run inline.": "Queue dispatches the subflow as a separate worker job (default, works for every subflow). Inline runs it synchronously in the same engine process for much lower latency — use it for chains of lightweight subflows. The subflow must not pause (Delay, Human Input/Approval, or its own Queue-mode Call Flow) when run inline.",
   "Queue": "Queue",
-  "Inline": "Inline"
+  "Inline": "Inline",
+  "Call Flow for Each Item": "Call Flow for Each Item",
+  "Call a flow that has a \"Callable Flow\" trigger once per item, in parallel, and wait until they have all answered": "Call a flow that has a \"Callable Flow\" trigger once per item, in parallel, and wait until they have all answered",
+  "Items": "Items",
+  "A list with one payload per call, e.g. {{step_1['output'].rows}}. At most 500 items.": "A list with one payload per call, e.g. {{step_1['output'].rows}}. At most 500 items.",
+  "When a call fails": "When a call fails",
+  "Wait for all and report each result": "Wait for all and report each result",
+  "Fail at the first failure": "Fail at the first failure",
+  "Succeed once a quorum succeeded": "Succeed once a quorum succeeded",
+  "Quorum": "Quorum",
+  "With \"Succeed once a quorum succeeded\": how many calls must succeed.": "With \"Succeed once a quorum succeeded\": how many calls must succeed.",
+  "Stop waiting after (seconds)": "Stop waiting after (seconds)",
+  "Continue with the answers that arrived by then; the rest are reported as timed out. Leave empty to wait for every call.": "Continue with the answers that arrived by then; the rest are reported as timed out. Leave empty to wait for every call.",
+  "Wait for every call and report each result, stop waiting at the first failure, or succeed as soon as enough calls have succeeded. Calls still running when the step stops waiting are not stopped; their answers are ignored.": "Wait for every call and report each result, stop waiting at the first failure, or succeed as soon as enough calls have succeeded. Calls still running when the step stops waiting are not stopped; their answers are ignored."
 }

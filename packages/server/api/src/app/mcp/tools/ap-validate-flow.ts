@@ -4,6 +4,8 @@ import {
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    LoopExecutionMode,
+    LoopOnItemsAction,
     McpToolDefinition,
     Permission,
     ProjectScopedMcpServer,
@@ -38,7 +40,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
-                const [callFlowIssues, qadamVersionIssues] = await Promise.all([
+                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -50,8 +52,14 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         platformId,
                         log,
                     }),
+                    validateConcurrentLoops({
+                        trigger: flow.version.trigger,
+                        flowName: flow.version.displayName,
+                        platformId,
+                        log,
+                    }),
                 ])
-                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues] }
+                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues] }
                 return {
                     content: [{ type: 'text', text: formatValidationResult({ result, flowDisplayName: flow.version.displayName }) }],
                     structuredContent: {
@@ -125,6 +133,10 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
                     issues.push({ category: 'template_reference', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references "{{${ref}...}}" which comes AFTER it in execution order.` })
                 }
             }
+        }
+
+        if (step.type === FlowActionType.LOOP_ON_ITEMS && !isNil(step.settings.collect)) {
+            issues.push(...validateLoopCollectReferences({ loop: step, allStepNames, seenSteps }))
         }
 
         if (step.type === FlowActionType.ROUTER) {
@@ -308,7 +320,50 @@ function readFlowNode(flow: { version: { displayName: string, trigger: Step } })
         const childExternalId = readCallFlowInput(step).externalId
         return isNil(childExternalId) ? [] : [childExternalId]
     })
-    return { flowName: flow.version.displayName, qadamSteps, inlineChildren, expectsArguments }
+    // A durable loop checkpoints by pausing the run (#387), which an inline child cannot do.
+    const durableLoops = steps
+        .filter((step): step is LoopOnItemsAction => step.type === FlowActionType.LOOP_ON_ITEMS && step.settings.execution?.durable === true)
+        .map(loop => loop.displayName)
+    return { flowName: flow.version.displayName, qadamSteps, inlineChildren, expectsArguments, durableLoops }
+}
+
+// An iteration of a CONCURRENT loop cannot pause (#387): the engine refuses the step at run time,
+// before any waitpoint exists. This reports the same thing before publish, reading the same
+// `pauses` markers the inline check reads. The run-time refusal stays the authority — a
+// 'conditional' action this check cannot evaluate is reported as "may pause".
+async function validateConcurrentLoops({ trigger, flowName, platformId, log }: {
+    trigger: Step
+    flowName: string
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<ValidationIssue[]> {
+    const bodies = flowStructureUtil.getAllSteps(trigger)
+        .filter((step): step is LoopOnItemsAction => step.type === FlowActionType.LOOP_ON_ITEMS && step.settings.execution?.mode === LoopExecutionMode.CONCURRENT)
+        .flatMap(loop => isNil(loop.firstLoopAction) ? [] : [{
+            loop,
+            qadamSteps: flowStructureUtil.getAllSteps(loop.firstLoopAction)
+                .filter(step => !('skip' in step && step.skip === true))
+                .filter((step): step is QadamStep => step.type === FlowActionType.PIECE),
+        }])
+    if (bodies.length === 0) {
+        return []
+    }
+    const graph = new Map<string, FlowNode>(bodies.map(({ loop, qadamSteps }) => [loop.name, { flowName, expectsArguments: false, qadamSteps, inlineChildren: [], durableLoops: [] }]))
+    const markers = await loadPauseMarkers({ graph, platformId, log })
+    // A step inside nested CONCURRENT loops is in both bodies; it is reported once, under the outer.
+    const reported = new Set<string>()
+    return bodies.flatMap(({ loop, qadamSteps }) => qadamSteps.flatMap((step): ValidationIssue[] => {
+        const reason = readPauseReason({ step, metadata: markers.get(qadamPinUtil.pinOf({ step })) })
+        if (isNil(reason) || reported.has(step.name)) {
+            return []
+        }
+        reported.add(step.name)
+        return [{
+            category: 'concurrent_pause',
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} is inside the CONCURRENT loop ${mcpUtils.wrapUntrustedValue(loop.displayName)} but pauses (${reason}). An iteration of a CONCURRENT loop cannot pause — set the loop's execution mode to SEQUENTIAL, or move the step out of the loop.`,
+        }]
+    }))
 }
 
 // Whether an action pauses is declared by the action itself (`pauses` on `createAction`, #426),
@@ -335,6 +390,10 @@ async function loadPauseMarkers({ graph, platformId, log }: {
 }
 
 function findPausingStepIn({ node, markers }: { node: FlowNode, markers: PauseMarkers }): PausingStep | null {
+    const durableLoop = node.durableLoops[0]
+    if (!isNil(durableLoop)) {
+        return { flowName: node.flowName, stepDisplayName: durableLoop, reason: 'a durable loop, which pauses the run to checkpoint when it runs out of time' }
+    }
     return node.qadamSteps.reduce<PausingStep | null>((found, step) => {
         if (!isNil(found)) {
             return found
@@ -501,6 +560,22 @@ function isEmptyPayload(payload: unknown): boolean {
     return false
 }
 
+// `collect.value` runs at the end of each iteration (#41), so unlike the loop's other settings it
+// may read the loop's own body — steps that come after the loop in the flow's order.
+function validateLoopCollectReferences({ loop, allStepNames, seenSteps }: { loop: LoopOnItemsAction, allStepNames: Set<string>, seenSteps: Set<string> }): ValidationIssue[] {
+    const collectValue = loop.settings.collect?.value ?? ''
+    const bodyStepNames = new Set(isNil(loop.firstLoopAction) ? [] : flowStructureUtil.getAllSteps(loop.firstLoopAction).map(s => s.name))
+    return [...extractReferencedStepNames({ value: collectValue })].flatMap((ref): ValidationIssue[] => {
+        if (!allStepNames.has(ref)) {
+            return [{ category: 'template_reference', stepName: loop.name, message: `${mcpUtils.wrapUntrustedValue(loop.displayName)} collects "{{${ref}...}}" which does not exist in the flow.` }]
+        }
+        if (ref === loop.name || seenSteps.has(ref) || bodyStepNames.has(ref)) {
+            return []
+        }
+        return [{ category: 'template_reference', stepName: loop.name, message: `${mcpUtils.wrapUntrustedValue(loop.displayName)} collects "{{${ref}...}}", which runs after the loop — collect can read steps inside the loop or before it.` }]
+    })
+}
+
 function collectStringValues({ step }: { step: Step }): string[] {
     const result: string[] = []
 
@@ -576,7 +651,7 @@ const DELAY_UNIT_MS: Record<string, number> = {
     hours: 60 * 60 * 1000,
     days: 24 * 60 * 60 * 1000,
 }
-const UNRESOLVED_FLOW: FlowNode = { flowName: '', qadamSteps: [], inlineChildren: [], expectsArguments: false }
+const UNRESOLVED_FLOW: FlowNode = { flowName: '', qadamSteps: [], inlineChildren: [], expectsArguments: false, durableLoops: [] }
 const ASSEMBLYAI_QADAM = '@aiqadam/qadam-assemblyai'
 const ASSEMBLYAI_TRANSCRIBE_ACTION = 'transcribe'
 // FROZEN. Consulted only for a step pinned to a qadam version whose metadata carries no `pauses`
@@ -612,7 +687,7 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
@@ -620,6 +695,7 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     empty_branch: 'Empty Branches',
     subflow_payload: 'Subflow Payloads',
     inline_pause: 'Inline Subflows That Pause',
+    concurrent_pause: 'Pausing Steps In Concurrent Loops',
 }
 
 function formatValidationResult({ result, flowDisplayName }: { result: ValidationResult, flowDisplayName: string }): string {
@@ -658,7 +734,7 @@ function formatValidationResult({ result, flowDisplayName }: { result: Validatio
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause'
+    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
 }
@@ -685,6 +761,7 @@ type FlowNode = {
     expectsArguments: boolean
     qadamSteps: QadamStep[]
     inlineChildren: string[]
+    durableLoops: string[]
 }
 
 type ValidationResult = {

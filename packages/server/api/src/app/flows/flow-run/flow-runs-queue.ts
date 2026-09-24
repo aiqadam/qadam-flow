@@ -13,6 +13,7 @@ import { QueueName, redisMetadataKey, RunsMetadataJobData, RunsMetadataQueueConf
 import { flowService } from '../flow/flow.service'
 import { flowRunRepo } from './flow-run-service'
 import { flowRunSideEffects } from './flow-run-side-effects'
+import { joinWaitpointService } from './waitpoint/join-waitpoint-service'
 import { resumeService } from './waitpoint/resume-service'
 import { waitpointService } from './waitpoint/waitpoint-service'
 import { WaitpointStatus } from './waitpoint/waitpoint-types'
@@ -202,7 +203,13 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     }
 
     const parentRunId = savedFlowRun.parentRunId
-    const shouldMarkParentAsFailed = savedFlowRun.failParentOnFailure && !isNil(parentRunId) && ![FlowRunStatus.SUCCEEDED, FlowRunStatus.RUNNING, FlowRunStatus.PAUSED, FlowRunStatus.QUEUED].includes(savedFlowRun.status)
+    const answersJoinSlot = !isNil(savedFlowRun.parentSlotId)
+    // A join child (#374) answers its own slot on any terminal status — including a SUCCEEDED run
+    // that never reached a Return Response — and never completes the parent's waitpoint itself.
+    if (answersJoinSlot && isFlowRunStateTerminal({ status: savedFlowRun.status, ignoreInternalError: false })) {
+        await joinWaitpointService(log).fillSlotForFinishedChild({ childRun: savedFlowRun })
+    }
+    const shouldMarkParentAsFailed = !answersJoinSlot && savedFlowRun.failParentOnFailure && !isNil(parentRunId) && ![FlowRunStatus.SUCCEEDED, FlowRunStatus.RUNNING, FlowRunStatus.PAUSED, FlowRunStatus.QUEUED].includes(savedFlowRun.status)
     if (shouldMarkParentAsFailed) {
         await markParentRunAsFailed({
             parentRunId,
