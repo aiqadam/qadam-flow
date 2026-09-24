@@ -28,7 +28,7 @@ const LOG_INPUT_HINT = 'Whether this step\'s input is written to the run log. De
 const LOG_OUTPUT_HINT = 'Whether this step\'s output is written to the run log. Defaults to true. Set false when the output carries personal or secret data (e.g. tables-update-record returns the whole row): the persisted log shows **REDACTED** while the value still flows to the next step.'
 // Mirrors the engine's FILE processor (#388): anything else fails the step at run time.
 const FILE_VALUE_HINT = 'FILE — pass an http(s) URL (e.g. {{step_1[\'output\'].file}}) or a data:<mime>;base64,<data> URI. Objects and bare base64 are rejected.'
-const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].message}}.'
+const STEP_REFERENCE_HINT = 'Reference a prior step\'s output with {{stepName[\'output\'].field}} (output is nested under [\'output\'], e.g. {{trigger[\'output\'].body.email}}, {{send_email[\'output\'].id}}). For a continue-on-failure step\'s error, use {{stepName[\'error\'].description}} (readable text), {{stepName[\'error\'].status}} (HTTP status) or {{stepName[\'error\'].retryAfterSeconds}} (the wait a provider asked for on a 429); {{stepName[\'error\'].message}} is the raw stored error string.'
 
 function mcpToolError(prefix: string, err: unknown): McpToolResult {
     // Every branch below is sanitized, including the two that read a `params.message` written by

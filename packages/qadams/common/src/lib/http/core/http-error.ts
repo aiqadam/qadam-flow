@@ -30,10 +30,16 @@ import { AxiosError } from 'axios';
  *
  * The response is kept. It is what a failing request is diagnosed from, and it is the server's own
  * words rather than the credentials we sent it.
+ *
+ * Response headers are the exception to that: `Set-Cookie`, session tokens and signed redirect URLs
+ * travel there, so only the rate-limit headers a flow needs to back off correctly are kept (#387).
+ * They surface through `response` — the shape `formatQadamError` reads — and deliberately not
+ * through `message` or `errorMessage()`, which failsafe actions hand back as step output.
  */
 export class HttpError extends Error {
   private readonly status: number;
   private readonly responseBody: unknown;
+  private readonly responseHeaders: Record<string, string>;
 
   constructor(err: AxiosError) {
     const status = err?.response?.status || 500;
@@ -50,6 +56,7 @@ export class HttpError extends Error {
 
     this.status = status;
     this.responseBody = responseBody;
+    this.responseHeaders = pickAllowedHeaders(err?.response?.headers);
   }
 
   public errorMessage() {
@@ -65,6 +72,27 @@ export class HttpError extends Error {
     return {
       status: this.status,
       body: this.responseBody,
+      headers: this.responseHeaders,
     };
   }
 }
+
+function pickAllowedHeaders(headers: unknown): Record<string, string> {
+  if (headers === null || typeof headers !== 'object') {
+    return {};
+  }
+  return Object.entries(headers).reduce<Record<string, string>>((kept, [name, value]) => {
+    const lowered = name.toLowerCase();
+    if (!ALLOWED_RESPONSE_HEADERS.includes(lowered) || value === undefined || value === null) {
+      return kept;
+    }
+    return { ...kept, [lowered]: Array.isArray(value) ? value.join(', ') : String(value) };
+  }, {});
+}
+
+const ALLOWED_RESPONSE_HEADERS = [
+  'retry-after',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
+];

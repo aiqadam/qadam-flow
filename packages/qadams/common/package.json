@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadams-common",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Shared HTTP and auth helpers for Qadam Flow qadams built on @aiqadam/qadams-framework.",
   "license": "MIT",
   "repository": {

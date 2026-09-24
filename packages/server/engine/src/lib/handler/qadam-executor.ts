@@ -29,7 +29,7 @@ export const qadamExecutor: BaseExecutor<QadamAction> = {
         if (executionState.isCompleted({ stepName: action.name })) {
             return executionState
         }
-        const resultExecution = await runWithExponentialBackoff(executionState, action, constants, executeAction)
+        const resultExecution = await runWithExponentialBackoff({ executionState, action, constants, requestFunction: executeAction })
         return continueIfFailureHandler(resultExecution, action, constants)
     },
 }

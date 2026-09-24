@@ -238,3 +238,50 @@ describe('tryParseFriendlyQadamError', () => {
         expect(tryParseFriendlyQadamError(undefined)).toBeNull()
     })
 })
+
+// #387: a flow reacting to a 429 needs the wait as a number, not a string to regex out of `raw`.
+describe('formatQadamError retryAfterSeconds', () => {
+    const rateLimited = (headers: Record<string, unknown>): TestHttpError =>
+        new TestHttpError({ status: 429, body: { ok: false }, headers }, {})
+
+    it('reads delay-seconds', () => {
+        expect(formatQadamError(rateLimited({ 'retry-after': '12' })).retryAfterSeconds).toBe(12)
+    })
+
+    it('matches the header name case-insensitively', () => {
+        expect(formatQadamError(rateLimited({ 'Retry-After': '3' })).retryAfterSeconds).toBe(3)
+    })
+
+    it('reads a numeric header value', () => {
+        expect(formatQadamError(rateLimited({ 'retry-after': 5 })).retryAfterSeconds).toBe(5)
+    })
+
+    it('converts an HTTP-date into seconds from now', () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(new Date('2026-09-24T10:00:00Z'))
+        try {
+            const result = formatQadamError(rateLimited({ 'retry-after': 'Thu, 24 Sep 2026 10:00:30 GMT' }))
+            expect(result.retryAfterSeconds).toBe(30)
+        }
+        finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('clamps an HTTP-date in the past to zero', () => {
+        expect(formatQadamError(rateLimited({ 'retry-after': 'Thu, 01 Jan 2015 00:00:00 GMT' })).retryAfterSeconds).toBe(0)
+    })
+
+    it('rounds fractional delay-seconds up', () => {
+        expect(formatQadamError(rateLimited({ 'retry-after': '1.5' })).retryAfterSeconds).toBe(2)
+    })
+
+    it('does not read a negative or bare number as a date', () => {
+        expect(formatQadamError(rateLimited({ 'retry-after': '-1' })).retryAfterSeconds).toBeUndefined()
+    })
+
+    it('is undefined when the header is absent or unparseable', () => {
+        expect(formatQadamError(rateLimited({})).retryAfterSeconds).toBeUndefined()
+        expect(formatQadamError(rateLimited({ 'retry-after': 'soon' })).retryAfterSeconds).toBeUndefined()
+    })
+})

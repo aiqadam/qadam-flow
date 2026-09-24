@@ -116,7 +116,7 @@ describe('AxiosHttpClient', () => {
   it('still carries the response status and body', async () => {
     const thrown = await sendFailingRequest();
 
-    expect(thrown.response).toEqual({ status: 429, body: RESPONSE_BODY });
+    expect(thrown.response).toEqual({ status: 429, body: RESPONSE_BODY, headers: {} });
     expect(thrown.errorMessage()).toEqual({
       response: { status: 429, body: RESPONSE_BODY },
     });
@@ -145,13 +145,47 @@ describe('AxiosHttpClient', () => {
   });
 });
 
-async function sendFailingRequest(): Promise<HttpError> {
+// Rate-limit headers are the one part of a response's headers a flow needs (#387): without
+// `Retry-After` a flow can only guess how long to back off. Everything else in the header block —
+// cookies, session tokens, signed URLs — stays dropped, and none of it reaches the surfaces a
+// failsafe action returns as output.
+describe('HttpError response headers', () => {
+  it('keeps only the rate-limit headers, lower-cased', async () => {
+    const thrown = await sendFailingRequest({
+      'Retry-After': '7',
+      'X-RateLimit-Remaining': '0',
+      'Set-Cookie': [SECRET_IN_HEADER],
+      Authorization: SECRET_IN_HEADER,
+    });
+
+    expect(thrown.response.headers).toEqual({ 'retry-after': '7', 'x-ratelimit-remaining': '0' });
+    expect(inspect(thrown)).not.toContain(SECRET_IN_HEADER);
+  });
+
+  it('does not add headers to the message or errorMessage()', async () => {
+    const thrown = await sendFailingRequest({ 'Retry-After': '7' });
+
+    expect(thrown.message).not.toContain('retry-after');
+    expect(JSON.stringify(thrown.errorMessage())).not.toContain('retry-after');
+  });
+
+  it('lets the persisted error carry retryAfterSeconds', async () => {
+    const thrown = await sendFailingRequest({ 'Retry-After': '7' });
+
+    const persisted = formatQadamError(thrown, { raw: inspect(thrown) });
+
+    expect(persisted.status).toBe(429);
+    expect(persisted.retryAfterSeconds).toBe(7);
+  });
+});
+
+async function sendFailingRequest(headers: Record<string, string | string[]> = {}): Promise<HttpError> {
   const failing = axios.create({
     adapter: async (config) => {
       throw new axios.AxiosError('boom', 'ERR', config, undefined, {
         status: 429,
         statusText: 'Too Many Requests',
-        headers: {},
+        headers,
         config,
         data: RESPONSE_BODY,
       });
@@ -180,4 +214,5 @@ async function sendFailingRequest(): Promise<HttpError> {
 // Distinctive enough that a match in any rendering is unambiguous, rather than a substring that
 // could plausibly have come from somewhere else.
 const SECRET_IN_BODY = 'do-not-leak-me-9f3c1a';
+const SECRET_IN_HEADER = 'session-do-not-leak-4b7e2d';
 const RESPONSE_BODY = { error: 'rate limited' };

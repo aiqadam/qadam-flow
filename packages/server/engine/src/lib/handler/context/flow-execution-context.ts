@@ -21,6 +21,7 @@ import {
 import { engineFileApi } from '../../engine-file-api'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { loggingUtils } from '../../helper/logging-utils'
+import { StepErrorView, stepErrorView } from '../../helper/step-error-view'
 import { utils } from '../../utils'
 import { StepExecutionPath } from './step-execution-path'
 
@@ -38,6 +39,7 @@ export class FlowExecutorContext {
     stepsCount: number
     engineApi?: EngineApiConfig
     resolvedStepOutputCache: Map<string, Promise<unknown>>
+    errorViewCache: Map<string, StepErrorView>
     slicingEnabled: boolean
     stepLogPolicy: Map<string, StepLogPolicy>
 
@@ -56,6 +58,7 @@ export class FlowExecutorContext {
         this.stepsCount = copyFrom?.stepsCount ?? 0
         this.engineApi = copyFrom?.engineApi
         this.resolvedStepOutputCache  = copyFrom?.resolvedStepOutputCache  ?? new Map()
+        this.errorViewCache = copyFrom?.errorViewCache ?? new Map()
         this.slicingEnabled = copyFrom?.slicingEnabled ?? true
         this.stepLogPolicy = copyFrom?.stepLogPolicy ?? new Map()
     }
@@ -207,7 +210,7 @@ export class FlowExecutorContext {
             }, {} as Record<string, StepOutput>)
             : this.steps
 
-        let flattened: Record<string, unknown> = await extractStepView(referencedSteps, this.engineApi, this.resolvedStepOutputCache )
+        let flattened: Record<string, unknown> = await extractStepView({ steps: referencedSteps, engineApi: this.engineApi, cache: this.resolvedStepOutputCache, errorViewCache: this.errorViewCache })
         let targetMap = this.steps
 
         for (const [stepName, iteration] of this.currentPath.path) {
@@ -218,19 +221,19 @@ export class FlowExecutorContext {
             targetMap = stepOutput.output.iterations[iteration]
             flattened = {
                 ...flattened,
-                ...await extractStepView(targetMap, this.engineApi, this.resolvedStepOutputCache ),
+                ...await extractStepView({ steps: targetMap, engineApi: this.engineApi, cache: this.resolvedStepOutputCache, errorViewCache: this.errorViewCache }),
             }
         }
         return flattened
     }
 }
 
-async function extractStepView(steps: Record<string, StepOutput>, engineApi: EngineApiConfig | undefined, cache: Map<string, Promise<unknown>>): Promise<Record<string, unknown>> {
+async function extractStepView({ steps, engineApi, cache, errorViewCache }: ExtractStepViewParams): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {}
     for (const [stepName, step] of Object.entries(steps)) {
         const output = await resolveStepOutput(step, engineApi, cache)
         const error = step.status === StepOutputStatus.FAILED && step.errorMessage !== undefined
-            ? { message: step.errorMessage }
+            ? stepErrorView.build({ errorMessage: step.errorMessage, cache: errorViewCache })
             : undefined
         executionJournal.setOwnStep({ target: result, stepName, value: { output, error } })
     }
@@ -302,6 +305,13 @@ export type FlowVerdict = {
 export type EngineApiConfig = {
     engineToken: string
     internalApiUrl: string
+}
+
+type ExtractStepViewParams = {
+    steps: Record<string, StepOutput>
+    engineApi: EngineApiConfig | undefined
+    cache: Map<string, Promise<unknown>>
+    errorViewCache: Map<string, StepErrorView>
 }
 
 export type FlowExecutorContextInit = {

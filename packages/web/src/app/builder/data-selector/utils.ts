@@ -333,23 +333,13 @@ function traverseStep(
       stepNode.children = [outputLeaf];
     }
 
-    const errorMessageLeaf: DataSelectorTreeNode<DataSelectorTreeNodeDataUnion> =
-      {
-        key: `${step.name}_error_message`,
-        data: {
-          type: 'value',
-          displayName: t('Error message'),
-          propertyPath: `${step.name}['error']['message']`,
-          value: '---runtime error message---',
-          insertable: true,
-        },
-      };
+    const errorLeaves = buildErrorLeaves(step.name);
 
     if (branch === 'on-failure') {
       if (stepNode.data.type === 'value') {
         stepNode.data = { ...stepNode.data, insertable: false };
       }
-      stepNode.children = [errorMessageLeaf];
+      stepNode.children = errorLeaves;
     } else if (branch !== 'on-success') {
       const onSuccessNode: DataSelectorTreeNode<DataSelectorTreeNodeDataUnion> =
         {
@@ -370,13 +360,52 @@ function traverseStep(
             displayNameClassName:
               'text-destructive-800 dark:text-destructive-200',
           },
-          children: [errorMessageLeaf],
+          children: errorLeaves,
         };
       stepNode.children = [onSuccessNode, onFailureNode];
     }
   }
 
   return stepNode;
+}
+
+// `message` is the stored error string and stays first for flows authored before #387; the
+// structured fields beside it are what a flow reads to branch on or back off from a failure.
+function buildErrorLeaves(
+  stepName: string,
+): DataSelectorTreeNode<DataSelectorTreeNodeDataUnion>[] {
+  const leaves: { key: string; displayName: string; value: unknown }[] = [
+    {
+      key: 'message',
+      displayName: t('Error message'),
+      value: '---runtime error message---',
+    },
+    {
+      key: 'description',
+      displayName: t('Error description'),
+      value: '---runtime error description---',
+    },
+    {
+      key: 'status',
+      displayName: t('Error status code'),
+      value: '---HTTP status code---',
+    },
+    {
+      key: 'retryAfterSeconds',
+      displayName: t('Retry after (seconds)'),
+      value: '---seconds the provider asked to wait---',
+    },
+  ];
+  return leaves.map((leaf) => ({
+    key: `${stepName}_error_${leaf.key}`,
+    data: {
+      type: 'value',
+      displayName: leaf.displayName,
+      propertyPath: `${stepName}['error']['${leaf.key}']`,
+      value: leaf.value,
+      insertable: true,
+    },
+  }));
 }
 
 function filterBy(
