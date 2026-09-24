@@ -2150,6 +2150,64 @@ describe('MCP Tools integration', () => {
         expect(text(result)).toContain('✅')
     })
 
+    it('71b. ap_validate_step_config — ROUTER rejects an oversized branch list with one issue', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+
+        const result = await apValidateStepConfigTool(mcp, mockLog).execute({
+            stepType: 'ROUTER',
+            settings: { branches: Array(200_000).fill({}), executionType: 'EXECUTE_FIRST_MATCH' },
+        })
+
+        expect(text(result)).toContain('⚠️')
+        expect(result.structuredContent?.errors).toHaveLength(1)
+    })
+
+    it('71d. ap_validate_step_config — ROUTER stops at the first malformed branch', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+
+        const result = await apValidateStepConfigTool(mcp, mockLog).execute({
+            stepType: 'ROUTER',
+            settings: { branches: Array(1000).fill({}), executionType: 'EXECUTE_FIRST_MATCH' },
+        })
+
+        expect(result.structuredContent?.errors).toHaveLength(1)
+    })
+
+    it('71e. ap_validate_step_config — ROUTER lists at most twenty issues for well-formed invalid branches', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const branch = { branchName: 'B', branchType: 'CONDITION', conditions: [[{ firstValue: '', secondValue: '', operator: 'TEXT_CONTAINS' }]] }
+
+        const result = await apValidateStepConfigTool(mcp, mockLog).execute({
+            stepType: 'ROUTER',
+            settings: { branches: Array(1000).fill(branch), executionType: 'EXECUTE_FIRST_MATCH' },
+        })
+
+        expect(text(result)).toContain('⚠️')
+        expect(result.structuredContent?.errors).toHaveLength(20)
+    })
+
+    it('71c. ap_validate_step_config — ROUTER still reports every branch missing its conditions', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+
+        const result = await apValidateStepConfigTool(mcp, mockLog).execute({
+            stepType: 'ROUTER',
+            settings: {
+                branches: [
+                    { branchName: 'B1', branchType: 'CONDITION', conditions: [] },
+                    { branchName: 'B2', branchType: 'CONDITION', conditions: [] },
+                ],
+                executionType: 'EXECUTE_FIRST_MATCH',
+            },
+        })
+
+        expect(text(result)).toContain('branches.0.conditions')
+        expect(text(result)).toContain('branches.1.conditions')
+    })
+
     // ── Published flow warning ────────────────────────────────────────
 
     it('72. ap_add_step — warns when flow is published', async () => {

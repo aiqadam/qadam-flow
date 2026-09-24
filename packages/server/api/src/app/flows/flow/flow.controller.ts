@@ -1,6 +1,7 @@
 import { ApId, ApplicationEventName,
     CountFlowsRequest,
     CreateFlowRequest,
+    ErrorCode,
     FlowOperationRequest,
     FlowOperationType,
     FlowStatus,
@@ -8,13 +9,16 @@ import { ApId, ApplicationEventName,
     FlowTrigger,
     GetFlowQueryParamsRequest,
     GetFlowTemplateRequestQuery,
+    isNil,
     ListFlowsRequest,
     Permission,
     PopulatedFlow,
     PrincipalType,
+    QadamFlowError,
     SeekPage,
     SERVICE_KEY_SECURITY_OPENAPI,
     SharedTemplate,
+    tryCatch,
 } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
@@ -23,6 +27,7 @@ import { authenticationUtils } from '../../authentication/authentication-utils'
 import { entitiesMustBeOwnedByCurrentProject } from '../../authentication/authorization'
 import { ProjectResourceType } from '../../core/security/authorization/common'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
+import { authorizationMiddleware } from '../../core/security/v2/authz/authorization-middleware'
 import { applicationEvents } from '../../helper/application-events'
 import { userService } from '../../user/user-service'
 import { migrateFlowVersionTemplate } from '../flow-version/migrations'
@@ -69,23 +74,52 @@ export const flowController: FastifyPluginAsyncZod = async (app) => {
                 id: ApId,
             }),
         },
+        // An imported flow may be on an older schema version, so it is migrated before the
+        // schema sees it — which also means before the body has been validated at all.
         preValidation: async (request) => {
-            if (request.body?.type === FlowOperationType.IMPORT_FLOW) {
-                const migratedFlowTemplate = await migrateFlowVersionTemplate({
-                    displayName: request.body.request.displayName,
-                    trigger: request.body.request.trigger,
-                    //because the target for the first migraiton is undefined not null
-                    schemaVersion: request.body.request.schemaVersion ?? undefined,
-                    notes: request.body.request.notes ?? [],
-                    valid: false,
-                })
-                request.body.request = {
-                    ...request.body.request,
-                    displayName: migratedFlowTemplate.displayName,
-                    trigger: migratedFlowTemplate.trigger,
-                    schemaVersion: migratedFlowTemplate.schemaVersion,
-                    notes: migratedFlowTemplate.notes,
+            // An id the params schema will reject must not reach the authorization lookup
+            // first: leave it for validation to answer with a 400.
+            if (request.body?.type !== FlowOperationType.IMPORT_FLOW || !ApId.safeParse(request.params.id).success) {
+                return
+            }
+            // The migration reads the database, and this hook runs ahead of preHandler's
+            // project-membership check; authorize first so only a member of the flow's project
+            // can make the server run it. The security config resolves the project from the
+            // route param, never the body, so this is safe before validation.
+            await authorizationMiddleware(request)
+            const { body } = request
+            const { data: migratedFlowTemplate, error } = await tryCatch(() => migrateFlowVersionTemplate({
+                displayName: body.request.displayName,
+                trigger: body.request.trigger,
+                //because the target for the first migraiton is undefined not null
+                schemaVersion: body.request.schemaVersion ?? undefined,
+                notes: body.request.notes ?? [],
+                valid: false,
+            }))
+            // Never fall through with the body as sent: the current schema is loose where the
+            // migrations work (step inputs, qadam names), so an old flow can pass validation
+            // unmigrated, and the import would then store it without any migration applied.
+            if (isNil(migratedFlowTemplate)) {
+                request.log.warn({ err: error }, '[flowController] imported flow could not be migrated')
+                // A body the current schema rejects anyway gets that schema's field-level 400.
+                if (!FlowOperationRequest.safeParse(body).success) {
+                    return
                 }
+                throw new QadamFlowError({
+                    code: ErrorCode.FLOW_MIGRATION_FAILED,
+                    params: {
+                        // An imported template has no flow version of its own yet.
+                        flowVersionId: '',
+                        message: 'The imported flow could not be migrated to the current schema version',
+                    },
+                })
+            }
+            body.request = {
+                ...body.request,
+                displayName: migratedFlowTemplate.displayName,
+                trigger: migratedFlowTemplate.trigger,
+                schemaVersion: migratedFlowTemplate.schemaVersion,
+                notes: migratedFlowTemplate.notes,
             }
         },
     }, async (request) => {

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { Nullable, NullableEnum } from '../../core/common'
 import { PopulatedFlow } from '../flows/flow'
+import { DropdownOptionsInput } from '../tables/field'
 import { TableAutomationStatus, TableAutomationTrigger } from '../tables/table'
 
 export enum FlowProjectOperationType {
@@ -36,9 +37,7 @@ export const FieldState = z.object({
     // mutually exclusive in practice — one object shape covers both so a table's
     // state/template round-trip does not need a field-type-keyed union here.
     data: Nullable(z.object({
-        options: z.array(z.object({
-            value: z.string(),
-        })).optional(),
+        options: DropdownOptionsInput.optional(),
         schema: z.string().optional(),
     })),
     externalId: z.string(),

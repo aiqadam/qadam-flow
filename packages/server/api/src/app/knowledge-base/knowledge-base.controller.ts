@@ -1,4 +1,4 @@
-import { ApMultipartFile, ErrorCode, FileCompression, FileType, Permission, PrincipalType, QadamFlowError, SERVICE_KEY_SECURITY_OPENAPI, tryCatch } from '@aiqadam/shared'
+import { ApMultipartFile, BoundedArray, ErrorCode, FileCompression, FileType, Permission, PrincipalType, QadamFlowError, SERVICE_KEY_SECURITY_OPENAPI, tryCatch } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
@@ -10,6 +10,11 @@ import { knowledgeBaseService } from './knowledge-base.service'
 const KB_PRINCIPALS = [PrincipalType.USER, PrincipalType.ENGINE, PrincipalType.SERVICE] as const
 const KB_ALLOWED_MIME_TYPES = ['application/pdf', 'text/plain', 'text/csv', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
 const EMBEDDING_DIMENSIONS = 768
+// The ai qadam's agent tools store embeddings 50 chunks at a time; the caps bound what one
+// request can make the schema parse (see BoundedArray), well above any real batch.
+const MAX_CHUNKS_PER_REQUEST = 1000
+const MAX_FILES_PER_SEARCH = 1000
+const Embedding = BoundedArray({ element: z.number(), min: EMBEDDING_DIMENSIONS, max: EMBEDDING_DIMENSIONS })
 
 export const knowledgeBaseController: FastifyPluginAsyncZod = async (fastify) => {
 
@@ -251,13 +256,16 @@ const StoreChunksRequest = {
             id: z.string(),
         }),
         body: z.object({
-            chunks: z.array(z.object({
-                id: z.string().optional(),
-                content: z.string().optional(),
-                embedding: z.array(z.number()).length(EMBEDDING_DIMENSIONS).optional(),
-                chunkIndex: z.number().optional(),
-                metadata: z.record(z.string(), z.unknown()).optional(),
-            })),
+            chunks: BoundedArray({
+                element: z.object({
+                    id: z.string().optional(),
+                    content: z.string().optional(),
+                    embedding: Embedding.optional(),
+                    chunkIndex: z.number().optional(),
+                    metadata: z.record(z.string(), z.unknown()).optional(),
+                }),
+                max: MAX_CHUNKS_PER_REQUEST,
+            }),
         }),
     },
 }
@@ -292,8 +300,8 @@ const SearchKnowledgeBaseRequest = {
         security: [SERVICE_KEY_SECURITY_OPENAPI],
         description: 'Search knowledge base using vector similarity',
         body: z.object({
-            knowledgeBaseFileIds: z.array(z.string()),
-            queryEmbedding: z.array(z.number()).length(EMBEDDING_DIMENSIONS),
+            knowledgeBaseFileIds: BoundedArray({ element: z.string(), max: MAX_FILES_PER_SEARCH }),
+            queryEmbedding: Embedding,
             limit: z.number().int().min(1).max(100).optional().default(5),
             similarityThreshold: z.number().min(0).max(1).optional(),
         }),

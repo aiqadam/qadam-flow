@@ -1,3 +1,4 @@
+import { BoundedArray } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { securityAccess } from '../../../core/security/authorization/fastify-security'
@@ -25,18 +26,33 @@ function isPrivateUseScheme(protocol: string): boolean {
         || ['cursor', 'vscode', 'vscode-insiders', 'windsurf', 'claude'].includes(scheme)
 }
 
+// A public, unauthenticated route: dynamic client registration (RFC 7591) sets no limits of
+// its own, and real MCP clients register one or two redirect URIs.
+const MAX_REDIRECT_URIS = 20
+const MAX_GRANT_OR_RESPONSE_TYPES = 10
+
 const RegisterRequest = {
     config: { security: securityAccess.public() },
     schema: {
         hide: true,
         body: z.object({
-            redirect_uris: z.array(z.string().url().refine((uri) => {
-                const scheme = new URL(uri).protocol
-                return scheme === 'http:' || scheme === 'https:' || isPrivateUseScheme(scheme)
-            }, { message: 'Only http, https, or private-use URI schemes (RFC 8252) are allowed' })).min(1),
+            // zod runs a refine even after `url()` has rejected the value, so the refine
+            // must not assume a parseable URL: an unguarded `new URL` throws out of the
+            // validator on the first malformed entry.
+            redirect_uris: BoundedArray({
+                element: z.url().refine((uri) => {
+                    if (!URL.canParse(uri)) {
+                        return false
+                    }
+                    const scheme = new URL(uri).protocol
+                    return scheme === 'http:' || scheme === 'https:' || isPrivateUseScheme(scheme)
+                }, { message: 'Only http, https, or private-use URI schemes (RFC 8252) are allowed' }),
+                max: MAX_REDIRECT_URIS,
+                nonEmpty: true,
+            }),
             client_name: z.string().max(255).optional(),
-            grant_types: z.array(z.string()).optional(),
-            response_types: z.array(z.string()).optional(),
+            grant_types: BoundedArray({ element: z.string(), max: MAX_GRANT_OR_RESPONSE_TYPES }).optional(),
+            response_types: BoundedArray({ element: z.string(), max: MAX_GRANT_OR_RESPONSE_TYPES }).optional(),
             token_endpoint_auth_method: z.enum(['none', 'client_secret_post']).optional(),
         }),
     },

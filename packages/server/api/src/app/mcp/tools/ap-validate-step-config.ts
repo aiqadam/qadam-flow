@@ -4,12 +4,17 @@ import {
     McpToolResult,
     ProjectScopedMcpServer,
     RouterActionSettingsWithValidation,
+    RouterBranchesSchema,
     RouterExecutionType,
     SourceCode,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { mcpUtils } from './mcp-utils'
+
+// A tool response is read by a model; past a screenful of issues more lines only cost tokens.
+const MAX_REPORTED_ISSUES = 20
+const RouterSettingsShape = z.object({ branches: RouterBranchesSchema(false) })
 
 export const apValidateStepConfigTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
     return {
@@ -110,7 +115,7 @@ function validateWithSchema({ schema, data, label }: { schema: z.ZodType, data: 
             structuredContent: { valid: true, errors: [] },
         }
     }
-    const errors = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`)
+    const errors = result.error.issues.slice(0, MAX_REPORTED_ISSUES).map(i => `${i.path.join('.')}: ${i.message}`)
     return {
         content: [{ type: 'text', text: `⚠️ Invalid ${label} configuration:\n${errors.join('\n')}` }],
         structuredContent: { valid: false, errors },
@@ -158,14 +163,19 @@ function validateRouter(settings: Record<string, unknown> | undefined): McpToolR
             structuredContent: { valid: false, errors: ['settings must include branches and executionType'] },
         }
     }
-    const result = RouterActionSettingsWithValidation.safeParse(settings)
+    // `settings` comes straight from the tool call, and the validating schema reports every
+    // invalid branch; bound the shape first with the request-side schema, which caps the branch
+    // count and stops at the first malformed branch. Well-formed but invalid branches still
+    // cost an issue each — at most MAX_ROUTER_BRANCHES of them — so the list is capped too.
+    const shape = RouterSettingsShape.safeParse(settings)
+    const result = shape.success ? RouterActionSettingsWithValidation.safeParse(settings) : shape
     if (result.success) {
         return {
             content: [{ type: 'text', text: '✅ Valid ROUTER configuration.' }],
             structuredContent: { valid: true, errors: [] },
         }
     }
-    const errors = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`)
+    const errors = result.error.issues.slice(0, MAX_REPORTED_ISSUES).map(i => `${i.path.join('.')}: ${i.message}`)
     return {
         content: [{
             type: 'text',

@@ -1,9 +1,14 @@
 import { z } from 'zod'
-import { STEP_NAME_REGEX } from '../../../core/common'
-import { formErrors } from '../../../form-errors'
+import { BoundedArray, STEP_NAME_REGEX } from '../../../core/common'
 import { VersionType } from '../../qadams'
 import { PropertySettings } from '../properties'
 import { SampleDataSetting } from '../sample-data'
+
+// Caps on a router's arrays, sized to bound what a request can make the schema parse (see
+// BoundedArray), not to shape flows — each is far above a real router.
+const MAX_ROUTER_BRANCHES = 1000
+export const MAX_BRANCH_CONDITION_GROUPS = 1000
+export const MAX_CONDITIONS_PER_GROUP = 1000
 
 export enum FlowActionType {
     CODE = 'CODE',
@@ -245,10 +250,11 @@ function buildBranchConditionValid(addMinLength: boolean) {
 // authoring mistake, and accepting it is what let #429 ship routers whose every real branch was
 // dead code.
 function buildBranchConditionGroups(addMinLength: boolean) {
-    if (!addMinLength) {
-        return z.array(z.array(buildBranchConditionValid(false)))
-    }
-    return z.array(z.array(buildBranchConditionValid(true)).min(1, formErrors.required)).min(1, formErrors.required)
+    return BoundedArray({
+        element: BoundedArray({ element: buildBranchConditionValid(addMinLength), max: MAX_CONDITIONS_PER_GROUP, nonEmpty: addMinLength }),
+        max: MAX_BRANCH_CONDITION_GROUPS,
+        nonEmpty: addMinLength,
+    })
 }
 
 export const ValidBranchCondition = buildBranchConditionValid(true)
@@ -274,20 +280,28 @@ export type BranchSingleValueCondition = z.infer<
 >
 
 
-export const RouterBranchesSchema = (addMinLength: boolean) =>
-    z.array(
-        z.union([
-            z.object({
-                conditions: buildBranchConditionGroups(addMinLength),
-                branchType: z.literal(BranchExecutionType.CONDITION),
-                branchName: z.string(),
-            }),
-            z.object({
-                branchType: z.literal(BranchExecutionType.FALLBACK),
-                branchName: z.string(),
-            }),
-        ]),
-    )
+// The validating variant (`addMinLength`) backs the builder's router form, which puts a marker
+// on every invalid branch, so its branch list reports every branch rather than stopping at the
+// first; within a branch the early stop is fine, since the form marks branches, not
+// conditions. It is not what request bodies are parsed with (they use the non-validating
+// variant); a caller that validates untrusted settings with it bounds them with that variant
+// first — see ap-validate-step-config.
+export const RouterBranchesSchema = (addMinLength: boolean) => {
+    const branch = z.discriminatedUnion('branchType', [
+        z.object({
+            conditions: buildBranchConditionGroups(addMinLength),
+            branchType: z.literal(BranchExecutionType.CONDITION),
+            branchName: z.string(),
+        }),
+        z.object({
+            branchType: z.literal(BranchExecutionType.FALLBACK),
+            branchName: z.string(),
+        }),
+    ])
+    return addMinLength
+        ? z.array(branch).max(MAX_ROUTER_BRANCHES)
+        : BoundedArray({ element: branch, max: MAX_ROUTER_BRANCHES })
+}
 
 export const RouterActionSettings = z.object({
     ...commonActionSettings,

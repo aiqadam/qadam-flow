@@ -5,6 +5,7 @@ import { projectService } from '../../../../project/project-service'
 import { userService } from '../../../../user/user-service'
 import { AuthorizationRouteSecurity, ProjectAuthorizationConfig } from '../../authorization/authorization'
 import { AuthorizationType, RouteKind } from '../../authorization/common'
+import { FastifyRouteSecurity } from '../../authorization/fastify-security'
 
 export const authorizeOrThrow = async (principal: Principal, security: AuthorizationRouteSecurity, log: FastifyBaseLogger): Promise<void> => {
     if (security.kind === RouteKind.PUBLIC) {
@@ -30,6 +31,19 @@ export const authorizeOrThrow = async (principal: Principal, security: Authoriza
         case AuthorizationType.NONE:
             break
     }
+}
+
+// The slice of authorizeOrThrow that reads nothing but the principal and the route
+// config, so it can run before the body is validated. Everything that needs the body
+// (projectResource lookups, project membership) stays in authorizeOrThrow.
+export const assertPrincipalAdmitted = async ({ principal, security }: AssertPrincipalAdmittedParams): Promise<void> => {
+    if (isNil(security) || security.kind === RouteKind.PUBLIC) {
+        return
+    }
+    if (security.authorization.type === AuthorizationType.NONE) {
+        return
+    }
+    await assertPrinicpalIsOneOf(security.authorization.allowedPrincipals, principal.type)
 }
 
 
@@ -174,4 +188,8 @@ async function assertPrinicpalIsOneOf< T extends readonly PrincipalType[]>(allow
             },
         })
     }
+}
+type AssertPrincipalAdmittedParams = {
+    principal: Principal
+    security: FastifyRouteSecurity | undefined
 }

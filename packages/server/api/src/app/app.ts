@@ -131,7 +131,10 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
         }
     })
 
-    app.addHook('preHandler', authenticationMiddleware)
+    // Authentication runs before the body schema, so an unauthenticated caller cannot make
+    // the server validate an arbitrarily large body. Authorization stays after it: it can
+    // read request.body (ProjectResourceType.BODY / EntitySourceType.BODY).
+    app.addHook('preValidation', authenticationMiddleware)
     app.addHook('preHandler', authorizationMiddleware)
 
     const canaryAppUrl = system.get(AppSystemProp.CANARY_APP_URL)

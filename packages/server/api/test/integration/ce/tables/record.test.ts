@@ -15,6 +15,11 @@ import {
 import { TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
+// The projection tests assert this name is absent from a whole serialised response. A faker
+// word can be as short as `ea` or `ex`, which turns up inside "created" or a random id, so the
+// field that must not appear gets a name nothing else in a response can contain.
+const UNPROJECTED_FIELD_NAME = 'unprojected_phone_column'
+
 let app: FastifyInstance | null = null
 
 beforeAll(async () => {
@@ -181,6 +186,7 @@ describe('Record API', () => {
             const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
             const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
             phone.type = FieldType.TEXT
+            phone.name = UNPROJECTED_FIELD_NAME
             await db.save('field', phone)
             const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
             await db.save('record', record)
@@ -1763,6 +1769,7 @@ async function createPersonRecord(ctx: TestContext): Promise<PersonRecord> {
     const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })
     const phone = createMockField({ tableId: table.id, projectId: ctx.project.id })
     phone.type = FieldType.TEXT
+    phone.name = UNPROJECTED_FIELD_NAME
     await db.save('field', phone)
     const record = createMockRecord({ tableId: table.id, projectId: ctx.project.id })
     await db.save('record', record)

@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { Nullable } from '../../../core/common'
+import { BoundedArray, Nullable } from '../../../core/common'
 import { Metadata } from '../../../core/common/metadata'
-import { BranchCondition, CodeActionSchema, CodeActionSettings, FlowActionType, LoopOnItemsActionSchema, LoopOnItemsActionSettings, QadamActionSchema, QadamActionSettings, RouterActionSchema, RouterActionSettings } from '../actions/action'
+import { BranchCondition, CodeActionSchema, CodeActionSettings, FlowActionType, LoopOnItemsActionSchema, LoopOnItemsActionSettings, MAX_BRANCH_CONDITION_GROUPS, MAX_CONDITIONS_PER_GROUP, QadamActionSchema, QadamActionSettings, RouterActionSchema, RouterActionSettings } from '../actions/action'
 import { FlowStatus } from '../flow'
 import { FlowVersion, FlowVersionState } from '../flow-version'
 import { Note } from '../note'
@@ -54,6 +54,11 @@ export enum FlowOperationType {
     UPDATE_SAMPLE_DATA_INFO = 'UPDATE_SAMPLE_DATA_INFO',
 }
 
+// Caps on what one flow operation can make the schema parse (see BoundedArray); each is far
+// above a real flow.
+const MAX_STEP_NAMES_PER_OPERATION = 10_000
+const MAX_NOTES_PER_FLOW = 10_000
+
 export const DeleteBranchRequest = z.object({
     branchIndex: z.number(),
     stepName: z.string(),
@@ -68,7 +73,10 @@ export const AddNoteRequest = Note.omit({ createdAt: true, updatedAt: true, owne
 export const AddBranchRequest = z.object({
     branchIndex: z.number(),
     stepName: z.string(),
-    conditions: z.array(z.array(BranchCondition)).optional(),
+    conditions: BoundedArray({
+        element: BoundedArray({ element: BranchCondition, max: MAX_CONDITIONS_PER_GROUP }),
+        max: MAX_BRANCH_CONDITION_GROUPS,
+    }).optional(),
     branchName: z.string(),
 })
 export const MoveBranchRequest = z.object({
@@ -79,7 +87,7 @@ export const MoveBranchRequest = z.object({
 export type MoveBranchRequest = z.infer<typeof MoveBranchRequest>
 
 export const SkipActionRequest = z.object({
-    names: z.array(z.string()),
+    names: BoundedArray({ element: z.string(), max: MAX_STEP_NAMES_PER_OPERATION }),
     skip: z.boolean(),
 })
 
@@ -124,7 +132,7 @@ export const ImportFlowRequest = z.object({
     displayName: z.string(),
     trigger: FlowTrigger,
     schemaVersion: Nullable(z.string()),
-    notes: Nullable(z.array(Note)),
+    notes: Nullable(BoundedArray({ element: Note, max: MAX_NOTES_PER_FLOW })),
 })
 
 export type ImportFlowRequest = z.infer<typeof ImportFlowRequest>
@@ -143,16 +151,20 @@ export type ChangeNameRequest = z.infer<typeof ChangeNameRequest>
 
 
 export const DeleteActionRequest = z.object({
-    names: z.array(z.string()),
+    names: BoundedArray({ element: z.string(), max: MAX_STEP_NAMES_PER_OPERATION }),
 })
 
 export type DeleteActionRequest = z.infer<typeof DeleteActionRequest>
 
-export const UpdateActionRequest = z.union([
-    CodeActionSchema.omit({ lastUpdatedDate: true, settings: true }).and(z.object({ settings: CodeActionSettings.omit({ sampleData: true }) })),
-    LoopOnItemsActionSchema.omit({ lastUpdatedDate: true, settings: true }).and(z.object({ settings: LoopOnItemsActionSettings.omit({ sampleData: true }) })),
-    QadamActionSchema.omit({ lastUpdatedDate: true, settings: true }).and(z.object({ settings: QadamActionSettings.omit({ sampleData: true }) })),
-    RouterActionSchema.omit({ lastUpdatedDate: true, settings: true }).and(z.object({ settings: RouterActionSettings.omit({ sampleData: true }) })),
+// Discriminated on `type` so a request is parsed against its own action's schema only; a
+// plain union parses it against every variant and reports every variant's issues.
+// `.extend` rather than `.and`: a discriminated union needs object options, and replacing
+// the omitted `settings` key produces the same shape.
+export const UpdateActionRequest = z.discriminatedUnion('type', [
+    CodeActionSchema.omit({ lastUpdatedDate: true, settings: true }).extend({ settings: CodeActionSettings.omit({ sampleData: true }) }),
+    LoopOnItemsActionSchema.omit({ lastUpdatedDate: true, settings: true }).extend({ settings: LoopOnItemsActionSettings.omit({ sampleData: true }) }),
+    QadamActionSchema.omit({ lastUpdatedDate: true, settings: true }).extend({ settings: QadamActionSettings.omit({ sampleData: true }) }),
+    RouterActionSchema.omit({ lastUpdatedDate: true, settings: true }).extend({ settings: RouterActionSettings.omit({ sampleData: true }) }),
 ])
 
 
@@ -181,9 +193,9 @@ export const AddActionRequest = z.object({
 })
 export type AddActionRequest = z.infer<typeof AddActionRequest>
 
-export const UpdateTriggerRequest = z.union([
+export const UpdateTriggerRequest = z.discriminatedUnion('type', [
     EmptyTrigger.omit({ lastUpdatedDate: true }),
-    QadamTrigger.omit({ lastUpdatedDate: true, settings: true }).and(z.object({ settings: QadamTriggerSettings.omit({ sampleData: true }) })),
+    QadamTrigger.omit({ lastUpdatedDate: true, settings: true }).extend({ settings: QadamTriggerSettings.omit({ sampleData: true }) }),
 ])
 export type UpdateTriggerRequest = z.infer<typeof UpdateTriggerRequest>
 
@@ -214,7 +226,9 @@ export const UpdateOwnerRequest = z.object({
 })
 export type UpdateOwnerRequest = z.infer<typeof UpdateOwnerRequest>
 
-export const FlowOperationRequest = z.union([
+// Discriminated on `type`: a plain union parses the body against all 26 operations — even
+// when `type` names none of them — and nests every operation's issues into the rejection.
+export const FlowOperationRequest = z.discriminatedUnion('type', [
     z.object({
         type: z.literal(FlowOperationType.MOVE_ACTION),
         request: MoveActionRequest,
