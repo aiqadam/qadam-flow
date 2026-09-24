@@ -103,7 +103,7 @@ describe('Waitpoint controller — engine project isolation (#516)', () => {
         const stored = await db.findOneBy('waitpoint', { flowRunId: runB.id })
         expect(stored).toBeNull()
 
-        const scheduledJobs = (await systemJobsQueue.getDelayed()).filter((job) => job.data.flowRunId === runB.id)
+        const scheduledJobs = (await systemJobsQueue.getDelayed()).filter((job) => 'flowRunId' in job.data && job.data.flowRunId === runB.id)
         expect(scheduledJobs).toHaveLength(0)
     })
 

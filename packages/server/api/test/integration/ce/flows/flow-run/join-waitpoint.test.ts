@@ -337,7 +337,7 @@ function postWaitpoint({ engineToken, payload }: { engineToken: string, payload:
     })
 }
 
-function answer({ url, body }: { url: string, body: unknown }): Promise<LightMyRequestResponse> {
+function answer({ url, body }: { url: string, body: Record<string, unknown> }): Promise<LightMyRequestResponse> {
     return app.inject({ method: 'POST', url: `/api${new URL(url).pathname.replace(/^\/api/, '')}`, payload: body })
 }
 
