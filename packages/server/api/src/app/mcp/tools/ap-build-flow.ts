@@ -10,6 +10,7 @@ import {
     Permission,
     QadamTrigger,
     RouterExecutionType,
+    spreadIfDefined,
     StepLocationRelativeToParent,
     UpdateActionRequest,
 } from '@aiqadam/shared'
@@ -30,6 +31,8 @@ const stepSpec = z.object({
     sourceCode: z.string().optional(),
     packageJson: z.string().optional(),
     loopItems: z.string().optional(),
+    loopCollect: mcpUtils.LOOP_COLLECT_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_COLLECT_HINT),
+    loopKeepBodies: mcpUtils.LOOP_KEEP_BODIES_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_KEEP_BODIES_HINT),
     continueOnFailure: z.boolean().optional(),
     retryOnFailure: z.boolean().optional(),
     logInput: z.boolean().optional().describe(mcpUtils.LOG_INPUT_HINT),
@@ -151,9 +154,9 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                         resolvedPieceName = versionResult.normalizedPieceName
                     }
 
-                    const rewritten = mcpUtils.rewriteAllReferences({ input: step.input, loopItems: step.loopItems, trigger: latestTrigger })
+                    const rewritten = mcpUtils.rewriteAllReferences({ input: step.input, loopItems: step.loopItems, loopCollect: step.loopCollect, trigger: latestTrigger })
                     const normalizedInput = await mcpUtils.normalizeAgentFlowToolIds({ input: rewritten.input, projectId, log })
-                    const rewrittenStep = { ...step, input: normalizedInput, loopItems: rewritten.loopItems }
+                    const rewrittenStep = { ...step, input: normalizedInput, loopItems: rewritten.loopItems, loopCollect: rewritten.loopCollect }
                     const skeleton = buildSkeleton({ step: rewrittenStep, name: stepName, resolvedPieceVersion, resolvedPieceName })
                     const parseResult = UpdateActionRequest.safeParse({
                         ...skeleton,
@@ -271,7 +274,11 @@ function buildSkeleton({ step, name, resolvedPieceVersion, resolvedPieceName }: 
                 name,
                 displayName: step.displayName,
                 valid: false,
-                settings: { items: step.loopItems ?? '' },
+                settings: {
+                    items: step.loopItems ?? '',
+                    ...spreadIfDefined('collect', step.loopCollect),
+                    ...spreadIfDefined('keepBodies', step.loopKeepBodies),
+                },
             }
         case FlowActionType.ROUTER:
             return {

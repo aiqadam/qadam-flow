@@ -2052,5 +2052,15 @@
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Необязательный JSON-объект, который добавляется в каждый чат-запрос к этому провайдеру, например чтобы выключить размышления Qwen в vLLM.",
   "extraBodyMustBeObject": "Должен быть JSON-объектом или пустым",
   "extraBodyReservedKey": "Здесь нельзя задавать model, messages, tools, tool_choice, stream, stream_options и response_format",
-  "extraBodyTooLarge": "Дополнительные параметры запроса слишком большие"
+  "extraBodyTooLarge": "Дополнительные параметры запроса слишком большие",
+  "Results": "Результаты",
+  "Collect results": "Собирать результаты",
+  "Collects one value per item. After the loop, read the list as collected on the loop output.": "Собирает по одному значению на каждый элемент. После цикла список доступен как collected в выходе цикла.",
+  "Value to collect": "Значение для сбора",
+  "Select a value from a step inside the loop": "Выберите значение из шага внутри цикла",
+  "Skip items where a step failed": "Пропускать элементы, где шаг завершился ошибкой",
+  "Keep step details for": "Сохранять детали шагов для",
+  "Every item": "Всех элементов",
+  "Items where a step failed": "Элементов, где шаг завершился ошибкой",
+  "Keeping fewer details lets a loop over thousands of items stay under the run log size limit. Collected results and failures are kept either way.": "Если сохранять меньше деталей, цикл по тысячам элементов укладывается в лимит размера лога запуска. Собранные результаты и ошибки сохраняются в любом случае."
 }

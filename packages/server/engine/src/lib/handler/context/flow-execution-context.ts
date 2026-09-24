@@ -161,6 +161,12 @@ export class FlowExecutorContext {
         })
     }
 
+    // The journal is shared by every copy of this context and mutated in place, so this records
+    // against the root every copy writes to.
+    public recordInPlaceGrowth({ bytes }: { bytes: number }): void {
+        loggingUtils.recordGrowth({ steps: this.steps, bytes })
+    }
+
     // The copy handed to the log serializer. Redaction happens here, not in `upsertStep`, because
     // the in-memory output is the value later steps resolve against — replacing it in place would
     // break them. See `logRedaction.isOutputRedactionEnabled` for the PAUSED exception.

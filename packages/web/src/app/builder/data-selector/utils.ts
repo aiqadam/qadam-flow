@@ -282,6 +282,8 @@ function traverseStep(
   if (step.type === FlowActionType.LOOP_ON_ITEMS) {
     const copiedSampleData = JSON.parse(JSON.stringify(sampleData[step.name]));
     delete copiedSampleData['iterations'];
+    // Bookkeeping a RESUME reads to skip finished iterations (#41), not data a step would use.
+    delete copiedSampleData['iterationStatus'];
     const headNode = traverseOutput(
       displayName,
       [step.name],

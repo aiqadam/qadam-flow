@@ -21,6 +21,8 @@ const FIRST_FORCED_WALK_AFTER_UPSERTS = 256
 // `{}` plus the separating comma.
 const EMPTY_ITERATION_BYTES = 3
 
+const LOOP_BOOKKEEPING_KEYS = ['collected', 'failures', 'iterationStatus']
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -95,7 +97,10 @@ export const loggingUtils = {
         tracked.totalUpserts += 1
     },
     // For a write that does not go through `upsertStep`: a loop appends to its own bookkeeping
-    // arrays in place rather than copying them every iteration.
+    // arrays in place rather than copying them every iteration. `steps` must be the journal root —
+    // anything else is untracked and counts nothing, which is why callers go through
+    // `FlowExecutorContext.recordInPlaceGrowth` — and `bytes` must be at least what the full walk
+    // measures for the appended values: `sizeofUtils.recursiveSizeof(value) + 1` each.
     recordGrowth({ steps, bytes }: { steps: Record<string, StepOutput>, bytes: number }): void {
         const tracked = logSizeTrackers.get(steps)
         if (isNil(tracked)) {
@@ -136,9 +141,17 @@ function upsertGrowthBound({ stepName, stepOutput, previous }: Omit<RecordUpsert
     const iterations = readIterations(stepOutput.output)
     const previousIterations = readIterations(previous?.output)
     const addedSlots = Math.max(0, iterations.length - previousIterations.length)
-    // `collected`, `failures` and `iterationStatus` grow with the item count too, and are appended
-    // to in place; the loop executor records what it appends (`recordGrowth`).
-    const shell = { ...stepOutput, output: { ...readRecord(stepOutput.output), iterations: [], collected: [], failures: [], iterationStatus: [] } }
+    // `collected`, `failures` and `iterationStatus` grow with the item count too. The loop appends
+    // to them in place and records each append (`recordInPlaceGrowth`), so an array that is still
+    // the one already in the journal is left out here; a replaced array is counted in full.
+    const output = readRecord(stepOutput.output)
+    const previousOutput = readRecord(previous?.output)
+    const unchangedBookkeeping = Object.fromEntries(
+        LOOP_BOOKKEEPING_KEYS
+            .filter((key) => !isNil(output[key]) && output[key] === previousOutput[key])
+            .map((key) => [key, []]),
+    )
+    const shell = { ...stepOutput, output: { ...output, iterations: [], ...unchangedBookkeeping } }
     return keyBytes + sizeofUtils.recursiveSizeof(shell) + addedSlots * EMPTY_ITERATION_BYTES
 }
 

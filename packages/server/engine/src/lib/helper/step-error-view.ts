@@ -14,6 +14,12 @@ export const stepErrorView = {
         cache.set(errorMessage, view)
         return view
     },
+    describe({ errorMessage }: { errorMessage: string | undefined }): string {
+        if (isNil(errorMessage)) {
+            return ''
+        }
+        return tryParseFriendlyQadamError(errorMessage)?.message ?? errorMessage
+    },
     retryAfterSeconds({ errorMessage }: { errorMessage: string | undefined }): number | undefined {
         if (isNil(errorMessage)) {
             return undefined

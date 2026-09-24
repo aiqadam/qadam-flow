@@ -15,7 +15,10 @@
 | FlowRun | A single execution instance of a published flow, tracking status, logs, timing, and step results. | execution, job, run instance | Flow, FlowRunStatus, LogsFile |
 | FlowRunStatus | The state machine for a run: QUEUED, RUNNING, PAUSED, SUCCEEDED, FAILED, TIMEOUT, CANCELED, and others. | — | FlowRun |
 | FlowVersion | An immutable (once locked) snapshot of a flow's trigger + action graph; DRAFT is editable, LOCKED is published. | version, revision | Flow, Draft, Published |
+| Iteration status | A loop's per-iteration record (`S` succeeded, `F` failed) that lets a RESUME skip a finished iteration without entering its body. | watermark, cursor | Loop collector, Keep bodies |
+| Keep bodies | A loop setting (`ALL` / `FAILED_ONLY` / `NONE`) for which finished iterations keep their step outputs; the rest are blanked to `{}`, never removed. | retain iterations | Iteration status, Loop collector |
 | Folder | A grouping container for organizing flows and tables within a project. | directory, category | Flow, Table |
+| Loop collector | A loop's `collect.value` template, evaluated at the end of each iteration into a positional `collected[]`, with failed iterations listed compactly in `failures[]`. | aggregator, reducer | Iteration status, Keep bodies |
 | Published | A LOCKED FlowVersion pointed to by `flow.publishedVersionId`; the version that runs in production. | live, active version | Draft, FlowVersion, Trigger Source |
 | Sample Data | Captured step input/output stored as File entities per flow version, used for testing downstream steps. | test data, mock data | FlowVersion, Step Run |
 | Step | Generic term for any node in a flow graph — either a trigger or an action. | node, block | Action, Trigger |

@@ -4,6 +4,7 @@ import {
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    LoopOnItemsAction,
     McpToolDefinition,
     Permission,
     ProjectScopedMcpServer,
@@ -125,6 +126,10 @@ function validateFlow({ trigger }: { trigger: Step }): ValidationResult {
                     issues.push({ category: 'template_reference', stepName: step.name, message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references "{{${ref}...}}" which comes AFTER it in execution order.` })
                 }
             }
+        }
+
+        if (step.type === FlowActionType.LOOP_ON_ITEMS && !isNil(step.settings.collect)) {
+            issues.push(...validateLoopCollectReferences({ loop: step, allStepNames, seenSteps }))
         }
 
         if (step.type === FlowActionType.ROUTER) {
@@ -499,6 +504,22 @@ function isEmptyPayload(payload: unknown): boolean {
         return Object.keys(payload).length === 0
     }
     return false
+}
+
+// `collect.value` runs at the end of each iteration (#41), so unlike the loop's other settings it
+// may read the loop's own body — steps that come after the loop in the flow's order.
+function validateLoopCollectReferences({ loop, allStepNames, seenSteps }: { loop: LoopOnItemsAction, allStepNames: Set<string>, seenSteps: Set<string> }): ValidationIssue[] {
+    const collectValue = loop.settings.collect?.value ?? ''
+    const bodyStepNames = new Set(isNil(loop.firstLoopAction) ? [] : flowStructureUtil.getAllSteps(loop.firstLoopAction).map(s => s.name))
+    return [...extractReferencedStepNames({ value: collectValue })].flatMap((ref): ValidationIssue[] => {
+        if (!allStepNames.has(ref)) {
+            return [{ category: 'template_reference', stepName: loop.name, message: `${mcpUtils.wrapUntrustedValue(loop.displayName)} collects "{{${ref}...}}" which does not exist in the flow.` }]
+        }
+        if (ref === loop.name || seenSteps.has(ref) || bodyStepNames.has(ref)) {
+            return []
+        }
+        return [{ category: 'template_reference', stepName: loop.name, message: `${mcpUtils.wrapUntrustedValue(loop.displayName)} collects "{{${ref}...}}", which runs after the loop — collect can read steps inside the loop or before it.` }]
+    })
 }
 
 function collectStringValues({ step }: { step: Step }): string[] {

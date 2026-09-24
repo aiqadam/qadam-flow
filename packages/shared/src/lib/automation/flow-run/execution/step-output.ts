@@ -142,6 +142,14 @@ export type LoopStepResult = {
     item: unknown
     index: number
     iterations: Record<string, StepOutput>[]
+    // #41. Positional: `collected[i]` belongs to item `i`, `null` where the iteration failed or was
+    // skipped, so retries and concurrency cannot reorder it.
+    collected?: unknown[]
+    // Compact: one entry per failed iteration, so its length is the number of failures.
+    failures?: LoopIterationFailure[]
+    // One entry per finished iteration. A RESUME skips an `S` iteration without entering its body,
+    // which is what makes a blanked body (`keepBodies`) safe to replay.
+    iterationStatus?: LoopIterationStatus[]
 }
 
 export class LoopStepOutput extends GenericStepOutput<
@@ -210,4 +218,17 @@ LoopStepResult
             },
         })
     }
+}
+
+export type LoopIterationFailure = {
+    index: number
+    stepName: string
+    description: string
+}
+
+// One character each: a loop of tens of thousands of items carries one of these per item in its
+// persisted log.
+export enum LoopIterationStatus {
+    SUCCEEDED = 'S',
+    FAILED = 'F',
 }

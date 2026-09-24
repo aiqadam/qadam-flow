@@ -30,7 +30,7 @@ export const logRedaction = {
                 logOutput: step.logOutput ?? true,
             })
         }
-        return policy
+        return withCollectedRedaction({ trigger, policy })
     },
     // Applied when the step is written into the execution state. A step's own output is never
     // redacted here: `stepsForLog()` does that on the copy handed to the serializer, because the
@@ -78,17 +78,53 @@ function redactStepForLog({ stepName, step, stepLogPolicy }: RedactStepParams): 
         const loop = new LoopStepOutput(step)
         const iterations = loop.output?.iterations
         if (!isNil(iterations)) {
-            return loop.setIterations(iterations.map((iteration) =>
+            const redacted = loop.setIterations(iterations.map((iteration) =>
                 logRedaction.redactStepsForLog({ steps: iteration, stepLogPolicy }),
             ))
+            const collected = redacted.output?.collected
+            if (policy?.redactCollected !== true || isNil(collected) || isNil(redacted.output)) {
+                return redacted
+            }
+            return new LoopStepOutput({
+                ...redacted,
+                output: { ...redacted.output, collected: collected.map((value) => isNil(value) ? value : REDACTED_VALUE) },
+            })
         }
     }
     return step
 }
 
+// A loop's `collected` holds whatever its `collect.value` read, so a value read from a step that
+// opted out of logging its output must not reach the log through the loop instead (#41). Matched
+// by substring, as the props resolver finds referenced steps: over-matching only redacts more.
+function withCollectedRedaction({ trigger, policy }: { trigger: FlowTrigger, policy: Map<string, StepLogPolicy> }): Map<string, StepLogPolicy> {
+    const unloggedOutputs = [...policy.entries()].filter(([, entry]) => !entry.logOutput).map(([name]) => name)
+    if (unloggedOutputs.length === 0) {
+        return policy
+    }
+    const withCollected = new Map(policy)
+    for (const step of flowStructureUtil.getAllSteps(trigger)) {
+        if (step.type !== FlowActionType.LOOP_ON_ITEMS || isNil(step.settings.collect)) {
+            continue
+        }
+        const collectValue = step.settings.collect.value
+        if (!unloggedOutputs.some((name) => collectValue.includes(name))) {
+            continue
+        }
+        const existing = policy.get(step.name)
+        withCollected.set(step.name, {
+            logInput: existing?.logInput ?? true,
+            logOutput: existing?.logOutput ?? true,
+            redactCollected: true,
+        })
+    }
+    return withCollected
+}
+
 export type StepLogPolicy = {
     logInput: boolean
     logOutput: boolean
+    redactCollected?: boolean
 }
 
 type BuildStepLogPolicyParams = {

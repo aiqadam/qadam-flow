@@ -2052,5 +2052,15 @@
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.",
   "extraBodyMustBeObject": "Must be a JSON object, or empty",
   "extraBodyReservedKey": "Can't set model, messages, tools, tool_choice, stream, stream_options or response_format here",
-  "extraBodyTooLarge": "Extra request parameters are too large"
+  "extraBodyTooLarge": "Extra request parameters are too large",
+  "Results": "Results",
+  "Collect results": "Collect results",
+  "Collects one value per item. After the loop, read the list as collected on the loop output.": "Collects one value per item. After the loop, read the list as collected on the loop output.",
+  "Value to collect": "Value to collect",
+  "Select a value from a step inside the loop": "Select a value from a step inside the loop",
+  "Skip items where a step failed": "Skip items where a step failed",
+  "Keep step details for": "Keep step details for",
+  "Every item": "Every item",
+  "Items where a step failed": "Items where a step failed",
+  "Keeping fewer details lets a loop over thousands of items stay under the run log size limit. Collected results and failures are kept either way.": "Keeping fewer details lets a loop over thousands of items stay under the run log size limit. Collected results and failures are kept either way."
 }

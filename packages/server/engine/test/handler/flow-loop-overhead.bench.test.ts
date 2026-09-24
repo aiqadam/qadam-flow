@@ -20,7 +20,7 @@ describe.skipIf(!process.env.ENGINE_BENCH)('loop overhead benchmark', () => {
 
     it.each(benchCounts())('%i iterations × 2 steps', async (count) => {
         const items = Array.from({ length: count }, (_, i) => ({ chatId: 100000 + i, text: `message number ${i} `.repeat(8) }))
-        const loop = buildSimpleLoopAction({
+        const plainLoop = buildSimpleLoopAction({
             name: 'loop',
             loopItems: '{{ trigger.output.items }}',
             firstLoopAction: {
@@ -38,6 +38,8 @@ describe.skipIf(!process.env.ENGINE_BENCH)('loop overhead benchmark', () => {
                 }),
             },
         })
+        // Collects one field per iteration, the way a bulk send reports what it sent (#41, #387).
+        const loop = { ...plainLoop, settings: { ...plainLoop.settings, collect: { value: '{{ send.output.result.message_id }}' } } }
         const state = await FlowExecutorContext.empty().upsertStep('trigger', GenericStepOutput.create({
             type: FlowActionType.CODE,
             status: StepOutputStatus.SUCCEEDED,

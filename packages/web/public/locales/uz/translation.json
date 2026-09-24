@@ -2052,5 +2052,15 @@
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Ushbu provayderga yuboriladigan har bir chat so'roviga qo'shiladigan ixtiyoriy JSON obyekt, masalan vLLM'da Qwen fikrlashini o'chirish uchun.",
   "extraBodyMustBeObject": "JSON obyekt yoki bo'sh bo'lishi kerak",
   "extraBodyReservedKey": "Bu yerda model, messages, tools, tool_choice, stream, stream_options va response_format ni o'rnatib bo'lmaydi",
-  "extraBodyTooLarge": "Qo'shimcha so'rov parametrlari juda katta"
+  "extraBodyTooLarge": "Qo'shimcha so'rov parametrlari juda katta",
+  "Results": "Natijalar",
+  "Collect results": "Natijalarni yig‘ish",
+  "Collects one value per item. After the loop, read the list as collected on the loop output.": "Har bir element uchun bitta qiymat yig‘adi. Tsikldan keyin ro‘yxat tsikl natijasida collected sifatida mavjud.",
+  "Value to collect": "Yig‘iladigan qiymat",
+  "Select a value from a step inside the loop": "Tsikl ichidagi qadamdan qiymat tanlang",
+  "Skip items where a step failed": "Qadam xato bilan tugagan elementlarni o‘tkazib yuborish",
+  "Keep step details for": "Qadam tafsilotlarini saqlash",
+  "Every item": "Barcha elementlar",
+  "Items where a step failed": "Qadam xato bilan tugagan elementlar",
+  "Keeping fewer details lets a loop over thousands of items stay under the run log size limit. Collected results and failures are kept either way.": "Kamroq tafsilot saqlansa, minglab elementlar bo‘yicha tsikl ishga tushirish jurnali hajmi chegarasidan oshmaydi. Yig‘ilgan natijalar va xatolar har holda saqlanadi."
 }

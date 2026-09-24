@@ -30,6 +30,8 @@ const updateStepInput = z.object({
     auth: z.string().optional(),
     actionName: z.string().optional(),
     loopItems: z.string().optional(),
+    loopCollect: mcpUtils.LOOP_COLLECT_INPUT_SCHEMA.optional(),
+    loopKeepBodies: mcpUtils.LOOP_KEEP_BODIES_INPUT_SCHEMA.optional(),
     skip: z.boolean().optional(),
     sourceCode: z.string().optional(),
     packageJson: z.string().optional(),
@@ -52,6 +54,8 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
             auth: z.string().optional().describe('Connection `externalId` from `ap_list_connections`. The tool wraps it automatically as `{{connections[\'externalId\']}}`.'),
             actionName: z.string().optional().describe('For PIECE steps: the action to perform. Use ap_research_pieces to get valid values.'),
             loopItems: z.string().optional().describe('For LOOP steps: expression for the items to iterate over'),
+            loopCollect: mcpUtils.LOOP_COLLECT_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_COLLECT_HINT),
+            loopKeepBodies: mcpUtils.LOOP_KEEP_BODIES_INPUT_SCHEMA.optional().describe(mcpUtils.LOOP_KEEP_BODIES_HINT),
             skip: z.boolean().optional().describe('Whether to skip this step during execution'),
             sourceCode: z.string().optional().describe('For CODE steps only: the JavaScript/TypeScript source code. Must export a `code` function: `export const code = async (inputs) => { ... }`.'),
             packageJson: z.string().optional().describe('For CODE steps only: package.json content as a JSON string for npm dependencies. Defaults to "{}".'),
@@ -62,7 +66,7 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
         },
         annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
-            const { flowId, stepName, displayName, input, auth, actionName, loopItems, skip, sourceCode, packageJson, continueOnFailure, retryOnFailure, logInput, logOutput } = updateStepInput.parse(args)
+            const { flowId, stepName, displayName, input, auth, actionName, loopItems, loopCollect, loopKeepBodies, skip, sourceCode, packageJson, continueOnFailure, retryOnFailure, logInput, logOutput } = updateStepInput.parse(args)
 
             const [flow, project] = await Promise.all([
                 flowService(log).getOnePopulated({ id: flowId, projectId: mcp.projectId }),
@@ -91,7 +95,7 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 return authError
             }
 
-            const rewrittenInput = mcpUtils.rewriteAllReferences({ input, loopItems, trigger: flow.version.trigger })
+            const rewrittenInput = mcpUtils.rewriteAllReferences({ input, loopItems, loopCollect, trigger: flow.version.trigger })
             const rewritten = {
                 ...rewrittenInput,
                 input: await mcpUtils.normalizeAgentFlowToolIds({ input: rewrittenInput.input, projectId: mcp.projectId, log }),
@@ -134,6 +138,16 @@ export const apUpdateStepTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLo
                 else {
                     return { content: [{ type: 'text', text: `❌ loopItems can only be set on LOOP_ON_ITEMS steps, but "${stepName}" is type ${step.type}.` }] }
                 }
+            }
+            const loopSettingUpdates = [
+                { name: 'loopCollect', key: 'collect', value: rewritten.loopCollect },
+                { name: 'loopKeepBodies', key: 'keepBodies', value: loopKeepBodies },
+            ].filter((update) => update.value !== undefined)
+            if (loopSettingUpdates.length > 0 && step.type !== FlowActionType.LOOP_ON_ITEMS) {
+                return { content: [{ type: 'text', text: `❌ ${loopSettingUpdates[0].name} can only be set on LOOP_ON_ITEMS steps, but "${stepName}" is type ${step.type}.` }] }
+            }
+            for (const update of loopSettingUpdates) {
+                updatedSettings[update.key] = update.value
             }
             if (sourceCode !== undefined || packageJson !== undefined) {
                 if (step.type !== FlowActionType.CODE) {

@@ -2052,5 +2052,15 @@
   "Optional JSON object added to every chat request to this provider, for example to turn off Qwen thinking on vLLM.": "Осы провайдерге жіберілетін әр чат сұрауына қосылатын міндетті емес JSON нысаны, мысалы vLLM-де Qwen ойлауын өшіру үшін.",
   "extraBodyMustBeObject": "JSON нысаны немесе бос болуы керек",
   "extraBodyReservedKey": "Мұнда model, messages, tools, tool_choice, stream, stream_options және response_format орнатуға болмайды",
-  "extraBodyTooLarge": "Қосымша сұрау параметрлері тым үлкен"
+  "extraBodyTooLarge": "Қосымша сұрау параметрлері тым үлкен",
+  "Results": "Нәтижелер",
+  "Collect results": "Нәтижелерді жинау",
+  "Collects one value per item. After the loop, read the list as collected on the loop output.": "Әр элемент үшін бір мәнді жинайды. Циклдан кейін тізім цикл нәтижесінде collected ретінде қолжетімді.",
+  "Value to collect": "Жиналатын мән",
+  "Select a value from a step inside the loop": "Цикл ішіндегі қадамнан мән таңдаңыз",
+  "Skip items where a step failed": "Қадам қатемен аяқталған элементтерді өткізіп жіберу",
+  "Keep step details for": "Қадам мәліметтерін сақтау",
+  "Every item": "Барлық элементтер",
+  "Items where a step failed": "Қадам қатемен аяқталған элементтер",
+  "Keeping fewer details lets a loop over thousands of items stay under the run log size limit. Collected results and failures are kept either way.": "Аз мәлімет сақталса, мыңдаған элемент бойынша цикл іске қосу журналының өлшем шегінен аспайды. Жиналған нәтижелер мен қателер кез келген жағдайда сақталады."
 }

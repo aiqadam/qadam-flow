@@ -22,6 +22,14 @@ export enum RouterExecutionType {
     EXECUTE_FIRST_MATCH = 'EXECUTE_FIRST_MATCH',
 }
 
+// What a loop keeps of each iteration's step outputs once the iteration is done (#41). A body that
+// is not kept is blanked to `{}` rather than removed: iterations are addressed by position.
+export enum LoopKeepBodies {
+    ALL = 'ALL',
+    FAILED_ONLY = 'FAILED_ONLY',
+    NONE = 'NONE',
+}
+
 export enum BranchExecutionType {
     FALLBACK = 'FALLBACK',
     CONDITION = 'CONDITION',
@@ -108,9 +116,19 @@ export const QadamActionSchema = z.object({
 })
 
 // Loop Items
+export const LoopCollectSettings = z.object({
+    value: z.string(),
+    skipFailed: z.boolean().optional(),
+})
+export type LoopCollectSettings = z.infer<typeof LoopCollectSettings>
+
 export const LoopOnItemsActionSettings = z.object({
     ...commonActionSettings,
     items: z.string(),
+    // Both optional so every loop authored before #41 reads as it did: nothing collected, every
+    // iteration kept.
+    collect: LoopCollectSettings.optional(),
+    keepBodies: z.enum(LoopKeepBodies).optional(),
 })
 export type LoopOnItemsActionSettings = z.infer<
   typeof LoopOnItemsActionSettings

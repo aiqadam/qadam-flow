@@ -7,6 +7,8 @@ import {
     FlowTriggerType,
     isNil,
     isObject,
+    LoopCollectSettings,
+    LoopKeepBodies,
     McpToolDefinition,
     Note,
     Permission,
@@ -167,6 +169,14 @@ function formatStepSettings(step: Step, includeInput: boolean): string[] {
         const items = settings.items as string | undefined
         if (items) {
             lines.push(`  loopItems: ${mcpUtils.wrapUntrustedValue(items)}`)
+        }
+        const collect = LoopCollectSettings.safeParse(settings.collect)
+        if (collect.success) {
+            lines.push(`  loopCollect: ${mcpUtils.wrapUntrustedValue(collect.data.value)}${collect.data.skipFailed === true ? ' (skipFailed)' : ''}`)
+        }
+        const keepBodies = z.enum(LoopKeepBodies).safeParse(settings.keepBodies)
+        if (keepBodies.success) {
+            lines.push(`  loopKeepBodies: ${keepBodies.data}`)
         }
     }
     return lines

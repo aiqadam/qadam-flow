@@ -72,6 +72,14 @@ All flow modifications go through `POST /v1/flows/:id` with a `FlowOperationRequ
 - Data: SAVE_SAMPLE_DATA, UPDATE_SAMPLE_DATA_INFO, UPDATE_MINUTES_SAVED
 - Notes: ADD_NOTE, UPDATE_NOTE, DELETE_NOTE
 
+## Loops (`LOOP_ON_ITEMS`)
+
+- **Collector (#41).** `settings.collect: { value, skipFailed? }` is resolved at the end of each iteration in that iteration's scope. `output.collected[i]` belongs to item `i` (`null` for a failed or skipped iteration); `output.failures[]` holds one `{ index, stepName, description }` per failed iteration; `output.iterationStatus[i]` is `S`/`F`. The three arrays are owned by `loop-executor` and appended to in place (copying them per iteration made loops quadratic), with each append recorded through `FlowExecutorContext.recordInPlaceGrowth`.
+- **Keep bodies.** `settings.keepBodies` blanks a finished iteration to `{}` — never removes it, since iterations are addressed by position (`getStateAtPath`, web `loopsIndexes`). A RESUME skips any `S` iteration without entering its body, which is what makes a blanked body safe; a `FROM_FAILED_STEP` retry drops FAILED steps and re-runs exactly the `F` iterations.
+- **Redaction.** A loop whose `collect.value` reads a step with `logOutput: false` gets `redactCollected` in its log policy, so `collected` is `**REDACTED**` in the persisted log while staying live for later steps.
+- **Validation.** `collect.value` may read the loop's own body (steps after the loop in flow order); `ap_validate_flow` checks it separately from other template references.
+- **Log-size guard (#387).** `applyLogSizeLimitIfExceeded` no longer walks the whole journal per step: it walks when a measured size plus an upper bound on writes since could cross the cap, on a doubling schedule of total writes, and once when a run (or inline child) ends — the last two catch objects a qadam grows in place, which the bound cannot see.
+
 ## Draft vs Published
 
 - New flow → FlowVersion in DRAFT state (editable)
