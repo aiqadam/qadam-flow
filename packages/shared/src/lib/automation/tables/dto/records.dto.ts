@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { OptionalArrayFromQuery } from '../../../core/common/base-model'
+import { BoundedArray, OptionalArrayFromQuery } from '../../../core/common/base-model'
 import { ApId } from '../../../core/common/id-generator'
 import { Cursor } from '../../../core/common/seek-page'
 import { formErrors } from '../../../form-errors'
@@ -9,11 +9,27 @@ const coerceToString = z.preprocess(
     z.string().nullable(),
 )
 
-export const CreateRecordsRequest = z.object({
-    records: z.array(z.array(z.object({
+// Every array a record write carries is a BoundedArray: length-checked before its elements
+// are parsed, and parsed only up to the first invalid element (see BoundedArray). Declared
+// here, against the end-of-file convention, for the same TS2448 reason as the constants
+// below. The width is not MAX_FIELDS_PER_TABLE — an operator prop shared cannot see — but
+// ten times its default, and past a table's column count a row names nothing new.
+export const MAX_CELLS_PER_RECORD = 1000
+
+// Not MAX_RECORDS_PER_BATCH: the web table import sends a whole file in one create, capped
+// client-side at the platform's MAX_RECORDS_PER_TABLE (10000 by default).
+export const MAX_RECORDS_PER_CREATE = 50_000
+
+const RecordCells = BoundedArray({
+    element: z.object({
         fieldId: z.string(),
         value: coerceToString,
-    }))),
+    }),
+    max: MAX_CELLS_PER_RECORD,
+})
+
+export const CreateRecordsRequest = z.object({
+    records: BoundedArray({ element: RecordCells, max: MAX_RECORDS_PER_CREATE }),
     tableId: z.string(),
 })
 
@@ -63,13 +79,14 @@ const writeProjection = z.array(ApId).min(1, formErrors.required).max(MAX_PROJEC
 
 export const UpdateRecordsRequest = z.object({
     tableId: z.string(),
-    records: z.array(z.object({
-        id: z.string(),
-        cells: z.array(z.object({
-            fieldId: z.string(),
-            value: coerceToString,
-        })),
-    })).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
+    records: BoundedArray({
+        element: z.object({
+            id: z.string(),
+            cells: RecordCells,
+        }),
+        max: MAX_RECORDS_PER_BATCH,
+        nonEmpty: true,
+    }),
     agentUpdate: z.boolean().optional(),
     fieldIds: writeProjection,
 })
@@ -146,18 +163,19 @@ export const Filter = z.discriminatedUnion('operator', [
 
 export type Filter = z.infer<typeof Filter>
 
+// A compare-and-set names the few columns the write depends on; a hundred conditions is
+// already far past any real one. Same declared-here exception as the constants above.
+const MAX_PRECONDITIONS = 100
+
 export const UpdateRecordRequest = z.object({
-    cells: z.array(z.object({
-        fieldId: z.string(),
-        value: coerceToString,
-    })).optional(),
+    cells: RecordCells.optional(),
     tableId: z.string(),
     agentUpdate: z.boolean().optional(),
     // Compare-and-set: the update applies only if the record still matches every
     // condition, evaluated inside the same transaction as the write. Reusing Filter
     // gives eq/neq/in/not_in and — the case the ticket names as "is empty" —
     // not_exists.
-    precondition: z.array(Filter).min(1, formErrors.required).optional(),
+    precondition: BoundedArray({ element: Filter, max: MAX_PRECONDITIONS, nonEmpty: true }).optional(),
     fieldIds: writeProjection,
 })
 
@@ -171,10 +189,7 @@ export const UpsertRecordsRequest = z.object({
     // MAX_KEY_FIELDS. The bound that keeps the matching loop cheap is the
     // dedupe itself, which leaves at most as many ids as the table has columns.
     keyFieldIds: z.array(ApId).min(1, formErrors.required).max(MAX_KEY_FIELDS),
-    records: z.array(z.array(z.object({
-        fieldId: z.string(),
-        value: coerceToString,
-    }))).min(1, formErrors.required).max(MAX_RECORDS_PER_BATCH),
+    records: BoundedArray({ element: RecordCells, max: MAX_RECORDS_PER_BATCH, nonEmpty: true }),
     fieldIds: writeProjection,
 })
 

@@ -1,4 +1,4 @@
-import { apId, FlowOperationType, PrincipalType } from '@aiqadam/shared'
+import { apId, FlowOperationType, MAX_CELLS_PER_RECORD, MAX_RECORDS_PER_CREATE, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { generateMockToken } from '../../../helpers/auth'
@@ -87,31 +87,42 @@ describe('Request validation', () => {
         })
     })
 
-    describe('bounds the rejection it returns', () => {
-        it('caps the issues listed in the message', async () => {
+    describe('bounds the work a body can cause', () => {
+        it('reports only the first invalid cell of a batch', async () => {
             const ctx = await createTestContext(app!)
 
             const response = await ctx.post('/v1/records/batch', {
                 tableId: apId(),
-                records: [{ id: apId(), cells: Array(1000).fill(1) }],
+                records: [{ id: apId(), cells: Array(MAX_CELLS_PER_RECORD).fill(1) }],
             })
 
             expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
-            const body = response?.json()
-            expect(body.message).toContain('990 more')
-            expect(response?.body.length).toBeLessThan(4096)
+            expect(response?.json().message).toBe('body/records/0/cells/0 Invalid input: expected object, received number')
         })
 
-        it('answers 400, not 500, when the schema itself throws', async () => {
+        it('rejects a row wider than the cap with one issue', async () => {
             const ctx = await createTestContext(app!)
 
             const response = await ctx.post('/v1/records/batch', oversizedInvalidBatch())
 
             expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
-            expect(response?.body.length).toBeLessThan(4096)
+            expect(response?.json().message).toContain('body/records/0/cells')
+            expect(response?.body.length).toBeLessThan(1024)
         })
 
-        it('answers 400, not 500, when a public route schema throws', async () => {
+        it('rejects a create over the record cap with one issue', async () => {
+            const ctx = await createTestContext(app!)
+
+            const response = await ctx.post('/v1/records', {
+                tableId: apId(),
+                records: Array(MAX_RECORDS_PER_CREATE + 1).fill([]),
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            expect(response?.body.length).toBeLessThan(1024)
+        })
+
+        it('answers 400, not 500, for a malformed redirect URI on the public register route', async () => {
             const response = await app!.inject({
                 method: 'POST',
                 url: '/register',
@@ -120,11 +131,21 @@ describe('Request validation', () => {
 
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
+
+        it('caps the redirect URIs the public register route accepts', async () => {
+            const response = await app!.inject({
+                method: 'POST',
+                url: '/register',
+                body: { redirect_uris: Array(21).fill('https://example.com/callback') },
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
     })
 })
 
-// Large enough that zod's issue aggregation overflows the stack when one nested
-// array element carries this many issues.
+// Before the cells array was bounded, this many invalid cells in one nested row made zod
+// overflow the stack while aggregating their issues.
 function oversizedInvalidBatch(): Record<string, unknown> {
     return {
         tableId: apId(),

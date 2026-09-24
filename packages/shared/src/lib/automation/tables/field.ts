@@ -1,5 +1,17 @@
 import { z } from 'zod'
-import { BaseModelSchema } from '../../core/common'
+import { BaseModelSchema, BoundedArray } from '../../core/common'
+
+// The request-side cap on a STATIC_DROPDOWN's options, wherever a caller supplies them
+// (CreateFieldRequest, FieldState). Generous — a country or city list fits — because it
+// exists to bound parsing, not to shape tables.
+export const MAX_DROPDOWN_OPTIONS = 10_000
+
+export const DropdownOptionsInput = BoundedArray({
+    element: z.object({
+        value: z.string(),
+    }),
+    max: MAX_DROPDOWN_OPTIONS,
+})
 
 export enum FieldType {
     TEXT = 'TEXT',

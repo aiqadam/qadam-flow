@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { Nullable } from '../../../core/common'
-import { OptionalArrayFromQuery } from '../../../core/common/base-model'
+import { BoundedArray, OptionalArrayFromQuery } from '../../../core/common/base-model'
 import { ApId } from '../../../core/common/id-generator'
 import { formErrors } from '../../../form-errors'
 import { FieldState } from '../../project-release/project-state'
@@ -10,10 +10,14 @@ import { MAX_KEY_FIELDS } from './records.dto'
 
 export const SAFE_EXTERNAL_ID_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,128}$/
 
+// Declared ahead of its consumer for the same TS2448 reason as the records.dto constants.
+// Same basis as MAX_CELLS_PER_RECORD: ten times MAX_FIELDS_PER_TABLE's default.
+const MAX_FIELDS_PER_CREATE = 1000
+
 export const CreateTableRequest = z.object({
     projectId: z.string(),
     name: z.string(),
-    fields: z.array(FieldState).optional(),
+    fields: BoundedArray({ element: FieldState, max: MAX_FIELDS_PER_CREATE }).optional(),
     externalId: z.string().regex(SAFE_EXTERNAL_ID_PATTERN, formErrors.invalidExternalId).optional(),
     folderId: z.string().optional(),
     folderName: z.string().optional(),

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BoundedArray } from '../../core/common/base-model'
 import { ApId } from '../../core/common/id-generator'
 import { FlowRunStatus } from './execution/flow-execution'
 import { FlowRetryStrategy } from './flow-run'
@@ -36,10 +37,14 @@ export const BulkCancelFlowRequestBody = z.object({
     projectId: ApId,
     flowRunIds: z.array(ApId).optional(),
     excludeFlowRunIds: z.array(ApId).optional(),
-    status: z.array(z.union([
-        z.literal(FlowRunStatus.PAUSED),
-        z.literal(FlowRunStatus.QUEUED),
-    ])).optional(),
+    // Two cancellable statuses; the cap only keeps a repeated list from being parsed in full.
+    status: BoundedArray({
+        element: z.union([
+            z.literal(FlowRunStatus.PAUSED),
+            z.literal(FlowRunStatus.QUEUED),
+        ]),
+        max: 10,
+    }).optional(),
     flowId: z.array(ApId).optional(),
     createdAfter: z.string().optional(),
     createdBefore: z.string().optional(),
