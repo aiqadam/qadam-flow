@@ -183,6 +183,47 @@ describe('Join waitpoint', () => {
         expect(parent?.status).toBe(FlowRunStatus.RUNNING)
     })
 
+    it('only lets the child a slot was claimed for answer it by finishing', async () => {
+        const { run, engineToken, projectId } = await setupParent({ status: FlowRunStatus.RUNNING })
+        const join: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 1, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()
+        const slotId = new URL((join.slotResumeUrls ?? [])[0]).pathname.split('/').pop() ?? ''
+        await saveChild({ projectId, parentRunId: run.id, parentWaitpointId: join.id, parentSlotId: slotId })
+
+        await joinWaitpointService(app.log).fillSlotForFinishedChild({ childRun: { id: apId(), projectId, status: FlowRunStatus.FAILED, parentRunId: run.id, parentWaitpointId: join.id, parentSlotId: slotId } })
+
+        expect(await db.findOneBy('waitpoint_slot', { id: slotId })).toMatchObject({ status: WaitpointSlotStatus.PENDING })
+    })
+
+    it('releases a slot claim when the child run could not be created, so a retry can claim it again', async () => {
+        const { run, engineToken, projectId, platformId } = await setupParent({ status: FlowRunStatus.PAUSED })
+        const join: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 1, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED })).json()
+        const slotId = new URL((join.slotResumeUrls ?? [])[0]).pathname.split('/').pop() ?? ''
+        const { flowId, flowVersionId } = await saveFlow({ projectId })
+        const startChild = () => flowRunService(app.log).start({
+            flowId, flowVersionId, projectId, platformId,
+            environment: RunEnvironment.TESTING,
+            payload: {},
+            executeTrigger: false,
+            executionType: ExecutionType.BEGIN,
+            workerHandlerId: undefined,
+            httpRequestId: undefined,
+            streamStepProgress: StreamStepProgress.NONE,
+            parentRunId: run.id,
+            failParentOnFailure: true,
+            parentWaitpointId: join.id,
+            parentSlotId: slotId,
+        })
+
+        const save = vi.spyOn(Repository.prototype, 'save').mockRejectedValueOnce(new Error('database blip'))
+        await expect(startChild()).rejects.toThrow('database blip')
+        save.mockRestore()
+        expect(await db.findOneBy('waitpoint_slot', { id: slotId })).toMatchObject({ childRunId: null })
+
+        const retried = await startChild()
+        expect(await db.findOneBy('flow_run', { id: retried.id })).toMatchObject({ parentSlotId: slotId })
+        expect(await db.findOneBy('waitpoint_slot', { id: slotId })).toMatchObject({ childRunId: retried.id })
+    })
+
     it('on timeout resumes with the answers that arrived and marks the rest timed out', async () => {
         const { run, engineToken, projectId } = await setupParent({ status: FlowRunStatus.RUNNING })
         const join: CreateWaitpointResponse = (await createJoin({ engineToken, run, projectId, slots: 2, failurePolicy: JoinFailurePolicy.enum.ALL_SETTLED, timeoutSeconds: 3600 })).json()
@@ -267,6 +308,8 @@ async function saveChild({ projectId, parentRunId, parentWaitpointId, parentSlot
     const { flowId, flowVersionId } = await saveFlow({ projectId })
     const child = createMockFlowRun({ projectId, flowId, flowVersionId, status: FlowRunStatus.RUNNING, environment: RunEnvironment.PRODUCTION, parentRunId })
     await db.save('flow_run', { ...child, parentWaitpointId, parentSlotId, failParentOnFailure: true, dispatchMode: 'QUEUE' })
+    // What `queueOrCreateInstantly` does for a verified child: the slot is claimed for it.
+    await db.update('waitpoint_slot', parentSlotId, { childRunId: child.id })
     return child
 }
 

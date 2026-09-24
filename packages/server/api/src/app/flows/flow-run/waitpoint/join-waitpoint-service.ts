@@ -21,7 +21,7 @@ import { Waitpoint, WaitpointResumePayload, WaitpointSlot, WaitpointSlotStatus, 
 // failure policy decides. Every write takes the waitpoint row FOR UPDATE, so two answers landing
 // together are counted one after the other, and the one that decides is the only one that completes.
 export const joinWaitpointService = (log: FastifyBaseLogger) => ({
-    async fillSlot({ flowRunId, projectId, waitpointId, slotId, answer, childRunId }: FillSlotParams): Promise<FillSlotResult> {
+    async fillSlot({ flowRunId, projectId, waitpointId, slotId, answer, childRunId, onlyForClaimant = false }: FillSlotParams): Promise<FillSlotResult> {
         const decision = await transaction(async (entityManager) => {
             const waitpoint = await lockPendingJoin({ entityManager, flowRunId, waitpointId })
             // A server-side caller knows the project and gets it enforced; an HTTP answer knows only
@@ -32,7 +32,7 @@ export const joinWaitpointService = (log: FastifyBaseLogger) => ({
             // First answer wins: a duplicate callback, or a child's terminal status arriving after its
             // own Return Response, changes nothing.
             const updated = await waitpointSlotRepo(entityManager).update(
-                { id: slotId, waitpointId: waitpoint.id, projectId: waitpoint.projectId, status: WaitpointSlotStatus.PENDING },
+                { id: slotId, waitpointId: waitpoint.id, projectId: waitpoint.projectId, status: WaitpointSlotStatus.PENDING, ...(onlyForClaimant ? { childRunId } : {}) },
                 { status: answer.status, payload: capSlotData(answer.data), ...spreadIfDefined('childRunId', childRunId) },
             )
             if ((updated.affected ?? 0) === 0) {
@@ -68,7 +68,8 @@ export const joinWaitpointService = (log: FastifyBaseLogger) => ({
                     link: await domainHelper.getPublicUrl({ path: `/projects/${childRun.projectId}/runs/${childRun.id}` }),
                 },
             }
-        await this.fillSlot({ flowRunId: parentRunId, projectId: childRun.projectId, waitpointId: parentWaitpointId, slotId: parentSlotId, answer, childRunId: childRun.id })
+        // Only the child the slot was claimed for may answer it by finishing.
+        await this.fillSlot({ flowRunId: parentRunId, projectId: childRun.projectId, waitpointId: parentWaitpointId, slotId: parentSlotId, answer, childRunId: childRun.id, onlyForClaimant: true })
     },
 
     async expire({ flowRunId, projectId, waitpointId }: ExpireParams): Promise<void> {
@@ -233,6 +234,7 @@ type FillSlotParams = {
     slotId: string
     answer: SlotAnswer
     childRunId?: string
+    onlyForClaimant?: boolean
 }
 
 type FillSlotResult = {

@@ -225,6 +225,10 @@ export const waitpointService = (log: FastifyBaseLogger) => ({
         return (claimed.affected ?? 0) > 0
     },
 
+    async releaseSlotClaim({ slotId, projectId, childRunId }: ReleaseSlotClaimParams): Promise<void> {
+        await waitpointSlotRepo().update({ id: slotId, projectId, childRunId, status: WaitpointSlotStatus.PENDING }, { childRunId: null })
+    },
+
     async isJoinWaitpoint({ id, flowRunId }: IsJoinWaitpointParams): Promise<boolean> {
         return waitpointRepo().exists({ where: { id, flowRunId, join: Not(IsNull()) } })
     },
@@ -398,6 +402,12 @@ type VerifiedParentJoin = {
 type ClaimSlotParams = {
     slotId: ApId
     waitpointId: ApId
+    projectId: ApId
+    childRunId: ApId
+}
+
+type ReleaseSlotClaimParams = {
+    slotId: ApId
     projectId: ApId
     childRunId: ApId
 }

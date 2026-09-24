@@ -887,8 +887,9 @@ async function resolveVerifiedParent({ parentRunId, failParentOnFailure, parentW
 }
 
 // A join slot (#374) belongs to the first child created for it: a parent step that is replayed
-// re-dispatches only the slots with no child yet, and a second child for the same slot runs
-// detached from the join instead of racing the first one's answer.
+// re-dispatches only the slots with no child yet, and a second child for the same slot is not
+// attached to the join — its failure answers nothing. (It still carries the slot's callback URL, so
+// its own Return Response can answer; the first answer wins, and both process the same item.)
 async function claimJoinSlot({ verified, childRunId, projectId, log }: ClaimJoinSlotParams): Promise<ResolvedParent> {
     if (isNil(verified.parentSlotId) || isNil(verified.parentWaitpointId)) {
         return verified
@@ -936,7 +937,20 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         steps: {},
         triggeredBy: params.triggeredBy,
     }
-    switch (params.environment) {
+    const { data: created, error } = await tryCatch(() => persistOrQueueRun({ flowRun, environment: params.environment, log }))
+    if (error) {
+        // A claim for a run that never came to exist would leave its slot unanswerable and never
+        // re-dispatched; the retried request claims it again.
+        if (!isNil(parentSlotId)) {
+            await waitpointService(log).releaseSlotClaim({ slotId: parentSlotId, projectId: params.projectId, childRunId: id })
+        }
+        throw error
+    }
+    return created
+}
+
+async function persistOrQueueRun({ flowRun, environment, log }: PersistOrQueueRunParams): Promise<FlowRun> {
+    switch (environment) {
         case RunEnvironment.TESTING:
             return flowRunRepo().save(flowRun)
         case RunEnvironment.PRODUCTION:
@@ -1011,6 +1025,12 @@ type ResolveVerifiedParentParams = {
     parentWaitpointId: string | undefined
     parentSlotId: string | undefined
     projectId: ProjectId
+    log: FastifyBaseLogger
+}
+
+type PersistOrQueueRunParams = {
+    flowRun: FlowRun
+    environment: RunEnvironment
     log: FastifyBaseLogger
 }
 
