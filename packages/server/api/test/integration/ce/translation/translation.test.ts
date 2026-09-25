@@ -1,6 +1,7 @@
-import { DefaultProjectRole, TranslationImportFormat, TranslationImportMode } from '@aiqadam/shared'
+import { apId, DefaultProjectRole, TranslationImportFormat, TranslationImportMode } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { db } from '../../../helpers/db'
 import { describeWithAuth } from '../../../helpers/describe-with-auth'
 import { createMemberContext, createServiceContext, createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
@@ -59,6 +60,54 @@ describe('Translation CE API', () => {
             })
 
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('rejects a key with more than 50 locales (M4)', async () => {
+            const ctx = await setup()
+            const values: Record<string, string> = {}
+            // 51 distinct, individually-valid BCP-47 tags — one past MAX_TRANSLATION_LOCALES_PER_KEY.
+            for (let i = 0; i < 51; i++) {
+                values[`en-x-${i.toString().padStart(4, '0')}`] = 'v'
+            }
+
+            const response = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'too.many.locales', values }],
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('rejects a description longer than 500 characters (M4)', async () => {
+            const ctx = await setup()
+
+            const response = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'long.description', values: { en: 'x' }, description: 'a'.repeat(501) }],
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('two concurrent batch upserts to the same project both succeed (advisory lock does not deadlock or corrupt writes)', async () => {
+            const ctx = await setup()
+
+            const [first, second] = await Promise.all([
+                ctx.post('/v1/translations', {
+                    projectId: ctx.project.id,
+                    translations: [{ key: 'concurrent.a', values: { en: 'A' } }],
+                }),
+                ctx.post('/v1/translations', {
+                    projectId: ctx.project.id,
+                    translations: [{ key: 'concurrent.b', values: { en: 'B' } }],
+                }),
+            ])
+
+            expect(first.statusCode).toBe(StatusCodes.OK)
+            expect(second.statusCode).toBe(StatusCodes.OK)
+
+            const list = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'concurrent' })
+            expect(list.json().data).toHaveLength(2)
         })
     })
 
@@ -172,7 +221,8 @@ describe('Translation CE API', () => {
             })
             const elapsedMs = Date.now() - startedAt
 
-            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            // RESOURCE_LIMIT_EXCEEDED maps to 403 (error-handler.ts), not 400.
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
             // Generously bounded: the previous quadratic flatten took ~6s at 5k keys and did not
             // finish within 290s at 20k; the fixed, cap-aborting path should reject in well under
             // a second even at 50k, but 10s leaves ample headroom for a loaded CI runner.
@@ -193,6 +243,24 @@ describe('Translation CE API', () => {
 
             const list = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'nested.greeting' })
             expect(list.json().data[0].values).toEqual({ en: 'Hi' })
+        })
+
+        // `import`'s DTO has no per-value length schema (only the whole-payload byte cap) — this
+        // reaches ONLY the service-level `upsertMergingValues` re-validation (M4), not a REST DTO
+        // check, unlike the same cap on POST /v1/translations (already enforced by
+        // UpsertTranslationRequestItem's zod schema before the request reaches the service).
+        it('rejects an imported value longer than TRANSLATION_VALUE_MAX_LENGTH (M4)', async () => {
+            const ctx = await setup()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.FLAT,
+                mode: TranslationImportMode.MERGE,
+                data: { 'too.long': 'x'.repeat(10_001) },
+            })
+            // ErrorCode.VALIDATION maps to 409 (error-handler.ts), not the 400 a zod/DTO schema
+            // failure produces — this request never reaches a schema that caps value length.
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
         })
     })
 
@@ -240,6 +308,31 @@ describe('Translation CE API', () => {
                 data: { 'service.imported': 'via CI' },
             })
             expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    describe('whole-table byte cap (M4)', () => {
+        it('rejects a write once the project\'s translation table already exceeds MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT', async () => {
+            const ctx = await createTestContext(app!)
+            // Seeded directly (bypassing the per-value 10k cap, which only the application layer
+            // enforces) to cheaply cross the 20 MB whole-table cap without 20 MB of individually
+            // valid requests. 21 rows x ~1 MB each.
+            const oversizedValue = 'x'.repeat(1_000_000)
+            await db.save('translation', Array.from({ length: 21 }, (_, i) => ({
+                id: apId(),
+                projectId: ctx.project.id,
+                platformId: ctx.platform.id,
+                key: `oversized.${i}`,
+                values: { en: oversizedValue },
+                description: null,
+            })))
+
+            const response = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'one.more.key', values: { en: 'small' } }],
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
         })
     })
 })

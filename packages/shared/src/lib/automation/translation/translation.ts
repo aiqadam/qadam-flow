@@ -6,14 +6,36 @@ export const TRANSLATION_KEY_REGEX = /^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_-]+)*$/
 export const TRANSLATION_KEY_MAX_LENGTH = 255
 export const TRANSLATION_VALUE_MAX_LENGTH = 10_000
 export const MAX_TRANSLATION_KEYS_PER_PROJECT = 5_000
-// One imported/exported payload is bounded well under Postgres's own per-row jsonb practicalities,
+// Measures the re-serialized size of the request's already-parsed `data` field
+// (`Buffer.byteLength(JSON.stringify(data), 'utf8')` in `translation.controller.ts`), not the
+// literal raw HTTP request body — the two differ by whatever whitespace/key-order the client sent
+// and the small `locale`/`format`/`mode` fields alongside `data`, but never by more than a few
+// bytes for a realistic payload. Bounded well under Postgres's own per-row jsonb practicalities,
 // not at the 1 GB toast ceiling — a single request this size is already pathological for a
 // hand- or CI-maintained translation table.
 export const MAX_TRANSLATION_IMPORT_BYTES = 1_000_000
 export const MAX_LOCALE_TAG_LENGTH = 35
 export const MAX_TRANSLATION_KEYS_PER_UPSERT = 500
+// Well beyond the builder's own four locales (en/ru/uz/kk) to leave headroom for a project
+// translating its flows into a realistic global-product locale set (dialects included), while
+// still bounding a single row's worst-case jsonb size: 50 locales at the per-value cap above is
+// ~500 KB, which is comfortably inside Postgres's per-row practicalities.
+export const MAX_TRANSLATION_LOCALES_PER_KEY = 50
+// A short translator-facing note ("what is this string for"), not a document — the same order of
+// magnitude as other short admin-facing note fields in this codebase.
+export const TRANSLATION_DESCRIPTION_MAX_LENGTH = 500
+// A whole-project byte cap, checked on every write inside the same transaction (and behind the
+// same advisory lock) that enforces `MAX_TRANSLATION_KEYS_PER_PROJECT`, so a build-up of many
+// large values cannot slip past the per-key/per-value caps by spreading itself across more keys
+// than any single request touches. The original "~1 MB per 5,000 keys" planning figure assumed a
+// short (tens-of-bytes) UI string per key/locale pair, which is the common case; a hard cap has to
+// bound the worst *legitimate* case instead — a project that pushes many keys toward the
+// individual `TRANSLATION_VALUE_MAX_LENGTH` cap across several locales (e.g. long email-template
+// bodies) — so 20 MB is chosen deliberately larger than that figure rather than reproducing it.
+export const MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT = 20_000_000
 
 export const TranslationValues = z.record(z.string(), z.string().max(TRANSLATION_VALUE_MAX_LENGTH, 'translationValueTooLong'))
+    .refine((values) => Object.keys(values).length <= MAX_TRANSLATION_LOCALES_PER_KEY, 'tooManyTranslationLocales')
 export type TranslationValues = z.infer<typeof TranslationValues>
 
 export const Translation = z.object({
@@ -81,11 +103,18 @@ export const localeUtil = {
             return true
         })
     },
-    /** First candidate in the chain that has a non-empty value in `values`, or `null`. */
-    resolve(params: { values: Record<string, string>, chain: string[] }): { locale: string, value: string } | null {
+    /**
+     * First candidate in the chain with a value in `values` — a `Map`, never a plain object, so a
+     * candidate literally equal to `__proto__` or `constructor` (already rejected by
+     * `localeUtil.canonicalize` before it can reach here, but checked again at this boundary for
+     * defense in depth) is an ordinary key, never a prototype lookup. Shared by the engine
+     * (`props-resolver.ts`) and anywhere else resolving a translation's per-locale value against a
+     * candidate chain, so there is exactly one resolution implementation, not two that could drift.
+     */
+    resolve(params: { values: Map<string, string>, chain: string[] }): { locale: string, value: string } | null {
         const { values, chain } = params
         for (const locale of chain) {
-            const value = values[locale]
+            const value = values.get(locale)
             if (value !== undefined) {
                 return { locale, value }
             }

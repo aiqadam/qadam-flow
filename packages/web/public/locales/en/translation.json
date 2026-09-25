@@ -2091,5 +2091,7 @@
   "invalidTranslationKey": "Key must contain only letters, digits, underscores, and dot-separated segments (letters, digits, underscores, hyphens)",
   "translationKeyTooLong": "Translation key is too long (max 255 characters)",
   "translationValueTooLong": "Translation value is too long (max 10,000 characters)",
-  "invalidLocale": "Locale must be a valid BCP-47 tag (max 35 characters)"
+  "invalidLocale": "Locale must be a valid BCP-47 tag (max 35 characters)",
+  "tooManyTranslationLocales": "A translation key can have at most 50 locales",
+  "translationDescriptionTooLong": "Description is too long (max 500 characters)"
 }

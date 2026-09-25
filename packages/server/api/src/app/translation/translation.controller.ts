@@ -14,13 +14,26 @@ import {
     TranslationImportFormat,
     UpsertTranslationsRequestBody,
 } from '@aiqadam/shared'
+import { RateLimitOptions } from '@fastify/rate-limit'
 import { FastifyPluginCallbackZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { z } from 'zod'
 import { ProjectResourceType } from '../core/security/authorization/common'
 import { securityAccess } from '../core/security/authorization/fastify-security'
+import { system } from '../helper/system/system'
+import { AppSystemProp } from '../helper/system/system-props'
 import { TranslationEntity } from './translation.entity'
 import { translationService } from './translation.service'
+
+// Reuses the operator-configured API_RATE_LIMIT_AUTHN_* knobs rather than inventing a
+// translation-specific one — the same pattern `user-invitation.module.ts` follows for its own
+// non-authn write route. Import is the one translation write whose cost scales with request size
+// (the transactional per-project write below, plus the whole-table byte-cap scan), so it is the
+// one that needs its own per-route limit; the others are bounded by their own item/key caps.
+const importRateLimitOptions: RateLimitOptions = {
+    max: Number.parseInt(system.getOrThrow(AppSystemProp.API_RATE_LIMIT_AUTHN_MAX), 10),
+    timeWindow: system.getOrThrow(AppSystemProp.API_RATE_LIMIT_AUTHN_WINDOW),
+}
 
 export const translationController: FastifyPluginCallbackZod = (app, _opts, done) => {
     app.get('/', ListTranslationsRequest, async (request): Promise<SeekPage<Translation>> => {
@@ -148,6 +161,7 @@ const ImportTranslationsRequest = {
             Permission.WRITE_TRANSLATION,
             { type: ProjectResourceType.BODY },
         ),
+        rateLimit: importRateLimitOptions,
     },
     schema: {
         tags: ['translations'],
