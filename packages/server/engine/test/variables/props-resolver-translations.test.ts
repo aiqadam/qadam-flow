@@ -202,9 +202,22 @@ describe('props-resolver: $t translations', () => {
         warnSpy.mockRestore()
     })
 
-    test('the flow\'s own localeSource wins over an inherited run locale', async () => {
-        const constants = buildConstants({ localeSource: '\'ru\'', inheritedRunLocale: 'en' })
+    test('a bare literal localeSource (no braces) is a fixed locale and wins over an inherited run locale', async () => {
+        const constants = buildConstants({ localeSource: 'ru', inheritedRunLocale: 'en' })
         const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'greeting\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Привет')
+    })
+
+    // localeSource is a normal mention-capable field — resolved through the same
+    // `resolveInputAsync` path as any other step input, not a raw-JS eval: a single whole-string
+    // token (`{{trigger['output'].lang}}`) returns its resolved value directly.
+    test('a template localeSource resolves through the normal props-resolver path', async () => {
+        const constants = buildConstants({ localeSource: '{{trigger[\'output\'].lang}}', inheritedRunLocale: 'en' })
+        const executionState = await buildExecutionState({ lang: 'ru' })
         const { resolvedInput } = await buildResolver(constants).resolve({
             unresolvedInput: '{{$t[\'greeting\']}}',
             executionState,
@@ -214,8 +227,20 @@ describe('props-resolver: $t translations', () => {
 
     test('a localeSource that fails to evaluate falls back rather than failing the run', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-        const constants = buildConstants({ localeSource: 'thisIsNotDefinedAnywhere', inheritedRunLocale: 'ru' })
+        const constants = buildConstants({ localeSource: '{{thisIsNotDefinedAnywhere}}', inheritedRunLocale: 'ru' })
         const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'greeting\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Привет')
+        warnSpy.mockRestore()
+    })
+
+    test('a localeSource that resolves to a non-string falls back rather than failing the run', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const constants = buildConstants({ localeSource: '{{trigger[\'output\']}}', inheritedRunLocale: 'ru' })
+        const executionState = await buildExecutionState({ lang: 'ru' })
         const { resolvedInput } = await buildResolver(constants).resolve({
             unresolvedInput: '{{$t[\'greeting\']}}',
             executionState,

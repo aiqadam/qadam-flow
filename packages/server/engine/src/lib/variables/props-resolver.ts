@@ -56,6 +56,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
                 currentState,
                 stepNames,
                 constants,
+                executionState,
             }
             const resolvedInput = await applyFunctionToValues<T>(
                 unresolvedInput,
@@ -82,7 +83,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
 }
 
 const mergeFlattenedKeysArraysIntoOneArray = async (token: string, partsThatNeedResolving: string[],
-    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames' | 'constants'>,
+    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames' | 'constants' | 'executionState'>,
     contextVersion: ContextVersion | undefined,
 ) => {
     const resolvedValues: Record<string, unknown> = {}
@@ -121,15 +122,21 @@ function extractReferencedStepNames(input: unknown, stepNames: string[]): Set<st
     return referencedSteps
 }
 
-/** 
+/**
  * input: `Hello {{firstName}} {{lastName}}`
  * tokenThatNeedResolving: [`{{firstName}}`, `{{lastName}}`]
+ *
+ * Exported for `EngineConstants#getRunLocale` — `FlowVersion.localeSource` is a normal
+ * mention-capable template field (the Phase 2 builder edits it with the same text input as
+ * every other field), so it is resolved through the exact same path as any other input:
+ * a single whole-string token (`{{trigger['output'].lang}}`) returns the raw resolved value,
+ * and a bare literal (`ru`, no braces) passes through unchanged.
  */
-async function resolveInputAsync(params: ResolveInputInternalParams): Promise<unknown> {
-    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames, constants } = params
+export async function resolveInputAsync(params: ResolveInputInternalParams): Promise<unknown> {
+    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames, constants, executionState } = params
 
     if (formulaEvaluator.containsWrapper(input)) {
-        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, constants, contextVersion: params.contextVersion }
+        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, constants, executionState, contextVersion: params.contextVersion }
         const { expression: preResolvedExpr, vars: preResolvedVars } = await preResolveFormulaVars({ expression: input, resolveOptions: formulaOptions })
         const { result, error } = formulaEvaluator.evaluate({ expression: preResolvedExpr, sampleData: preResolvedVars })
         if (error) {
@@ -147,6 +154,7 @@ async function resolveInputAsync(params: ResolveInputInternalParams): Promise<un
         censoredInput,
         stepNames,
         constants,
+        executionState,
     }
     const inputContainsOnlyOneTokenToResolve =
         tokensThatNeedResolving.length === 1 &&
@@ -276,7 +284,7 @@ function parseVariableName(variableName: string): string | null {
 // Unlike `variables`/`connections`, a translation value is not a secret: the censored pass resolves
 // it the same way the uncensored one does.
 async function handleTranslation(params: ResolveSingleTokenParams): Promise<unknown> {
-    const { variableName, currentState, stepNames, constants } = params
+    const { variableName, currentState, stepNames, constants, executionState } = params
     const parsed = parseTranslationToken(variableName)
     if (isNil(parsed)) {
         throw new UnresolvedTemplateReferenceError({ expression: variableName })
@@ -292,7 +300,7 @@ async function handleTranslation(params: ResolveSingleTokenParams): Promise<unkn
 
     const [translations, runLocale, defaultLocale] = await Promise.all([
         constants.getTranslations(),
-        constants.getRunLocale({ currentState }),
+        constants.getRunLocale({ executionState }),
         constants.getProjectDefaultLocale(),
     ])
 
@@ -468,7 +476,7 @@ export function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown
     return []
 }
 
-type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames' | 'constants'>
+type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames' | 'constants' | 'executionState'>
 
 async function preResolveFormulaVars({ expression, resolveOptions }: {
     expression: string
@@ -509,9 +517,10 @@ type ResolveSingleTokenParams = {
     censoredInput: boolean
     contextVersion: ContextVersion | undefined
     constants: EngineConstants
+    executionState: FlowExecutorContext
 }
 
-type ResolveInputInternalParams = {
+export type ResolveInputInternalParams = {
     input: string
     stepNames: string[]
     engineToken: string
@@ -521,6 +530,7 @@ type ResolveInputInternalParams = {
     currentState: Record<string, unknown>
     contextVersion: ContextVersion | undefined
     constants: EngineConstants
+    executionState: FlowExecutorContext
 }
 
 type ResolveInputParams = {

@@ -60,11 +60,12 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
 
     // In-process, so the parent's resolved run locale is passed straight through as a plain field
     // — no wire format needed, unlike the queued `callFlow` path (`PARENT_RUN_LOCALE_HEADER`). An
-    // empty scope is a deliberate simplification: if the parent's own `localeSource` has not been
-    // resolved yet (no `$t` used before this step), it is resolved here against no step outputs,
-    // which only matters for a `localeSource` expression that itself reads step data — documented
-    // as a known limitation rather than threading the full execution state through this hook.
-    const inheritedRunLocale = await parentConstants.getRunLocale({ currentState: {} })
+    // empty execution state is a deliberate simplification: if the parent's own `localeSource` has
+    // not been resolved yet (no `$t` used before this step), it is resolved here against no step
+    // outputs, which only matters for a `localeSource` expression that itself reads step data —
+    // documented as a known limitation rather than threading the parent's real, in-flight
+    // execution state through this hook (`callFlowInline` only receives `constants` today).
+    const inheritedRunLocale = await parentConstants.getRunLocale({ executionState: FlowExecutorContext.empty() })
 
     // Matches the envelope `callableFlow.run()` hands back on the queue path
     // (`{ data: <payload>, callbackUrl }`, from the raw webhook POST body callFlow's

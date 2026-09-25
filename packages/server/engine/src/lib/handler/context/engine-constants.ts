@@ -1,8 +1,9 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType } from '@aiqadam/shared'
+import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType, tryCatch } from '@aiqadam/shared'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { createTranslationResolver } from '../../qadam-context/translation-resolver'
-import { createPropsResolver, evalInScope, flattenNestedKeys, PropsResolver } from '../../variables/props-resolver'
+import { createPropsResolver, PropsResolver, resolveInputAsync } from '../../variables/props-resolver'
+import type { FlowExecutorContext } from './flow-execution-context'
 
 type RetryConstants = {
     maxAttempts: number
@@ -309,30 +310,49 @@ export class EngineConstants {
     // parent locale, which wins over "no override" (the caller then falls back to the project's
     // `defaultLocale`). A `localeSource` that fails to evaluate to a usable locale is logged once
     // and treated as absent — it never fails the run.
-    public async getRunLocale(params: { currentState: Record<string, unknown> }): Promise<string | null> {
+    public async getRunLocale(params: { executionState: FlowExecutorContext }): Promise<string | null> {
         if (this.runLocale !== undefined) {
             return this.runLocale
         }
-        const ownLocale = await this.resolveOwnLocaleSource(params.currentState)
+        const ownLocale = await this.resolveOwnLocaleSource(params.executionState)
         this.runLocale = ownLocale ?? this.inheritedRunLocale
         return this.runLocale
     }
 
-    private async resolveOwnLocaleSource(currentState: Record<string, unknown>): Promise<string | null> {
+    // `localeSource` is a normal mention-capable field — `{{trigger['output'].lang}}` — resolved
+    // through the same `resolveInputAsync` path every other step input goes through (a single
+    // whole-string token returns its raw resolved value; a bare literal like `ru`, no braces,
+    // passes through unchanged and means a fixed locale), uncensored. Both a thrown resolution
+    // error and a resolvable-but-unusable result (non-string, empty, non-canonical) fall back to
+    // the inherited/default locale with one warning — this must never fail the run.
+    //
+    // The scope is built from every step name this run has, not just the ones the *outer* `$t`
+    // expression happens to mention: `localeSource` is evaluated independently of whatever
+    // triggered its first lookup, so it needs its own state regardless of the caller's own
+    // referenced-step set.
+    private async resolveOwnLocaleSource(executionState: FlowExecutorContext): Promise<string | null> {
         const expression = this.flowVersionLocaleSource
         if (isNil(expression) || expression.trim().length === 0) {
             return null
         }
-        // No `unresolvedReference` passed: a broken reference inside `localeSource` must fall
-        // through to the inherited/default locale, never fail the run — `evalInScope` already
-        // logs any internal evaluation error to the engine log before defaulting to `''`, which
-        // this then treats the same as a legitimately empty result.
-        const evaluated = await evalInScope({
-            js: expression,
-            contextAsScope: { ...currentState },
-            functions: { flattenNestedKeys },
-        })
-        const canonical = isString(evaluated) && evaluated.length > 0 ? localeUtil.canonicalize(evaluated) : null
+        const currentState = await executionState.currentState(this.stepNames)
+        const { data: resolved, error } = await tryCatch(() => resolveInputAsync({
+            input: expression,
+            currentState,
+            engineToken: this.engineToken,
+            projectId: this.projectId,
+            apiUrl: this.internalApiUrl,
+            censoredInput: false,
+            stepNames: this.stepNames,
+            constants: this,
+            executionState,
+            contextVersion: undefined,
+        }))
+        if (!isNil(error)) {
+            this.warnTranslationFallbackOnce(`localeSource:${this.flowVersionId}`, `localeSource "${expression}" failed to evaluate (${error instanceof Error ? error.message : String(error)}); falling back to the inherited or default locale`)
+            return null
+        }
+        const canonical = isString(resolved) && resolved.length > 0 ? localeUtil.canonicalize(resolved) : null
         if (isNil(canonical)) {
             this.warnTranslationFallbackOnce(`localeSource:${this.flowVersionId}`, `localeSource "${expression}" did not resolve to a usable locale; falling back to the inherited or default locale`)
         }
