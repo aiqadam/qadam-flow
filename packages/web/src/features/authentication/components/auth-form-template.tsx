@@ -11,6 +11,7 @@ import { useRedirectAfterLogin } from '@/lib/navigation-utils';
 import { HorizontalSeparatorWithText } from '../../../components/ui/separator';
 import { flagsHooks } from '../../../hooks/flags-hooks';
 
+import { LdapLoginForm } from './ldap-login-form';
 import { SamlLoginForm } from './saml-login-form';
 import { SignInForm } from './sign-in-form';
 import { SignUpForm } from './sign-up-form';
@@ -167,8 +168,12 @@ const AuthFormTemplate = React.memo(
     const redirectAfterLogin = useRedirectAfterLogin();
     const [showCheckYourEmailNote, setShowCheckYourEmailNote] = useState(false);
     const [showSamlLogin, setShowSamlLogin] = useState(false);
+    const [showLdapLogin, setShowLdapLogin] = useState(false);
     const { data: isEmailAuthEnabled } = flagsHooks.useFlag<boolean>(
       ApFlagId.EMAIL_AUTH_ENABLED,
+    );
+    const { data: isLdapAuthEnabled } = flagsHooks.useFlag<boolean>(
+      ApFlagId.LDAP_AUTH_ENABLED,
     );
     const data = {
       signin: {
@@ -200,6 +205,19 @@ const AuthFormTemplate = React.memo(
             </h1>
           </div>
           <SamlLoginForm onBack={() => setShowSamlLogin(false)} />
+        </AuthLayout>
+      );
+    }
+
+    if (showLdapLogin) {
+      return (
+        <AuthLayout isSignUp={isSignUp}>
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold tracking-tight font-sentient">
+              {t('Sign in with directory account')}
+            </h1>
+          </div>
+          <LdapLoginForm onBack={() => setShowLdapLogin(false)} />
         </AuthLayout>
       );
     }
@@ -236,6 +254,16 @@ const AuthFormTemplate = React.memo(
             <SignInForm />
           )
         ) : null}
+
+        {!isSignUp && isLdapAuthEnabled && !showCheckYourEmailNote && (
+          <button
+            type="button"
+            className="mt-4 w-full text-center text-sm text-muted-foreground transition-all duration-200 hover:text-foreground"
+            onClick={() => setShowLdapLogin(true)}
+          >
+            {t('Sign in with directory account')}
+          </button>
+        )}
 
         <BottomNote isSignup={isSignUp} />
       </AuthLayout>

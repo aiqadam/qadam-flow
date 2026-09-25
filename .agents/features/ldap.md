@@ -105,6 +105,32 @@ from `@aiqadam/shared`, but a **separate** system prop (`AppSystemProp.LDAP_ALLO
 a domain controller's subnet must not also open it to arbitrary outbound HTTP from qadams, and vice
 versa.
 
+## Web UI (Phase 1)
+- `packages/web/src/app/routes/platform/security/sso/index.tsx` — the SSO settings page. The
+  page-level lock moved to per-item: the LDAP item is always usable (no `plan.ssoEnabled` gate,
+  never flipped by this feature); Google and SAML show the same inline "Soon" badge the sidebar and
+  `LockedFeatureGuard` already use, instead of their old action, because their backend routes don't
+  exist yet (`authenticationService.federatedAuthn` has zero callers, `/v1/authn/saml/*` 404s) —
+  tracked separately, not fixed here.
+- `packages/web/src/app/routes/platform/security/sso/ldap-dialog.tsx` — `ConfigureLdapDialog` /
+  `LdapConfigForm`: the full config form (URL, TLS mode/verify, CA cert, bind DN/password, base DN,
+  user filter, attribute map, JIT/link-by-email switches with explicit takeover-risk copy, session
+  length, enabled) plus a `TestConnectionPanel` that calls `POST …/test` — that endpoint always
+  tests the **saved** row, never in-flight form values, so the panel only renders once a config
+  exists.
+- `packages/web/src/features/platform-admin/api/ldap-config-api.ts` /
+  `hooks/ldap-config-hooks.ts` — CRUD + test client for `/v1/platform-ldap-configs`.
+- `packages/web/src/app/components/sidebar/platform/index.tsx` — the SSO sidebar entry no longer
+  carries `locked`/`badge: 'Soon'` (that gate lived on the whole page, which is no longer locked).
+- `packages/web/src/features/authentication/components/ldap-login-form.tsx` — sign-in-only
+  "directory account" mode (username, not email) calling `POST /v1/authn/ldap/sign-in`; maps each
+  LDAP error code (plus a generic 429) to a distinct, actionable message and otherwise reuses the
+  password sign-in's post-login handling (`authenticationSession.saveResponse` +
+  `redirectAfterLogin`). Wired into
+  `packages/web/src/features/authentication/components/auth-form-template.tsx` behind
+  `ApFlagId.LDAP_AUTH_ENABLED`, sign-in only — LDAP has no sign-up screen, JIT provisioning happens
+  through sign-in itself.
+
 ## `ldapts` findings (Phase 1 investigation)
 - **TLS `servername` is never derived automatically for either transport.** For `ldaps://`,
   `Client._connect()` calls `tls.connect(port, host, tlsOptions)`; Node only defaults `servername`
