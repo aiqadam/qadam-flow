@@ -188,6 +188,16 @@ describe('Platform LDAP config API', () => {
             })
             expect(update.statusCode).toBe(StatusCodes.OK)
         })
+
+        it('rejects supplying a CA certificate for the first time without re-supplying the bind password', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig())
+            const update = await ctx.post('/v1/platform-ldap-configs', {
+                ...validConfig(),
+                caCertificate: '-----BEGIN CERTIFICATE-----\nMIIBAjCB',
+                bindPassword: undefined,
+            })
+            expect(update.statusCode).not.toBe(StatusCodes.OK)
+        })
     })
 
     // B2: only the platform owner may enable linking a directory entry to an existing local
@@ -215,6 +225,73 @@ describe('Platform LDAP config API', () => {
                 payload: validConfig({ linkExistingByEmail: true }),
             })
             expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        async function tokenForNonOwnerAdmin(): Promise<string> {
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            return generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+        }
+
+        // The exact rule (round 2 of review): gated on the *merged* config's `linkExistingByEmail`,
+        // not on whether this request's own body sets it — a non-owner admin must not be able to
+        // repoint a connection-sensitive field on a config that already has linking-by-email on,
+        // just because their own request never mentions that field.
+        it('rejects a non-owner admin repointing the URL while linkExistingByEmail is already on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ url: 'ldaps://attacker.example.com:636' }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('rejects a non-owner admin repointing attributeMap.email while linkExistingByEmail is already on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({
+                    attributeMap: { subject: 'entryUUID', email: 'otherMail', firstName: 'givenName', lastName: 'sn' },
+                }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('rejects a non-owner admin repointing userFilter while linkExistingByEmail is already on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ userFilter: '(sAMAccountName={username})' }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        // A no-op resend is fine, even from a non-owner: nothing about the account-takeover flag
+        // actually changes, so there is nothing for the owner-only gate to protect against here.
+        it('allows a non-owner admin to resend the exact same config unchanged while linkExistingByEmail is already on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ linkExistingByEmail: true, bindPassword: undefined }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.OK)
         })
     })
 })

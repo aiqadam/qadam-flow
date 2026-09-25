@@ -70,6 +70,24 @@ export const UpsertLdapConfigRequest = z.object(ldapConfigShape).partial({
     sessionTtlSeconds: true,
     enabled: true,
 }).extend({
+    // `.partial()` alone is not enough for these five: in this zod version, `.optional()` layered
+    // on top of a field's own `.default(...)` (from `ldapConfigShape`, shared with `LdapConfig`)
+    // does *not* defeat the default — omitting the field on an update still parsed to the schema's
+    // default value, not `undefined`, silently resetting `linkExistingByEmail`/`tlsVerify`/
+    // `jitProvisioning`/`sessionTtlSeconds`/`enabled` to their base defaults on *any* partial update
+    // that did not explicitly resend them — the exact opposite of "an omitted field on update keeps
+    // the stored value" `ldapConfigService.upsert` depends on (and B2's owner-only gate depends on
+    // that promise holding for `linkExistingByEmail` specifically). Redefining each one here with
+    // no `.default()` of its own — plain `.optional()` — is what actually makes an omitted field
+    // parse to `undefined`.
+    tlsVerify: z.boolean().optional(),
+    jitProvisioning: z.boolean().optional(),
+    linkExistingByEmail: z.boolean().optional(),
+    sessionTtlSeconds: z.number().int()
+        .min(MIN_LDAP_SESSION_TTL_SECONDS, 'invalidLdapSessionTtl')
+        .max(MAX_LDAP_SESSION_TTL_SECONDS, 'invalidLdapSessionTtl')
+        .optional(),
+    enabled: z.boolean().optional(),
     // Omitted keeps the value already stored for the platform; present-and-empty is refused
     // (never a way to blank out the bind account) so the only way to clear a credential is
     // deleting the whole config.
@@ -111,8 +129,8 @@ export enum LdapTestStage {
 }
 
 export const LdapTestRequest = z.object({
-    username: z.string().min(1).max(256).optional(),
-    password: z.string().min(1).max(1024).optional(),
+    username: z.string().min(1, formErrors.required).max(256, 'invalidLdapUsername').optional(),
+    password: z.string().min(1, formErrors.required).max(1024, 'invalidLdapPassword').optional(),
 }).refine(
     (value) => (value.username === undefined) === (value.password === undefined),
     { message: 'invalidLdapTestCredentials', path: ['password'] },
