@@ -373,7 +373,7 @@
     },
     "packages/qadams/common": {
       "name": "@aiqadam/qadams-common",
-      "version": "0.14.1",
+      "version": "0.16.0",
       "dependencies": {
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
@@ -393,7 +393,7 @@
     },
     "packages/qadams/community/activepieces": {
       "name": "@aiqadam/qadam-activepieces",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -403,7 +403,7 @@
     },
     "packages/qadams/community/add-event": {
       "name": "@aiqadam/qadam-add-event",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -413,7 +413,7 @@
     },
     "packages/qadams/community/ai": {
       "name": "@aiqadam/qadam-ai",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "3.0.97",
         "@ai-sdk/anthropic": "3.0.72",
@@ -442,7 +442,7 @@
     },
     "packages/qadams/community/airtable": {
       "name": "@aiqadam/qadam-airtable",
-      "version": "0.6.9",
+      "version": "0.7.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -454,7 +454,7 @@
     },
     "packages/qadams/community/algolia": {
       "name": "@aiqadam/qadam-algolia",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -573,7 +573,7 @@
     },
     "packages/qadams/community/apify": {
       "name": "@aiqadam/qadam-apify",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -584,7 +584,7 @@
     },
     "packages/qadams/community/asana": {
       "name": "@aiqadam/qadam-asana",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -595,7 +595,7 @@
     },
     "packages/qadams/community/assemblyai": {
       "name": "@aiqadam/qadam-assemblyai",
-      "version": "1.1.6",
+      "version": "2.0.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -615,7 +615,7 @@
     },
     "packages/qadams/community/azure-ad": {
       "name": "@aiqadam/qadam-azure-ad",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -648,7 +648,7 @@
     },
     "packages/qadams/community/azure-devops": {
       "name": "@aiqadam/qadam-azure-devops",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -671,7 +671,7 @@
     },
     "packages/qadams/community/baserow": {
       "name": "@aiqadam/qadam-baserow",
-      "version": "0.9.4",
+      "version": "0.10.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -701,7 +701,7 @@
     },
     "packages/qadams/community/bitly": {
       "name": "@aiqadam/qadam-bitly",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -723,7 +723,7 @@
     },
     "packages/qadams/community/box": {
       "name": "@aiqadam/qadam-box",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -733,7 +733,7 @@
     },
     "packages/qadams/community/brave-search": {
       "name": "@aiqadam/qadam-brave-search",
-      "version": "0.0.4",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -763,7 +763,7 @@
     },
     "packages/qadams/community/calendly": {
       "name": "@aiqadam/qadam-calendly",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -773,7 +773,7 @@
     },
     "packages/qadams/community/canva": {
       "name": "@aiqadam/qadam-canva",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -783,7 +783,7 @@
     },
     "packages/qadams/community/chargebee": {
       "name": "@aiqadam/qadam-chargebee",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -793,7 +793,7 @@
     },
     "packages/qadams/community/chatwoot": {
       "name": "@aiqadam/qadam-chatwoot",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -803,7 +803,7 @@
     },
     "packages/qadams/community/clarifai": {
       "name": "@aiqadam/qadam-clarifai",
-      "version": "0.3.5",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -814,7 +814,7 @@
     },
     "packages/qadams/community/claude": {
       "name": "@aiqadam/qadam-claude",
-      "version": "0.4.7",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -831,7 +831,7 @@
     },
     "packages/qadams/community/clicksend": {
       "name": "@aiqadam/qadam-clicksend",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -841,7 +841,7 @@
     },
     "packages/qadams/community/clickup": {
       "name": "@aiqadam/qadam-clickup",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -857,7 +857,7 @@
     },
     "packages/qadams/community/clockify": {
       "name": "@aiqadam/qadam-clockify",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -867,7 +867,7 @@
     },
     "packages/qadams/community/cloudconvert": {
       "name": "@aiqadam/qadam-cloudconvert",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -890,7 +890,7 @@
     },
     "packages/qadams/community/cohere": {
       "name": "@aiqadam/qadam-cohere",
-      "version": "0.0.4",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -900,7 +900,7 @@
     },
     "packages/qadams/community/confluence": {
       "name": "@aiqadam/qadam-confluence",
-      "version": "0.2.7",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -915,7 +915,7 @@
     },
     "packages/qadams/community/contentful": {
       "name": "@aiqadam/qadam-contentful",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -938,7 +938,7 @@
     },
     "packages/qadams/community/datadog": {
       "name": "@aiqadam/qadam-datadog",
-      "version": "0.1.6",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -950,7 +950,7 @@
     },
     "packages/qadams/community/deepgram": {
       "name": "@aiqadam/qadam-deepgram",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -964,7 +964,7 @@
     },
     "packages/qadams/community/deepl": {
       "name": "@aiqadam/qadam-deepl",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -986,7 +986,7 @@
     },
     "packages/qadams/community/digital-ocean": {
       "name": "@aiqadam/qadam-digital-ocean",
-      "version": "0.0.6",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -996,7 +996,7 @@
     },
     "packages/qadams/community/discord": {
       "name": "@aiqadam/qadam-discord",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1008,7 +1008,7 @@
     },
     "packages/qadams/community/discourse": {
       "name": "@aiqadam/qadam-discourse",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1018,7 +1018,7 @@
     },
     "packages/qadams/community/docusign": {
       "name": "@aiqadam/qadam-docusign",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1033,7 +1033,7 @@
     },
     "packages/qadams/community/dropbox": {
       "name": "@aiqadam/qadam-dropbox",
-      "version": "0.7.2",
+      "version": "0.8.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1054,7 +1054,7 @@
     },
     "packages/qadams/community/elevenlabs": {
       "name": "@aiqadam/qadam-elevenlabs",
-      "version": "0.2.7",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1085,7 +1085,7 @@
     },
     "packages/qadams/community/figma": {
       "name": "@aiqadam/qadam-figma",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1096,7 +1096,7 @@
     },
     "packages/qadams/community/firecrawl": {
       "name": "@aiqadam/qadam-firecrawl",
-      "version": "0.3.7",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1139,7 +1139,7 @@
     },
     "packages/qadams/community/freshdesk": {
       "name": "@aiqadam/qadam-freshdesk",
-      "version": "0.2.6",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1149,7 +1149,7 @@
     },
     "packages/qadams/community/freshsales": {
       "name": "@aiqadam/qadam-freshsales",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1159,7 +1159,7 @@
     },
     "packages/qadams/community/freshservice": {
       "name": "@aiqadam/qadam-freshservice",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1180,7 +1180,7 @@
     },
     "packages/qadams/community/getresponse": {
       "name": "@aiqadam/qadam-getresponse",
-      "version": "0.0.4",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1190,7 +1190,7 @@
     },
     "packages/qadams/community/gitea": {
       "name": "@aiqadam/qadam-gitea",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1200,7 +1200,7 @@
     },
     "packages/qadams/community/github": {
       "name": "@aiqadam/qadam-github",
-      "version": "0.8.3",
+      "version": "0.9.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1215,7 +1215,7 @@
     },
     "packages/qadams/community/gitlab": {
       "name": "@aiqadam/qadam-gitlab",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1225,7 +1225,7 @@
     },
     "packages/qadams/community/gmail": {
       "name": "@aiqadam/qadam-gmail",
-      "version": "0.12.5",
+      "version": "0.13.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1246,7 +1246,7 @@
     },
     "packages/qadams/community/google-bigquery": {
       "name": "@aiqadam/qadam-google-bigquery",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1258,7 +1258,7 @@
     },
     "packages/qadams/community/google-calendar": {
       "name": "@aiqadam/qadam-google-calendar",
-      "version": "0.9.3",
+      "version": "0.10.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1281,7 +1281,7 @@
     },
     "packages/qadams/community/google-contacts": {
       "name": "@aiqadam/qadam-google-contacts",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1294,7 +1294,7 @@
     },
     "packages/qadams/community/google-docs": {
       "name": "@aiqadam/qadam-google-docs",
-      "version": "0.4.3",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1307,7 +1307,7 @@
     },
     "packages/qadams/community/google-drive": {
       "name": "@aiqadam/qadam-google-drive",
-      "version": "0.7.8",
+      "version": "0.8.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1325,7 +1325,7 @@
     },
     "packages/qadams/community/google-forms": {
       "name": "@aiqadam/qadam-google-forms",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1338,7 +1338,7 @@
     },
     "packages/qadams/community/google-gemini": {
       "name": "@aiqadam/qadam-google-gemini",
-      "version": "0.1.9",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1357,7 +1357,7 @@
     },
     "packages/qadams/community/google-my-business": {
       "name": "@aiqadam/qadam-google-my-business",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1379,7 +1379,7 @@
     },
     "packages/qadams/community/google-search-console": {
       "name": "@aiqadam/qadam-google-search-console",
-      "version": "0.2.2",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1391,7 +1391,7 @@
     },
     "packages/qadams/community/google-sheets": {
       "name": "@aiqadam/qadam-google-sheets",
-      "version": "0.16.0",
+      "version": "0.17.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1409,7 +1409,7 @@
     },
     "packages/qadams/community/google-slides": {
       "name": "@aiqadam/qadam-google-slides",
-      "version": "0.1.7",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1421,7 +1421,7 @@
     },
     "packages/qadams/community/google-tasks": {
       "name": "@aiqadam/qadam-google-tasks",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1431,7 +1431,7 @@
     },
     "packages/qadams/community/google-vertexai": {
       "name": "@aiqadam/qadam-google-vertexai",
-      "version": "0.1.4",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1457,7 +1457,7 @@
     },
     "packages/qadams/community/grok-xai": {
       "name": "@aiqadam/qadam-grok-xai",
-      "version": "0.1.4",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1468,7 +1468,7 @@
     },
     "packages/qadams/community/groq": {
       "name": "@aiqadam/qadam-groq",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1488,7 +1488,7 @@
     },
     "packages/qadams/community/hashi-corp-vault": {
       "name": "@aiqadam/qadam-hashi-corp-vault",
-      "version": "0.0.6",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1498,7 +1498,7 @@
     },
     "packages/qadams/community/heygen": {
       "name": "@aiqadam/qadam-heygen",
-      "version": "0.1.7",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1521,7 +1521,7 @@
     },
     "packages/qadams/community/hubspot": {
       "name": "@aiqadam/qadam-hubspot",
-      "version": "0.8.5",
+      "version": "0.9.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1571,7 +1571,7 @@
     },
     "packages/qadams/community/intercom": {
       "name": "@aiqadam/qadam-intercom",
-      "version": "0.7.2",
+      "version": "0.8.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1594,7 +1594,7 @@
     },
     "packages/qadams/community/jira-cloud": {
       "name": "@aiqadam/qadam-jira-cloud",
-      "version": "0.3.5",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1610,7 +1610,7 @@
     },
     "packages/qadams/community/jira-data-center": {
       "name": "@aiqadam/qadam-jira-data-center",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1623,7 +1623,7 @@
     },
     "packages/qadams/community/jotform": {
       "name": "@aiqadam/qadam-jotform",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1644,7 +1644,7 @@
     },
     "packages/qadams/community/kommo": {
       "name": "@aiqadam/qadam-kommo",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1665,7 +1665,7 @@
     },
     "packages/qadams/community/linkedin": {
       "name": "@aiqadam/qadam-linkedin",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1680,7 +1680,7 @@
     },
     "packages/qadams/community/localai": {
       "name": "@aiqadam/qadam-localai",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1691,7 +1691,7 @@
     },
     "packages/qadams/community/lokalise": {
       "name": "@aiqadam/qadam-lokalise",
-      "version": "0.0.6",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1715,7 +1715,7 @@
     },
     "packages/qadams/community/mailgun": {
       "name": "@aiqadam/qadam-mailgun",
-      "version": "0.0.6",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1735,7 +1735,7 @@
     },
     "packages/qadams/community/matomo": {
       "name": "@aiqadam/qadam-matomo",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1746,7 +1746,7 @@
     },
     "packages/qadams/community/matrix": {
       "name": "@aiqadam/qadam-matrix",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1760,7 +1760,7 @@
     },
     "packages/qadams/community/mattermost": {
       "name": "@aiqadam/qadam-mattermost",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1770,7 +1770,7 @@
     },
     "packages/qadams/community/mautic": {
       "name": "@aiqadam/qadam-mautic",
-      "version": "0.5.5",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1791,7 +1791,7 @@
     },
     "packages/qadams/community/messagebird": {
       "name": "@aiqadam/qadam-messagebird",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1802,7 +1802,7 @@
     },
     "packages/qadams/community/metabase": {
       "name": "@aiqadam/qadam-metabase",
-      "version": "0.2.7",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1817,7 +1817,7 @@
     },
     "packages/qadams/community/microsoft-365-people": {
       "name": "@aiqadam/qadam-microsoft-365-people",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1830,7 +1830,7 @@
     },
     "packages/qadams/community/microsoft-365-planner": {
       "name": "@aiqadam/qadam-microsoft-365-planner",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1843,7 +1843,7 @@
     },
     "packages/qadams/community/microsoft-copilot": {
       "name": "@aiqadam/qadam-microsoft-copilot",
-      "version": "0.1.3",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1855,7 +1855,7 @@
     },
     "packages/qadams/community/microsoft-dynamics-365-business-central": {
       "name": "@aiqadam/qadam-microsoft-dynamics-365-business-central",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1866,7 +1866,7 @@
     },
     "packages/qadams/community/microsoft-dynamics-crm": {
       "name": "@aiqadam/qadam-microsoft-dynamics-crm",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1876,7 +1876,7 @@
     },
     "packages/qadams/community/microsoft-excel-365": {
       "name": "@aiqadam/qadam-microsoft-excel-365",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1889,7 +1889,7 @@
     },
     "packages/qadams/community/microsoft-onedrive": {
       "name": "@aiqadam/qadam-microsoft-onedrive",
-      "version": "0.3.4",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1918,7 +1918,7 @@
     },
     "packages/qadams/community/microsoft-outlook": {
       "name": "@aiqadam/qadam-microsoft-outlook",
-      "version": "0.3.6",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1931,7 +1931,7 @@
     },
     "packages/qadams/community/microsoft-outlook-calendar": {
       "name": "@aiqadam/qadam-microsoft-outlook-calendar",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1942,7 +1942,7 @@
     },
     "packages/qadams/community/microsoft-power-bi": {
       "name": "@aiqadam/qadam-microsoft-power-bi",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1952,7 +1952,7 @@
     },
     "packages/qadams/community/microsoft-sharepoint": {
       "name": "@aiqadam/qadam-microsoft-sharepoint",
-      "version": "0.3.4",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1965,7 +1965,7 @@
     },
     "packages/qadams/community/microsoft-teams": {
       "name": "@aiqadam/qadam-microsoft-teams",
-      "version": "0.5.4",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1978,7 +1978,7 @@
     },
     "packages/qadams/community/microsoft-todo": {
       "name": "@aiqadam/qadam-microsoft-todo",
-      "version": "0.3.4",
+      "version": "0.4.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -1991,7 +1991,7 @@
     },
     "packages/qadams/community/mistral-ai": {
       "name": "@aiqadam/qadam-mistral-ai",
-      "version": "0.2.2",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2002,7 +2002,7 @@
     },
     "packages/qadams/community/mixpanel": {
       "name": "@aiqadam/qadam-mixpanel",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2072,7 +2072,7 @@
     },
     "packages/qadams/community/notion": {
       "name": "@aiqadam/qadam-notion",
-      "version": "0.6.2",
+      "version": "0.7.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2086,7 +2086,7 @@
     },
     "packages/qadams/community/ntfy": {
       "name": "@aiqadam/qadam-ntfy",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2112,7 +2112,7 @@
     },
     "packages/qadams/community/okta": {
       "name": "@aiqadam/qadam-okta",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2122,7 +2122,7 @@
     },
     "packages/qadams/community/open-router": {
       "name": "@aiqadam/qadam-open-router",
-      "version": "0.1.4",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2133,7 +2133,7 @@
     },
     "packages/qadams/community/openai": {
       "name": "@aiqadam/qadam-openai",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2166,7 +2166,7 @@
     },
     "packages/qadams/community/pagerduty": {
       "name": "@aiqadam/qadam-pagerduty",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2176,7 +2176,7 @@
     },
     "packages/qadams/community/pandadoc": {
       "name": "@aiqadam/qadam-pandadoc",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2208,7 +2208,7 @@
     },
     "packages/qadams/community/pipedrive": {
       "name": "@aiqadam/qadam-pipedrive",
-      "version": "0.8.7",
+      "version": "0.9.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2221,7 +2221,7 @@
     },
     "packages/qadams/community/plausible": {
       "name": "@aiqadam/qadam-plausible",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2258,7 +2258,7 @@
     },
     "packages/qadams/community/posthog": {
       "name": "@aiqadam/qadam-posthog",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2304,7 +2304,7 @@
     },
     "packages/qadams/community/reddit": {
       "name": "@aiqadam/qadam-reddit",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2314,7 +2314,7 @@
     },
     "packages/qadams/community/resend": {
       "name": "@aiqadam/qadam-resend",
-      "version": "0.4.2",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2352,7 +2352,7 @@
     },
     "packages/qadams/community/salesforce": {
       "name": "@aiqadam/qadam-salesforce",
-      "version": "0.7.5",
+      "version": "0.8.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2375,7 +2375,7 @@
     },
     "packages/qadams/community/sendgrid": {
       "name": "@aiqadam/qadam-sendgrid",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2391,7 +2391,7 @@
     },
     "packages/qadams/community/sendinblue": {
       "name": "@aiqadam/qadam-sendinblue",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2401,7 +2401,7 @@
     },
     "packages/qadams/community/sendpulse": {
       "name": "@aiqadam/qadam-sendpulse",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2421,7 +2421,7 @@
     },
     "packages/qadams/community/service-now": {
       "name": "@aiqadam/qadam-service-now",
-      "version": "0.2.2",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2434,7 +2434,7 @@
     },
     "packages/qadams/community/shopify": {
       "name": "@aiqadam/qadam-shopify",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2445,7 +2445,7 @@
     },
     "packages/qadams/community/slack": {
       "name": "@aiqadam/qadam-slack",
-      "version": "0.17.2",
+      "version": "0.18.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2480,7 +2480,7 @@
     },
     "packages/qadams/community/stability-ai": {
       "name": "@aiqadam/qadam-stability-ai",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2500,7 +2500,7 @@
     },
     "packages/qadams/community/stripe": {
       "name": "@aiqadam/qadam-stripe",
-      "version": "0.6.9",
+      "version": "0.7.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2511,7 +2511,7 @@
     },
     "packages/qadams/community/supabase": {
       "name": "@aiqadam/qadam-supabase",
-      "version": "0.1.7",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2532,7 +2532,7 @@
     },
     "packages/qadams/community/tavily": {
       "name": "@aiqadam/qadam-tavily",
-      "version": "0.1.7",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2542,7 +2542,7 @@
     },
     "packages/qadams/community/telegram-bot": {
       "name": "@aiqadam/qadam-telegram-bot",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2556,7 +2556,7 @@
     },
     "packages/qadams/community/telnyx": {
       "name": "@aiqadam/qadam-telnyx",
-      "version": "0.0.4",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2566,7 +2566,7 @@
     },
     "packages/qadams/community/ticktick": {
       "name": "@aiqadam/qadam-ticktick",
-      "version": "0.1.6",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2577,7 +2577,7 @@
     },
     "packages/qadams/community/time-ops": {
       "name": "@aiqadam/qadam-time-ops",
-      "version": "0.0.6",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2587,7 +2587,7 @@
     },
     "packages/qadams/community/todoist": {
       "name": "@aiqadam/qadam-todoist",
-      "version": "0.4.7",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2608,7 +2608,7 @@
     },
     "packages/qadams/community/trello": {
       "name": "@aiqadam/qadam-trello",
-      "version": "0.4.7",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2620,7 +2620,7 @@
     },
     "packages/qadams/community/twenty": {
       "name": "@aiqadam/qadam-twenty",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2631,7 +2631,7 @@
     },
     "packages/qadams/community/twilio": {
       "name": "@aiqadam/qadam-twilio",
-      "version": "0.4.6",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2657,7 +2657,7 @@
     },
     "packages/qadams/community/typeform": {
       "name": "@aiqadam/qadam-typeform",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2668,7 +2668,7 @@
     },
     "packages/qadams/community/umami": {
       "name": "@aiqadam/qadam-umami",
-      "version": "0.1.6",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2688,7 +2688,7 @@
     },
     "packages/qadams/community/vercel": {
       "name": "@aiqadam/qadam-vercel",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2698,7 +2698,7 @@
     },
     "packages/qadams/community/webex": {
       "name": "@aiqadam/qadam-webex",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2708,7 +2708,7 @@
     },
     "packages/qadams/community/webflow": {
       "name": "@aiqadam/qadam-webflow",
-      "version": "0.2.7",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2728,7 +2728,7 @@
     },
     "packages/qadams/community/woocommerce": {
       "name": "@aiqadam/qadam-woocommerce",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2739,7 +2739,7 @@
     },
     "packages/qadams/community/wordpress": {
       "name": "@aiqadam/qadam-wordpress",
-      "version": "0.4.5",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2751,7 +2751,7 @@
     },
     "packages/qadams/community/youtrack": {
       "name": "@aiqadam/qadam-youtrack",
-      "version": "0.0.3",
+      "version": "0.1.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2761,7 +2761,7 @@
     },
     "packages/qadams/community/youtube": {
       "name": "@aiqadam/qadam-youtube",
-      "version": "0.4.8",
+      "version": "0.5.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2778,7 +2778,7 @@
     },
     "packages/qadams/community/zendesk": {
       "name": "@aiqadam/qadam-zendesk",
-      "version": "0.2.8",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2800,7 +2800,7 @@
     },
     "packages/qadams/community/zoho-books": {
       "name": "@aiqadam/qadam-zoho-books",
-      "version": "0.1.5",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2810,7 +2810,7 @@
     },
     "packages/qadams/community/zoho-campaigns": {
       "name": "@aiqadam/qadam-zoho-campaigns",
-      "version": "0.1.7",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2822,7 +2822,7 @@
     },
     "packages/qadams/community/zoho-crm": {
       "name": "@aiqadam/qadam-zoho-crm",
-      "version": "0.2.7",
+      "version": "0.3.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2833,7 +2833,7 @@
     },
     "packages/qadams/community/zoho-desk": {
       "name": "@aiqadam/qadam-zoho-desk",
-      "version": "0.1.6",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2843,7 +2843,7 @@
     },
     "packages/qadams/community/zoho-invoice": {
       "name": "@aiqadam/qadam-zoho-invoice",
-      "version": "0.1.6",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2854,7 +2854,7 @@
     },
     "packages/qadams/community/zoho-mail": {
       "name": "@aiqadam/qadam-zoho-mail",
-      "version": "0.1.7",
+      "version": "0.2.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2869,7 +2869,7 @@
     },
     "packages/qadams/community/zoom": {
       "name": "@aiqadam/qadam-zoom",
-      "version": "0.6.3",
+      "version": "0.7.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2879,7 +2879,7 @@
     },
     "packages/qadams/core/approval": {
       "name": "@aiqadam/qadam-approval",
-      "version": "0.1.19",
+      "version": "0.1.20",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2899,7 +2899,7 @@
     },
     "packages/qadams/core/crypto": {
       "name": "@aiqadam/qadam-crypto",
-      "version": "0.0.21",
+      "version": "0.0.22",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -2973,7 +2973,7 @@
     },
     "packages/qadams/core/delay": {
       "name": "@aiqadam/qadam-delay",
-      "version": "0.3.27",
+      "version": "0.3.28",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -3028,7 +3028,7 @@
     },
     "packages/qadams/core/http": {
       "name": "@aiqadam/qadam-http",
-      "version": "0.11.9",
+      "version": "0.12.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -3179,7 +3179,7 @@
     },
     "packages/qadams/core/subflows": {
       "name": "@aiqadam/qadam-subflows",
-      "version": "0.4.14",
+      "version": "0.4.16",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -3189,7 +3189,7 @@
     },
     "packages/qadams/core/tables": {
       "name": "@aiqadam/qadam-tables",
-      "version": "0.4.5",
+      "version": "0.4.6",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -3237,7 +3237,7 @@
     },
     "packages/qadams/core/webhook": {
       "name": "@aiqadam/qadam-webhook",
-      "version": "0.1.35",
+      "version": "0.1.38",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -3268,7 +3268,7 @@
     },
     "packages/qadams/framework": {
       "name": "@aiqadam/qadams-framework",
-      "version": "0.32.1",
+      "version": "0.33.1",
       "dependencies": {
         "@aiqadam/shared": "workspace:*",
         "ai": "6.0.170",
@@ -3370,6 +3370,7 @@
         "ioredis": "5.4.1",
         "jsonwebtoken": "9.0.1",
         "jwks-rsa": "3.1.0",
+        "ldapts": "9.2.0",
         "mammoth": "1.11.0",
         "mime-types": "2.1.35",
         "mustache": "4.2.0",
@@ -3530,7 +3531,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.135.1",
+      "version": "0.141.0",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",
@@ -7703,6 +7704,8 @@
 
     "lazystream": ["lazystream@1.0.1", "", { "dependencies": { "readable-stream": "^2.0.5" } }, "sha512-b94GiNHQNy6JNTrt5w6zNyffMrNkXZb3KTkCZJb2V1xaEGCk093vkZ2jk3tpaeP33/OiXC+WvK9AxUebnf5nbw=="],
 
+    "ldapts": ["ldapts@9.2.0", "", { "dependencies": { "strict-event-emitter-types": "2.0.0" } }, "sha512-5mDg3OT5fDP9DUXga9dCLW8cMW24OTOKT4pv/Qj+f2zCV3qxb+gkZLCzMAqzVTOANoycidKkYpPvkclUQU2aXw=="],
+
     "leac": ["leac@0.6.0", "", {}, "sha512-y+SqErxb8h7nE/fiEX07jsbuhrpO9lL8eca7/Y1nuWV2moNlXhyd59iDGcRf6moVyDMbmTNzL40SUyrFU/yDpg=="],
 
     "leven": ["leven@3.1.0", "", {}, "sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A=="],
@@ -8950,6 +8953,8 @@
     "stream-shift": ["stream-shift@1.0.3", "", {}, "sha512-76ORR0DO1o1hlKwTbi/DM3EXWGf3ZJYO8cXX5RJwnul2DEg2oyoZyjLNoQM8WsvZiFKCRfC1O0J7iCvie3RZmQ=="],
 
     "streamx": ["streamx@2.25.0", "", { "dependencies": { "events-universal": "^1.0.0", "fast-fifo": "^1.3.2", "text-decoder": "^1.1.0" } }, "sha512-0nQuG6jf1w+wddNEEXCF4nTg3LtufWINB5eFEN+5TNZW7KWJp6x87+JFL43vaAUPyCfH1wID+mNVyW6OHtFamg=="],
+
+    "strict-event-emitter-types": ["strict-event-emitter-types@2.0.0", "", {}, "sha512-Nk/brWYpD85WlOgzw5h173aci0Teyv8YdIAEtV+N88nDB0dLlazZyJMIsN6eo1/AR61l+p6CJTG1JIyFaoNEEA=="],
 
     "string-argv": ["string-argv@0.3.2", "", {}, "sha512-aqD2Q0144Z+/RqG52NeHEkZauTAUWJO8c6yTftGJKO3Tja5tUgIfmIl6kExvhtxSDP7fXB6DvzkfMpCd/F3G+Q=="],
 

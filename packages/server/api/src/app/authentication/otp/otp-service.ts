@@ -4,7 +4,7 @@ import {
     isNil,
     OtpModel,
     OtpState,
-    OtpType, PlatformId } from '@aiqadam/shared'
+    OtpType, PlatformId, UserIdentityProvider } from '@aiqadam/shared'
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { repoFactory } from '../../core/db/repo-factory'
@@ -25,6 +25,14 @@ export const otpService = (log: FastifyBaseLogger) => ({
     }: CreateParams): Promise<void> {
         const userIdentity = await userIdentityService(log).getIdentityByEmail(email)
         if (!userIdentity) {
+            return
+        }
+        // An LDAP-managed identity has no local password to reset, and the directory is the only
+        // party that can change it. Silently doing nothing — rather than an error — keeps this
+        // branch indistinguishable from "no such email" (the `!userIdentity` case just above),
+        // which is the same anti-enumeration property `userIdentityService.verifyIdentityPassword`
+        // preserves for local sign-in.
+        if (type === OtpType.PASSWORD_RESET && userIdentity.provider === UserIdentityProvider.LDAP) {
             return
         }
         const existingOtp = await repo().findOneBy({

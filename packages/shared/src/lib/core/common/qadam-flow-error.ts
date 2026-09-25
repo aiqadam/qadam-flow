@@ -98,6 +98,10 @@ export type ApErrorParams =
     | ExecutionStateMissingParams
     | GenericErrorParams
     | SandboxCapacityExceededParams
+    | LdapDirectoryUnreachableParams
+    | LdapBindAccountRejectedParams
+    | LdapEmailAttributeMissingParams
+    | LdapAccountCollisionParams
 
 export type TriggerExecutionFailedParams = BaseErrorParams<ErrorCode.TRIGGER_EXECUTION_FAILED, {
     flowId: FlowId
@@ -186,6 +190,34 @@ ErrorCode.FLOW_RUN_RETRY_OUTSIDE_RETENTION,
 export type InvalidCredentialsErrorParams = BaseErrorParams<
 ErrorCode.INVALID_CREDENTIALS,
 null
+>
+
+// Deliberately generic across "the directory is down", "DNS could not resolve it" and "every
+// vetted IP failed the host guard" — none of those distinctions are the caller's to make, only
+// the operator's, and the admin-only `/ldap/test` endpoint is where that detail actually surfaces
+// (`LdapTestResponse.message` / `ldapResultCode`), not this code.
+export type LdapDirectoryUnreachableParams = BaseErrorParams<
+ErrorCode.LDAP_DIRECTORY_UNREACHABLE,
+Record<string, never>
+>
+
+export type LdapBindAccountRejectedParams = BaseErrorParams<
+ErrorCode.LDAP_BIND_ACCOUNT_REJECTED,
+Record<string, never>
+>
+
+export type LdapEmailAttributeMissingParams = BaseErrorParams<
+ErrorCode.LDAP_EMAIL_ATTRIBUTE_MISSING,
+{
+    attribute: string
+}
+>
+
+export type LdapAccountCollisionParams = BaseErrorParams<
+ErrorCode.LDAP_ACCOUNT_COLLISION,
+{
+    email: string
+}
 >
 
 export type DomainIsNotAllowedErrorParams = BaseErrorParams<
@@ -609,5 +641,9 @@ export enum ErrorCode {
     RESUME_LOGS_FILE_MISSING = 'RESUME_LOGS_FILE_MISSING',
     EXECUTION_STATE_MISSING = 'EXECUTION_STATE_MISSING',
     GENERIC_ERROR = 'GENERIC_ERROR',
+    LDAP_DIRECTORY_UNREACHABLE = 'LDAP_DIRECTORY_UNREACHABLE',
+    LDAP_BIND_ACCOUNT_REJECTED = 'LDAP_BIND_ACCOUNT_REJECTED',
+    LDAP_EMAIL_ATTRIBUTE_MISSING = 'LDAP_EMAIL_ATTRIBUTE_MISSING',
+    LDAP_ACCOUNT_COLLISION = 'LDAP_ACCOUNT_COLLISION',
 }
 

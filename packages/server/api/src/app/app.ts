@@ -16,6 +16,8 @@ import { apiKeyModule } from './api-keys/api-key.module'
 import { appConnectionModule } from './app-connection/app-connection.module'
 import { platformAppConnectionModule } from './app-connection/platform-app-connection.module'
 import { authenticationModule } from './authentication/authentication.module'
+import { ldapAuthnModule } from './authentication/ldap/ldap-authn-module'
+import { ldapConfigModule } from './authentication/ldap/ldap-config-module'
 import { localAuthnModule } from './authentication/local-authn/local-authn-module'
 import { otpModule } from './authentication/otp/otp-module'
 import { chatModule } from './chat/chat.module'
@@ -162,6 +164,8 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(authenticationModule)
     await app.register(otpModule)
     await app.register(localAuthnModule)
+    await app.register(ldapAuthnModule)
+    await app.register(ldapConfigModule)
     await app.register(alertsModule)
     await app.register(apiKeyModule)
     await app.register(projectMemberModule)

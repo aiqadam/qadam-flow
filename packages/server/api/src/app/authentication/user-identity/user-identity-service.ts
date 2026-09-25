@@ -1,4 +1,5 @@
-import { apId, ErrorCode, isNil, QadamFlowError, spreadIfDefined, UserIdentity } from '@aiqadam/shared'
+import { cryptoUtils } from '@aiqadam/server-utils'
+import { apId, ErrorCode, isNil, QadamFlowError, spreadIfDefined, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { nanoid } from 'nanoid'
 import { repoFactory } from '../../core/db/repo-factory'
@@ -45,6 +46,18 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
     },
     async verifyIdentityPassword(params: VerifyIdentityPasswordParams): Promise<UserIdentity> {
         const userIdentity = await getIdentityByEmail(params.email)
+        // An LDAP-managed identity's stored `password` is a scrambled, never-issued value (see
+        // `linkToFederatedProvider` below) — reusing it against a caller-supplied password one day
+        // could line up by coincidence, so this is a hard code-path exclusion, not a bet on the
+        // hash never matching. The response is identical to "no such identity" (`INVALID_
+        // CREDENTIALS`, no distinguishing detail) so a caller cannot use this endpoint to discover
+        // that an email is provisioned via the directory.
+        if (!isNil(userIdentity) && userIdentity.provider === UserIdentityProvider.LDAP) {
+            throw new QadamFlowError({
+                code: ErrorCode.INVALID_CREDENTIALS,
+                params: null,
+            })
+        }
         if (isNil(userIdentity)) {
             throw new QadamFlowError({
                 code: ErrorCode.INVALID_CREDENTIALS,
@@ -89,9 +102,33 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
         }
     },
     async updatePassword(params: UpdatePasswordParams): Promise<void> {
+        const identity = await userIdentityRepository().findOneByOrFail({ id: params.id })
+        if (identity.provider === UserIdentityProvider.LDAP) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: {
+                    message: 'This account is managed by an LDAP directory and cannot change its password locally',
+                },
+            })
+        }
         const hashedPassword = await passwordHasher.hash(params.newPassword)
         await userIdentityRepository().update(params.id, {
             password: hashedPassword,
+            tokenVersion: nanoid(),
+        })
+    },
+    // Used only by the LDAP JIT "link existing account by email" path: the identity keeps its row
+    // (email, id, history) but stops being reachable by local password sign-in, OTP password reset
+    // or password change from this moment on — `verifyIdentityPassword`/`updatePassword` above and
+    // the OTP PASSWORD_RESET paths all exclude `UserIdentityProvider.LDAP`. The password is
+    // scrambled to a value nobody (including this identity's own former owner) ever received,
+    // rather than left as whatever the local password used to be, so a stale local credential
+    // cannot resurface as a bypass. Runs before the `provider` write, not after, so it goes through
+    // the ordinary `updatePassword` guard rather than being a second exception to it.
+    async linkToFederatedProvider({ id, provider }: LinkToFederatedProviderParams): Promise<void> {
+        await this.updatePassword({ id, newPassword: await cryptoUtils.generateRandomPassword() })
+        await userIdentityRepository().update(id, {
+            provider,
             tokenVersion: nanoid(),
         })
     },
@@ -151,4 +188,9 @@ type UpdateLastLoggedInPlatformIdParams = {
 type VerifyIdentityPasswordParams = {
     email: string
     password: string
+}
+
+type LinkToFederatedProviderParams = {
+    id: string
+    provider: UserIdentityProvider
 }

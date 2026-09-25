@@ -41,7 +41,7 @@ Manages user identity, platform membership, roles, session security, and a gamif
 
 **User**: id, platformRole (ADMIN/MEMBER/OPERATOR), status (ACTIVE/INACTIVE), identityId (FK to UserIdentity), externalId (nullable), platformId (FK), lastActiveDate. Unique on (platformId, identityId).
 
-**UserIdentity**: id, email, password (hashed), firstName, lastName, provider (EMAIL/GOOGLE/SAML/JWT), verified (boolean), tokenVersion (for session invalidation). One identity → many users (across platforms).
+**UserIdentity**: id, email, password (hashed), firstName, lastName, provider (EMAIL/GOOGLE/SAML/JWT/LDAP), verified (boolean), tokenVersion (for session invalidation). One identity → many users (across platforms). `LDAP` identities are excluded from every local-password path (sign-in, password reset, password change) — see `.agents/features/ldap.md`.
 
 **UserBadge**: id, userId, name (badge key). Unique on (userId, name).
 

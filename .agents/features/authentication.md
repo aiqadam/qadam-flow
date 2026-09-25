@@ -1,7 +1,13 @@
 # CE Authentication
 
 ## Summary
-The authentication feature handles user identity creation, sign-in, and JWT session management. It supports email/password credentials, federated OAuth providers (Google, SAML), and invitation-only sign-up when a platform is configured. On first sign-up (no `platformId`), a new platform and personal project are created automatically. The token is a short-lived JWT (7 days) signed with a shared secret, and sessions are invalidated by rotating the `tokenVersion` on the `UserIdentity` record.
+The authentication feature handles user identity creation, sign-in, and JWT session management. It supports email/password credentials, federated OAuth providers (Google, SAML), invitation-only sign-up when a platform is configured, and per-platform LDAP/Active Directory sign-in (`.agents/features/ldap.md`). On first sign-up (no `platformId`), a new platform and personal project are created automatically. The token is a short-lived JWT (7 days by default; LDAP sign-ins mint a platform-configured, shorter TTL) signed with a shared secret, and sessions are invalidated by rotating the `tokenVersion` on the `UserIdentity` record.
+
+LDAP is a distinct sign-in path (`POST /v1/authn/ldap/sign-in`), not a `UserIdentityProvider` this
+file's `signInWithPassword`/`federatedAuthn` handle — see `.agents/features/ldap.md` for its own
+service, JIT provisioning and identity linking. `UserIdentityProvider.LDAP` accounts are excluded
+from every local-password code path below (`verifyIdentityPassword`, `updatePassword`, OTP
+`PASSWORD_RESET`).
 
 ## Key Files
 - `packages/server/api/src/app/authentication/authentication.controller.ts` — Fastify routes: POST /sign-up, POST /sign-in, POST /switch-platform

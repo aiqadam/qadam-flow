@@ -3,6 +3,7 @@ import { ApFlagId, ExecutionMode, Flag, isNil, PrincipalType } from '@aiqadam/sh
 import dayjs from 'dayjs'
 import { FastifyBaseLogger, FastifyRequest } from 'fastify'
 import { In } from 'typeorm'
+import { ldapConfigService } from '../authentication/ldap/ldap-config-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { domainHelper } from '../helper/domain-helper'
 import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
@@ -289,6 +290,15 @@ export const flagService = (_log: FastifyBaseLogger) => ({
                 created,
                 updated,
             },
+            {
+                id: ApFlagId.LDAP_AUTH_ENABLED,
+                // The sign-in page needs to know whether to offer a "directory account" mode
+                // before the caller has any session — never anything from the stored config
+                // itself (bind DN, URL, attribute map), only this one boolean.
+                value: await isLdapAuthEnabled({ request, log: _log }),
+                created,
+                updated,
+            },
         )
 
         // Commit-level build provenance is more precise than CURRENT_VERSION/LATEST_VERSION
@@ -366,6 +376,15 @@ async function resolvePlatformTheme({ request, log }: { request: FastifyRequest,
         favIconUrl: nonEmpty(platform.favIconUrl) ?? defaultTheme.logos.favIconUrl,
         logoIconUrl: nonEmpty(platform.logoIconUrl) ?? defaultTheme.logos.logoIconUrl,
     })
+}
+
+async function isLdapAuthEnabled({ request, log }: { request: FastifyRequest, log: FastifyBaseLogger }): Promise<boolean> {
+    const platformId = await platformUtils.getPlatformIdForRequest(request)
+    if (isNil(platformId)) {
+        return false
+    }
+    const config = await ldapConfigService(log).get({ platformId })
+    return config?.config.enabled ?? false
 }
 
 function nonEmpty(value: string | undefined | null): string | undefined {
