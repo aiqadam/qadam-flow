@@ -51,7 +51,7 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
 
         const bindPassword = isNil(request.bindPassword)
             ? existing?.bindPassword
-            : await encryptUtils.encryptObject(request.bindPassword)
+            : await encryptUtils.encryptString(request.bindPassword)
         if (isNil(bindPassword)) {
             throw new QadamFlowError({
                 code: ErrorCode.VALIDATION,
@@ -144,7 +144,7 @@ async function resolveCaCertificate({ request, existing }: ResolveCaCertificateP
         return existing?.caCertificate ?? null
     }
     assertValidPem(request.caCertificate)
-    return encryptUtils.encryptObject(request.caCertificate)
+    return encryptUtils.encryptString(request.caCertificate)
 }
 
 function assertValidPem(pem: string): void {

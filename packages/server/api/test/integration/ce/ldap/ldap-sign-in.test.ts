@@ -63,7 +63,7 @@ const DIRECTORY_ENTRY = {
 }
 
 async function saveLdapConfig(overrides: Record<string, unknown> = {}): Promise<void> {
-    const bindPassword = await encryptUtils.encryptObject('bind-secret')
+    const bindPassword = await encryptUtils.encryptString('bind-secret')
     await databaseConnection().getRepository('platform_ldap_config').save({
         id: apId(),
         created: new Date().toISOString(),

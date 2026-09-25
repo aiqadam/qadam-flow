@@ -1,5 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import pino from 'pino'
+import { ldapConfigService } from '../../../../src/app/authentication/ldap/ldap-config-service'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -109,6 +111,21 @@ describe('Platform LDAP config API', () => {
             caCertificate: 'not-a-real-certificate',
         }))
         expect(response.statusCode).not.toBe(StatusCodes.OK)
+    })
+
+    // Regression test for a real bug an actual-directory run caught: `upsert` used to encrypt
+    // these two plain-string secrets with `encryptObject` (which JSON-stringifies first — the
+    // right pairing for an object-shaped secret like `ai-provider`'s `auth`, wrong for a bare
+    // string), while the sign-in path decrypted with `decryptString` (no JSON.parse). The mismatch
+    // silently left literal quote characters around the recovered value — invisible to every other
+    // test here, since none of them decrypt a stored secret and compare it back to the plaintext.
+    it('round-trips the bind password byte-for-byte through encryption', async () => {
+        await ctx.post('/v1/platform-ldap-configs', validConfig({
+            bindPassword: 'super-secret-bind-password',
+        }))
+        const resolved = await ldapConfigService(pino({ level: 'silent' })).getResolvedForSignIn({ platformId: ctx.platform.id })
+        expect(resolved?.bindPassword).toBe('super-secret-bind-password')
+        expect(resolved?.bindPassword).not.toContain('"')
     })
 
     it('reports the failing stage from /test when the directory is unreachable', async () => {
