@@ -15,10 +15,11 @@ was read or copied (`.agents/rules/edition-safety.md`).
 - `packages/server/api/src/app/authentication/ldap/ldap-config-entity.ts` — `platform_ldap_config` TypeORM entity (plaintext config jsonb + `EncryptedObject` bind password / CA cert)
 - `packages/server/api/src/app/authentication/ldap/ldap-config-service.ts` — CRUD (no network I/O on save), `/test` orchestration, `getResolvedForSignIn` (decrypted config for the sign-in flow only, never returned over HTTP)
 - `packages/server/api/src/app/authentication/ldap/ldap-config-controller.ts` / `ldap-config-module.ts` — platform-admin routes at `/v1/platform-ldap-configs`
-- `packages/server/api/src/app/authentication/ldap/ldap-host-guard.ts` — resolves every A/AAAA record for the configured host and vets each IP with `ssrfIpClassifier.isBlockedIp` (`@aiqadam/shared`) against the `AP_LDAP_ALLOW_LIST` allow list (parsed via `safeHttp.parseAllowList`, shared with the SSRF filter's own parser); an IP literal skips DNS entirely
-- `packages/server/api/src/app/authentication/ldap/ldap-client.ts` — thin wrapper over `ldapts`: connects to the first vetted IP (TLS `servername` explicitly set to the *hostname*, never the dialed IP — see below), service bind, search, user bind on a **new** connection, unbind; a process-wide concurrency cap and 5s timeouts on every operation
+- `packages/server/api/src/app/authentication/ldap/ldap-host-guard.ts` — resolves every A/AAAA record for the configured host via `dns.lookup(host, { all: true })` (the OS resolver — honours `/etc/hosts`/Docker `extra_hosts`, unlike `resolve4`/`resolve6`) and vets each IP with `ssrfIpClassifier.isBlockedIp` (`@aiqadam/shared`) against the `AP_LDAP_ALLOW_LIST` allow list (parsed via `safeHttp.parseAllowList`, shared with the SSRF filter's own parser); an IP literal skips DNS entirely; an `::ffff:`-mapped IPv4 metadata address is unwrapped before the metadata-address comparison
+- `packages/server/api/src/app/authentication/ldap/ldap-client.ts` — thin wrapper over `ldapts`: connects to the first vetted IP (capped at 4 per attempt), TLS `servername` explicitly set to the *hostname*, never the dialed IP — see below; service bind, search, user bind on a **new** connection, unbind; a process-wide concurrency cap (slot held for a connection's *entire* lifetime, not just its connect step) with a bounded wait queue and per-wait timeout, a StartTLS handshake timeout, and a guard against `ldapts` silently reconnecting a dropped StartTLS session in plaintext — see "Connection lifecycle & concurrency (M1)" below
 - `packages/server/api/src/app/authentication/ldap/ldap-filter.ts` — RFC 4515 filter-value escaping (`\`, `*`, `(`, `)`, NUL)
-- `packages/server/api/src/app/authentication/ldap/ldap-attributes.ts` — attribute readers + AD `objectGUID` buffer → canonical mixed-endian GUID string conversion
+- `packages/server/api/src/app/authentication/ldap/ldap-username.ts` — `ldapUsernameUtils.normalize`: trim, collapse whitespace, NFKC, lowercase — the one normalisation both the rate limiter and the directory search use, so they can never disagree about "the same username"
+- `packages/server/api/src/app/authentication/ldap/ldap-attributes.ts` — attribute readers (case-insensitive key lookup — the directory's own casing convention, not the admin's typing, decides how a name comes back) + AD `objectGUID` buffer → canonical mixed-endian GUID string conversion
 - `packages/server/api/src/app/authentication/ldap/ldap-stage-error.ts` — internal error carrying the failing stage + LDAP result code, shared by the sign-in error mapping and the `/test` response
 - `packages/server/api/src/app/authentication/ldap/ldap-sign-in-rate-limit.ts` — the per-username (regardless of source IP) dimension of sign-in rate limiting
 - `packages/server/api/src/app/authentication/ldap/ldap-authn-service.ts` — sign-in orchestration: lookup order, JIT provisioning, link-by-email, token minting
@@ -32,9 +33,9 @@ was read or copied (`.agents/rules/edition-safety.md`).
 ## Domain Terms
 - **`platform_ldap_config`** — one row per platform (unique `platformId`); plaintext operational config in `config` jsonb, secrets (`bindPassword`, optional `caCertificate`) as `EncryptedObject`
 - **`user_federated_identity`** — generic external-identity join: `(platformId, provider, subject)` unique and `(platformId, userId, provider)` unique; `provider` is `FederatedIdentityProvider` (`LDAP` now, meant to be reused by a future OIDC `sub`); rows survive deleting the LDAP config
-- **subject** — the directory's own stable identifier for the entry: AD `objectGUID` (canonical mixed-endian string form) or OpenLDAP `entryUUID`, or an operator-chosen custom attribute
+- **subject** — the directory's own stable identifier for the entry, restricted to `LdapSubjectAttribute` (`objectGUID` canonical mixed-endian string form, or OpenLDAP `entryUUID`) — not an operator-chosen custom attribute: a mutable attribute like `uid`/`mail` here would let whoever controls the directory repoint an account to a different real person by editing that attribute, with no admin-side re-link step to notice it
 - **Host guard** — `AP_LDAP_ALLOW_LIST`, resolved/classified independently of `AP_SSRF_ALLOW_LIST` so approving the directory does not also open its subnet to outbound-HTTP qadams
-- **Stage** — `LdapTestStage` (`ALLOW_LIST`/`CONNECT`/`SERVICE_BIND`/`SEARCH`/`USER_BIND`/`SUCCESS`), the unit the admin-only `/test` endpoint and internal error mapping both key on
+- **Stage** — `LdapTestStage` (`NOT_CONFIGURED`/`ALLOW_LIST`/`CONNECT`/`SERVICE_BIND`/`SEARCH`/`USER_BIND`/`SUCCESS`), the unit the admin-only `/test` endpoint and internal error mapping both key on
 
 ## Entities
 
@@ -61,15 +62,15 @@ was read or copied (`.agents/rules/edition-safety.md`).
 | GET | `/v1/platform-ldap-configs` | platformAdminOnly (USER) | Returns `hasBindPassword`/`hasCaCertificate`, never the secrets themselves |
 | POST | `/v1/platform-ldap-configs` | platformAdminOnly (USER) | Upsert; an omitted secret field keeps the stored value; zod validation only, no network I/O |
 | DELETE | `/v1/platform-ldap-configs` | platformAdminOnly (USER) | Deletes the platform's config (does not touch `user_federated_identity` rows) |
-| POST | `/v1/platform-ldap-configs/test` | platformAdminOnly (USER) | Connects through the host guard; optional test username/password exercises the full bind+search+user-bind path; returns the failing `stage` + LDAP result code |
+| POST | `/v1/platform-ldap-configs/test` | platformAdminOnly (USER) | Connects through the host guard; optional test username/password exercises the full bind+search+user-bind path, including verifying the email/subject attributes actually resolve on the matched entry; returns the failing `stage` + LDAP result code. Response schema is `LdapTestResponse`. |
 | POST | `/v1/authn/ldap/sign-in` | public, rate-limited (IP + IP:username) | `{ username, password }`; empty password refused before any I/O |
 
 ## Service Methods
 
 ### `ldapConfigService`
-- `get`/`getOrThrow`/`upsert`/`delete` — no network I/O; `upsert` re-validates the merged config with `LdapConfig.parse` so a partial update can't leave an invalid row
+- `get`/`upsert`/`delete` — no network I/O; `upsert` re-validates the merged config with `LdapConfig.parse` so a partial update can't leave an invalid row
 - `getResolvedForSignIn` — the only other reader of the decrypted secrets besides `test`; never exposed over HTTP
-- `test` — full connect → service bind → (optional) search → user bind, returning `LdapTestResponse`
+- `test` — full connect → service bind → (optional) search + attribute-resolvability check → user bind, returning `LdapTestResponse`; "no config saved" is its own `NOT_CONFIGURED` stage, distinct from an `ALLOW_LIST` failure
 
 ### `ldapAuthnService.signIn`
 1. Refuse an empty password before any lookup (defense in depth; the zod schema already refuses it at the HTTP boundary)
@@ -139,6 +140,12 @@ Enforced in the **service** layer, not controllers, so nothing can route around 
 ## Flags
 `ApFlagId.LDAP_AUTH_ENABLED` — boolean, resolved off `platformUtils.getPlatformIdForRequest`, `true`
 only when a config row exists **and** `config.enabled`. No secrets, no config shape.
+`GET /v1/flags` is unauthenticated and hit on every sign-in page load; `flag.service.ts`'s `getAll`
+resolves the platform id once and threads it to both this check and the theme lookup (previously
+two separate `getPlatformIdForRequest` calls), so the LDAP flag's own cost is exactly one indexed
+`findOneBy` on `platform_ldap_config`'s unique `platformId` index — already a single cheap query,
+not something an added cache layer would improve, and a cache would itself go stale across
+replicas after an admin disables LDAP.
 
 ## `AP_LDAP_ALLOW_LIST`
 Same parser as `AP_SSRF_ALLOW_LIST` (`safeHttp.parseAllowList`, exported from
@@ -162,24 +169,45 @@ versa.
   `InvalidCredentialsError`) wrap only the numeric LDAP result code and the server's own RFC 4511
   `errorMessage` diagnostic text — never the request's bind DN or password.
 
-## Known gaps (not yet fixed)
-- **No timeout on the StartTLS handshake itself** (`ldapts`'s `startTLS()` calls
-  `tls.connect({ socket })` with no deadline of its own) — a directory that accepts the TCP
-  connection but never completes the TLS upgrade can hold a connection-slot indefinitely.
-  `LDAP_OPERATION_TIMEOUT_MS` bounds every *operation* after a connection is established, not this
-  step.
-- **No timeout or cap on the connection-slot waiter queue** (`ldap-client.ts`'s
-  `acquireConnectionSlot`) — a burst of requests past `MAX_CONCURRENT_LDAP_CONNECTIONS` queues
-  unboundedly rather than failing fast, and the concurrency cap itself only covers the `connect()`
-  call, not the whole bind+search+bind operation, so it undercounts real concurrent directory load.
-- **No cap on the number of vetted IPs tried per connection attempt** — `connect()` iterates every
-  IP `resolveVettedIps` returns.
-- `/test`'s connection leak on a mid-flow failure is fixed (see "Bind password re-supply" section
-  above and `ldap-config-service.ts`'s `test()` — unbind now runs in a `finally`), but `/test` does
-  not yet report "no config saved" as its own distinct stage from a real `ALLOW_LIST` failure, and
-  a `SUCCESS` result does not yet verify that the email/subject attributes actually resolve for the
-  test user.
-- Attribute lookups (`ldap-attributes.ts`) are case-sensitive, including `objectGUID`.
-- `tlsVerify: false` does not yet log a warning on every connect.
-- An IPv6 literal in the configured URL is not yet unwrapped from its brackets before use as a TLS
-  `servername`.
+## Connection lifecycle & concurrency (M1)
+`ldap-client.ts` owns all of this:
+- **Concurrency cap covers a connection's whole lifetime.** `withConnectionSlot`'s slot is held
+  from `connect()` through the final `unbind()` — connect → bind → search → bind → unbind — not
+  just the `connect()` call, so `MAX_CONCURRENT_LDAP_CONNECTIONS` (10) is a genuine bound on open
+  connections, not merely concurrent in-flight connects.
+- **Bounded wait, bounded queue.** A caller past the cap waits for a free slot for at most
+  `CONNECTION_SLOT_WAIT_TIMEOUT_MS` (5s) before failing outright, and the waiter queue itself is
+  capped (`MAX_CONNECTION_SLOT_WAITERS`, 50) so a large burst rejects immediately past that point
+  rather than queuing everyone and letting each one time out independently.
+- **Slot handoff, not decrement-then-increment.** `releaseConnectionSlot` hands a freed slot
+  directly to the oldest waiter when one exists, and never decrements the active count in that
+  case — the previous shape decremented unconditionally and let the woken waiter's own
+  continuation re-increment later, leaving a window where a fresh acquirer could take the
+  transiently-free slot on top of the waiter also about to claim it.
+- **StartTLS handshake timeout.** `ldapts`'s `startTLS()` places no deadline on the TLS upgrade
+  itself; `withStartTlsTimeout` races it against `LDAP_OPERATION_TIMEOUT_MS` and, on timeout, calls
+  `client.unbind()` (the one public method that unconditionally destroys whatever socket the client
+  currently holds) to force the stalled connection closed.
+- **Cap on vetted IPs tried per attempt** (`MAX_VETTED_IPS_PER_ATTEMPT`, 4) — a multi-homed name
+  with many records no longer turns one attempt into an unbounded number of connect attempts.
+- **Scheme assertion in `connect()`.** Defense in depth alongside `LdapConfig`'s own
+  `superRefine`: a row written before that check existed, or directly to the database, still gets
+  refused at connect time rather than reaching the wire as a silent plaintext/StartTLS mismatch.
+- **Plaintext-reconnect guard (StartTLS only).** `ldapts` computes whether a client is "secure"
+  once, at construction, from the *original* scheme/`tlsOptions` — never updated after `startTLS()`
+  upgrades the current socket — and every operation reconnects unconditionally whenever the socket
+  is not currently connected, with no way to tell it "fail instead". `assertConnectionStillUpgraded`
+  checks `client.isConnected` before `serviceBind`/`searchForUser`/the user bind and refuses rather
+  than let `ldapts` silently redial in plaintext.
+- **IPv6 literal brackets.** `URL#hostname` keeps the brackets around an IPv6 literal (`"[::1]"`);
+  `stripIPv6Brackets` removes them before the host guard and the TLS `servername` see the value.
+- **`tlsVerify: false` logs a warning on every connect**, not only at config-save time.
+
+## Real-directory test suite in CI (M5)
+`test/integration/ce/ldap/ldap-openldap.test.ts` is opt-in (`RUN_LDAP_OPENLDAP_TESTS=true`) but now
+runs in the "CE integration suite" GitHub Actions job: a `run:` step generates a fresh TLS cert,
+starts `ghcr.io/ldapjs/docker-test-openldap/openldap` pinned by digest, waits for the LDAPS port,
+resets the one seeded test account's password via `ldappasswd`, then the next step opts the suite
+in via env var — with an `if: always()` cleanup step after. Config in that suite is written
+through the real `POST /v1/platform-ldap-configs` `upsert` handler (including the CA-certificate
+round trip), never by writing the `platform_ldap_config` row directly.
