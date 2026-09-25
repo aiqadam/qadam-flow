@@ -1,4 +1,4 @@
-import { EngineGenericError, ExecutionError, FetchError } from '@aiqadam/shared'
+import { EngineGenericError, ExecutionError, FetchError, GetTranslationsForWorkerResponse } from '@aiqadam/shared'
 import { utils } from '../utils'
 
 export const createTranslationResolver = ({ engineToken, apiUrl }: CreateTranslationResolverParams): TranslationResolver => {
@@ -16,7 +16,7 @@ export const createTranslationResolver = ({ engineToken, apiUrl }: CreateTransla
                 if (!response.ok) {
                     throw new EngineGenericError('TranslationFetchError', `Failed to fetch project translations (HTTP ${response.status})`)
                 }
-                const body = await response.json() as { translations: TranslationRow[] }
+                const body = GetTranslationsForWorkerResponse.parse(await response.json())
                 return body.translations
             }))
 

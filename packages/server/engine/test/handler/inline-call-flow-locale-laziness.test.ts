@@ -180,7 +180,7 @@ describe('inline callFlow inherits the parent\'s real, in-flight execution state
         // not silently against the project's 'en' default (which an empty execution state, resolving
         // the parent's own localeSource against no step outputs, would have fallen through to).
         expect(mockUploadLogFile).toHaveBeenCalledTimes(1)
-        const uploadedData = mockUploadLogFile.mock.calls[0][0].data as Buffer
+        const uploadedData = mockUploadLogFile.mock.calls[0][0].data
         const decompressed = await zstdDecompress(uploadedData)
         const log = JSON.parse(decompressed.toString('utf8')) as { executionState: { steps: Record<string, { output: unknown }> } }
         expect(log.executionState.steps.child_step_1.output).toEqual({ key: 'Привет' })
