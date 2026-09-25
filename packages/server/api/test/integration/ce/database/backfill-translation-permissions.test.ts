@@ -1,6 +1,6 @@
 import { apId } from '@aiqadam/shared'
-import { databaseConnection, resetDatabaseConnection } from '../../../../src/app/database/database-connection'
 import { initializeDatabase } from '../../../../src/app/database'
+import { databaseConnection, resetDatabaseConnection } from '../../../../src/app/database/database-connection'
 import { BackfillTranslationPermissionsOnDefaultRoles1790800000000 } from '../../../../src/app/database/migration/postgres/1790800000000-BackfillTranslationPermissionsOnDefaultRoles'
 
 // `ensureDefaultProjectRoles` only INSERTs a role name missing for a platform; it never updates

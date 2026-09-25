@@ -266,7 +266,11 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                         executionType: ExecutionType.BEGIN,
                         workerHandlerId: undefined,
                         httpRequestId: undefined,
-                        inheritedRunLocale: updatedFlowRun.inheritedRunLocale,
+                        // A nullable TypeORM column reads back `null` when unset, never
+                        // `undefined` — normalized here so it matches every schema downstream
+                        // (ResumeExecuteFlowJobData, BeginExecuteFlowJobData) declaring this
+                        // `z.string().optional()`, which rejects `null` outright.
+                        inheritedRunLocale: updatedFlowRun.inheritedRunLocale ?? undefined,
                     }, log)
                 }
                 return addToQueue({
@@ -277,7 +281,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     resumeReason: ResumeReason.RETRY,
                     workerHandlerId: undefined,
                     httpRequestId: undefined,
-                    inheritedRunLocale: updatedFlowRun.inheritedRunLocale,
+                    inheritedRunLocale: updatedFlowRun.inheritedRunLocale ?? undefined,
                 }, log)
             }
             case FlowRetryStrategy.ON_LATEST_VERSION: {
@@ -320,7 +324,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     // value with nothing to re-verify against — the parent it names may have long
                     // since completed or been retried itself, and this run's own locale resolution
                     // never depends on the parent still existing.
-                    inheritedRunLocale: oldFlowRun.inheritedRunLocale,
+                    inheritedRunLocale: oldFlowRun.inheritedRunLocale ?? undefined,
                 })
             }
         }

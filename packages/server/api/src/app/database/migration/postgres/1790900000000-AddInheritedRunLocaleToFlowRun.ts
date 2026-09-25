@@ -7,10 +7,10 @@ export class AddInheritedRunLocaleToFlowRun1790900000000 implements Migration {
     release = '2.0.0'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "flow_run" ADD "inheritedRunLocale" character varying`)
+        await queryRunner.query('ALTER TABLE "flow_run" ADD "inheritedRunLocale" character varying')
     }
 
     public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "flow_run" DROP COLUMN "inheritedRunLocale"`)
+        await queryRunner.query('ALTER TABLE "flow_run" DROP COLUMN "inheritedRunLocale"')
     }
 }
