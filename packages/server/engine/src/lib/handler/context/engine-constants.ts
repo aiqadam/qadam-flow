@@ -103,17 +103,6 @@ export class EngineConstants {
     // per run, lazily, on the first `$t` (or subflow dispatch) that needs it.
     private runLocale: string | null | undefined = undefined
     private runLocalePromise: Promise<string | null> | undefined = undefined
-    // Set for the duration of the one resolution attempt that owns `runLocalePromise`, so a `$t`
-    // (or a formula wrapping one) reached from *inside* `localeSource`'s own evaluation sees "no
-    // run locale yet" instead of awaiting a promise that depends on itself (a hang, not a stack
-    // overflow, since the recursion here is across `await` boundaries). This flag is coarser than
-    // true call-stack reentrancy: a genuinely unrelated concurrent resolution (e.g. two CONCURRENT
-    // loop iterations, one of which is the one resolving `localeSource` for the whole run) that
-    // happens to land inside this same narrow window also reads `null` here, rather than awaiting
-    // the shared promise. That is an accepted degraded answer — the same fallback a resolution
-    // failure already produces (default locale, one warning) — for what is already a
-    // self-referential `localeSource`; the alternative (a real hang) is not.
-    private isResolvingRunLocale = false
     private warnedTranslationFallbacks = new Set<string>()
 
     public get isRunningApTests(): boolean {
@@ -357,14 +346,14 @@ export class EngineConstants {
         if (this.runLocale !== undefined) {
             return this.runLocale
         }
-        // Checked BEFORE the in-flight-promise memoization below, not after: once
-        // `resolveRunLocaleOnce`'s promise is assigned, a nested `$t` reached from inside its own
-        // `resolveOwnLocaleSource` call would otherwise be handed that exact same promise and
-        // await it — a promise awaiting itself, which hangs forever rather than throwing. See the
-        // field's own comment for the accepted false-positive this flag can also produce.
-        if (this.isResolvingRunLocale) {
-            return null
-        }
+        // In-flight promise memoization, same pattern as `getTranslations`/`getProject`: every
+        // concurrent caller (a step with several `$t` fields resolved via `Promise.all`, two
+        // CONCURRENT loop iterations, …) awaits the SAME promise and gets the same real answer.
+        // The one call that would otherwise recurse into this same promise — a `$t` reached from
+        // INSIDE `localeSource`'s own evaluation — never reaches here at all: `handleTranslation`
+        // (`props-resolver.ts`) short-circuits it via the `resolvingLocaleSource` flag threaded
+        // through `resolveOwnLocaleSource`'s own `resolveInputAsync` call below, so there is no
+        // longer any reentrancy for this method itself to guard against.
         if (isNil(this.runLocalePromise)) {
             this.runLocalePromise = this.resolveRunLocaleOnce(params.executionState)
         }
@@ -372,7 +361,6 @@ export class EngineConstants {
     }
 
     private async resolveRunLocaleOnce(executionState: FlowExecutorContext): Promise<string | null> {
-        this.isResolvingRunLocale = true
         try {
             const ownLocale = await this.resolveOwnLocaleSource(executionState)
             this.runLocale = ownLocale ?? this.inheritedRunLocale
@@ -381,9 +369,6 @@ export class EngineConstants {
         catch (error) {
             this.runLocalePromise = undefined
             throw error
-        }
-        finally {
-            this.isResolvingRunLocale = false
         }
     }
 
@@ -415,6 +400,7 @@ export class EngineConstants {
             constants: this,
             executionState,
             contextVersion: undefined,
+            resolvingLocaleSource: true,
         }))
         if (!isNil(error)) {
             this.warnTranslationFallbackOnce(`localeSource:${this.flowVersionId}`, `localeSource "${expression}" failed to evaluate (${error instanceof Error ? error.message : String(error)}); falling back to the inherited or default locale`)

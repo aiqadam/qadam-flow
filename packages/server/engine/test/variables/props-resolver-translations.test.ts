@@ -300,4 +300,42 @@ describe('props-resolver: $t translations', () => {
         expect(translationsDelta).toBe(1)
         expect(projectDelta).toBe(1)
     })
+
+    // The reentrancy guard must be scoped to localeSource's OWN evaluation, not to "any resolution
+    // in flight on this EngineConstants instance" — a per-run flag set for the whole duration of
+    // resolveRunLocaleOnce would also read null for every OTHER concurrent $t caller that merely
+    // landed inside that same window, not just the one genuinely nested inside localeSource. A step
+    // with several $t fields resolved through `applyFunctionToValues`'s own `Promise.all` is exactly
+    // that case: only the FIRST field's call starts `resolveRunLocaleOnce` and would see the flag,
+    // the other two arrive microtasks later while it is still pending. 'greeting' has only a 'ru'
+    // value in the mock table (no 'en'), so a field that incorrectly resolved against a null run
+    // locale (falling through to the 'en' project default) would throw TranslationKeyNotFoundError
+    // instead of silently returning the wrong string — any wrong answer among the three fails this.
+    test('a step with several $t fields resolved concurrently all resolve using the same run locale (not null for every field but the first)', async () => {
+        const constants = buildConstants({ localeSource: '{{trigger[\'output\'].lang}}' })
+        const executionState = await buildExecutionState({ lang: 'ru' })
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: {
+                a: '{{$t[\'greeting\']}}',
+                b: '{{$t[\'greeting\']}}',
+                c: '{{$t[\'greeting\']}}',
+            },
+            executionState,
+        })
+        expect(resolvedInput).toEqual({ a: 'Привет', b: 'Привет', c: 'Привет' })
+    })
+
+    // Same scoping concern, across separate `resolve()` calls sharing one `EngineConstants` — the
+    // shape several CONCURRENT loop iterations resolving the same step input take.
+    test('concurrent loop iterations each resolve $t using the same run locale, not null for every iteration but the first', async () => {
+        const constants = buildConstants({ localeSource: '{{trigger[\'output\'].lang}}' })
+        const executionState = await buildExecutionState({ lang: 'ru' })
+        const resolver = buildResolver(constants)
+        const results = await Promise.all(Array.from({ length: 5 }, () =>
+            resolver.resolve({ unresolvedInput: '{{$t[\'greeting\']}}', executionState }),
+        ))
+        for (const { resolvedInput } of results) {
+            expect(resolvedInput).toEqual('Привет')
+        }
+    })
 })

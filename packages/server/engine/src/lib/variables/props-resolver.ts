@@ -82,7 +82,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
 }
 
 const mergeFlattenedKeysArraysIntoOneArray = async (token: string, partsThatNeedResolving: string[],
-    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames' | 'constants' | 'executionState'>,
+    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames' | 'constants' | 'executionState' | 'resolvingLocaleSource'>,
     contextVersion: ContextVersion | undefined,
 ) => {
     const resolvedValues: Record<string, unknown> = {}
@@ -132,10 +132,10 @@ function extractReferencedStepNames(input: unknown, stepNames: string[]): Set<st
  * and a bare literal (`ru`, no braces) passes through unchanged.
  */
 export async function resolveInputAsync(params: ResolveInputInternalParams): Promise<unknown> {
-    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames, constants, executionState } = params
+    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames, constants, executionState, resolvingLocaleSource } = params
 
     if (formulaEvaluator.containsWrapper(input)) {
-        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, constants, executionState, contextVersion: params.contextVersion }
+        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, constants, executionState, contextVersion: params.contextVersion, resolvingLocaleSource }
         const { expression: preResolvedExpr, vars: preResolvedVars } = await preResolveFormulaVars({ expression: input, resolveOptions: formulaOptions })
         const { result, error } = formulaEvaluator.evaluate({ expression: preResolvedExpr, sampleData: preResolvedVars })
         if (error) {
@@ -154,6 +154,7 @@ export async function resolveInputAsync(params: ResolveInputInternalParams): Pro
         stepNames,
         constants,
         executionState,
+        resolvingLocaleSource,
     }
     const inputContainsOnlyOneTokenToResolve =
         tokensThatNeedResolving.length === 1 &&
@@ -283,7 +284,7 @@ function parseVariableName(variableName: string): string | null {
 // Unlike `variables`/`connections`, a translation value is not a secret: the censored pass resolves
 // it the same way the uncensored one does.
 async function handleTranslation(params: ResolveSingleTokenParams): Promise<unknown> {
-    const { variableName, currentState, stepNames, constants, executionState } = params
+    const { variableName, currentState, stepNames, constants, executionState, resolvingLocaleSource } = params
     const parsed = parseTranslationToken(variableName)
     if (isNil(parsed)) {
         throw new UnresolvedTemplateReferenceError({ expression: variableName })
@@ -297,9 +298,17 @@ async function handleTranslation(params: ResolveSingleTokenParams): Promise<unkn
         ? null
         : await resolveExplicitLocale({ localeExpr, currentState, stepNames, variableName })
 
+    // A `$t` reached from INSIDE `localeSource`'s own evaluation (directly, or through a formula
+    // wrapper) never calls `constants.getRunLocale` again — that would await the very promise this
+    // call is nested inside, which never resolves. Short-circuiting to "no run locale yet" here,
+    // scoped to this one call chain via `resolvingLocaleSource`, is what lets every OTHER concurrent
+    // `$t` resolution in the same run (a step with several `$t` fields resolved via `Promise.all`, a
+    // concurrent loop iteration) await the real, shared `runLocalePromise` instead of also reading
+    // null — the previous instance-wide `isResolvingRunLocale` flag on `EngineConstants` could not
+    // tell the two cases apart and returned null for both.
     const [translations, runLocale, defaultLocale] = await Promise.all([
         constants.getTranslations(),
-        constants.getRunLocale({ executionState }),
+        resolvingLocaleSource ? Promise.resolve(null) : constants.getRunLocale({ executionState }),
         constants.getProjectDefaultLocale(),
     ])
 
@@ -475,7 +484,7 @@ export function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown
     return []
 }
 
-type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames' | 'constants' | 'executionState'>
+type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames' | 'constants' | 'executionState' | 'resolvingLocaleSource'>
 
 async function preResolveFormulaVars({ expression, resolveOptions }: {
     expression: string
@@ -517,6 +526,14 @@ type ResolveSingleTokenParams = {
     contextVersion: ContextVersion | undefined
     constants: EngineConstants
     executionState: FlowExecutorContext
+    // Set only on the resolveInputAsync call EngineConstants#resolveOwnLocaleSource itself makes to
+    // evaluate `localeSource` — never by any other caller, so this is a property of THIS call chain,
+    // not shared mutable state on `constants`. Lets handleTranslation short-circuit a `$t` nested
+    // inside `localeSource` (directly or via a formula wrapper) to "no run locale yet" without ever
+    // calling `constants.getRunLocale` again, so an unrelated concurrent `$t` resolution elsewhere in
+    // the same run (a step with several `$t` fields resolved via `Promise.all`, or a concurrent loop
+    // iteration) is never affected by it.
+    resolvingLocaleSource?: boolean
 }
 
 export type ResolveInputInternalParams = {
@@ -530,6 +547,7 @@ export type ResolveInputInternalParams = {
     contextVersion: ContextVersion | undefined
     constants: EngineConstants
     executionState: FlowExecutorContext
+    resolvingLocaleSource?: boolean
 }
 
 type ResolveInputParams = {
