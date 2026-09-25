@@ -1,14 +1,17 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { applyFunctionToValues, extractMustacheTokens, FormulaEvaluationError, formulaEvaluator, isNil, isString, UnresolvedTemplateReferenceError } from '@aiqadam/shared'
+import { applyFunctionToValues, extractMustacheTokens, FormulaEvaluationError, formulaEvaluator, isNil, isString, localeUtil, TRANSLATION_KEY_REGEX, TranslationKeyNotFoundError, UnresolvedTemplateReferenceError } from '@aiqadam/shared'
 
 import { initCodeSandbox } from '../core/code/code-sandbox'
+import type { EngineConstants } from '../handler/context/engine-constants'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
 import { createConnectionResolver } from '../qadam-context/connection-resolver'
 import { createVariableResolver } from '../qadam-context/variable-resolver'
 import { utils } from '../utils'
+import { parseTranslationToken, resolveTranslationValue } from './translation-token'
 
 const CONNECTIONS = 'connections'
 const VARIABLES = 'variables'
+const TRANSLATIONS = '$t'
 // Both quote styles. `{{variables["NAME"]}}` is one character away from the form the unresolved-
 // reference error itself recommends, and matching only `'` made that typo resolve to `''`.
 // No whitespace tolerance, deliberately: the pattern anchors the quote directly against `[`,
@@ -34,7 +37,7 @@ async function replaceTokensAsync(
 }
 
 
-export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVersion, stepNames }: PropsResolverParams) => {
+export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVersion, stepNames, constants }: PropsResolverParams) => {
     return {
         resolve: async <T = unknown>(params: ResolveInputParams): Promise<ResolveResult<T>> => {
             const { unresolvedInput, executionState } = params
@@ -52,6 +55,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
                 apiUrl,
                 currentState,
                 stepNames,
+                constants,
             }
             const resolvedInput = await applyFunctionToValues<T>(
                 unresolvedInput,
@@ -78,7 +82,7 @@ export const createPropsResolver = ({ engineToken, projectId, apiUrl, contextVer
 }
 
 const mergeFlattenedKeysArraysIntoOneArray = async (token: string, partsThatNeedResolving: string[],
-    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames'>,
+    resolveOptions: Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'stepNames' | 'constants'>,
     contextVersion: ContextVersion | undefined,
 ) => {
     const resolvedValues: Record<string, unknown> = {}
@@ -122,10 +126,10 @@ function extractReferencedStepNames(input: unknown, stepNames: string[]): Set<st
  * tokenThatNeedResolving: [`{{firstName}}`, `{{lastName}}`]
  */
 async function resolveInputAsync(params: ResolveInputInternalParams): Promise<unknown> {
-    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames } = params
+    const { input, currentState, engineToken, projectId, apiUrl, censoredInput, stepNames, constants } = params
 
     if (formulaEvaluator.containsWrapper(input)) {
-        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, contextVersion: params.contextVersion }
+        const formulaOptions = { engineToken, projectId, apiUrl, currentState, censoredInput, stepNames, constants, contextVersion: params.contextVersion }
         const { expression: preResolvedExpr, vars: preResolvedVars } = await preResolveFormulaVars({ expression: input, resolveOptions: formulaOptions })
         const { result, error } = formulaEvaluator.evaluate({ expression: preResolvedExpr, sampleData: preResolvedVars })
         if (error) {
@@ -142,6 +146,7 @@ async function resolveInputAsync(params: ResolveInputInternalParams): Promise<un
         currentState,
         censoredInput,
         stepNames,
+        constants,
     }
     const inputContainsOnlyOneTokenToResolve =
         tokensThatNeedResolving.length === 1 &&
@@ -177,6 +182,9 @@ async function resolveSingleToken(params: ResolveSingleTokenParams): Promise<unk
     }
     if (variableName.startsWith(CONNECTIONS)) {
         return handleConnection(params)
+    }
+    if (variableName.startsWith(TRANSLATIONS)) {
+        return handleTranslation(params)
     }
     return evalInScope({
         js: normalizeInvalidDotKeys(variableName),
@@ -261,6 +269,67 @@ function parseVariableName(variableName: string): string | null {
     return null
 }
 
+// `$t['key']` optionally followed by exactly one `[<dynamic locale expression>]`. Values are
+// inserted literally and never re-scanned for `{{…}}` — the caller (`resolveInputAsync`) treats
+// this function's return value as a leaf, the same as any other resolved token, so a stored value
+// containing mustache syntax renders as inert text rather than being interpreted a second time.
+// Unlike `variables`/`connections`, a translation value is not a secret: the censored pass resolves
+// it the same way the uncensored one does.
+async function handleTranslation(params: ResolveSingleTokenParams): Promise<unknown> {
+    const { variableName, currentState, stepNames, constants } = params
+    const parsed = parseTranslationToken(variableName)
+    if (isNil(parsed)) {
+        throw new UnresolvedTemplateReferenceError({ expression: variableName })
+    }
+    const { key, localeExpr } = parsed
+    if (!TRANSLATION_KEY_REGEX.test(key)) {
+        throw new TranslationKeyNotFoundError(key)
+    }
+
+    const explicitLocale = isNil(localeExpr)
+        ? null
+        : await resolveExplicitLocale({ localeExpr, currentState, stepNames, variableName })
+
+    const [translations, runLocale, defaultLocale] = await Promise.all([
+        constants.getTranslations(),
+        constants.getRunLocale({ currentState }),
+        constants.getProjectDefaultLocale(),
+    ])
+
+    const values = translations.get(key)
+    if (isNil(values)) {
+        throw new TranslationKeyNotFoundError(key)
+    }
+
+    const chain = localeUtil.buildCandidateChain({ explicitLocale, runLocale, defaultLocale })
+    const resolved = resolveTranslationValue({ values, chain })
+    if (isNil(resolved)) {
+        throw new TranslationKeyNotFoundError(key)
+    }
+    if (chain.length > 0 && resolved.locale !== chain[0]) {
+        constants.warnTranslationFallbackOnce(`${key}:${chain[0]}`, `translation key "${key}" has no value for locale "${chain[0]}" — falling back to "${resolved.locale}"`)
+    }
+    return resolved.value
+}
+
+// A resolvable-but-broken reference (`nil`/empty/non-string/non-canonical) falls through to the
+// run/default locale; an UNRESOLVABLE one (a step name that does not exist in this flow) still
+// throws — the plain (non-`failOnUnreadablePath`) mode `evalInScope` already uses for every other
+// step reference, via `assertReferenceIsResolvable`. `failOnUnreadablePath` is deliberately NOT set
+// here: it would also throw on a merely-undefined property read (e.g. `loop['item'].lang` when
+// `lang` was never set), which is exactly the "resolvable... unknown value" case that must fall
+// through instead.
+async function resolveExplicitLocale(params: { localeExpr: string, currentState: Record<string, unknown>, stepNames: string[], variableName: string }): Promise<string | null> {
+    const { localeExpr, currentState, stepNames, variableName } = params
+    const evaluated = await evalInScope({
+        js: localeExpr,
+        contextAsScope: { ...currentState },
+        functions: { flattenNestedKeys },
+        unresolvedReference: { expression: variableName, stepNames },
+    })
+    return isString(evaluated) && evaluated.length > 0 ? localeUtil.canonicalize(evaluated) : null
+}
+
 async function handleConnection(params: ResolveSingleTokenParams): Promise<unknown> {
     const { variableName, engineToken, projectId, apiUrl, censoredInput } = params
     const connectionName = parseConnectionNameOnly(variableName)
@@ -329,8 +398,11 @@ function parseSquareBracketConnectionPath(variableName: string): string | null {
     return match ? match[2] : null
 }
 
+// Exported for `EngineConstants#getRunLocale` — `FlowVersion.localeSource` is evaluated the same
+// way the `$t[...]` dynamic locale bracket is, so the engine has exactly one sandboxed-eval path
+// rather than two.
 // eslint-disable-next-line @typescript-eslint/ban-types
-async function evalInScope({ js, contextAsScope, functions, unresolvedReference, failOnUnreadablePath = false }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] }, failOnUnreadablePath?: boolean }): Promise<unknown> {
+export async function evalInScope({ js, contextAsScope, functions, unresolvedReference, failOnUnreadablePath = false }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] }, failOnUnreadablePath?: boolean }): Promise<unknown> {
     const { data: result, error: resultError } = await utils.tryCatchAndThrowOnEngineError((async () => {
         const codeSandbox = await initCodeSandbox()
 
@@ -379,7 +451,7 @@ function assertReferenceIsResolvable({ error, unresolvedReference }: { error: Er
     throw new UnresolvedTemplateReferenceError({ expression: unresolvedReference.expression, reference, cause: error })
 }
 
-function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
+export function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
     if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
         for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
             if (key === pathToMatch[0]) {
@@ -396,7 +468,7 @@ function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
     return []
 }
 
-type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames'>
+type PreResolveOptions = Pick<ResolveInputInternalParams, 'engineToken' | 'projectId' | 'apiUrl' | 'currentState' | 'censoredInput' | 'contextVersion' | 'stepNames' | 'constants'>
 
 async function preResolveFormulaVars({ expression, resolveOptions }: {
     expression: string
@@ -436,6 +508,7 @@ type ResolveSingleTokenParams = {
     apiUrl: string
     censoredInput: boolean
     contextVersion: ContextVersion | undefined
+    constants: EngineConstants
 }
 
 type ResolveInputInternalParams = {
@@ -447,6 +520,7 @@ type ResolveInputInternalParams = {
     censoredInput: boolean
     currentState: Record<string, unknown>
     contextVersion: ContextVersion | undefined
+    constants: EngineConstants
 }
 
 type ResolveInputParams = {
@@ -466,4 +540,5 @@ type PropsResolverParams = {
     apiUrl: string
     contextVersion: ContextVersion | undefined
     stepNames: string[]
+    constants: EngineConstants
 }

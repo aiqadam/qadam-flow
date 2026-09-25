@@ -56,11 +56,15 @@
  *   the table one clears every row and column before recreating the schema.
  * - `ap_upsert_variable` / `ap_delete_variable` — a variable holds a secret; rotating or removing one
  *   changes what every published flow referencing it sends, with no value to restore from.
+ * - `ap_upsert_translations` / `ap_delete_translation` — changes what every published flow's
+ *   `{{$t[...]}}` references render as, with no value to restore from. Values are not secret (unlike
+ *   a variable), but the effect on a live flow is the same shape as the variable pair above.
  *
- * `ap_export_flow`, `ap_export_table` and `ap_list_variables` join the read-only group instead. They
- * write nothing, `ap_list_variables` returns no variable *value* at all, and the data the two exports
- * reach is already reachable through `ap_flow_structure` and `ap_find_records`, which are ungated —
- * so gating them would add a confirmation without adding a boundary.
+ * `ap_export_flow`, `ap_export_table`, `ap_list_variables` and `ap_list_translations` join the
+ * read-only group instead. They write nothing, `ap_list_variables` returns no variable *value* at
+ * all, and the data the two exports and `ap_list_translations` reach is already reachable through
+ * `ap_flow_structure` and `ap_find_records`, which are ungated — so gating them would add a
+ * confirmation without adding a boundary.
  */
 export const chatToolGating = {
     /**
@@ -101,6 +105,7 @@ const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_list_flows',
     'ap_list_runs',
     'ap_list_tables',
+    'ap_list_translations',
     'ap_list_variables',
     'ap_read_step_code',
     'ap_research_pieces',

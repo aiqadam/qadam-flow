@@ -5,6 +5,7 @@ import {
     FlowOperationType,
     flowStructureUtil,
     FlowTriggerType,
+    isNil,
     McpToolContext,
     McpToolDefinition,
     Permission,
@@ -55,6 +56,7 @@ const buildFlowInput = z.object({
         auth: z.string().optional(),
     }),
     steps: z.array(stepSpec),
+    localeSource: z.string().optional().describe('Expression evaluated once per run to pick this flow\'s translation locale for {{$t[...]}} references. Omit for no override (falls back to project defaultLocale).'),
 })
 
 export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
@@ -71,13 +73,14 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                 auth: z.string().optional().describe('Connection externalId for trigger auth'),
             }).describe('Trigger configuration'),
             steps: z.array(stepSpec).describe('Array of steps. By default added sequentially after trigger. Use parentStepName + stepLocationRelativeToParent to nest steps inside loops. Each step supports: PIECE (qadamName+actionName+input), CODE (sourceCode+input), LOOP_ON_ITEMS (loopItems), ROUTER.'),
+            localeSource: z.string().optional().describe('Expression evaluated once per run to pick this flow\'s translation locale for {{$t[...]}} references. Omit for no override.'),
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {
             let flowId: string | undefined
             const projectId = mcp.projectId
             try {
-                const { flowName, trigger, steps } = buildFlowInput.parse(args)
+                const { flowName, trigger, steps, localeSource } = buildFlowInput.parse(args)
                 const triggerAuthError = mcpUtils.validateAuth(trigger.auth)
                 if (triggerAuthError) {
                     return triggerAuthError
@@ -137,6 +140,12 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                     id: flowId, projectId, userId: null, platformId,
                     operation: { type: FlowOperationType.UPDATE_TRIGGER, request: triggerPayload },
                 })
+                if (!isNil(localeSource)) {
+                    currentFlow = await flowService(log).update({
+                        id: flowId, projectId, userId: null, platformId,
+                        operation: { type: FlowOperationType.UPDATE_LOCALE_SOURCE, request: { localeSource } },
+                    })
+                }
                 const skippedSteps: string[] = []
                 let lastTopLevelStepName: string | null = null
 

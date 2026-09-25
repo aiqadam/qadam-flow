@@ -24,4 +24,8 @@ export const formErrors = {
     tableKeyColumnsNotInTable: 'tableKeyColumnsNotInTable',
     upsertKeyMustMatchDeclaredKey: 'upsertKeyMustMatchDeclaredKey',
     upsertKeyValuesAreEmpty: 'upsertKeyValuesAreEmpty',
+    invalidTranslationKey: 'invalidTranslationKey',
+    translationKeyTooLong: 'translationKeyTooLong',
+    translationValueTooLong: 'translationValueTooLong',
+    invalidLocale: 'invalidLocale',
 } as const

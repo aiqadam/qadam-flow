@@ -191,6 +191,7 @@ function buildFlowOperation(
         engineToken: ctx.engineToken,
         internalApiUrl: ctx.internalApiUrl,
         publicApiUrl: ctx.publicApiUrl,
+        inheritedRunLocale: data.inheritedRunLocale,
     }
 
     if (data.executionType === ExecutionType.RESUME) {

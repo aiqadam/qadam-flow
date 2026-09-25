@@ -48,7 +48,7 @@ describe('chat tenant isolation (#350)', () => {
     // upstream), an empty array satisfies "no tool has X" for any X. Same count
     // `chat-tool-gating.test.ts` pins for the same reason — keep the two in sync.
     it('sees the whole tool registry', () => {
-        expect(registeredTools().length).toBe(48)
+        expect(registeredTools().length).toBe(51)
     })
 
     it('no registered tool declares a projectId input field', () => {

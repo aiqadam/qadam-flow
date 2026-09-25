@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MAX_LOCALE_TAG_LENGTH } from '../../automation/translation/translation'
 import { Nullable, OptionalArrayFromQuery } from '../../core/common/base-model'
 import { Metadata } from '../../core/common/metadata'
 import { SAFE_STRING_PATTERN } from '../../core/common/security'
@@ -19,6 +20,7 @@ export const UpdateProjectPlatformRequest = z.object({
     // 22003 (numeric_value_out_of_range), which would otherwise surface as an opaque 500 instead
     // of a clean 400 at the schema boundary.
     maxConcurrentJobs: Nullable(z.number().int().positive().max(2147483647)).optional(),
+    defaultLocale: Nullable(z.string().max(MAX_LOCALE_TAG_LENGTH, 'invalidLocale')).optional(),
 })
 
 export type UpdateProjectPlatformRequest = z.infer<typeof UpdateProjectPlatformRequest>

@@ -396,6 +396,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
         stepNameToTest,
         environment,
         syncDeadline,
+        inheritedRunLocale,
     }: StartParams): Promise<FlowRun> {
         return tracer.startActiveSpan('flowRun.start', {
             attributes: {
@@ -434,6 +435,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     httpRequestId,
                     streamStepProgress,
                     syncDeadline,
+                    inheritedRunLocale,
                 }, log)
 
                 span.setAttribute('flowRun.queued', true)
@@ -740,6 +742,7 @@ export async function addToQueue(params: AddToQueueParams, log: FastifyBaseLogge
         logsFileId,
         traceContext,
         syncDeadline: params.syncDeadline,
+        inheritedRunLocale: params.inheritedRunLocale,
     }
     const data: ExecuteFlowJobData = params.executionType === ExecutionType.RESUME
         ? {
@@ -1099,6 +1102,7 @@ type AddToQueueParamsCommon = {
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
     syncDeadline?: string
+    inheritedRunLocale?: string
 }
 
 export type AddToQueueParams = AddToQueueParamsCommon & (
@@ -1126,6 +1130,7 @@ type StartParams = {
     streamStepProgress: StreamStepProgress
     sampleData?: Record<string, unknown>
     syncDeadline?: string
+    inheritedRunLocale?: string
 }
 
 

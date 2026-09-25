@@ -6,6 +6,7 @@ import {
     DefaultProjectRole,
     ErrorCode,
     isNil,
+    localeUtil,
     Metadata,
     Project,
     ProjectIcon,
@@ -115,10 +116,13 @@ export const projectService = (log: FastifyBaseLogger) => ({
         const externalId = request.externalId?.trim() !== '' ? request.externalId : undefined
         await assertExternalIdIsUnique(externalId, projectId)
 
+        const defaultLocale = normalizeDefaultLocale(request.defaultLocale)
+
         const baseUpdate = {
             ...spreadIfDefined('externalId', externalId),
             ...spreadIfDefined('releasesEnabled', request.releasesEnabled),
             ...spreadIfDefined('metadata', request.metadata),
+            ...(request.defaultLocale !== undefined ? { defaultLocale } : {}),
             ...(request.poolId !== undefined ? { poolId: request.poolId } : {}),
             // Only a privileged caller ever *writes* this column. A non-privileged caller
             // reaches here only by echoing the value it read (the gate above rejects anything
@@ -555,6 +559,23 @@ function assertCallerMayWriteMaxConcurrentJobs({ requestedMaxConcurrentJobs, cur
     })
 }
 
+// Canonicalised on write so the engine's locale resolution chain (which also canonicalises
+// candidates) can compare against a stable stored form. `null` clears the override; an
+// uncanonicalizable tag is rejected rather than silently stored malformed.
+function normalizeDefaultLocale(defaultLocale: string | null | undefined): string | null | undefined {
+    if (isNil(defaultLocale)) {
+        return defaultLocale
+    }
+    const canonical = localeUtil.canonicalize(defaultLocale)
+    if (isNil(canonical)) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: `"${defaultLocale}" is not a valid BCP-47 locale tag` },
+        })
+    }
+    return canonical
+}
+
 async function assertExternalIdIsUnique(externalId: string | undefined | null, projectId: ProjectId): Promise<void> {
     if (!isNil(externalId)) {
         const externalIdAlreadyExists = await projectRepo().existsBy({
@@ -599,6 +620,7 @@ type UpdateTeamProjectParams = {
     poolId?: string | null
     maxConcurrentJobs?: number | null
     icon?: ProjectIcon
+    defaultLocale?: string | null
 }
 
 type UpdatePersonalProjectParams = {
@@ -608,6 +630,7 @@ type UpdatePersonalProjectParams = {
     metadata?: Metadata
     poolId?: string | null
     maxConcurrentJobs?: number | null
+    defaultLocale?: string | null
 }
 
 type UpdateParams = UpdateTeamProjectParams | UpdatePersonalProjectParams

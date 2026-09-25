@@ -112,6 +112,15 @@ export class VariableNotFoundError extends ExecutionError {
     }
 }
 
+// USER, mirroring VariableNotFoundError: a `$t['key']` naming a key that does not exist at all, or
+// one that has no value in the resolved default locale (the last link in the resolution chain), is
+// an authoring mistake that must fail the step rather than the whole run.
+export class TranslationKeyNotFoundError extends ExecutionError {
+    constructor(key: string, cause?: unknown) {
+        super('TranslationKeyNotFound', formatMessage(`translation key (${key}) not found, or has no value in the default locale — check the key in Settings → Translations, or create it`), ExecutionErrorType.USER, cause)
+    }
+}
+
 // `{{VAR}}` is not a project variable reference: the short form is evaluated against the run's
 // step outputs, finds no such name, and used to resolve to an empty string. An empty string is a
 // valid value everywhere, so the mistake surfaced as wrong data rather than as an error — and
@@ -127,9 +136,9 @@ export class UnresolvedTemplateReferenceError extends ExecutionError {
 // further in and deserves the syntax rather than a name it cannot quote back.
 function buildUnresolvedReferenceMessage({ expression, reference }: { expression: string, reference?: string }): string {
     if (reference === undefined) {
-        return `{{${expression}}} does not name anything this run can read. A project variable is written {{variables['NAME']}} and a connection {{connections['NAME']}}, with the exact name in quotes.`
+        return `{{${expression}}} does not name anything this run can read. A project variable is written {{variables['NAME']}}, a connection {{connections['NAME']}} and a translation {{$t['key']}}, with the exact name in quotes.`
     }
-    return `"${reference}" is not defined (in {{${expression}}}). It is neither a step in this flow nor a built-in. To read a project variable use {{variables['${reference}']}}; to read a step's output use {{stepName['output'].field}}.`
+    return `"${reference}" is not defined (in {{${expression}}}). It is neither a step in this flow nor a built-in. To read a project variable use {{variables['${reference}']}}; to read a translation use {{$t['key']}}; to read a step's output use {{stepName['output'].field}}.`
 }
 
 export class EngineGenericError extends ExecutionError {

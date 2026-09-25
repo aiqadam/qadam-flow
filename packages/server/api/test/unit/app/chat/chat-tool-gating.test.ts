@@ -20,7 +20,7 @@ import { qadamFlowTools } from '../../../../src/app/mcp/tools'
 const fakeMcp = { projectId: 'test-project', platformId: 'test-platform' } as unknown as ProjectScopedMcpServer
 const fakeLog = { info: () => undefined, error: () => undefined, warn: () => undefined, debug: () => undefined } as unknown as FastifyBaseLogger
 
-const TOTAL_REGISTERED_TOOLS = 48
+const TOTAL_REGISTERED_TOOLS = 51
 
 // Matches the verb an `operation`-style enum would use to spell a destructive action — this is the
 // shape #302 slipped through: `ap_manage_notes` sat in "Additive only" with a plain-looking
@@ -69,7 +69,7 @@ describe('chatToolGating (#264)', () => {
 
         expect(unexpected, 'a tool is reachable without approval but is not on the ungated list').toEqual([])
         // Counted, so a new tool silently joining the ungated set cannot hide.
-        expect(ungated.length, 'the ungated set changed size — was that decision deliberate?').toBe(31)
+        expect(ungated.length, 'the ungated set changed size — was that decision deliberate?').toBe(32)
     })
 
     it('has no ungated name that does not resolve to a registered tool', () => {
@@ -99,6 +99,8 @@ describe('chatToolGating (#264)', () => {
         ['ap_import_table', 'clears every row and column of the target table before recreating its schema'],
         ['ap_upsert_variable', 'rotates a secret every published flow referencing it then sends'],
         ['ap_delete_variable', 'removes a secret with no value to restore from'],
+        ['ap_upsert_translations', 'changes what every published flow\'s {{$t[...]}} references render as'],
+        ['ap_delete_translation', 'removes a translation key with no value to restore from'],
     ])('gates %s, which %s', (toolName) => {
         expect(chatToolGating.requiresApproval(toolName)).toBe(true)
     })
@@ -113,7 +115,7 @@ describe('chatToolGating (#264)', () => {
     // The flow-building loop has to stay usable, so this is the other half of the trade-off and it
     // deserves to break loudly if someone gates it by accident.
     it('leaves read-only and draft-only tools alone', () => {
-        for (const name of ['ap_list_flows', 'ap_flow_structure', 'ap_research_pieces', 'ap_add_step', 'ap_update_step', 'ap_create_flow', 'ap_export_flow', 'ap_export_table', 'ap_list_variables']) {
+        for (const name of ['ap_list_flows', 'ap_flow_structure', 'ap_research_pieces', 'ap_add_step', 'ap_update_step', 'ap_create_flow', 'ap_export_flow', 'ap_export_table', 'ap_list_variables', 'ap_list_translations']) {
             expect(chatToolGating.requiresApproval(name), `${name} must not need approval`).toBe(false)
         }
     })

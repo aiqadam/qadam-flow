@@ -1,0 +1,237 @@
+import { createServer, Server } from 'http'
+import { LATEST_CONTEXT_VERSION } from '@aiqadam/qadams-framework'
+import { FlowActionType, FlowTriggerType, FlowVersionState, GenericStepOutput, StepOutputStatus, StreamStepProgress } from '@aiqadam/shared'
+import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
+import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
+import { createPropsResolver } from '../../src/lib/variables/props-resolver'
+
+const TRANSLATIONS = {
+    translations: [
+        { key: 'welcome.title', values: { en: 'Welcome', ru: 'Добро пожаловать' } },
+        { key: 'greeting', values: { ru: 'Привет' } },
+        { key: 'raw.value', values: { en: '{{connections[\'x\'].access_token}}' } },
+    ],
+}
+const PROJECT = { defaultLocale: 'en' }
+
+let server: Server
+let apiUrl: string
+
+beforeAll(async () => {
+    server = createServer((req, res) => {
+        res.setHeader('content-type', 'application/json')
+        if (req.url === '/v1/worker/translations') {
+            res.end(JSON.stringify(TRANSLATIONS))
+            return
+        }
+        if (req.url === '/v1/worker/project') {
+            res.end(JSON.stringify(PROJECT))
+            return
+        }
+        res.statusCode = 404
+        res.end('{}')
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    const address = server.address()
+    if (address === null || typeof address === 'string') {
+        throw new Error('mock server failed to bind to a TCP port')
+    }
+    apiUrl = `http://127.0.0.1:${address.port}/`
+})
+
+afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+})
+
+function buildConstants(params: { localeSource?: string | null, inheritedRunLocale?: string | null, stepNames?: string[] } = {}): EngineConstants {
+    return new EngineConstants({
+        flowId: 'FLOW_ID',
+        flowVersionId: 'FLOW_VERSION_ID',
+        flowVersionState: FlowVersionState.LOCKED,
+        triggerQadamName: 'trigger',
+        flowRunId: 'FLOW_RUN_ID',
+        publicApiUrl: 'http://127.0.0.1:1/api/',
+        internalApiUrl: apiUrl,
+        retryConstants: { maxAttempts: 1, retryExponential: 2, retryInterval: 1 },
+        engineToken: 'WORKER_TOKEN',
+        projectId: 'PROJECT_ID',
+        streamStepProgress: StreamStepProgress.NONE,
+        workerHandlerId: null,
+        httpRequestId: null,
+        platformId: 'PLATFORM_ID',
+        stepNames: params.stepNames ?? ['trigger', 't'],
+        flowVersionLocaleSource: params.localeSource ?? null,
+        inheritedRunLocale: params.inheritedRunLocale ?? null,
+    })
+}
+
+async function buildExecutionState(triggerOutput: Record<string, unknown> = {}): Promise<FlowExecutorContext> {
+    return FlowExecutorContext.empty().upsertStep('trigger', GenericStepOutput.create({
+        type: FlowTriggerType.PIECE,
+        status: StepOutputStatus.SUCCEEDED,
+        input: {},
+        output: triggerOutput,
+    }))
+}
+
+function buildResolver(constants: EngineConstants) {
+    return createPropsResolver({
+        projectId: constants.projectId,
+        engineToken: constants.engineToken,
+        apiUrl: constants.internalApiUrl,
+        contextVersion: LATEST_CONTEXT_VERSION,
+        stepNames: constants.stepNames,
+        constants,
+    })
+}
+
+describe('props-resolver: $t translations', () => {
+    test('basic key resolves against the project default locale', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'welcome.title\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Welcome')
+    })
+
+    test('dynamic locale bracket picks the locale from the current step scope', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState({ lang: 'ru' })
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'welcome.title\'][trigger[\'output\'].lang]}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Добро пожаловать')
+    })
+
+    test('fallback chain: a base-language tag with no exact-tag value falls back to the base language', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState({ lang: 'ru-RU' })
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'greeting\'][trigger[\'output\'].lang]}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Привет')
+    })
+
+    test('missing key fails the resolve with TranslationKeyNotFoundError', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        await expect(buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'does.not.exist\']}}',
+            executionState,
+        })).rejects.toThrow('translation key (does.not.exist) not found')
+    })
+
+    test('an unresolvable step reference inside the locale bracket still throws', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        await expect(buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'welcome.title\'][unknownStep.lang]}}',
+            executionState,
+        })).rejects.toThrow('is not defined')
+    })
+
+    test('a translation value is inserted literally and never re-scanned for mustache syntax', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'raw.value\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('{{connections[\'x\'].access_token}}')
+    })
+
+    // A step literally named `t` (not `$t`) must resolve through the ordinary step-reference path,
+    // unaffected by the `$t` root check (`variableName.startsWith('$t')` requires the dollar sign).
+    test('a step named "t" resolves normally and is not treated as the translations root', async () => {
+        const constants = buildConstants({ stepNames: ['trigger', 't'] })
+        let executionState = await buildExecutionState()
+        executionState = await executionState.upsertStep('t', GenericStepOutput.create({
+            type: FlowActionType.PIECE,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+            output: { value: 'plain-step' },
+        }))
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{t[\'output\'].value}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('plain-step')
+    })
+
+    test('__proto__ as a key is an ordinary miss, never a prototype lookup', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        await expect(buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'__proto__\']}}',
+            executionState,
+        })).rejects.toThrow('translation key (__proto__) not found')
+    })
+
+    test('__proto__ as a dynamic locale is rejected by canonicalization and falls through to the default locale', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState({ lang: '__proto__' })
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'welcome.title\'][trigger[\'output\'].lang]}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Welcome')
+    })
+
+    test('an inherited run locale is used when the flow has no localeSource of its own', async () => {
+        const constants = buildConstants({ inheritedRunLocale: 'ru' })
+        const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'greeting\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Привет')
+    })
+
+    test('a fallback to a less-specific locale warns exactly once per (key, locale) per run', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const constants = buildConstants()
+        const executionState = await buildExecutionState({ lang: 'ru-RU' })
+        await buildResolver(constants).resolve({ unresolvedInput: '{{$t[\'greeting\'][trigger[\'output\'].lang]}}', executionState })
+        await buildResolver(constants).resolve({ unresolvedInput: '{{$t[\'greeting\'][trigger[\'output\'].lang]}}', executionState })
+        const fallbackWarnings = warnSpy.mock.calls.filter(([message]) => typeof message === 'string' && message.includes('greeting'))
+        expect(fallbackWarnings).toHaveLength(1)
+        warnSpy.mockRestore()
+    })
+
+    test('the flow\'s own localeSource wins over an inherited run locale', async () => {
+        const constants = buildConstants({ localeSource: '\'ru\'', inheritedRunLocale: 'en' })
+        const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'greeting\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Привет')
+    })
+
+    test('a localeSource that fails to evaluate falls back rather than failing the run', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const constants = buildConstants({ localeSource: 'thisIsNotDefinedAnywhere', inheritedRunLocale: 'ru' })
+        const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'greeting\']}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Привет')
+        warnSpy.mockRestore()
+    })
+
+    test('the whole translation table and the run locale are each fetched at most once per EngineConstants instance', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        const resolver = buildResolver(constants)
+        await resolver.resolve({ unresolvedInput: '{{$t[\'welcome.title\']}}', executionState })
+        await resolver.resolve({ unresolvedInput: '{{$t[\'welcome.title\']}}', executionState })
+        const secondTranslations = await constants.getTranslations()
+        const firstTranslations = await constants.getTranslations()
+        expect(secondTranslations).toBe(firstTranslations)
+    })
+})

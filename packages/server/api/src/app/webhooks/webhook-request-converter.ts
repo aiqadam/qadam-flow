@@ -9,6 +9,7 @@ import {
     isMultipartFile,
     isNil,
     PARENT_RUN_ID_HEADER,
+    PARENT_RUN_LOCALE_HEADER,
     tryCatchSync,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger, FastifyRequest } from 'fastify'
@@ -65,15 +66,17 @@ export async function convertRequest(
     }
 }
 
-export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun, 'parentRunId' | 'failParentOnFailure'> & { parentWaitpointId?: string, parentSlotId?: string } {
+export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun, 'parentRunId' | 'failParentOnFailure'> & { parentWaitpointId?: string, parentSlotId?: string, inheritedRunLocale?: string } {
     const parentRunIdHeader = request.headers[PARENT_RUN_ID_HEADER]
     const parentRunId = typeof parentRunIdHeader === 'string' ? parentRunIdHeader : undefined
     const proof = extractParentWaitpointProofFromBody({ body: request.body, parentRunId })
+    const inheritedRunLocaleHeader = request.headers[PARENT_RUN_LOCALE_HEADER]
     return {
         parentRunId,
         failParentOnFailure: request.headers[FAIL_PARENT_ON_FAILURE_HEADER] === 'true',
         parentWaitpointId: proof?.waitpointId,
         parentSlotId: proof?.slotId,
+        inheritedRunLocale: typeof inheritedRunLocaleHeader === 'string' ? inheritedRunLocaleHeader : undefined,
     }
 }
 

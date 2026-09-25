@@ -52,6 +52,7 @@ export enum FlowOperationType {
     DELETE_NOTE = 'DELETE_NOTE',
     ADD_NOTE = 'ADD_NOTE',
     UPDATE_SAMPLE_DATA_INFO = 'UPDATE_SAMPLE_DATA_INFO',
+    UPDATE_LOCALE_SOURCE = 'UPDATE_LOCALE_SOURCE',
 }
 
 // Caps on what one flow operation can make the schema parse (see BoundedArray); each is far
@@ -133,6 +134,7 @@ export const ImportFlowRequest = z.object({
     trigger: FlowTrigger,
     schemaVersion: Nullable(z.string()),
     notes: Nullable(BoundedArray({ element: Note, max: MAX_NOTES_PER_FLOW })),
+    localeSource: Nullable(z.string()).optional(),
 })
 
 export type ImportFlowRequest = z.infer<typeof ImportFlowRequest>
@@ -225,6 +227,11 @@ export const UpdateOwnerRequest = z.object({
     ownerId: z.string(),
 })
 export type UpdateOwnerRequest = z.infer<typeof UpdateOwnerRequest>
+
+export const UpdateLocaleSourceRequest = z.object({
+    localeSource: Nullable(z.string()),
+})
+export type UpdateLocaleSourceRequest = z.infer<typeof UpdateLocaleSourceRequest>
 
 // Discriminated on `type`: a plain union parses the body against all 26 operations — even
 // when `type` names none of them — and nests every operation's issues into the rejection.
@@ -333,6 +340,10 @@ export const FlowOperationRequest = z.discriminatedUnion('type', [
         type: z.literal(FlowOperationType.UPDATE_SAMPLE_DATA_INFO),
         request: UpdateSampleDataInfoRequest,
     }).describe('Update Sample Data Info'),
+    z.object({
+        type: z.literal(FlowOperationType.UPDATE_LOCALE_SOURCE),
+        request: UpdateLocaleSourceRequest,
+    }).describe('Update Locale Source'),
 ])
 
 
@@ -434,6 +445,10 @@ export const flowOperations = {
             }
             case FlowOperationType.UPDATE_SAMPLE_DATA_INFO: {
                 clonedVersion = _updateSampleDataInfo(clonedVersion, operation.request)
+                break
+            }
+            case FlowOperationType.UPDATE_LOCALE_SOURCE: {
+                clonedVersion.localeSource = operation.request.localeSource
                 break
             }
             default:

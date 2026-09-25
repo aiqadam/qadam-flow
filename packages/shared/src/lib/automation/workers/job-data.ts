@@ -118,6 +118,9 @@ const ExecuteFlowJobDataCommon = z.object({
     sampleData: z.record(z.string(), z.unknown()).optional(),
     logsFileId: z.string(),
     traceContext: z.record(z.string(), z.string()).optional(),
+    // The resolved run locale of the parent run, for a subflow child dispatched via queue-mode
+    // `callFlow` (see `PARENT_RUN_LOCALE_HEADER`). Absent for every non-subflow dispatch.
+    inheritedRunLocale: z.string().optional(),
     // Set only for a sync webhook's initial BEGIN dispatch (webhook.service.ts#handleSync), to the
     // ISO instant `AP_WEBHOOK_TIMEOUT_SECONDS` (or a per-call override, e.g. MCP's longer budget) after
     // acceptance — the same deadline the sync HTTP caller itself is bound by. That includes
@@ -160,6 +163,7 @@ export const WebhookJobData = z.object({
     failParentOnFailure: z.boolean().optional(),
     parentWaitpointId: z.string().optional(),
     parentSlotId: z.string().optional(),
+    inheritedRunLocale: z.string().optional(),
     traceContext: z.record(z.string(), z.string()).optional(),
 })
 export type WebhookJobData = z.infer<typeof WebhookJobData>

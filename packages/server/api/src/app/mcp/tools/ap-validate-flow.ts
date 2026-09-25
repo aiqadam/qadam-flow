@@ -6,6 +6,7 @@ import {
     isNil,
     LoopExecutionMode,
     LoopOnItemsAction,
+    MAX_TRANSLATION_KEYS_PER_PROJECT,
     McpToolDefinition,
     Permission,
     ProjectScopedMcpServer,
@@ -20,6 +21,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
+import { translationService } from '../../translation/translation.service'
 import { mcpUtils } from './mcp-utils'
 
 export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -40,7 +42,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
-                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues] = await Promise.all([
+                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues, translationIssues] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -58,8 +60,14 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         platformId,
                         log,
                     }),
+                    validateFlowTranslations({
+                        trigger: flow.version.trigger,
+                        projectId: mcp.projectId,
+                        platformId,
+                        log,
+                    }),
                 ])
-                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues] }
+                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues] }
                 return {
                     content: [{ type: 'text', text: formatValidationResult({ result, flowDisplayName: flow.version.displayName }) }],
                     structuredContent: {
@@ -576,6 +584,79 @@ function validateLoopCollectReferences({ loop, allStepNames, seenSteps }: { loop
     })
 }
 
+// Static check: every `{{$t['key']}}` reference is checked against the project's translation
+// table. A key referenced nowhere in the table is an error (it will fail the step at run time,
+// per `TranslationKeyNotFoundError`); a key that exists but is missing a locale other keys in the
+// project do have is a warning, since it may simply not have been translated yet rather than being
+// wrong. The bracket's own dynamic-locale expression (`$t['key'][expr]`) is never evaluated here —
+// only the literal key is checked, and the message says so.
+async function validateFlowTranslations({ trigger, projectId, platformId, log }: {
+    trigger: Step
+    projectId: string
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<ValidationIssue[]> {
+    const steps = flowStructureUtil.getAllSteps(trigger).filter(step => !('skip' in step && step.skip === true))
+    const refsByStep = steps.flatMap((step) => {
+        const refs = collectStringValues({ step }).flatMap((value) => extractTranslationKeyRefs({ value }))
+        return refs.map((ref) => ({ step, ...ref }))
+    })
+    if (refsByStep.length === 0) {
+        return []
+    }
+
+    const table = await translationService(log).list({
+        projectId,
+        platformId,
+        cursor: undefined,
+        limit: MAX_TRANSLATION_KEYS_PER_PROJECT,
+        key: undefined,
+    })
+    const byKey = new Map(table.data.map((row) => [row.key, row]))
+    const allLocales = unique(table.data.flatMap((row) => Object.keys(row.values)))
+
+    const seen = new Set<string>()
+    return refsByStep.flatMap(({ step, key, hasDynamicLocale }): ValidationIssue[] => {
+        const dedupeKey = `${step.name}:${key}`
+        if (seen.has(dedupeKey)) {
+            return []
+        }
+        seen.add(dedupeKey)
+
+        const row = byKey.get(key)
+        if (isNil(row)) {
+            return [{
+                category: 'translation_key',
+                stepName: step.name,
+                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${key}" which does not exist — use ap_upsert_translations to create it.`,
+            }]
+        }
+
+        const missingLocales = allLocales.filter((locale) => row.values[locale] === undefined)
+        if (missingLocales.length === 0) {
+            return []
+        }
+        const dynamicNote = hasDynamicLocale ? ' This step\'s locale is chosen dynamically at run time and is not statically checked.' : ''
+        return [{
+            category: 'translation_locale',
+            stepName: step.name,
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${key}", which has no value for locale(s): ${missingLocales.join(', ')}.${dynamicNote}`,
+        }]
+    })
+}
+
+const TRANSLATION_KEY_REF_PATTERN = /\$t\[(['"])([^'"]+)\1\](\[)?/g
+
+function extractTranslationKeyRefs({ value }: { value: string }): { key: string, hasDynamicLocale: boolean }[] {
+    const refs: { key: string, hasDynamicLocale: boolean }[] = []
+    let match
+    TRANSLATION_KEY_REF_PATTERN.lastIndex = 0
+    while ((match = TRANSLATION_KEY_REF_PATTERN.exec(value)) !== null) {
+        refs.push({ key: match[2], hasDynamicLocale: match[3] === '[' })
+    }
+    return refs
+}
+
 function collectStringValues({ step }: { step: Step }): string[] {
     const result: string[] = []
 
@@ -632,7 +713,10 @@ function extractReferencedStepNames({ value }: { value: string }): string[] {
         // `variables` belongs beside `connections`: both are context roots, not steps. Reporting
         // `{{variables['X']}}` as "references a step that does not exist" put a false positive on
         // the exact form the engine's unresolved-reference error tells the author to switch to.
-        if (name !== 'connections' && name !== 'variables') {
+        // `$t` (translations) is a third root, checked here defensively even though `\w+` can
+        // never actually capture a name starting with `$` — future-proofing against this pattern
+        // being loosened rather than a live gap today.
+        if (name !== 'connections' && name !== 'variables' && name !== '$t') {
             names.add(name)
         }
     }
@@ -687,11 +771,13 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'translation_key', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
     template_reference: 'Template References',
+    translation_key: 'Unknown Translation Keys',
+    translation_locale: 'Translations Missing Locales',
     empty_branch: 'Empty Branches',
     subflow_payload: 'Subflow Payloads',
     inline_pause: 'Inline Subflows That Pause',
@@ -734,7 +820,7 @@ function formatValidationResult({ result, flowDisplayName }: { result: Validatio
 }
 
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
 }

@@ -58,6 +58,14 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         throw new EngineGenericError('MissingRunEnvironmentError', 'Parent run has no environment set; cannot execute an inline subflow')
     }
 
+    // In-process, so the parent's resolved run locale is passed straight through as a plain field
+    // — no wire format needed, unlike the queued `callFlow` path (`PARENT_RUN_LOCALE_HEADER`). An
+    // empty scope is a deliberate simplification: if the parent's own `localeSource` has not been
+    // resolved yet (no `$t` used before this step), it is resolved here against no step outputs,
+    // which only matters for a `localeSource` expression that itself reads step data — documented
+    // as a known limitation rather than threading the full execution state through this hook.
+    const inheritedRunLocale = await parentConstants.getRunLocale({ currentState: {} })
+
     // Matches the envelope `callableFlow.run()` hands back on the queue path
     // (`{ data: <payload>, callbackUrl }`, from the raw webhook POST body callFlow's
     // queue branch sends) — callFlow's existing templates read `trigger.output.data.*`
@@ -88,6 +96,8 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
         inlineDepth: parentConstants.inlineDepth + 1,
         executionStartedAt: parentConstants.executionStartedAt,
         insideConcurrentIteration: insideConcurrentIteration || parentConstants.insideConcurrentIteration,
+        flowVersionLocaleSource: flowVersion.localeSource,
+        inheritedRunLocale,
     })
 
     const withTriggerStep = await FlowExecutorContext.empty({

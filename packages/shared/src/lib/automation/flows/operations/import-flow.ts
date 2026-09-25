@@ -26,6 +26,13 @@ function createChangeNameOperation(displayName: string): FlowOperationRequest {
     }
 }
 
+function createUpdateLocaleSourceOperation(localeSource: string | null | undefined): FlowOperationRequest {
+    return {
+        type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+        request: { localeSource: localeSource ?? null },
+    }
+}
+
 function _getImportOperationsForSteps(step: FlowAction | FlowTrigger | undefined): FlowOperationRequest[] {
     const steps: FlowOperationRequest[] = []
     while (step) {
@@ -167,6 +174,7 @@ function _importFlow(flowVersion: FlowVersion, request: ImportFlowRequest): Flow
  
     return [
         createChangeNameOperation(request.displayName),
+        createUpdateLocaleSourceOperation(request.localeSource),
         ...deleteOperations,
         createUpdateTriggerOperation(request.trigger),
         ...importOperations,

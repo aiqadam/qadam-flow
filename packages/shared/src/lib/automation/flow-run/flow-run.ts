@@ -27,6 +27,13 @@ export function truncateFailedStepMessage(
 export const PARENT_RUN_ID_HEADER = 'ap-parent-run-id'
 export const FAIL_PARENT_ON_FAILURE_HEADER = 'ap-fail-parent-on-failure'
 export const RAW_PAYLOAD_HEADER = 'ap-raw-payload'
+// The parent's own resolved run locale (see `EngineConstants#getRunLocale`), sent by a queue-mode
+// `callFlow` submission so the child's locale chain has something to inherit from before falling
+// back to its own project's `defaultLocale` — mirrors the inline-child path in
+// `inline-flow-executor.ts`, which passes the same value in-process instead of over HTTP. Not
+// itself security-sensitive (worst case it only shifts which locale a lookup prefers, inside the
+// child's own project data), so unlike `parentRunId` it needs no re-verification downstream.
+export const PARENT_RUN_LOCALE_HEADER = 'ap-parent-run-locale'
 
 export type FlowRunId = ApId
 

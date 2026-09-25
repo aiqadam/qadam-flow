@@ -81,6 +81,10 @@ export const ProjectEntity = new EntitySchema<ProjectSchema>({
             ...ApIdSchema,
             nullable: true,
         },
+        defaultLocale: {
+            type: String,
+            nullable: true,
+        },
     },
     indices: [
         {
