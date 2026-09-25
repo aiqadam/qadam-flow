@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { Action, Qadam, QadamPropertyMap, Trigger } from '@aiqadam/qadams-framework'
-import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias, tryCatchSync } from '@aiqadam/shared'
+import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { z } from 'zod'
 import { utils } from '../utils'
 
@@ -24,6 +24,7 @@ const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 // `version` tolerated as missing or null so a package.json the old name-only index accepted stays
 // resolvable; it just never wins the same-version check.
 const distPackageJsonSchema = z.object({ name: z.string(), version: z.string().nullish() })
+const resolvedQadamPackageJsonSchema = z.object({ version: z.string() })
 
 export const qadamLoader = {
     loadQadamOrThrow: async (
@@ -48,11 +49,24 @@ export const qadamLoader = {
             const sharedDepsAlreadyLoaded = isColdLoad ? isQadamsFrameworkAlreadyLoaded(qadamPath) : false
 
             const importStart = performance.now()
-            const module = await import(qadamPath)
+            const { data: module, error: importError } = await tryCatch(() => import(qadamPath))
             const importMs = performance.now() - importStart
+            if (importError) {
+                // A failed cold attempt must not permanently mark the path as "seen" — a later,
+                // successful import of the same path (e.g. after a transient failure) still needs
+                // its own cold-load line. Only ever un-mark our own cold claim: a warm path
+                // (isColdLoad false) that fails here was already imported successfully once, and
+                // Node's own module cache means a retry would resolve from cache anyway — the
+                // failure is unrelated to import cost and must not turn a warm path cold again.
+                if (isColdLoad) {
+                    loggedColdQadamPaths.delete(qadamPath)
+                }
+                throw importError
+            }
 
             if (isColdLoad) {
-                logColdQadamLoad({ qadamName, qadamVersion, resolveMs, importMs, sharedDepsAlreadyLoaded })
+                const resolvedVersion = await resolveLoadedQadamVersion(qadamPath)
+                logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, resolveMs, importMs, sharedDepsAlreadyLoaded })
             }
 
             const qadam = extractQadamFromModule<Qadam>({
@@ -198,13 +212,30 @@ function isQadamsFrameworkAlreadyLoaded(qadamPath: string): boolean {
     return !isNil(data)
 }
 
-function logColdQadamLoad({ qadamName, qadamVersion, resolveMs, importMs, sharedDepsAlreadyLoaded }: LogColdQadamLoadParams): void {
+// #419 Phase 0: the version actually loaded, as opposed to `qadam` below (the requested
+// name@version) — a stale-pinned alias (e.g. `qadam-tables@0.3.1`) can fall through to a newer
+// bundled dist (#503). Read from the resolved package's own `package.json`, which always sits two
+// directories above its `dist/src/index.js` entry point (`buildDistIndex` and
+// `traverseAllParentFoldersToFindQadam` both lay out `<package root>/package.json` next to
+// `<package root>/src/index.js`). `null` when unreadable, rather than falling back to any part of
+// `qadamPath` itself: an installed/ARCHIVE qadam's path can carry a platform- or tenant-specific
+// segment, and this line must never leak one.
+async function resolveLoadedQadamVersion(qadamPath: string): Promise<string | null> {
+    const { data } = await tryCatch(async () => {
+        const packageJsonPath = path.join(path.dirname(path.dirname(qadamPath)), 'package.json')
+        const content = await fs.readFile(packageJsonPath, 'utf-8')
+        return resolvedQadamPackageJsonSchema.parse(JSON.parse(content)).version
+    })
+    return data ?? null
+}
+
+function logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, resolveMs, importMs, sharedDepsAlreadyLoaded }: LogColdQadamLoadParams): void {
     console.log(`[qadamLoader] cold load ${JSON.stringify({
         qadam: `${qadamName}@${qadamVersion}`,
+        resolvedVersion,
         resolveMs: roundMs(resolveMs),
         importMs: roundMs(importMs),
         sharedDepsAlreadyLoaded,
-        executionMode: process.env.AP_EXECUTION_MODE ?? 'unknown',
     })}`)
 }
 
@@ -375,6 +406,7 @@ type DistPackageEntry = {
 type LogColdQadamLoadParams = {
     qadamName: string
     qadamVersion: string
+    resolvedVersion: string | null
     resolveMs: number
     importMs: number
     sharedDepsAlreadyLoaded: boolean
