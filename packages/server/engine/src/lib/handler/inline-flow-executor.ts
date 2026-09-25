@@ -32,8 +32,8 @@ const zstdCompress = promisify(zstdCompressCallback)
 // and the child FlowRun row are all resolved by the WORKER (via resolveInlineFlow),
 // which scopes and depth-guards them from ITS OWN trusted job context — this
 // function never has to (and must never) trust a flowId's ownership on its own.
-export async function callFlowInline(params: { constants: EngineConstants, flowId: string, payload: unknown, insideConcurrentIteration: boolean }): Promise<CallFlowInlineResult> {
-    const { constants: parentConstants, flowId, payload, insideConcurrentIteration } = params
+export async function callFlowInline(params: { constants: EngineConstants, executionState: FlowExecutorContext, flowId: string, payload: unknown, insideConcurrentIteration: boolean }): Promise<CallFlowInlineResult> {
+    const { constants: parentConstants, executionState, flowId, payload, insideConcurrentIteration } = params
 
     const resolved = await utils.tryCatchAndThrowOnEngineError(() =>
         // `parentRunId: parentConstants.flowRunId` is the run THIS call is nested
@@ -59,13 +59,12 @@ export async function callFlowInline(params: { constants: EngineConstants, flowI
     }
 
     // In-process, so the parent's resolved run locale is passed straight through as a plain field
-    // — no wire format needed, unlike the queued `callFlow` path (`PARENT_RUN_LOCALE_HEADER`). An
-    // empty execution state is a deliberate simplification: if the parent's own `localeSource` has
-    // not been resolved yet (no `$t` used before this step), it is resolved here against no step
-    // outputs, which only matters for a `localeSource` expression that itself reads step data —
-    // documented as a known limitation rather than threading the parent's real, in-flight
-    // execution state through this hook (`callFlowInline` only receives `constants` today).
-    const inheritedRunLocale = await parentConstants.getRunLocale({ executionState: FlowExecutorContext.empty() })
+    // — no wire format needed, unlike the queued `callFlow` path (`PARENT_RUN_LOCALE_HEADER`). Uses
+    // the parent's real, in-flight `executionState` (threaded through from `qadam-executor.ts`'s own
+    // step context) rather than an empty one — the same lazy contract every other `run.locale()`
+    // caller gets: a `localeSource` referencing an earlier step's output resolves correctly as long
+    // as that step already ran before this inline `callFlow`, exactly like the queued path.
+    const inheritedRunLocale = await parentConstants.getRunLocale({ executionState })
 
     // Matches the envelope `callableFlow.run()` hands back on the queue path
     // (`{ data: <payload>, callbackUrl }`, from the raw webhook POST body callFlow's
