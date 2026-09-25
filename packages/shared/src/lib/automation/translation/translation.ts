@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { BaseModelSchema, Nullable } from '../../core/common/base-model'
 import { tryCatchSync } from '../../core/common/try-catch'
+import { formErrors } from '../../form-errors'
 
 export const TRANSLATION_KEY_REGEX = /^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_-]+)*$/
 export const TRANSLATION_KEY_MAX_LENGTH = 255
@@ -56,7 +57,7 @@ export const Translation = z.object({
 export type Translation = z.infer<typeof Translation>
 
 export const TranslationKeySchema = z.string()
-    .min(1, 'formErrors.required')
+    .min(1, formErrors.required)
     .max(TRANSLATION_KEY_MAX_LENGTH, 'translationKeyTooLong')
     .regex(TRANSLATION_KEY_REGEX, 'invalidTranslationKey')
 

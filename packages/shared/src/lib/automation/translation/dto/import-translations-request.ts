@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { formErrors } from '../../../form-errors'
 
 export enum TranslationImportFormat {
     FLAT = 'flat',
@@ -12,7 +13,7 @@ export enum TranslationImportMode {
 
 export const ImportTranslationsRequestBody = z.object({
     projectId: z.string(),
-    locale: z.string().min(1, 'formErrors.required'),
+    locale: z.string().min(1, formErrors.required),
     format: z.enum(TranslationImportFormat),
     mode: z.enum(TranslationImportMode),
     // Shape depends on `format` (flat: `{ "a.b": "value" }`; nested: `{ a: { b: "value" } }`) —
@@ -24,7 +25,7 @@ export type ImportTranslationsRequestBody = z.infer<typeof ImportTranslationsReq
 
 export const ExportTranslationsRequestQuery = z.object({
     projectId: z.string(),
-    locale: z.string().min(1, 'formErrors.required'),
+    locale: z.string().min(1, formErrors.required),
     format: z.enum(TranslationImportFormat).optional(),
 })
 export type ExportTranslationsRequestQuery = z.infer<typeof ExportTranslationsRequestQuery>
