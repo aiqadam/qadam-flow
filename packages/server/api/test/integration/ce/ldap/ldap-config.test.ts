@@ -1,7 +1,10 @@
+import { PlatformRole, PrincipalType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import pino from 'pino'
 import { ldapConfigService } from '../../../../src/app/authentication/ldap/ldap-config-service'
+import { generateMockToken } from '../../../helpers/auth'
+import { mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -61,6 +64,10 @@ describe('Platform LDAP config API', () => {
             tlsMode: 'ldaps',
         }))
         expect(response.statusCode).not.toBe(StatusCodes.OK)
+        // Asserts the specific issue key rather than just "not OK": a generic status-code check
+        // alone would still pass if the schema started rejecting this request for the wrong
+        // reason (or stopped validating the URL/tlsMode pairing at all and failed elsewhere).
+        expect(response.json().message).toContain('invalidLdapUrlForTlsMode')
     })
 
     it('rejects a userFilter with no {username} placeholder', async () => {
@@ -137,5 +144,77 @@ describe('Platform LDAP config API', () => {
         const body = response.json()
         expect(body.success).toBe(false)
         expect(['ALLOW_LIST', 'CONNECT']).toContain(body.stage)
+    })
+
+    // M3: a stored bind password is otherwise exfiltratable by repointing the connection at an
+    // attacker-controlled host and letting the server dial out with the old bind credentials.
+    describe('bind password re-supply on connection-sensitive changes (M3)', () => {
+        it('rejects a URL change without re-supplying the bind password', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig())
+            const update = await ctx.post('/v1/platform-ldap-configs', {
+                ...validConfig(),
+                url: 'ldaps://attacker.example.com:636',
+                bindPassword: undefined,
+            })
+            expect(update.statusCode).not.toBe(StatusCodes.OK)
+        })
+
+        it('rejects a bindDn change without re-supplying the bind password', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig())
+            const update = await ctx.post('/v1/platform-ldap-configs', {
+                ...validConfig(),
+                bindDn: 'cn=other,dc=example,dc=com',
+                bindPassword: undefined,
+            })
+            expect(update.statusCode).not.toBe(StatusCodes.OK)
+        })
+
+        it('rejects a tlsVerify change without re-supplying the bind password', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ tlsVerify: true }))
+            const update = await ctx.post('/v1/platform-ldap-configs', {
+                ...validConfig(),
+                tlsVerify: false,
+                bindPassword: undefined,
+            })
+            expect(update.statusCode).not.toBe(StatusCodes.OK)
+        })
+
+        it('allows an unrelated field change without re-supplying the bind password', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig())
+            const update = await ctx.post('/v1/platform-ldap-configs', {
+                ...validConfig(),
+                jitProvisioning: false,
+                bindPassword: undefined,
+            })
+            expect(update.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    // B2: only the platform owner may enable linking a directory entry to an existing local
+    // account by email — any other admin could otherwise use the flag to take over accounts they
+    // do not own.
+    describe('linkExistingByEmail is owner-only (B2)', () => {
+        it('allows the platform owner to enable linkExistingByEmail', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects a non-owner admin enabling linkExistingByEmail', async () => {
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ linkExistingByEmail: true }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
     })
 })

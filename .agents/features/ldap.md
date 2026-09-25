@@ -42,9 +42,9 @@ was read or copied (`.agents/rules/edition-safety.md`).
 | Column | Type | Notes |
 |---|---|---|
 | platformId | string | unique FK → `platform`, `ON DELETE CASCADE` |
-| config | jsonb | `LdapConfig`: url, tlsMode (`ldaps`\|`starttls`), baseDn, bindDn, userFilter, attributeMap, tlsVerify, jitProvisioning, linkExistingByEmail, sessionTtlSeconds (3600–604800, default 43200), enabled |
-| bindPassword | jsonb | `EncryptedObject`, required |
-| caCertificate | jsonb, nullable | `EncryptedObject`, PEM validated with `crypto.X509Certificate` at save |
+| config | json | `LdapConfig`: url, tlsMode (`ldaps`\|`starttls`), baseDn, bindDn, userFilter, attributeMap, tlsVerify, jitProvisioning, linkExistingByEmail, sessionTtlSeconds (3600–604800, default 43200), enabled |
+| bindPassword | `EncryptedObject` (json) | required; re-supply is mandatory whenever `url`, `bindDn`, `tlsVerify`, `tlsMode` or `caCertificate` changes on an update — otherwise the old bind credentials would silently start being sent to a newly-repointed host |
+| caCertificate | `EncryptedObject` (json), nullable | PEM validated with `crypto.X509Certificate` at save |
 
 ### `user_federated_identity`
 | Column | Type | Notes |
@@ -74,12 +74,54 @@ was read or copied (`.agents/rules/edition-safety.md`).
 ### `ldapAuthnService.signIn`
 1. Refuse an empty password before any lookup (defense in depth; the zod schema already refuses it at the HTTP boundary)
 2. Load the platform's resolved config; refuse if absent or disabled (`LDAP_DIRECTORY_UNREACHABLE`)
-3. Service bind → RFC 4515-escaped search (`sizeLimit: 2`, exactly one entry required) → user bind on a **new** connection → read attributes → unbind
+3. Service bind → RFC 4515-escaped search on the **normalised** username (`ldapUsernameUtils.normalize`: trim, collapse whitespace, NFKC, lowercase — the same normalisation the rate limiter keys on, so the two can never disagree about "the same username"; `sizeLimit: 2`, exactly one entry required) → user bind on a **new** connection → read attributes → unbind
 4. Resolve the platform user, in order:
-   - `user_federated_identity` lookup by `(platformId, LDAP, subject)` → existing user (INACTIVE refused, never reactivated)
-   - else `UserIdentity` lookup by email (case-insensitive): if found, `linkExistingByEmail` off → `LDAP_ACCOUNT_COLLISION`; on and the identity has users on ≤1 platform → link (flip provider to `LDAP`, scramble password, rotate `tokenVersion`, create the federated row); otherwise → `LDAP_ACCOUNT_COLLISION`
+   - `user_federated_identity` lookup by `(platformId, LDAP, subject)` → existing user (INACTIVE refused, never reactivated). This is the only unguarded path — everything below runs `assertIdentityIsNotPrivilegedElsewhere` first.
+   - else `UserIdentity` lookup by email (case-insensitive). Before doing anything with it, `assertIdentityIsNotPrivilegedElsewhere` refuses (`LDAP_ACCOUNT_COLLISION`, indistinguishable from a plain collision) whenever the identity has a user on any *other* platform, or holds `platformRole: ADMIN` on any platform, or *is* the platform owner anywhere — **the owner's break-glass**: no directory, however configured, can ever link or adopt the owner, so their local password always keeps working. Past that gate:
+     - identity already `provider === LDAP` (no federated row for *this* platform — deleted user, half-finished JIT, rotated `objectGUID`, or a first sign-in on a second eligible platform) → recover: `getOrCreateWithProject`, then create the federated row if absent, or refuse (`LDAP_ACCOUNT_COLLISION`) if one exists with a *different* subject — a deliberate refusal, not a re-point, since silently repointing would hand a rotated directory entry someone else's account. No password scramble on this path; there is no local password to protect.
+     - else `linkExistingByEmail` off → `LDAP_ACCOUNT_COLLISION`; on → link (flip provider to `LDAP`, scramble password, rotate `tokenVersion`, create the federated row)
    - else, `jitProvisioning` on → `userIdentityService.create` (verified, random password, provider `LDAP`) + `userService.getOrCreateWithProject` (MEMBER + personal project); off → `INVALID_CREDENTIALS` (anti-enumeration)
+   - Every branch below the fast subject-match one runs inside one DB transaction (`transaction()` in `core/db/transaction.ts`) — identity, user/project and federated row are created/linked atomically, so a mid-way failure leaves nothing half-created (in particular, never an identity with no federated row, which would be a permanently unreachable account: local password sign-in also refuses `provider === LDAP`).
 5. Mint a token via `accessTokenManager.generateToken(principal, config.sessionTtlSeconds)` and emit `USER_SIGNED_IN`
+
+### `linkExistingByEmail` is owner-only
+`ldapConfigService.upsert` rejects (`AUTHORIZATION`, 403) any attempt to set `linkExistingByEmail:
+true` unless the caller is the platform's own owner (`platform.ownerId`) — any other admin could
+otherwise configure a directory they control and use the flag against every non-admin local
+account. Turning it back off, or leaving it unchanged, is unrestricted.
+
+### `/switch-platform` and the LDAP session TTL
+Reissuing a token on `/switch-platform` used to reset the clock to the default 7-day TTL,
+silently undoing a directory admin's own `sessionTtlSeconds` every time an LDAP-signed-in user
+switched platforms. For an LDAP identity, the reissued token is capped at the *current* token's
+own remaining `exp` (never extended by switching to a platform with a longer configured TTL) —
+`authentication.controller.ts` decodes (not re-verifies; the request already passed auth
+middleware) the incoming JWT's `exp` and threads it to `authentication.service.ts`, which applies
+the cap only when `identity.provider === LDAP`. Every other identity provider is unaffected.
+
+### Bind password re-supply on connection-sensitive changes
+`ldapConfigService.upsert` rejects an update that changes `url`, `bindDn`, `tlsVerify`,
+`tlsMode` or `caCertificate` without also re-supplying `bindPassword` — otherwise a stored bind
+password could be exfiltrated by repointing the connection at an attacker-controlled host and
+letting the server dial out with the old credentials. `caCertificate` is compared by
+"was this field touched at all" rather than by value (it is stored encrypted, so telling
+"resent unchanged" apart from "actually different" would mean decrypting on every unrelated
+update); rounding toward asking for the password more often than strictly necessary is the safe
+direction.
+
+### Rate limiting
+`ldapSignInRateLimit.assertNotRateLimited` keeps two independent fixed-window Redis counters, on
+top of the per-route `@fastify/rate-limit` bucket every `/v1/authn/*` route already gets:
+- `ldap-sign-in:{platformId}:{ip}:{normalizedUsername}` — caps attempts against one *username*
+  from one *IP* (10/60s).
+- `ldap-sign-in:{platformId}:{normalizedUsername}` — caps attempts against one *username*
+  regardless of source IP, which the per-IP bucket alone cannot do for a botnet (30/60s).
+
+Both keys use `ldapUsernameUtils.normalize`, the same normalisation the directory search applies,
+so a Unicode-equivalent username can neither dodge the limit nor land in a bucket the actual
+sign-in attempt disagrees with. Each counter increments via one Redis `MULTI` (`INCR` +
+`EXPIRE ... NX`), not a separate `INCR`-then-conditional-`EXPIRE`, closing the window where a
+concurrent request could observe the key before it has a TTL.
 
 ### Errors
 `LDAP_DIRECTORY_UNREACHABLE`, `LDAP_BIND_ACCOUNT_REJECTED`, `LDAP_EMAIL_ATTRIBUTE_MISSING`,
@@ -119,3 +161,25 @@ versa.
 - **Errors never carry the submitted password.** `ldapts`'s `ResultCodeError` subclasses (e.g.
   `InvalidCredentialsError`) wrap only the numeric LDAP result code and the server's own RFC 4511
   `errorMessage` diagnostic text — never the request's bind DN or password.
+
+## Known gaps (not yet fixed)
+- **No timeout on the StartTLS handshake itself** (`ldapts`'s `startTLS()` calls
+  `tls.connect({ socket })` with no deadline of its own) — a directory that accepts the TCP
+  connection but never completes the TLS upgrade can hold a connection-slot indefinitely.
+  `LDAP_OPERATION_TIMEOUT_MS` bounds every *operation* after a connection is established, not this
+  step.
+- **No timeout or cap on the connection-slot waiter queue** (`ldap-client.ts`'s
+  `acquireConnectionSlot`) — a burst of requests past `MAX_CONCURRENT_LDAP_CONNECTIONS` queues
+  unboundedly rather than failing fast, and the concurrency cap itself only covers the `connect()`
+  call, not the whole bind+search+bind operation, so it undercounts real concurrent directory load.
+- **No cap on the number of vetted IPs tried per connection attempt** — `connect()` iterates every
+  IP `resolveVettedIps` returns.
+- `/test`'s connection leak on a mid-flow failure is fixed (see "Bind password re-supply" section
+  above and `ldap-config-service.ts`'s `test()` — unbind now runs in a `finally`), but `/test` does
+  not yet report "no config saved" as its own distinct stage from a real `ALLOW_LIST` failure, and
+  a `SUCCESS` result does not yet verify that the email/subject attributes actually resolve for the
+  test user.
+- Attribute lookups (`ldap-attributes.ts`) are case-sensitive, including `objectGUID`.
+- `tlsVerify: false` does not yet log a warning on every connect.
+- An IPv6 literal in the configured URL is not yet unwrapped from its brackets before use as a TLS
+  `servername`.

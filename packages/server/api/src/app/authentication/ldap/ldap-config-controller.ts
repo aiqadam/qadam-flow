@@ -23,7 +23,7 @@ export const ldapConfigController: FastifyPluginAsyncZod = async (app) => {
 
     app.post('/', UpsertLdapConfig, async (request) => {
         const platformId = request.principal.platform.id
-        return ldapConfigService(app.log).upsert({ platformId, request: request.body })
+        return ldapConfigService(app.log).upsert({ platformId, callingUserId: request.principal.id, request: request.body })
     })
 
     app.delete('/', DeleteLdapConfig, async (request, reply) => {

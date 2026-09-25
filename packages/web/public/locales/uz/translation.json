@@ -2088,7 +2088,7 @@
   "Before the run runs out of time, the loop pauses between items and continues with a fresh time budget, so it can work through more items than fit in one run. An item that was running when the run was stopped some other way may be sent again on retry.": "Ishga tushirish vaqti tugashidan oldin tsikl elementlar orasida pauza qiladi va yangi vaqt byudjeti bilan davom etadi, shuning uchun bitta ishga tushirishga sig‘maydigan ko‘proq elementni ishlay oladi. Ishga tushirish boshqacha to‘xtatilganda bajarilayotgan element qayta urinishda yana yuborilishi mumkin.",
   "Enter a whole number from {min} to {max}": "{min} dan {max} gacha butun son kiriting",
   "Enter a number above {min} and up to {max}": "{min} dan katta va {max} dan oshmaydigan son kiriting",
-  "invalidLdapUserFilter": "Filtr {username} joy egallovchisini aynan bir marta o'z ichiga olishi kerak",
+  "invalidLdapUserFilter": "Filtr '{username}' joy egallovchisini aynan bir marta o'z ichiga olishi kerak",
   "invalidLdapSessionTtl": "Sessiya davomiyligi 1 soatdan 7 kungacha bo'lishi kerak",
   "invalidLdapUrlForTlsMode": "URL sxemasi tanlangan TLS rejimiga mos kelishi kerak (LDAPS uchun ldaps://, StartTLS uchun ldap://)",
   "invalidLdapUsername": "Foydalanuvchi nomi juda uzun",

@@ -182,9 +182,28 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
             userId: user.id,
             platformId: platform.id,
             projectId: null,
+            expiresInSeconds: await getSwitchPlatformExpiresInSeconds({ identityId: params.identityId, currentTokenExpiresAtSeconds: params.currentTokenExpiresAtSeconds, log }),
         })
     },
 })
+
+// A directory admin sets the LDAP session TTL specifically so a revoked/expired directory account
+// stops holding a Qadam Flow session past that bound — `switch-platform` reissuing a fresh 7-day
+// default token would silently undo that ceiling every time an LDAP-signed-in user switched
+// platforms. Preferred fix over "cap by the target platform's own LDAP TTL": the token this call
+// reissues is a *continuation* of the caller's own current session, not a fresh directory sign-in,
+// so it must never outlive what that current token already promised — capping it at the *target*
+// platform's TTL would let a caller switch onto a platform with a longer configured TTL and gain
+// session time back, which the "never outlive" framing exists specifically to prevent. Every
+// non-LDAP identity is unaffected: this only shortens (never extends) the default.
+async function getSwitchPlatformExpiresInSeconds({ identityId, currentTokenExpiresAtSeconds, log }: GetSwitchPlatformExpiresInSecondsParams): Promise<number | undefined> {
+    const identity = await userIdentityService(log).getOneOrFail({ id: identityId })
+    if (identity.provider !== UserIdentityProvider.LDAP || isNil(currentTokenExpiresAtSeconds)) {
+        return undefined
+    }
+    const remainingSeconds = currentTokenExpiresAtSeconds - Math.floor(Date.now() / 1000)
+    return Math.max(remainingSeconds, 1)
+}
 
 async function assertUserCanSwitchToPlatform(platform: PlatformWithoutSensitiveData | undefined): Promise<void> {
     if (isNil(platform)) {
@@ -274,4 +293,11 @@ type SignInWithPasswordParams = {
 type SwitchPlatformParams = {
     identityId: string
     platformId: string
+    currentTokenExpiresAtSeconds?: number
+}
+
+type GetSwitchPlatformExpiresInSecondsParams = {
+    identityId: string
+    currentTokenExpiresAtSeconds?: number
+    log: FastifyBaseLogger
 }

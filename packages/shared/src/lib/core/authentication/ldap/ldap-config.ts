@@ -40,7 +40,7 @@ const ldapConfigShape = {
 }
 
 // A directory login page cannot be more permissive than the transport it authenticates over —
-// `tlsMode` only ever names the two encrypted forms (RFC 4513 ยง3), and the scheme check below
+// `tlsMode` only ever names the two encrypted forms (RFC 4513 §3), and the scheme check below
 // pins the URL to the one that matches, so a plaintext `ldap://` config with no StartTLS upgrade
 // is structurally unrepresentable rather than merely discouraged.
 export const LdapConfig = z.object(ldapConfigShape).superRefine((config, ctx) => {

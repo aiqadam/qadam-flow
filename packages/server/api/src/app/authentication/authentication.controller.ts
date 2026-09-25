@@ -7,9 +7,11 @@ import { ApplicationEventName,
     UserIdentityProvider,
 } from '@aiqadam/shared'
 import { RateLimitOptions } from '@fastify/rate-limit'
+import { FastifyRequest } from 'fastify'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { securityAccess } from '../core/security/authorization/fastify-security'
 import { applicationEvents } from '../helper/application-events'
+import { jwtUtils } from '../helper/jwt-utils'
 import { networkUtils } from '../helper/network-utils'
 import { system } from '../helper/system/system'
 import { AppSystemProp } from '../helper/system/system-props'
@@ -75,9 +77,27 @@ export const authenticationController: FastifyPluginAsyncZod = async (
         return authenticationService(request.log).switchPlatform({
             identityId: user.identityId,
             platformId: request.body.platformId,
+            currentTokenExpiresAtSeconds: getCurrentTokenExpiresAtSeconds(request),
         })
     })
 
+}
+
+// The authorization middleware already verified this token before the handler ran — this reads
+// the already-trusted `exp` claim back out, purely so `switchPlatform` can cap an LDAP identity's
+// reissued token at the current session's own remaining lifetime (see the comment on
+// `getSwitchPlatformExpiresInSeconds` in `authentication.service.ts`). `jwtUtils.decode` never
+// re-checks the signature, which is fine here — a forged token could not have reached this
+// far — but that also means this must never be used for anything but reading a claim off a
+// request the middleware already trusts.
+function getCurrentTokenExpiresAtSeconds(request: FastifyRequest): number | undefined {
+    const header = request.headers.authorization
+    if (isNil(header)) {
+        return undefined
+    }
+    const token = header.replace(/^Bearer\s+/i, '')
+    const decoded = jwtUtils.decode<{ exp?: number }>({ jwt: token })
+    return decoded?.payload.exp
 }
 
 const rateLimitOptions: RateLimitOptions = {

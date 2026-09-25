@@ -81,7 +81,7 @@ async function connect({ config }: ConnectParams): Promise<Client> {
             }
             else {
                 // `Client` only opens the socket lazily, on its first operation — an unauthenticated
-                // bind (RFC 4513 ยง5.1.2) forces that now, using a hardcoded empty DN/password (never
+                // bind (RFC 4513 §5.1.2) forces that now, using a hardcoded empty DN/password (never
                 // the caller's own credentials), purely to prove the TCP+TLS handshake this IP
                 // completed. Whether the directory then accepts or refuses an anonymous bind is
                 // itself a protocol response (a `ResultCodeError`), which proves connectivity either
@@ -132,7 +132,7 @@ async function searchForUser({ client, baseDn, userFilter, username, attributeMa
         // `sizeLimit: 2` is deliberate: one match is a normal result and any count above it is a
         // filter or directory-shape problem the caller must refuse rather than pick a winner from
         // — the exact count matters here, so the request asks for one more than "exactly one" can
-        // ever need. Search references (RFC 4511 ยง4.5.3) are never followed: this reads only
+        // ever need. Search references (RFC 4511 §4.5.3) are never followed: this reads only
         // `searchEntries`, so a referral response is invisible rather than chased.
         result = await client.search(baseDn, {
             scope: 'sub',
@@ -157,7 +157,7 @@ async function searchForUser({ client, baseDn, userFilter, username, attributeMa
 }
 
 // Always binds on a brand-new connection rather than reusing the service-bind connection — RFC
-// 4513 ยง5.1.2's rebind-in-place would mean falling back to the service account's own authorization
+// 4513 §5.1.2's rebind-in-place would mean falling back to the service account's own authorization
 // on a failed user bind, which is exactly the ambiguity a "new connection per bind" design avoids.
 async function bindAsUser({ config, userDn, password }: BindAsUserParams): Promise<void> {
     const client = await withConnectionSlot(() => connect({ config }))
