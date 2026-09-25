@@ -240,6 +240,13 @@ export type RunContext = {
   createWaitpoint: CreateWaitpointHook;
   waitForWaitpoint: WaitForWaitpointHook;
   callFlowInline: CallFlowInlineHook;
+  /**
+   * This run's resolved translation locale (own `localeSource`, or inherited from a parent
+   * subflow), already resolved once by the engine before this context was built — read-only,
+   * never a hook to call. `null` when nothing resolved to a locale (no `localeSource`, no
+   * inherited parent, no project default either).
+   */
+  locale: string | null;
 }
 
 export type OnStartContext<

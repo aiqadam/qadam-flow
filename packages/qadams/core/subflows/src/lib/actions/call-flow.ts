@@ -5,7 +5,7 @@ import {
   Property,
 } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { ExecutionType, FAIL_PARENT_ON_FAILURE_HEADER, FlowStatus, isNil, PARENT_RUN_ID_HEADER } from '@aiqadam/shared';
+import { ExecutionType, FAIL_PARENT_ON_FAILURE_HEADER, FlowStatus, isNil, PARENT_RUN_ID_HEADER, PARENT_RUN_LOCALE_HEADER, spreadIfDefined } from '@aiqadam/shared';
 import { callableFlowDropdown, CallableFlowRequest, CallableFlowResponse, CallableFlowValue, findFlowByExternalIdOrThrow } from '../common';
 
 export const callFlow = createAction({
@@ -148,6 +148,11 @@ export const callFlow = createAction({
         'Content-Type': 'application/json',
         [PARENT_RUN_ID_HEADER]: context.run.id,
         [FAIL_PARENT_ON_FAILURE_HEADER]: context.propsValue.waitForResponse ? 'true' : 'false',
+        // The child inherits this run's resolved locale (own `localeSource`, or one already
+        // inherited from further up the chain) so `$t[...]` in the child resolves the same way an
+        // Inline call's direct field-pass would. Omitted entirely when nothing resolved to a
+        // locale, so the consumer's own project-default fallback still applies.
+        ...spreadIfDefined(PARENT_RUN_LOCALE_HEADER, context.run.locale),
       },
       body: {
         data: payload,

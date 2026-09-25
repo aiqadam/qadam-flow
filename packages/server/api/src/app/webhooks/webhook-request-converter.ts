@@ -8,6 +8,7 @@ import {
     FlowRun,
     isMultipartFile,
     isNil,
+    localeUtil,
     PARENT_RUN_ID_HEADER,
     PARENT_RUN_LOCALE_HEADER,
     tryCatchSync,
@@ -76,8 +77,22 @@ export function extractHeaderFromRequest(request: FastifyRequest): Pick<FlowRun,
         failParentOnFailure: request.headers[FAIL_PARENT_ON_FAILURE_HEADER] === 'true',
         parentWaitpointId: proof?.waitpointId,
         parentSlotId: proof?.slotId,
-        inheritedRunLocale: typeof inheritedRunLocaleHeader === 'string' ? inheritedRunLocaleHeader : undefined,
+        inheritedRunLocale: extractInheritedRunLocale(inheritedRunLocaleHeader),
     }
+}
+
+// `ap-parent-run-locale` reaches here from two kinds of caller: our own queue-mode `callFlow`
+// (already canonicalized when it read `context.run.locale`), and any other caller of this public
+// webhook endpoint, including an external one that can set arbitrary headers. Neither is trusted
+// as-is — `localeUtil.canonicalize` both length-caps (`MAX_LOCALE_TAG_LENGTH`) and rejects
+// anything `Intl.getCanonicalLocales` can't parse as BCP-47, so a garbage value degrades to "no
+// inherited locale" (falls through to the run's own `localeSource`/project default) rather than
+// propagating unsanitized into a translation lookup.
+function extractInheritedRunLocale(header: string | string[] | undefined): string | undefined {
+    if (typeof header !== 'string') {
+        return undefined
+    }
+    return localeUtil.canonicalize(header) ?? undefined
 }
 
 /**

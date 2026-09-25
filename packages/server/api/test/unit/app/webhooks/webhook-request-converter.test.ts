@@ -1,4 +1,4 @@
-import { apId, FAIL_PARENT_ON_FAILURE_HEADER, PARENT_RUN_ID_HEADER } from '@aiqadam/shared'
+import { apId, FAIL_PARENT_ON_FAILURE_HEADER, PARENT_RUN_ID_HEADER, PARENT_RUN_LOCALE_HEADER } from '@aiqadam/shared'
 import { extractHeaderFromRequest, isBinaryContentType } from '../../../../src/app/webhooks/webhook-request-converter'
 
 describe('isBinaryContentType', () => {
@@ -186,6 +186,64 @@ describe('extractHeaderFromRequest', () => {
             const result = extractHeaderFromRequest(request)
             expect(result.parentWaitpointId).toBe(waitpointId)
             expect(result.parentSlotId).toBeUndefined()
+        })
+    })
+
+    // `ap-parent-run-locale` reaches this endpoint from our own queue-mode `callFlow` (already
+    // canonical) and from any other caller of a public webhook (untrusted) alike, so it must be
+    // canonicalized and length-capped here rather than trusted as-is.
+    describe('inheritedRunLocale extraction', () => {
+        it('canonicalizes a well-formed BCP-47 tag', () => {
+            const request = {
+                headers: {
+                    [PARENT_RUN_LOCALE_HEADER]: 'ru-ru',
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.inheritedRunLocale).toBe('ru-RU')
+        })
+
+        it('returns undefined when the header is missing', () => {
+            const request = {
+                headers: {},
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.inheritedRunLocale).toBeUndefined()
+        })
+
+        it('drops a garbage value instead of propagating it unsanitized', () => {
+            const request = {
+                headers: {
+                    [PARENT_RUN_LOCALE_HEADER]: '<script>alert(1)</script>',
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.inheritedRunLocale).toBeUndefined()
+        })
+
+        it('drops a value longer than MAX_LOCALE_TAG_LENGTH instead of propagating it unsanitized', () => {
+            const request = {
+                headers: {
+                    [PARENT_RUN_LOCALE_HEADER]: 'a'.repeat(200),
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.inheritedRunLocale).toBeUndefined()
+        })
+
+        it('drops a duplicated header value (string[]) rather than picking one', () => {
+            const request = {
+                headers: {
+                    [PARENT_RUN_LOCALE_HEADER]: ['ru', 'en'],
+                },
+            } as never
+
+            const result = extractHeaderFromRequest(request)
+            expect(result.inheritedRunLocale).toBeUndefined()
         })
     })
 })
