@@ -60,14 +60,19 @@ describe('qadamLoader.loadQadamOrThrow — cold-load logging (#419 Phase 0)', ()
 
     // #419 review: a failed cold import must not log a cold-load line, and must not leave the path
     // permanently marked "seen" in `loggedColdQadamPaths` (verified by reading the source: the
-    // `import()` line is wrapped so a throw un-marks the path before rethrowing). A genuine
-    // "retry succeeds this time" case cannot be exercised end-to-end here: Node's dynamic `import()`
-    // caches a failure at the resolved-specifier level for the lifetime of the process — a second
-    // `import()` of the *exact same* path rejects with the *original* error even after the file on
-    // disk is fixed, confirmed against plain Node (no bundler, no vitest) for both a runtime `throw`
-    // and a `SyntaxError`. So the Set cleanup is real bookkeeping hygiene, but an end-to-end test
-    // that reuses the same failed path can only ever assert "still no log line" — true regardless of
-    // whether the cleanup ran, so it would pass for the wrong reason and is not included here.
+    // `import()` line is wrapped so a throw un-marks the path before rethrowing). Whether a retry
+    // can actually reach a fresh, successful import of the exact same path depends on *why* the
+    // first attempt failed: Node caches a failure that happens during evaluation (a runtime
+    // `throw`, a `SyntaxError`) at the resolved-specifier level for the process's lifetime — a
+    // second `import()` of that exact path rejects with the *original* error even after the file on
+    // disk is fixed, confirmed against plain Node (no bundler, no vitest). But plain Node does
+    // *not* cache `ERR_MODULE_NOT_FOUND` — e.g. a half-written install where the qadam's directory
+    // already exists but its entry file is still being written appears a moment later — and there
+    // the Set cleanup is exactly what lets that later, genuinely successful import get its own
+    // cold-load line. That specific case can't be exercised in *this* test harness, though: vitest's
+    // vite-node loader caches both kinds of failure (confirmed the same way), so no fix-dependent
+    // end-to-end test is possible here — only that a failed attempt logs nothing, which holds either
+    // way and is what the test below covers.
     describe('a failed import does not log a cold-load line', () => {
         const qadamName = '@aiqadam/qadam-419-throws-on-import'
         const qadamVersion = '0.0.1'
@@ -100,7 +105,69 @@ describe('qadamLoader.loadQadamOrThrow — cold-load logging (#419 Phase 0)', ()
             expect(coldLoadLogLines(consoleLogSpy)).toHaveLength(0)
         })
     })
+
+    describe('resolvedVersion is read from the resolved package\'s own package.json', () => {
+        let workspace: string
+        let previousCustomPaths: string | undefined
+
+        beforeEach(async () => {
+            workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'qadam-loader-cold-log-'))
+            previousCustomPaths = process.env.AP_CUSTOM_PIECES_PATHS
+            process.env.AP_CUSTOM_PIECES_PATHS = workspace
+        })
+
+        afterEach(async () => {
+            if (previousCustomPaths === undefined) {
+                delete process.env.AP_CUSTOM_PIECES_PATHS
+            }
+            else {
+                process.env.AP_CUSTOM_PIECES_PATHS = previousCustomPaths
+            }
+            await fs.rm(workspace, { recursive: true, force: true })
+        })
+
+        it('reports the version from the installed package\'s own package.json, not the requested one', async () => {
+            const qadamName = '@aiqadam/qadam-419-resolved-version'
+            const qadamVersion = '0.0.1'
+            const installedDir = await installFixture({ workspace, qadamName, qadamVersion })
+            await fs.writeFile(path.join(installedDir, 'package.json'), JSON.stringify({ version: '0.0.2' }))
+
+            await expect(qadamLoader.loadQadamOrThrow({ qadamName, qadamVersion, devQadams: [] })).rejects.toThrow()
+
+            const logs = coldLoadLogLines(consoleLogSpy)
+            expect(logs).toHaveLength(1)
+            const line = parseColdLoadLine(logs[0])
+            expect(line.qadam).toBe(`${qadamName}@${qadamVersion}`)
+            expect(line.resolvedVersion).toBe('0.0.2')
+        })
+
+        it('reports resolvedVersion=null when the installed package has no package.json', async () => {
+            const qadamName = '@aiqadam/qadam-419-resolved-version-missing'
+            const qadamVersion = '0.0.1'
+            await installFixture({ workspace, qadamName, qadamVersion })
+            // Deliberately no package.json written next to `src/index.js`.
+
+            await expect(qadamLoader.loadQadamOrThrow({ qadamName, qadamVersion, devQadams: [] })).rejects.toThrow()
+
+            const logs = coldLoadLogLines(consoleLogSpy)
+            expect(logs).toHaveLength(1)
+            expect(parseColdLoadLine(logs[0]).resolvedVersion).toBeNull()
+        })
+    })
 })
+
+// Lays out `<workspace>/qadams/<name>-<version>/node_modules/<name>/src/index.js` — the shape
+// `traverseAllParentFoldersToFindQadam` resolves via `AP_CUSTOM_PIECES_PATHS` — and returns the
+// installed package's own root directory (the sibling of `src`, where `package.json` belongs).
+async function installFixture({ workspace, qadamName, qadamVersion }: InstallFixtureParams): Promise<string> {
+    const alias = `${qadamName}-${qadamVersion}`
+    const installedDir = path.join(workspace, 'qadams', alias, 'node_modules', qadamName)
+    await fs.mkdir(path.join(installedDir, 'src'), { recursive: true })
+    // Exports nothing `extractQadamFromModule` recognises, so the call rejects after the cold-load
+    // line is logged — these tests only care about what got logged, not about a full successful load.
+    await fs.writeFile(path.join(installedDir, 'src', 'index.js'), 'module.exports = {}\n')
+    return installedDir
+}
 
 async function readPackageVersion(packageJsonPath: string): Promise<string> {
     const parsed: unknown = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'))
@@ -137,4 +204,10 @@ type ColdLoadLogLine = {
     resolveMs: number
     importMs: number
     sharedDepsAlreadyLoaded: boolean
+}
+
+type InstallFixtureParams = {
+    workspace: string
+    qadamName: string
+    qadamVersion: string
 }

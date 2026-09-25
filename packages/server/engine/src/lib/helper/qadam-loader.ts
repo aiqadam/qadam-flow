@@ -215,9 +215,10 @@ function isQadamsFrameworkAlreadyLoaded(qadamPath: string): boolean {
 // #419 Phase 0: the version actually loaded, as opposed to `qadam` below (the requested
 // name@version) — a stale-pinned alias (e.g. `qadam-tables@0.3.1`) can fall through to a newer
 // bundled dist (#503). Read from the resolved package's own `package.json`, which always sits two
-// directories above its `dist/src/index.js` entry point (`buildDistIndex` and
-// `traverseAllParentFoldersToFindQadam` both lay out `<package root>/package.json` next to
-// `<package root>/src/index.js`). `null` when unreadable, rather than falling back to any part of
+// directories above the entry point regardless of which layout resolved it: `dist/src/index.js`
+// for bundled and dev qadams (`buildDistIndex`), `<pkg>/src/index.js` for installed ones
+// (`traverseAllParentFoldersToFindQadam`) — either way, `package.json` is the entry file's `src`
+// directory's own sibling. `null` when unreadable, rather than falling back to any part of
 // `qadamPath` itself: an installed/ARCHIVE qadam's path can carry a platform- or tenant-specific
 // segment, and this line must never leak one.
 async function resolveLoadedQadamVersion(qadamPath: string): Promise<string | null> {
