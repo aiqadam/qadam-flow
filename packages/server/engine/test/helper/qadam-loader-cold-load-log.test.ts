@@ -4,16 +4,16 @@ import path from 'path'
 import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 
 const SUBFLOWS_NAME = '@aiqadam/qadam-subflows'
-const TABLES_NAME = '@aiqadam/qadam-tables'
+const DELAY_NAME = '@aiqadam/qadam-delay'
 
 describe('qadamLoader.loadQadamOrThrow — cold-load logging (#419 Phase 0)', () => {
     let subflowsVersion: string
-    let tablesVersion: string
+    let delayVersion: string
     let consoleLogSpy: ReturnType<typeof vi.spyOn>
 
     beforeAll(async () => {
         subflowsVersion = await readPackageVersion('packages/qadams/core/subflows/package.json')
-        tablesVersion = await readPackageVersion('packages/qadams/core/tables/package.json')
+        delayVersion = await readPackageVersion('packages/qadams/core/delay/package.json')
     })
 
     beforeEach(() => {
@@ -48,13 +48,13 @@ describe('qadamLoader.loadQadamOrThrow — cold-load logging (#419 Phase 0)', ()
         await qadamLoader.loadQadamOrThrow({ qadamName: SUBFLOWS_NAME, qadamVersion: subflowsVersion, devQadams: [] })
         consoleLogSpy.mockClear()
 
-        await qadamLoader.loadQadamOrThrow({ qadamName: TABLES_NAME, qadamVersion: tablesVersion, devQadams: [] })
+        await qadamLoader.loadQadamOrThrow({ qadamName: DELAY_NAME, qadamVersion: delayVersion, devQadams: [] })
 
         const logs = coldLoadLogLines(consoleLogSpy)
         expect(logs).toHaveLength(1)
         const line = parseColdLoadLine(logs[0])
-        expect(line.qadam).toBe(`${TABLES_NAME}@${tablesVersion}`)
-        expect(line.resolvedVersion).toBe(tablesVersion)
+        expect(line.qadam).toBe(`${DELAY_NAME}@${delayVersion}`)
+        expect(line.resolvedVersion).toBe(delayVersion)
         expect(line.sharedDepsAlreadyLoaded).toBe(true)
     })
 
