@@ -1,6 +1,21 @@
 import { isNil, LdapAttributeMap } from '@aiqadam/shared'
 import { Entry } from 'ldapts'
 
+// The directory, not the admin's own typing, decides how an attribute name comes back on the
+// wire — some servers echo it back exactly as schema-defined (`objectGUID`, mixed case) while
+// others normalise to lowercase, and `Entry`'s keys are whatever the server actually sent. A
+// case-sensitive `entry[name]` lookup would then depend on a coincidence of casing between the
+// admin's configured attribute name and this one server's convention, silently returning
+// `undefined` — not a search failure — whenever they disagree.
+function getAttributeValue(entry: Entry, name: string): EntryAttributeValue {
+    if (name in entry) {
+        return entry[name]
+    }
+    const lowerName = name.toLowerCase()
+    const matchingKey = Object.keys(entry).find((key) => key.toLowerCase() === lowerName)
+    return isNil(matchingKey) ? undefined : entry[matchingKey]
+}
+
 // Active Directory's `objectGUID` is a raw 16-byte value in "mixed-endian" order: the first three
 // components (a 32-bit and two 16-bit integers) are little-endian on the wire, the way every
 // Windows GUID API reads and prints them, while the last two components (an 8-byte byte string)
@@ -25,7 +40,7 @@ function swapByteOrder(hex: string): string {
 }
 
 function readStringAttribute({ entry, name }: ReadAttributeParams): string | undefined {
-    const value = entry[name]
+    const value = getAttributeValue(entry, name)
     if (isNil(value)) {
         return undefined
     }
@@ -44,7 +59,7 @@ function readStringAttribute({ entry, name }: ReadAttributeParams): string | und
 
 function resolveSubject({ entry, attributeMap }: ResolveSubjectParams): string | undefined {
     if (attributeMap.subject === 'objectGUID') {
-        const value = entry[attributeMap.subject]
+        const value = getAttributeValue(entry, attributeMap.subject)
         const buffer = Array.isArray(value) ? value[0] : value
         if (isNil(buffer) || !Buffer.isBuffer(buffer)) {
             return undefined
@@ -69,3 +84,5 @@ type ResolveSubjectParams = {
     entry: Entry
     attributeMap: LdapAttributeMap
 }
+
+type EntryAttributeValue = Entry[string] | undefined

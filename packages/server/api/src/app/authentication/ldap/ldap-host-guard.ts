@@ -21,11 +21,25 @@ function getLdapAllowList(): string[] {
 // well-known cloud metadata endpoints must never be reachable through this feature, allow-listed
 // or not, because unlike an arbitrary internal service there is no legitimate reason for a
 // directory bind to ever need one. Checked ahead of, and independent of, the allow list.
-const METADATA_ADDRESSES = ['169.254.169.254', 'fd00:ec2::254']
+// `169.254.169.254` covers AWS/GCP/Azure; `169.254.170.2` is AWS ECS's task metadata endpoint;
+// `100.100.100.200` is Alibaba Cloud's; `fd00:ec2::254` is AWS's IPv6 metadata address.
+const METADATA_ADDRESSES = ['169.254.169.254', '169.254.170.2', '100.100.100.200', 'fd00:ec2::254']
 
 function isCloudMetadataAddress(ip: string): boolean {
-    const addr = ipaddr.parse(ip)
-    return METADATA_ADDRESSES.some((metadataIp) => addr.toString() === ipaddr.parse(metadataIp).toString())
+    const canonical = toCanonicalIpv4String(ipaddr.parse(ip))
+    return METADATA_ADDRESSES.some((metadataIp) => canonical === toCanonicalIpv4String(ipaddr.parse(metadataIp)))
+}
+
+// An IPv4-mapped IPv6 literal (`::ffff:169.254.169.254`) is the *same* address as its IPv4 form as
+// far as the kernel and the directory server are concerned, but `IPv6#toString()` prints it back
+// out with the `::ffff:` prefix, so a naive string comparison against the plain IPv4 metadata
+// addresses above would silently let this form through. Unwrapping to the IPv4 form first (when
+// the parsed address is one) is what makes the comparison see through the wrapper either way.
+function toCanonicalIpv4String(addr: ReturnType<typeof ipaddr.parse>): string {
+    if ('isIPv4MappedAddress' in addr && addr.isIPv4MappedAddress()) {
+        return addr.toIPv4Address().toString()
+    }
+    return addr.toString()
 }
 
 // Resolves every A/AAAA record for the host and vets each one individually — a multi-homed name
@@ -65,15 +79,17 @@ async function resolveVettedIps({ host }: ResolveVettedIpsParams): Promise<strin
     return candidateIps
 }
 
-// Each family is resolved independently and a failure on one (e.g. no AAAA record, the common
-// case) does not sink the other — only the combined, empty result counts as unresolvable to the
-// caller.
+// `dns.lookup` (the OS resolver — `getaddrinfo(3)`) rather than `dns.resolve4`/`resolve6` (which
+// query a DNS server directly): the latter skips `/etc/hosts` entirely, so an operator's own
+// `extra_hosts` entry for an internal directory hostname — the normal way to pin a private domain
+// controller's address in a container without standing up split-horizon DNS — would resolve for
+// every other outbound feature in this process but silently fail here. `{ all: true }` is the
+// A/AAAA-both-families equivalent under this single call. An unresolvable host throws inside
+// `dns.lookup` itself, so the `.catch` below has the same "empty means unresolvable" contract the
+// caller already checks for.
 async function resolveHostname(host: string): Promise<string[]> {
-    const [ipv4, ipv6] = await Promise.all([
-        dns.resolve4(host).catch(() => [] as string[]),
-        dns.resolve6(host).catch(() => [] as string[]),
-    ])
-    return [...ipv4, ...ipv6]
+    const results = await dns.lookup(host, { all: true }).catch(() => [])
+    return results.map((result) => result.address)
 }
 
 export const ldapHostGuard = {

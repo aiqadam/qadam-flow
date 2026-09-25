@@ -1,4 +1,4 @@
-import { LdapTestRequest, PlatformLdapConfig, PrincipalType, UpsertLdapConfigRequest } from '@aiqadam/shared'
+import { LdapTestRequest, LdapTestResponse, PlatformLdapConfig, PrincipalType, UpsertLdapConfigRequest } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
@@ -14,11 +14,7 @@ import { ldapConfigService } from './ldap-config-service'
 export const ldapConfigController: FastifyPluginAsyncZod = async (app) => {
     app.get('/', GetLdapConfig, async (request) => {
         const platformId = request.principal.platform.id
-        const config = await ldapConfigService(app.log).get({ platformId })
-        if (config === null) {
-            return null
-        }
-        return config
+        return ldapConfigService(app.log).get({ platformId })
     })
 
     app.post('/', UpsertLdapConfig, async (request) => {
@@ -73,5 +69,8 @@ const TestLdapConfig = {
     },
     schema: {
         body: LdapTestRequest,
+        response: {
+            [StatusCodes.OK]: LdapTestResponse,
+        },
     },
 }

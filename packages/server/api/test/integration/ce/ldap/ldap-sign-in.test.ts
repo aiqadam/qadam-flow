@@ -129,6 +129,41 @@ describe('LDAP sign-in', () => {
         expect(federated).not.toBeNull()
     })
 
+    it('refuses an INACTIVE user, even with correct credentials', async () => {
+        await saveLdapConfig()
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+        const first = await signIn('jdoe', 'correct-password')
+        expect(first.statusCode).toBe(StatusCodes.OK)
+        await databaseConnection().getRepository('user').update({ id: first.json().id }, { status: UserStatus.INACTIVE })
+
+        const second = await signIn('jdoe', 'correct-password')
+
+        expect(second.json().code).toBe('USER_IS_INACTIVE')
+    })
+
+    it('refuses JIT provisioning when jitProvisioning is off, for an unrecognized directory user', async () => {
+        await saveLdapConfig({ jitProvisioning: false })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+
+        const response = await signIn('jdoe', 'correct-password')
+
+        expect(response.json().code).toBe('INVALID_CREDENTIALS')
+        const identity = await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' })
+        expect(identity).toBeNull()
+    })
+
+    it('returns LDAP_EMAIL_ATTRIBUTE_MISSING when the matched entry has no readable email attribute', async () => {
+        await saveLdapConfig()
+        searchForUser.mockResolvedValue({ ...DIRECTORY_ENTRY, mail: undefined })
+        bindAsUser.mockResolvedValue(undefined)
+
+        const response = await signIn('jdoe', 'correct-password')
+
+        expect(response.json().code).toBe('LDAP_EMAIL_ATTRIBUTE_MISSING')
+    })
+
     it('returns INVALID_CREDENTIALS for a wrong password without revealing the user was found', async () => {
         await saveLdapConfig()
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)

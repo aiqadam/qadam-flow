@@ -11,8 +11,17 @@ export enum LdapTlsMode {
     STARTTLS = 'starttls',
 }
 
+// Restricted to the two attributes every major directory guarantees are both unique and
+// immutable for the life of the entry (AD's `objectGUID`, OpenLDAP's `entryUUID`) — an
+// operator-chosen custom attribute here (e.g. `uid`, `mail`) would let whoever controls the
+// directory repoint a Qadam Flow account to a different real person simply by editing that
+// attribute on an existing entry, with no admin-side re-link step to notice it. The UI's own
+// subject-attribute field is a select over exactly these two values for the same reason.
+export const LdapSubjectAttribute = z.enum(['objectGUID', 'entryUUID'])
+export type LdapSubjectAttribute = z.infer<typeof LdapSubjectAttribute>
+
 export const LdapAttributeMap = z.object({
-    subject: z.string().min(1, formErrors.required),
+    subject: LdapSubjectAttribute,
     email: z.string().min(1, formErrors.required),
     firstName: z.string().min(1, formErrors.required),
     lastName: z.string().min(1, formErrors.required),
@@ -89,6 +98,10 @@ export const PlatformLdapConfig = z.object({
 export type PlatformLdapConfig = z.infer<typeof PlatformLdapConfig>
 
 export enum LdapTestStage {
+    // "Nothing saved for this platform yet" is not the same failure as "the allow list rejected
+    // the configured host" — the two used to share ALLOW_LIST, which made /test's response
+    // ambiguous about which one an admin was looking at.
+    NOT_CONFIGURED = 'NOT_CONFIGURED',
     ALLOW_LIST = 'ALLOW_LIST',
     CONNECT = 'CONNECT',
     SERVICE_BIND = 'SERVICE_BIND',
@@ -114,7 +127,11 @@ export const LdapTestResponse = z.object({
 })
 export type LdapTestResponse = z.infer<typeof LdapTestResponse>
 
-function matchesTlsScheme(config: { url: string, tlsMode: LdapTlsMode }): boolean {
+// Exported so `ldap-client.ts`'s `connect()` can re-assert the same rule at connect time, as
+// defense in depth against a row that predates this check or was written directly to the
+// database — a plaintext `ldap://` config with no StartTLS upgrade must stay unrepresentable
+// all the way down to the socket, not just at the validation boundary.
+export function matchesTlsScheme(config: { url: string, tlsMode: LdapTlsMode }): boolean {
     const expectedScheme = config.tlsMode === LdapTlsMode.LDAPS ? 'ldaps://' : 'ldap://'
     return config.url.toLowerCase().startsWith(expectedScheme)
 }

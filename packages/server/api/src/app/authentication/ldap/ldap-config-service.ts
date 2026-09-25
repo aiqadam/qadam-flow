@@ -3,6 +3,7 @@ import {
     apId,
     ErrorCode,
     isNil,
+    LdapAttributeMap,
     LdapConfig,
     LdapTestRequest,
     LdapTestResponse,
@@ -16,27 +17,19 @@ import {
     UserId,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { Client } from 'ldapts'
+import { Entry } from 'ldapts'
 import { repoFactory } from '../../core/db/repo-factory'
 import { EncryptedObject, encryptUtils } from '../../helper/encryption'
 import { platformService } from '../../platform/platform.service'
+import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapClient, ResolvedLdapConnectionConfig } from './ldap-client'
 import { PlatformLdapConfigEntity, PlatformLdapConfigSchema } from './ldap-config-entity'
 import { LdapStageError } from './ldap-stage-error'
+import { ldapUsernameUtils } from './ldap-username'
 
 const platformLdapConfigRepo = repoFactory(PlatformLdapConfigEntity)
 
 export const ldapConfigService = (log: FastifyBaseLogger) => ({
-    async getOrThrow({ platformId }: PlatformScopedParams): Promise<PlatformLdapConfig> {
-        const row = await platformLdapConfigRepo().findOneBy({ platformId })
-        if (isNil(row)) {
-            throw new QadamFlowError({
-                code: ErrorCode.ENTITY_NOT_FOUND,
-                params: { entityId: platformId, entityType: 'platform_ldap_config' },
-            })
-        }
-        return toResponse(row)
-    },
     async get({ platformId }: PlatformScopedParams): Promise<PlatformLdapConfig | null> {
         const row = await platformLdapConfigRepo().findOneBy({ platformId })
         return isNil(row) ? null : toResponse(row)
@@ -112,32 +105,43 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
     async test({ platformId, request }: TestParams): Promise<LdapTestResponse> {
         const row = await platformLdapConfigRepo().findOneBy({ platformId })
         if (isNil(row)) {
-            return { success: false, stage: LdapTestStage.ALLOW_LIST, message: 'No LDAP configuration is saved for this platform' }
+            // Its own stage, distinct from ALLOW_LIST: "nothing saved yet" and "the allow list
+            // rejected the configured host" used to share one stage, which made this response
+            // ambiguous about which of the two an admin was actually looking at.
+            return { success: false, stage: LdapTestStage.NOT_CONFIGURED, message: 'No LDAP configuration is saved for this platform' }
         }
         const { config, bindPassword, connectionConfig } = await decryptForConnection(row)
 
-        // `client` is declared outside the `try` so `finally` can always reach it: the previous
-        // shape only unbound on the two success returns, so a `serviceBind`/`searchForUser` throw
-        // (the entire point of this endpoint — testing a config that is expected to sometimes
-        // fail) leaked the socket every time it did.
-        let client: Client | undefined
         try {
-            client = await ldapClient.withConnectionSlot(() => ldapClient.connect({ config: connectionConfig }))
-            await ldapClient.serviceBind({ client, bindDn: config.bindDn, bindPassword })
+            // The whole connect -> service bind -> (optional) search -> unbind sequence runs
+            // inside one connection slot, held for its entire lifetime (M1) — this is also what
+            // fixes the connection leak a `serviceBind`/`searchForUser` failure used to cause: the
+            // previous shape only unbound on the two success returns.
+            return await ldapClient.withConnectionSlot(async () => {
+                const client = await ldapClient.connect({ config: connectionConfig })
+                try {
+                    await ldapClient.serviceBind({ client, bindDn: config.bindDn, bindPassword, tlsMode: config.tlsMode })
 
-            if (isNil(request.username) || isNil(request.password)) {
-                return { success: true, stage: LdapTestStage.SUCCESS, message: 'Connected and bound with the service account' }
-            }
+                    if (isNil(request.username) || isNil(request.password)) {
+                        return { success: true, stage: LdapTestStage.SUCCESS, message: 'Connected and bound with the service account' }
+                    }
 
-            const entry = await ldapClient.searchForUser({
-                client,
-                baseDn: config.baseDn,
-                userFilter: config.userFilter,
-                username: request.username,
-                attributeMap: config.attributeMap,
+                    const entry = await ldapClient.searchForUser({
+                        client,
+                        baseDn: config.baseDn,
+                        userFilter: config.userFilter,
+                        username: ldapUsernameUtils.normalize(request.username),
+                        attributeMap: config.attributeMap,
+                        tlsMode: config.tlsMode,
+                    })
+                    assertResolvableAttributes({ entry, attributeMap: config.attributeMap })
+                    await ldapClient.bindAsUser({ config: connectionConfig, userDn: entry.dn, password: request.password })
+                    return { success: true, stage: LdapTestStage.SUCCESS, message: 'Signed in successfully as the test user' }
+                }
+                finally {
+                    await client.unbind().catch(() => undefined)
+                }
             })
-            await ldapClient.bindAsUser({ config: connectionConfig, userDn: entry.dn, password: request.password })
-            return { success: true, stage: LdapTestStage.SUCCESS, message: 'Signed in successfully as the test user' }
         }
         catch (thrown) {
             if (thrown instanceof LdapStageError) {
@@ -146,11 +150,30 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
             log.error({ err: thrown, platformId }, '[ldapConfigService#test] Unexpected error while testing LDAP configuration')
             return { success: false, stage: LdapTestStage.CONNECT, message: 'Unexpected error while testing the connection' }
         }
-        finally {
-            await client?.unbind().catch(() => undefined)
-        }
     },
 })
+
+// A test that only proves the search matched an entry would tell an admin nothing about the one
+// failure mode `ldapAuthnService.signIn` would hit next: an entry that matches the filter but is
+// missing (or has unreadable) email/subject attributes. Checking both here, the same way
+// `ldapAuthnService` does, is what makes a `SUCCESS` result from `/test` an actual predictor of
+// whether a real sign-in with these credentials would succeed.
+function assertResolvableAttributes({ entry, attributeMap }: AssertResolvableAttributesParams): void {
+    const email = ldapAttributeUtils.readStringAttribute({ entry, name: attributeMap.email })
+    if (isNil(email) || email.length === 0) {
+        throw new LdapStageError({
+            stage: LdapTestStage.SEARCH,
+            message: `The configured email attribute ("${attributeMap.email}") is missing or unreadable on the matched entry`,
+        })
+    }
+    const subject = ldapAttributeUtils.resolveSubject({ entry, attributeMap })
+    if (isNil(subject) || subject.length === 0) {
+        throw new LdapStageError({
+            stage: LdapTestStage.SEARCH,
+            message: `The configured subject attribute ("${attributeMap.subject}") is missing or unreadable on the matched entry`,
+        })
+    }
+}
 
 async function decryptForConnection(row: PlatformLdapConfigSchema): Promise<ResolvedLdapConfig> {
     const bindPassword = await encryptUtils.decryptString(row.bindPassword)
@@ -254,6 +277,11 @@ type ResolveCaCertificateParams = {
 }
 
 type NewOrUpdatedRow = Omit<PlatformLdapConfigSchema, 'platform'>
+
+type AssertResolvableAttributesParams = {
+    entry: Entry
+    attributeMap: LdapAttributeMap
+}
 
 export type ResolvedLdapConfig = {
     config: LdapConfig

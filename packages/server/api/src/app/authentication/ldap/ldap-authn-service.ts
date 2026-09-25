@@ -78,31 +78,39 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
 async function lookupDirectoryUser({ resolved, username, password, log }: LookupDirectoryUserParams): Promise<{ entry: Entry, subject: string }> {
     const { config, bindPassword, connectionConfig } = resolved
     try {
-        const client = await ldapClient.withConnectionSlot(() => ldapClient.connect({ config: connectionConfig }))
-        try {
-            await ldapClient.serviceBind({ client, bindDn: config.bindDn, bindPassword })
-            // Normalised the same way, and for the same reason, the rate-limit bucket key is
-            // (`ldapUsernameUtils.normalize`'s own comment) — a directory that folds Unicode
-            // variants together (most do, since RFC 4515 says nothing about case- or
-            // width-folding) must see the same value the rate limiter counted against.
-            const entry = await ldapClient.searchForUser({
-                client,
-                baseDn: config.baseDn,
-                userFilter: config.userFilter,
-                username: ldapUsernameUtils.normalize(username),
-                attributeMap: config.attributeMap,
-            })
-            const subject = ldapAttributeUtils.resolveSubject({ entry, attributeMap: config.attributeMap })
-            if (isNil(subject) || subject.length === 0) {
-                log.error({ attribute: config.attributeMap.subject }, '[ldapAuthnService] Subject attribute missing or unreadable on the matched directory entry')
-                throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'The configured subject attribute is missing on the matched entry' })
+        // The whole connect -> service bind -> search -> unbind sequence runs inside one
+        // connection slot, held for its entire lifetime (M1) — the concurrency cap this slot
+        // enforces is otherwise only a bound on simultaneous *connects*, not on how many
+        // directory connections are actually open at once.
+        const { entry, subject } = await ldapClient.withConnectionSlot(async () => {
+            const client = await ldapClient.connect({ config: connectionConfig })
+            try {
+                await ldapClient.serviceBind({ client, bindDn: config.bindDn, bindPassword, tlsMode: config.tlsMode })
+                // Normalised the same way, and for the same reason, the rate-limit bucket key is
+                // (`ldapUsernameUtils.normalize`'s own comment) — a directory that folds Unicode
+                // variants together (most do, since RFC 4515 says nothing about case- or
+                // width-folding) must see the same value the rate limiter counted against.
+                const entry = await ldapClient.searchForUser({
+                    client,
+                    baseDn: config.baseDn,
+                    userFilter: config.userFilter,
+                    username: ldapUsernameUtils.normalize(username),
+                    attributeMap: config.attributeMap,
+                    tlsMode: config.tlsMode,
+                })
+                const subject = ldapAttributeUtils.resolveSubject({ entry, attributeMap: config.attributeMap })
+                if (isNil(subject) || subject.length === 0) {
+                    log.error({ attribute: config.attributeMap.subject }, '[ldapAuthnService] Subject attribute missing or unreadable on the matched directory entry')
+                    throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'The configured subject attribute is missing on the matched entry' })
+                }
+                return { entry, subject }
             }
-            await ldapClient.bindAsUser({ config: connectionConfig, userDn: entry.dn, password })
-            return { entry, subject }
-        }
-        finally {
-            await client.unbind().catch(() => undefined)
-        }
+            finally {
+                await client.unbind().catch(() => undefined)
+            }
+        })
+        await ldapClient.bindAsUser({ config: connectionConfig, userDn: entry.dn, password })
+        return { entry, subject }
     }
     catch (error) {
         throw mapToSignInError(error)
