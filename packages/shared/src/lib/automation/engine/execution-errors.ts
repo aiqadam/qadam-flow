@@ -116,7 +116,7 @@ export class VariableNotFoundError extends ExecutionError {
 // one that has no value in the resolved default locale (the last link in the resolution chain), is
 // an authoring mistake that must fail the step rather than the whole run.
 export class TranslationKeyNotFoundError extends ExecutionError {
-    constructor(key: string, cause?: unknown) {
+    constructor({ key, cause }: { key: string, cause?: unknown }) {
         super('TranslationKeyNotFound', formatMessage(`translation key (${key}) not found, or has no value in the default locale — check the key in Settings → Translations, or create it`), ExecutionErrorType.USER, cause)
     }
 }

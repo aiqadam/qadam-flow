@@ -4,6 +4,11 @@ const TRANSLATION_KEY_BRACKET_PATTERN = /^\[(['"])([^'"]+)\1\]/
 // nothing else. Anything past that — a second bracket, a trailing `.field`, an unterminated
 // bracket — fails to parse and is treated as an unresolved reference by the caller, the same way
 // `parseVariableName`/`parseConnectionNameOnly` do for their own roots.
+//
+// Shared between the engine (`props-resolver.ts`'s `handleTranslation`) and the API's
+// `ap_validate_flow` (`validateFlowTranslations`) — one grammar, so a token the engine would
+// reject at run time (a trailing `.field`, an unterminated locale bracket) is never reported as a
+// valid reference by the validator, and vice versa.
 export function parseTranslationToken(token: string): ParsedTranslationToken | null {
     if (!token.startsWith('$t[')) {
         return null
@@ -23,21 +28,6 @@ export function parseTranslationToken(token: string): ParsedTranslationToken | n
         return null
     }
     return { key, localeExpr: localeBracket.content }
-}
-
-// First candidate in the chain with a value in `values` — a `Map`, never a plain object, so a
-// candidate literally equal to `__proto__` or `constructor` (rejected by `localeUtil.canonicalize`
-// before it can reach here, but checked again at this boundary for defense in depth) is an
-// ordinary key, never a prototype lookup.
-export function resolveTranslationValue(params: { values: Map<string, string>, chain: string[] }): { locale: string, value: string } | null {
-    const { values, chain } = params
-    for (const locale of chain) {
-        const value = values.get(locale)
-        if (value !== undefined) {
-            return { locale, value }
-        }
-    }
-    return null
 }
 
 // Scans a leading `[...]`, tracking bracket depth and skipping over quoted string contents (so a
@@ -79,7 +69,7 @@ function matchBalancedBracket(text: string): { content: string, length: number }
     return null
 }
 
-type ParsedTranslationToken = {
+export type ParsedTranslationToken = {
     key: string
     localeExpr: string | undefined
 }

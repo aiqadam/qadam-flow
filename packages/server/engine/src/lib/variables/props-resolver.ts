@@ -1,5 +1,5 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { applyFunctionToValues, extractMustacheTokens, FormulaEvaluationError, formulaEvaluator, isNil, isString, localeUtil, TRANSLATION_KEY_REGEX, TranslationKeyNotFoundError, UnresolvedTemplateReferenceError } from '@aiqadam/shared'
+import { applyFunctionToValues, extractMustacheTokens, FormulaEvaluationError, formulaEvaluator, isNil, isString, localeUtil, parseTranslationToken, TRANSLATION_KEY_REGEX, TranslationKeyNotFoundError, UnresolvedTemplateReferenceError } from '@aiqadam/shared'
 
 import { initCodeSandbox } from '../core/code/code-sandbox'
 import type { EngineConstants } from '../handler/context/engine-constants'
@@ -7,7 +7,6 @@ import { FlowExecutorContext } from '../handler/context/flow-execution-context'
 import { createConnectionResolver } from '../qadam-context/connection-resolver'
 import { createVariableResolver } from '../qadam-context/variable-resolver'
 import { utils } from '../utils'
-import { parseTranslationToken, resolveTranslationValue } from './translation-token'
 
 const CONNECTIONS = 'connections'
 const VARIABLES = 'variables'
@@ -291,7 +290,7 @@ async function handleTranslation(params: ResolveSingleTokenParams): Promise<unkn
     }
     const { key, localeExpr } = parsed
     if (!TRANSLATION_KEY_REGEX.test(key)) {
-        throw new TranslationKeyNotFoundError(key)
+        throw new TranslationKeyNotFoundError({ key })
     }
 
     const explicitLocale = isNil(localeExpr)
@@ -306,13 +305,13 @@ async function handleTranslation(params: ResolveSingleTokenParams): Promise<unkn
 
     const values = translations.get(key)
     if (isNil(values)) {
-        throw new TranslationKeyNotFoundError(key)
+        throw new TranslationKeyNotFoundError({ key })
     }
 
     const chain = localeUtil.buildCandidateChain({ explicitLocale, runLocale, defaultLocale })
-    const resolved = resolveTranslationValue({ values, chain })
+    const resolved = localeUtil.resolve({ values, chain })
     if (isNil(resolved)) {
-        throw new TranslationKeyNotFoundError(key)
+        throw new TranslationKeyNotFoundError({ key })
     }
     if (chain.length > 0 && resolved.locale !== chain[0]) {
         constants.warnTranslationFallbackOnce(`${key}:${chain[0]}`, `translation key "${key}" has no value for locale "${chain[0]}" — falling back to "${resolved.locale}"`)
