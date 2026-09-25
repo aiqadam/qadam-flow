@@ -1,11 +1,11 @@
-import { apId, LdapTestStage, UserIdentityProvider } from '@aiqadam/shared'
+import { apId, LdapTestStage, PlatformRole, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LdapStageError } from '../../../../src/app/authentication/ldap/ldap-stage-error'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
-import { createMockUserIdentity } from '../../../helpers/mocks'
+import { createMockUserIdentity, mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -99,6 +99,11 @@ async function signIn(username: string, password: string) {
         url: '/api/v1/authn/ldap/sign-in',
         body: { username, password },
     })
+}
+
+function decodeExp(token: string): number {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'))
+    return payload.exp
 }
 
 describe('LDAP sign-in', () => {
@@ -222,5 +227,145 @@ describe('LDAP sign-in', () => {
 
         const otp = await databaseConnection().getRepository('otp').findOneBy({ type: 'PASSWORD_RESET' })
         expect(otp).toBeNull()
+    })
+
+    // B1: platform B linking-by-email an identity whose only user row lives on platform A would let
+    // `/v1/authentication/switch-platform` hand out a token for A — a cross-platform takeover.
+    it('refuses to link an identity whose only user is on a second platform', async () => {
+        await saveLdapConfig({ linkExistingByEmail: true })
+        // `POST /v1/authn/ldap/sign-in` is unauthenticated, so it resolves the platform via
+        // `platformUtils.getPlatformIdForRequest` -> `getOldestPlatform` (oldest `created` wins) —
+        // the same fallback single-tenant CE relies on for every public authn route. A `created`
+        // in the future keeps this second platform from ever winning that race against `ctx.platform`,
+        // whose own `created` is `faker.date.recent()` (i.e. in the past).
+        const otherSetup = await mockAndSaveBasicSetup({ platform: { created: new Date(Date.now() + 86400000).toISOString() } })
+        const { mockUserIdentity } = await mockBasicUser({
+            userIdentity: { email: 'jdoe@example.com', provider: UserIdentityProvider.EMAIL, verified: true },
+            user: { platformId: otherSetup.mockPlatform.id, platformRole: PlatformRole.MEMBER },
+        })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+
+        const response = await signIn('jdoe', 'correct-password')
+
+        expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
+        const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({
+            platformId: ctx.platform.id,
+            subject: DIRECTORY_ENTRY.entryUUID,
+        })
+        expect(federated).toBeNull()
+        const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: mockUserIdentity.id })
+        expect(identity?.provider).toBe(UserIdentityProvider.EMAIL)
+    })
+
+    // B2: the platform owner's break-glass — no directory, however configured, may ever link or
+    // adopt the owner's identity, so local password sign-in keeps working for them no matter what.
+    it('never links the platform owner, even with linkExistingByEmail on', async () => {
+        await databaseConnection().getRepository('user_identity').update(ctx.userIdentity.id, { email: 'jdoe@example.com' })
+        await saveLdapConfig({ linkExistingByEmail: true })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+
+        const response = await signIn('jdoe', 'correct-password')
+
+        expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
+        const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: ctx.userIdentity.id })
+        expect(identity?.provider).toBe(UserIdentityProvider.EMAIL)
+    })
+
+    // B2: a non-owner ADMIN is just as capable of directing traffic through a directory they
+    // control, so the refusal must not be scoped to the owner alone.
+    it('never links a non-owner admin, even with linkExistingByEmail on', async () => {
+        await saveLdapConfig({ linkExistingByEmail: true })
+        const { mockUserIdentity } = await mockBasicUser({
+            userIdentity: { email: 'jdoe@example.com', provider: UserIdentityProvider.EMAIL, verified: true },
+            user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+        })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+
+        const response = await signIn('jdoe', 'correct-password')
+
+        expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
+        const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: mockUserIdentity.id })
+        expect(identity?.provider).toBe(UserIdentityProvider.EMAIL)
+    })
+
+    // B3: an LDAP identity with no federated row for this platform (deleted user, half-finished
+    // JIT, new objectGUID, or a first sign-in on a second eligible platform) must still be able to
+    // sign in — the fast `findBySubject` path only covers the common case where that row exists.
+    describe('recovery when an LDAP identity has no federated row for this platform (B3)', () => {
+        it('signs in again through the fast findBySubject path unaffected', async () => {
+            await saveLdapConfig()
+            searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+            bindAsUser.mockResolvedValue(undefined)
+            const first = await signIn('jdoe', 'correct-password')
+            expect(first.statusCode).toBe(StatusCodes.OK)
+            const firstUserId = first.json().id
+
+            const second = await signIn('jdoe', 'correct-password')
+
+            expect(second.statusCode).toBe(StatusCodes.OK)
+            expect(second.json().id).toBe(firstUserId)
+        })
+
+        it('recovers after the user row is deleted, without re-scrambling a nonexistent local password', async () => {
+            await saveLdapConfig()
+            searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+            bindAsUser.mockResolvedValue(undefined)
+            const first = await signIn('jdoe', 'correct-password')
+            expect(first.statusCode).toBe(StatusCodes.OK)
+            const firstUserId = first.json().id
+
+            await databaseConnection().getRepository('user_federated_identity').delete({ platformId: ctx.platform.id })
+            await databaseConnection().getRepository('project').delete({ ownerId: firstUserId })
+            await databaseConnection().getRepository('user').delete({ id: firstUserId })
+
+            const second = await signIn('jdoe', 'correct-password')
+
+            expect(second.statusCode).toBe(StatusCodes.OK)
+            const recreatedUser = await databaseConnection().getRepository('user').findOneBy({ identityId: (await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' }))!.id })
+            expect(recreatedUser).not.toBeNull()
+            const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({
+                platformId: ctx.platform.id,
+                subject: DIRECTORY_ENTRY.entryUUID,
+            })
+            expect(federated).not.toBeNull()
+        })
+    })
+
+    // M2: `/switch-platform` reissuing a fresh default-lifetime token would silently undo the
+    // directory admin's own session TTL every time an LDAP-signed-in user switched platforms.
+    it('caps a switched-platform token so it never outlives the current LDAP session (M2)', async () => {
+        await saveLdapConfig({ sessionTtlSeconds: 300 })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+        const signInResponse = await signIn('jdoe', 'correct-password')
+        expect(signInResponse.statusCode).toBe(StatusCodes.OK)
+        const { token } = signInResponse.json()
+        const originalExp = decodeExp(token)
+
+        const identity = await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' })
+        const secondSetup = await mockAndSaveBasicSetup()
+        await databaseConnection().getRepository('user').save({
+            id: apId(),
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            status: UserStatus.ACTIVE,
+            platformRole: PlatformRole.ADMIN,
+            identityId: identity!.id,
+            platformId: secondSetup.mockPlatform.id,
+        })
+
+        const switchResponse = await app!.inject({
+            method: 'POST',
+            url: '/api/v1/authentication/switch-platform',
+            headers: { authorization: `Bearer ${token}` },
+            body: { platformId: secondSetup.mockPlatform.id },
+        })
+
+        expect(switchResponse.statusCode).toBe(StatusCodes.OK)
+        const switchedExp = decodeExp(switchResponse.json().token)
+        expect(switchedExp).toBeLessThanOrEqual(originalExp)
     })
 })
