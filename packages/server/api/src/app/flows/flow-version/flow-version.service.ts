@@ -62,6 +62,10 @@ export const flowVersionService = (log: FastifyBaseLogger) => ({
                         displayName: previousVersion.displayName,
                         schemaVersion: previousVersion.schemaVersion,
                         notes: previousVersion.notes,
+                        // "Use as draft" restores an older PUBLISHED version's whole content —
+                        // its `localeSource` must come back with it, not stay whatever the current
+                        // (about-to-be-overwritten) draft happened to have.
+                        localeSource: previousVersion.localeSource,
                     },
                 }]
                 if (

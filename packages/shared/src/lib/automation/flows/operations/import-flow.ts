@@ -26,10 +26,10 @@ function createChangeNameOperation(displayName: string): FlowOperationRequest {
     }
 }
 
-function createUpdateLocaleSourceOperation(localeSource: string | null | undefined): FlowOperationRequest {
+function createUpdateLocaleSourceOperation(localeSource: string | null): FlowOperationRequest {
     return {
         type: FlowOperationType.UPDATE_LOCALE_SOURCE,
-        request: { localeSource: localeSource ?? null },
+        request: { localeSource },
     }
 }
 
@@ -174,7 +174,12 @@ function _importFlow(flowVersion: FlowVersion, request: ImportFlowRequest): Flow
  
     return [
         createChangeNameOperation(request.displayName),
-        createUpdateLocaleSourceOperation(request.localeSource),
+        // `undefined` means "the caller expressed no opinion" (a duplicate/use-as-draft path that
+        // never read `localeSource` off its source version) and must leave the target's existing
+        // value untouched — only `null`/a string is an explicit instruction to clear or set it.
+        // Emitting the operation unconditionally used to coalesce `undefined` to `null` here,
+        // silently wiping `localeSource` on every import that did not carry it.
+        ...(request.localeSource !== undefined ? [createUpdateLocaleSourceOperation(request.localeSource)] : []),
         ...deleteOperations,
         createUpdateTriggerOperation(request.trigger),
         ...importOperations,

@@ -64,6 +64,10 @@ export const apDuplicateFlowTool = ({ mcp, userId }: McpToolContext, log: Fastif
                                 trigger: sourceFlow.version.trigger,
                                 schemaVersion: sourceFlow.version.schemaVersion ?? null,
                                 notes: sourceFlow.version.notes ?? null,
+                                // The new copy has no `localeSource` of its own yet — without
+                                // carrying it forward explicitly, duplicating a flow that has one
+                                // set would silently drop it on the copy.
+                                localeSource: sourceFlow.version.localeSource,
                             },
                         },
                     })
