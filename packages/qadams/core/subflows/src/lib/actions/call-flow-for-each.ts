@@ -9,6 +9,8 @@ import {
   JoinFailurePolicy,
   JoinResult,
   PARENT_RUN_ID_HEADER,
+  PARENT_RUN_LOCALE_HEADER,
+  spreadIfDefined,
 } from '@aiqadam/shared';
 import { callableFlowDropdown, CallableFlowRequest, CallableFlowResponse, findFlowByExternalIdOrThrow } from '../common';
 
@@ -114,6 +116,7 @@ export const callFlowForEach = createAction({
         const dispatched = await dispatchChild({
           url: `${context.server.apiUrl}v1/webhooks/${flow.id}`,
           parentRunId: context.run.id,
+          parentRunLocale: context.run.locale,
           payload: items[index],
           callbackUrl: slotUrls[index],
         });
@@ -127,7 +130,7 @@ export const callFlowForEach = createAction({
   },
 });
 
-async function dispatchChild({ url, parentRunId, payload, callbackUrl }: DispatchChildParams): Promise<{ ok: true } | { ok: false, message: string }> {
+async function dispatchChild({ url, parentRunId, parentRunLocale, payload, callbackUrl }: DispatchChildParams): Promise<{ ok: true } | { ok: false, message: string }> {
   try {
     await httpClient.sendRequest<CallableFlowRequest>({
       method: HttpMethod.POST,
@@ -136,6 +139,9 @@ async function dispatchChild({ url, parentRunId, payload, callbackUrl }: Dispatc
         'Content-Type': 'application/json',
         [PARENT_RUN_ID_HEADER]: parentRunId,
         [FAIL_PARENT_ON_FAILURE_HEADER]: 'true',
+        // Every child inherits the parent's resolved run locale, same as the single-call
+        // `callFlow` action — omitted entirely when nothing resolved to a locale.
+        ...spreadIfDefined(PARENT_RUN_LOCALE_HEADER, parentRunLocale),
       },
       body: {
         data: payload,
@@ -199,6 +205,7 @@ const DISPATCH_CONCURRENCY = 10;
 type DispatchChildParams = {
   url: string;
   parentRunId: string;
+  parentRunLocale: string | null;
   payload: unknown;
   callbackUrl: string;
 };
