@@ -152,6 +152,33 @@ describe('Translation CE API', () => {
             expect(byKey['replace.dropped']).toEqual({ ru: 'dropped (ru)' })
         })
 
+        it('rejects a 50k-key import fast instead of hanging on a quadratic flatten (B1)', async () => {
+            const ctx = await setup()
+            // Short keys/values keep the whole JSON payload comfortably under
+            // `MAX_TRANSLATION_IMPORT_BYTES` (1 MB) — the point is to exercise the service's own
+            // per-project key-count cap during flattening, not the controller's separate byte cap.
+            const data: Record<string, string> = {}
+            for (let i = 0; i < 50_000; i++) {
+                Object.defineProperty(data, `k${i}`, { value: '1', writable: true, enumerable: true, configurable: true })
+            }
+
+            const startedAt = Date.now()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.FLAT,
+                mode: TranslationImportMode.MERGE,
+                data,
+            })
+            const elapsedMs = Date.now() - startedAt
+
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+            // Generously bounded: the previous quadratic flatten took ~6s at 5k keys and did not
+            // finish within 290s at 20k; the fixed, cap-aborting path should reject in well under
+            // a second even at 50k, but 10s leaves ample headroom for a loaded CI runner.
+            expect(elapsedMs).toBeLessThan(10_000)
+        })
+
         it('accepts a nested payload', async () => {
             const ctx = await setup()
             const response = await ctx.post('/v1/translations/import', {
