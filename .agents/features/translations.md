@@ -39,7 +39,7 @@ Flow translations are project-scoped key/locale/value triples that a flow can lo
 
 **Project.defaultLocale** (nullable string) and **FlowVersion.localeSource** (nullable string, versioned like every other flow-version field) are columns on existing entities, not new tables.
 
-**FlowRun.inheritedRunLocale** (nullable string): the locale a queued subflow run inherited from its parent at dispatch time, persisted so a resume or a retry re-dispatches with the same value rather than losing it (a plain in-memory job field would not survive either).
+**FlowRun.inheritedRunLocale** (nullable string): the locale a queued subflow run inherited from its parent at dispatch time, persisted so a resume or a retry re-dispatches with the same value rather than losing it (a plain in-memory job field would not survive either). Written at run creation only, through both persistence paths `persistOrQueueRun` (`flow-run-service.ts`) picks by `RunEnvironment`: `TESTING` saves the built `FlowRun` row directly; `PRODUCTION` flushes it through the runs-metadata queue instead, whose `RunsMetadataUpsertData`/`RUNS_METADATA_UPSERT_KEYS` allow-list (`runs-metadata-queue-factory.ts`) must name the field explicitly — the same creation-time-only rule `parentWaitpointId`/`parentSlotId` already follow there — or a PRODUCTION run's inherited locale is silently dropped the moment its row is first written, however correctly `queueOrCreateInstantly` built it in memory.
 
 ## Endpoints
 
