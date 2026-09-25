@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { Action, Qadam, QadamPropertyMap, Trigger } from '@aiqadam/qadams-framework'
-import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias } from '@aiqadam/shared'
+import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias, tryCatchSync } from '@aiqadam/shared'
 import { z } from 'zod'
 import { utils } from '../utils'
 
@@ -9,6 +9,13 @@ import { utils } from '../utils'
 // process lives. Both caches hold the in-flight promise so concurrent steps share one walk.
 const qadamPathCache = new Map<string, Promise<string>>()
 let distIndexCache: Promise<Map<string, DistPackageEntry>> | null = null
+// #419 Phase 0: which resolved qadam paths already had a cold-load line logged. Keyed by the
+// resolved path rather than the (qadamName, qadamVersion) a caller asked for, because a
+// stale-pinned alias falls back to the same bundled dist file (#503) — the import cost is paid
+// once per (process x resolved file), so the log fires once for that, not once per alias. Set
+// synchronously right after `getQadamPath` resolves and before any further `await`, so two calls
+// racing on the same brand-new path cannot both observe it as cold.
+const loggedColdQadamPaths = new Set<string>()
 // Exact `x.y.z` aliases only (`name-1.2.3`): that is the shape the API accepts for a pinned
 // version (`ExactVersionType`), and `trimVersionFromAlias` splits on the last hyphen, so a
 // prerelease tail could not be recovered here anyway. A dev qadam is resolved by bare name and
@@ -28,8 +35,25 @@ export const qadamLoader = {
                 qadamVersion,
                 devQadams,
             })
+            const resolveStart = performance.now()
             const qadamPath = await qadamLoader.getQadamPath({ packageName, devQadams })
+            const resolveMs = performance.now() - resolveStart
+
+            // Cold vs. warm decides only whether the line below gets logged — Node's own module
+            // cache makes every import of an already-seen path cheap regardless.
+            const isColdLoad = !loggedColdQadamPaths.has(qadamPath)
+            if (isColdLoad) {
+                loggedColdQadamPaths.add(qadamPath)
+            }
+            const sharedDepsAlreadyLoaded = isColdLoad ? isQadamsFrameworkAlreadyLoaded(qadamPath) : false
+
+            const importStart = performance.now()
             const module = await import(qadamPath)
+            const importMs = performance.now() - importStart
+
+            if (isColdLoad) {
+                logColdQadamLoad({ qadamName, qadamVersion, resolveMs, importMs, sharedDepsAlreadyLoaded })
+            }
 
             const qadam = extractQadamFromModule<Qadam>({
                 module,
@@ -153,6 +177,39 @@ export const qadamLoader = {
         })
         return resolving
     },
+}
+
+// #419 Phase 0: whether the bundled qadams-framework dist entry was already in the CJS module
+// cache BEFORE this import — i.e. some earlier qadam import in this process already pulled it in.
+// Read straight off `require.cache`; never pre-require it as a probe, which would load it itself
+// and make every load report `true`.
+//
+// Resolved from the QADAM's own directory, not the engine's — the engine ships as one bundled
+// file (`dist/packages/engine/main.js`, copied to a cache path with no `node_modules` of its own),
+// while bun installs `@aiqadam/qadams-framework` next to each qadam's own `dist/src/index.js`
+// (verified against the real image: `require.resolve` from the engine's own location fails to
+// find it at all). Every bundled qadam's local symlink still realpaths to the same framework
+// file, so `require.cache` correctly reflects a hit made through a different qadam's own symlink.
+function isQadamsFrameworkAlreadyLoaded(qadamPath: string): boolean {
+    const { data } = tryCatchSync(() => {
+        const resolved = require.resolve('@aiqadam/qadams-framework', { paths: [path.dirname(qadamPath)] })
+        return require.cache[resolved]
+    })
+    return !isNil(data)
+}
+
+function logColdQadamLoad({ qadamName, qadamVersion, resolveMs, importMs, sharedDepsAlreadyLoaded }: LogColdQadamLoadParams): void {
+    console.log(`[qadamLoader] cold load ${JSON.stringify({
+        qadam: `${qadamName}@${qadamVersion}`,
+        resolveMs: roundMs(resolveMs),
+        importMs: roundMs(importMs),
+        sharedDepsAlreadyLoaded,
+        executionMode: process.env.AP_EXECUTION_MODE ?? 'unknown',
+    })}`)
+}
+
+function roundMs(value: number): number {
+    return Math.round(value * 10) / 10
 }
 
 async function resolveQadamPath({ packageName, isDevQadam }: ResolveQadamPathParams): Promise<string> {
@@ -313,6 +370,14 @@ type DistPackageEntry = {
     // claim an alias's version, so it never wins the #503 same-version check.
     version: string | null
     indexPath: string
+}
+
+type LogColdQadamLoadParams = {
+    qadamName: string
+    qadamVersion: string
+    resolveMs: number
+    importMs: number
+    sharedDepsAlreadyLoaded: boolean
 }
 
 type ResolveQadamPathParams = {
