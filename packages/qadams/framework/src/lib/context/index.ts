@@ -231,6 +231,19 @@ export type CallFlowInlineResult = {
  */
 export type CallFlowInlineHook = (params: CallFlowInlineParams) => Promise<CallFlowInlineResult>;
 
+/**
+ * Resolves this run's own locale (its `localeSource`, or one inherited from a parent subflow) —
+ * `null` when neither is set. Never the project's `defaultLocale`: that fallback belongs to a
+ * `{{$t[...]}}` lookup's own candidate chain, not to this run-level answer.
+ *
+ * A hook rather than a plain value deliberately: the engine resolves it lazily, on the first
+ * actual read, from whatever step output is available *at that point* in the run. Exposing it
+ * eagerly (computed once before every action's context is built, whether or not that action ever
+ * reads it) would freeze the answer against a `localeSource` expression that reads a step's
+ * output the run hasn't produced yet the first time some unrelated action happens to run.
+ */
+export type GetRunLocaleHook = () => Promise<string | null>;
+
 export type RunContext = {
   id: FlowRunId;
   stop: StopHook;
@@ -240,13 +253,7 @@ export type RunContext = {
   createWaitpoint: CreateWaitpointHook;
   waitForWaitpoint: WaitForWaitpointHook;
   callFlowInline: CallFlowInlineHook;
-  /**
-   * This run's resolved translation locale (own `localeSource`, or inherited from a parent
-   * subflow), already resolved once by the engine before this context was built — read-only,
-   * never a hook to call. `null` when nothing resolved to a locale (no `localeSource`, no
-   * inherited parent, no project default either).
-   */
-  locale: string | null;
+  locale: GetRunLocaleHook;
 }
 
 export type OnStartContext<

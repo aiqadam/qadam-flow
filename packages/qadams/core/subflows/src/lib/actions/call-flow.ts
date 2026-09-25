@@ -141,6 +141,7 @@ export const callFlow = createAction({
       context.run.waitForWaitpoint(waitpoint.id);
     }
 
+    const parentRunLocale = await context.run.locale();
     const response = await httpClient.sendRequest<CallableFlowRequest>({
       method: HttpMethod.POST,
       url: `${context.server.apiUrl}v1/webhooks/${flow?.id}`,
@@ -152,7 +153,7 @@ export const callFlow = createAction({
         // inherited from further up the chain) so `$t[...]` in the child resolves the same way an
         // Inline call's direct field-pass would. Omitted entirely when nothing resolved to a
         // locale, so the consumer's own project-default fallback still applies.
-        ...spreadIfDefined(PARENT_RUN_LOCALE_HEADER, context.run.locale),
+        ...spreadIfDefined(PARENT_RUN_LOCALE_HEADER, parentRunLocale),
       },
       body: {
         data: payload,

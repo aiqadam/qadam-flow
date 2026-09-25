@@ -108,6 +108,7 @@ export const callFlowForEach = createAction({
     // dispatched twice.
     const dispatched = new Set(waitpoint.dispatchedSlots ?? []);
     const toDispatch = items.map((_, index) => index).filter((index) => !dispatched.has(index));
+    const parentRunLocale = await context.run.locale();
     await forEachWithConcurrency({
       count: toDispatch.length,
       concurrency: DISPATCH_CONCURRENCY,
@@ -116,7 +117,7 @@ export const callFlowForEach = createAction({
         const dispatched = await dispatchChild({
           url: `${context.server.apiUrl}v1/webhooks/${flow.id}`,
           parentRunId: context.run.id,
-          parentRunLocale: context.run.locale,
+          parentRunLocale,
           payload: items[index],
           callbackUrl: slotUrls[index],
         });

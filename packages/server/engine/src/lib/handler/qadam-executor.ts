@@ -107,11 +107,6 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 stepNameToUpdate: action.name,
             })
         }
-        // Resolved once per run (see `EngineConstants#getRunLocale`) and exposed read-only on
-        // `context.run.locale` so `@aiqadam/qadam-subflows`' queued `callFlow` can forward it to a
-        // child run via `PARENT_RUN_LOCALE_HEADER` without re-deriving it.
-        const runLocale = await constants.getRunLocale({ executionState })
-
         const context: ActionContext<QadamAuthProperty, InputPropertyMap> = {
             executionType: isPaused ? ExecutionType.RESUME : ExecutionType.BEGIN,
             resumePayload: constants.resumePayload!,
@@ -165,7 +160,13 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params, concurrentFork: executionState.isConcurrentFork }),
                 waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params, concurrentFork: executionState.isConcurrentFork }),
                 callFlowInline: (req) => callFlowInline({ constants, flowId: req.flowId, payload: req.payload, insideConcurrentIteration: executionState.isConcurrentFork }),
-                locale: runLocale,
+                // Lazy: resolved via `EngineConstants#getRunLocale` only when something actually
+                // calls this (today, `@aiqadam/qadam-subflows`' queued `callFlow`), using THIS
+                // step's own `executionState` — not computed for every action regardless of
+                // whether it is ever read, which used to freeze the answer at whichever action ran
+                // first in the flow, before a `localeSource` referencing a later step's output
+                // could possibly resolve to anything.
+                locale: () => constants.getRunLocale({ executionState }),
             },
             project: {
                 id: constants.projectId,

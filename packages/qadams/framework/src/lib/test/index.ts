@@ -54,6 +54,7 @@ export function createMockActionContext<
       respond: () => {
         return;
       },
+      locale: async () => null,
     },
     project: {
       id: 'test-project-id',

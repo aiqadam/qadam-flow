@@ -90,12 +90,30 @@ export class EngineConstants {
     public readonly flowVersionLocaleSource: string | null
     public readonly inheritedRunLocale: string | null
     private project: Project | null = null
+    // The in-flight fetch, memoized separately from the resolved value: multiple `$t` resolutions
+    // (or step contexts) racing before the first fetch lands must all await the SAME promise
+    // rather than each firing their own request — cleared on rejection so a transient failure
+    // isn't cached forever.
+    private projectPromise: Promise<Project> | undefined = undefined
     // A `Map` throughout, never a plain object: a translation key or locale tag equal to
     // `__proto__`/`constructor` must be an ordinary entry, not a prototype lookup.
     private translations: Map<string, Map<string, string>> | null = null
+    private translationsPromise: Promise<Map<string, Map<string, string>>> | undefined = undefined
     // `undefined` = not yet resolved this run; `null` = resolved to "no override". Evaluated once
     // per run, lazily, on the first `$t` (or subflow dispatch) that needs it.
     private runLocale: string | null | undefined = undefined
+    private runLocalePromise: Promise<string | null> | undefined = undefined
+    // Set for the duration of the one resolution attempt that owns `runLocalePromise`, so a `$t`
+    // (or a formula wrapping one) reached from *inside* `localeSource`'s own evaluation sees "no
+    // run locale yet" instead of awaiting a promise that depends on itself (a hang, not a stack
+    // overflow, since the recursion here is across `await` boundaries). This flag is coarser than
+    // true call-stack reentrancy: a genuinely unrelated concurrent resolution (e.g. two CONCURRENT
+    // loop iterations, one of which is the one resolving `localeSource` for the whole run) that
+    // happens to land inside this same narrow window also reads `null` here, rather than awaiting
+    // the shared promise. That is an accepted degraded answer — the same fallback a resolution
+    // failure already produces (default locale, one warning) — for what is already a
+    // self-referential `localeSource`; the alternative (a real hang) is not.
+    private isResolvingRunLocale = false
     private warnedTranslationFallbacks = new Set<string>()
 
     public get isRunningApTests(): boolean {
@@ -266,17 +284,29 @@ export class EngineConstants {
         if (this.project) {
             return this.project
         }
+        if (isNil(this.projectPromise)) {
+            this.projectPromise = this.fetchProjectOnce()
+        }
+        return this.projectPromise
+    }
 
-        const getWorkerProjectEndpoint = `${this.internalApiUrl}v1/worker/project`
+    private async fetchProjectOnce(): Promise<Project> {
+        try {
+            const getWorkerProjectEndpoint = `${this.internalApiUrl}v1/worker/project`
 
-        const response = await fetch(getWorkerProjectEndpoint, {
-            headers: {
-                Authorization: `Bearer ${this.engineToken}`,
-            },
-        })
+            const response = await fetch(getWorkerProjectEndpoint, {
+                headers: {
+                    Authorization: `Bearer ${this.engineToken}`,
+                },
+            })
 
-        this.project = await response.json() as Project
-        return this.project
+            this.project = await response.json() as Project
+            return this.project
+        }
+        catch (error) {
+            this.projectPromise = undefined
+            throw error
+        }
     }
 
     public externalProjectId = async (): Promise<string | undefined> => {
@@ -296,13 +326,26 @@ export class EngineConstants {
         if (!isNil(this.translations)) {
             return this.translations
         }
-        const rows = await createTranslationResolver({ engineToken: this.engineToken, apiUrl: this.internalApiUrl }).obtainAll()
-        const translations = new Map<string, Map<string, string>>()
-        for (const row of rows) {
-            translations.set(row.key, new Map(Object.entries(row.values)))
+        if (isNil(this.translationsPromise)) {
+            this.translationsPromise = this.fetchTranslationsOnce()
         }
-        this.translations = translations
-        return translations
+        return this.translationsPromise
+    }
+
+    private async fetchTranslationsOnce(): Promise<Map<string, Map<string, string>>> {
+        try {
+            const rows = await createTranslationResolver({ engineToken: this.engineToken, apiUrl: this.internalApiUrl }).obtainAll()
+            const translations = new Map<string, Map<string, string>>()
+            for (const row of rows) {
+                translations.set(row.key, new Map(Object.entries(row.values)))
+            }
+            this.translations = translations
+            return translations
+        }
+        catch (error) {
+            this.translationsPromise = undefined
+            throw error
+        }
     }
 
     // One function, one memoized answer per run: this run's own `localeSource` (evaluated lazily
@@ -314,9 +357,34 @@ export class EngineConstants {
         if (this.runLocale !== undefined) {
             return this.runLocale
         }
-        const ownLocale = await this.resolveOwnLocaleSource(params.executionState)
-        this.runLocale = ownLocale ?? this.inheritedRunLocale
-        return this.runLocale
+        // Checked BEFORE the in-flight-promise memoization below, not after: once
+        // `resolveRunLocaleOnce`'s promise is assigned, a nested `$t` reached from inside its own
+        // `resolveOwnLocaleSource` call would otherwise be handed that exact same promise and
+        // await it — a promise awaiting itself, which hangs forever rather than throwing. See the
+        // field's own comment for the accepted false-positive this flag can also produce.
+        if (this.isResolvingRunLocale) {
+            return null
+        }
+        if (isNil(this.runLocalePromise)) {
+            this.runLocalePromise = this.resolveRunLocaleOnce(params.executionState)
+        }
+        return this.runLocalePromise
+    }
+
+    private async resolveRunLocaleOnce(executionState: FlowExecutorContext): Promise<string | null> {
+        this.isResolvingRunLocale = true
+        try {
+            const ownLocale = await this.resolveOwnLocaleSource(executionState)
+            this.runLocale = ownLocale ?? this.inheritedRunLocale
+            return this.runLocale
+        }
+        catch (error) {
+            this.runLocalePromise = undefined
+            throw error
+        }
+        finally {
+            this.isResolvingRunLocale = false
+        }
     }
 
     // `localeSource` is a normal mention-capable field — `{{trigger['output'].lang}}` — resolved

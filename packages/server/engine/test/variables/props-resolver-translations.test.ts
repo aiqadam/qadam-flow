@@ -16,10 +16,12 @@ const PROJECT = { defaultLocale: 'en' }
 
 let server: Server
 let apiUrl: string
+const requestCounts = new Map<string, number>()
 
 beforeAll(async () => {
     server = createServer((req, res) => {
         res.setHeader('content-type', 'application/json')
+        requestCounts.set(req.url ?? '', (requestCounts.get(req.url ?? '') ?? 0) + 1)
         if (req.url === '/v1/worker/translations') {
             res.end(JSON.stringify(TRANSLATIONS))
             return
@@ -258,5 +260,44 @@ describe('props-resolver: $t translations', () => {
         const secondTranslations = await constants.getTranslations()
         const firstTranslations = await constants.getTranslations()
         expect(secondTranslations).toBe(firstTranslations)
+    })
+
+    // A `$t` reached while `localeSource` is itself still resolving (directly, or nested inside a
+    // formula) used to call back into `getRunLocale` while `runLocale` was still `undefined`,
+    // recursing without bound. The sentinel in `EngineConstants#getRunLocale` breaks the cycle by
+    // reporting "no run locale yet" to that one reentrant read — this only asserts the resolution
+    // terminates with a sane fallback; a regression here manifests as the test hanging past its
+    // timeout (or a stack overflow), not merely a wrong value.
+    test('a $t nested inside localeSource resolves without recursing without bound (B4)', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const constants = buildConstants({ localeSource: '{{$t[\'welcome.title\']}}' })
+        const executionState = await buildExecutionState()
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'welcome.title\']}}',
+            executionState,
+        })
+        // The nested $t (reached while localeSource resolves) sees no run locale yet, so it falls
+        // through to the project default ('en'), resolving to 'Welcome' — a string that is not
+        // itself a valid BCP-47 tag, so localeSource's own resolution ends up `null` too. The outer
+        // $t use then falls back to the same project default, landing on the same value.
+        expect(resolvedInput).toEqual('Welcome')
+        warnSpy.mockRestore()
+    })
+
+    // Multiple `$t` resolutions racing before the project/translations fetch lands (e.g. several
+    // iterations of a CONCURRENT loop, each resolving a step input at roughly the same time) must
+    // share ONE in-flight request per endpoint, not fire one each.
+    test('N concurrent $t resolutions fetch the translation table and the project exactly once', async () => {
+        const before = new Map(requestCounts)
+        const constants = buildConstants()
+        const executionState = await buildExecutionState()
+        const resolver = buildResolver(constants)
+        await Promise.all(Array.from({ length: 20 }, () =>
+            resolver.resolve({ unresolvedInput: '{{$t[\'welcome.title\']}}', executionState }),
+        ))
+        const translationsDelta = (requestCounts.get('/v1/worker/translations') ?? 0) - (before.get('/v1/worker/translations') ?? 0)
+        const projectDelta = (requestCounts.get('/v1/worker/project') ?? 0) - (before.get('/v1/worker/project') ?? 0)
+        expect(translationsDelta).toBe(1)
+        expect(projectDelta).toBe(1)
     })
 })
