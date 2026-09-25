@@ -26,6 +26,7 @@ import { AddTranslationTable1790500000000 } from './migration/postgres/179050000
 import { AddProjectDefaultLocale1790600000000 } from './migration/postgres/1790600000000-AddProjectDefaultLocale'
 import { AddFlowVersionLocaleSource1790700000000 } from './migration/postgres/1790700000000-AddFlowVersionLocaleSource'
 import { BackfillTranslationPermissionsOnDefaultRoles1790800000000 } from './migration/postgres/1790800000000-BackfillTranslationPermissionsOnDefaultRoles'
+import { AddInheritedRunLocaleToFlowRun1790900000000 } from './migration/postgres/1790900000000-AddInheritedRunLocaleToFlowRun'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -59,6 +60,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddProjectDefaultLocale1790600000000,
         AddFlowVersionLocaleSource1790700000000,
         BackfillTranslationPermissionsOnDefaultRoles1790800000000,
+        AddInheritedRunLocaleToFlowRun1790900000000,
     ]
 }
 

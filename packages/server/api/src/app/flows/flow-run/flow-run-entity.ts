@@ -49,6 +49,14 @@ export const FlowRunEntity = new EntitySchema<FlowRunSchema>({
             ...ApIdSchema,
             nullable: true,
         },
+        // Captured once at creation from `PARENT_RUN_LOCALE_HEADER` (queued `callFlow`), so a
+        // resume or a retry — both re-dispatch this same run's job without going back to the
+        // parent, which may since have completed, been retried, or no longer exist — can still
+        // thread it through.
+        inheritedRunLocale: {
+            type: String,
+            nullable: true,
+        },
         dispatchMode: {
             type: String,
             nullable: true,

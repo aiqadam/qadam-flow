@@ -266,6 +266,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                         executionType: ExecutionType.BEGIN,
                         workerHandlerId: undefined,
                         httpRequestId: undefined,
+                        inheritedRunLocale: updatedFlowRun.inheritedRunLocale,
                     }, log)
                 }
                 return addToQueue({
@@ -276,6 +277,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     resumeReason: ResumeReason.RETRY,
                     workerHandlerId: undefined,
                     httpRequestId: undefined,
+                    inheritedRunLocale: updatedFlowRun.inheritedRunLocale,
                 }, log)
             }
             case FlowRetryStrategy.ON_LATEST_VERSION: {
@@ -314,6 +316,11 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     // Re-verified the same way; a slot the first attempt already answered is no
                     // longer PENDING, so the retried run is created without it.
                     parentSlotId: oldFlowRun.parentSlotId,
+                    // Safe to copy verbatim, unlike the waitpoint fields above: this is a plain
+                    // value with nothing to re-verify against — the parent it names may have long
+                    // since completed or been retried itself, and this run's own locale resolution
+                    // never depends on the parent still existing.
+                    inheritedRunLocale: oldFlowRun.inheritedRunLocale,
                 })
             }
         }
@@ -422,6 +429,7 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     parentSlotId,
                     stepNameToTest,
                     environment,
+                    inheritedRunLocale,
                 }, log)
                 span.setAttribute('flowRun.id', newFlowRun.id)
 
@@ -939,6 +947,7 @@ async function queueOrCreateInstantly(params: CreateParams, log: FastifyBaseLogg
         tags: [],
         steps: {},
         triggeredBy: params.triggeredBy,
+        inheritedRunLocale: params.inheritedRunLocale,
     }
     const { data: created, error } = await tryCatch(() => persistOrQueueRun({ flowRun, environment: params.environment, log }))
     if (error) {
@@ -1020,6 +1029,7 @@ type CreateParams = {
     stepNameToTest?: string
     flowId: FlowId
     environment: RunEnvironment
+    inheritedRunLocale?: string
 }
 
 type GetAllChildRunsParams = {

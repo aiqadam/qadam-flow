@@ -185,6 +185,7 @@ async function enqueueResume(params: EnqueueResumeParams, log: FastifyBaseLogger
             : StreamStepProgress.NONE,
         executionType: ExecutionType.RESUME,
         resumeReason: ResumeReason.WAITPOINT,
+        inheritedRunLocale: flowRun.inheritedRunLocale,
     }, log)
     await flowRunSideEffects(log).onResume(flowRun)
 }

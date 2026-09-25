@@ -79,6 +79,11 @@ export const FlowRun = z.object({
     // The join slot (#374) this child answers when its parent waits on a join waitpoint. Written
     // once, at creation, after the same re-verification as `parentWaitpointId`.
     parentSlotId: z.string().optional(),
+    // The parent's resolved run locale (see `EngineConstants#getRunLocale`), captured once at
+    // creation from `PARENT_RUN_LOCALE_HEADER` (queued `callFlow`) so it survives a resume or a
+    // retry — both re-dispatch this same run's job without re-deriving anything from the parent,
+    // which may since have completed, been retried itself, or no longer exist.
+    inheritedRunLocale: z.string().optional(),
     dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),
     triggeredBy: z.string().optional(),
