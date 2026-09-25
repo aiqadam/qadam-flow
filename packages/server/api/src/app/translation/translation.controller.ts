@@ -2,6 +2,7 @@ import {
     ApId,
     ErrorCode,
     ExportTranslationsRequestQuery,
+    GetTranslationUsagesResponse,
     ImportTranslationsRequestBody,
     ListTranslationsRequestQuery,
     MAX_TRANSLATION_IMPORT_BYTES,
@@ -61,6 +62,14 @@ export const translationController: FastifyPluginCallbackZod = (app, _opts, done
             platformId: request.principal.platform.id,
         })
         await reply.status(StatusCodes.NO_CONTENT).send()
+    })
+
+    app.get('/:id/usages', GetTranslationUsagesRequest, async (request) => {
+        return translationService(request.log).usages({
+            id: request.params.id,
+            projectId: request.projectId,
+            platformId: request.principal.platform.id,
+        })
     })
 
     app.post('/import', ImportTranslationsRequest, async (request) => {
@@ -150,6 +159,25 @@ const DeleteTranslationRequest = {
         params: z.object({ id: ApId }),
         response: {
             [StatusCodes.NO_CONTENT]: z.never(),
+        },
+    },
+}
+
+const GetTranslationUsagesRequest = {
+    config: {
+        security: securityAccess.project(
+            [PrincipalType.USER, PrincipalType.SERVICE],
+            Permission.READ_TRANSLATION,
+            { type: ProjectResourceType.TABLE, tableName: TranslationEntity },
+        ),
+    },
+    schema: {
+        tags: ['translations'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        description: 'Find flows in this project whose draft or published version references this translation key, bounded by MAX_TRANSLATION_USAGE_FLOWS_SCANNED. Used to warn before deleting a key still in use.',
+        params: z.object({ id: ApId }),
+        response: {
+            [StatusCodes.OK]: GetTranslationUsagesResponse,
         },
     },
 }

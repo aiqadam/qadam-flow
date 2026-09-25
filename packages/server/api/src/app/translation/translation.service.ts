@@ -1,28 +1,37 @@
 import {
-    ApId,
     apId,
+    ApId,
     Cursor,
     ErrorCode,
+    extractMustacheTokens,
+    flowStructureUtil,
+    FlowVersionState,
+    GetTranslationUsagesResponse,
     isNil,
     localeUtil,
     MAX_TRANSLATION_KEYS_PER_PROJECT,
     MAX_TRANSLATION_LOCALES_PER_KEY,
     MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT,
+    MAX_TRANSLATION_USAGE_FLOWS_SCANNED,
+    parseTranslationToken,
+    PopulatedFlow,
     QadamFlowError,
     sanitizeObjectForPostgresql,
     SeekPage,
+    Step,
     Translation,
     TRANSLATION_DESCRIPTION_MAX_LENGTH,
     TRANSLATION_KEY_MAX_LENGTH,
     TRANSLATION_KEY_REGEX,
+    TRANSLATION_VALUE_MAX_LENGTH,
     TranslationImportFormat,
     TranslationImportMode,
-    TRANSLATION_VALUE_MAX_LENGTH,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { EntityManager, ILike } from 'typeorm'
 import { repoFactory } from '../core/db/repo-factory'
 import { transaction } from '../core/db/transaction'
+import { flowService } from '../flows/flow/flow.service'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
 import { TranslationEntity, TranslationSchema } from './translation.entity'
@@ -47,7 +56,7 @@ export const translationService = (log: FastifyBaseLogger) => ({
             .where({
                 projectId,
                 platformId,
-                ...(isNil(key) ? {} : { key: ILike(`%${key}%`) }),
+                ...(isNil(key) ? {} : { key: ILike(`%${escapeLikeWildcards(key)}%`) }),
             })
         const { data, cursor: nextCursor } = await paginator.paginate(queryBuilder)
         return paginationHelper.createPage<Translation>(data, nextCursor)
@@ -131,6 +140,48 @@ export const translationService = (log: FastifyBaseLogger) => ({
             await assertTableByteCapNotExceeded({ entityManager, projectId, platformId })
             return { importedKeys: keys.length, removedFromLocale }
         })
+    },
+
+    async usages(params: { id: string, projectId: string, platformId: string }): Promise<GetTranslationUsagesResponse> {
+        const { id, projectId, platformId } = params
+        const translation = await getOneOrThrow({ id, projectId, platformId })
+
+        const [draftPage, publishedPage] = await Promise.all([
+            flowService(log).list({
+                projectIds: [projectId],
+                versionState: FlowVersionState.DRAFT,
+                limit: MAX_TRANSLATION_USAGE_FLOWS_SCANNED,
+                includeTriggerSource: false,
+            }),
+            flowService(log).list({
+                projectIds: [projectId],
+                versionState: FlowVersionState.LOCKED,
+                limit: MAX_TRANSLATION_USAGE_FLOWS_SCANNED,
+                includeTriggerSource: false,
+            }),
+        ])
+
+        const draftMatches = new Map(draftPage.data
+            .filter((flow) => flowReferencesTranslationKey({ trigger: flow.version.trigger, key: translation.key }))
+            .map((flow) => [flow.id, flow]))
+        const publishedMatches = new Map(publishedPage.data
+            .filter((flow) => flowReferencesTranslationKey({ trigger: flow.version.trigger, key: translation.key }))
+            .map((flow) => [flow.id, flow]))
+
+        const byFlowId = new Map<string, PopulatedFlow>([...draftMatches, ...publishedMatches])
+        const usages = [...byFlowId.values()].map((flow) => ({
+            flowId: flow.id,
+            flowDisplayName: flow.version.displayName,
+            referencedInDraft: draftMatches.has(flow.id),
+            referencedInPublished: publishedMatches.has(flow.id),
+        }))
+
+        return {
+            key: translation.key,
+            usages,
+            scannedFlowCount: draftPage.data.length + publishedPage.data.length,
+            truncated: draftPage.data.length >= MAX_TRANSLATION_USAGE_FLOWS_SCANNED || publishedPage.data.length >= MAX_TRANSLATION_USAGE_FLOWS_SCANNED,
+        }
     },
 
     async exportAll(params: { projectId: string, platformId: string, locale: string, format: TranslationImportFormat }): Promise<Record<string, unknown>> {
@@ -412,6 +463,87 @@ function nestFlatData(flat: Record<string, string>): NestedNode {
         })
     }
     return root
+}
+
+// Escapes the two characters ILike's underlying Postgres LIKE/ILIKE treats specially (`%` any
+// run, `_` any one character) plus the escape character itself, so a key search for a substring
+// that happens to contain either is matched literally rather than as a wildcard — `\` is Postgres's
+// default LIKE escape character, so escaping it too keeps a literal backslash in the search term
+// from being read as the start of an (unintended) escape sequence.
+function escapeLikeWildcards(value: string): string {
+    return value.replace(/[\\%_]/g, '\\$&')
+}
+
+// A minimal, self-contained walk of the string-bearing settings a step can carry (`input`,
+// `items`, router `branches`), deliberately not shared with `ap_validate_flow`'s own
+// `collectStringValues` — that validator's version also needs to distinguish a step's `input` vs
+// `branches` shape for its own step-reference checks, and reusing it here would mean importing
+// from an MCP tool module into a service, the wrong direction for that dependency. Only the two
+// finding a real `$t[...]` key reference (not malformed-reference detection, not the dynamic-locale
+// flag) is needed for a usages lookup, so this stays a smaller, purpose-built duplicate.
+function flowReferencesTranslationKey(params: { trigger: Step, key: string }): boolean {
+    const { trigger, key } = params
+    return flowStructureUtil.getAllSteps(trigger).some((step) => stepReferencesTranslationKey({ step, key }))
+}
+
+function stepReferencesTranslationKey(params: { step: Step, key: string }): boolean {
+    const { step, key } = params
+    return collectStepStrings(step).some((value) => extractMustacheTokens(value).some((token) => {
+        const inner = token.inner.trim()
+        if (!inner.startsWith('$t')) {
+            return false
+        }
+        const parsed = parseTranslationToken(inner)
+        return !isNil(parsed) && parsed.key === key
+    }))
+}
+
+function collectStepStrings(step: Step): string[] {
+    const result: string[] = []
+    if (!('settings' in step) || typeof step.settings !== 'object' || step.settings === null) {
+        return result
+    }
+    const settings = step.settings as Record<string, unknown>
+
+    if ('input' in settings && typeof settings.input === 'object' && settings.input !== null) {
+        walkForStrings(settings.input, (val) => result.push(val))
+    }
+    if ('items' in settings && typeof settings.items === 'string') {
+        result.push(settings.items)
+    }
+    if ('branches' in settings && Array.isArray(settings.branches)) {
+        for (const branch of settings.branches) {
+            if (typeof branch !== 'object' || branch === null || !('conditions' in branch) || !Array.isArray(branch.conditions)) {
+                continue
+            }
+            for (const group of branch.conditions) {
+                if (!Array.isArray(group)) continue
+                for (const cond of group) {
+                    if (typeof cond !== 'object' || cond === null) continue
+                    if ('firstValue' in cond && typeof cond.firstValue === 'string') result.push(cond.firstValue)
+                    if ('secondValue' in cond && typeof cond.secondValue === 'string') result.push(cond.secondValue)
+                }
+            }
+        }
+    }
+    return result
+}
+
+function walkForStrings(value: unknown, onString: (val: string) => void): void {
+    if (value === null || value === undefined) {
+        return
+    }
+    if (typeof value === 'string') {
+        onString(value)
+        return
+    }
+    if (Array.isArray(value)) {
+        for (const item of value) walkForStrings(item, onString)
+        return
+    }
+    if (typeof value === 'object') {
+        for (const val of Object.values(value)) walkForStrings(val, onString)
+    }
 }
 
 type ListParams = {

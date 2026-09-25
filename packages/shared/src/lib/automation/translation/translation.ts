@@ -33,6 +33,13 @@ export const TRANSLATION_DESCRIPTION_MAX_LENGTH = 500
 // individual `TRANSLATION_VALUE_MAX_LENGTH` cap across several locales (e.g. long email-template
 // bodies) — so 20 MB is chosen deliberately larger than that figure rather than reproducing it.
 export const MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT = 20_000_000
+// GET /v1/translations/:id/usages scans a project's flows rather than reading a precomputed
+// index, so this bounds the request's own cost rather than the table's storage: comfortably
+// above what a project management UI needs to show ("used by N flows, showing the first
+// MAX_TRANSLATION_USAGE_FLOWS_SCANNED") without ever loading every flow version body a large
+// platform project could have. `truncated: true` on the response tells the caller the scan
+// stopped short of the project's actual flow count.
+export const MAX_TRANSLATION_USAGE_FLOWS_SCANNED = 500
 
 export const TranslationValues = z.record(z.string(), z.string().max(TRANSLATION_VALUE_MAX_LENGTH, 'translationValueTooLong'))
     .refine((values) => Object.keys(values).length <= MAX_TRANSLATION_LOCALES_PER_KEY, 'tooManyTranslationLocales')

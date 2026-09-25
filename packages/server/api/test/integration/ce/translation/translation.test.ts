@@ -1,8 +1,9 @@
-import { apId, DefaultProjectRole, TranslationImportFormat, TranslationImportMode } from '@aiqadam/shared'
+import { apId, DefaultProjectRole, FlowActionType, FlowTrigger, FlowTriggerType, TranslationImportFormat, TranslationImportMode } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { db } from '../../../helpers/db'
 import { describeWithAuth } from '../../../helpers/describe-with-auth'
+import { createMockFlow, createMockFlowVersion } from '../../../helpers/mocks'
 import { createMemberContext, createServiceContext, createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -127,6 +128,22 @@ describe('Translation CE API', () => {
             const body = response.json()
             expect(body.data).toHaveLength(1)
             expect(body.data[0].key).toBe('errors.notFound')
+        })
+
+        it('treats "_" in the search term literally rather than as a single-character wildcard', async () => {
+            const ctx = await setup()
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [
+                    { key: 'wild_card.test', values: { en: 'a' } },
+                    { key: 'wildXcard.test', values: { en: 'b' } },
+                ],
+            })
+
+            const response = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'wild_card' })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            const keys = response.json().data.map((row: { key: string }) => row.key)
+            expect(keys).toEqual(['wild_card.test'])
         })
     })
 
@@ -281,6 +298,78 @@ describe('Translation CE API', () => {
         })
     })
 
+    describeWithAuth('GET /v1/translations/:id/usages (M7)', () => app!, (setup) => {
+        it('reports a flow whose draft references the key, and one whose published version does, separately', async () => {
+            const ctx = await setup()
+            const created = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'usage.key', values: { en: 'Used' } }],
+            })
+            const id = created.json()[0].id
+
+            const draftOnlyFlow = createMockFlow({ projectId: ctx.project.id })
+            await db.save('flow', draftOnlyFlow)
+            await db.save('flow_version', createMockFlowVersion({
+                flowId: draftOnlyFlow.id,
+                displayName: 'Draft Only Flow',
+                trigger: buildTriggerReferencing('{{$t[\'usage.key\']}}'),
+            }))
+
+            // Two versions on the same flow: the older one (published) references the key, and a
+            // newer, never-published draft that does not — proving the endpoint reports draft and
+            // published usage independently rather than treating "has any version referencing it"
+            // as a single flag. A flow's own latest version is otherwise indistinguishable from its
+            // published one whenever it has only ever had a single version.
+            const publishedFlow = createMockFlow({ projectId: ctx.project.id })
+            await db.save('flow', publishedFlow)
+            const publishedVersion = createMockFlowVersion({
+                flowId: publishedFlow.id,
+                displayName: 'Published Flow',
+                created: new Date(Date.now() - 60_000).toISOString(),
+                trigger: buildTriggerReferencing('{{$t[\'usage.key\']}}'),
+            })
+            await db.save('flow_version', publishedVersion)
+            await db.update('flow', publishedFlow.id, { publishedVersionId: publishedVersion.id })
+            await db.save('flow_version', createMockFlowVersion({
+                flowId: publishedFlow.id,
+                displayName: 'Published Flow (newer draft)',
+                created: new Date().toISOString(),
+                trigger: buildTriggerReferencing('plain text, no reference'),
+            }))
+
+            const untouchedFlow = createMockFlow({ projectId: ctx.project.id })
+            await db.save('flow', untouchedFlow)
+            await db.save('flow_version', createMockFlowVersion({
+                flowId: untouchedFlow.id,
+                displayName: 'Unrelated Flow',
+                trigger: buildTriggerReferencing('{{$t[\'other.key\']}}'),
+            }))
+
+            const response = await ctx.get(`/v1/translations/${id}/usages`)
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            const body = response.json()
+            expect(body.key).toBe('usage.key')
+
+            const byFlowId = new Map(body.usages.map((usage: { flowId: string }) => [usage.flowId, usage]))
+            expect(byFlowId.get(draftOnlyFlow.id)).toMatchObject({ referencedInDraft: true, referencedInPublished: false })
+            expect(byFlowId.get(publishedFlow.id)).toMatchObject({ referencedInDraft: false, referencedInPublished: true })
+            expect(byFlowId.has(untouchedFlow.id)).toBe(false)
+        })
+
+        it('reports no usages for a key nothing references', async () => {
+            const ctx = await setup()
+            const created = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'unused.key', values: { en: 'Unused' } }],
+            })
+            const id = created.json()[0].id
+
+            const response = await ctx.get(`/v1/translations/${id}/usages`)
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            expect(response.json().usages).toEqual([])
+        })
+    })
+
     describe('permissions', () => {
         it('a VIEWER can read but cannot write', async () => {
             const ownerCtx = await createTestContext(app!)
@@ -336,3 +425,28 @@ describe('Translation CE API', () => {
         })
     })
 })
+
+function buildTriggerReferencing(input: string): FlowTrigger {
+    return {
+        name: 'trigger',
+        displayName: 'Trigger',
+        valid: true,
+        lastUpdatedDate: new Date().toISOString(),
+        type: FlowTriggerType.EMPTY,
+        settings: {},
+        nextAction: {
+            name: 'step_1',
+            displayName: 'Step 1',
+            valid: true,
+            lastUpdatedDate: new Date().toISOString(),
+            type: FlowActionType.PIECE,
+            settings: {
+                qadamName: '@aiqadam/qadam-data-mapper',
+                qadamVersion: '0.4.14',
+                actionName: 'advanced_mapping',
+                input: { text: input },
+                propertySettings: {},
+            },
+        },
+    }
+}
