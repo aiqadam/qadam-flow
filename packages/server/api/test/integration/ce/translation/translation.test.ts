@@ -262,6 +262,141 @@ describe('Translation CE API', () => {
             expect(list.json().data[0].values).toEqual({ en: 'Hi' })
         })
 
+        // A nested payload accidentally sent with `format: 'flat'` has object values, not strings —
+        // silently skipping them used to mean an existing key kept nothing from this import, so
+        // `mode: 'replace'` would strip its `en` locale entirely (M4). Rejecting the whole request
+        // up front, before the transaction opens, means nothing is deleted.
+        it('rejects a nested payload sent as format: flat + replace, deleting nothing (M4)', async () => {
+            const ctx = await setup()
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'greeting', values: { en: 'Hello', ru: 'Привет' } }],
+            })
+
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.FLAT,
+                mode: TranslationImportMode.REPLACE,
+                data: { greeting: { nested: 'oops' } },
+            })
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+
+            const list = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'greeting' })
+            expect(list.json().data[0].values).toEqual({ en: 'Hello', ru: 'Привет' })
+        })
+
+        it('rejects a non-string leaf in a nested payload (M4)', async () => {
+            const ctx = await setup()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.NESTED,
+                mode: TranslationImportMode.MERGE,
+                data: { nested: { count: 42 } },
+            })
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+
+            const list = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'nested.count' })
+            expect(list.json().data).toHaveLength(0)
+        })
+
+        // `nextPrefix.length > TRANSLATION_KEY_MAX_LENGTH` is checked the instant a child segment
+        // would be appended, before ever recursing into it — a chain of 150 single-letter levels
+        // crosses 255 characters around level 128. This does NOT distinguish old from new code by
+        // status code alone: the pre-fix walker also eventually rejects the same (fully-built,
+        // over-length) key via the post-hoc `assertKeyIsWellFormed` check that already ran on every
+        // flattened key before this round, so both old and new code return 409 here. What only the
+        // eager per-segment check produces is THIS specific message, thrown mid-walk rather than
+        // after flattening completes — the pre-fix code's post-hoc rejection reads
+        // `"<key>" is not a valid translation key`, never the "exceeds ... characters" wording below.
+        it('rejects a nested key path once it would exceed TRANSLATION_KEY_MAX_LENGTH (M4)', async () => {
+            const ctx = await setup()
+            const letters = 'abcdefghijklmnopqrstuvwxyz'
+            let node: unknown = 'leaf'
+            for (let i = 0; i < 150; i++) {
+                node = { [letters[i % letters.length]]: node }
+            }
+
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.NESTED,
+                mode: TranslationImportMode.MERGE,
+                data: node,
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response.json().params.message).toContain('exceeds 255 characters')
+        })
+
+        // A deep chain of long (50-char) segments crosses TRANSLATION_KEY_MAX_LENGTH within the
+        // chain itself, a handful of levels before ever reaching the wide leaf object below it — the
+        // eager per-segment length check (this fix) aborts there, in well under a millisecond,
+        // without ever touching the wide object's 2,000 entries (deliberately kept under the
+        // pre-existing 5,000-key cap, so THAT cap can't be what's rejecting this payload and mask the
+        // fix under test). The pre-fix `[...prefix, segment]` walker has no such short-circuit: it
+        // walks the whole chain, then the wide object, building one ~24,000-character joined key per
+        // entry via `prefix.join('.')` and calling `Object.defineProperty` with that key 2,000 times —
+        // a standalone reproduction of this exact shape (see bench-old-new.mjs in this PR's history)
+        // measured that at ~4 seconds, entirely from Object.defineProperty's own non-linear cost on
+        // very long string keys, not from the array-copy cost of building the prefix itself. Both old
+        // and new code end up returning 409 (the payload's over-length keys are invalid either way),
+        // so status code alone can't tell them apart — the elapsed-time budget is what a regression
+        // here would blow.
+        it('rejects a deep chain leading to a wide leaf object fast, staying under 1 MB (M4)', async () => {
+            const ctx = await setup()
+            const segment = 's'.repeat(50)
+            const wide: Record<string, string> = {}
+            for (let i = 0; i < 2_000; i++) {
+                Object.defineProperty(wide, `k${i}`, { value: '1', writable: true, enumerable: true, configurable: true })
+            }
+            let node: Record<string, unknown> = wide
+            for (let i = 0; i < 470; i++) {
+                node = { [`${segment}${i}`]: node }
+            }
+
+            const startedAt = Date.now()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.NESTED,
+                mode: TranslationImportMode.MERGE,
+                data: node,
+            })
+            const elapsedMs = Date.now() - startedAt
+
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response.json().params.message).toContain('exceeds 255 characters')
+            expect(elapsedMs).toBeLessThan(2_000)
+        })
+
+        // A payload built entirely from same-depth empty objects never reaches a leaf at all, so
+        // neither the key-count cap NOR the non-string-leaf rejection above is ever triggered — the
+        // node-visit cap is the ONLY thing that bounds this walk. 55,000 empty-object entries (each
+        // the cheapest possible per-node JSON encoding) cross MAX_TRANSLATION_IMPORT_NODES (50,000)
+        // while staying comfortably under the 1 MB byte cap.
+        it('rejects a payload of nested empty objects once the node-visit cap is exceeded, even though no leaf is ever invalid (M4)', async () => {
+            const ctx = await setup()
+            const data: Record<string, unknown> = {}
+            for (let i = 0; i < 55_000; i++) {
+                Object.defineProperty(data, String(i), { value: {}, writable: true, enumerable: true, configurable: true })
+            }
+
+            const startedAt = Date.now()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.NESTED,
+                mode: TranslationImportMode.MERGE,
+                data,
+            })
+            const elapsedMs = Date.now() - startedAt
+
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(elapsedMs).toBeLessThan(10_000)
+        })
+
         // `import`'s DTO has no per-value length schema (only the whole-payload byte cap) — this
         // reaches ONLY the service-level `upsertMergingValues` re-validation (M4), not a REST DTO
         // check, unlike the same cap on POST /v1/translations (already enforced by

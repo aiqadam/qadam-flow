@@ -41,6 +41,19 @@ export const MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT = 20_000_000
 // platform project could have. `truncated: true` on the response tells the caller the scan
 // stopped short of the project's actual flow count.
 export const MAX_TRANSLATION_USAGE_FLOWS_SCANNED = 500
+// A nested import payload is walked node-by-node (every object and every leaf, string or not) to
+// flatten it, ahead of and independent from `MAX_TRANSLATION_KEYS_PER_PROJECT` (which only counts
+// STRING leaves — the ones that become translation rows, and are additionally rejected outright if
+// they are not strings). Without a cap on the walk itself, a payload built entirely from nested
+// objects that never bottom out in a leaf at all (so neither the key-count cap nor the non-string-
+// leaf rejection is ever reached) would still cost one visit per node, unbounded. 10x the key cap
+// leaves generous headroom for realistic nesting (a handful of object levels per real key) while
+// still rejecting a degenerate payload — sized against what actually fits under
+// `MAX_TRANSLATION_IMPORT_BYTES` (1 MB): a payload of nothing but same-depth empty objects (the
+// cheapest possible per-node JSON encoding, `"1234":{}`) tops out around 92,000 such nodes before
+// the byte cap alone would reject it, so 50,000 is comfortably reachable within that budget rather
+// than a number the byte cap would always catch first.
+export const MAX_TRANSLATION_IMPORT_NODES = 50_000
 
 export const TranslationValues = z.record(z.string(), z.string().max(TRANSLATION_VALUE_MAX_LENGTH, 'translationValueTooLong'))
     .refine((values) => Object.keys(values).length <= MAX_TRANSLATION_LOCALES_PER_KEY, 'tooManyTranslationLocales')

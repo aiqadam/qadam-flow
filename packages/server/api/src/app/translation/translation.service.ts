@@ -9,6 +9,7 @@ import {
     GetTranslationUsagesResponse,
     isNil,
     localeUtil,
+    MAX_TRANSLATION_IMPORT_NODES,
     MAX_TRANSLATION_KEYS_PER_PROJECT,
     MAX_TRANSLATION_LOCALES_PER_KEY,
     MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT,
@@ -376,8 +377,18 @@ function flattenFlatData(data: Record<string, unknown>): Record<string, string> 
     const result: Record<string, string> = {}
     let count = 0
     for (const [key, value] of Object.entries(data)) {
+        // A non-string value here used to be silently DROPPED rather than rejected — with
+        // `mode: 'replace'`, a dropped key is indistinguishable from one genuinely absent from the
+        // payload, so `removeLocaleFromKeysNotIn` would strip that locale from an existing key the
+        // caller never meant to touch (e.g. a nested payload accidentally posted with
+        // `format: 'flat'`, whose values are objects, not strings). Rejecting the whole import
+        // instead — before the transaction even opens — means a malformed payload can never delete
+        // anything.
         if (typeof value !== 'string') {
-            continue
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Translation value for key "${key}" must be a string, got ${describeNonStringType(value)}` },
+            })
         }
         count += 1
         assertFlattenedKeyCountWithinCap(count)
@@ -386,10 +397,20 @@ function flattenFlatData(data: Record<string, unknown>): Record<string, string> 
     return result
 }
 
+function describeNonStringType(value: unknown): string {
+    if (isNil(value)) {
+        return value === null ? 'null' : 'undefined'
+    }
+    if (Array.isArray(value)) {
+        return 'an array'
+    }
+    return typeof value === 'object' ? 'a nested object' : typeof value
+}
+
 function flattenNestedData(data: Record<string, unknown>): Record<string, string> {
     const result: Record<string, string> = {}
-    const counter = { value: 0 }
-    flattenNestedInto({ node: data, prefix: [], result, counter })
+    const counters = { keys: 0, nodes: 0 }
+    flattenNestedInto({ node: data, prefix: '', result, counters })
     return result
 }
 
@@ -398,22 +419,73 @@ function flattenNestedData(data: Record<string, unknown>): Record<string, string
 // found in a subtree once per ancestor level, which is quadratic again for a sufficiently wide
 // tree even though each individual merge uses `Object.defineProperty`. One `defineProperty` call
 // per leaf string value, total, regardless of nesting shape.
-function flattenNestedInto(params: { node: unknown, prefix: string[], result: Record<string, string>, counter: { value: number } }): void {
-    const { node, prefix, result, counter } = params
+//
+// `prefix` is a plain STRING built by concatenation as the walk descends, never an array rebuilt
+// with `[...prefix, segment]` at every level — that array-spread was O(depth) per node visited,
+// making the whole walk O(depth × nodes) for a deep tree. String concatenation is O(1) amortized
+// per level instead (the same reason `Array.prototype.join` at a single leaf is fine but doing the
+// equivalent copy at every intermediate node is not).
+//
+// Every node visited counts toward `counters.nodes` — an object or a leaf alike — checked BEFORE
+// recursing into it, so a payload built mostly from bare objects (nested arbitrarily wide/deep
+// without ever reaching a leaf that would increment `counters.keys` or trip the rejection below)
+// still aborts once the walk itself has done too much work, rather than only being bounded by how
+// many actual translation keys it happens to produce.
+//
+// A leaf that is not a string is REJECTED, not silently dropped: with `mode: 'replace'`, a silently
+// dropped key was indistinguishable from one genuinely absent from the payload, so
+// `removeLocaleFromKeysNotIn` would strip that locale from an existing key the caller never meant
+// to touch. Rejecting here, before the transaction opens, means a malformed payload can never
+// delete anything either.
+//
+// The joined path length is checked the instant a child segment would be appended — before ever
+// recursing into that child — so a pathologically deep chain of single-key wrappers is rejected as
+// soon as its own prefix would exceed `TRANSLATION_KEY_MAX_LENGTH`, not after building the whole
+// path down to whatever leaf eventually terminates it.
+function flattenNestedInto(params: { node: unknown, prefix: string, result: Record<string, string>, counters: { keys: number, nodes: number } }): void {
+    const { node, prefix, result, counters } = params
+    counters.nodes += 1
+    assertVisitedNodeCountWithinCap(counters.nodes)
+
     if (typeof node === 'string') {
         if (prefix.length === 0) {
             return
         }
-        counter.value += 1
-        assertFlattenedKeyCountWithinCap(counter.value)
-        Object.defineProperty(result, prefix.join('.'), { value: node, writable: true, enumerable: true, configurable: true })
+        counters.keys += 1
+        assertFlattenedKeyCountWithinCap(counters.keys)
+        Object.defineProperty(result, prefix, { value: node, writable: true, enumerable: true, configurable: true })
         return
     }
-    if (typeof node !== 'object' || isNil(node) || Array.isArray(node)) {
-        return
+    const isPlainObject = typeof node === 'object' && !isNil(node) && !Array.isArray(node)
+    if (!isPlainObject) {
+        if (prefix.length === 0) {
+            // The root payload itself failing to be an object is caught by the request's own zod
+            // schema (`data: z.record(...)`) before this ever runs.
+            return
+        }
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: `Translation value at "${prefix}" must be a string (or a nested object of strings), got ${describeNonStringType(node)}` },
+        })
     }
     for (const [segment, value] of Object.entries(node)) {
-        flattenNestedInto({ node: value, prefix: [...prefix, segment], result, counter })
+        const nextPrefix = prefix.length === 0 ? segment : `${prefix}.${segment}`
+        if (nextPrefix.length > TRANSLATION_KEY_MAX_LENGTH) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Nested key path "${nextPrefix.slice(0, TRANSLATION_KEY_MAX_LENGTH)}..." exceeds ${TRANSLATION_KEY_MAX_LENGTH} characters` },
+            })
+        }
+        flattenNestedInto({ node: value, prefix: nextPrefix, result, counters })
+    }
+}
+
+function assertVisitedNodeCountWithinCap(count: number): void {
+    if (count > MAX_TRANSLATION_IMPORT_NODES) {
+        throw new QadamFlowError({
+            code: ErrorCode.RESOURCE_LIMIT_EXCEEDED,
+            params: { resource: 'translation_import_nodes', limit: MAX_TRANSLATION_IMPORT_NODES },
+        })
     }
 }
 
