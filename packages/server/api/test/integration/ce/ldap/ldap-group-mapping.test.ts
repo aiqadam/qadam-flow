@@ -413,6 +413,56 @@ describe('ldapGroupMappingService.applyMapping — a raised MANUAL role reverts 
         expect(afterThirdPass.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
     })
 
+    // The single-user, three-call test above proves the state-machine fix; this proves it holds at
+    // a realistic fleet size and that `transitionPlatformRoleIfCurrentlyEquals`'s conditional UPDATE
+    // is scoped to its own row — a query missing an `id`/`platformId` predicate would either affect
+    // every user sharing the same expected (platformRole, platformRoleManagedBy) pair, or silently
+    // do nothing for all but one of them, and only shows up once more than a couple of rows share
+    // that starting state at once.
+    it('reverts dozens of MANUAL OPERATORs raised to ADMIN back to OPERATOR and MANUAL, independently of each other', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+
+        const userIds = await Promise.all(Array.from({ length: 30 }, async () => {
+            const userId = await createDirectoryUser(mockPlatform.id)
+            await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.OPERATOR, source: 'ADMIN' })
+            return userId
+        }))
+
+        for (const userId of userIds) {
+            await ldapGroupMappingService(log).applyMapping({
+                platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=admins,dc=example,dc=com'],
+            })
+        }
+        for (const userId of userIds) {
+            const raised = await userService(log).getOrThrow({ id: userId })
+            expect(raised.platformRole).toBe(PlatformRole.ADMIN)
+            expect(raised.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        }
+
+        // A handful of them lose the group grant on the next pass; the rest keep it.
+        const revertedUserIds = userIds.slice(0, 5)
+        const stillAdminUserIds = userIds.slice(5)
+        for (const userId of revertedUserIds) {
+            await ldapGroupMappingService(log).applyMapping({
+                platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+            })
+        }
+
+        for (const userId of revertedUserIds) {
+            const reverted = await userService(log).getOrThrow({ id: userId })
+            expect(reverted.platformRole).toBe(PlatformRole.OPERATOR)
+            expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
+        }
+        for (const userId of stillAdminUserIds) {
+            const stillAdmin = await userService(log).getOrThrow({ id: userId })
+            expect(stillAdmin.platformRole).toBe(PlatformRole.ADMIN)
+            expect(stillAdmin.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        }
+    })
+
     it('an admin role write in between forgets the recorded baseline, so the next raise captures the new manual role instead of the stale one', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
         const userId = await createDirectoryUser(mockPlatform.id)
