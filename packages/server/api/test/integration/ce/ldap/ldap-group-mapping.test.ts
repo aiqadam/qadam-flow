@@ -221,14 +221,14 @@ describe('ldapGroupMappingService.applyMapping — project grants', () => {
         expect(await databaseConnection().getRepository('project_member').findOneBy({ userId, projectId: nonTeamProject.id })).toBeNull()
     })
 
-    // Round 2 (app-sec finding #10): the `ON CONFLICT ... DO UPDATE ... WHERE "managedBy" = 'LDAP'`
-    // clause is a defense-in-depth guard against a race between this function's own JS-level
-    // "does a MANUAL row already exist" check and the insert that follows it — a concurrent write
-    // (e.g. an invitation acceptance) creating the MANUAL row in that exact window must still never
-    // be overwritten. `findOneBy` is stubbed to return `null` for one call only, simulating that
-    // race window (the MANUAL row already exists in Postgres by the time the upsert below runs, but
-    // this function's own pre-check did not see it) — everything else in the call goes through the
-    // real function and the real database.
+    // The `ON CONFLICT ... DO UPDATE ... WHERE "managedBy" = 'LDAP'` clause is a defense-in-depth
+    // guard against a race between this function's own JS-level "does a MANUAL row already exist"
+    // check and the insert that follows it — a concurrent write (e.g. an invitation acceptance)
+    // creating the MANUAL row in that exact window must still never be overwritten. `findOneBy` is
+    // stubbed to return `null` for one call only, simulating that race window (the MANUAL row
+    // already exists in Postgres by the time the upsert below runs, but this function's own
+    // pre-check did not see it) — everything else in the call goes through the real function and
+    // the real database.
     it('never flips a MANUAL row to LDAP even when the pre-check misses it under a race', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
         const userId = await createDirectoryUser(mockPlatform.id)
@@ -264,7 +264,7 @@ describe('ldapGroupMappingService.applyMapping — project grants', () => {
     })
 })
 
-describe('ldapGroupMappingService.applyMapping — platform-role provenance and revocation (round 2)', () => {
+describe('ldapGroupMappingService.applyMapping — platform-role provenance and revocation', () => {
     it('marks a group-granted platform role as LDAP-managed, and reverts it to MEMBER once no group grants one anymore', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
         const userId = await createDirectoryUser(mockPlatform.id)
@@ -306,12 +306,11 @@ describe('ldapGroupMappingService.applyMapping — platform-role provenance and 
     })
 })
 
-// Round 3 (app-sec finding #4, blocking): round 2's `applyPlatformRoleGrant` applied *any* matched
-// mapping's role unconditionally, which meant a MEMBER/OPERATOR-mapped group would silently demote
-// a MANUAL ADMIN the moment that admin's own directory account happened to match it — the exact
-// opposite of "a manually set role is never demoted by a mapping". These cases are the matched-role
-// scenario the round-2 tests above never covered (they only exercised the *no-match* revert path).
-describe('ldapGroupMappingService.applyMapping — a mapping may only ever raise a MANUAL role, never lower it (round 3)', () => {
+// A MEMBER/OPERATOR-mapped group must never silently demote a MANUAL ADMIN just because that
+// admin's own directory account happens to match it — the exact opposite of "a manually set role
+// is never demoted by a mapping". These cases are the matched-role scenario the tests above don't
+// cover (those only exercise the *no-match* revert path).
+describe('ldapGroupMappingService.applyMapping — a mapping may only ever raise a MANUAL role, never lower it', () => {
     it('a manual ADMIN in a MEMBER-mapped group stays ADMIN and MANUAL', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
         const userId = await createDirectoryUser(mockPlatform.id)
@@ -352,5 +351,71 @@ describe('ldapGroupMappingService.applyMapping — a mapping may only ever raise
         const reverted = await userService(log).getOrThrow({ id: userId })
         expect(reverted.platformRole).toBe(PlatformRole.MEMBER)
         expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+    })
+})
+
+// "Manual roles are never demoted" applies to a mapping-raised role too, once the group grant that
+// raised it goes away — the revert must land back on the admin's own prior role, not fall all the
+// way to MEMBER, which would itself be a demotion the admin never asked for.
+describe('ldapGroupMappingService.applyMapping — a raised MANUAL role reverts to its own prior role, not MEMBER', () => {
+    it('reverts a MANUAL OPERATOR raised to ADMIN back to OPERATOR, not MEMBER, once the group no longer grants a role', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.OPERATOR, source: 'ADMIN' })
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=admins,dc=example,dc=com'],
+        })
+        const raised = await userService(log).getOrThrow({ id: userId })
+        expect(raised.platformRole).toBe(PlatformRole.ADMIN)
+        expect(raised.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        expect(raised.platformRoleManualBaseline).toBe(PlatformRole.OPERATOR)
+
+        // Removed from the group on the directory side — the next sign-in/reconcile pass resolves
+        // no platform role at all.
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+        })
+        const reverted = await userService(log).getOrThrow({ id: userId })
+        expect(reverted.platformRole).toBe(PlatformRole.OPERATOR)
+        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        expect(reverted.platformRoleManualBaseline).toBeNull()
+    })
+
+    it('an admin role write in between forgets the recorded baseline, so the next raise captures the new manual role instead of the stale one', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.OPERATOR, source: 'ADMIN' })
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=admins,dc=example,dc=com'],
+        })
+        expect((await userService(log).getOrThrow({ id: userId })).platformRoleManualBaseline).toBe(PlatformRole.OPERATOR)
+
+        // An admin, unaware this ADMIN role came from a group, explicitly sets it by hand — a fresh
+        // manual decision that must forget the stale OPERATOR baseline a since-superseded mapping
+        // recorded, not merely leave it lying around unread.
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.MEMBER, source: 'ADMIN' })
+        const afterAdminWrite = await userService(log).getOrThrow({ id: userId })
+        expect(afterAdminWrite.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
+        expect(afterAdminWrite.platformRoleManualBaseline).toBeNull()
+
+        // The same group raises the role again — the baseline it now records must be the fresh
+        // MANUAL MEMBER the admin just left it at, not the stale OPERATOR from before.
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=admins,dc=example,dc=com'],
+        })
+        expect((await userService(log).getOrThrow({ id: userId })).platformRoleManualBaseline).toBe(PlatformRole.MEMBER)
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+        })
+        const reverted = await userService(log).getOrThrow({ id: userId })
+        expect(reverted.platformRole).toBe(PlatformRole.MEMBER)
     })
 })

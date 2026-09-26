@@ -31,6 +31,19 @@ export const UserEntity = new EntitySchema<UserSchema>({
             nullable: false,
             default: 'MANUAL',
         },
+        // The MANUAL `platformRole` a group mapping's raise-only rule preserved at the moment it
+        // last raised a MANUAL role to an LDAP-managed one — e.g. an admin's own OPERATOR promoted
+        // to ADMIN by a matching group. Read back only by the mapping's own revert path (no
+        // resolved role, currently LDAP-managed): the role returns to this baseline, not to
+        // MEMBER, because "manual roles are never demoted" also means a manual role a mapping once
+        // raised is never demoted *below where the admin themselves left it* once the group grant
+        // goes away. Cleared (reset to null) by the same admin role write that already resets
+        // provenance to MANUAL, and by the mapping's own revert once it has been consumed
+        // (`.agents/features/ldap.md` Phase 2).
+        platformRoleManualBaseline: {
+            type: String,
+            nullable: true,
+        },
         identityId: {
             type: String,
             nullable: false,

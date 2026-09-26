@@ -50,6 +50,10 @@ export const User = z.object({
     ...BaseModelSchema,
     platformRole: z.nativeEnum(PlatformRole),
     platformRoleManagedBy: z.enum(PlatformRoleManagedBy),
+    // The MANUAL role a group mapping's raise-only rule preserved the last time it raised a
+    // MANUAL role to an LDAP-managed one; read back only by that same mapping's revert path,
+    // never by anything human-facing.
+    platformRoleManualBaseline: Nullable(z.nativeEnum(PlatformRole)),
     status: z.nativeEnum(UserStatus),
     identityId: z.string(),
     externalId: Nullable(z.string()),

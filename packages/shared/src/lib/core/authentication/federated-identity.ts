@@ -23,11 +23,12 @@ export const UserFederatedIdentity = z.object({
     // reactivate the user: only an account the directory itself deactivated is reactivated
     // automatically, so a manual admin deactivation always sticks.
     directoryDisabledAt: z.string().nullable(),
-    // Round 3 (app-sec finding #5): stamped by the reconcile job every time it actually resolves
-    // this identity's directory state within its per-platform time budget — the ordering
-    // `listByPlatformAndProvider` reads it back with (oldest/never-reconciled first, `NULLS FIRST`)
-    // is what rotates the starting point across ticks, so a slow/huge directory's time budget
-    // starves a *different* slice of users each run instead of the same prefix forever.
+    // Stamped by the reconcile job every time it actually finishes resolving this identity's
+    // directory state within its per-platform time budget — the ordering
+    // `listByPlatformAndProvider` reads it back with (oldest/never-reconciled first, `NULLS FIRST`,
+    // `id` as a tie-break) is what rotates the starting point across ticks, so a slow/huge
+    // directory's time budget reaches a *different* slice of users each run instead of always
+    // starving the same prefix.
     lastReconciledAt: z.string().nullable(),
 })
 export type UserFederatedIdentity = z.infer<typeof UserFederatedIdentity>

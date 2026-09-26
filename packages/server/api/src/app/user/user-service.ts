@@ -12,6 +12,7 @@ import {
     QadamFlowError,
     SeekPage,
     spreadIfDefined,
+    spreadIfNotUndefined,
     User,
     UserId,
     UserIdentity,
@@ -77,7 +78,7 @@ export const userService = (log: FastifyBaseLogger) => ({
     async updateLastActiveDate({ id }: UpdateLastActiveDateParams): Promise<void> {
         await userRepo().update({ id }, { lastActiveDate: dayjs().toISOString() })
     },
-    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN', entityManager }: UpdateParams): Promise<UserWithMetaInformation> {
+    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN', platformRoleManualBaseline, entityManager }: UpdateParams): Promise<UserWithMetaInformation> {
         const user = await this.getOrThrow({ id })
         assertNotNullOrUndefined(user.platformId, 'platformId')
 
@@ -113,6 +114,13 @@ export const userService = (log: FastifyBaseLogger) => ({
             // on what is now a manually-asserted role. The mapping's own write (`source: 'LDAP'`)
             // is the only path that sets LDAP instead.
             ...(platformRole !== undefined ? { platformRoleManagedBy: source === 'ADMIN' ? PlatformRoleManagedBy.MANUAL : PlatformRoleManagedBy.LDAP } : {}),
+            // An admin's own role write is a fresh manual decision, so it forgets any raise
+            // baseline a mapping recorded — the next mapping raise (if any) captures a new one from
+            // here. The mapping's own path (`source: 'LDAP'`) passes `platformRoleManualBaseline`
+            // explicitly (a role to set, or `null` once consumed by a revert) whenever it wants to
+            // touch this column; every other write leaves it exactly as it was.
+            ...(platformRole !== undefined && source === 'ADMIN' ? { platformRoleManualBaseline: null } : {}),
+            ...spreadIfNotUndefined('platformRoleManualBaseline', source === 'LDAP' ? platformRoleManualBaseline : undefined),
         })
 
         // Any explicit *admin* status write — either direction — is a human decision that must
@@ -128,15 +136,25 @@ export const userService = (log: FastifyBaseLogger) => ({
     async getUsersByIdentityId({ identityId }: GetUsersByIdentityIdParams): Promise<Pick<User, 'id' | 'platformId'>[]> {
         return userRepo().find({ where: { identityId } }).then((users) => users.map((user) => ({ id: user.id, platformId: user.platformId })))
     },
-    // Round 3 (app-sec finding #5): reconcile used to fetch each linked user's status with its own
-    // `getOrThrow` call inside a `Promise.all` — N round trips for N linked users. One `IN (...)`
-    // query does the same job.
-    async getStatusesByIds({ ids }: GetStatusesByIdsParams): Promise<Map<UserId, UserStatus>> {
+    // Batches reconcile's per-user status lookup (one linked-user set per platform) into a single
+    // `IN (...)` query instead of N individual round trips. Scoped by `platformId` too, not only the
+    // caller-supplied `ids`, for multi-tenant safety.
+    async getStatusesByIds({ ids, platformId }: GetStatusesByIdsParams): Promise<Map<UserId, UserStatus>> {
         if (ids.length === 0) {
             return new Map()
         }
-        const users = await userRepo().find({ where: { id: In(ids) }, select: { id: true, status: true } })
+        const users = await userRepo().find({ where: { id: In(ids), platformId }, select: { id: true, status: true } })
         return new Map(users.map((user) => [user.id, user.status]))
+    },
+    // Atomic conditional transition — `UPDATE ... WHERE status = :expectedStatus` — used wherever a
+    // caller must never overwrite a status a concurrent write already changed out from under it
+    // (reconcile's deactivate/reactivate paths in particular, both of which race against an admin's
+    // own status write on the same user). Returns whether the row actually matched and was updated;
+    // `false` means the current status is no longer what the caller expected, and the caller must
+    // treat that as "someone else already decided this", not merely "nothing to do".
+    async transitionStatusIfCurrentlyEquals({ id, platformId, expectedStatus, newStatus, entityManager }: TransitionStatusIfCurrentlyEqualsParams): Promise<boolean> {
+        const result = await userRepo(entityManager).update({ id, platformId, status: expectedStatus }, { status: newStatus })
+        return (result.affected ?? 0) > 0
     },
     async list({ platformId, externalId, cursorRequest, limit }: ListParams): Promise<SeekPage<UserWithMetaInformation>> {
         const decodedCursor = paginationHelper.decodeCursor(cursorRequest)
@@ -365,9 +383,15 @@ type UpdateParams = {
     // manage `directoryDisabledAt`/`platformRoleManagedBy` themselves rather than having this
     // method reset them to the human-decision defaults.
     source?: 'ADMIN' | 'LDAP'
-    // Round 3 (app-sec finding #7): `ldapReconcileService.deactivateUser` needs this write and its
-    // own `setDirectoryDisabledAt` write to commit atomically — join the caller's own transaction
-    // rather than defaulting to the pooled connection.
+    // Only ever passed by `ldapGroupMappingService` (`source: 'LDAP'`): a `PlatformRole` to record
+    // as the pre-raise MANUAL baseline (the mapping is raising a MANUAL role right now), or `null`
+    // once a revert has consumed that baseline. Omitted (not merely `undefined` passed) by every
+    // other caller, which leaves the column untouched — an admin write already clears it
+    // unconditionally above, regardless of this param.
+    platformRoleManualBaseline?: PlatformRole | null
+    // `ldapReconcileService.deactivateUser` needs this write and its own `setDirectoryDisabledAt`
+    // write to commit atomically — join the caller's own transaction rather than defaulting to the
+    // pooled connection.
     entityManager?: EntityManager
 }
 
@@ -384,6 +408,15 @@ type GetUsersByIdentityIdParams = {
 }
 type GetStatusesByIdsParams = {
     ids: UserId[]
+    platformId: PlatformId
+}
+
+type TransitionStatusIfCurrentlyEqualsParams = {
+    id: UserId
+    platformId: PlatformId
+    expectedStatus: UserStatus
+    newStatus: UserStatus
+    entityManager?: EntityManager
 }
 
 type NewUser = Omit<User, 'created' | 'updated'>

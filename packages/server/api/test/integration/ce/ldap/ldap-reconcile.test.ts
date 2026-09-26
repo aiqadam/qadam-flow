@@ -227,16 +227,15 @@ describe('ldapReconcileService.reconcileAllPlatforms — safety valve', () => {
         }
     })
 
-    // Round 2 (app-sec finding #2): the denominator (and the numerator) must count only real
-    // transitions — a user already INACTIVE (25 of the 100 seeded here, permanently reported
-    // "gone" by the mocked directory every run, as a stale account genuinely would be) must never
-    // inflate either side of the valve's math. 100 linked users total: 25 already INACTIVE and
-    // reported gone, 74 ACTIVE and present, 1 ACTIVE and newly gone (the actual new departure).
-    // The buggy valve (numerator = every gone/disabled result including the 25 stale ones,
-    // denominator = every linked user) computes 26 > ceil(100 * 20 / 100) = 20 and trips, leaving
-    // the one real departure undeactivated. The fixed valve counts only the one real transition
-    // against the 75 currently-ACTIVE linked users (ceil(75 * 20 / 100) = 15), does not trip, and
-    // deactivates the one real departure.
+    // The denominator (and the numerator) must count only real transitions — a user already
+    // INACTIVE (25 of the 100 seeded here, permanently reported "gone" by the mocked directory
+    // every run, as a stale account genuinely would be) must never inflate either side of the
+    // valve's math. 100 linked users total: 25 already INACTIVE and reported gone, 74 ACTIVE and
+    // present, 1 ACTIVE and newly gone (the actual new departure). Counting every gone/disabled
+    // result including the 25 stale ones against every linked user would compute 26 against a cap
+    // of ceil(100 * 20 / 100) = 20 and trip, leaving the one real departure undeactivated. Counting
+    // only the one real transition against the 75 currently-ACTIVE linked users (ceil(75 * 20 /
+    // 100) = 15) does not trip, and deactivates the one real departure.
     it('counts only real transitions against currently-ACTIVE linked users, not every already-inactive one', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
         await saveEnabledLdapConfig(mockPlatform.id)
@@ -338,9 +337,9 @@ describe('ldapReconcileService.reconcileAllPlatforms — disabled configs', () =
     })
 })
 
-// Round 3 (app-sec, missing-test finding #8): direct coverage of the two `userService.update` side
-// effects the reconcile design depends on, exercised through the real admin path (`source: 'ADMIN'`,
-// the controller's own default) rather than only inferred from reconcile's own end-to-end behavior.
+// Direct coverage of the two `userService.update` side effects the reconcile design depends on,
+// exercised through the real admin path (`source: 'ADMIN'`, the controller's own default) rather
+// than only inferred from reconcile's own end-to-end behavior.
 describe('userService.update — admin-path provenance side effects', () => {
     it('an admin status write clears directoryDisabledAt on the user\'s federated rows', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
@@ -371,51 +370,65 @@ describe('userService.update — admin-path provenance side effects', () => {
     })
 })
 
-// Round 3 (app-sec finding #5, must-fix): the per-platform time budget used to slice into
-// `linkedIdentities` in whatever order `listByPlatformAndProvider` happened to return them, with no
-// rotation — a slow/huge directory would starve the exact same prefix of users every single tick,
-// forever. `searchBySubject` carries a small artificial delay here so a small
-// `LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS` reliably only covers a strict subset of the linked users
-// each run.
+// The per-platform time budget slices into `linkedIdentities` in `lastReconciledAt` order
+// (`NULLS FIRST`, `id` as a tie-break) — a slow/huge directory must not starve the exact same
+// prefix of users every single tick, forever. A fake, injectable clock (`Date.now` spied to a
+// counter this test advances itself, one fixed step per `searchBySubject` call) makes a tiny
+// `LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS` deterministically only cover a strict subset of the
+// linked users each run, with no real `setTimeout` delay and so no timing flakiness. The
+// assertion reads the actual effect reconcile leaves behind — which federated rows got a fresh
+// `lastReconciledAt` this run — rather than counting mock calls, so it would catch a bug in the
+// stamping logic itself, not only in how many times the (test-double) directory got searched.
 describe('ldapReconcileService.reconcileAllPlatforms — time budget rotates across runs', () => {
-    it('processes a different subset of users on a second run than the first, under a tiny budget', async () => {
+    it('reconciles a different, non-overlapping subset of users on a second run than the first, under a tiny budget', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
         await saveEnabledLdapConfig(mockPlatform.id)
-        await Promise.all(Array.from({ length: 4 }, (_, i) =>
+        const linked = await Promise.all(Array.from({ length: 4 }, (_, i) =>
             createLinkedUser({ platformId: mockPlatform.id, subject: `c0c0c0c${i}-0000-0000-0000-000000000000` })))
 
         const originalGetNumber = system.getNumber.bind(system)
         vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
             if (prop === AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) {
-                return 40
+                return 100
             }
             return originalGetNumber(prop)
         })
-        searchBySubject.mockImplementation(({ subject }: { subject: string }) => new Promise((resolve) => {
-            setTimeout(() => resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }), 25)
-        }))
+        let clock = 1_000_000
+        vi.spyOn(Date, 'now').mockImplementation(() => clock)
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) => {
+            clock += 60
+            return Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` })
+        })
+
+        const federatedRepo = databaseConnection().getRepository('user_federated_identity')
+        const stampedSubjects = async (): Promise<Set<string>> => {
+            const rows = await federatedRepo.find({ where: { platformId: mockPlatform.id } })
+            return new Set(rows.filter((row) => row.lastReconciledAt !== null).map((row) => row.subject))
+        }
 
         await reconcile()
-        const firstRunSubjects = searchBySubject.mock.calls.map((call) => (call[0] as { subject: string }).subject)
-        expect(firstRunSubjects.length).toBeGreaterThan(0)
-        expect(firstRunSubjects.length).toBeLessThan(4)
+        const firstRunStamped = await stampedSubjects()
+        expect(firstRunStamped.size).toBeGreaterThan(0)
+        expect(firstRunStamped.size).toBeLessThan(linked.length)
 
-        searchBySubject.mockClear()
         await reconcile()
-        const secondRunSubjects = searchBySubject.mock.calls.map((call) => (call[0] as { subject: string }).subject)
-        expect(secondRunSubjects.length).toBeGreaterThan(0)
+        const afterSecondRun = await stampedSubjects()
+        const newlyStampedBySecondRun = [...afterSecondRun].filter((subject) => !firstRunStamped.has(subject))
 
-        const overlap = secondRunSubjects.filter((subject) => firstRunSubjects.includes(subject))
-        expect(overlap).toEqual([])
+        expect(newlyStampedBySecondRun.length).toBeGreaterThan(0)
+        // Rotation, not re-processing the same slice: the second run's newly-stamped users are
+        // exactly the ones the first run's own budget left untouched.
+        for (const subject of newlyStampedBySecondRun) {
+            expect(firstRunStamped.has(subject)).toBe(false)
+        }
     })
 })
 
-// Round 3 (app-sec finding #6, blocking): the identity snapshot the write-back phase acts on is
-// taken at the start of the tick — an admin re-deactivating (or reactivating) the same user can
-// land in between that snapshot and this phase actually running. `searchBySubject`'s own mock
-// implementation performs the competing admin write as a side effect, simulating it landing at
-// the one point in the tick that matters: after reconcile's own snapshot read, before its
-// write-back phase.
+// The identity snapshot reconcile acts on for a given user is taken at the start of the tick — an
+// admin re-deactivating (or reactivating) the same user can land in between that snapshot and the
+// point reconcile actually writes based on it. `searchBySubject`'s own mock implementation performs
+// the competing admin write as a side effect, simulating it landing at the one point in the tick
+// that matters: after reconcile's own snapshot read, before its own conditional write.
 describe('ldapReconcileService.reconcileAllPlatforms — reactivation race with a concurrent admin write', () => {
     it('never reactivates a user an admin re-deactivated in the moment between the snapshot and the write-back phase', async () => {
         const { mockPlatform } = await mockAndSaveBasicSetup()
@@ -441,5 +454,138 @@ describe('ldapReconcileService.reconcileAllPlatforms — reactivation race with 
         expect(user.status).toBe(UserStatus.INACTIVE)
         const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({ id: federatedId })
         expect(federated?.directoryDisabledAt).toBeNull()
+    })
+})
+
+// Splitting the search phase and the write-back phase into two independently-deadlined loops
+// starves the second loop whenever the first alone consumes the whole per-tick budget: the search
+// loop stops right at the deadline, and the write-back loop's own deadline check is then true on
+// its very first iteration, acting on nobody even though the search already learned enough to act
+// on every identity it reached. Each identity must instead be processed start-to-finish (searched,
+// then reverted-or-left) before the next one is even started, under one shared deadline — so a
+// tight budget still fully finishes whatever prefix of identities it does reach.
+describe('ldapReconcileService.reconcileAllPlatforms — per-user processing under a tight time budget', () => {
+    it('reverts every LDAP-managed ADMIN this tick actually reaches once the group no longer grants a role, and leaves an identity outside this tick both untouched and unstamped', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        await updateLdapConfig(mockPlatform.id, {
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: 'ADMIN', projects: [] }],
+        })
+        const linked = await Promise.all(Array.from({ length: 3 }, (_, i) =>
+            createLinkedUser({ platformId: mockPlatform.id, subject: `f0f0f0f${i}-0000-0000-0000-000000000000` })))
+
+        // A generous first pass, with everybody a member of the admin-granting group, establishes
+        // the LDAP-managed ADMIN state this test then has to revert under budget pressure.
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) =>
+            Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }))
+        resolveMemberGroupDns.mockResolvedValue(['cn=admins,dc=example,dc=com'])
+        await reconcile()
+        for (const { userId } of linked) {
+            const user = await userService(log).getOrThrow({ id: userId })
+            expect(user.platformRole).toBe(PlatformRole.ADMIN)
+            expect(user.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        }
+
+        const federatedRepo = databaseConnection().getRepository('user_federated_identity')
+        const rowsBefore = await Promise.all(linked.map(({ federatedId }) => federatedRepo.findOneByOrFail({ id: federatedId })))
+        for (const row of rowsBefore) {
+            expect(row.lastReconciledAt).not.toBeNull()
+        }
+        // A single, one-time real delay (not a per-call sleep — that pattern is what made an
+        // earlier version of this suite's rotation test timing-fragile) guarantees the
+        // millisecond-resolution `lastReconciledAt` timestamp the tight tick below writes cannot
+        // collide with the one the generous pass above already wrote, however fast both happen to
+        // run — the "not stamped" assertion needs a real, not simulated, gap between the two.
+        await new Promise((resolve) => {
+            setTimeout(resolve, 5) 
+        })
+
+        // The group no longer grants anyone a role, and a tiny, injectable-clock-driven time
+        // budget only lets this tick reach a strict prefix of the three linked users.
+        resolveMemberGroupDns.mockResolvedValue([])
+        const originalGetNumber = system.getNumber.bind(system)
+        vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
+            if (prop === AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) {
+                return 100
+            }
+            return originalGetNumber(prop)
+        })
+        let clock = 5_000_000
+        vi.spyOn(Date, 'now').mockImplementation(() => clock)
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) => {
+            clock += 60
+            return Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` })
+        })
+
+        await reconcile()
+
+        const rowsAfter = await Promise.all(linked.map(({ federatedId }) => federatedRepo.findOneByOrFail({ id: federatedId })))
+        const results = linked.map((user, index) => ({
+            userId: user.userId,
+            // `lastReconciledAt` comes back from TypeORM as a `Date` object, not a string — two
+            // separately-fetched `Date` instances are never `===`/`!==`-equal by reference even
+            // when they represent the exact same instant, so the timestamps themselves (via
+            // `getTime()`) are what must be compared, not the objects.
+            reachedThisTick: rowsAfter[index].lastReconciledAt?.getTime() !== rowsBefore[index].lastReconciledAt?.getTime(),
+        }))
+        const reached = results.filter((result) => result.reachedThisTick)
+        const untouched = results.filter((result) => !result.reachedThisTick)
+        // The whole point of this test: under the old split-loop design, `reached` would be empty
+        // here — the search loop alone would exhaust the budget, and the separate write-back loop
+        // would revert nobody even though every one of these identities was already known to no
+        // longer be in the group.
+        expect(reached.length).toBeGreaterThan(0)
+        expect(untouched.length).toBeGreaterThan(0)
+
+        for (const { userId } of reached) {
+            const user = await userService(log).getOrThrow({ id: userId })
+            expect(user.platformRole).toBe(PlatformRole.MEMBER)
+        }
+        for (const { userId } of untouched) {
+            const user = await userService(log).getOrThrow({ id: userId })
+            expect(user.platformRole).toBe(PlatformRole.ADMIN)
+        }
+    })
+})
+
+// H2: the safety valve must be judged against the slice this tick actually processed, not only
+// the platform's full ACTIVE population — otherwise a directory-wide misconfiguration (a wrong
+// `baseDn` making every user look gone) can still slip a small, valve-respecting fraction of
+// ACTIVE users through per tick, and enough ticks add up to most of the platform being
+// deactivated despite the valve never tripping on any single run judged platform-wide. 100 linked
+// users, a time budget an injectable clock limits to a handful per tick, and every one of them
+// reported "gone": the slice-local share (all of a ~4-person slice) is far over 20%, even though
+// the platform-wide share (~4 of 100) would not be.
+describe('ldapReconcileService.reconcileAllPlatforms — safety valve trips per-slice even when the platform-wide share would allow it', () => {
+    it('trips the valve on both of two consecutive budget-limited ticks and deactivates nobody either time', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        const linked = await Promise.all(
+            Array.from({ length: 100 }, (_, i) => createLinkedUser({ platformId: mockPlatform.id, subject: `9${String(i).padStart(3, '0')}0000-0000-0000-0000-000000000000` })),
+        )
+
+        const originalGetNumber = system.getNumber.bind(system)
+        vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
+            if (prop === AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) {
+                return 200
+            }
+            return originalGetNumber(prop)
+        })
+        let clock = 10_000_000
+        vi.spyOn(Date, 'now').mockImplementation(() => clock)
+        searchBySubject.mockImplementation(() => {
+            clock += 60
+            return Promise.resolve(null)
+        })
+
+        await reconcile()
+        for (const { userId } of linked) {
+            expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.ACTIVE)
+        }
+
+        await reconcile()
+        for (const { userId } of linked) {
+            expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.ACTIVE)
+        }
     })
 })

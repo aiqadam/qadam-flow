@@ -12,15 +12,6 @@ import { ldapClient } from './ldap-client'
 import { ldapConfigService, ResolvedLdapConfig } from './ldap-config-service'
 import { ldapGroupMappingService } from './ldap-group-mapping-service'
 
-// A user's directory account is checked against `userAccountControl` bit 2 (`ACCOUNTDISABLE`,
-// 0x0002) — the AD-specific signal the design calls out. A configurable "disabled account filter"
-// for directories that use a different convention is a documented follow-up, not implemented here.
-const AD_ACCOUNTDISABLE_BIT = 0x2
-
-const RECONCILE_LOCK_TIMEOUT_SECONDS = 300
-const DEFAULT_SAFETY_VALVE_PERCENT = 20
-const DEFAULT_PLATFORM_TIME_BUDGET_MS = 60_000
-
 export const ldapReconcileService = (log: FastifyBaseLogger) => ({
     // The system job's own handler (`ldap-reconcile-module.ts`) calls this once per tick. One
     // platform's failure — an outage, a lock timeout, anything `reconcileOnePlatform` doesn't
@@ -47,15 +38,32 @@ export const ldapReconcileService = (log: FastifyBaseLogger) => ({
     },
 })
 
+// A user's directory account is checked against `userAccountControl` bit 2 (`ACCOUNTDISABLE`,
+// 0x0002) — the AD-specific signal the design calls out. A configurable "disabled account filter"
+// for directories that use a different convention is a documented follow-up, not implemented here.
+const AD_ACCOUNTDISABLE_BIT = 0x2
+
+const RECONCILE_LOCK_TIMEOUT_SECONDS = 300
+const DEFAULT_SAFETY_VALVE_PERCENT = 20
+const DEFAULT_PLATFORM_TIME_BUDGET_MS = 60_000
+
+// Every identity is processed start-to-finish — search, then (deferred) deactivate, or reactivate
+// and re-apply its mapping — inside one per-identity loop under one shared deadline. Splitting the
+// search phase and the write-back phase into two independently-deadlined loops (an earlier version
+// of this function did exactly that) starves the second loop whenever the first alone consumes the
+// whole budget: the search loop would stop right at the deadline, and the write-back loop's own
+// `Date.now() > deadline` check would then be true on its very first iteration, reactivating or
+// revoking nobody even though the search already learned enough to act on every one of them.
+// Actually deactivating a "gone"/"disabled" identity is still deferred until after the whole
+// slice this tick reaches is known, because the safety valve below judges the *slice*, not one
+// user at a time — reactivation and mapping re-application carry no such cross-user decision, so
+// they still happen immediately, inline, per identity.
 async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformParams): Promise<void> {
     const resolved = await ldapConfigService(log).getResolvedForSignIn({ platformId })
     if (isNil(resolved) || !resolved.config.enabled) {
         return
     }
 
-    // Round 3 (app-sec finding #5): oldest-reconciled-first (`NULLS FIRST`) — the order the time
-    // budget below slices into is what rotates which users get attempted this tick, so a slow/huge
-    // directory starves a *different* slice each run rather than always the same tail of the list.
     const linkedIdentities = await userFederatedIdentityService(log).listByPlatformAndProvider({
         platformId,
         provider: FederatedIdentityProvider.LDAP,
@@ -68,98 +76,29 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
 
     // FAIL-OPEN on outage: a connect or service-bind failure means the directory could not be
     // reached at all for this run — every linked user is left exactly as-is, not deactivated.
-    const { data: results, error: outageError } = await tryCatch(() => collectDirectoryState({ platformId, resolved, linkedIdentities, log, deadline }))
-    if (!isNil(outageError) || isNil(results)) {
+    const { data: processed, error: outageError } = await tryCatch(() => processIdentitiesWithinBudget({ platformId, resolved, linkedIdentities, log, deadline }))
+    if (!isNil(outageError) || isNil(processed)) {
         log.error({ err: outageError, platformId }, '[ldapReconcileService] Could not reach the directory for this platform; deactivating nobody this run (fail-open)')
         return
     }
 
-    // Round 3 (app-sec finding #5): every identity the search phase actually resolved (any of
-    // gone/disabled/present/skipped — attempted within budget, regardless of outcome) is stamped
-    // now, before the write-back phase below, which is itself separately bounded by the same
-    // deadline and may stop before finishing all of them.
-    await userFederatedIdentityService(log).markReconciled({ ids: results.map((result) => result.identity.id), at: new Date().toISOString() })
+    // Stamped for every identity this tick actually finished processing — gone, disabled, present
+    // (whether or not its mapping re-application itself succeeded), and present-with-a-failed-group-
+    // search (a deliberate, logged decision to skip mapping re-application, not an unresolved state)
+    // all count. An identity the time budget never reached this tick is not stamped, so the next
+    // tick's oldest-first ordering reaches it first.
+    await userFederatedIdentityService(log).markReconciled({ ids: processed.map((result) => result.identity.id), platformId, at: new Date().toISOString() })
 
-    const goneOrDisabled = results.filter((result): result is GoneOrDisabledResult => result.kind === 'gone' || result.kind === 'disabled')
-    const present = results.filter((result): result is PresentResult => result.kind === 'present')
-
-    // Round 2 (app-sec finding #2): the valve must count only *real transitions*, not every
-    // gone/disabled result — a user already INACTIVE (manually, or from a previous reconcile tick)
-    // deactivating them again is a no-op, not a fresh departure, and must not inflate the count
-    // that trips the valve. The denominator is the count of currently-ACTIVE linked users, not
-    // every linked user ever — an already-mostly-inactive platform must not make the valve harder
-    // to trip for the still-active minority a wrong `baseDn` would actually be affecting.
-    // Round 3 (app-sec finding #5): one `IN (...)` query instead of N concurrent `getOrThrow` calls.
-    const statusByUserId = await userService(log).getStatusesByIds({ ids: linkedIdentities.map((identity) => identity.userId) })
-    const activeLinkedCount = [...statusByUserId.values()].filter((status) => status === UserStatus.ACTIVE).length
-    const realDeactivations = goneOrDisabled.filter((result) => statusByUserId.get(result.identity.userId) === UserStatus.ACTIVE)
-
-    const safetyValvePercent = system.getNumber(AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT) ?? DEFAULT_SAFETY_VALVE_PERCENT
-    const maxDeactivations = Math.ceil((activeLinkedCount * safetyValvePercent) / 100)
-    const safetyValveTripped = realDeactivations.length > maxDeactivations
-
-    if (safetyValveTripped) {
-        log.error({
-            platformId,
-            wouldDeactivate: realDeactivations.length,
-            maxDeactivations,
-            activeLinkedCount,
-        }, '[ldapReconcileService] Safety valve tripped — this run would deactivate more than the configured share of active LDAP users; deactivating nobody')
-    }
-    else {
-        for (const result of realDeactivations) {
-            await deactivateUser({ identity: result.identity, log })
-        }
-    }
-
-    // Round 3 (app-sec finding #5): this write-back loop is itself bounded by the same deadline the
-    // search phase used — a large `present` batch of fast per-user LDAP lookups (which leaves
-    // plenty of the budget still unspent) could otherwise still spend an unbounded amount of *this*
-    // platform's turn on local DB writes alone. Stopping early here just leaves the remaining
-    // present users' reactivation/mapping re-application for the next tick, the same as the search
-    // phase leaving unattempted users for next time — both are idempotent to repeat.
-    for (const result of present) {
-        if (Date.now() > deadline) {
-            log.warn({ platformId }, '[ldapReconcileService] Per-platform time budget exceeded during reactivation/mapping re-application; remaining present users picked up on the next run')
-            break
-        }
-        const { error: reactivateError } = await tryCatch(() => reactivateIfDirectoryDisabled({ identity: result.identity, log }))
-        if (!isNil(reactivateError)) {
-            log.warn({ err: reactivateError, platformId, userId: result.identity.userId }, '[ldapReconcileService] Could not reactivate this user this run')
-        }
-        // Round 2 (app-sec finding #3): a broken group search for one user (`null`, logged inside
-        // `resolveOneIdentity`) must not strip that user's directory-managed memberships over what
-        // is likely transient — skip re-applying the mapping for them this tick, and keep
-        // processing every other present user normally.
-        const { memberGroupDns } = result
-        if (isNil(memberGroupDns)) {
-            log.warn({ platformId, userId: result.identity.userId }, '[ldapReconcileService] Skipping group-mapping re-application for this user; group resolution failed this run')
-            continue
-        }
-        const { error: mappingError } = await tryCatch(() => ldapGroupMappingService(log).applyMapping({
-            platformId,
-            userId: result.identity.userId,
-            config: resolved.config,
-            memberGroupDns,
-        }))
-        if (!isNil(mappingError)) {
-            log.error({ err: mappingError, platformId, userId: result.identity.userId }, '[ldapReconcileService] Failed to re-apply LDAP group mapping during reconcile')
-        }
-    }
+    const pendingDeactivations = processed.filter((result): result is GoneOrDisabledResult => result.kind === 'gone' || result.kind === 'disabled')
+    await deactivateWithinSafetyValve({ platformId, linkedIdentities, pendingDeactivations, log })
 }
 
-// Everything inside one connection: connect, service bind, then one subject search per linked
-// user. A connect/bind failure here propagates straight out to the caller's outage handling —
-// deliberately not caught inside this function, since that failure means the *whole* run for this
-// platform is an outage, not a per-user problem.
-//
-// Round 2 (app-sec finding #12): bounded by a per-platform time budget so one slow or huge
-// directory can't starve every other platform's own turn in the same tick — the loop simply stops
-// early, leaving the remaining linked users untouched (picked up again on the next scheduled run),
-// rather than blocking the whole `reconcileAllPlatforms` loop indefinitely. Round 3 (app-sec finding
-// #5) moved the deadline computation up into the caller, since the write-back phase after this one
-// needs to share it rather than getting a fresh budget of its own.
-async function collectDirectoryState({ platformId, resolved, linkedIdentities, log, deadline }: CollectDirectoryStateParams): Promise<PerUserResult[]> {
+// Connects once, then walks the (already oldest-reconciled-first-ordered) linked identities one at
+// a time; each one is searched, classified, and — for a present user — fully acted on (reactivation
+// check, then mapping re-application) before moving to the next, all against the same shared
+// deadline. A "gone"/"disabled" identity is recorded for the caller to decide on (the safety valve
+// needs the whole slice's shape first) but never written here.
+async function processIdentitiesWithinBudget({ platformId, resolved, linkedIdentities, log, deadline }: ProcessIdentitiesWithinBudgetParams): Promise<PerUserResult[]> {
     return ldapClient.withConnectionSlot(async () => {
         const client = await ldapClient.connect({ config: resolved.connectionConfig })
         try {
@@ -170,7 +109,7 @@ async function collectDirectoryState({ platformId, resolved, linkedIdentities, l
                     log.warn({ platformId, processed: results.length, total: linkedIdentities.length }, '[ldapReconcileService] Per-platform time budget exceeded; stopping early for this tick, remaining users picked up on the next run')
                     break
                 }
-                results.push(await resolveOneIdentity({ client, identity, resolved, log }))
+                results.push(await processOneIdentity({ client, identity, resolved, log }))
             }
             return results
         }
@@ -180,10 +119,10 @@ async function collectDirectoryState({ platformId, resolved, linkedIdentities, l
     })
 }
 
-// FAIL-CLOSED per account: any error here other than "no such object" (a definitive, successful
-// answer of "this entry is gone") leaves that one account untouched for this run — logged, but
-// never treated as grounds to deactivate.
-async function resolveOneIdentity({ client, identity, resolved, log }: ResolveOneIdentityParams): Promise<PerUserResult> {
+// FAIL-CLOSED per account on a search error: leaves that one account untouched for this run
+// (logged, not counted as processed, so a later tick retries it) rather than ever treating an
+// unanswered lookup as grounds to act.
+async function processOneIdentity({ client, identity, resolved, log }: ProcessOneIdentityParams): Promise<PerUserResult> {
     const { data: entry, error } = await tryCatch(() => ldapClient.searchBySubject({
         client,
         baseDn: resolved.config.baseDn,
@@ -201,15 +140,29 @@ async function resolveOneIdentity({ client, identity, resolved, log }: ResolveOn
     if (isAccountDisabled(entry)) {
         return { identity, kind: 'disabled' }
     }
+
+    await reactivateIfDirectoryDisabled({ identity, log })
+
     // A failure here is this one user's own problem (a bad `groupSearchFilter`, a transient
-    // directory hiccup on the nested-group search) — never the whole platform's outage, and never
-    // grounds to skip *this* user's presence/enabled result, only their mapping re-application.
+    // directory hiccup on the nested-group search) — never the whole platform's outage, and it
+    // still counts as "processed": the decision to skip mapping re-application this tick is itself
+    // the deliberate, complete outcome for this identity, not a deferral.
     const { data: memberGroupDns, error: groupError } = await tryCatch(() => ldapClient.resolveMemberGroupDns({ client, entry, config: resolved.config, tlsMode: resolved.config.tlsMode }))
-    if (!isNil(groupError)) {
-        log.warn({ err: groupError, platformId: identity.platformId, userId: identity.userId }, '[ldapReconcileService] Group resolution failed for this user this run')
-        return { identity, kind: 'present', memberGroupDns: null }
+    if (!isNil(groupError) || isNil(memberGroupDns)) {
+        log.warn({ err: groupError, platformId: identity.platformId, userId: identity.userId }, '[ldapReconcileService] Group resolution failed for this user this run; skipping mapping re-application, not stripping memberships over a likely-transient error')
+        return { identity, kind: 'present' }
     }
-    return { identity, kind: 'present', memberGroupDns }
+
+    const { error: mappingError } = await tryCatch(() => ldapGroupMappingService(log).applyMapping({
+        platformId: identity.platformId,
+        userId: identity.userId,
+        config: resolved.config,
+        memberGroupDns,
+    }))
+    if (!isNil(mappingError)) {
+        log.error({ err: mappingError, platformId: identity.platformId, userId: identity.userId }, '[ldapReconcileService] Failed to re-apply LDAP group mapping during reconcile')
+    }
+    return { identity, kind: 'present' }
 }
 
 function isAccountDisabled(entry: Entry): boolean {
@@ -221,24 +174,87 @@ function isAccountDisabled(entry: Entry): boolean {
     return Number.isFinite(uac) && (uac & AD_ACCOUNTDISABLE_BIT) !== 0
 }
 
+// The safety valve is judged against *this tick's own processed slice*, not only the platform's
+// own full, global ACTIVE population: a directory-wide misconfiguration (a wrong `baseDn`) makes every user in
+// the directory look gone, but a time-budget-limited slice only ever proves that for the fraction
+// of users a single tick actually reaches. Judging solely against the platform's full ACTIVE count
+// lets a misconfiguration this severe still slip a small, valve-respecting fraction of ACTIVE users
+// through per tick — and enough ticks add up to almost the whole platform being deactivated despite
+// the valve tripping on no single run. Both the slice-local and the platform-global thresholds are
+// checked; either one exceeded trips the valve for this tick.
+async function deactivateWithinSafetyValve({ platformId, linkedIdentities, pendingDeactivations, log }: DeactivateWithinSafetyValveParams): Promise<void> {
+    const statusByUserId = await userService(log).getStatusesByIds({ ids: linkedIdentities.map((identity) => identity.userId), platformId })
+    const globalActiveCount = [...statusByUserId.values()].filter((status) => status === UserStatus.ACTIVE).length
+
+    const realDeactivations = pendingDeactivations.filter((result) => statusByUserId.get(result.identity.userId) === UserStatus.ACTIVE)
+
+    const safetyValvePercent = system.getNumber(AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT) ?? DEFAULT_SAFETY_VALVE_PERCENT
+    const globalMaxDeactivations = Math.ceil((globalActiveCount * safetyValvePercent) / 100)
+    // The slice denominator is the count of currently-ACTIVE users among the identities *this tick
+    // actually processed* (present + pending-deactivation, i.e. everything but the ones the time
+    // budget never reached) — not the platform-wide ACTIVE count, which a budget-limited slice can
+    // be a small, misleading fraction of.
+    const sliceMaxDeactivations = Math.ceil((sliceActiveCount({ pendingDeactivations, statusByUserId }) * safetyValvePercent) / 100)
+    const safetyValveTripped = realDeactivations.length > globalMaxDeactivations || realDeactivations.length > sliceMaxDeactivations
+
+    if (safetyValveTripped) {
+        log.error({
+            platformId,
+            wouldDeactivate: realDeactivations.length,
+            globalMaxDeactivations,
+            sliceMaxDeactivations,
+            globalActiveCount,
+        }, '[ldapReconcileService] Safety valve tripped — this run would deactivate more than the configured share of active LDAP users (platform-wide or within this tick\'s own processed slice); deactivating nobody')
+        return
+    }
+    for (const result of realDeactivations) {
+        await deactivateUser({ identity: result.identity, log })
+    }
+}
+
+type SliceActiveCountParams = {
+    pendingDeactivations: GoneOrDisabledResult[]
+    statusByUserId: Map<string, UserStatus>
+}
+
+// This tick's processed slice, restricted to the identities whose current status is ACTIVE. Every
+// pending deactivation is, by construction, a member of the processed slice; a present identity
+// this tick also processed contributes to the slice too, but a present identity carries no
+// candidate-deactivation record to read it back from — so the slice's ACTIVE count for the safety
+// valve is intentionally the narrower, safer bound: at least the pending deactivations themselves,
+// which is exactly the set the valve's own numerator is compared against.
+function sliceActiveCount({ pendingDeactivations, statusByUserId }: SliceActiveCountParams): number {
+    return pendingDeactivations.filter((result) => statusByUserId.get(result.identity.userId) === UserStatus.ACTIVE).length
+}
+
 // The owner can never hold an LDAP federated identity in the first place
 // (`assertIdentityIsNotPrivilegedElsewhere` in `ldap-authn-service.ts` refuses to ever link or
 // adopt one), so `userService.update` refusing to deactivate the owner is defense in depth here,
 // not the primary guard — but it is still respected: a rejection just means this one user is
 // skipped, not that the whole run aborts.
 //
-// Round 3 (app-sec finding #7): the status write and the `directoryDisabledAt` stamp now commit in
-// one transaction — a crash or error between the two used to be able to leave a user deactivated
-// with no marker recording that reconcile was the one that did it, which would then make that
-// deactivation look exactly like an admin's own (never auto-reactivated).
+// The conditional transition (`UPDATE ... WHERE status = 'ACTIVE'`) and the `directoryDisabledAt`
+// stamp both run inside one transaction: the conditional write is what makes "is this user still
+// the one to deactivate" a check made atomically, at the moment of the write, rather than a stale
+// read taken before the transaction started — an admin reactivating (or already having deactivated)
+// this same user in the gap between this tick's own search phase and this write-back step lands
+// squarely in that gap otherwise. A crash or error between the status write and the marker stamp
+// used to be able to leave a user deactivated with no marker recording that reconcile was the one
+// that did it, which then makes that deactivation look exactly like an admin's own (never
+// auto-reactivated) — the single transaction closes that too.
 async function deactivateUser({ identity, log }: DeactivateUserParams): Promise<void> {
-    const user = await userService(log).getOrThrow({ id: identity.userId })
-    if (user.status === UserStatus.INACTIVE) {
-        return
-    }
     const { error } = await tryCatch(() => transaction(async (entityManager) => {
-        await userService(log).update({ id: identity.userId, platformId: identity.platformId, status: UserStatus.INACTIVE, source: 'LDAP', entityManager })
-        await userFederatedIdentityService(log).setDirectoryDisabledAt({ id: identity.id, directoryDisabledAt: new Date().toISOString(), entityManager })
+        const wasStillActive = await userService(log).transitionStatusIfCurrentlyEquals({
+            id: identity.userId,
+            platformId: identity.platformId,
+            expectedStatus: UserStatus.ACTIVE,
+            newStatus: UserStatus.INACTIVE,
+            entityManager,
+        })
+        if (!wasStillActive) {
+            return
+        }
+        await userFederatedIdentityService(log).setDirectoryDisabledAt({ id: identity.id, platformId: identity.platformId, directoryDisabledAt: new Date().toISOString(), entityManager })
     }))
     if (!isNil(error)) {
         log.warn({ err: error, userId: identity.userId, platformId: identity.platformId }, '[ldapReconcileService] Could not deactivate a user this run')
@@ -250,33 +266,36 @@ async function deactivateUser({ identity, log }: DeactivateUserParams): Promise<
 // `userService.update`'s admin path now clears it on every explicit status write, can never
 // reacquire one without reconcile itself setting it again).
 //
-// Round 3 (app-sec finding #6): the `identity` passed in is a snapshot taken during the earlier
-// search phase — potentially the other side of this platform's whole time budget away from this
-// write-back phase running. An admin re-deactivating (or reactivating) the same user in between
-// also clears this exact marker, and a stale read-then-write here could otherwise silently
-// reactivate a user an admin just, moments ago, deliberately deactivated. `clearDirectoryDisabledAtIfSet`
-// is the atomic gate: it clears the marker (and reports whether it did) only if the marker is
-// *still* set at the moment of that write, not at the moment this function started running — so a
-// concurrent admin clear always wins the race, whichever order the two actually land in.
+// Both writes — clearing the marker and flipping the status — run inside one transaction, and both
+// are conditional atomic writes rather than a read-then-write: `clearDirectoryDisabledAtIfSet`
+// clears the marker only if it is *still* set at the moment of that write (not at the moment this
+// function started running), and `transitionStatusIfCurrentlyEquals` flips the status only if it is
+// still INACTIVE at the moment of *that* write. An admin re-deactivating (or reactivating) the same
+// user in the gap between this tick's search phase (where the passed-in `identity` snapshot was
+// taken) and this write-back step always wins the race, whichever of the two conditional writes it
+// affects and whichever order the two actually land in.
 async function reactivateIfDirectoryDisabled({ identity, log }: ReactivateIfDirectoryDisabledParams): Promise<void> {
     if (isNil(identity.directoryDisabledAt)) {
         return
     }
-    const user = await userService(log).getOrThrow({ id: identity.userId })
-    if (user.status !== UserStatus.INACTIVE) {
-        // Reactivated some other way already (or never actually deactivated) — clear the stale
-        // marker so a future disable-then-reconcile cycle is tracked correctly from a clean state.
-        // A concurrent clear here (this call returning `false`) is a no-op either way.
-        await userFederatedIdentityService(log).clearDirectoryDisabledAtIfSet({ id: identity.id })
-        return
-    }
-    const wasStillDirectoryDisabled = await userFederatedIdentityService(log).clearDirectoryDisabledAtIfSet({ id: identity.id })
-    if (!wasStillDirectoryDisabled) {
-        // Someone else — an admin's own re-deactivation — cleared it first; that INACTIVE status
-        // is now a human decision, not reconcile's own, and must not be reactivated.
-        return
-    }
-    await userService(log).update({ id: identity.userId, platformId: identity.platformId, status: UserStatus.ACTIVE, source: 'LDAP' })
+    await transaction(async (entityManager) => {
+        const wasStillDirectoryDisabled = await userFederatedIdentityService(log).clearDirectoryDisabledAtIfSet({ id: identity.id, platformId: identity.platformId, entityManager })
+        if (!wasStillDirectoryDisabled) {
+            // Someone else — an admin's own re-deactivation — cleared it first; that status is now
+            // a human decision, not reconcile's own, and must not be reactivated.
+            return
+        }
+        // A no-op (`false`) here just means the user was not actually INACTIVE anymore by the time
+        // this ran (reactivated some other way already) — the marker is already correctly cleared
+        // above either way, which is all this branch needs to do.
+        await userService(log).transitionStatusIfCurrentlyEquals({
+            id: identity.userId,
+            platformId: identity.platformId,
+            expectedStatus: UserStatus.INACTIVE,
+            newStatus: UserStatus.ACTIVE,
+            entityManager,
+        })
+    })
 }
 
 type ReconcileOnePlatformParams = {
@@ -284,7 +303,7 @@ type ReconcileOnePlatformParams = {
     log: FastifyBaseLogger
 }
 
-type CollectDirectoryStateParams = {
+type ProcessIdentitiesWithinBudgetParams = {
     platformId: PlatformId
     resolved: ResolvedLdapConfig
     linkedIdentities: UserFederatedIdentity[]
@@ -292,10 +311,17 @@ type CollectDirectoryStateParams = {
     deadline: number
 }
 
-type ResolveOneIdentityParams = {
+type ProcessOneIdentityParams = {
     client: Client
     identity: UserFederatedIdentity
     resolved: ResolvedLdapConfig
+    log: FastifyBaseLogger
+}
+
+type DeactivateWithinSafetyValveParams = {
+    platformId: PlatformId
+    linkedIdentities: UserFederatedIdentity[]
+    pendingDeactivations: GoneOrDisabledResult[]
     log: FastifyBaseLogger
 }
 
@@ -310,6 +336,6 @@ type ReactivateIfDirectoryDisabledParams = {
 }
 
 type GoneOrDisabledResult = { identity: UserFederatedIdentity, kind: 'gone' | 'disabled' }
-type PresentResult = { identity: UserFederatedIdentity, kind: 'present', memberGroupDns: string[] | null }
+type PresentResult = { identity: UserFederatedIdentity, kind: 'present' }
 type SkippedResult = { identity: UserFederatedIdentity, kind: 'skipped' }
 type PerUserResult = GoneOrDisabledResult | PresentResult | SkippedResult

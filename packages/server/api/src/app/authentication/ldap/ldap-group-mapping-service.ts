@@ -25,22 +25,27 @@ export const ldapGroupMappingService = (log: FastifyBaseLogger) => ({
     },
 })
 
-// Never touches the platform owner. Two directions, both gated on provenance (round 2, app-sec
-// finding #7 — a directory-granted ADMIN must be revocable) — and round 3 (app-sec finding #4)
-// tightened the first direction, which used to demote a MANUAL role rather than only ever raising
-// it:
+// Never touches the platform owner. Two directions, both gated on provenance — a directory-granted
+// ADMIN must be revocable, and a manually-set role must never be demoted by a mapping:
 // - A resolved role (some group matched with a `platformRole` set) always applies, and always
 //   marks the role LDAP-managed, when the role is *already* LDAP-managed — an explicit group grant
 //   is a real, current directory decision, and always wins over whatever the *previous* mapping
 //   decided, in either direction. Against a MANUAL role, though, a mapping may only ever *raise*
 //   it (e.g. a manually-set MEMBER promoted to ADMIN by a matching group) — never lower or hold it
 //   at or below its current rank. Raising a MANUAL role is itself what flips its provenance to
-//   LDAP going forward; the spec this closes a gap against is explicit that "a manually set role is
-//   never demoted by a [lower-ranked] mapping" — a mapped MEMBER/OPERATOR must never overwrite an
-//   admin's own ADMIN promotion, which the pre-round-3 code did unconditionally.
-// - No resolved role (no matching group grants one) only *reverts* the role, to MEMBER, and only
-//   when the role is currently LDAP-managed — a manually-set role (`platformRoleManagedBy:
-//   'MANUAL'`, e.g. an admin's own promotion) is never touched by the absence of a mapping match.
+//   LDAP going forward; a mapped MEMBER/OPERATOR must never overwrite an admin's own ADMIN
+//   promotion. Raising a MANUAL role also records it as `platformRoleManualBaseline` — the exact
+//   role an admin left this user at — so a later revert can restore that instead of falling all
+//   the way back to MEMBER: "manual roles are never demoted" applies to a mapping-raised role too,
+//   once the raise that granted it is later revoked by the same mapping.
+// - No resolved role (no matching group grants one) only *reverts* the role, and only when the
+//   role is currently LDAP-managed — a manually-set role (`platformRoleManagedBy: 'MANUAL'`) is
+//   never touched by the absence of a mapping match. The revert target is the recorded
+//   `platformRoleManualBaseline` when one is set (the admin's own role before this mapping ever
+//   raised it), or MEMBER when there is none (e.g. the row was created straight into an LDAP grant
+//   with no prior manual role to remember). The baseline is cleared in the same write, since a
+//   revert fully consumes it — a subsequent raise records a fresh one from whatever the role is at
+//   that point.
 async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }: ApplyPlatformRoleGrantParams): Promise<void> {
     const [platform, user] = await Promise.all([
         platformService(log).getOneOrThrow(platformId),
@@ -58,12 +63,23 @@ async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }:
         if (user.platformRole === platformRole && user.platformRoleManagedBy === PlatformRoleManagedBy.LDAP) {
             return
         }
-        await userService(log).update({ id: userId, platformId, platformRole, source: 'LDAP' })
+        const isRaisingFromManual = isManuallyManaged
+        await userService(log).update({
+            id: userId,
+            platformId,
+            platformRole,
+            source: 'LDAP',
+            ...(isRaisingFromManual ? { platformRoleManualBaseline: user.platformRole } : {}),
+        })
         return
     }
 
-    if (!isManuallyManaged && user.platformRole !== PlatformRole.MEMBER) {
-        await userService(log).update({ id: userId, platformId, platformRole: PlatformRole.MEMBER, source: 'LDAP' })
+    if (isManuallyManaged) {
+        return
+    }
+    const revertRole = user.platformRoleManualBaseline ?? PlatformRole.MEMBER
+    if (user.platformRole !== revertRole || !isNil(user.platformRoleManualBaseline)) {
+        await userService(log).update({ id: userId, platformId, platformRole: revertRole, source: 'LDAP', platformRoleManualBaseline: null })
     }
 }
 
