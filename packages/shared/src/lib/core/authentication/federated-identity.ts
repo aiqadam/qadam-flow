@@ -17,5 +17,11 @@ export const UserFederatedIdentity = z.object({
     userId: z.string(),
     provider: z.enum(FederatedIdentityProvider),
     subject: z.string(),
+    // Set only by the LDAP reconcile job (`.agents/features/ldap.md` Phase 2) when it deactivates
+    // a user because the directory account is gone or disabled — never by a sign-in, and never by
+    // an admin's own deactivation. Reconcile reads this back to decide whether *it* is allowed to
+    // reactivate the user: only an account the directory itself deactivated is reactivated
+    // automatically, so a manual admin deactivation always sticks.
+    directoryDisabledAt: z.string().nullable(),
 })
 export type UserFederatedIdentity = z.infer<typeof UserFederatedIdentity>

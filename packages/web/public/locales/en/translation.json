@@ -2100,5 +2100,8 @@
   "invalidLdapUrlForTlsMode": "The URL scheme must match the selected TLS mode (ldaps:// for LDAPS, ldap:// for StartTLS)",
   "invalidLdapUsername": "Username is too long",
   "invalidLdapPassword": "Password is too long",
-  "invalidLdapTestCredentials": "Provide both a username and a password to test a directory sign-in, or leave both empty to test only the service account"
+  "invalidLdapTestCredentials": "Provide both a username and a password to test a directory sign-in, or leave both empty to test only the service account",
+  "invalidLdapGroupDn": "Each group mapping must have a group DN",
+  "invalidLdapGroupSearchFilter": "The group search filter must contain the placeholder '{userDn}' exactly once",
+  "invalidLdapGroupSearchConfig": "The group search base DN and filter must be set together, or not at all"
 }

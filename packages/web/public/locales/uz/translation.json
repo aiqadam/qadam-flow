@@ -2100,5 +2100,8 @@
   "invalidLdapUrlForTlsMode": "URL sxemasi tanlangan TLS rejimiga mos kelishi kerak (LDAPS uchun ldaps://, StartTLS uchun ldap://)",
   "invalidLdapUsername": "Foydalanuvchi nomi juda uzun",
   "invalidLdapPassword": "Parol juda uzun",
-  "invalidLdapTestCredentials": "Katalog orqali kirishni sinash uchun foydalanuvchi nomi va parolni birga kiriting, yoki faqat xizmat hisobini sinash uchun ikkalasini ham bo'sh qoldiring"
+  "invalidLdapTestCredentials": "Katalog orqali kirishni sinash uchun foydalanuvchi nomi va parolni birga kiriting, yoki faqat xizmat hisobini sinash uchun ikkalasini ham bo'sh qoldiring",
+  "invalidLdapGroupDn": "Har bir guruh moslashtirishda guruh DN bo'lishi shart",
+  "invalidLdapGroupSearchFilter": "Guruh qidiruv filtri '{userDn}' joy egallovchisini aynan bir marta o'z ichiga olishi kerak",
+  "invalidLdapGroupSearchConfig": "Guruh qidiruvining asosiy DN va filtri birgalikda, yoki umuman o'rnatilmasligi kerak"
 }
