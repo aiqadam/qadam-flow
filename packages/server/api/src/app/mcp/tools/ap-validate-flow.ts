@@ -443,6 +443,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+// A flow triggered by subflows' own Callable Flow trigger is designed to be invoked as a subflow —
+// its run can inherit a resolved locale from whichever parent called it (`inheritedRunLocale`, set
+// from `PARENT_RUN_LOCALE_HEADER`), even when the flow itself has no `localeSource` and the project
+// has no default locale. `validateFlowTranslations` uses this to downgrade its "no locale chain at
+// all" finding to a warning for this trigger only.
+function isCallableFlowTrigger(trigger: Step): boolean {
+    return trigger.type === FlowTriggerType.PIECE
+        && trigger.settings.qadamName === SUBFLOWS_QADAM
+        && trigger.settings.triggerName === CALLABLE_FLOW_TRIGGER
+}
+
 function findPausingFlow({ root, graph, markers }: { root: string, graph: Map<string, FlowNode>, markers: PauseMarkers }): PausingStep | null {
     const seen = new Set<string>()
     const pending = [root]
@@ -621,6 +632,8 @@ async function validateFlowTranslations({ trigger, localeSource, projectId, plat
     log: FastifyBaseLogger
 }): Promise<ValidationIssue[]> {
     const localeSourceIssues = validateLocaleSourceItself({ localeSource })
+    const hasUsableLocaleSource = !isNil(localeSource) && localeSource.trim().length > 0
+    const isCallableFlow = isCallableFlowTrigger(trigger)
 
     const steps = flowStructureUtil.getAllSteps(trigger).filter(step => !('skip' in step && step.skip === true))
     const refsByStep = steps.flatMap((step) => {
@@ -677,12 +690,21 @@ async function validateFlowTranslations({ trigger, localeSource, projectId, plat
         // for this key (even a row with every locale filled in cannot help: nothing selects one). This
         // is checked instead of (not in addition to) the "missing the default locale's value" check
         // below, since there is no default locale here to be missing a value for in the first place.
-        const noLocaleChainAtAll = !hasDynamicLocale && isNil(localeSource) && isNil(canonicalDefaultLocale)
+        //
+        // NOT a guaranteed failure when the trigger is subflows' Callable Flow: `EngineConstants#getRunLocale`
+        // falls back to `inheritedRunLocale` when this flow's own `localeSource` resolves to nothing, and a
+        // Callable Flow's `inheritedRunLocale` is set whenever its caller forwarded a resolved locale
+        // (`PARENT_RUN_LOCALE_HEADER`, see call-flow.ts/call-flow-for-each.ts) — something this static check
+        // cannot know without simulating every possible caller. Downgraded to a warning for that trigger only;
+        // every other trigger type can never receive an inherited locale, so the guaranteed-failure error still
+        // applies there.
+        const noLocaleChainAtAll = !hasDynamicLocale && !hasUsableLocaleSource && isNil(canonicalDefaultLocale)
         const defaultLocaleIssue: ValidationIssue[] = noLocaleChainAtAll
             ? [{
                 category: 'translation_default_locale',
                 stepName: step.name,
-                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}" with no explicit locale, but this project has neither a default locale nor is this flow's localeSource set — there is nothing for the run to resolve a locale from, so this step will fail at run time regardless of which locales the key has values for. Set the project's default locale, set this flow's localeSource, or reference an explicit locale (e.g. $t['${key}']['en']).`,
+                severity: isCallableFlow ? 'warning' : 'error',
+                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}" with no explicit locale, but this project has neither a default locale nor is this flow's localeSource set — ${isCallableFlow ? 'a Callable Flow inherits its caller\'s locale, so this only fails when it is called without one' : 'there is nothing for the run to resolve a locale from, so this step will fail at run time'} regardless of which locales the key has values for. Set the project's default locale, set this flow's localeSource, or reference an explicit locale (e.g. $t['${key}']['en']).`,
             }]
             : (!isNil(canonicalDefaultLocale) && !keyHasValueForLocaleOrBase({ row, locale: canonicalDefaultLocale }))
                 ? [{
@@ -707,10 +729,11 @@ async function validateFlowTranslations({ trigger, localeSource, projectId, plat
 }
 
 // A `$t` nested inside `localeSource` cannot resolve to anything useful: the engine's own
-// reentrancy guard (`EngineConstants#getRunLocale`) reports "no run locale yet" to it rather than
-// hanging, which means the nested lookup always resolves against the project's default locale
-// chain regardless of what the run's real locale would otherwise have been — never a crash, but
-// never the flow author's intent either.
+// `resolvingLocaleSource` guard (props-resolver.ts's `handleTranslation`, threaded through the one
+// `resolveInputAsync` call `EngineConstants#getRunLocale` makes to evaluate `localeSource` itself)
+// reports "no run locale yet" to it rather than recursing, which means the nested lookup always
+// resolves against the project's default locale chain regardless of what the run's real locale
+// would otherwise have been — never a crash, but never the flow author's intent either.
 function validateLocaleSourceItself({ localeSource }: { localeSource: string | null | undefined }): ValidationIssue[] {
     if (isNil(localeSource)) {
         return []
@@ -821,6 +844,7 @@ function extractReferencedStepNames({ value }: { value: string }): string[] {
 
 const SUBFLOWS_QADAM = '@aiqadam/qadam-subflows'
 const CALL_FLOW_ACTION = 'callFlow'
+const CALLABLE_FLOW_TRIGGER = 'callableFlow'
 const INLINE_EXECUTION_MODE = 'inline'
 const DELAY_QADAM = '@aiqadam/qadam-delay'
 const DELAY_FOR_ACTION = 'delayFor'
@@ -953,11 +977,12 @@ type ValidationIssue = {
     stepName: string
     message: string
     // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
-    // summary; 'warning' is reported but never blocks. Only `translation_locale` (missing a
-    // non-default locale, or a `$t` nested inside `localeSource`) is a warning today.
-    // `translation_default_locale` (missing the project's own default locale) is deliberately an
-    // error, not a warning — that is the one gap that fails a run with no explicit or inherited
-    // locale, so it gets the same severity as every other category that fails the run outright.
+    // summary; 'warning' is reported but never blocks. `translation_locale` (missing a non-default
+    // locale, or a `$t` nested inside `localeSource`) is always a warning. `translation_default_locale`
+    // (no usable locale for this `$t` reference) is an error for every trigger except subflows'
+    // Callable Flow, where it is a warning — that trigger can inherit a real locale from its caller
+    // at run time, which this static check cannot rule out, so it is not a guaranteed failure there
+    // the way it is for every other trigger type.
     severity?: 'error' | 'warning'
 }
 

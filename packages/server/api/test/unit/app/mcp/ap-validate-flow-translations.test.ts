@@ -41,7 +41,16 @@ vi.mock('../../../../src/app/translation/translation.service', () => ({
 import { apValidateFlowTool } from '../../../../src/app/mcp/tools/ap-validate-flow'
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
-const mcp = { type: McpServerType.PROJECT, projectId: 'project-1', platformId: 'platform-1' } as unknown as ProjectScopedMcpServer
+const mcp: ProjectScopedMcpServer = {
+    id: 'mcp-1',
+    created: '2026-01-01T00:00:00.000Z',
+    updated: '2026-01-01T00:00:00.000Z',
+    type: McpServerType.PROJECT,
+    projectId: 'project-1',
+    platformId: 'platform-1',
+    token: 'token',
+    disabledTools: null,
+}
 
 function flowWithStepInput({ input, localeSource }: { input: string, localeSource?: string | null }): Record<string, unknown> {
     return {
@@ -56,6 +65,32 @@ function flowWithStepInput({ input, localeSource }: { input: string, localeSourc
                 lastUpdatedDate: '2024-01-01T00:00:00Z',
                 type: FlowTriggerType.EMPTY,
                 settings: {},
+                nextAction: {
+                    name: 'step_1',
+                    displayName: 'Step 1',
+                    valid: true,
+                    lastUpdatedDate: '2024-01-01T00:00:00Z',
+                    type: FlowActionType.PIECE,
+                    settings: { qadamName: '@aiqadam/qadam-data-mapper', qadamVersion: '0.4.14', actionName: 'advanced_mapping', input: { text: input }, propertySettings: {} },
+                },
+            },
+        },
+    }
+}
+
+function flowWithCallableFlowTrigger({ input, localeSource }: { input: string, localeSource?: string | null }): Record<string, unknown> {
+    return {
+        id: 'flow-1',
+        version: {
+            displayName: 'Translations Flow',
+            localeSource: localeSource ?? null,
+            trigger: {
+                name: 'trigger',
+                displayName: 'Trigger',
+                valid: true,
+                lastUpdatedDate: '2024-01-01T00:00:00Z',
+                type: FlowTriggerType.PIECE,
+                settings: { qadamName: '@aiqadam/qadam-subflows', qadamVersion: '0.4.14', triggerName: 'callableFlow', input: {}, propertySettings: {} },
                 nextAction: {
                     name: 'step_1',
                     displayName: 'Step 1',
@@ -110,7 +145,7 @@ describe('ap_validate_flow — translation references', () => {
         const warnings = await warningsOf('translation_locale')
         expect(warnings).toHaveLength(1)
         expect(warnings[0]).toContain('ru')
-        // A missing non-default locale never blocks publishing (M6): it is reported, but does
+        // A missing non-default locale never blocks publishing: it is reported, but does
         // not appear in structuredContent.issues and does not flip valid to false.
         expect(await issuesOf('translation_locale')).toEqual([])
     })
@@ -156,7 +191,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await issuesOf('template_reference')).toEqual([])
     })
 
-    it('fails a key that has no value for the project\'s default locale (M6)', async () => {
+    it('fails a key that has no value for the project\'s default locale', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: 'en' })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'no.default\']}}' }))
         mockTranslationList.mockResolvedValue({
@@ -176,7 +211,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await warningsOf('translation_default_locale')).toEqual([])
     })
 
-    it('fails a $t reference with no explicit locale when the project has no default locale and the flow has no localeSource (M7)', async () => {
+    it('fails a $t reference with no explicit locale when the project has no default locale and the flow has no localeSource', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'no.chain\']}}', localeSource: null }))
         mockTranslationList.mockResolvedValue({
@@ -200,7 +235,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(result.content[0].text).not.toContain('ready to publish')
     })
 
-    it('does not flag a $t reference with no explicit locale when the flow has a localeSource, even with no project default locale (M7)', async () => {
+    it('does not flag a $t reference with no explicit locale when the flow has a localeSource, even with no project default locale', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'has.source\']}}', localeSource: '{{trigger[\'output\'].lang}}' }))
         mockTranslationList.mockResolvedValue({
@@ -214,7 +249,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await issuesOf('translation_default_locale')).toEqual([])
     })
 
-    it('does not flag a $t reference that already carries an explicit locale bracket, even with no default locale and no localeSource (M7)', async () => {
+    it('does not flag a $t reference that already carries an explicit locale bracket, even with no default locale and no localeSource', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'explicit.locale\'][\'en\']}}', localeSource: null }))
         mockTranslationList.mockResolvedValue({
@@ -228,7 +263,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await issuesOf('translation_default_locale')).toEqual([])
     })
 
-    it('does not flag a $t reference when the project has a default locale, even with no localeSource (M7)', async () => {
+    it('does not flag a $t reference when the project has a default locale, even with no localeSource', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: 'en' })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'has.default\']}}', localeSource: null }))
         mockTranslationList.mockResolvedValue({
@@ -242,7 +277,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await issuesOf('translation_default_locale')).toEqual([])
     })
 
-    it('does not flag a $t reference when the project has no default locale but the flow has a localeSource (M7)', async () => {
+    it('does not flag a $t reference when the project has no default locale but the flow has a localeSource', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'fine.key\']}}', localeSource: '{{trigger[\'output\'].lang}}' }))
         mockTranslationList.mockResolvedValue({
@@ -256,7 +291,42 @@ describe('ap_validate_flow — translation references', () => {
         expect(await issuesOf('translation_default_locale')).toEqual([])
     })
 
-    it('does not flag a key whose base language covers the project\'s default locale (M6)', async () => {
+    it('downgrades the no-locale-chain finding to a warning when the trigger is subflows\' Callable Flow', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
+        mockGetOnePopulated.mockResolvedValue(flowWithCallableFlowTrigger({ input: '{{$t[\'inherited.key\']}}', localeSource: null }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'inherited.key', values: { en: 'Hi' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        // A Callable Flow can inherit a real locale from its caller at run time (inheritedRunLocale),
+        // which this static check cannot rule out — so it is a warning, not a blocking error, here.
+        expect(await issuesOf('translation_default_locale')).toEqual([])
+        const warnings = await warningsOf('translation_default_locale')
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toContain('inherited.key')
+    })
+
+    it('treats a blank localeSource the same as no localeSource at all', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'blank.source\']}}', localeSource: '   ' }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'blank.source', values: { en: 'Hi' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        const issues = await issuesOf('translation_default_locale')
+        expect(issues).toHaveLength(1)
+        expect(issues[0]).toContain('blank.source')
+    })
+
+    it('does not flag a key whose base language covers the project\'s default locale', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: 'en-US' })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'base.covered\']}}' }))
         mockTranslationList.mockResolvedValue({
@@ -270,7 +340,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await issuesOf('translation_default_locale')).toEqual([])
     })
 
-    it('warns when localeSource itself references a translation (B4)', async () => {
+    it('warns when localeSource itself references a translation', async () => {
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: 'plain text, no $t here', localeSource: '{{$t[\'nested.locale\']}}' }))
         mockTranslationList.mockResolvedValue({ data: [], next: null, previous: null })
 
@@ -287,7 +357,7 @@ describe('ap_validate_flow — translation references', () => {
         expect(await warningsOf('translation_locale')).toEqual([])
     })
 
-    it('wraps a malformed $t reference\'s echoed content as untrusted rather than printing it raw (M8)', async () => {
+    it('wraps a malformed $t reference\'s echoed content as untrusted rather than printing it raw', async () => {
         // A trailing `.field` after the closing bracket makes this unparseable per
         // parseTranslationToken's grammar - the engine would also reject it at run time. The
         // instruction-shaped text after it stands in for adversarial content a flow author (or
