@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // protocol (that is `ldap-openldap.test.ts`'s job, against a real directory).
 const fakeClientState = vi.hoisted(() => ({
     constructedUrls: [] as string[],
+    constructedTlsOptions: [] as (Record<string, unknown> | undefined)[],
     startTlsBehavior: 'resolve' as 'resolve' | 'stall' | 'reject',
     isConnectedValue: true,
     unbindCalls: 0,
@@ -15,8 +16,9 @@ const fakeClientState = vi.hoisted(() => ({
 vi.mock('ldapts', async (importOriginal) => {
     const actual = await importOriginal<typeof import('ldapts')>()
     class FakeClient {
-        constructor(options: { url: string }) {
+        constructor(options: { url: string, tlsOptions?: Record<string, unknown> }) {
             fakeClientState.constructedUrls.push(options.url)
+            fakeClientState.constructedTlsOptions.push(options.tlsOptions)
         }
 
         get isConnected(): boolean {
@@ -56,6 +58,7 @@ async function importClient() {
 beforeEach(() => {
     vi.resetModules()
     fakeClientState.constructedUrls = []
+    fakeClientState.constructedTlsOptions = []
     fakeClientState.startTlsBehavior = 'resolve'
     fakeClientState.isConnectedValue = true
     fakeClientState.unbindCalls = 0
@@ -115,6 +118,41 @@ describe('ldapClient.connect — scheme assertion', () => {
             config: { url: 'ldaps://directory.example.com:636', tlsMode: LdapTlsMode.STARTTLS, tlsVerify: true },
         })).rejects.toThrow()
         expect(resolveVettedIps).not.toHaveBeenCalled()
+    })
+})
+
+describe('ldapClient.connect — TLS servername vs. IP literal (Node DEP0123)', () => {
+    it('sets servername to the configured hostname for a DNS name', async () => {
+        resolveVettedIps.mockResolvedValue(['10.0.0.5'])
+        const ldapClient = await importClient()
+
+        await ldapClient.connect({
+            config: { url: 'ldaps://directory.example.com:636', tlsMode: LdapTlsMode.LDAPS, tlsVerify: true },
+        })
+
+        expect(fakeClientState.constructedTlsOptions[0]?.servername).toBe('directory.example.com')
+    })
+
+    it('omits servername outright when the configured host is an IP literal', async () => {
+        resolveVettedIps.mockResolvedValue(['10.0.0.5'])
+        const ldapClient = await importClient()
+
+        await ldapClient.connect({
+            config: { url: 'ldaps://10.0.0.5:636', tlsMode: LdapTlsMode.LDAPS, tlsVerify: true },
+        })
+
+        expect(fakeClientState.constructedTlsOptions[0]).not.toHaveProperty('servername')
+    })
+
+    it('omits servername for an IPv6 literal host too', async () => {
+        resolveVettedIps.mockResolvedValue(['::1'])
+        const ldapClient = await importClient()
+
+        await ldapClient.connect({
+            config: { url: 'ldaps://[::1]:636', tlsMode: LdapTlsMode.LDAPS, tlsVerify: true },
+        })
+
+        expect(fakeClientState.constructedTlsOptions[0]).not.toHaveProperty('servername')
     })
 })
 

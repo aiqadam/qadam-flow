@@ -1,7 +1,9 @@
 import tls from 'node:tls'
-import { isNil, LdapAttributeMap, LdapTestStage, LdapTlsMode, matchesTlsScheme, unique } from '@aiqadam/shared'
+import { isNil, LdapAttributeMap, LdapConfig, LdapTestStage, LdapTlsMode, matchesTlsScheme, unique } from '@aiqadam/shared'
+import ipaddr from 'ipaddr.js'
 import { Client, Entry, ResultCodeError } from 'ldapts'
 import { system } from '../../helper/system/system'
+import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapFilterUtils } from './ldap-filter'
 import { ldapHostGuard } from './ldap-host-guard'
 import { LdapStageError } from './ldap-stage-error'
@@ -10,6 +12,9 @@ export const ldapClient = {
     connect,
     serviceBind,
     searchForUser,
+    searchNestedGroups,
+    searchBySubject,
+    resolveMemberGroupDns,
     bindAsUser,
     withConnectionSlot,
 }
@@ -143,8 +148,12 @@ async function connect({ config }: ConnectParams): Promise<Client> {
         system.globalLogger().warn({ url: config.url }, '[ldapClient#connect] tlsVerify is disabled — the directory\'s certificate will not be validated')
     }
 
+    // Node's `tls.connect` warns (DEP0123) and ignores `servername` outright when it is an IP
+    // address — RFC 6066 §3 restricts SNI to hostnames. That only ever matters for the *configured*
+    // host: when it is itself an IP literal (no DNS name to preserve), there is nothing to put in
+    // `servername` in the first place, so it is omitted rather than set to the same IP being dialed.
     const tlsOptions: tls.ConnectionOptions = {
-        servername: hostname,
+        ...(ipaddr.isValid(hostname) ? {} : { servername: hostname }),
         rejectUnauthorized: config.tlsVerify,
         ...(isNil(config.caCertificatePem) ? {} : { ca: [config.caCertificatePem] }),
     }
@@ -263,7 +272,10 @@ async function serviceBind({ client, bindDn, bindPassword, tlsMode }: ServiceBin
 async function searchForUser({ client, baseDn, userFilter, username, attributeMap, tlsMode }: SearchForUserParams): Promise<Entry> {
     assertConnectionStillUpgraded({ client, tlsMode })
     const filter = ldapFilterUtils.buildUserSearchFilter({ userFilter, username })
-    const attributes = unique([attributeMap.email, attributeMap.firstName, attributeMap.lastName, attributeMap.subject])
+    // `memberOf` is read unconditionally, alongside the identity attributes — it costs nothing extra
+    // (one more attribute on the same search) and is the direct-membership source group mapping
+    // (Phase 2) needs on every sign-in, not only when nested-group search is configured.
+    const attributes = unique([attributeMap.email, attributeMap.firstName, attributeMap.lastName, attributeMap.subject, 'memberOf'])
     const explicitBufferAttributes = attributeMap.subject === 'objectGUID' ? ['objectGUID'] : []
 
     let result
@@ -293,6 +305,95 @@ async function searchForUser({ client, baseDn, userFilter, username, attributeMa
         throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'The filter matched more than one entry' })
     }
     return result.searchEntries[0]
+}
+
+// Nested-group resolution (Phase 2): AD's own transitive-membership filter, templated with the
+// signed-in user's own DN (never the caller-supplied username — the DN just came back from
+// `searchForUser` on the very same connection, so it needs no further escaping concerns of its
+// own beyond the same RFC 4515 value-escaping every filter value gets). No `sizeLimit` — an
+// arbitrary number of nested groups is a normal, expected result here, unlike the user search's
+// deliberately-narrow "exactly one" contract.
+async function searchNestedGroups({ client, groupSearchBaseDn, groupSearchFilter, userDn, tlsMode }: SearchNestedGroupsParams): Promise<string[]> {
+    assertConnectionStillUpgraded({ client, tlsMode })
+    const filter = ldapFilterUtils.buildFilterFromTemplate({ template: groupSearchFilter, placeholder: '{userDn}', value: userDn })
+    let result
+    try {
+        result = await client.search(groupSearchBaseDn, {
+            scope: 'sub',
+            filter,
+            attributes: ['dn'],
+            timeLimit: LDAP_OPERATION_TIMEOUT_MS / 1000,
+        })
+    }
+    catch (error) {
+        throw toStageError({ stage: LdapTestStage.SEARCH, error, fallbackMessage: 'The nested-group search failed' })
+    }
+    return result.searchEntries.map((entry) => entry.dn)
+}
+
+// Group resolution (Phase 2), shared by sign-in and reconcile: direct `memberOf` values on the
+// already-fetched entry, plus (when configured) the nested-group search — `unique` because AD's
+// transitive-membership search can re-report a group the entry's own `memberOf` already named.
+async function resolveMemberGroupDns({ client, entry, config, tlsMode }: ResolveMemberGroupDnsParams): Promise<string[]> {
+    const directGroupDns = ldapAttributeUtils.readMultiValueAttribute({ entry, name: 'memberOf' })
+    if (!config.nestedGroups || isNil(config.groupSearchBaseDn) || isNil(config.groupSearchFilter)) {
+        return directGroupDns
+    }
+    const nestedGroupDns = await searchNestedGroups({
+        client,
+        groupSearchBaseDn: config.groupSearchBaseDn,
+        groupSearchFilter: config.groupSearchFilter,
+        userDn: entry.dn,
+        tlsMode,
+    })
+    return unique([...directGroupDns, ...nestedGroupDns])
+}
+
+// Reconcile's own lookup (Phase 2): finds the directory entry an existing `user_federated_identity`
+// row points at, by its own stable subject, rather than by the (mutable) email/username a sign-in
+// searches on. `objectGUID` cannot be searched as a string — AD compares it as a raw octet string,
+// so the canonical dashed form this same client produced via `ldapAttributeUtils
+// .objectGuidBufferToCanonicalString` has to be turned back into the `\xx\xx...` escaped-octet
+// filter syntax RFC 4515 §3 uses for binary values.
+async function searchBySubject({ client, baseDn, attributeMap, subject, tlsMode }: SearchBySubjectParams): Promise<Entry | null> {
+    assertConnectionStillUpgraded({ client, tlsMode })
+    const filterValue = attributeMap.subject === 'objectGUID' ? canonicalGuidToFilterValue(subject) : ldapFilterUtils.escapeFilterValue(subject)
+    const filter = `(${attributeMap.subject}=${filterValue})`
+    const attributes = unique([attributeMap.email, attributeMap.firstName, attributeMap.lastName, attributeMap.subject, 'memberOf', 'userAccountControl'])
+    const explicitBufferAttributes = attributeMap.subject === 'objectGUID' ? ['objectGUID'] : []
+
+    let result
+    try {
+        result = await client.search(baseDn, {
+            scope: 'sub',
+            filter,
+            attributes,
+            explicitBufferAttributes,
+            sizeLimit: 2,
+            timeLimit: LDAP_OPERATION_TIMEOUT_MS / 1000,
+        })
+    }
+    catch (error) {
+        throw toStageError({ stage: LdapTestStage.SEARCH, error, fallbackMessage: 'The directory search failed' })
+    }
+    if (result.searchEntries.length === 0) {
+        return null
+    }
+    if (result.searchEntries.length > 1) {
+        throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'The subject filter matched more than one entry' })
+    }
+    return result.searchEntries[0]
+}
+
+// The inverse of `objectGuidBufferToCanonicalString`: re-groups the canonical
+// `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` string back into the mixed-endian 16-byte wire form (the
+// first three groups little-endian, the last two big-endian — the same asymmetry AD's own GUID
+// APIs use), then RFC 4515 §3 octet-escapes every byte (`\xx`) — the syntax the grammar requires
+// for a binary attribute value in a filter.
+function canonicalGuidToFilterValue(canonical: string): string {
+    const [group1, group2, group3, group4, group5] = canonical.split('-')
+    const reordered = ldapAttributeUtils.swapByteOrder(group1) + ldapAttributeUtils.swapByteOrder(group2) + ldapAttributeUtils.swapByteOrder(group3) + group4 + group5
+    return reordered.match(/.{2}/g)?.map((byte) => `\\${byte}`).join('') ?? ''
 }
 
 // Always binds on a brand-new connection rather than reusing the service-bind connection — RFC
@@ -368,6 +469,29 @@ type SearchForUserParams = {
     userFilter: string
     username: string
     attributeMap: LdapAttributeMap
+    tlsMode: LdapTlsMode
+}
+
+type SearchNestedGroupsParams = {
+    client: Client
+    groupSearchBaseDn: string
+    groupSearchFilter: string
+    userDn: string
+    tlsMode: LdapTlsMode
+}
+
+type SearchBySubjectParams = {
+    client: Client
+    baseDn: string
+    attributeMap: LdapAttributeMap
+    subject: string
+    tlsMode: LdapTlsMode
+}
+
+type ResolveMemberGroupDnsParams = {
+    client: Client
+    entry: Entry
+    config: Pick<LdapConfig, 'nestedGroups' | 'groupSearchBaseDn' | 'groupSearchFilter'>
     tlsMode: LdapTlsMode
 }
 

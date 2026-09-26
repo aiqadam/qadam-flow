@@ -2,17 +2,21 @@ import tls from 'node:tls'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 // Opt-in only, but exercised in CI: the "CE integration suite" job in `.github/workflows/ci.yml`
 // runs this file too (via a dedicated `run:` step that stands up the same container this header
-// documents, then sets `AP_RUN_LDAP_OPENLDAP_TESTS=true`), so it is not "run locally only" the way
-// an opt-in suite normally is. The flag is `AP_`-prefixed, not a bare name, because turbo's
+// documents, then sets `QF_RUN_LDAP_OPENLDAP_TESTS=true`), so it is not "run locally only" the way
+// an opt-in suite normally is. The flag is `QF_`-prefixed, not a bare name, because turbo's
 // `globalPassThroughEnv` (`turbo.json`) only forwards `AP_*`/`QF_*` to the spawned `vitest`
 // process under its strict env mode — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped,
 // which made every one of this suite's 8 cases skip in CI without ever failing the job (round 2 of
-// #339's review). The `describe.skipIf(!RUN)` below stays a *skip* for a genuinely local,
+// #339's review). `QF_` is the canonical prefix (#339 Phase 2); `AP_RUN_LDAP_OPENLDAP_TESTS` is
+// read too, as a deprecated fallback, since this file reads `process.env` directly rather than
+// through `system.get()` and so does not go through `environmentMigrations`' generic AP_/QF_
+// mirror. The `describe.skipIf(!RUN)` below stays a *skip* for a genuinely local,
 // opted-out run, but `if (!RUN && IS_CI)` turns the same missing flag into a hard failure whenever
 // `CI=true`, so a future regression in the env plumbing fails loudly instead of quietly reporting
 // 8 skipped as green. The env-gate itself stays because the test-ce path (`npm run test-api`) has
@@ -65,9 +69,9 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 //   docker exec ldap-openldap-test-339 ldappasswd -x -H ldap://localhost \
 //     -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone \
 //     -s "correct-horse-battery-staple" "cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com"
-//   AP_RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
+//   QF_RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
 //   docker rm -f ldap-openldap-test-339   # afterwards
-const RUN = process.env['AP_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
+const RUN = process.env['QF_RUN_LDAP_OPENLDAP_TESTS'] === 'true' || process.env['AP_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
 const IS_CI = process.env['CI'] === 'true'
 
 const LDAP_HOST = process.env['LDAP_TEST_HOST'] ?? '127.0.0.1'
@@ -90,8 +94,8 @@ if (RUN) {
 
 if (!RUN && IS_CI) {
     describe('LDAP sign-in against a real OpenLDAP directory — CI must not silently skip this suite', () => {
-        it('fails instead of skipping when AP_RUN_LDAP_OPENLDAP_TESTS was not propagated to CI', () => {
-            throw new Error('AP_RUN_LDAP_OPENLDAP_TESTS was not \'true\' in CI. This suite\'s 8 real-directory '
+        it('fails instead of skipping when QF_RUN_LDAP_OPENLDAP_TESTS was not propagated to CI', () => {
+            throw new Error('QF_RUN_LDAP_OPENLDAP_TESTS was not \'true\' in CI. This suite\'s 8 real-directory '
                 + 'cases would otherwise silently report as skipped rather than failing the job — see the M5 '
                 + 'step in .github/workflows/ci.yml and this file\'s own header.')
         })
@@ -222,6 +226,33 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
         const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.statusCode).toBe(StatusCodes.OK)
         expect(response.json().token).toBeDefined()
+    })
+
+    // Phase 2 (#339): the fixture image does have groups — `slapcat` shows
+    // `cn=ship_crew,ou=people,dc=planetexpress,dc=com` with `member: cn=Philip J. Fry,...` — so this
+    // extends the real-directory suite rather than skipping it. Two things this specific fixture
+    // cannot prove, stated rather than silently assumed: (1) it has no `memberOf` back-link overlay
+    // configured, so the default `memberOf`-on-the-user-entry path resolves zero groups here — this
+    // test instead configures the optional `groupSearchBaseDn`/`groupSearchFilter` and searches the
+    // group's own `member` attribute; (2) the filter uses plain equality (`member={userDn}`), not
+    // AD's `LDAP_MATCHING_RULE_IN_CHAIN` OID — slapd's default backend does not implement that
+    // Microsoft-specific extensible-match control, so the nested-group (transitive membership) case
+    // is unprovable against this OpenLDAP fixture and is covered only by the mocked unit/integration
+    // tests instead.
+    it('applies a group mapping resolved via a real nested-group-style search, granting the mapped platform role', async () => {
+        await saveConfig({
+            overrides: {
+                groupSearchBaseDn: BASE_DN,
+                groupSearchFilter: '(member={userDn})',
+                groupMappings: [{ groupDn: 'cn=ship_crew,ou=people,dc=planetexpress,dc=com', platformRole: 'OPERATOR', projects: [] }],
+            },
+        })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        expect(response.statusCode).toBe(StatusCodes.OK)
+
+        const identity = await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'fry@planetexpress.com' })
+        const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
+        expect(user?.platformRole).toBe('OPERATOR')
     })
 })
 
