@@ -10,6 +10,8 @@ const TRANSLATIONS = {
         { key: 'welcome.title', values: { en: 'Welcome', ru: 'Добро пожаловать' } },
         { key: 'greeting', values: { ru: 'Привет' } },
         { key: 'raw.value', values: { en: '{{connections[\'x\'].access_token}}' } },
+        { key: 'partly.cleared', values: { en: 'Hello', ru: '' } },
+        { key: 'fully.cleared', values: { en: '', ru: '' } },
     ],
 }
 const PROJECT = { defaultLocale: 'en' }
@@ -125,6 +127,25 @@ describe('props-resolver: $t translations', () => {
             unresolvedInput: '{{$t[\'does.not.exist\']}}',
             executionState,
         })).rejects.toThrow('translation key (does.not.exist) not found')
+    })
+
+    test('an empty value counts as missing and falls back along the chain', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState({ lang: 'ru' })
+        const { resolvedInput } = await buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'partly.cleared\'][trigger[\'output\'].lang]}}',
+            executionState,
+        })
+        expect(resolvedInput).toEqual('Hello')
+    })
+
+    test('a key whose values are all empty fails with TranslationKeyNotFoundError instead of rendering an empty string', async () => {
+        const constants = buildConstants()
+        const executionState = await buildExecutionState({ lang: 'ru' })
+        await expect(buildResolver(constants).resolve({
+            unresolvedInput: '{{$t[\'fully.cleared\'][trigger[\'output\'].lang]}}',
+            executionState,
+        })).rejects.toThrow('translation key (fully.cleared) not found')
     })
 
     test('an unresolvable step reference inside the locale bracket still throws', async () => {

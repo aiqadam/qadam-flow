@@ -144,10 +144,18 @@ export const localeUtil = {
         const { values, chain } = params
         for (const locale of chain) {
             const value = values.get(locale)
-            if (value !== undefined) {
+            if (localeUtil.isPresentValue(value)) {
                 return { locale, value }
             }
         }
         return null
+    },
+    /**
+     * An empty string is "not translated yet", not a translation: that is what `''` means in an
+     * imported ru.json/uz.json, and what clearing a grid cell stores. Treating it as a value would
+     * render an empty message to the end user instead of falling back along the chain.
+     */
+    isPresentValue(value: string | undefined): value is string {
+        return value !== undefined && value !== ''
     },
 }

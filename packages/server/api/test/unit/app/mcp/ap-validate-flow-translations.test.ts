@@ -221,6 +221,37 @@ describe('ap_validate_flow — translation references', () => {
         expect(await warningsOf('translation_default_locale')).toEqual([])
     })
 
+    it('fails a key whose default-locale value is an empty string, the same as a missing one', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: 'en' })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'cleared.default\']}}' }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'cleared.default', values: { en: '', ru: 'Привет' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        const issues = await issuesOf('translation_default_locale')
+        expect(issues).toHaveLength(1)
+        expect(issues[0]).toContain('cleared.default')
+    })
+
+    it('warns about a non-default locale whose value is an empty string', async () => {
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'cleared.ru\']}}' }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'cleared.ru', values: { en: 'Hello', ru: '' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        const warnings = await warningsOf('translation_locale')
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toContain('ru')
+    })
+
     it('fails a $t reference with no explicit locale when the project has no default locale and the flow has no localeSource', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'no.chain\']}}', localeSource: null }))

@@ -41,6 +41,13 @@ export const translationsQueries = {
     });
   },
 
+  useLocales: ({ projectId }: { projectId: string }) => {
+    return useQuery({
+      queryKey: ['translation-locales', projectId],
+      queryFn: () => translationsApi.listLocales({ projectId }),
+    });
+  },
+
   useListSearchParams: () => {
     const { search } = useLocation();
     return useMemo(() => {

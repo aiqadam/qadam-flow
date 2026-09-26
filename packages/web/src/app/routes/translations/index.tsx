@@ -4,6 +4,7 @@ import { t } from 'i18next';
 import {
   Download,
   Languages,
+  ListPlus,
   MoreVertical,
   Pencil,
   Search,
@@ -14,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { AddLocaleDialog } from '@/app/translations/add-locale-dialog';
 import { ImportTranslationsDialog } from '@/app/translations/import-translations-dialog';
 import { TranslationDeleteDialog } from '@/app/translations/translation-delete-dialog';
 import { TranslationKeyDialog } from '@/app/translations/translation-key-dialog';
@@ -71,21 +73,6 @@ const exportLocale = async (locale: string) => {
   }
 };
 
-const isRowMissingAValue = ({
-  translation,
-  presentLocales,
-  defaultLocale,
-}: {
-  translation: Translation;
-  presentLocales: string[];
-  defaultLocale: string | null | undefined;
-}) => {
-  const requiredLocales = defaultLocale
-    ? [...new Set([...presentLocales, defaultLocale])]
-    : presentLocales;
-  return requiredLocales.some((locale) => !translation.values[locale]);
-};
-
 function TranslationsPage() {
   const projectId = authenticationSession.getProjectId()!;
   const { checkAccess } = useAuthorization();
@@ -97,6 +84,10 @@ function TranslationsPage() {
   const [deleting, setDeleting] = useState<Translation | undefined>(undefined);
   const [selectedRows, setSelectedRows] = useState<Translation[]>([]);
   const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [addLocaleOpen, setAddLocaleOpen] = useState(false);
+  // A locale exists only through the values stored under it, so one added here has no
+  // server-side record until a cell in its column is filled in.
+  const [addedLocales, setAddedLocales] = useState<string[]>([]);
 
   const { cursor, limit, key, missing } =
     translationsQueries.useListSearchParams();
@@ -120,27 +111,40 @@ function TranslationsPage() {
   const {
     data: translations,
     isLoading,
-    refetch,
+    refetch: refetchTranslations,
   } = translationsQueries.useTranslations({
-    request: { projectId, cursor, limit, key },
+    request: {
+      projectId,
+      cursor,
+      limit,
+      key,
+      missing: missing ? 'true' : undefined,
+    },
     extraKeys: [
       'translations',
       cursor ?? '',
       String(limit),
       key ?? '',
+      String(missing),
       projectId,
     ],
     showErrorDialog: true,
   });
+  const { data: localesResponse, refetch: refetchLocales } =
+    translationsQueries.useLocales({ projectId });
+  const refetch = () => {
+    refetchTranslations();
+    refetchLocales();
+  };
 
   const { mutateAsync: deleteTranslations } =
     translationsMutations.useBulkDeleteTranslations(refetch);
 
   const presentLocales = useMemo(() => {
-    const locales = new Set<string>();
-    (translations?.data ?? []).forEach((translation) => {
-      Object.keys(translation.values).forEach((locale) => locales.add(locale));
-    });
+    const locales = new Set<string>([
+      ...(localesResponse?.locales ?? []),
+      ...addedLocales,
+    ]);
     if (project.defaultLocale) {
       locales.add(project.defaultLocale);
     }
@@ -151,23 +155,8 @@ function TranslationsPage() {
         ? 1
         : a.localeCompare(b),
     );
-  }, [translations, project.defaultLocale]);
-
-  const filteredData = useMemo(() => {
-    if (!translations?.data) return undefined;
-    if (!missing) return translations;
-    return {
-      data: translations.data.filter((translation) =>
-        isRowMissingAValue({
-          translation,
-          presentLocales,
-          defaultLocale: project.defaultLocale,
-        }),
-      ),
-      next: translations.next,
-      previous: translations.previous,
-    };
-  }, [translations, missing, presentLocales, project.defaultLocale]);
+  }, [localesResponse, addedLocales, project.defaultLocale]);
+  const savedLocales = localesResponse?.locales ?? [];
 
   const filters: DataTableFilters<'key'>[] = [
     {
@@ -341,20 +330,31 @@ function TranslationsPage() {
         <Button
           size="sm"
           variant="outline"
-          disabled={presentLocales.length === 0}
+          disabled={savedLocales.length === 0}
         >
           <Download className="h-4 w-4 mr-1" />
           {t('Export')}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {presentLocales.map((locale) => (
+        {savedLocales.map((locale) => (
           <DropdownMenuItem key={locale} onClick={() => exportLocale(locale)}>
             {locale}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>,
+    <PermissionNeededTooltip key="add-locale" hasPermission={canWrite}>
+      <Button
+        disabled={!canWrite}
+        size="sm"
+        variant="outline"
+        onClick={() => setAddLocaleOpen(true)}
+      >
+        <ListPlus className="h-4 w-4 mr-1" />
+        {t('Add locale')}
+      </Button>
+    </PermissionNeededTooltip>,
     <PermissionNeededTooltip key="new" hasPermission={canWrite}>
       <Button
         disabled={!canWrite}
@@ -376,7 +376,7 @@ function TranslationsPage() {
         )}
         emptyStateIcon={<Languages className="size-14" />}
         columns={columns}
-        page={filteredData}
+        page={translations}
         isLoading={isLoading}
         filters={filters}
         customFilters={[
@@ -391,6 +391,12 @@ function TranslationsPage() {
         selectColumn={true}
         onSelectedRowsChange={setSelectedRows}
         bulkActions={bulkActions}
+      />
+      <AddLocaleDialog
+        open={addLocaleOpen}
+        onOpenChange={setAddLocaleOpen}
+        existingLocales={presentLocales}
+        onAdded={(locale) => setAddedLocales((prev) => [...prev, locale])}
       />
       <TranslationKeyDialog
         open={createOpen}
