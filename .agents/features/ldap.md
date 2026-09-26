@@ -417,7 +417,15 @@ migration since both are the same "who owns this user's platformRole" concern), 
 - **Fail-open on outage, fail-closed per account.** A connect or service-bind failure aborts the
   whole platform's run (nobody touched, logged as an error). A `searchBySubject` failure for one
   specific linked user skips only that user (logged as a warning) — the rest of the platform's
-  linked users are still processed normally.
+  linked users are still processed normally. A `kind: 'skipped'` identity is deliberately never
+  stamped (`markReconciled` filters it out before writing) and so is retried *first* next tick
+  (the oldest/never-reconciled ordering), rather than being pushed to the back of the rotation as
+  if it had actually been dealt with. A DB error (not a directory error) reactivating one specific
+  user is likewise this one user's own problem, wrapped in its own `tryCatch` inside
+  `processOneIdentity` and logged — it does not abort the rest of the platform's tick the way an
+  unhandled per-user exception used to (propagating out of the whole budget-bounded loop, which
+  the outer `tryCatch` around it then mistook for a directory outage, stamping nobody at all that
+  tick, not even identities already finished earlier in the same run).
 - **Disabled-account detection is `userAccountControl` bit 2 (AD `ACCOUNTDISABLE`) only** in this
   PR. A configurable "disabled account filter" for directories using a different convention is a
   documented follow-up, not implemented here.
@@ -427,18 +435,27 @@ migration since both are the same "who owns this user's platformRole" concern), 
   `INACTIVE` from a previous run, or a manual deactivation, that the directory still reports as
   gone every tick must never inflate either side of the math). The first threshold is the
   platform-wide one: this count against the platform's total currently-`ACTIVE` linked users. The
-  second is slice-local: the same count against only the currently-`ACTIVE` users *within this
-  tick's own processed slice*. The slice-local threshold exists because the per-platform time
-  budget (below) means a single tick may only ever reach a small fraction of a large platform's
-  linked users — a directory-wide misconfiguration (a wrong `baseDn`) makes every one of *those*
-  look gone, which can still be a small, valve-respecting share of the platform's *full* ACTIVE
-  population every single tick, and enough ticks of "small share, repeated" adds up to most of the
-  platform being deactivated despite the valve never tripping on any one run judged only
-  platform-wide. Checked once after every user this tick reached has been classified
-  gone/disabled/present; tripping it aborts *only* the deactivation half of the run for that
-  platform — reactivation and mapping re-application for present/enabled users still proceed, since
-  those are the restorative direction and safe to apply even during a suspected `baseDn`/filter
-  misconfiguration.
+  second is slice-local: the same count against the ACTIVE count among **every** identity this
+  tick actually processed — present, gone *and* disabled, not only the ones already headed for
+  deactivation. Using the deactivation candidates as their own denominator (an earlier version of
+  this valve did exactly that) makes the numerator and denominator the same set, so the ratio is
+  always ~100% and the valve trips on any tick with more than a percent-of-one genuine departure,
+  breaking ordinary offboarding outright — the fix is the ACTIVE count across the *whole* processed
+  slice (including present, unaffected users), not just the departures within it. The slice-local
+  threshold exists in the first place because the per-platform time budget (below) means a single
+  tick may only ever reach a small fraction of a large platform's linked users — a directory-wide
+  misconfiguration (a wrong `baseDn`) makes every one of *those* look gone, which can still be a
+  small, valve-respecting share of the platform's *full* ACTIVE population every single tick, and
+  enough ticks of "small share, repeated" adds up to most of the platform being deactivated despite
+  the valve never tripping on any one run judged only platform-wide. Checked once after every user
+  this tick reached has been classified gone/disabled/present; tripping it aborts *only* the
+  deactivation half of the run for that platform — reactivation and mapping re-application for
+  present/enabled users still proceed, since those are the restorative direction and safe to apply
+  even during a suspected `baseDn`/filter misconfiguration. **Accepted edge case:** two genuine
+  departures landing in the same tiny, budget-limited slice (e.g. a tick that only reaches 3–4
+  users total) can still legitimately trip the valve on its own — that is not a bug; the next
+  tick's rotation reaches a different slice, and a real, larger-than-expected wave of departures
+  across the *whole* platform stays bounded by the platform-wide threshold regardless.
 - **A broken group search never blocks sign-in, reconcile, or strips memberships.** Both
   `ldapAuthnService.lookupDirectoryUser` and reconcile's `processOneIdentity` wrap the group-search
   call in its own `tryCatch`; on failure they log it and skip calling `applyMapping` entirely for
@@ -458,7 +475,22 @@ migration since both are the same "who owns this user's platformRole" concern), 
   previous reconcile-driven deactivation could let a later reconcile pass reactivate a user an admin
   deliberately deactivated by hand afterwards. Reconcile's own status writes (`source: 'LDAP'`, the
   default for every caller in this file) manage the marker themselves and never trigger this clear;
-  only `source: 'ADMIN'` (the admin controller's own default) does.
+  only `source: 'ADMIN'` (the admin controller's own default) does. **The marker clear runs before
+  the status write, not after** — `clearDirectoryDisabledAtIfSet` (reconcile's own reactivation
+  path) is itself a conditional "clear only if still set", so whichever of the two clears (this
+  admin write's, or a concurrent reconcile tick's) lands first "wins" the marker, and the loser's
+  own attempt becomes a no-op. Clearing after the status write instead would let a concurrent
+  reconcile tick observe the marker still set, see the status already flipped to `INACTIVE` by this
+  same admin write, and reactivate the user right back to `ACTIVE` before this write's own
+  marker-clear ever runs — silently overwriting the admin's explicit decision.
+- **Reconcile's own deactivation never touches the platform owner**, via an explicit
+  `identity.userId === platformOwnerId` check in `deactivateUser` (the owner id is fetched once per
+  platform, not once per user) — defense in depth, since the owner can never hold a federated LDAP
+  identity in the first place (`assertIdentityIsNotPrivilegedElsewhere` in `ldap-authn-service.ts`
+  refuses to ever link or adopt one). This check is `deactivateUser`'s own responsibility:
+  `transitionStatusIfCurrentlyEquals`, the generic conditional status transition it (and
+  reactivation) both call, has no owner awareness of its own, unlike `userService.update`, which
+  used to carry this guard for every caller before reconcile's deactivation path moved off it.
 - **A directory-granted platform role is revocable; a manually-set one can only be raised, never
   lowered, by a mapping — and a raise-then-revert lands back on the admin's own prior role, not
   always `MEMBER`.** `user.platformRoleManagedBy` (`PlatformRoleManagedBy`: `MANUAL`/`LDAP`) tracks
@@ -474,12 +506,26 @@ migration since both are the same "who owns this user's platformRole" concern), 
   before this mapping ever raised it) or `MEMBER` when there is none (e.g. the row was created
   straight into an LDAP grant with no prior manual role to remember) — "manually set roles are never
   demoted" applies to a mapping-raised role too, once the group grant that raised it goes away, not
-  only to a role that was never raised in the first place. The baseline is cleared by the revert
-  that consumes it, and unconditionally by any admin role write (`POST /v1/users/:id`, which always
-  writes `MANUAL` and forgets any raise-baseline a since-superseded mapping recorded, so the next
-  raise — if any — captures a fresh one from wherever the admin actually left the role). A `MANUAL`
-  role is never touched by the absence of a mapping match, and the platform owner is never touched
-  either way.
+  only to a role that was never raised in the first place. **Restoring a recorded baseline restores
+  provenance to `MANUAL` too**, not only the role value — leaving provenance `LDAP` after a
+  baseline-restoring revert would mean the *next* mapping pass treats the already-restored MANUAL
+  role as still LDAP-managed and eligible to raise unconditionally, silently discarding that the
+  mapping's own grant was just revoked, and would never record a fresh baseline on that next raise
+  either (the raise branch only records one when raising *from* MANUAL) — a second raise-then-revert
+  cycle would then fall all the way to `MEMBER` instead of back to the admin's real prior role, the
+  baseline tracking silently correct on the first cycle and wrong on every one after. Reverting to
+  the no-baseline fallback (`MEMBER`) keeps today's `LDAP` provenance, since there is no human
+  decision being restored there. The baseline is cleared by the revert that consumes it either way,
+  and unconditionally by any admin role write (`POST /v1/users/:id`, which always writes `MANUAL`
+  and forgets any raise-baseline a since-superseded mapping recorded, so the next raise — if any —
+  captures a fresh one from wherever the admin actually left the role). A `MANUAL` role is never
+  touched by the absence of a mapping match, and the platform owner is never touched either way.
+  The read-decide-write sequence in `applyPlatformRoleGrant` (read the user, decide what to write,
+  write it back) is not atomic on its own — `userService.transitionPlatformRoleIfCurrentlyEquals`
+  (the same conditional-write pattern as `transitionStatusIfCurrentlyEquals`) closes the gap: the
+  write only takes effect if the row still matches the exact `(platformRole, platformRoleManagedBy)`
+  pair just read, so an admin's own competing write landing in that gap is never silently
+  overwritten by the mapping's now-stale decision.
 - **Only a TEAM project can receive a group-mapping grant.** Rejected with `ErrorCode.VALIDATION` at
   save time (`assertGroupMappingProjectsBelongToPlatform`) and silently skipped (logged) at apply
   time (`projectBelongsToPlatformAsTeam`) — a `PERSONAL` project has no meaningful shared-role
@@ -554,7 +600,14 @@ review; `QF_` is the only name recognised now.
   platform role, no-match leaves role untouched, highest-wins per project; a dedicated round-2 block
   covers the RFC 4514 tokeniser directly against the three spoofing vectors its own design comment
   documents (an escaped comma followed by a space vs. not, a trailing NBSP, a Kelvin-sign lookalike)
-  plus a positive case for genuine case/spacing differences.
+  plus a positive case for genuine case/spacing differences. A `resolveGrants`-level block covers
+  the four in-band-sentinel collisions the structural-tagging fix closes, exercised through
+  `resolveGrants` itself (the real production entry point) rather than through raw
+  `normalizeGroupDn` string equality: a BER-form `groupDn` against a literal group name spelling out
+  the old `#ber:` tag text; two different invalid hex escapes against each other; an invalid hex
+  escape against a literal group name spelling out the old invalid-UTF-8 sentinel text; and an AVA
+  with no `=` against a valid AVA whose decoded type spells out the old invalid-AVA sentinel text —
+  each shown red against the pre-fix code before being fixed.
 - `test/unit/app/authentication/ldap/ldap-client.test.ts` — `canonicalGuidToFilterValue` round-trips
   a known `objectGUID` vector and refuses a malformed subject rather than converting it.
 - `test/unit/app/authentication/ldap/ldap-reconcile-module.test.ts` —
@@ -566,10 +619,13 @@ review; `QF_` is the only name recognised now.
   is ignored at apply time; a MANUAL row can never flip to `LDAP` even when the JS-level pre-check
   misses it under a simulated race; a group-granted platform role is marked `LDAP`-managed and
   reverts to `MEMBER` once no mapping matches, while a manually-granted role is never demoted by that
-  absence. Two round-4 cases cover the manual-baseline revert: a MANUAL OPERATOR raised to ADMIN by a
-  mapping reverts to OPERATOR (not MEMBER) once the group no longer grants a role; and an admin role
-  write in between forgets the recorded baseline, so a later raise from that fresh manual role
-  captures its own new baseline rather than the stale one.
+  absence. Two cases cover the manual-baseline revert: a MANUAL OPERATOR raised to ADMIN by a
+  mapping reverts to OPERATOR *and MANUAL provenance* (not just the role value) once the group no
+  longer grants a role, with a third `applyMapping([])` call proving that revert is a genuine
+  no-op afterwards (under the pre-fix bug, provenance staying `LDAP` made this third call
+  incorrectly demote the user again, all the way to `MEMBER`, since the consumed baseline left
+  nothing to fall back on); and an admin role write in between forgets the recorded baseline, so a
+  later raise from that fresh manual role captures its own new baseline rather than the stale one.
 - Reconcile: `test/integration/ce/ldap/ldap-reconcile.test.ts` — deactivates gone/disabled users and
   stamps `directoryDisabledAt`; reactivates only directory-deactivated users, never a manual
   deactivation; fail-open on a connect/bind error; fail-closed per account on a search error; a case
@@ -578,23 +634,33 @@ review; `QF_` is the only name recognised now.
   proving the valve counts real transitions against the ACTIVE denominator rather than tripping on
   the stale majority; group mappings are re-applied (and revoked) on every reconcile pass; a
   group-search failure for one user is skipped for that user only, with every other present user
-  still processed normally; a disabled config is skipped entirely (no directory call made at all).
-  Three cases exercise round-4's fixes specifically, all using an injectable fake clock
-  (`Date.now` spied to a counter the test itself advances per mocked directory call — no real
-  `setTimeout` delays, so no timing flakiness): the rotation case now asserts which federated rows
-  actually got a fresh `lastReconciledAt`, not `searchBySubject`'s call count; a dedicated
-  per-user-processing case proves an LDAP-managed ADMIN outside a group is reverted for every
-  identity a tight tick actually reaches, and is left both untouched *and unstamped* for one it
-  doesn't reach (shown red against the pre-round-4 split-loop structure before being fixed); and a
-  two-tick, budget-limited-slice, everyone-reported-gone case proves the safety valve trips on
-  *both* ticks and deactivates nobody, even though the platform-wide share alone would not have
-  tripped it.
+  still processed normally; a disabled config is skipped entirely (no directory call made at all);
+  reconcile never deactivates the platform owner even if a federated row is inserted directly
+  pointing at them (bypassing the primary link-time guard, to exercise this one in isolation); a DB
+  error reactivating one user (not a directory error) does not abort the rest of the platform's
+  tick, and every identity — including the broken one — still gets a fresh `lastReconciledAt`.
+  Several cases use an injectable fake clock (`Date.now`, or `vi.useFakeTimers({ toFake: ['Date'] })`
+  when `new Date()` also needs to move with it — deliberately scoped to `Date` only so real
+  Postgres/Redis I/O in the same test is unaffected — spied/advanced by the test itself per mocked
+  directory call, or by an explicit jump between two passes; no real `setTimeout` delays, so no
+  timing flakiness): the rotation case asserts which federated rows actually got a fresh
+  `lastReconciledAt`, not `searchBySubject`'s call count; a dedicated per-user-processing case
+  proves an LDAP-managed ADMIN outside a group is reverted for every identity a tight tick actually
+  reaches, and is left both untouched *and unstamped* for one it doesn't reach (shown red against
+  the pre-fix split-loop structure before being fixed); a two-tick, budget-limited-slice,
+  everyone-reported-gone case proves the safety valve trips on *both* ticks and deactivates nobody,
+  even though the platform-wide share alone would not have tripped it; and a realistic-scale case
+  (30 present users, 3 genuine departures, the full default budget — no rotation involved) proves
+  ordinary offboarding actually goes through, which the pre-fix valve (numerator and denominator
+  both computed from the same deactivation-candidate set) broke outright for any tick with more
+  than one departure.
 - Save/apply validation and owner gates: appended to `test/integration/ce/ldap/ldap-config.test.ts`
   (ADMIN-granting-mapping owner gate on both upsert and delete, cross-platform `projectId` rejected
   at save with the specific status code the route actually returns, a non-TEAM project rejected at
   save, DELETE owner gate, and a Phase-1-shaped config row — missing `groupMappings`/`nestedGroups`
   entirely from its stored JSON — backfilling schema defaults on both the sign-in-facing resolved
-  config and the GET response).
+  config and the GET response, and a `groupDn` with no unescaped `=` — never comparable to anything
+  — rejected at save with the `invalidLdapGroupDnEncoding` message).
 - `test/integration/ce/ldap/ldap-config-test-endpoint.test.ts` — `/test`'s own `GROUP_SEARCH` stage:
   never exercised when the platform has no group mappings, its own failure stage (not `SEARCH`) when
   group resolution fails and mappings exist, and a successful pass-through when both a mapping and a
@@ -676,6 +742,25 @@ Recorded deliberately, not discovered late — each of these is a property of th
   handle attribute-type OID vs. short-name equivalence (`2.5.4.3` vs `cn`); a group DN using that
   form would need to be entered into `groupMappings` in whatever form the directory actually reports
   it in.
+
+  All of the above sentinels/tags were themselves still *in-band strings* — a literal `#ber:` text
+  prefix, a `\u0000`-delimited marker — living in the same space as ordinary decoded content, which
+  makes every one of them forgeable: an attacker just writes an ordinary, validly-escaped value
+  whose *decoded* text happens to equal the sentinel verbatim (e.g. an escaped `\#ber:04024869`
+  literally decodes to the string `#ber:04024869`, colliding with the BER-tagged form of the same
+  hex), and it then compares equal to whatever the sentinel was supposed to mean. Every value in the
+  normalized structure is now tagged *structurally* instead — `['str', decodedString]` or `['ber',
+  lowercasedHex]`, a distinct array shape at a position no decoded input ever lands in — and invalid
+  input (an AVA with no `=`, a hex escape that fails a `fatal`-mode UTF-8 decode) makes the *whole
+  DN* normalize to `null` rather than embed any sentinel value anywhere in the structure.
+  `resolveGrants` filters `null` out of both the reported-groups `Set` and the mappings it checks
+  against it, so two independently-unparseable DNs (or a mapping's own unparseable `groupDn`) can
+  never be treated as matching anything, including each other. Because a stored mapping whose
+  `groupDn` normalizes to `null` could otherwise never grant anything, with no error to reveal the
+  mistake at any later point, `ldapConfigService.upsert` now also rejects such a `groupDn` outright
+  at save time (`assertGroupMappingDnsAreComparable`, `invalidLdapGroupDnEncoding`) — full BER
+  decoding to validate a `#<hex>` value's own hex digits was considered and rejected here too, for
+  the same reason it was rejected for matching: more ASN.1 machinery than this comparison needs.
 - **(f) Disabled-account detection covers AD's `userAccountControl` bit 2 only.** A directory that
   signals "disabled" a different way (a custom attribute, a different bit, group membership) is not
   detected by reconcile; such an account is only caught by "gone" (searchBySubject returns nothing)
