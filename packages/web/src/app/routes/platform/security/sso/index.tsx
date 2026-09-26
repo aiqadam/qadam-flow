@@ -1,12 +1,11 @@
-import { SsoDomainVerificationStatus } from '@aiqadam/shared';
+import { UpsertLdapConfigRequest } from '@aiqadam/shared';
 import { t } from 'i18next';
-import { CheckCircle, LockIcon, MailIcon, Earth } from 'lucide-react';
+import { Clock, FolderKey, LockIcon, MailIcon, Earth } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { CenteredPage } from '@/app/components/centered-page';
-import LockedFeatureGuard from '@/app/components/locked-feature-guard';
-import { AllowedDomainDialog } from '@/app/routes/platform/security/sso/allowed-domain';
-import { ConfigureSamlDialog } from '@/app/routes/platform/security/sso/saml-dialog';
+import { ldapConfigFormUtils } from '@/app/routes/platform/security/sso/ldap-config-form-helpers';
+import { ConfigureLdapDialog } from '@/app/routes/platform/security/sso/ldap-dialog';
 import {
   Item,
   ItemMedia,
@@ -16,162 +15,183 @@ import {
   ItemActions,
 } from '@/components/custom/item';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { ssoMutations } from '@/features/platform-admin';
+import {
+  ldapConfigMutations,
+  ldapConfigQueries,
+} from '@/features/platform-admin';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { apiErrorUtils } from '@/lib/api-error-utils';
+import { authenticationSession } from '@/lib/authentication-session';
 
 import GoogleIcon from '../../../../../assets/img/custom/auth/google-icon.svg';
 
+const SoonBadge = () => (
+  <Badge variant="outline" className="gap-1.5 text-muted-foreground">
+    <Clock className="size-3" />
+    {t('Soon')}
+  </Badge>
+);
+
 const SSOPage = () => {
-  const { platform, refetch } = platformHooks.useCurrentPlatform();
+  const { platform } = platformHooks.useCurrentPlatform();
+  const {
+    data: ldapConfig,
+    isLoading: isLdapConfigLoading,
+    isError: isLdapConfigError,
+  } = ldapConfigQueries.useLdapConfig();
 
-  const samlConnected = !!platform.federatedAuthProviders?.saml;
-  const ssoDomainVerified =
-    platform.ssoDomainVerification?.status ===
-    SsoDomainVerificationStatus.VERIFIED;
-  const emailAuthEnabled = platform.emailAuthEnabled;
-
-  const { mutate: toggleEmailAuthentication, isPending: isEmailAuthPending } =
-    ssoMutations.useUpdatePlatformSso({
-      platformId: platform.id,
-      refetch,
-      onSuccess: () => {
-        toast.success(t('Email authentication updated'), { duration: 3000 });
-      },
+  const isOwner = platform.ownerId === authenticationSession.getCurrentUserId();
+  const ldapQuickToggleLockedForNonOwner =
+    ldapConfigFormUtils.computeFormLockedForNonOwner({
+      isOwner,
+      linkExistingByEmail: ldapConfig?.config.linkExistingByEmail ?? false,
     });
 
-  const { mutate: toggleGoogleAuth, isPending: isGoogleAuthPending } =
-    ssoMutations.useUpdatePlatformSso({
-      platformId: platform.id,
-      refetch,
+  const { mutate: toggleLdapEnabled, isPending: isLdapTogglePending } =
+    ldapConfigMutations.useUpsertLdapConfig({
       onSuccess: () => {
-        toast.success(t('Google authentication updated'), { duration: 3000 });
+        toast.success(t('LDAP configuration updated'), { duration: 3000 });
+      },
+      onError: (error) => {
+        toast.error(
+          apiErrorUtils.extractServerMessage({
+            error,
+            fallback: t("Couldn't save the LDAP configuration"),
+          }),
+        );
       },
     });
 
   return (
-    <LockedFeatureGuard
-      locked={!platform.plan.ssoEnabled}
-      lockTitle={t('Single Sign On')}
-      lockDescription={t(
-        'Let your users sign in with your current SSO provider or give them self serve sign up access',
-      )}
+    <CenteredPage
+      title={t('Single Sign On')}
+      description={t('Manage single sign on providers')}
     >
-      <CenteredPage
-        title={t('Single Sign On')}
-        description={t('Manage single sign on providers')}
-      >
-        <div className="flex flex-col gap-4">
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <Earth />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{t('Allowed Domains')}</ItemTitle>
-              <ItemDescription>
-                {t('Restrict authentication to specific email domains.')}
-              </ItemDescription>
-              {(platform?.allowedAuthDomains ?? []).length > 0 && (
-                <div className="mt-1 gap-2 flex">
-                  {(platform?.allowedAuthDomains ?? []).map((text, index) => (
-                    <Badge key={index} variant={'outline'}>
-                      {text}
-                    </Badge>
-                  ))}
-                </div>
+      <div className="flex flex-col gap-4">
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <Earth />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{t('Allowed Domains')}</ItemTitle>
+            <ItemDescription>
+              {t('Restrict authentication to specific email domains.')}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <SoonBadge />
+          </ItemActions>
+        </Item>
+
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <FolderKey />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{t('LDAP / Active Directory')}</ItemTitle>
+            <ItemDescription>
+              {t(
+                'Let users sign in with their on-premise directory username and password.',
               )}
-            </ItemContent>
-            <ItemActions>
-              <AllowedDomainDialog platform={platform} refetch={refetch} />
-            </ItemActions>
-          </Item>
-
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <img className="size-6" src={GoogleIcon} alt="icon" />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>Google</ItemTitle>
-              <ItemDescription>
-                {t(
-                  "Allow logins through google's single sign-on functionality.",
+            </ItemDescription>
+            {ldapConfig && !ldapConfig.config.tlsVerify && (
+              <div className="mt-1">
+                <Badge variant="destructive">
+                  {t('Certificate verification disabled')}
+                </Badge>
+              </div>
+            )}
+            {isLdapConfigError && (
+              <p className="mt-1 text-sm text-destructive">
+                {t("Couldn't load the LDAP configuration")}
+              </p>
+            )}
+          </ItemContent>
+          <ItemActions>
+            {isLdapConfigLoading ? (
+              <Button size="sm" variant="basic" disabled>
+                {t('Loading…')}
+              </Button>
+            ) : isLdapConfigError ? (
+              <Button size="sm" variant="basic" disabled>
+                {t('Configure')}
+              </Button>
+            ) : (
+              <>
+                {ldapConfig && (
+                  <Switch
+                    checked={ldapConfig.config.enabled}
+                    disabled={
+                      isLdapTogglePending || ldapQuickToggleLockedForNonOwner
+                    }
+                    onCheckedChange={(checked) => {
+                      const request: UpsertLdapConfigRequest = {
+                        ...ldapConfig.config,
+                        enabled: checked,
+                      };
+                      toggleLdapEnabled(request);
+                    }}
+                  />
                 )}
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Switch
-                checked={platform.googleAuthEnabled}
-                onCheckedChange={() =>
-                  toggleGoogleAuth({
-                    googleAuthEnabled: !platform.googleAuthEnabled,
-                  })
-                }
-                disabled={isGoogleAuthPending}
-              />
-            </ItemActions>
-          </Item>
+                <ConfigureLdapDialog
+                  platform={platform}
+                  config={ldapConfig ?? null}
+                />
+              </>
+            )}
+          </ItemActions>
+        </Item>
 
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <LockIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{t('SAML 2.0')}</ItemTitle>
-              <ItemDescription>
-                {t(
-                  "Allow logins through saml 2.0's single sign-on functionality.",
-                )}
-              </ItemDescription>
-              {platform.ssoDomain && (
-                <div className="mt-1 gap-2 flex items-center">
-                  <Badge variant="outline">{platform.ssoDomain}</Badge>
-                  {ssoDomainVerified ? (
-                    <span className="flex items-center gap-1 text-xs text-success-600">
-                      <CheckCircle className="size-3" />
-                      {t('Verified')}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-warning">
-                      {t('Pending verification')}
-                    </span>
-                  )}
-                </div>
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <img className="size-6" src={GoogleIcon} alt="icon" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Google</ItemTitle>
+            <ItemDescription>
+              {t("Allow logins through google's single sign-on functionality.")}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <SoonBadge />
+          </ItemActions>
+        </Item>
+
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <LockIcon />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{t('SAML 2.0')}</ItemTitle>
+            <ItemDescription>
+              {t(
+                "Allow logins through saml 2.0's single sign-on functionality.",
               )}
-            </ItemContent>
-            <ItemActions>
-              <ConfigureSamlDialog
-                platform={platform}
-                refetch={refetch}
-                connected={samlConnected}
-              />
-            </ItemActions>
-          </Item>
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <SoonBadge />
+          </ItemActions>
+        </Item>
 
-          <Item variant="outline">
-            <ItemMedia variant="icon">
-              <MailIcon />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle>{t('Allowed Email Login')}</ItemTitle>
-              <ItemDescription>
-                {t('Allow logins through email and password.')}
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Switch
-                checked={emailAuthEnabled}
-                onCheckedChange={() =>
-                  toggleEmailAuthentication({
-                    emailAuthEnabled: !platform.emailAuthEnabled,
-                  })
-                }
-                disabled={isEmailAuthPending}
-              />
-            </ItemActions>
-          </Item>
-        </div>
-      </CenteredPage>
-    </LockedFeatureGuard>
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <MailIcon />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{t('Allowed Email Login')}</ItemTitle>
+            <ItemDescription>
+              {t('Allow logins through email and password.')}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <SoonBadge />
+          </ItemActions>
+        </Item>
+      </div>
+    </CenteredPage>
   );
 };
 
