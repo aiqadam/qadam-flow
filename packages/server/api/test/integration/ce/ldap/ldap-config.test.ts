@@ -4,7 +4,7 @@ import { StatusCodes } from 'http-status-codes'
 import pino from 'pino'
 import { ldapConfigService } from '../../../../src/app/authentication/ldap/ldap-config-service'
 import { generateMockToken } from '../../../helpers/auth'
-import { mockBasicUser } from '../../../helpers/mocks'
+import { mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -347,6 +347,123 @@ describe('Platform LDAP config API', () => {
                 payload: validConfig({ linkExistingByEmail: true, bindPassword: undefined }),
             })
             expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    // Phase 2: a group mapping that grants platform ADMIN is exactly as powerful as
+    // `linkExistingByEmail` — any directory user in that group becomes a platform admin — so it is
+    // gated the same way.
+    describe('a group mapping granting platform ADMIN is owner-only', () => {
+        it('allows the platform owner to save a mapping granting ADMIN', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+            }))
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects a non-owner admin saving a mapping granting ADMIN', async () => {
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({
+                    groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+                }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('still allows a non-owner admin to save a mapping granting only MEMBER/OPERATOR', async () => {
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({
+                    groupMappings: [{ groupDn: 'cn=staff,dc=example,dc=com', platformRole: PlatformRole.OPERATOR, projects: [] }],
+                }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    describe('group mapping projectId is validated against the configuring platform', () => {
+        it('rejects a projectId that belongs to a different platform', async () => {
+            const otherPlatform = await mockAndSaveBasicSetup()
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: otherPlatform.mockProject.id, role: 'Editor' }] }],
+            }))
+            expect(response.statusCode).not.toBe(StatusCodes.OK)
+        })
+
+        it('accepts a projectId that belongs to the configuring platform', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: ctx.project.id, role: 'Editor' }] }],
+            }))
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    // Coordinator follow-up: deleting a config is exactly as sensitive as changing it while
+    // `linkExistingByEmail` is on — a non-owner admin must not be able to delete and immediately
+    // re-create an unchanged config to dodge the upsert-time owner gate.
+    describe('deleting a config with linkExistingByEmail on is owner-only', () => {
+        it('rejects a non-owner admin deleting a config with linkExistingByEmail on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(await ldapConfigService(pino({ level: 'silent' })).get({ platformId: ctx.platform.id })).not.toBeNull()
+        })
+
+        it('allows the platform owner to delete a config with linkExistingByEmail on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const response = await ctx.delete('/v1/platform-ldap-configs')
+            expect(response.statusCode).toBe(StatusCodes.NO_CONTENT)
+        })
+
+        it('allows a non-owner admin to delete a config with linkExistingByEmail off', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig())
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+            })
+            expect(response.statusCode).toBe(StatusCodes.NO_CONTENT)
         })
     })
 })

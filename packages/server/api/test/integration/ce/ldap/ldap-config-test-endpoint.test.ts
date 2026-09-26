@@ -21,6 +21,7 @@ vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
         searchForUser: (...args: unknown[]) => searchForUser(...args),
         bindAsUser: (...args: unknown[]) => bindAsUser(...args),
         withConnectionSlot: (fn: () => unknown) => fn(),
+        resolveMemberGroupDns: () => Promise.resolve([]),
     },
 }))
 

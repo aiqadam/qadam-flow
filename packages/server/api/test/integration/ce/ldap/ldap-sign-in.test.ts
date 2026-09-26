@@ -27,6 +27,9 @@ vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
         searchForUser: (...args: unknown[]) => searchForUser(...args),
         bindAsUser: (...args: unknown[]) => bindAsUser(...args),
         withConnectionSlot: (fn: () => unknown) => fn(),
+        // Group mapping (Phase 2) reads this on every sign-in; the mock directory entry never
+        // carries `memberOf`, so no group DNs is the correct, non-crashing default here.
+        resolveMemberGroupDns: () => Promise.resolve([]),
     },
 }))
 
