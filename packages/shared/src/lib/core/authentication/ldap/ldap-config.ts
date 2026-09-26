@@ -23,31 +23,31 @@ export const LdapGroupProjectMapping = z.object({
 })
 export type LdapGroupProjectMapping = z.infer<typeof LdapGroupProjectMapping>
 
+// Caps guard against an admin-authored config becoming an unbounded payload — every mapping is
+// re-walked on every sign-in and every reconcile tick, so `groupMappings`/`projects` sizes feed
+// directly into per-request and per-tick cost. `groupDn` matches the 1024-char cap already used
+// for `username`/`password` below.
+export const MAX_LDAP_GROUP_DN_LENGTH = 1024
+export const MAX_LDAP_GROUP_MAPPINGS = 200
+export const MAX_LDAP_GROUP_MAPPING_PROJECTS = 200
+
 export const LdapGroupMapping = z.object({
-    groupDn: z.string().min(1, 'invalidLdapGroupDn'),
+    groupDn: z.string().min(1, 'invalidLdapGroupDn').max(MAX_LDAP_GROUP_DN_LENGTH, 'ldapGroupDnTooLong'),
     platformRole: z.enum(PlatformRole).optional(),
-    projects: z.array(LdapGroupProjectMapping).default([]),
+    projects: z.array(LdapGroupProjectMapping).max(MAX_LDAP_GROUP_MAPPING_PROJECTS, 'tooManyLdapGroupMappingProjects').default([]),
 })
 export type LdapGroupMapping = z.infer<typeof LdapGroupMapping>
 
-// `UpsertLdapConfigRequest` needs its own mapping shape, without `projects`'s `.default([])` —
-// a field carrying `.default(...)` makes `z.input` (what a caller may omit) diverge from
-// `z.output` (what parsing always produces) for the schema that owns it, and that divergence
-// propagates outward: `z.infer<UpsertLdapConfigRequest>` (used for the request's own TS type, e.g.
-// `zodResolver`'s generic in `ldap-dialog.tsx`) is normally `z.output`, but nesting a
-// default-carrying field anywhere inside the object is enough to make TS treat the two forms as
-// structurally different types for the request as a whole, not just for the one nested field —
-// exactly the "two different types with this name exist, but they are unrelated" error `Resolver<T>`
-// hit. `projects` is required here instead (the request always supplies it, empty array or not);
-// `LdapConfig.parse` — every actual merge/parse point (`ldapConfigService.upsert`'s
-// `{ ...existingConfig, ...request }`, `resolveStoredConfig`) — still runs the *original*
-// `LdapGroupMapping` (with its `.default([])` intact) over the final merged config, so a mapping a
-// caller does omit `projects` from still backfills to `[]` there, the same as before; the default
-// simply now applies at that parse layer instead of inside the request's own inferred type.
-export const UpsertLdapGroupMapping = z.object({
-    groupDn: z.string().min(1, 'invalidLdapGroupDn'),
-    platformRole: z.enum(PlatformRole).optional(),
-    projects: z.array(LdapGroupProjectMapping),
+// `projects` has no `.default([])` here, unlike `LdapGroupMapping` — a field carrying `.default(...)`
+// makes `z.input` (what a caller may omit) diverge from `z.output` (what parsing always produces),
+// and nesting that anywhere inside `UpsertLdapConfigRequest` was enough to break `zodResolver`'s
+// `Resolver<T>` typing in `ldap-dialog.tsx` with a "two different types, but they are unrelated"
+// error. Requiring `projects` here keeps this schema's `z.input`/`z.output` identical; the request
+// must always supply it (empty array or not). `LdapConfig.parse` — every actual merge/parse point —
+// still runs the original `LdapGroupMapping` (with its default intact) over the final merged
+// config, so an omitted `projects` still backfills to `[]` there, same as before.
+export const UpsertLdapGroupMapping = LdapGroupMapping.extend({
+    projects: z.array(LdapGroupProjectMapping).max(MAX_LDAP_GROUP_MAPPING_PROJECTS, 'tooManyLdapGroupMappingProjects'),
 })
 export type UpsertLdapGroupMapping = z.infer<typeof UpsertLdapGroupMapping>
 
@@ -103,7 +103,7 @@ const ldapConfigShape = {
         (value) => value === undefined || countOccurrences({ value, needle: '{userDn}' }) === 1,
         'invalidLdapGroupSearchFilter',
     ),
-    groupMappings: z.array(LdapGroupMapping).default([]),
+    groupMappings: z.array(LdapGroupMapping).max(MAX_LDAP_GROUP_MAPPINGS, 'tooManyLdapGroupMappings').default([]),
 }
 
 // A directory login page cannot be more permissive than the transport it authenticates over —
@@ -154,7 +154,7 @@ export const UpsertLdapConfigRequest = z.object(ldapConfigShape).partial({
     // own comment) so the request's own inferred type has no default-carrying field anywhere
     // inside it.
     nestedGroups: z.boolean().optional(),
-    groupMappings: z.array(UpsertLdapGroupMapping).optional(),
+    groupMappings: z.array(UpsertLdapGroupMapping).max(MAX_LDAP_GROUP_MAPPINGS, 'tooManyLdapGroupMappings').optional(),
     // Omitted keeps the value already stored for the platform; present-and-empty is refused
     // (never a way to blank out the bind account) so the only way to clear a credential is
     // deleting the whole config.
