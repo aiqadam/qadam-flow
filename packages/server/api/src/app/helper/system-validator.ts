@@ -214,8 +214,9 @@ const systemPropValidators: {
     [AppSystemProp.LDAP_RECONCILE_CRON]: stringValidator,
     [AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT]: (value: string) => {
         const percent = Number(value)
-        return Number.isFinite(percent) && percent > 0 && percent <= 100 ? true : 'Value must be a number between 1 and 100'
+        return Number.isInteger(percent) && percent >= 1 && percent <= 100 ? true : 'Value must be an integer between 1 and 100'
     },
+    [AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS]: positiveIntegerValidator,
 
     // Embed
     [AppSystemProp.ALLOWED_EMBED_ORIGINS]: stringValidator,

@@ -80,9 +80,13 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     [AppSystemProp.LDAP_RECONCILE_ENABLED]: 'true',
     [AppSystemProp.LDAP_RECONCILE_CRON]: '23 * * * *',
     // Aborts a platform's reconcile run (deactivating nobody) if it would otherwise deactivate more
-    // than this share of that platform's LDAP-linked users in one run — the failure mode a wrong
-    // `baseDn` or a directory outage misreported as "everyone is gone" produces.
+    // than this share of that platform's *currently active* LDAP-linked users in one run — the
+    // failure mode a wrong `baseDn` or a directory outage misreported as "everyone is gone"
+    // produces.
     [AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT]: '20',
+    // Bounds one platform's own turn inside a single reconcile tick, so a slow or very large
+    // directory can't starve every other platform sharing the same tick.
+    [AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS]: '60000',
 }
 
 let globalLogger: FastifyBaseLogger
