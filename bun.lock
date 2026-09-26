@@ -3179,12 +3179,15 @@
     },
     "packages/qadams/core/subflows": {
       "name": "@aiqadam/qadam-subflows",
-      "version": "0.4.16",
+      "version": "0.4.17",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
         "@aiqadam/shared": "workspace:*",
         "tslib": "2.6.2",
+      },
+      "devDependencies": {
+        "vitest": "3.0.8",
       },
     },
     "packages/qadams/core/tables": {
@@ -3268,7 +3271,7 @@
     },
     "packages/qadams/framework": {
       "name": "@aiqadam/qadams-framework",
-      "version": "0.33.1",
+      "version": "0.34.0",
       "dependencies": {
         "@aiqadam/shared": "workspace:*",
         "ai": "6.0.170",
@@ -3428,7 +3431,7 @@
     },
     "packages/server/engine": {
       "name": "@aiqadam/engine",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@aiqadam/qadams-common": "workspace:*",
         "@aiqadam/qadams-framework": "workspace:*",
@@ -3531,7 +3534,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.141.0",
+      "version": "0.142.0",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "7.1.0",

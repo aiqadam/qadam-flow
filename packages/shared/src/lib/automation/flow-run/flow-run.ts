@@ -27,6 +27,13 @@ export function truncateFailedStepMessage(
 export const PARENT_RUN_ID_HEADER = 'ap-parent-run-id'
 export const FAIL_PARENT_ON_FAILURE_HEADER = 'ap-fail-parent-on-failure'
 export const RAW_PAYLOAD_HEADER = 'ap-raw-payload'
+// The parent's own resolved run locale (see `EngineConstants#getRunLocale`), sent by a queue-mode
+// `callFlow` submission so the child's locale chain has something to inherit from before falling
+// back to its own project's `defaultLocale` — mirrors the inline-child path in
+// `inline-flow-executor.ts`, which passes the same value in-process instead of over HTTP. Not
+// itself security-sensitive (worst case it only shifts which locale a lookup prefers, inside the
+// child's own project data), so unlike `parentRunId` it needs no re-verification downstream.
+export const PARENT_RUN_LOCALE_HEADER = 'ap-parent-run-locale'
 
 export type FlowRunId = ApId
 
@@ -72,6 +79,14 @@ export const FlowRun = z.object({
     // The join slot (#374) this child answers when its parent waits on a join waitpoint. Written
     // once, at creation, after the same re-verification as `parentWaitpointId`.
     parentSlotId: z.string().optional(),
+    // The parent's resolved run locale (see `EngineConstants#getRunLocale`), captured once at
+    // creation from `PARENT_RUN_LOCALE_HEADER` (queued `callFlow`) so it survives a resume or a
+    // retry — both re-dispatch this same run's job without re-deriving anything from the parent,
+    // which may since have completed, been retried itself, or no longer exist. `Nullable`, not
+    // just `.optional()`: the backing column is a nullable varchar, so an ordinary run (nothing
+    // ever inherited) reads back `null` here, not `undefined` — `.optional()` alone rejected that
+    // at response-serialization time for every run without an inherited locale.
+    inheritedRunLocale: Nullable(z.string()),
     dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),
     triggeredBy: z.string().optional(),

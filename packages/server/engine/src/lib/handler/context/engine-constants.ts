@@ -1,7 +1,9 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType } from '@aiqadam/shared'
+import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType, tryCatch } from '@aiqadam/shared'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
-import { createPropsResolver, PropsResolver } from '../../variables/props-resolver'
+import { createTranslationResolver } from '../../qadam-context/translation-resolver'
+import { createPropsResolver, PropsResolver, resolveInputAsync } from '../../variables/props-resolver'
+import type { FlowExecutorContext } from './flow-execution-context'
 
 type RetryConstants = {
     maxAttempts: number
@@ -38,6 +40,13 @@ type EngineConstantsParams = {
     // An inline child called from an iteration of a concurrent loop: its own loops run one item at a
     // time, as a loop nested in that iteration would, so nesting cannot multiply the operator ceiling.
     insideConcurrentIteration?: boolean
+    // `FlowVersion.localeSource` — an expression evaluated once, lazily, to pick this run's own
+    // translation locale (see `EngineConstants#getRunLocale`). `null`/absent means the run has no
+    // override of its own and falls back to `inheritedRunLocale`, then the project's default.
+    flowVersionLocaleSource?: string | null
+    // The parent run's resolved locale, for a subflow (inline or queued `callFlow`). Only consulted
+    // when this run's own `flowVersionLocaleSource` does not resolve to anything usable.
+    inheritedRunLocale?: string | null
 }
 
 const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
@@ -78,7 +87,23 @@ export class EngineConstants {
     public readonly inlineDepth: number
     public readonly executionStartedAt: number
     public readonly insideConcurrentIteration: boolean
+    public readonly flowVersionLocaleSource: string | null
+    public readonly inheritedRunLocale: string | null
     private project: Project | null = null
+    // The in-flight fetch, memoized separately from the resolved value: multiple `$t` resolutions
+    // (or step contexts) racing before the first fetch lands must all await the SAME promise
+    // rather than each firing their own request — cleared on rejection so a transient failure
+    // isn't cached forever.
+    private projectPromise: Promise<Project> | undefined = undefined
+    // A `Map` throughout, never a plain object: a translation key or locale tag equal to
+    // `__proto__`/`constructor` must be an ordinary entry, not a prototype lookup.
+    private translations: Map<string, Map<string, string>> | null = null
+    private translationsPromise: Promise<Map<string, Map<string, string>>> | undefined = undefined
+    // `undefined` = not yet resolved this run; `null` = resolved to "no override". Evaluated once
+    // per run, lazily, on the first `$t` (or subflow dispatch) that needs it.
+    private runLocale: string | null | undefined = undefined
+    private runLocalePromise: Promise<string | null> | undefined = undefined
+    private warnedTranslationFallbacks = new Set<string>()
 
     public get isRunningApTests(): boolean {
         return EngineConstants.TEST_MODE
@@ -129,6 +154,8 @@ export class EngineConstants {
         this.inlineDepth = params.inlineDepth ?? 0
         this.executionStartedAt = params.executionStartedAt ?? Date.now()
         this.insideConcurrentIteration = params.insideConcurrentIteration ?? false
+        this.flowVersionLocaleSource = params.flowVersionLocaleSource ?? null
+        this.inheritedRunLocale = params.inheritedRunLocale ?? null
     }
   
     public static fromExecuteFlowInput(input: ResolvedExecuteFlowOperation): EngineConstants {
@@ -154,6 +181,8 @@ export class EngineConstants {
             platformId: input.platformId,
             stepNames: flowStructureUtil.getAllSteps(input.flowVersion.trigger).map((step) => step.name),
             stepLogPolicy: logRedaction.buildStepLogPolicy({ trigger: input.flowVersion.trigger }),
+            flowVersionLocaleSource: input.flowVersion.localeSource,
+            inheritedRunLocale: input.inheritedRunLocale,
         })
     }
 
@@ -237,28 +266,163 @@ export class EngineConstants {
             apiUrl: this.internalApiUrl,
             contextVersion,
             stepNames: this.stepNames,
+            constants: this,
         })
     }
     private async getProject(): Promise<Project> {
         if (this.project) {
             return this.project
         }
+        if (isNil(this.projectPromise)) {
+            this.projectPromise = this.fetchProjectOnce()
+        }
+        return this.projectPromise
+    }
 
-        const getWorkerProjectEndpoint = `${this.internalApiUrl}v1/worker/project`
+    private async fetchProjectOnce(): Promise<Project> {
+        try {
+            const getWorkerProjectEndpoint = `${this.internalApiUrl}v1/worker/project`
 
-        const response = await fetch(getWorkerProjectEndpoint, {
-            headers: {
-                Authorization: `Bearer ${this.engineToken}`,
-            },
-        })
+            const response = await fetch(getWorkerProjectEndpoint, {
+                headers: {
+                    Authorization: `Bearer ${this.engineToken}`,
+                },
+            })
 
-        this.project = await response.json() as Project
-        return this.project
+            this.project = await response.json() as Project
+            return this.project
+        }
+        catch (error) {
+            this.projectPromise = undefined
+            throw error
+        }
     }
 
     public externalProjectId = async (): Promise<string | undefined> => {
         const project = await this.getProject()
         return project.externalId ?? undefined
+    }
+
+    public async getProjectDefaultLocale(): Promise<string | null> {
+        const project = await this.getProject()
+        return project.defaultLocale ?? null
+    }
+
+    // The whole project translation table, fetched once per run and lazily — only on the first
+    // `$t` this run actually resolves. Never re-fetched across a resume: a resumed run gets a fresh
+    // `EngineConstants` instance, so this is "no cross-run cache" by construction, not by policy.
+    public async getTranslations(): Promise<Map<string, Map<string, string>>> {
+        if (!isNil(this.translations)) {
+            return this.translations
+        }
+        if (isNil(this.translationsPromise)) {
+            this.translationsPromise = this.fetchTranslationsOnce()
+        }
+        return this.translationsPromise
+    }
+
+    private async fetchTranslationsOnce(): Promise<Map<string, Map<string, string>>> {
+        try {
+            const rows = await createTranslationResolver({ engineToken: this.engineToken, apiUrl: this.internalApiUrl }).obtainAll()
+            const translations = new Map<string, Map<string, string>>()
+            for (const row of rows) {
+                translations.set(row.key, new Map(Object.entries(row.values)))
+            }
+            this.translations = translations
+            return translations
+        }
+        catch (error) {
+            this.translationsPromise = undefined
+            throw error
+        }
+    }
+
+    // One function, one memoized answer per run: this run's own `localeSource` (evaluated lazily
+    // against whatever scope is available the first time it is needed) wins over the inherited
+    // parent locale, which wins over "no override" (the caller then falls back to the project's
+    // `defaultLocale`). A `localeSource` that fails to evaluate to a usable locale is logged once
+    // and treated as absent — it never fails the run.
+    public async getRunLocale(params: { executionState: FlowExecutorContext }): Promise<string | null> {
+        if (this.runLocale !== undefined) {
+            return this.runLocale
+        }
+        // In-flight promise memoization, same pattern as `getTranslations`/`getProject`: every
+        // concurrent caller (a step with several `$t` fields resolved via `Promise.all`, two
+        // CONCURRENT loop iterations, …) awaits the SAME promise and gets the same real answer.
+        // The one call that would otherwise recurse into this same promise — a `$t` reached from
+        // INSIDE `localeSource`'s own evaluation — never reaches here at all: `handleTranslation`
+        // (`props-resolver.ts`) short-circuits it via the `resolvingLocaleSource` flag threaded
+        // through `resolveOwnLocaleSource`'s own `resolveInputAsync` call below, so there is no
+        // longer any reentrancy for this method itself to guard against.
+        if (isNil(this.runLocalePromise)) {
+            this.runLocalePromise = this.resolveRunLocaleOnce(params.executionState)
+        }
+        return this.runLocalePromise
+    }
+
+    private async resolveRunLocaleOnce(executionState: FlowExecutorContext): Promise<string | null> {
+        try {
+            const ownLocale = await this.resolveOwnLocaleSource(executionState)
+            this.runLocale = ownLocale ?? this.inheritedRunLocale
+            return this.runLocale
+        }
+        catch (error) {
+            this.runLocalePromise = undefined
+            throw error
+        }
+    }
+
+    // `localeSource` is a normal mention-capable field — `{{trigger['output'].lang}}` — resolved
+    // through the same `resolveInputAsync` path every other step input goes through (a single
+    // whole-string token returns its raw resolved value; a bare literal like `ru`, no braces,
+    // passes through unchanged and means a fixed locale), uncensored. Both a thrown resolution
+    // error and a resolvable-but-unusable result (non-string, empty, non-canonical) fall back to
+    // the inherited/default locale with one warning — this must never fail the run.
+    //
+    // The scope is built from every step name this run has, not just the ones the *outer* `$t`
+    // expression happens to mention: `localeSource` is evaluated independently of whatever
+    // triggered its first lookup, so it needs its own state regardless of the caller's own
+    // referenced-step set.
+    private async resolveOwnLocaleSource(executionState: FlowExecutorContext): Promise<string | null> {
+        const expression = this.flowVersionLocaleSource
+        if (isNil(expression) || expression.trim().length === 0) {
+            return null
+        }
+        const currentState = await executionState.currentState(this.stepNames)
+        const { data: resolved, error } = await tryCatch(() => resolveInputAsync({
+            input: expression,
+            currentState,
+            engineToken: this.engineToken,
+            projectId: this.projectId,
+            apiUrl: this.internalApiUrl,
+            censoredInput: false,
+            stepNames: this.stepNames,
+            constants: this,
+            executionState,
+            contextVersion: undefined,
+            resolvingLocaleSource: true,
+        }))
+        if (!isNil(error)) {
+            this.warnTranslationFallbackOnce({ dedupeKey: `localeSource:${this.flowVersionId}`, message: `localeSource "${expression}" failed to evaluate (${error instanceof Error ? error.message : String(error)}); falling back to the inherited or default locale` })
+            return null
+        }
+        const canonical = isString(resolved) && resolved.length > 0 ? localeUtil.canonicalize(resolved) : null
+        if (isNil(canonical)) {
+            this.warnTranslationFallbackOnce({ dedupeKey: `localeSource:${this.flowVersionId}`, message: `localeSource "${expression}" did not resolve to a usable locale; falling back to the inherited or default locale` })
+        }
+        return canonical
+    }
+
+    public warnTranslationFallbackOnce(params: { dedupeKey: string, message: string }): void {
+        const { dedupeKey, message } = params
+        if (this.warnedTranslationFallbacks.has(dedupeKey)) {
+            return
+        }
+        this.warnedTranslationFallbacks.add(dedupeKey)
+        // No per-step warnings channel exists on `FlowExecutorContext` today — the engine log is
+        // the fallback this repo's engine conventions point to (see `evalInScope`'s own
+        // `console.warn`, the only precedent for a non-fatal resolution issue).
+        console.warn(`[translation] ${message}`)
     }
 }
 

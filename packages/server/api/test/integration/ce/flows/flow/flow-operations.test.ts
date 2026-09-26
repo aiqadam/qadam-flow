@@ -5,6 +5,7 @@ import {
     FlowStatus,
     FlowTriggerType,
     FlowVersionState,
+    LOCALE_SOURCE_MAX_LENGTH,
     PackageType,
     PopulatedFlow,
     QadamType,
@@ -658,6 +659,35 @@ describe('Flow Operations API', () => {
             const body = response?.json()
             expect(body.version.displayName).toBe('Imported Flow')
             expect(body.version.state).toBe(FlowVersionState.DRAFT)
+        })
+
+        it('rejects an import whose localeSource exceeds LOCALE_SOURCE_MAX_LENGTH', async () => {
+            const ctx = await createTestContext(app!)
+
+            const createResponse = await ctx.post('/v1/flows', {
+                displayName: 'test flow',
+                projectId: ctx.project.id,
+            }, { query: { projectId: ctx.project.id } })
+            const flow: PopulatedFlow = createResponse?.json()
+
+            const response = await ctx.post(`/v1/flows/${flow.id}`, {
+                type: FlowOperationType.IMPORT_FLOW,
+                request: {
+                    displayName: 'Imported Flow',
+                    trigger: {
+                        type: FlowTriggerType.EMPTY,
+                        name: 'trigger',
+                        settings: {},
+                        valid: false,
+                        displayName: 'Select Trigger',
+                    },
+                    schemaVersion: null,
+                    notes: null,
+                    localeSource: 'a'.repeat(LOCALE_SOURCE_MAX_LENGTH + 1),
+                },
+            })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
         it('marks an imported router with a condition-less branch invalid even when the import claims valid:true', async () => {

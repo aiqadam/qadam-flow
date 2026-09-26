@@ -266,6 +266,7 @@ async function prepareTriggerExecution({ qadamName, qadamVersion, triggerName, i
         engineToken,
         contextVersion: qadam.getContextInfo?.().version,
         stepNames,
+        constants,
     }).resolve<StaticPropsValue<QadamPropertyMap>>({
         unresolvedInput: input,
         executionState: FlowExecutorContext.empty(),

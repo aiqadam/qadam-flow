@@ -51,6 +51,7 @@ export const qadamHelper = {
                 engineToken: constants.engineToken,
                 contextVersion: qadam.getContextInfo?.().version,
                 stepNames: constants.stepNames,
+                constants,
             }).resolve<
             StaticPropsValue<QadamPropertyMap>
             >({

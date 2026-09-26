@@ -9,6 +9,8 @@ import {
   JoinFailurePolicy,
   JoinResult,
   PARENT_RUN_ID_HEADER,
+  PARENT_RUN_LOCALE_HEADER,
+  spreadIfDefined,
 } from '@aiqadam/shared';
 import { callableFlowDropdown, CallableFlowRequest, CallableFlowResponse, findFlowByExternalIdOrThrow } from '../common';
 
@@ -106,6 +108,12 @@ export const callFlowForEach = createAction({
     // dispatched twice.
     const dispatched = new Set(waitpoint.dispatchedSlots ?? []);
     const toDispatch = items.map((_, index) => index).filter((index) => !dispatched.has(index));
+    // `context.run.locale` did not exist before this qadam started forwarding it (#420) - an
+    // engine older than the one this version was published against builds a RunContext without
+    // it, and calling a missing method throws rather than resolving to `undefined`. Guarding with
+    // `typeof` keeps this qadam loadable on such an engine (no locale forwarded, same as before)
+    // instead of failing every dispatched child outright.
+    const parentRunLocale = typeof context.run.locale === 'function' ? await context.run.locale() : null;
     await forEachWithConcurrency({
       count: toDispatch.length,
       concurrency: DISPATCH_CONCURRENCY,
@@ -114,6 +122,7 @@ export const callFlowForEach = createAction({
         const dispatched = await dispatchChild({
           url: `${context.server.apiUrl}v1/webhooks/${flow.id}`,
           parentRunId: context.run.id,
+          parentRunLocale,
           payload: items[index],
           callbackUrl: slotUrls[index],
         });
@@ -127,7 +136,7 @@ export const callFlowForEach = createAction({
   },
 });
 
-async function dispatchChild({ url, parentRunId, payload, callbackUrl }: DispatchChildParams): Promise<{ ok: true } | { ok: false, message: string }> {
+async function dispatchChild({ url, parentRunId, parentRunLocale, payload, callbackUrl }: DispatchChildParams): Promise<{ ok: true } | { ok: false, message: string }> {
   try {
     await httpClient.sendRequest<CallableFlowRequest>({
       method: HttpMethod.POST,
@@ -136,6 +145,9 @@ async function dispatchChild({ url, parentRunId, payload, callbackUrl }: Dispatc
         'Content-Type': 'application/json',
         [PARENT_RUN_ID_HEADER]: parentRunId,
         [FAIL_PARENT_ON_FAILURE_HEADER]: 'true',
+        // Every child inherits the parent's resolved run locale, same as the single-call
+        // `callFlow` action — omitted entirely when nothing resolved to a locale.
+        ...spreadIfDefined(PARENT_RUN_LOCALE_HEADER, parentRunLocale),
       },
       body: {
         data: payload,
@@ -199,6 +211,7 @@ const DISPATCH_CONCURRENCY = 10;
 type DispatchChildParams = {
   url: string;
   parentRunId: string;
+  parentRunLocale: string | null;
   payload: unknown;
   callbackUrl: string;
 };

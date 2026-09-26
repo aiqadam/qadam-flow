@@ -58,6 +58,7 @@ export const webhookService = {
         parentWaitpointId,
         parentSlotId,
         timeoutMs,
+        inheritedRunLocale,
     }: HandleWebhookParams): Promise<EngineHttpResponse> {
         return tracer.startActiveSpan('webhook.service.handle', {
             attributes: {
@@ -179,6 +180,7 @@ export const webhookService = {
                         failParentOnFailure: verifiedFailParentOnFailure,
                         parentWaitpointId: verifiedParentWaitpointId,
                         parentSlotId: verifiedParentSlotId,
+                        inheritedRunLocale,
                     })
                 }
 
@@ -202,6 +204,7 @@ export const webhookService = {
                     parentWaitpointId: verifiedParentWaitpointId,
                     parentSlotId: verifiedParentSlotId,
                     timeoutMs,
+                    inheritedRunLocale,
                 })
                 return {
                     status: flowHttpResponse.status,
@@ -230,7 +233,7 @@ async function handleAsync(params: AsyncWebhookParams): Promise<EngineHttpRespon
         },
     }, async (span) => {
         try {
-            const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, webhookHeader, saveSampleData, execute, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId } = params
+            const { flow, logger, webhookRequestId, payload, flowVersionIdToRun, webhookHeader, saveSampleData, execute, runEnvironment, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId, inheritedRunLocale } = params
 
             span.setAttribute('webhook.platformId', platformId)
 
@@ -259,6 +262,7 @@ async function handleAsync(params: AsyncWebhookParams): Promise<EngineHttpRespon
                     failParentOnFailure,
                     parentWaitpointId,
                     parentSlotId,
+                    inheritedRunLocale,
                     traceContext,
                 },
             })
@@ -288,7 +292,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
         },
     }, async (span) => {
         try {
-            const { payload, projectId, flow, logger, webhookRequestId, workerHandlerId, flowVersionIdToRun, runEnvironment, saveSampleData, flowVersionToRun, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId, timeoutMs } = params
+            const { payload, projectId, flow, logger, webhookRequestId, workerHandlerId, flowVersionIdToRun, runEnvironment, saveSampleData, flowVersionToRun, parentRunId, failParentOnFailure, parentWaitpointId, parentSlotId, platformId, timeoutMs, inheritedRunLocale } = params
 
             if (saveSampleData) {
                 rejectedPromiseHandler(savePayload({
@@ -362,6 +366,7 @@ async function handleSync(params: SyncWebhookParams): Promise<EngineHttpResponse
                 parentWaitpointId,
                 parentSlotId,
                 syncDeadline,
+                inheritedRunLocale,
             }))
             if (error) {
                 listener.cancel()
@@ -455,6 +460,7 @@ type HandleWebhookParams = {
     parentWaitpointId?: string
     parentSlotId?: string
     timeoutMs?: number
+    inheritedRunLocale?: string
 }
 
 type ResolveParentAttachmentParams = {
@@ -487,6 +493,7 @@ type AsyncWebhookParams = {
     failParentOnFailure: boolean
     parentWaitpointId?: string
     parentSlotId?: string
+    inheritedRunLocale?: string
 }
 
 type SyncWebhookParams = {
@@ -507,4 +514,5 @@ type SyncWebhookParams = {
     parentWaitpointId?: string
     parentSlotId?: string
     timeoutMs?: number
+    inheritedRunLocale?: string
 }

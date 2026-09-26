@@ -430,6 +430,7 @@ export const flowHooks = {
         trigger: updatedTrigger,
         schemaVersion: templateFlow.schemaVersion,
         notes: templateFlow.notes,
+        localeSource: templateFlow.localeSource,
       },
     });
   },
@@ -500,6 +501,7 @@ export const flowHooks = {
             trigger: updatedTrigger,
             schemaVersion: templateFlow.schemaVersion,
             notes: templateFlow.notes,
+            localeSource: templateFlow.localeSource,
           },
         });
       },

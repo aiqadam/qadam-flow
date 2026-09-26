@@ -159,7 +159,14 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 respond: createRespondHook(params),
                 createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params, concurrentFork: executionState.isConcurrentFork }),
                 waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params, concurrentFork: executionState.isConcurrentFork }),
-                callFlowInline: (req) => callFlowInline({ constants, flowId: req.flowId, payload: req.payload, insideConcurrentIteration: executionState.isConcurrentFork }),
+                callFlowInline: (req) => callFlowInline({ constants, executionState, flowId: req.flowId, payload: req.payload, insideConcurrentIteration: executionState.isConcurrentFork }),
+                // Lazy: resolved via `EngineConstants#getRunLocale` only when something actually
+                // calls this (today, `@aiqadam/qadam-subflows`' queued `callFlow`), using THIS
+                // step's own `executionState` — not computed for every action regardless of
+                // whether it is ever read, which used to freeze the answer at whichever action ran
+                // first in the flow, before a `localeSource` referencing a later step's output
+                // could possibly resolve to anything.
+                locale: () => constants.getRunLocale({ executionState }),
             },
             project: {
                 id: constants.projectId,

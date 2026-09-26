@@ -63,6 +63,9 @@ export const Project = z.object({
     releasesEnabled: z.boolean(),
     metadata: Nullable(Metadata),
     poolId: Nullable(ApId),
+    // BCP-47 tag, canonicalised on write (see `localeUtil.canonicalize`). The default locale a
+    // flow run falls back to for `{{$t[...]}}` once neither an explicit nor a run locale resolves.
+    defaultLocale: Nullable(z.string()),
 })
 
 const projectAnalytics = z.object({

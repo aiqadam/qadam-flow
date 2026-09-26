@@ -185,6 +185,10 @@ async function enqueueResume(params: EnqueueResumeParams, log: FastifyBaseLogger
             : StreamStepProgress.NONE,
         executionType: ExecutionType.RESUME,
         resumeReason: ResumeReason.WAITPOINT,
+        // A nullable TypeORM column reads back `null` when unset, never `undefined` — normalized
+        // here so it matches ResumeExecuteFlowJobData's `z.string().optional()`, which rejects
+        // `null` outright.
+        inheritedRunLocale: flowRun.inheritedRunLocale ?? undefined,
     }, log)
     await flowRunSideEffects(log).onResume(flowRun)
 }

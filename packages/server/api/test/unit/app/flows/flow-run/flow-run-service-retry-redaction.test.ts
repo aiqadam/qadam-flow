@@ -126,7 +126,7 @@ function flowVersion({ id = 'fv-1', logOutput }: { id?: string, logOutput?: bool
     return { id, trigger: trigger({ logOutput }) }
 }
 
-function flowRun({ status, triggerOutput }: { status: FlowRunStatus, triggerOutput: unknown }) {
+function flowRun({ status, triggerOutput, inheritedRunLocale }: { status: FlowRunStatus, triggerOutput: unknown, inheritedRunLocale?: string }) {
     return {
         id: 'run-1',
         projectId: 'project-1',
@@ -138,6 +138,7 @@ function flowRun({ status, triggerOutput }: { status: FlowRunStatus, triggerOutp
         logsFileId: 'file-1',
         failParentOnFailure: true,
         steps: { trigger: { status: StepOutputStatus.SUCCEEDED, output: triggerOutput } },
+        inheritedRunLocale,
     }
 }
 
@@ -231,5 +232,58 @@ describe('flowRunService().retry — refuses to replay a redacted trigger payloa
             expect(mockRepoUpdate).not.toHaveBeenCalled()
             expect(mockJobQueueAdd).not.toHaveBeenCalled()
         })
+    })
+})
+
+// Neither branch of FROM_FAILED_STEP used to forward the run's own persisted
+// `inheritedRunLocale` into the re-dispatched job at all — a queued subflow child that later
+// failed and was retried silently lost its parent's inherited locale, even though the value was
+// sitting right there on the row `retry()` already re-reads.
+describe('flowRunService().retry — forwards inheritedRunLocale into the re-dispatched job', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockOnRetry.mockResolvedValue(undefined)
+        mockOffloadPayload.mockResolvedValue({ type: 'inline', value: null })
+        mockMaybeOffloadPayload.mockResolvedValue({ type: 'inline', value: null })
+        mockJobQueueAdd.mockResolvedValue(undefined)
+        mockRepoUpdate.mockResolvedValue(undefined)
+    })
+
+    it('FROM_FAILED_STEP, trigger failed: re-sends the run\'s own inheritedRunLocale', async () => {
+        runRowHolder.current = flowRun({ status: FlowRunStatus.FAILED, triggerOutput: undefined, inheritedRunLocale: 'ru' })
+        mockFileGetDataOrUndefined.mockResolvedValue({
+            data: Buffer.from(JSON.stringify({ executionState: { steps: { trigger: { status: StepOutputStatus.FAILED, output: { real: 'payload' } } } } })),
+        })
+        mockGetOneOrThrow.mockResolvedValue(flowVersion({ logOutput: true }))
+
+        await flowRunService(log).retry({
+            flowRunId: 'run-1',
+            projectId: 'project-1',
+            strategy: FlowRetryStrategy.FROM_FAILED_STEP,
+        })
+
+        expect(mockJobQueueAdd).toHaveBeenCalledTimes(1)
+        const jobData = mockJobQueueAdd.mock.calls[0][0].data
+        expect(jobData.executeTrigger).toBe(true)
+        expect(jobData.inheritedRunLocale).toBe('ru')
+    })
+
+    it('FROM_FAILED_STEP, resuming a non-trigger step: re-sends the run\'s own inheritedRunLocale', async () => {
+        runRowHolder.current = flowRun({ status: FlowRunStatus.FAILED, triggerOutput: { real: 'payload' }, inheritedRunLocale: 'ru' })
+        mockFileGetDataOrUndefined.mockResolvedValue({
+            data: Buffer.from(JSON.stringify({ executionState: { steps: runRowHolder.current.steps } })),
+        })
+        mockGetOneOrThrow.mockResolvedValue(flowVersion({ logOutput: true }))
+
+        await flowRunService(log).retry({
+            flowRunId: 'run-1',
+            projectId: 'project-1',
+            strategy: FlowRetryStrategy.FROM_FAILED_STEP,
+        })
+
+        expect(mockJobQueueAdd).toHaveBeenCalledTimes(1)
+        const jobData = mockJobQueueAdd.mock.calls[0][0].data
+        expect(jobData.inheritedRunLocale).toBe('ru')
     })
 })
