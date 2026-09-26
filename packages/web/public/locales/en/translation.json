@@ -2088,7 +2088,7 @@
   "Before the run runs out of time, the loop pauses between items and continues with a fresh time budget, so it can work through more items than fit in one run. An item that was running when the run was stopped some other way may be sent again on retry.": "Before the run runs out of time, the loop pauses between items and continues with a fresh time budget, so it can work through more items than fit in one run. An item that was running when the run was stopped some other way may be sent again on retry.",
   "Enter a whole number from {min} to {max}": "Enter a whole number from {min} to {max}",
   "Enter a number above {min} and up to {max}": "Enter a number above {min} and up to {max}",
-  "invalidLdapUserFilter": "The filter must contain the placeholder {username} exactly once",
+  "invalidLdapUserFilter": "The filter must contain the placeholder '{username}' exactly once",
   "invalidLdapSessionTtl": "Session length must be between 1 hour and 7 days",
   "invalidLdapUrlForTlsMode": "The URL scheme must match the selected TLS mode (ldaps:// for LDAPS, ldap:// for StartTLS)",
   "invalidLdapUsername": "Username is too long",

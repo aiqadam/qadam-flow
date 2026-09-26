@@ -20,7 +20,7 @@ export const ldapAuthnController: FastifyPluginAsyncZod = async (app) => {
                 params: {},
             })
         }
-        await ldapSignInRateLimit.assertNotRateLimited({ platformId, ip, username: request.body.username })
+        await ldapSignInRateLimit.assertNotRateLimited({ platformId, ip, username: request.body.username, log: request.log })
 
         const response = await ldapAuthnService(request.log).signIn({
             platformId,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LdapConfig, LdapTlsMode, MAX_LDAP_SESSION_TTL_SECONDS, MIN_LDAP_SESSION_TTL_SECONDS } from '../../../src'
+import { LdapConfig, LdapTlsMode, MAX_LDAP_SESSION_TTL_SECONDS, MIN_LDAP_SESSION_TTL_SECONDS, UpsertLdapConfigRequest } from '../../../src'
 
 const validAttributeMap = {
     subject: 'objectGUID',
@@ -101,5 +101,47 @@ describe('LdapConfig', () => {
                 expect(result.data.sessionTtlSeconds).toBe(43200)
             }
         })
+    })
+})
+
+describe('UpsertLdapConfigRequest — omitted defaulted fields stay undefined (round 2 of #339 review)', () => {
+    // `ldapConfigService.upsert` merges `{ ...existing?.config, ...request }` on the promise that
+    // an omitted field in `request` keeps the stored value. That promise only holds if `.parse()`
+    // actually leaves an omitted field as `undefined` — in this zod version, `.optional()` layered
+    // on top of a field's own `.default(...)` does *not* achieve that; the default still fires. All
+    // five of these fields must therefore be redefined without their own `.default()` in this
+    // schema specifically (`LdapConfig`, used for a brand-new/fully-merged config, keeps its
+    // defaults — this is about the partial-update request only).
+    const fieldsWithABaseDefault = ['tlsVerify', 'jitProvisioning', 'linkExistingByEmail', 'sessionTtlSeconds', 'enabled'] as const
+
+    it.each(fieldsWithABaseDefault)('omitting %s parses to undefined, not its LdapConfig default', (field) => {
+        const result = UpsertLdapConfigRequest.safeParse(baseConfig())
+        expect(result.success).toBe(true)
+        if (result.success) {
+            expect(result.data[field]).toBeUndefined()
+        }
+    })
+
+    it('still accepts and preserves an explicitly-sent value for each of those fields', () => {
+        const result = UpsertLdapConfigRequest.safeParse(baseConfig({
+            tlsVerify: false,
+            jitProvisioning: false,
+            linkExistingByEmail: true,
+            sessionTtlSeconds: 7200,
+            enabled: true,
+        }))
+        expect(result.success).toBe(true)
+        if (result.success) {
+            expect(result.data.tlsVerify).toBe(false)
+            expect(result.data.jitProvisioning).toBe(false)
+            expect(result.data.linkExistingByEmail).toBe(true)
+            expect(result.data.sessionTtlSeconds).toBe(7200)
+            expect(result.data.enabled).toBe(true)
+        }
+    })
+
+    it('still enforces the sessionTtlSeconds bounds when it is explicitly sent', () => {
+        const result = UpsertLdapConfigRequest.safeParse(baseConfig({ sessionTtlSeconds: MIN_LDAP_SESSION_TTL_SECONDS - 1 }))
+        expect(result.success).toBe(false)
     })
 })

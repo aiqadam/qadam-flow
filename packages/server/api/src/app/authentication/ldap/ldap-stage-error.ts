@@ -10,11 +10,19 @@ export class LdapStageError extends Error {
 
     public readonly ldapResultCode?: number
 
-    constructor({ stage, message, ldapResultCode }: LdapStageErrorParams) {
+    // Distinguishes "the search ran and matched nothing" from every other `SEARCH`-stage failure
+    // (a protocol error, a filter matching more than one entry) — the one case the sign-in flow's
+    // timing-oracle defense (`ldapAuthnService`'s dummy bind) needs to recognise specifically, since
+    // it is the one case that would otherwise skip the second network round trip a matched-entry
+    // wrong password always pays for.
+    public readonly notFound?: boolean
+
+    constructor({ stage, message, ldapResultCode, notFound }: LdapStageErrorParams) {
         super(message)
         this.name = 'LdapStageError'
         this.stage = stage
         this.ldapResultCode = ldapResultCode
+        this.notFound = notFound
     }
 }
 
@@ -22,4 +30,5 @@ type LdapStageErrorParams = {
     stage: LdapTestStage
     message: string
     ldapResultCode?: number
+    notFound?: boolean
 }

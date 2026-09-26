@@ -51,6 +51,26 @@ already exists under another project, and creates a pending row only for a flow 
 metadata names. It does not police the `runs_metadata:<id>` hash, which merges every write for a run
 id regardless of project — the worker check above is what keeps foreign writes out of it.
 
+## Cold Qadam-Import Log Line (#419 Phase 0)
+The engine (`packages/server/engine/src/lib/helper/qadam-loader.ts`, `loadQadamOrThrow`) emits one
+`console.log` line, prefixed `[qadamLoader] cold load `, the first time a resolved qadam dist path
+is imported in a process — a repeat (warm) import of the same path logs nothing. Grep worker stdout
+for the prefix to find these. JSON fields on the line:
+- `qadam` — the requested `name@version` (what the flow step actually pinned).
+- `resolvedVersion` — the version actually loaded, read from the resolved package's own
+  `package.json`; can differ from `qadam`'s version when a stale pin falls through to a newer
+  bundled dist (#503), and is `null` if that `package.json` couldn't be read. Never the resolved
+  file path itself — an installed/ARCHIVE qadam's path can carry a platform- or tenant-specific
+  segment, and this line must never leak one.
+- `resolveMs` — time in `qadamLoader.getQadamPath` (path resolution).
+- `importMs` — time in `await import(qadamPath)`.
+- `sharedDepsAlreadyLoaded` — whether `@aiqadam/qadams-framework`'s dist entry was already in the
+  CJS module cache before this import (an earlier qadam in the same process pulled it in already).
+  Not exposed as a step-output field; log-only.
+- No `executionMode` on the line by design (app-sec): engine stdout can reach a user-facing error
+  context (`app-connection-service.ts:680-684`), and the worker already logs its execution mode at
+  startup (`worker.ts:482`).
+
 ## Version Gating (rolling-deploy safety)
 During a rolling upgrade the app and worker fleets briefly run different builds. Mixing them risks flow-schema/contract skew and silent run corruption, so dispatch is gated on an exact release match — both sides enforce it, whichever runs the newer build:
 - **App side** (`worker-rpc-service.ts#poll`): if `input.workerProps.version !== apVersionUtil.getCurrentRelease()`, it logs a warning and returns `null` (withholds the job). An old worker can never receive jobs from a new app.

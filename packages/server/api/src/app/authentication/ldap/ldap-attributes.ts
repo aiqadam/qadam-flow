@@ -1,6 +1,27 @@
 import { isNil, LdapAttributeMap } from '@aiqadam/shared'
 import { Entry } from 'ldapts'
 
+export const ldapAttributeUtils = {
+    objectGuidBufferToCanonicalString,
+    readStringAttribute,
+    resolveSubject,
+}
+
+// The directory, not the admin's own typing, decides how an attribute name comes back on the
+// wire — some servers echo it back exactly as schema-defined (`objectGUID`, mixed case) while
+// others normalise to lowercase, and `Entry`'s keys are whatever the server actually sent. A
+// case-sensitive `entry[name]` lookup would then depend on a coincidence of casing between the
+// admin's configured attribute name and this one server's convention, silently returning
+// `undefined` — not a search failure — whenever they disagree.
+function getAttributeValue({ entry, name }: GetAttributeValueParams): EntryAttributeValue {
+    if (name in entry) {
+        return entry[name]
+    }
+    const lowerName = name.toLowerCase()
+    const matchingKey = Object.keys(entry).find((key) => key.toLowerCase() === lowerName)
+    return isNil(matchingKey) ? undefined : entry[matchingKey]
+}
+
 // Active Directory's `objectGUID` is a raw 16-byte value in "mixed-endian" order: the first three
 // components (a 32-bit and two 16-bit integers) are little-endian on the wire, the way every
 // Windows GUID API reads and prints them, while the last two components (an 8-byte byte string)
@@ -10,12 +31,12 @@ import { Entry } from 'ldapts'
 // out byte-reversed in the first three groups and fail to match the GUID an AD admin sees
 // anywhere else).
 function objectGuidBufferToCanonicalString(buffer: Buffer): string {
-    const hex = (start: number, end: number): string => buffer.subarray(start, end).toString('hex')
-    const group1 = swapByteOrder(hex(0, 4))
-    const group2 = swapByteOrder(hex(4, 6))
-    const group3 = swapByteOrder(hex(6, 8))
-    const group4 = hex(8, 10)
-    const group5 = hex(10, 16)
+    const hex = ({ start, end }: { start: number, end: number }): string => buffer.subarray(start, end).toString('hex')
+    const group1 = swapByteOrder(hex({ start: 0, end: 4 }))
+    const group2 = swapByteOrder(hex({ start: 4, end: 6 }))
+    const group3 = swapByteOrder(hex({ start: 6, end: 8 }))
+    const group4 = hex({ start: 8, end: 10 })
+    const group5 = hex({ start: 10, end: 16 })
     return `${group1}-${group2}-${group3}-${group4}-${group5}`
 }
 
@@ -25,7 +46,7 @@ function swapByteOrder(hex: string): string {
 }
 
 function readStringAttribute({ entry, name }: ReadAttributeParams): string | undefined {
-    const value = entry[name]
+    const value = getAttributeValue({ entry, name })
     if (isNil(value)) {
         return undefined
     }
@@ -44,9 +65,14 @@ function readStringAttribute({ entry, name }: ReadAttributeParams): string | und
 
 function resolveSubject({ entry, attributeMap }: ResolveSubjectParams): string | undefined {
     if (attributeMap.subject === 'objectGUID') {
-        const value = entry[attributeMap.subject]
+        const value = getAttributeValue({ entry, name: attributeMap.subject })
         const buffer = Array.isArray(value) ? value[0] : value
-        if (isNil(buffer) || !Buffer.isBuffer(buffer)) {
+        // A raw `objectGUID` is exactly 16 bytes (RFC-defined layout — see
+        // `objectGuidBufferToCanonicalString` below); a directory that sends anything else for this
+        // attribute is not sending a usable subject, and slicing/padding it into a GUID-shaped
+        // string anyway would fabricate an identifier collision-prone across entries instead of
+        // correctly reporting "no usable subject".
+        if (isNil(buffer) || !Buffer.isBuffer(buffer) || buffer.length !== 16) {
             return undefined
         }
         return objectGuidBufferToCanonicalString(buffer)
@@ -54,10 +80,9 @@ function resolveSubject({ entry, attributeMap }: ResolveSubjectParams): string |
     return readStringAttribute({ entry, name: attributeMap.subject })
 }
 
-export const ldapAttributeUtils = {
-    objectGuidBufferToCanonicalString,
-    readStringAttribute,
-    resolveSubject,
+type GetAttributeValueParams = {
+    entry: Entry
+    name: string
 }
 
 type ReadAttributeParams = {
@@ -69,3 +94,5 @@ type ResolveSubjectParams = {
     entry: Entry
     attributeMap: LdapAttributeMap
 }
+
+type EntryAttributeValue = Entry[string] | undefined

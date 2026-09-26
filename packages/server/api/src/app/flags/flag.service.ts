@@ -28,7 +28,12 @@ export const flagService = (_log: FastifyBaseLogger) => ({
         return flagRepo().findOneBy({ id: flagId })
     },
     async getAll({ request }: { request: FastifyRequest }): Promise<Flag[]> {
-        const theme = await resolvePlatformTheme({ request, log: _log })
+        // Resolved once and threaded to both helpers below — `getPlatformIdForRequest` itself
+        // falls back to `platformService.getOldestPlatform()` for an unauthenticated caller, and
+        // this endpoint is unauthenticated on every sign-in page load, so resolving it twice was a
+        // second avoidable database round trip on every single call, not just an LDAP-specific one.
+        const platformId = await platformUtils.getPlatformIdForRequest(request)
+        const theme = await resolvePlatformTheme({ platformId, log: _log })
         const flags = await flagRepo().findBy({
             id: In([
                 ApFlagId.SHOW_POWERED_BY_IN_FORM,
@@ -295,7 +300,7 @@ export const flagService = (_log: FastifyBaseLogger) => ({
                 // The sign-in page needs to know whether to offer a "directory account" mode
                 // before the caller has any session — never anything from the stored config
                 // itself (bind DN, URL, attribute map), only this one boolean.
-                value: await isLdapAuthEnabled({ request, log: _log }),
+                value: await isLdapAuthEnabled({ platformId, log: _log }),
                 created,
                 updated,
             },
@@ -350,18 +355,26 @@ export const flagService = (_log: FastifyBaseLogger) => ({
 
 /**
  * GET /v1/flags is called before sign-in, so the request carries no project or
- * platform context to scope by. Reuse the same fallback the codebase already
- * applies to that exact problem elsewhere (`platformUtils.getPlatformIdForRequest`,
- * used by the auth controllers, itself built on `platformService.getOldestPlatform()`
- * which `embed-security.ts` also falls back to for the same reason): prefer the
+ * platform context to scope by. `getAll` resolves the platform once for the whole
+ * request, via the same fallback the codebase already applies to that exact
+ * problem elsewhere (`platformUtils.getPlatformIdForRequest`, used by the auth
+ * controllers, itself built on `platformService.getOldestPlatform()` which
+ * `embed-security.ts` also falls back to for the same reason): prefer the
  * caller's own platform if it is authenticated, otherwise fall back to the oldest
  * platform, which is the correct notion of "the" platform for this
  * self-hosted-by-design app. This still resolves to a single, specific platformId
  * before any row is read, so an anonymous caller cannot use this to enumerate
- * platforms.
+ * platforms — and, since it is resolved once and passed to both this helper and
+ * `isLdapAuthEnabled` below rather than each re-resolving it, `GET /v1/flags` costs
+ * exactly one extra query beyond the flag lookups themselves: this theme lookup,
+ * plus (when LDAP is in play) `isLdapAuthEnabled`'s single `findOneBy` on
+ * `platform_ldap_config`'s own unique index on `platformId` — one indexed row read,
+ * not a scan, so no caching layer is added on top of it. An in-process cache would
+ * also go stale across replicas after an admin disables LDAP, up to whatever TTL it
+ * used, for a security-relevant flag — a correctness cost this endpoint's actual
+ * query cost does not justify paying.
  */
-async function resolvePlatformTheme({ request, log }: { request: FastifyRequest, log: FastifyBaseLogger }): Promise<typeof defaultTheme> {
-    const platformId = await platformUtils.getPlatformIdForRequest(request)
+async function resolvePlatformTheme({ platformId, log }: { platformId: string | null, log: FastifyBaseLogger }): Promise<typeof defaultTheme> {
     if (isNil(platformId)) {
         return defaultTheme
     }
@@ -378,8 +391,7 @@ async function resolvePlatformTheme({ request, log }: { request: FastifyRequest,
     })
 }
 
-async function isLdapAuthEnabled({ request, log }: { request: FastifyRequest, log: FastifyBaseLogger }): Promise<boolean> {
-    const platformId = await platformUtils.getPlatformIdForRequest(request)
+async function isLdapAuthEnabled({ platformId, log }: { platformId: string | null, log: FastifyBaseLogger }): Promise<boolean> {
     if (isNil(platformId)) {
         return false
     }

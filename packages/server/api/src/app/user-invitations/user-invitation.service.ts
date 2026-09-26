@@ -1,6 +1,7 @@
-import { apId, assertNotNullOrUndefined, ErrorCode, InvitationStatus, InvitationType, isNil, PlatformRole, QadamFlowError, SeekPage, spreadIfDefined, tryCatch, UserInvitation, UserInvitationWithLink } from '@aiqadam/shared'
+import { apId, assertNotNullOrUndefined, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, isNil, PlatformRole, QadamFlowError, SeekPage, spreadIfDefined, tryCatch, UserIdentity, UserIdentityProvider, UserInvitation, UserInvitationWithLink } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { IsNull } from 'typeorm'
+import { userFederatedIdentityService } from '../authentication/federated-identity/user-federated-identity-service'
 import { userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { domainHelper } from '../helper/domain-helper'
@@ -65,6 +66,15 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
 
         log.info({ count: invitations.length }, '[provisionUserInvitation] list invitations')
         for (const invitation of invitations) {
+            if (!(await isEligibleForInvitationProvisioning({ identity, platformId: invitation.platformId, log }))) {
+                log.warn(
+                    { invitationId: invitation.id, platformId: invitation.platformId, identityId: identity.id },
+                    '[provisionUserInvitation] Refusing to grant platform/project access to a directory-authenticated '
+                    + 'identity with no federated row on this platform — it must sign in through this platform\'s own '
+                    + 'directory instead',
+                )
+                continue
+            }
             log.info({ invitation }, '[provisionUserInvitation] provision')
             const user = await userService(log).getOrCreateWithProject({
                 identity,
@@ -231,6 +241,31 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
 })
 
 
+// app-sec (round 2): reverse-direction identity squatting. A directory-minted (LDAP) identity's
+// membership on any given platform must come only from that platform's own directory sign-in
+// (`ldapAuthnService.signIn`), which gates linking/adoption behind
+// `assertIdentityIsNotPrivilegedElsewhere`. An invitation is a single admin's action on ONE
+// platform and carries none of those checks — honoring it for an identity with no existing
+// federated row on the invitation's own platform would let that platform's admin grant a user row
+// (and, via `switchPlatform`, standing access) tied to a directory the platform never configured
+// or vetted this identity against. Non-LDAP identities are unaffected.
+async function isEligibleForInvitationProvisioning({ identity, platformId, log }: IsEligibleForInvitationProvisioningParams): Promise<boolean> {
+    if (identity.provider !== UserIdentityProvider.LDAP) {
+        return true
+    }
+    const existingUsers = await userService(log).getByIdentityId({ identityId: identity.id })
+    const userOnPlatform = existingUsers.find((user) => user.platformId === platformId)
+    if (isNil(userOnPlatform)) {
+        return false
+    }
+    const federatedRow = await userFederatedIdentityService(log).findByUser({
+        platformId,
+        userId: userOnPlatform.id,
+        provider: FederatedIdentityProvider.LDAP,
+    })
+    return !isNil(federatedRow)
+}
+
 async function generateInvitationLink(userInvitation: UserInvitation, expireyInSeconds: number): Promise<string> {
     const token = await jwtUtils.sign({
         payload: {
@@ -324,6 +359,12 @@ type HasAnyAcceptedInvitationsParams = {
 }
 type ProvisionUserInvitationParams = {
     email: string
+}
+
+type IsEligibleForInvitationProvisioningParams = {
+    identity: UserIdentity
+    platformId: string
+    log: FastifyBaseLogger
 }
 
 type PlatformAndIdParams = {

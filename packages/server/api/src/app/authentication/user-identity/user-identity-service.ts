@@ -2,6 +2,7 @@ import { cryptoUtils } from '@aiqadam/server-utils'
 import { apId, ErrorCode, isNil, QadamFlowError, spreadIfDefined, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { nanoid } from 'nanoid'
+import { EntityManager } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { passwordHasher } from '../lib/password-hasher'
 import { UserIdentityEntity } from './user-identity-entity'
@@ -9,14 +10,14 @@ import { UserIdentityEntity } from './user-identity-entity'
 export const userIdentityRepository = repoFactory(UserIdentityEntity)
 
 export const userIdentityService = (log: FastifyBaseLogger) => ({
-    async create(params: Pick<UserIdentity, 'email' | 'password' | 'firstName' | 'lastName' | 'trackEvents' | 'newsLetter' | 'provider' | 'verified'> & { imageUrl?: string }): Promise<UserIdentity> {
+    async create(params: Pick<UserIdentity, 'email' | 'password' | 'firstName' | 'lastName' | 'trackEvents' | 'newsLetter' | 'provider' | 'verified'> & { imageUrl?: string, entityManager?: EntityManager }): Promise<UserIdentity> {
         log.info({
             email: params.email,
         }, 'Creating user identity')
 
         const cleanedEmail = params.email.toLowerCase().trim()
         const hashedPassword = await passwordHasher.hash(params.password)
-        const userByEmail = await userIdentityRepository().findOne({ where: { email: cleanedEmail } })
+        const userByEmail = await userIdentityRepository(params.entityManager).findOne({ where: { email: cleanedEmail } })
         if (userByEmail) {
             throw new QadamFlowError({
                 code: ErrorCode.EXISTING_USER,
@@ -41,7 +42,7 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
             tokenVersion: nanoid(),
             imageUrl: params.imageUrl,
         }
-        const identity = await userIdentityRepository().save(newUserIdentity)
+        const identity = await userIdentityRepository(params.entityManager).save(newUserIdentity)
         return identity
     },
     async verifyIdentityPassword(params: VerifyIdentityPasswordParams): Promise<UserIdentity> {
@@ -102,7 +103,7 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
         }
     },
     async updatePassword(params: UpdatePasswordParams): Promise<void> {
-        const identity = await userIdentityRepository().findOneByOrFail({ id: params.id })
+        const identity = await userIdentityRepository(params.entityManager).findOneByOrFail({ id: params.id })
         if (identity.provider === UserIdentityProvider.LDAP) {
             throw new QadamFlowError({
                 code: ErrorCode.VALIDATION,
@@ -112,7 +113,7 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
             })
         }
         const hashedPassword = await passwordHasher.hash(params.newPassword)
-        await userIdentityRepository().update(params.id, {
+        await userIdentityRepository(params.entityManager).update(params.id, {
             password: hashedPassword,
             tokenVersion: nanoid(),
         })
@@ -125,9 +126,9 @@ export const userIdentityService = (log: FastifyBaseLogger) => ({
     // rather than left as whatever the local password used to be, so a stale local credential
     // cannot resurface as a bypass. Runs before the `provider` write, not after, so it goes through
     // the ordinary `updatePassword` guard rather than being a second exception to it.
-    async linkToFederatedProvider({ id, provider }: LinkToFederatedProviderParams): Promise<void> {
-        await this.updatePassword({ id, newPassword: await cryptoUtils.generateRandomPassword() })
-        await userIdentityRepository().update(id, {
+    async linkToFederatedProvider({ id, provider, entityManager }: LinkToFederatedProviderParams): Promise<void> {
+        await this.updatePassword({ id, newPassword: await cryptoUtils.generateRandomPassword(), entityManager })
+        await userIdentityRepository(entityManager).update(id, {
             provider,
             tokenVersion: nanoid(),
         })
@@ -171,6 +172,7 @@ type GetOneOrFailParams = {
 type UpdatePasswordParams = {
     id: string
     newPassword: string
+    entityManager?: EntityManager
 }
 
 type UpdateParams = {
@@ -193,4 +195,5 @@ type VerifyIdentityPasswordParams = {
 type LinkToFederatedProviderParams = {
     id: string
     provider: UserIdentityProvider
+    entityManager?: EntityManager
 }

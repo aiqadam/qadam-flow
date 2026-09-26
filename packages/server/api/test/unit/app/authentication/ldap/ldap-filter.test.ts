@@ -49,5 +49,35 @@ describe('ldapFilterUtils', () => {
             expect(filter.split('(').length - 1).toBe(1)
             expect(filter.split(')').length - 1).toBe(1)
         })
+
+        // None of `$&`, `` $` `` or `$'` are RFC 4515 metacharacters, so `escapeFilterValue`
+        // passes them through unchanged — but `String.replace(pattern, replacementString)`
+        // interprets them as substitution patterns (the whole match, everything before it,
+        // everything after it) when the replacement is a plain string rather than a function.
+        // A `buildUserSearchFilter` that used `.replace` directly would splice in the wrong text
+        // for exactly these three usernames; `split`/`join` never interprets `$`-sequences.
+        it('treats a literal $& username as plain text, not the whole-match substitution pattern', () => {
+            const filter = ldapFilterUtils.buildUserSearchFilter({
+                userFilter: '(uid={username})',
+                username: '$&',
+            })
+            expect(filter).toBe('(uid=$&)')
+        })
+
+        it('treats a literal $` username as plain text, not the before-match substitution pattern', () => {
+            const filter = ldapFilterUtils.buildUserSearchFilter({
+                userFilter: '(uid={username})',
+                username: '$`',
+            })
+            expect(filter).toBe('(uid=$`)')
+        })
+
+        it('treats a literal $\' username as plain text, not the after-match substitution pattern', () => {
+            const filter = ldapFilterUtils.buildUserSearchFilter({
+                userFilter: '(uid={username})',
+                username: '$\'',
+            })
+            expect(filter).toBe('(uid=$\')')
+        })
     })
 })

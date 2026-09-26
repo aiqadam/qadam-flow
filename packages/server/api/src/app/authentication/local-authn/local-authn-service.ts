@@ -52,15 +52,19 @@ export const localAuthnService = (log: FastifyBaseLogger) => ({
             })
         }
 
+        // Audited only once the password has actually changed — emitting it first (the previous
+        // order) would record a successful reset in the log even on a request whose
+        // `updatePassword` call then threw (e.g. an LDAP-linked identity's guard against scrambling
+        // a password that no longer means anything).
+        await userIdentityService(log).updatePassword({
+            id: identityId,
+            newPassword,
+        })
+
         await sendAuditLogForIdentity({
             identityId,
             action: ApplicationEventName.USER_PASSWORD_RESET,
             log,
-        })
-
-        await userIdentityService(log).updatePassword({
-            id: identityId,
-            newPassword,
         })
     },
 })
