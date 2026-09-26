@@ -68,7 +68,7 @@ async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue')
     })
     const subflowsPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-subflows',
-        version: '0.4.14',
+        version: '0.5.0',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
@@ -83,7 +83,7 @@ async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue')
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.14',
+            qadamVersion: '0.5.0',
             actionName: 'returnResponse',
             input: {
                 mode: 'simple',
@@ -138,7 +138,7 @@ async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue')
             lastUpdatedDate: new Date().toISOString(),
             settings: {
                 qadamName: '@aiqadam/qadam-subflows',
-                qadamVersion: '0.4.14',
+                qadamVersion: '0.5.0',
                 triggerName: 'callableFlow',
                 input: {
                     mode: 'simple',
@@ -167,7 +167,7 @@ async function setupSubflowFixtures(executionMode: 'queue' | 'inline' = 'queue')
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.14',
+            qadamVersion: '0.5.0',
             actionName: 'callFlow',
             input: {
                 flow: {
@@ -234,7 +234,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
     })
     const subflowsPiece = createMockQadamMetadata({
         name: '@aiqadam/qadam-subflows',
-        version: '0.4.14',
+        version: '0.5.0',
         platformId: undefined,
         packageType: PackageType.REGISTRY,
         qadamType: QadamType.OFFICIAL,
@@ -249,7 +249,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.14',
+            qadamVersion: '0.5.0',
             actionName: 'returnResponse',
             input: {
                 mode: 'simple',
@@ -280,7 +280,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
             valid: true,
             settings: {
                 qadamName: '@aiqadam/qadam-subflows',
-                qadamVersion: '0.4.14',
+                qadamVersion: '0.5.0',
                 triggerName: 'callableFlow',
                 input: {
                     mode: 'simple',
@@ -332,7 +332,7 @@ async function setupSubflowWithWebhookResponseFixtures() {
         valid: true,
         settings: {
             qadamName: '@aiqadam/qadam-subflows',
-            qadamVersion: '0.4.14',
+            qadamVersion: '0.5.0',
             actionName: 'callFlow',
             input: {
                 flow: {
@@ -753,7 +753,7 @@ describe('Execute Flow E2E', () => {
         })
         const subflowsPiece = createMockQadamMetadata({
             name: '@aiqadam/qadam-subflows',
-            version: '0.4.14',
+            version: '0.5.0',
             platformId: undefined,
             packageType: PackageType.REGISTRY,
             qadamType: QadamType.OFFICIAL,
@@ -773,7 +773,7 @@ describe('Execute Flow E2E', () => {
                 lastUpdatedDate: new Date().toISOString(),
                 settings: {
                     qadamName: '@aiqadam/qadam-subflows',
-                    qadamVersion: '0.4.14',
+                    qadamVersion: '0.5.0',
                     triggerName: 'callableFlow',
                     input: { mode: 'simple', exampleData: { sampleData: {} } },
                     propertySettings: {},
@@ -785,7 +785,7 @@ describe('Execute Flow E2E', () => {
                     valid: true,
                     settings: {
                         qadamName: '@aiqadam/qadam-subflows',
-                        qadamVersion: '0.4.14',
+                        qadamVersion: '0.5.0',
                         actionName: 'returnResponse',
                         input: { mode: 'simple', response: { response: { level: 'grandchild' } } },
                         propertySettings: {},
@@ -811,7 +811,7 @@ describe('Execute Flow E2E', () => {
                 lastUpdatedDate: new Date().toISOString(),
                 settings: {
                     qadamName: '@aiqadam/qadam-subflows',
-                    qadamVersion: '0.4.14',
+                    qadamVersion: '0.5.0',
                     triggerName: 'callableFlow',
                     input: { mode: 'simple', exampleData: { sampleData: {} } },
                     propertySettings: {},
@@ -823,7 +823,7 @@ describe('Execute Flow E2E', () => {
                     valid: true,
                     settings: {
                         qadamName: '@aiqadam/qadam-subflows',
-                        qadamVersion: '0.4.14',
+                        qadamVersion: '0.5.0',
                         actionName: 'callFlow',
                         input: {
                             flow: { externalId: grandchildFlow.externalId, exampleData: { sampleData: {} } },
@@ -850,7 +850,7 @@ describe('Execute Flow E2E', () => {
             valid: true,
             settings: {
                 qadamName: '@aiqadam/qadam-subflows',
-                qadamVersion: '0.4.14',
+                qadamVersion: '0.5.0',
                 actionName: 'callFlow',
                 input: {
                     flow: { externalId: childFlow.externalId, exampleData: { sampleData: {} } },
