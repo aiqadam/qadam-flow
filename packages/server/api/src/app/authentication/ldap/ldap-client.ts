@@ -390,7 +390,21 @@ async function searchBySubject({ client, baseDn, attributeMap, subject, tlsMode 
 // first three groups little-endian, the last two big-endian — the same asymmetry AD's own GUID
 // APIs use), then RFC 4515 §3 octet-escapes every byte (`\xx`) — the syntax the grammar requires
 // for a binary attribute value in a filter.
+// Round 2 (app-sec finding #9): `subject` is our own stored value, never attacker-supplied at this
+// call site directly — but it is still read back out of the database, and a malformed value here
+// (a bad migration, a hand-edited row, a bug in whatever produced it) must not silently build a
+// wrong-shaped filter fragment. Guarding the exact shape `objectGuidBufferToCanonicalString` always
+// produces closes that off as defense in depth, the same way `LdapStageError` from a search or bind
+// failure already does for every other stage.
+const CANONICAL_GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function canonicalGuidToFilterValue(canonical: string): string {
+    if (!CANONICAL_GUID_PATTERN.test(canonical)) {
+        throw new LdapStageError({
+            stage: LdapTestStage.SEARCH,
+            message: 'Stored subject is not a canonical objectGUID string',
+        })
+    }
     const [group1, group2, group3, group4, group5] = canonical.split('-')
     const reordered = ldapAttributeUtils.swapByteOrder(group1) + ldapAttributeUtils.swapByteOrder(group2) + ldapAttributeUtils.swapByteOrder(group3) + group4 + group5
     return reordered.match(/.{2}/g)?.map((byte) => `\\${byte}`).join('') ?? ''

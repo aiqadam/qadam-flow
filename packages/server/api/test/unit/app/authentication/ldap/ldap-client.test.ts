@@ -11,6 +11,8 @@ const fakeClientState = vi.hoisted(() => ({
     startTlsBehavior: 'resolve' as 'resolve' | 'stall' | 'reject',
     isConnectedValue: true,
     unbindCalls: 0,
+    searchCalls: [] as { baseDn: string, options: { filter: string } }[],
+    searchEntries: [] as unknown[],
 }))
 
 vi.mock('ldapts', async (importOriginal) => {
@@ -41,6 +43,11 @@ vi.mock('ldapts', async (importOriginal) => {
         async unbind(): Promise<void> {
             fakeClientState.unbindCalls += 1
         }
+
+        async search(baseDn: string, options: { filter: string }): Promise<{ searchEntries: unknown[] }> {
+            fakeClientState.searchCalls.push({ baseDn, options })
+            return { searchEntries: fakeClientState.searchEntries }
+        }
     }
     return { ...actual, Client: FakeClient }
 })
@@ -62,6 +69,8 @@ beforeEach(() => {
     fakeClientState.startTlsBehavior = 'resolve'
     fakeClientState.isConnectedValue = true
     fakeClientState.unbindCalls = 0
+    fakeClientState.searchCalls = []
+    fakeClientState.searchEntries = []
     resolveVettedIps.mockReset()
 })
 
@@ -367,6 +376,46 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
         waiter.release()
         intruder.release()
         await Promise.all([...holders.map((holder) => holder.done), waiter.done, intruder.done])
+    })
+})
+
+describe('ldapClient.searchBySubject — objectGUID round trip and malformed-subject guard (round 2)', () => {
+    const objectGuidAttributeMap = { subject: 'objectGUID' as const, email: 'mail', firstName: 'givenName', lastName: 'sn' }
+
+    it('converts a known canonical objectGUID string to the RFC 4515 octet-escaped filter value', async () => {
+        resolveVettedIps.mockResolvedValue(['10.0.0.5'])
+        const ldapClient = await importClient()
+        const client = await ldapClient.connect({ config: { url: 'ldaps://directory.example.com:636', tlsMode: LdapTlsMode.LDAPS, tlsVerify: true } })
+
+        // Same known vector as ldap-attributes.test.ts's forward-direction test: raw bytes
+        // `78563412341278569abcdef012345678` canonicalize to this string; the filter value must be
+        // exactly those same raw bytes, RFC 4515 §3 octet-escaped (`\XX` per byte) — the inverse of
+        // that conversion, not a re-derivation from the string's own displayed byte order.
+        await ldapClient.searchBySubject({
+            client,
+            baseDn: 'dc=example,dc=com',
+            attributeMap: objectGuidAttributeMap,
+            subject: '12345678-1234-5678-9abc-def012345678',
+            tlsMode: LdapTlsMode.LDAPS,
+        })
+
+        expect(fakeClientState.searchCalls).toHaveLength(1)
+        expect(fakeClientState.searchCalls[0].options.filter).toBe('(objectGUID=\\78\\56\\34\\12\\34\\12\\78\\56\\9a\\bc\\de\\f0\\12\\34\\56\\78)')
+    })
+
+    it('refuses a malformed stored subject rather than building a filter from it', async () => {
+        resolveVettedIps.mockResolvedValue(['10.0.0.5'])
+        const ldapClient = await importClient()
+        const client = await ldapClient.connect({ config: { url: 'ldaps://directory.example.com:636', tlsMode: LdapTlsMode.LDAPS, tlsVerify: true } })
+
+        await expect(ldapClient.searchBySubject({
+            client,
+            baseDn: 'dc=example,dc=com',
+            attributeMap: objectGuidAttributeMap,
+            subject: 'not-a-canonical-guid',
+            tlsMode: LdapTlsMode.LDAPS,
+        })).rejects.toThrow(/canonical objectGUID/)
+        expect(fakeClientState.searchCalls).toHaveLength(0)
     })
 })
 
