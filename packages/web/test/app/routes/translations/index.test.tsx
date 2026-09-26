@@ -43,6 +43,10 @@ vi.mock('@/features/translations/hooks/translations-hooks', () => ({
       missing: false,
     }),
     useUsages: () => ({ data: undefined, isLoading: false }),
+    useLocales: () => ({
+      data: { locales: ['en', 'uz'] },
+      refetch: () => {},
+    }),
   },
   translationsMutations: {
     useBulkDeleteTranslations: () => ({ mutateAsync: async () => {} }),
@@ -136,5 +140,21 @@ describe('TranslationsPage — Import button', () => {
     await click(findButtonByText('Import')!);
 
     expect(document.body?.textContent).toContain('Import translations');
+  });
+});
+
+describe('TranslationsPage — Add locale button', () => {
+  it('opens the add-locale dialog', async () => {
+    await mount();
+
+    expect(document.body?.textContent).not.toContain(
+      'Adds an empty column for this locale.',
+    );
+
+    await click(findButtonByText('Add locale')!);
+
+    expect(document.body?.textContent).toContain(
+      'Adds an empty column for this locale.',
+    );
   });
 });

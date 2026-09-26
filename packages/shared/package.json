@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/shared",
-  "version": "0.143.0",
+  "version": "0.144.0",
   "description": "Shared types, DTOs, Zod schemas and utilities for Qadam Flow and its qadams.",
   "license": "MIT",
   "repository": {

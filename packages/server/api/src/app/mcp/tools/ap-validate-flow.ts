@@ -714,7 +714,7 @@ async function validateFlowTranslations({ trigger, localeSource, projectId, plat
                 }]
                 : []
 
-        const missingLocales = allLocales.filter((locale) => locale !== canonicalDefaultLocale && row.values[locale] === undefined)
+        const missingLocales = allLocales.filter((locale) => locale !== canonicalDefaultLocale && !localeUtil.isPresentValue(row.values[locale]))
         const dynamicNote = hasDynamicLocale ? ' This step\'s locale is chosen dynamically at run time and is not statically checked.' : ''
         const localeWarning: ValidationIssue[] = missingLocales.length === 0 ? [] : [{
             category: 'translation_locale',
@@ -751,11 +751,11 @@ function validateLocaleSourceItself({ localeSource }: { localeSource: string | n
 }
 
 function keyHasValueForLocaleOrBase({ row, locale }: { row: { values: Record<string, string> }, locale: string }): boolean {
-    if (row.values[locale] !== undefined) {
+    if (localeUtil.isPresentValue(row.values[locale])) {
         return true
     }
     const base = localeUtil.baseLanguage(locale)
-    return !isNil(base) && row.values[base] !== undefined
+    return !isNil(base) && localeUtil.isPresentValue(row.values[base])
 }
 
 function extractTranslationKeyRefs({ value }: { value: string }): { key: string, hasDynamicLocale: boolean, malformed: boolean }[] {

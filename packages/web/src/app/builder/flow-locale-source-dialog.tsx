@@ -52,11 +52,9 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
   );
   const [localeSource, setLocaleSource] = useState(initialLocaleSource ?? '');
   const [isSaving, setIsSaving] = useState(false);
-  // Once a save fails, `flowUpdatesQueue` (promise-queue.ts) is permanently halted for the rest of
-  // this builder session — every later operation (including a retried Save here) is silently
-  // dropped, never resolving or rejecting, so re-enabling Save would just spin forever a second
-  // time. There is no in-app recovery from a halted queue, so this state is sticky for the
-  // dialog's lifetime rather than something a retry can clear.
+  // Once a save fails, flow-state's `queueHalted` refuses every later operation for the rest of
+  // this builder session (reporting it through `onError`), so a retry here cannot succeed. The
+  // builder banner offers the refresh; this state stays sticky for the dialog's lifetime.
   const [hasSaveFailed, setHasSaveFailed] = useState(false);
 
   const isTooLong = localeSource.trim().length > LOCALE_SOURCE_MAX_LENGTH;

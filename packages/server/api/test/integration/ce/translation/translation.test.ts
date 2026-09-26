@@ -204,6 +204,95 @@ describe('Translation CE API', () => {
             const keys = response.json().data.map((row: { key: string }) => row.key)
             expect(keys).toEqual(['wild_card.test'])
         })
+
+        it.each(['-1', '0', '101', '2.5'])('rejects limit=%s instead of returning every key', async (limit) => {
+            const ctx = await setup()
+
+            const response = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit })
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it.each(['1', '100'])('accepts limit=%s at the edge of the allowed range', async (limit) => {
+            const ctx = await setup()
+
+            const response = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('pages through keys written in one batch, in key order, forward and back', async () => {
+            const ctx = await setup()
+            const items = Array.from({ length: 12 }, (_, i) => ({ key: `batch.k${i.toString().padStart(2, '0')}`, values: { en: 'x' } }))
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [...items].reverse(),
+            })
+
+            const firstPage = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit: '5' })
+            const secondPage = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit: '5', cursor: firstPage.json().next })
+            const thirdPage = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit: '5', cursor: secondPage.json().next })
+            const keysOf = (page: { json: () => { data: { key: string }[] } }) => page.json().data.map((row) => row.key)
+
+            expect([...keysOf(firstPage), ...keysOf(secondPage), ...keysOf(thirdPage)]).toEqual(items.map((item) => item.key))
+            expect(thirdPage.json().next).toBeNull()
+
+            const backToSecond = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit: '5', cursor: thirdPage.json().previous })
+            expect(keysOf(backToSecond)).toEqual(keysOf(secondPage))
+        })
+
+        it('missing=true returns full pages of keys lacking a value in some project locale, with cursors that walk the filtered set', async () => {
+            const ctx = await setup()
+            const complete = Array.from({ length: 12 }, (_, i) => ({ key: `complete.k${i}`, values: { en: 'x', ru: 'y' } }))
+            const lackingRu = Array.from({ length: 7 }, (_, i) => ({ key: `lacking.k${i}`, values: { en: 'x' } }))
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [...complete, ...lackingRu, { key: 'cleared.ru', values: { en: 'x', ru: '' } }],
+            })
+
+            const firstPage = await ctx.get('/v1/translations', { projectId: ctx.project.id, missing: 'true', limit: '5' })
+            expect(firstPage.statusCode).toBe(StatusCodes.OK)
+            expect(firstPage.json().data).toHaveLength(5)
+            const secondPage = await ctx.get('/v1/translations', { projectId: ctx.project.id, missing: 'true', limit: '5', cursor: firstPage.json().next })
+            expect(secondPage.json().data).toHaveLength(3)
+            expect(secondPage.json().next).toBeNull()
+
+            const keys = [...firstPage.json().data, ...secondPage.json().data].map((row: { key: string }) => row.key).sort()
+            expect(keys).toEqual([...lackingRu.map((item) => item.key), 'cleared.ru'].sort())
+        })
+
+        it('missing=true counts the project default locale even when no key has a value for it', async () => {
+            const ctx = await setup()
+            await db.update('project', ctx.project.id, { defaultLocale: 'kk' })
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'no.kk', values: { en: 'x' } }],
+            })
+
+            const response = await ctx.get('/v1/translations', { projectId: ctx.project.id, missing: 'true' })
+            expect(response.json().data.map((row: { key: string }) => row.key)).toEqual(['no.kk'])
+        })
+    })
+
+    describeWithAuth('GET /v1/translations/locales', () => app!, (setup) => {
+        it('lists every locale in the project, including one only present on a key beyond the first page and one holding only empty values', async () => {
+            const ctx = await setup()
+            const otherCtx = await createTestContext(app!)
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [
+                    ...Array.from({ length: 30 }, (_, i) => ({ key: `page.k${i}`, values: { en: 'x' } })),
+                    { key: 'zz.last', values: { uz: 'z' } },
+                    { key: 'zz.placeholder', values: { kk: '' } },
+                ],
+            })
+            await otherCtx.post('/v1/translations', {
+                projectId: otherCtx.project.id,
+                translations: [{ key: 'other.project', values: { de: 'x' } }],
+            })
+
+            const response = await ctx.get('/v1/translations/locales', { projectId: ctx.project.id })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            expect(response.json()).toEqual({ locales: ['en', 'kk', 'uz'] })
+        })
     })
 
     describeWithAuth('DELETE /v1/translations/:id', () => app!, (setup) => {
@@ -624,6 +713,9 @@ describe('Translation CE API', () => {
 
             const readResponse = await viewerCtx.get('/v1/translations', { projectId: viewerCtx.project.id })
             expect(readResponse.statusCode).toBe(StatusCodes.OK)
+
+            const localesResponse = await viewerCtx.get('/v1/translations/locales', { projectId: viewerCtx.project.id })
+            expect(localesResponse.statusCode).toBe(StatusCodes.OK)
         })
 
         it('a SERVICE principal can import translations', async () => {

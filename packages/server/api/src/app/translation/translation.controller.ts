@@ -4,6 +4,8 @@ import {
     ExportTranslationsRequestQuery,
     GetTranslationUsagesResponse,
     ImportTranslationsRequestBody,
+    ListTranslationLocalesRequestQuery,
+    ListTranslationLocalesResponse,
     ListTranslationsRequestQuery,
     MAX_TRANSLATION_IMPORT_BYTES,
     Permission,
@@ -44,7 +46,16 @@ export const translationController: FastifyPluginCallbackZod = (app, _opts, done
             cursor: request.query.cursor,
             limit: request.query.limit,
             key: request.query.key,
+            missing: request.query.missing === 'true',
         })
+    })
+
+    app.get('/locales', ListTranslationLocalesRequest, async (request): Promise<ListTranslationLocalesResponse> => {
+        const locales = await translationService(request.log).listLocales({
+            projectId: request.projectId,
+            platformId: request.principal.platform.id,
+        })
+        return { locales }
     })
 
     app.post('/', UpsertTranslationsRequest, async (request) => {
@@ -118,9 +129,28 @@ const ListTranslationsRequest = {
         tags: ['translations'],
         security: [SERVICE_KEY_SECURITY_OPENAPI],
         querystring: ListTranslationsRequestQuery,
-        description: 'List project translations, filterable by a key substring',
+        description: 'List project translations, filterable by a key substring and, with `missing=true`, to keys with no value (or an empty one) for at least one of the project\'s locales or its default locale',
         response: {
             [StatusCodes.OK]: SeekPage(Translation),
+        },
+    },
+}
+
+const ListTranslationLocalesRequest = {
+    config: {
+        security: securityAccess.project(
+            [PrincipalType.USER, PrincipalType.SERVICE],
+            Permission.READ_TRANSLATION,
+            { type: ProjectResourceType.QUERY },
+        ),
+    },
+    schema: {
+        tags: ['translations'],
+        security: [SERVICE_KEY_SECURITY_OPENAPI],
+        querystring: ListTranslationLocalesRequestQuery,
+        description: 'List every locale any translation key in the project has an entry for, empty values included',
+        response: {
+            [StatusCodes.OK]: ListTranslationLocalesResponse,
         },
     },
 }

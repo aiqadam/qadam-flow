@@ -65,7 +65,8 @@ const StepSettingsContainer = () => {
     state.readonly,
     state.exitStepSettings,
     state.applyOperation,
-    state.saving,
+    // A halted queue means the server draft is stale, so a test would run the wrong config.
+    state.saving || state.queueHalted,
     state.flowVersion,
     state.selectedBranchIndex,
     state.setSelectedBranchIndex,

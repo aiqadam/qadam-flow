@@ -118,8 +118,8 @@ describe('FlowLocaleSourceDialog — save failure shows a persistent error and d
     const saveButtonAfterFailure = findButtonByText('Save')!;
     expect(saveButtonAfterFailure.disabled).toBe(true);
 
-    // A further click must not re-enter applyOperation — the queue is permanently halted after
-    // the first failure (promise-queue.ts), so a retry would just spin forever.
+    // A further click must not re-enter applyOperation — flow-state refuses every operation
+    // after the first failure (`queueHalted`), so a retry could only fail again.
     expect(applyOperationCallCount).toBe(1);
     await click(saveButtonAfterFailure);
     expect(applyOperationCallCount).toBe(1);

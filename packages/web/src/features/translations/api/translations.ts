@@ -2,6 +2,8 @@ import {
   ExportTranslationsRequestQuery,
   GetTranslationUsagesResponse,
   ImportTranslationsRequestBody,
+  ListTranslationLocalesRequestQuery,
+  ListTranslationLocalesResponse,
   ListTranslationsRequestQuery,
   SeekPage,
   Translation,
@@ -13,6 +15,14 @@ import { api } from '@/lib/api';
 export const translationsApi = {
   list(request: ListTranslationsRequestQuery): Promise<SeekPage<Translation>> {
     return api.get<SeekPage<Translation>>('/v1/translations', request);
+  },
+  listLocales(
+    request: ListTranslationLocalesRequestQuery,
+  ): Promise<ListTranslationLocalesResponse> {
+    return api.get<ListTranslationLocalesResponse>(
+      '/v1/translations/locales',
+      request,
+    );
   },
   upsertBatch(request: UpsertTranslationsRequestBody): Promise<Translation[]> {
     return api.post<Translation[]>('/v1/translations', request);

@@ -40,7 +40,8 @@ const TestStepCTAButton = () => {
     state.isStepBeingTested,
     state.setStepDataPanelOpen,
     state.run,
-    state.saving,
+    // A halted queue means the server draft is stale, so a test would run the wrong config.
+    state.saving || state.queueHalted,
   ]);
 
   const currentStep = selectedStep

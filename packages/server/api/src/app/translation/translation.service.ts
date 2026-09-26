@@ -27,6 +27,7 @@ import {
     TRANSLATION_VALUE_MAX_LENGTH,
     TranslationImportFormat,
     TranslationImportMode,
+    unique,
 } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { EntityManager, ILike } from 'typeorm'
@@ -35,19 +36,24 @@ import { transaction } from '../core/db/transaction'
 import { flowService } from '../flows/flow/flow.service'
 import { buildPaginator } from '../helper/pagination/build-paginator'
 import { paginationHelper } from '../helper/pagination/pagination-utils'
+import { Order } from '../helper/pagination/paginator'
+import { projectService } from '../project/project-service'
 import { TranslationEntity, TranslationSchema } from './translation.entity'
 
 export const translationRepo = repoFactory(TranslationEntity)
 
 export const translationService = (log: FastifyBaseLogger) => ({
     async list(params: ListParams): Promise<SeekPage<Translation>> {
-        const { projectId, platformId, cursor, limit, key } = params
+        const { projectId, platformId, cursor, limit, key, missing } = params
         const decodedCursor = paginationHelper.decodeCursor(cursor ?? null)
         const paginator = buildPaginator({
             entity: TranslationEntity,
             query: {
                 limit: limit ?? 10,
-                order: 'ASC',
+                // Not the default `created` key: that compares at one-second granularity, and a
+                // batch upsert or an import writes every row with the same `now()`, so every key
+                // after the first page vanished. `key` is unique per project, so the cursor is exact.
+                orderBy: [{ field: 'key', order: Order.ASC }],
                 afterCursor: decodedCursor.nextCursor,
                 beforeCursor: decodedCursor.previousCursor,
             },
@@ -59,8 +65,23 @@ export const translationService = (log: FastifyBaseLogger) => ({
                 platformId,
                 ...(isNil(key) ? {} : { key: ILike(`%${escapeLikeWildcards(key)}%`) }),
             })
+        if (missing === true) {
+            const project = await projectService(log).getOneOrThrow(projectId)
+            const requiredLocales = await listRequiredLocales({ projectId, platformId, defaultLocale: project.defaultLocale })
+            // Filtered in SQL, not on the loaded page, so the paginator's cursors walk the
+            // filtered set and every page comes back full.
+            queryBuilder.andWhere(
+                `EXISTS (SELECT 1 FROM unnest(CAST(:requiredLocales AS text[])) AS "required"("locale")
+                         WHERE COALESCE("translation"."values" ->> "required"."locale", '') = '')`,
+                { requiredLocales },
+            )
+        }
         const { data, cursor: nextCursor } = await paginator.paginate(queryBuilder)
         return paginationHelper.createPage<Translation>(data, nextCursor)
+    },
+
+    async listLocales(params: { projectId: string, platformId: string }): Promise<string[]> {
+        return queryPresentLocales(params)
     },
 
     async listForWorker(params: { projectId: string }): Promise<Translation[]> {
@@ -215,6 +236,27 @@ export const translationService = (log: FastifyBaseLogger) => ({
         return { translations: format === TranslationImportFormat.NESTED ? nestFlatData(flat) : flat }
     },
 })
+
+// Every locale any key has an entry for, empty values included: an imported uz.json with ''
+// placeholders declares uz as a locale of the project even before anything is translated.
+async function queryPresentLocales(params: { projectId: string, platformId: string }): Promise<string[]> {
+    const { projectId, platformId } = params
+    const rows: { locale: string }[] = await translationRepo().query(
+        `SELECT DISTINCT jsonb_object_keys("values") AS "locale"
+         FROM "translation"
+         WHERE "projectId" = $1 AND "platformId" = $2
+         ORDER BY "locale"`,
+        [projectId, platformId],
+    )
+    return rows.map((row) => row.locale)
+}
+
+async function listRequiredLocales(params: { projectId: string, platformId: string, defaultLocale: string | null | undefined }): Promise<string[]> {
+    const { projectId, platformId, defaultLocale } = params
+    const presentLocales = await queryPresentLocales({ projectId, platformId })
+    const canonicalDefaultLocale = isNil(defaultLocale) ? null : localeUtil.canonicalize(defaultLocale)
+    return isNil(canonicalDefaultLocale) ? presentLocales : unique([...presentLocales, canonicalDefaultLocale])
+}
 
 async function getOneOrThrow(params: GetOneParams): Promise<Translation> {
     const { id, projectId, platformId } = params
@@ -685,6 +727,7 @@ type ListParams = {
     cursor: Cursor | undefined
     limit: number | undefined
     key: string | undefined
+    missing?: boolean
 }
 
 type GetOneParams = {
