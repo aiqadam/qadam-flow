@@ -1,4 +1,5 @@
 import tls from 'node:tls'
+import { isNil, tryCatch } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { Client } from 'ldapts'
@@ -307,39 +308,35 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
 // it) and `del` failing with "no such object" (nothing to remove) are both swallowed; any other
 // failure is real and should fail the suite loudly rather than silently leaving stale/missing
 // fixture state for the next run.
+// Idempotent against a fixture already left behind by a previous run of this suite — "already
+// exists" from a prior `add` is expected and swallowed; any other failure still fails the setup.
 async function addSearchOnlyGroupFixture(): Promise<void> {
     const client = new Client({ url: `ldap://${LDAP_HOST}:${LDAP_PORT}` })
-    try {
+    const { error } = await tryCatch(async () => {
         await client.bind(BIND_DN, BIND_PASSWORD)
         await client.add(GROUP_SEARCH_ONLY_GROUP_DN, {
             objectClass: 'groupOfUniqueNames',
             cn: 'qa_crew_search_only',
             uniqueMember: TEST_USER_DN,
         })
-    }
-    catch (error) {
-        if (!(error instanceof Error) || !error.message.includes('Entry Already Exists')) {
-            throw error
-        }
-    }
-    finally {
-        await client.unbind().catch(() => undefined)
+    })
+    await client.unbind().catch(() => undefined)
+    if (!isNil(error) && (!(error instanceof Error) || !error.message.includes('Entry Already Exists'))) {
+        throw error
     }
 }
 
+// Symmetric with `addSearchOnlyGroupFixture` — "no such object" from a prior successful teardown
+// (or a run that never got far enough to create the fixture) is expected and swallowed.
 async function removeSearchOnlyGroupFixture(): Promise<void> {
     const client = new Client({ url: `ldap://${LDAP_HOST}:${LDAP_PORT}` })
-    try {
+    const { error } = await tryCatch(async () => {
         await client.bind(BIND_DN, BIND_PASSWORD)
         await client.del(GROUP_SEARCH_ONLY_GROUP_DN)
-    }
-    catch (error) {
-        if (!(error instanceof Error) || !error.message.includes('No Such Object')) {
-            throw error
-        }
-    }
-    finally {
-        await client.unbind().catch(() => undefined)
+    })
+    await client.unbind().catch(() => undefined)
+    if (!isNil(error) && (!(error instanceof Error) || !error.message.includes('No Such Object'))) {
+        throw error
     }
 }
 
