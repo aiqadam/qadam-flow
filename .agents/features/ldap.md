@@ -349,7 +349,7 @@ the platform role untouched (not reset to anything).
 - `packages/server/api/src/app/authentication/ldap/ldap-group-mapping-service.ts` — `applyMapping`: writes the platform-role grant (skips the owner; round 2 adds provenance-gated revocation — see "Reconcile semantics") and the directory-managed `project_member` rows (create/update/remove via a race-safe conditional upsert — see "Reconcile semantics"), re-validating every `projectId` still belongs to the platform *and is still a TEAM project* (defense in depth; save-time validation is in `ldapConfigService.upsert`). No `entityManager` parameter — every write here runs against the default connection.
 - `packages/server/api/src/app/authentication/ldap/ldap-reconcile-service.ts` — `reconcileAllPlatforms`: lists enabled platforms, then per platform under `distributedLock`, connects once and does one `searchBySubject` per linked user (bounded by a per-platform time budget — see "Reconcile semantics"); fail-open on a connect/bind error (touches nobody that run); fail-closed per account on a search error (skips only that user); a configurable safety valve — counting only real ACTIVE→gone/disabled transitions, against the ACTIVE linked-user count (round 2 fix) — aborts the whole platform run's deactivation half (deactivating nobody) if it would deactivate more than `LDAP_RECONCILE_SAFETY_VALVE_PERCENT` (default 20%) of that platform's currently-ACTIVE linked users
 - `packages/server/api/src/app/authentication/ldap/ldap-reconcile-module.ts` — registers the `SystemJobName.LDAP_RECONCILE` handler and a repeated BullMQ job (default hourly, `LDAP_RECONCILE_CRON`, validated with `cron-parser` — `ldapReconcileModuleUtils.resolveReconcileCron`, falls back to the default on an invalid value rather than crashing server boot); the handler itself re-reads `LDAP_RECONCILE_ENABLED` every tick rather than the job being conditionally registered, so toggling the flag takes effect on the next tick with no restart; one shared job for every platform, not one per platform (see "Reconcile semantics")
-- `ldap-client.ts` additions: `resolveMemberGroupDns` (reads `memberOf` on the already-fetched user entry, plus an optional nested-group search when `nestedGroups`+`groupSearchBaseDn`+`groupSearchFilter` are all configured), `searchNestedGroups` (templated `{userDn}` filter — AD's own nested-group idiom is `(member:1.2.840.113556.1.4.1941:={userDn})`, but the filter is admin-configured and directory-agnostic; OpenLDAP cannot evaluate that AD-specific extensible-match OID, so a plain `(member={userDn})` is what the real-directory test in `ldap-openldap.test.ts` actually exercises), `searchBySubject` (reconcile's own lookup — canonical `objectGUID` string is converted back to the RFC 4515 §3 escaped-octet filter syntax via `canonicalGuidToFilterValue`, the inverse of `ldapAttributeUtils.objectGuidBufferToCanonicalString`; round 2 guards the input against a canonical-GUID regex before converting, refusing a malformed stored `subject` rather than feeding it through the hex-pair conversion unchecked). `resolveMemberGroupDns`/`searchNestedGroups`/`searchBySubject` and the rest of `ldap-client.ts`'s Phase 2 surface landed in commit `31655702`.
+- `ldap-client.ts` additions: `resolveMemberGroupDns` (reads `memberOf` on the already-fetched user entry, plus an optional nested-group search when `nestedGroups`+`groupSearchBaseDn`+`groupSearchFilter` are all configured — `nestedGroups` is the one flag that gates whether the search runs at all, see "Real directory" under "Tests (Phase 2)" for a round-2 bug where a test configured the search fields but never this flag), `searchNestedGroups` (templated `{userDn}` filter — AD's own nested-group idiom is `(member:1.2.840.113556.1.4.1941:={userDn})`, but the filter is admin-configured and directory-agnostic; OpenLDAP cannot evaluate that AD-specific extensible-match OID, so a plain equality filter is what the real-directory test in `ldap-openldap.test.ts` exercises), `searchBySubject` (reconcile's own lookup — canonical `objectGUID` string is converted back to the RFC 4515 §3 escaped-octet filter syntax via `canonicalGuidToFilterValue`, the inverse of `ldapAttributeUtils.objectGuidBufferToCanonicalString`; round 2 guards the input against a canonical-GUID regex before converting, refusing a malformed stored `subject` rather than feeding it through the hex-pair conversion unchecked). `resolveMemberGroupDns`/`searchNestedGroups`/`searchBySubject` and the rest of `ldap-client.ts`'s Phase 2 surface landed in commit `31655702`.
 - `searchForUser` now also requests `memberOf` unconditionally (cheap, needed by every sign-in for group mapping)
 - `ldap-client.ts`'s `connect()` TLS `servername`: omitted (not just left as the dialed IP) when the *configured* host is itself an IP literal — Node's `tls.connect` warns (DEP0123) and ignores `servername` set to an IP address (RFC 6066 §3 restricts SNI to hostnames); `servername = hostname` is kept for a real DNS name
 
@@ -446,13 +446,21 @@ and `user_federated_identity` columns are plain `ADD COLUMN`) and
   deliberately deactivated by hand afterwards. Reconcile's own status writes (`source: 'LDAP'`, the
   default for every caller in this file) manage the marker themselves and never trigger this clear;
   only `source: 'ADMIN'` (the admin controller's own default) does.
-- **A directory-granted platform role is revocable, a manually-set one never is.** `user.platformRoleManagedBy`
-  (`PlatformRoleManagedBy`: `MANUAL`/`LDAP`) tracks who last decided the role. A group mapping match
-  always applies its role and always marks it `LDAP` — a real, current directory decision always
-  wins regardless of what set the *previous* role. No matching group only *reverts* the role to
-  `MEMBER`, and only when it is currently `LDAP`-managed; a manually-set role (e.g. an admin's own
-  promotion via `POST /v1/users/:id`, which always writes `MANUAL`) is never touched by the absence
-  of a mapping match. The platform owner is never touched either way, as before.
+- **A directory-granted platform role is revocable; a manually-set one can only be raised, never
+  lowered, by a mapping.** `user.platformRoleManagedBy` (`PlatformRoleManagedBy`: `MANUAL`/`LDAP`)
+  tracks who last decided the role. Round 2 of this review had a group mapping match *always* apply
+  its role unconditionally — which meant a mapped MEMBER/OPERATOR group would silently demote an
+  admin's own MANUAL ADMIN promotion the moment that admin's directory account matched it, exactly
+  the "manually set role is never demoted" guarantee this design otherwise promises. Round 3 fixed
+  this: against an **LDAP-managed** role, a matched mapping still always applies and still always
+  marks it `LDAP` — a real, current directory decision always wins over whatever a previous mapping
+  decided, in either direction. Against a **MANUAL** role, a matched mapping may only ever *raise*
+  it (a higher-ranked mapped role than what's currently stored) — raising is itself what flips
+  provenance to `LDAP` going forward — and must never lower it or leave it at the same rank while
+  changing provenance. No matching group at all only *reverts* the role to `MEMBER`, and only when
+  it is currently `LDAP`-managed; a `MANUAL` role (e.g. an admin's own promotion via
+  `POST /v1/users/:id`, which always writes `MANUAL`) is never touched by the absence of a mapping
+  match, exactly as before. The platform owner is never touched either way.
 - **Only a TEAM project can receive a group-mapping grant.** Rejected with `ErrorCode.VALIDATION` at
   save time (`assertGroupMappingProjectsBelongToPlatform`) and silently skipped (logged) at apply
   time (`projectBelongsToPlatformAsTeam`) — a `PERSONAL` project has no meaningful shared-role
@@ -539,12 +547,20 @@ review; `QF_` is the only name recognised now.
   never exercised when the platform has no group mappings, its own failure stage (not `SEARCH`) when
   group resolution fails and mappings exist, and a successful pass-through when both a mapping and a
   successful resolution are present.
-- Real directory: `ldap-openldap.test.ts` gained one case applying a group mapping resolved via a
-  real `(member={userDn})` search against the planetexpress fixture's real `cn=ship_crew` group,
-  confirming the mapped platform role is actually granted — see the file's own comment for what this
-  specific fixture cannot prove (no `memberOf` back-link overlay; OpenLDAP cannot evaluate AD's
-  `LDAP_MATCHING_RULE_IN_CHAIN` OID, so the nested-group *transitive*-membership case stays covered
-  only by the mocked tests).
+- Real directory: `ldap-openldap.test.ts` gained two cases exercising the real nested-group search.
+  Round 2's own version configured `groupSearchBaseDn`/`groupSearchFilter` against the fixture's
+  real `cn=ship_crew` group but never set `nestedGroups: true` — the one flag
+  `resolveMemberGroupDns` actually gates the search on — so the search never ran; the assertion
+  still passed only because this fixture's live `memberof` overlay already puts `ship_crew` directly
+  on the signed-in user's own `memberOf`, independent of the search. Round 3 fixed this by seeding a
+  `groupOfUniqueNames` fixture entry (`addSearchOnlyGroupFixture`, added/removed in the suite's own
+  `beforeAll`/`afterAll` via a raw admin-bound `ldapts.Client`) that the overlay does not watch —
+  a mapping resolved via that group can only ever match through the configured
+  `(uniqueMember={userDn})` search, never through `memberOf` — and added a negative case
+  (`nestedGroups: false`) proving the mapping does *not* apply when the search doesn't run, so the
+  positive case's pass is now provably tied to the search itself. See the file's own comment for
+  what this fixture still cannot prove: OpenLDAP cannot evaluate AD's `LDAP_MATCHING_RULE_IN_CHAIN`
+  OID, so the nested-group *transitive*-membership case stays covered only by the mocked tests.
 
 ## Accepted risks
 Recorded deliberately, not discovered late — each of these is a property of the design, not a bug:
@@ -579,15 +595,26 @@ Recorded deliberately, not discovered late — each of these is a property of th
   Round 2 of this review found the original "trim + lowercase each comma-separated component"
   version was a privilege-escalation hole, not just an approximation: `String#trim()` strips U+00A0
   NBSP (a trailing-NBSP group name would compare equal to the real one), `String#toLowerCase()`
-  performs full Unicode case folding (a Kelvin-sign-built name would compare equal to plain ASCII),
-  and splitting on every literal `,` ignores RFC 4515's `\,` escape (an escaped comma inside a
-  value would be misread as a component boundary). `ldapGroupMappingUtils.normalizeGroupDn` now
-  splits only on an *unescaped* `,`/`+`, trims only a literal ASCII space (0x20) at each raw
-  component's boundary (never NBSP, and never inside an escape sequence), and lowercases only ASCII
-  `A`–`Z` (never folding non-ASCII codepoints) — closing all three holes. It still does not handle
-  attribute-type OID vs. short-name equivalence (`2.5.4.3` vs `cn`) or the semantic ordering of a
-  multi-valued RDN; a group DN using either form would need to be entered into `groupMappings` in
-  whatever form the directory actually reports it in.
+  performs full Unicode case folding (a Kelvin-sign-built name, or a Turkish dotless-ı-built name,
+  would compare equal to plain ASCII), and splitting on every literal `,` ignores RFC 4515's `\,`
+  escape (an escaped comma inside a value would be misread as a component boundary). Round 2's own
+  fix closed those three, but still flattened the parsed DN back into one joined string before
+  comparing — which reopened the exact same class of hole one level up: a joined string cannot tell
+  "one RDN whose value contains a real comma" apart from "two separate RDNs", nor a multi-valued RDN
+  (`+`-joined) apart from two single-valued ones (`,`-joined), because both produce the identical
+  string once glued back together with the same separator. Round 3 compares a *structured* form
+  instead — an ordered list of RDNs, each an order-independent sorted list of `[type, value]` pairs,
+  serialised with `JSON.stringify` only at the very last step, so the shape is what determines
+  equality, never a string built by concatenation. Round 3 also fixed two more collision routes in
+  the same function: a hex escape run (`\XX\XX…`) is decoded once, as UTF-8 bytes accumulated into a
+  `Buffer`, not one `String.fromCharCode` per byte, which used to silently mis-decode any multi-byte
+  UTF-8 character (`\C3\A9` must decode to `é`, not the two-character `Ã©` byte-by-byte read); and
+  boundary-trimming now operates on the same escape-aware token list decoding uses, so a component
+  that legitimately ends in an *escaped* space (`Admins\ `) is never confused with one ending in a
+  literal, insignificant one and stripped by mistake — round 2's separate raw-string trim pass
+  trimmed by character code alone and could not make that distinction. It still does not handle
+  attribute-type OID vs. short-name equivalence (`2.5.4.3` vs `cn`); a group DN using that form would
+  need to be entered into `groupMappings` in whatever form the directory actually reports it in.
 - **(f) Disabled-account detection covers AD's `userAccountControl` bit 2 only.** A directory that
   signals "disabled" a different way (a custom attribute, a different bit, group membership) is not
   detected by reconcile; such an account is only caught by "gone" (searchBySubject returns nothing)
