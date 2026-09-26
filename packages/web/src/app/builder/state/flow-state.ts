@@ -31,6 +31,7 @@ export type FlowState = {
   outputSampleData: Record<string, unknown | undefined>;
   inputSampleData: Record<string, unknown | undefined>;
   saving: boolean;
+  queueHalted: boolean;
   renameFlowClientSide: (newName: string) => void;
   moveToFolderClientSide: (folderId: string) => void;
   applyOperation: (
@@ -113,6 +114,7 @@ export const createFlowState = (
     pendingDebounces.size > 0 || flowUpdatesQueue.size() !== 0;
   return {
     saving: false,
+    queueHalted: false,
     outputSampleData: initialState.outputSampleData,
     inputSampleData: initialState.inputSampleData,
     flow: initialState.flow,
@@ -195,6 +197,12 @@ export const createFlowState = (
           console.warn('Cannot apply operation while readonly');
           return state;
         }
+        // After one failed save the server no longer holds what this session shows, so a
+        // later edit would be applied locally and never saved. Refuse it and report it instead.
+        if (state.queueHalted) {
+          onError?.(new FlowUpdatesHaltedError());
+          return state;
+        }
         const newFlowVersion = flowOperations.apply(
           state.flowVersion,
           operation,
@@ -204,6 +212,12 @@ export const createFlowState = (
         });
         set({ saving: true });
         const updateRequest = async () => {
+          // Queued or debounced before the failure, but must not reach the server after it:
+          // it would be applied on top of a server version that is missing the failed edit.
+          if (get().queueHalted) {
+            onError?.(new FlowUpdatesHaltedError());
+            return;
+          }
           try {
             const { version: serverFlowVersion } = await flowsApi.update(
               state.flow.id,
@@ -235,8 +249,8 @@ export const createFlowState = (
             onSuccess?.();
           } catch (error) {
             console.error(error);
+            set({ saving: false, queueHalted: true });
             onError?.(error);
-            flowUpdatesQueue.halt();
           }
         };
 
@@ -488,3 +502,10 @@ const handleUpdatingSampleDataForStepLocallyAfterServerUpdate = ({
     },
   });
 };
+
+class FlowUpdatesHaltedError extends Error {
+  constructor() {
+    super('Flow updates are halted after an earlier save failed');
+    this.name = 'FlowUpdatesHaltedError';
+  }
+}

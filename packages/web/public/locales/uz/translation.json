@@ -2068,6 +2068,7 @@
   "tooManyTranslationLocales": "Tarjima kaliti eng ko'pi bilan 50 ta lokalga ega bo'lishi mumkin",
   "localeSourceTooLong": "Ushbu oqimning localeSource qiymati juda uzun (maksimum 1000 belgi)",
   "This change was not saved. Refresh the page to try again.": "Bu o'zgarish saqlanmadi. Qayta urinish uchun sahifani yangilang.",
+  "A change failed to save, so later changes are no longer saved. Refresh the page to load the saved flow.": "O'zgarishni saqlab bo'lmadi, shuning uchun keyingi o'zgarishlar endi saqlanmaydi. Saqlangan oqimni yuklash uchun sahifani yangilang.",
   "translationDescriptionTooLong": "Tavsif juda uzun (maksimum 500 belgi)",
   "translationKeyAlreadyExists": "Bu nomdagi tarjima kaliti allaqachon mavjud",
   "invalidLdapUserFilter": "Filtr '{username}' joy egallovchisini aynan bir marta o'z ichiga olishi kerak",

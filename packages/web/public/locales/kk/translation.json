@@ -2068,6 +2068,7 @@
   "tooManyTranslationLocales": "Аударма кілтінде ең көбі 50 локаль болуы мүмкін",
   "localeSourceTooLong": "Осы ағынның localeSource мәні тым ұзын (ең көбі 1000 таңба)",
   "This change was not saved. Refresh the page to try again.": "Бұл өзгеріс сақталмады. Қайта әрекеттену үшін бетті жаңартыңыз.",
+  "A change failed to save, so later changes are no longer saved. Refresh the page to load the saved flow.": "Өзгерісті сақтау мүмкін болмады, сондықтан кейінгі өзгерістер енді сақталмайды. Сақталған ағынды жүктеу үшін бетті жаңартыңыз.",
   "translationDescriptionTooLong": "Сипаттама тым ұзын (ең көбі 500 таңба)",
   "translationKeyAlreadyExists": "Бұл атаудағы аударма кілті бұрыннан бар",
   "invalidLdapUserFilter": "Сүзгіде '{username}' орынбасары дәл бір рет болуы керек",

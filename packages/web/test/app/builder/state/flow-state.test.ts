@@ -144,3 +144,101 @@ describe('createFlowState — applyOperation onError', () => {
     });
   });
 });
+
+describe('createFlowState — a failed update halts later updates visibly', () => {
+  beforeEach(() => {
+    updateMock.mockReset();
+  });
+
+  it('clears saving and sets queueHalted after a failed update', async () => {
+    const flowVersion = createTestFlowVersion();
+    const flow = createTestFlow(flowVersion);
+    updateMock.mockRejectedValueOnce(new Error('network down'));
+    const store = buildTestStore(flow, flowVersion);
+    const onError = vi.fn();
+
+    store.getState().applyOperation(
+      {
+        type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+        request: { localeSource: 'ru' },
+      },
+      undefined,
+      onError,
+    );
+    expect(store.getState().saving).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
+    expect(store.getState().saving).toBe(false);
+    expect(store.getState().queueHalted).toBe(true);
+  });
+
+  it('refuses a later edit with onError, without sending it or applying it locally', async () => {
+    const flowVersion = createTestFlowVersion();
+    const flow = createTestFlow(flowVersion);
+    updateMock.mockRejectedValueOnce(new Error('network down'));
+    const store = buildTestStore(flow, flowVersion);
+
+    store.getState().applyOperation({
+      type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+      request: { localeSource: 'ru' },
+    });
+    await vi.waitFor(() => {
+      expect(store.getState().queueHalted).toBe(true);
+    });
+    const versionAfterFailure = store.getState().flowVersion;
+
+    const onSuccess = vi.fn();
+    const onError = vi.fn();
+    store.getState().applyOperation(
+      {
+        type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+        request: { localeSource: 'uz' },
+      },
+      onSuccess,
+      onError,
+    );
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().flowVersion).toBe(versionAfterFailure);
+    expect(store.getState().saving).toBe(false);
+  });
+
+  it('reports an update already queued behind the failed one through onError instead of sending it', async () => {
+    const flowVersion = createTestFlowVersion();
+    const flow = createTestFlow(flowVersion);
+    updateMock.mockRejectedValueOnce(new Error('network down'));
+    const store = buildTestStore(flow, flowVersion);
+
+    const firstOnError = vi.fn();
+    const queuedOnSuccess = vi.fn();
+    const queuedOnError = vi.fn();
+    store.getState().applyOperation(
+      {
+        type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+        request: { localeSource: 'ru' },
+      },
+      undefined,
+      firstOnError,
+    );
+    store.getState().applyOperation(
+      {
+        type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+        request: { localeSource: 'uz' },
+      },
+      queuedOnSuccess,
+      queuedOnError,
+    );
+
+    await vi.waitFor(() => {
+      expect(queuedOnError).toHaveBeenCalledTimes(1);
+    });
+    expect(firstOnError).toHaveBeenCalledTimes(1);
+    expect(queuedOnSuccess).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().saving).toBe(false);
+  });
+});

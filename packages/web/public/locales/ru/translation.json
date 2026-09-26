@@ -2068,6 +2068,7 @@
   "tooManyTranslationLocales": "Ключ перевода может содержать не более 50 локалей",
   "localeSourceTooLong": "Значение localeSource этого потока слишком длинное (максимум 1000 символов)",
   "This change was not saved. Refresh the page to try again.": "Это изменение не было сохранено. Обновите страницу, чтобы попробовать снова.",
+  "A change failed to save, so later changes are no longer saved. Refresh the page to load the saved flow.": "Изменение не удалось сохранить, поэтому последующие изменения больше не сохраняются. Обновите страницу, чтобы загрузить сохранённый поток.",
   "translationDescriptionTooLong": "Описание слишком длинное (максимум 500 символов)",
   "translationKeyAlreadyExists": "Ключ перевода с таким именем уже существует",
   "invalidLdapUserFilter": "Фильтр должен содержать плейсхолдер '{username}' ровно один раз",
