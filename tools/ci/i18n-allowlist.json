@@ -115,6 +115,15 @@
       "reason": "acronym or proper noun"
     },
     {
+      "key": "Base DN",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "protocol or configuration label"
+    },
+    {
       "key": "Beta",
       "locales": [
         "uz"
@@ -267,6 +276,15 @@
       "reason": "acronym or proper noun"
     },
     {
+      "key": "LDAP / Active Directory",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "protocol or configuration label"
+    },
+    {
       "key": "logo",
       "locales": [
         "kk",
@@ -408,6 +426,15 @@
         "uz"
       ],
       "reason": "acronym or proper noun"
+    },
+    {
+      "key": "StartTLS",
+      "locales": [
+        "kk",
+        "ru",
+        "uz"
+      ],
+      "reason": "protocol or configuration label"
     },
     {
       "key": "Streamable HTTP",
