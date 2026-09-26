@@ -205,6 +205,13 @@ describe('Translation CE API', () => {
             expect(keys).toEqual(['wild_card.test'])
         })
 
+        it.each(['-1', '0', '101', '2.5'])('rejects limit=%s instead of returning every key', async (limit) => {
+            const ctx = await setup()
+
+            const response = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit })
+            expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
         it('pages through keys written in one batch, in key order, forward and back', async () => {
             const ctx = await setup()
             const items = Array.from({ length: 12 }, (_, i) => ({ key: `batch.k${i.toString().padStart(2, '0')}`, values: { en: 'x' } }))
