@@ -501,6 +501,39 @@ jobs:
       - name: Build engine (e2e prerequisite)
         run: npx turbo run build --filter=@aiqadam/engine
 
+      # M5: `test/integration/ce/ldap/ldap-openldap.test.ts` is opt-in (env-gated) because it needs
+      # a fresh, non-expired TLS cert installed into the directory image before slapd starts, which
+      # a plain `services:` container (used above for postgres/redis) cannot express — there is no
+      # hook to run a setup step against a `services:` image before its entrypoint runs. Standing it
+      # up as an ordinary `run:` step instead, pinned by digest for reproducibility, gets the same
+      # effect: generate the cert, start the container, wait for the port, reset the one seeded
+      # account's password, then opt the suite in via env var on the next step. See that test file's
+      # own header for the full rationale (including the encryption bug this exact suite caught) and
+      # for the equivalent local commands.
+      - name: Start OpenLDAP test directory (M5)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ldap-test-certs
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/ldap-test-certs/ldap.key -out /tmp/ldap-test-certs/ldap.crt -days 3650 -nodes \
+            -subj "/CN=planetexpress.com" \
+            -addext "subjectAltName=DNS:planetexpress.com,DNS:localhost,IP:127.0.0.1"
+          docker run -d --name ldap-openldap-ci -p 23890:389 -p 23891:636 \
+            -v /tmp/ldap-test-certs/ldap.crt:/etc/ldap/ssl/ldap.crt \
+            -v /tmp/ldap-test-certs/ldap.key:/etc/ldap/ssl/ldap.key \
+            ghcr.io/ldapjs/docker-test-openldap/openldap@sha256:2a8ad09a52aa5aa151d6286c383ac3454a0dc0170d6594656dc5710156fc821b
+          # `nc -z` only proves docker-proxy accepted the TCP connection, which it does before
+          # slapd itself is listening — a false-positive "ready" signal that raced the next step.
+          # `ldapwhoami` speaks the real protocol, so it only succeeds once slapd actually answers.
+          for i in $(seq 1 30); do
+            docker exec ldap-openldap-ci ldapwhoami -x -H ldap://localhost \
+              -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone >/dev/null 2>&1 && break
+            [ "$i" -eq 30 ] && { echo "::error::OpenLDAP test directory never answered ldapwhoami"; docker logs ldap-openldap-ci; exit 1; }
+            sleep 1
+          done
+          docker exec ldap-openldap-ci ldappasswd -x -H ldap://localhost \
+            -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone \
+            -s "correct-horse-battery-staple" "cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com"
+
       # #59 is resolved — check-migrations no longer false-positives on a clean
       # baseline, so run the full test-api gate (check-migrations + test-ce),
       # matching the root `test-api` script.
@@ -516,7 +549,19 @@ jobs:
       # unconditional means putting a postgres service and a 1-2 min DB spin-up
       # back onto every docs PR.
       - name: Run CE integration tests
+        env:
+          # `AP_`-prefixed so turbo's `globalPassThroughEnv` (`AP_*`/`QF_*`) actually forwards it to
+          # the spawned vitest process — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped by
+          # turbo's strict env mode, which made every one of this suite's 8 cases skip in CI without
+          # ever failing the job. `ldap-openldap.test.ts` itself now fails loudly (rather than
+          # skipping) whenever `CI=true` and this flag isn't `'true'`, so a regression here is caught
+          # by the suite itself, not only by this comment.
+          AP_RUN_LDAP_OPENLDAP_TESTS: 'true'
         run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
+
+      - name: Stop OpenLDAP test directory (M5)
+        if: always()
+        run: docker rm -f ldap-openldap-ci || true
 
   # Required status check. Runs unconditionally so it always reports a conclusion
   # — a *skipped* required check never reports one under GitHub rulesets, which

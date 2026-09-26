@@ -52,6 +52,10 @@ export const errorHandler = async (
             [ErrorCode.FLOW_RUN_RETRY_OUTSIDE_RETENTION]: StatusCodes.GONE,
             [ErrorCode.SANDBOX_CAPACITY_EXCEEDED]: StatusCodes.TOO_MANY_REQUESTS,
             [ErrorCode.CHAT_CONTEXT_LIMIT_EXCEEDED]: StatusCodes.BAD_REQUEST,
+            [ErrorCode.LDAP_DIRECTORY_UNREACHABLE]: StatusCodes.SERVICE_UNAVAILABLE,
+            [ErrorCode.LDAP_BIND_ACCOUNT_REJECTED]: StatusCodes.SERVICE_UNAVAILABLE,
+            [ErrorCode.LDAP_EMAIL_ATTRIBUTE_MISSING]: StatusCodes.UNPROCESSABLE_ENTITY,
+            [ErrorCode.LDAP_ACCOUNT_COLLISION]: StatusCodes.CONFLICT,
         }
         const statusCode =
       statusCodeMap[error.error.code] ?? StatusCodes.BAD_REQUEST

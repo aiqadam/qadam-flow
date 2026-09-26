@@ -21,7 +21,7 @@ import {
 import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { nanoid } from 'nanoid'
-import { In, IsNull } from 'typeorm'
+import { EntityManager, In, IsNull } from 'typeorm'
 import { userIdentityRepository, userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { buildPaginator } from '../helper/pagination/build-paginator'
@@ -44,18 +44,20 @@ export const userService = (log: FastifyBaseLogger) => ({
             externalId: params.externalId,
             platformId: params.platformId,
         }
-        return userRepo().save(user)
+        return userRepo(params.entityManager).save(user)
     },
-    async getOrCreateWithProject({ identity, platformId }: GetOrCreateWithProjectParams): Promise<User> {
+    async getOrCreateWithProject({ identity, platformId, entityManager }: GetOrCreateWithProjectParams): Promise<User> {
         const user = await this.getOneByIdentityAndPlatform({
             identityId: identity.id,
             platformId,
+            entityManager,
         })
         if (isNil(user)) {
             const newUser = await this.create({
                 identityId: identity.id,
                 platformId,
                 platformRole: PlatformRole.MEMBER,
+                entityManager,
             })
 
             await projectService(log).create({
@@ -63,6 +65,7 @@ export const userService = (log: FastifyBaseLogger) => ({
                 ownerId: newUser.id,
                 platformId,
                 type: ProjectType.PERSONAL,
+                entityManager,
             })
             return newUser
         }
@@ -130,8 +133,8 @@ export const userService = (log: FastifyBaseLogger) => ({
     async getByIdentityId({ identityId }: GetByIdentityId): Promise<UserSchema[]> {
         return userRepo().find({ where: { identityId } })
     },
-    async getOneByIdentityAndPlatform({ identityId, platformId }: GetOneByIdentityIdParams): Promise<User | null> {
-        return userRepo().findOneBy({ identityId, platformId: isNil(platformId) ? IsNull() : platformId })
+    async getOneByIdentityAndPlatform({ identityId, platformId, entityManager }: GetOneByIdentityIdParams): Promise<User | null> {
+        return userRepo(entityManager).findOneBy({ identityId, platformId: isNil(platformId) ? IsNull() : platformId })
     },
     async get({ id }: IdParams): Promise<User | null> {
         return userRepo().findOneBy({ id })
@@ -317,6 +320,7 @@ type GetByIdentityId = {
 type GetOneByIdentityIdParams = {
     identityId: string
     platformId: PlatformId | null
+    entityManager?: EntityManager
 }
 
 type GetOneByIdentityForOnboardingParams = {
@@ -337,6 +341,7 @@ type CreateParams = {
     externalId?: string
     platformRole: PlatformRole
     isActive?: boolean
+    entityManager?: EntityManager
 }
 type GetUsersByIdentityIdParams = {
     identityId: string
@@ -361,4 +366,5 @@ type UpdatePlatformIdParams = {
 type GetOrCreateWithProjectParams = {
     identity: UserIdentity
     platformId: string
+    entityManager?: EntityManager
 }
