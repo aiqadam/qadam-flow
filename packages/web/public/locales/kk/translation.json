@@ -2094,5 +2094,11 @@
   "invalidLocale": "Локаль жарамды BCP-47 тегі болуы керек (ең көбі 35 таңба)",
   "tooManyTranslationLocales": "Аударма кілтінде ең көбі 50 локаль болуы мүмкін",
   "localeSourceTooLong": "Осы ағынның localeSource мәні тым ұзын (ең көбі 1000 таңба)",
-  "translationDescriptionTooLong": "Сипаттама тым ұзын (ең көбі 500 таңба)"
+  "translationDescriptionTooLong": "Сипаттама тым ұзын (ең көбі 500 таңба)",
+  "invalidLdapUserFilter": "Сүзгіде '{username}' орынбасары дәл бір рет болуы керек",
+  "invalidLdapSessionTtl": "Сеанс ұзақтығы 1 сағаттан 7 күнге дейін болуы керек",
+  "invalidLdapUrlForTlsMode": "URL схемасы таңдалған TLS режиміне сәйкес болуы керек (LDAPS үшін ldaps://, StartTLS үшін ldap://)",
+  "invalidLdapUsername": "Пайдаланушы аты тым ұзын",
+  "invalidLdapPassword": "Құпия сөз тым ұзын",
+  "invalidLdapTestCredentials": "Каталог арқылы кіруді тексеру үшін пайдаланушы атын және құпия сөзді бірге енгізіңіз, немесе тек қызмет тіркелгісін тексеру үшін екеуін де бос қалдырыңыз"
 }

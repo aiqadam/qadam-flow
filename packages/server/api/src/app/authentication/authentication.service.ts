@@ -1,5 +1,5 @@
 import { cryptoUtils } from '@aiqadam/server-utils'
-import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, isNil, OtpType, PlatformRole, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
+import { ApFlagId, assertNotNullOrUndefined, AuthenticationResponse, ErrorCode, FederatedIdentityProvider, isNil, OtpType, PlatformRole, PlatformWithoutSensitiveData, QadamFlowError, User, UserIdentity, UserIdentityProvider } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flagService } from '../flags/flag.service'
 import { isSmtpConfigured } from '../helper/mail/email-sender/smtp-email-sender'
@@ -7,6 +7,7 @@ import { platformService } from '../platform/platform.service'
 import { userService } from '../user/user-service'
 import { userInvitationsService } from '../user-invitations/user-invitation.service'
 import { authenticationUtils } from './authentication-utils'
+import { userFederatedIdentityService } from './federated-identity/user-federated-identity-service'
 import { otpService } from './otp/otp-service'
 import { userIdentityService } from './user-identity/user-identity-service'
 
@@ -176,15 +177,34 @@ export const authenticationService = (log: FastifyBaseLogger) => ({
         await assertUserCanSwitchToPlatform(platform)
 
         assertNotNullOrUndefined(platform, 'Platform not found')
-        const user = await getUserForPlatform(params.identityId, platform, log)
+        const identity = await userIdentityService(log).getOneOrFail({ id: params.identityId })
+        const user = await getUserForPlatform({ identity, platform, log })
         log.info({ userId: user.id, platformId: platform.id }, 'User switched platform')
         return authenticationUtils(log).getProjectAndToken({
             userId: user.id,
             platformId: platform.id,
             projectId: null,
+            expiresInSeconds: getSwitchPlatformExpiresInSeconds({ identity, currentTokenExpiresAtSeconds: params.currentTokenExpiresAtSeconds }),
         })
     },
 })
+
+// A directory admin sets the LDAP session TTL specifically so a revoked/expired directory account
+// stops holding a Qadam Flow session past that bound — `switch-platform` reissuing a fresh 7-day
+// default token would silently undo that ceiling every time an LDAP-signed-in user switched
+// platforms. Preferred fix over "cap by the target platform's own LDAP TTL": the token this call
+// reissues is a *continuation* of the caller's own current session, not a fresh directory sign-in,
+// so it must never outlive what that current token already promised — capping it at the *target*
+// platform's TTL would let a caller switch onto a platform with a longer configured TTL and gain
+// session time back, which the "never outlive" framing exists specifically to prevent. Every
+// non-LDAP identity is unaffected: this only shortens (never extends) the default.
+function getSwitchPlatformExpiresInSeconds({ identity, currentTokenExpiresAtSeconds }: GetSwitchPlatformExpiresInSecondsParams): number | undefined {
+    if (identity.provider !== UserIdentityProvider.LDAP || isNil(currentTokenExpiresAtSeconds)) {
+        return undefined
+    }
+    const remainingSeconds = currentTokenExpiresAtSeconds - Math.floor(Date.now() / 1000)
+    return Math.max(remainingSeconds, 1)
+}
 
 async function assertUserCanSwitchToPlatform(platform: PlatformWithoutSensitiveData | undefined): Promise<void> {
     if (isNil(platform)) {
@@ -197,9 +217,9 @@ async function assertUserCanSwitchToPlatform(platform: PlatformWithoutSensitiveD
     }
 }
 
-async function getUserForPlatform(identityId: string, platform: PlatformWithoutSensitiveData, log: FastifyBaseLogger): Promise<User> {
+async function getUserForPlatform({ identity, platform, log }: GetUserForPlatformParams): Promise<User> {
     const user = await userService(log).getOneByIdentityAndPlatform({
-        identityId,
+        identityId: identity.id,
         platformId: platform.id,
     })
     if (isNil(user)) {
@@ -209,6 +229,28 @@ async function getUserForPlatform(identityId: string, platform: PlatformWithoutS
                 message: 'User is not member of the platform',
             },
         })
+    }
+    // Reverse-direction identity squatting (app-sec, round 2): a `user` row can exist here for an
+    // LDAP identity without that identity ever having signed in through *this* platform's own
+    // directory — e.g. via an invitation `provisionUserInvitation` granted before its own guard
+    // existed, or one predating this fix. Refusing the switch unless a federated row backs it up
+    // closes that path independently of whether the invitation-side guard already caught it: an
+    // LDAP identity's standing access to any platform must always be provable by a federated row,
+    // never by the mere existence of a `user` row.
+    if (identity.provider === UserIdentityProvider.LDAP) {
+        const federatedRow = await userFederatedIdentityService(log).findByUser({
+            platformId: platform.id,
+            userId: user.id,
+            provider: FederatedIdentityProvider.LDAP,
+        })
+        if (isNil(federatedRow)) {
+            throw new QadamFlowError({
+                code: ErrorCode.AUTHORIZATION,
+                params: {
+                    message: 'A directory-authenticated identity must sign in through this platform\'s own directory before switching to it',
+                },
+            })
+        }
     }
     return user
 }
@@ -274,4 +316,16 @@ type SignInWithPasswordParams = {
 type SwitchPlatformParams = {
     identityId: string
     platformId: string
+    currentTokenExpiresAtSeconds?: number
+}
+
+type GetSwitchPlatformExpiresInSecondsParams = {
+    identity: UserIdentity
+    currentTokenExpiresAtSeconds?: number
+}
+
+type GetUserForPlatformParams = {
+    identity: UserIdentity
+    platform: PlatformWithoutSensitiveData
+    log: FastifyBaseLogger
 }

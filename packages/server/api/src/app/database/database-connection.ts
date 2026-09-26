@@ -8,6 +8,8 @@ import { AlertEntity } from '../alerts/alerts-entity'
 import { PlatformAnalyticsReportEntity } from '../analytics/platform-analytics-report.entity'
 import { ApiKeyEntity } from '../api-keys/api-key.entity'
 import { AppConnectionEntity } from '../app-connection/app-connection.entity'
+import { UserFederatedIdentityEntity } from '../authentication/federated-identity/user-federated-identity-entity'
+import { PlatformLdapConfigEntity } from '../authentication/ldap/ldap-config-entity'
 import { OtpEntity } from '../authentication/otp/otp-entity'
 import { UserIdentityEntity } from '../authentication/user-identity/user-identity-entity'
 import { ChatConversationEntity } from '../chat/chat-conversation-entity'
@@ -102,6 +104,8 @@ function getEntities(): EntitySchema<unknown>[] {
         WaitpointSlotEntity,
         TemplateEntity,
         PlatformAnalyticsReportEntity,
+        PlatformLdapConfigEntity,
+        UserFederatedIdentityEntity,
     ]
 }
 

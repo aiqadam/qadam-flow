@@ -2094,5 +2094,11 @@
   "invalidLocale": "Locale must be a valid BCP-47 tag (max 35 characters)",
   "tooManyTranslationLocales": "A translation key can have at most 50 locales",
   "localeSourceTooLong": "This flow's localeSource is too long (max 1,000 characters)",
-  "translationDescriptionTooLong": "Description is too long (max 500 characters)"
+  "translationDescriptionTooLong": "Description is too long (max 500 characters)",
+  "invalidLdapUserFilter": "The filter must contain the placeholder '{username}' exactly once",
+  "invalidLdapSessionTtl": "Session length must be between 1 hour and 7 days",
+  "invalidLdapUrlForTlsMode": "The URL scheme must match the selected TLS mode (ldaps:// for LDAPS, ldap:// for StartTLS)",
+  "invalidLdapUsername": "Username is too long",
+  "invalidLdapPassword": "Password is too long",
+  "invalidLdapTestCredentials": "Provide both a username and a password to test a directory sign-in, or leave both empty to test only the service account"
 }

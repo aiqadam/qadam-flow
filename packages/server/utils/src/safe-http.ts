@@ -6,10 +6,19 @@ import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } f
 import axiosRetry from 'axios-retry'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
 
-function parseAllowListFromEnv(): string[] {
-    const raw = process.env['AP_SSRF_ALLOW_LIST']
+// Shared across every allow-list this process reads (SSRF's own `AP_SSRF_ALLOW_LIST` and the LDAP
+// host guard's separate `AP_LDAP_ALLOW_LIST` in `packages/server/api`) so there is exactly one
+// comma-separated-IP/CIDR parser to keep in sync, rather than a second copy that drifts from this
+// one. Takes the already-read raw value rather than an env var name: a caller outside this package
+// resolves its own variable (via its own `system.get`) and hands the string in, instead of a second
+// `process.env` reader.
+function parseAllowList(raw: string | undefined): string[] {
     if (!raw) return []
     return raw.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+function parseAllowListFromEnv(): string[] {
+    return parseAllowList(process.env['AP_SSRF_ALLOW_LIST'])
 }
 
 function buildAgents({ allowList, httpsAgentOptions }: BuildAgentsParams): SsrfAgents {
@@ -266,6 +275,7 @@ export const safeHttp = {
     fetch: safeFetch,
     firstByteTimeoutSeconds,
     streamIdleTimeoutSeconds,
+    parseAllowList,
     get axios(): AxiosInstance {
         lazyDefaultAxios ??= createAxios()
         return lazyDefaultAxios

@@ -2094,5 +2094,11 @@
   "invalidLocale": "Локаль должна быть корректным тегом BCP-47 (максимум 35 символов)",
   "tooManyTranslationLocales": "Ключ перевода может содержать не более 50 локалей",
   "localeSourceTooLong": "Значение localeSource этого потока слишком длинное (максимум 1000 символов)",
-  "translationDescriptionTooLong": "Описание слишком длинное (максимум 500 символов)"
+  "translationDescriptionTooLong": "Описание слишком длинное (максимум 500 символов)",
+  "invalidLdapUserFilter": "Фильтр должен содержать плейсхолдер '{username}' ровно один раз",
+  "invalidLdapSessionTtl": "Длительность сессии должна быть от 1 часа до 7 дней",
+  "invalidLdapUrlForTlsMode": "Схема URL должна соответствовать выбранному режиму TLS (ldaps:// для LDAPS, ldap:// для StartTLS)",
+  "invalidLdapUsername": "Имя пользователя слишком длинное",
+  "invalidLdapPassword": "Пароль слишком длинный",
+  "invalidLdapTestCredentials": "Укажите и имя пользователя, и пароль, чтобы проверить вход через каталог, либо оставьте оба поля пустыми, чтобы проверить только сервисную учётную запись"
 }

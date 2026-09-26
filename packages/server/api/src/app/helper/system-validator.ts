@@ -206,6 +206,9 @@ const systemPropValidators: {
     [AppSystemProp.IS_CANARY_APP]: booleanValidator,
     // SSRF protection
     [AppSystemProp.SSRF_ALLOW_LIST]: stringValidator,
+    // LDAP directory host guard — separate from AP_SSRF_ALLOW_LIST so approving the directory
+    // does not also open its subnet to every outbound-HTTP qadam
+    [AppSystemProp.LDAP_ALLOW_LIST]: stringValidator,
 
     // Embed
     [AppSystemProp.ALLOWED_EMBED_ORIGINS]: stringValidator,

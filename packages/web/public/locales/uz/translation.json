@@ -2094,5 +2094,11 @@
   "invalidLocale": "Til hududi to'g'ri BCP-47 tegi bo'lishi kerak (maksimum 35 belgi)",
   "tooManyTranslationLocales": "Tarjima kaliti eng ko'pi bilan 50 ta lokalga ega bo'lishi mumkin",
   "localeSourceTooLong": "Ushbu oqimning localeSource qiymati juda uzun (maksimum 1000 belgi)",
-  "translationDescriptionTooLong": "Tavsif juda uzun (maksimum 500 belgi)"
+  "translationDescriptionTooLong": "Tavsif juda uzun (maksimum 500 belgi)",
+  "invalidLdapUserFilter": "Filtr '{username}' joy egallovchisini aynan bir marta o'z ichiga olishi kerak",
+  "invalidLdapSessionTtl": "Sessiya davomiyligi 1 soatdan 7 kungacha bo'lishi kerak",
+  "invalidLdapUrlForTlsMode": "URL sxemasi tanlangan TLS rejimiga mos kelishi kerak (LDAPS uchun ldaps://, StartTLS uchun ldap://)",
+  "invalidLdapUsername": "Foydalanuvchi nomi juda uzun",
+  "invalidLdapPassword": "Parol juda uzun",
+  "invalidLdapTestCredentials": "Katalog orqali kirishni sinash uchun foydalanuvchi nomi va parolni birga kiriting, yoki faqat xizmat hisobini sinash uchun ikkalasini ham bo'sh qoldiring"
 }

@@ -70,7 +70,7 @@ export const authenticationUtils = (log: FastifyBaseLogger) => ({
                 id: params.platformId,
             },
             tokenVersion: identity.tokenVersion,
-        })
+        }, params.expiresInSeconds)
         return {
             ...user,
             firstName: identity.firstName,
@@ -237,4 +237,5 @@ type GetProjectAndTokenParams = {
     platformId: string
     projectId: string | null
     scope?: EndpointScope
+    expiresInSeconds?: number
 }
