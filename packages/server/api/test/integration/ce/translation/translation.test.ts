@@ -212,6 +212,13 @@ describe('Translation CE API', () => {
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
+        it.each(['1', '100'])('accepts limit=%s at the edge of the allowed range', async (limit) => {
+            const ctx = await setup()
+
+            const response = await ctx.get('/v1/translations', { projectId: ctx.project.id, limit })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
         it('pages through keys written in one batch, in key order, forward and back', async () => {
             const ctx = await setup()
             const items = Array.from({ length: 12 }, (_, i) => ({ key: `batch.k${i.toString().padStart(2, '0')}`, values: { en: 'x' } }))
