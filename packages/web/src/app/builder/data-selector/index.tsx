@@ -5,12 +5,13 @@ import {
   FlowTrigger,
   FlowTriggerType,
   LocalesEnum,
+  Permission,
   flowStructureUtil,
   isNil,
 } from '@aiqadam/shared';
 import { useQueries } from '@tanstack/react-query';
 import { t } from 'i18next';
-import { Database, SearchXIcon, Variable } from 'lucide-react';
+import { Database, Languages, SearchXIcon, Variable } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -19,6 +20,7 @@ import { SearchInput } from '@/components/custom/search-input';
 import { OutputSchema } from '@/components/custom/smart-output-viewer/types';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { qadamsApi } from '@/features/qadams';
+import { useAuthorization } from '@/hooks/authorization-hooks';
 import { cn } from '@/lib/utils';
 
 import { ScrollArea } from '../../../components/ui/scroll-area';
@@ -30,6 +32,7 @@ import {
   DataSelectorSizeTogglers,
 } from './data-selector-size-togglers';
 import { pathHelpers } from './path-helpers';
+import { TranslationsTab } from './translations-tab';
 import { DataSelectorTreeNode } from './type';
 import { dataSelectorUtils } from './utils';
 import { schemaTreeUtils } from './utils-schema';
@@ -116,6 +119,8 @@ const DataSelector = ({ parentHeight, parentWidth }: DataSelectorProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'friendly' | 'advanced'>('friendly');
   const [showDataSelector, setShowDataSelector] = useState(false);
+  const { checkAccess } = useAuthorization();
+  const canReadTranslations = checkAccess(Permission.READ_TRANSLATION);
 
   const { steps, sampleData, isFocusInsideListMapperModeInput } =
     useBuilderStateContext(getStepsAndData);
@@ -363,6 +368,16 @@ const DataSelector = ({ parentHeight, parentWidth }: DataSelectorProps) => {
               <Variable className="w-4 h-4" />
               {t('Variables')}
             </TabsTrigger>
+            {canReadTranslations && (
+              <TabsTrigger
+                value="translations"
+                variant="outline"
+                className="gap-2 px-3 py-2 hover:text-foreground rounded-none"
+              >
+                <Languages className="w-4 h-4" />
+                {t('Translations')}
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent
@@ -414,6 +429,12 @@ const DataSelector = ({ parentHeight, parentWidth }: DataSelectorProps) => {
           <TabsContent value="variables" className="flex-1 min-h-0 mt-2">
             <VariablesTab />
           </TabsContent>
+
+          {canReadTranslations && (
+            <TabsContent value="translations" className="flex-1 min-h-0 mt-2">
+              <TranslationsTab />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

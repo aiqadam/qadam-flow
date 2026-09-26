@@ -1,6 +1,7 @@
 import {
   ApFlagId,
   ColorName,
+  Permission,
   PlatformRole,
   PROJECT_COLOR_PALETTE,
   ProjectIcon,
@@ -28,6 +29,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { projectCollectionUtils } from '@/features/projects';
+import { useAuthorization } from '@/hooks/authorization-hooks';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
 import { userHooks } from '@/hooks/user-hooks';
@@ -38,6 +40,7 @@ export type FormValues = {
   icon: ProjectIcon;
   externalId?: string;
   maxConcurrentJobs?: number | null;
+  defaultLocale?: string | null;
 };
 
 type GeneralSettingsProps = {
@@ -47,6 +50,7 @@ type GeneralSettingsProps = {
 export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
   const { platform } = platformHooks.useCurrentPlatform();
   const platformRole = userHooks.getCurrentUserPlatformRole();
+  const { checkAccess } = useAuthorization();
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const { project } = projectCollectionUtils.useCurrentProject();
   const { data: isRateLimiterEnabled } = flagsHooks.useFlag<boolean>(
@@ -58,6 +62,15 @@ export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
   const showGeneralSettings = project.type === ProjectType.TEAM;
   const showExternalIdSettings =
     platform.plan.embeddingEnabled && platformRole === PlatformRole.ADMIN;
+  // Gated on WRITE_PROJECT rather than `platformRole === PlatformRole.ADMIN` (unlike
+  // maxConcurrentJobs below, which the server itself restricts to platform ADMIN/OPERATOR via
+  // `assertCallerMayWriteMaxConcurrentJobs`): the server accepts `defaultLocale` from anyone
+  // `callerCanAdministerProject` allows. This is a subset of that, not an exact match — a Team
+  // owner without project-ADMIN membership, a personal-project owner who is only a platform
+  // MEMBER, and an OPERATOR on a personal project can all write `defaultLocale` on the server
+  // today but do not see this field under `WRITE_PROJECT`. Narrower-but-safe (a hidden control the
+  // server would accept) beats broader-but-wrong (a visible control the server would reject).
+  const showDefaultLocale = checkAccess(Permission.WRITE_PROJECT);
   const colorOptions = Object.values(ColorName);
 
   return (
@@ -210,6 +223,33 @@ export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
                     : t(
                         'Maximum number of flows that can run at the same time for this project',
                       )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+        {showDefaultLocale && (
+          <FormField
+            name="defaultLocale"
+            render={({ field }) => (
+              <FormItem>
+                <Label htmlFor="defaultLocale" className="text-sm font-medium">
+                  {t('Default locale')}
+                </Label>
+                <ClearableInput
+                  {...field}
+                  id="defaultLocale"
+                  placeholder="ru"
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value || null)}
+                  onClear={() => field.onChange(null)}
+                  disabled={form.formState.disabled}
+                />
+                <FormDescription className="text-xs text-muted-foreground">
+                  {t(
+                    'BCP-47 locale tag (e.g. ru, uz-Latn) flows fall back to when resolving translation keys with no run locale.',
+                  )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

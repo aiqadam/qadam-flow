@@ -5,10 +5,14 @@ import {
   assertNotNullOrUndefined,
   formulaEvaluator,
   isNil,
+  parseTranslationToken,
 } from '@aiqadam/shared';
 import { MentionNodeAttrs } from '@tiptap/extension-mention';
 import { JSONContent } from '@tiptap/react';
-import { Variable as VariableIcon } from 'lucide-react';
+import {
+  Languages as TranslationIcon,
+  Variable as VariableIcon,
+} from 'lucide-react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -50,6 +54,7 @@ type ApMentionNodeAttrs = {
   displayText: string;
   serverValue: string;
   isVariable?: boolean;
+  isTranslation?: boolean;
 };
 const flattenNestedKeysRegex =
   /^flattenNestedKeys\((\w+)(?:\['output'\])?,\s*\[(.*?)\]\)$/;
@@ -301,6 +306,22 @@ function parseLabelFromMention(
   stepsMetadata: (StepMetadataWithDisplayName | undefined)[],
   variableByName?: Map<string, string>,
 ) {
+  const mentionWithoutInterpolationBrackets =
+    removeIntroplationBrackets(mention);
+  if (mentionWithoutInterpolationBrackets.startsWith('$t[')) {
+    const parsed = parseTranslationToken(mentionWithoutInterpolationBrackets);
+    if (parsed) {
+      return {
+        displayText:
+          parsed.localeExpr === undefined
+            ? `Text · ${parsed.key}`
+            : `Text · ${parsed.key} [dynamic locale]`,
+        serverValue: mention,
+        logoUrl: undefined,
+        isTranslation: true,
+      };
+    }
+  }
   const { stepName, path } = parseStepAndNameFromMention(mention);
   if (stepName === 'variables') {
     const name = path[0] ?? '';
@@ -426,6 +447,22 @@ const buildVariableIconElement = (): Element => {
   return element;
 };
 
+// eslint-disable-next-line testing-library/render-result-naming-convention
+const TRANSLATION_ICON_SVG_MARKUP = renderToStaticMarkup(
+  createElement(TranslationIcon, {
+    className: 'w-4 h-4 shrink-0 text-primary',
+    'aria-hidden': true,
+  }),
+);
+
+const buildTranslationIconElement = (): Element => {
+  const template = document.createElement('template');
+  template.innerHTML = TRANSLATION_ICON_SVG_MARKUP;
+  const element = template.content.firstElementChild;
+  assertNotNullOrUndefined(element, 'translationIconMarkup');
+  return element;
+};
+
 const generateMentionHtmlElement = (mentionAttrs: MentionNodeAttrs) => {
   const mentionElement = document.createElement('span');
   const apMentionNodeAttrs: ApMentionNodeAttrs = JSON.parse(
@@ -447,6 +484,8 @@ const generateMentionHtmlElement = (mentionAttrs: MentionNodeAttrs) => {
 
   if (apMentionNodeAttrs.isVariable) {
     mentionElement.appendChild(buildVariableIconElement());
+  } else if (apMentionNodeAttrs.isTranslation) {
+    mentionElement.appendChild(buildTranslationIconElement());
   } else if (apMentionNodeAttrs.logoUrl) {
     const imgElement = document.createElement('img');
     imgElement.src = apMentionNodeAttrs.logoUrl;

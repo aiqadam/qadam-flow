@@ -23,6 +23,36 @@ describe('textMentionUtils.parseLabelFromMention — flattenNestedKeys', () => {
   });
 });
 
+describe('textMentionUtils.parseLabelFromMention — $t translation mentions', () => {
+  it('renders a plain key as "Text · key", never falling through to the step-name path', () => {
+    const label = textMentionUtils.parseLabelFromMention(
+      "{{$t['welcome.title']}}",
+      [],
+      [],
+    );
+    expect(label.displayText).toBe('Text · welcome.title');
+    expect(label.displayText).not.toContain('Missing');
+  });
+
+  it('keeps a dot-separated key intact — the generic step-path parser would otherwise split on "."', () => {
+    const label = textMentionUtils.parseLabelFromMention(
+      "{{$t['a.b.c']}}",
+      [],
+      [],
+    );
+    expect(label.displayText).toBe('Text · a.b.c');
+  });
+
+  it('appends "[dynamic locale]" when a second (locale) bracket is present', () => {
+    const label = textMentionUtils.parseLabelFromMention(
+      "{{$t['welcome.title'][loop['item'].lang]}}",
+      [],
+      [],
+    );
+    expect(label.displayText).toBe('Text · welcome.title [dynamic locale]');
+  });
+});
+
 const convert = (text: string) =>
   textMentionUtils.convertTextToTipTapJsonContent(text, [], []);
 

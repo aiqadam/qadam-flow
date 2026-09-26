@@ -1,4 +1,4 @@
-import { isNil, Permission, PlatformRole, ProjectType } from '@aiqadam/shared';
+import { isNil, Permission, ProjectType } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { GitBranch, Puzzle, Settings, Users } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
@@ -14,7 +14,6 @@ import { ProjectMembersTab } from '@/features/invitations/components/project-mem
 import { projectCollectionUtils } from '@/features/projects';
 import { ApProjectDisplay } from '@/features/projects/components/ap-project-display';
 import { useAuthorization } from '@/hooks/authorization-hooks';
-import { platformHooks } from '@/hooks/platform-hooks';
 import { userHooks } from '@/hooks/user-hooks';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +22,7 @@ import { ProjectAvatar } from '../project-avatar';
 import { EnvironmentSettings } from './environment';
 import { GeneralSettings, FormValues } from './general';
 import { McpServerSettings } from './mcp-server';
+import { projectSettingsUtils } from './project-settings-utils';
 import { PiecesSettings } from './qadams';
 
 type TabId = 'general' | 'team' | 'pieces' | 'environment' | 'mcp';
@@ -48,7 +48,6 @@ export function ProjectSettingsDialog({
   const { project } = projectCollectionUtils.useCurrentProject();
   const previousOpenRef = useRef(open);
 
-  const { platform } = platformHooks.useCurrentPlatform();
   const platformRole = userHooks.getCurrentUserPlatformRole();
 
   const form = useForm<FormValues>({
@@ -57,6 +56,7 @@ export function ProjectSettingsDialog({
       icon: project.icon,
       externalId: initialValues?.externalId,
       maxConcurrentJobs: project.maxConcurrentJobs,
+      defaultLocale: project.defaultLocale,
     },
     disabled: checkAccess(Permission.WRITE_PROJECT) === false,
   });
@@ -67,6 +67,7 @@ export function ProjectSettingsDialog({
       externalId: values.externalId,
       icon: values.icon,
       maxConcurrentJobs: values.maxConcurrentJobs,
+      defaultLocale: values.defaultLocale,
     });
     toast.success(t('Your changes have been saved.'), {
       duration: 3000,
@@ -81,15 +82,17 @@ export function ProjectSettingsDialog({
         ...initialValues,
         icon: project.icon,
         maxConcurrentJobs: project.maxConcurrentJobs,
+        defaultLocale: project.defaultLocale,
       });
       setActiveTab(initialTab);
     }
     previousOpenRef.current = open;
   }, [open, project]);
 
-  const hasGeneralSettings =
-    project.type === ProjectType.TEAM ||
-    (platform.plan.embeddingEnabled && platformRole === PlatformRole.ADMIN);
+  const hasGeneralSettings = projectSettingsUtils.hasGeneralSettings({
+    projectType: project.type,
+    platformRole,
+  });
 
   const tabs = [
     {

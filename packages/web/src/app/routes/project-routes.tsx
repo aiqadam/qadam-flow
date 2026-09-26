@@ -38,6 +38,9 @@ const AppConnectionsPage = React.lazy(() =>
 const VariablesPage = React.lazy(() =>
   import('./variables').then((m) => ({ default: m.VariablesPage })),
 );
+const TranslationsPage = React.lazy(() =>
+  import('./translations').then((m) => ({ default: m.TranslationsPage })),
+);
 const ApTableEditorPage = React.lazy(() =>
   import('./tables/id').then((m) => ({ default: m.ApTableEditorPage })),
 );
@@ -193,6 +196,20 @@ export const projectRoutes = [
           <PageTitle title="Variables">
             <SuspenseWrapper>
               <VariablesPage />
+            </SuspenseWrapper>
+          </PageTitle>
+        </RoutePermissionGuard>
+      </ProjectDashboardLayout>
+    ),
+  }),
+  ...ProjectRouterWrapper({
+    path: routesThatRequireProjectId.translations,
+    element: (
+      <ProjectDashboardLayout>
+        <RoutePermissionGuard requiredPermissions={Permission.READ_TRANSLATION}>
+          <PageTitle title="Translations">
+            <SuspenseWrapper>
+              <TranslationsPage />
             </SuspenseWrapper>
           </PageTitle>
         </RoutePermissionGuard>
