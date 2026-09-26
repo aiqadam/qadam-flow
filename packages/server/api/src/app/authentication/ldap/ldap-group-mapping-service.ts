@@ -1,6 +1,6 @@
-import { apId, isNil, LdapConfig, PlatformId, ProjectMemberManagedBy, UserId } from '@aiqadam/shared'
+import { apId, isNil, LdapConfig, PlatformId, PlatformRole, PlatformRoleManagedBy, ProjectMemberManagedBy, ProjectType, UserId } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { EntityManager, In } from 'typeorm'
+import { In } from 'typeorm'
 import { repoFactory } from '../../core/db/repo-factory'
 import { platformService } from '../../platform/platform.service'
 import { ProjectMemberEntity } from '../../project/project-member.entity'
@@ -15,78 +15,110 @@ export const ldapGroupMappingService = (log: FastifyBaseLogger) => ({
     // group DNs it already resolved (`memberOf`, plus a nested-group search when configured); every
     // DB write this makes is idempotent, so applying the same grants twice is a no-op past the
     // first call.
-    async applyMapping({ platformId, userId, config, memberGroupDns, entityManager }: ApplyMappingParams): Promise<void> {
+    async applyMapping({ platformId, userId, config, memberGroupDns }: ApplyMappingParams): Promise<void> {
         const { platformRole, projectRoles } = ldapGroupMappingUtils.resolveGrants({
             groupMappings: config.groupMappings,
             memberGroupDns,
         })
-        await applyPlatformRoleGrant({ platformId, userId, platformRole, log, entityManager })
-        await applyProjectGrants({ platformId, userId, projectRoles, log, entityManager })
+        await applyPlatformRoleGrant({ platformId, userId, platformRole, log })
+        await applyProjectGrants({ platformId, userId, projectRoles, log })
     },
 })
 
-// Never touches the platform owner — the owner's role is not something a directory should ever be
-// able to move, the same break-glass `ldapAuthnService` already gives the owner against linking.
-// A mapping with no matching group at all resolves `platformRole: null`, which must leave the
-// user's current role untouched rather than reset it to anything.
+// Never touches the platform owner. Two directions, both gated on provenance (round 2, app-sec
+// finding #7 — a directory-granted ADMIN must be revocable):
+// - A resolved role (some group matched with a `platformRole` set) is always applied and always
+//   marks the role LDAP-managed — an explicit group grant is a real, current directory decision,
+//   and always wins regardless of what set the *previous* role.
+// - No resolved role (no matching group grants one) only *reverts* the role, to MEMBER, and only
+//   when the role is currently LDAP-managed — a manually-set role (`platformRoleManagedBy:
+//   'MANUAL'`, e.g. an admin's own promotion) is never touched by the absence of a mapping match.
 async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }: ApplyPlatformRoleGrantParams): Promise<void> {
-    if (isNil(platformRole)) {
-        return
-    }
     const [platform, user] = await Promise.all([
         platformService(log).getOneOrThrow(platformId),
         userService(log).getOrThrow({ id: userId }),
     ])
-    if (user.id === platform.ownerId || user.platformRole === platformRole) {
+    if (user.id === platform.ownerId) {
         return
     }
-    await userService(log).update({ id: userId, platformId, platformRole })
+
+    if (!isNil(platformRole)) {
+        if (user.platformRole === platformRole && user.platformRoleManagedBy === PlatformRoleManagedBy.LDAP) {
+            return
+        }
+        await userService(log).update({ id: userId, platformId, platformRole, source: 'LDAP' })
+        return
+    }
+
+    if (user.platformRoleManagedBy === PlatformRoleManagedBy.LDAP && user.platformRole !== PlatformRole.MEMBER) {
+        await userService(log).update({ id: userId, platformId, platformRole: PlatformRole.MEMBER, source: 'LDAP' })
+    }
 }
 
 // Only ever creates, updates or removes a `project_member` row this mapping itself marked
 // `LDAP`-managed. A manually-added membership is never touched, even when it also matches a group
 // mapping — the design's "a manual membership that also matches a mapping stays manual".
-async function applyProjectGrants({ platformId, userId, projectRoles, log, entityManager }: ApplyProjectGrantsParams): Promise<void> {
-    const existingManagedRows = await projectMemberRepo(entityManager).find({
+async function applyProjectGrants({ platformId, userId, projectRoles, log }: ApplyProjectGrantsParams): Promise<void> {
+    const existingManagedRows = await projectMemberRepo().find({
         where: { userId, platformId, managedBy: ProjectMemberManagedBy.LDAP },
     })
     const existingManagedByProjectId = new Map(existingManagedRows.map((row) => [row.projectId, row]))
 
     for (const [projectId, role] of projectRoles) {
-        const belongsToPlatform = await projectBelongsToPlatform({ projectId, platformId, log })
+        const belongsToPlatform = await projectBelongsToPlatformAsTeam({ projectId, platformId, log })
         if (!belongsToPlatform) {
-            // Defense in depth: the mapping was validated against this platform's own projects at
-            // save time, but the project may have been deleted, or moved, since — never trust the
-            // stored projectId again without re-checking it at apply time too.
-            log.warn({ platformId, projectId }, '[ldapGroupMappingService] Skipping a group-mapping project grant for a project that no longer belongs to this platform')
+            // Defense in depth: the mapping was validated against this platform's own TEAM
+            // projects at save time, but the project may have been deleted, moved, or changed
+            // type since — never trust the stored projectId again without re-checking it here too.
+            log.warn({ platformId, projectId }, '[ldapGroupMappingService] Skipping a group-mapping project grant for a project that is no longer a TEAM project on this platform')
             continue
         }
-        const projectRoleId = await projectService(log).getOrCreateDefaultProjectRoleId({ platformId, role, entityManager })
+        const projectRoleId = await projectService(log).getOrCreateDefaultProjectRoleId({ platformId, role })
         const existingRow = existingManagedByProjectId.get(projectId)
-        const existingAnyRow = isNil(existingRow) ? await projectMemberRepo(entityManager).findOneBy({ userId, projectId }) : existingRow
+        const existingAnyRow = isNil(existingRow) ? await projectMemberRepo().findOneBy({ userId, projectId }) : existingRow
         if (!isNil(existingAnyRow) && existingAnyRow.managedBy !== ProjectMemberManagedBy.LDAP) {
             continue
         }
-        await projectMemberRepo(entityManager).upsert({
-            id: existingAnyRow?.id ?? apId(),
-            userId,
-            projectId,
-            projectRoleId,
-            platformId,
-            managedBy: ProjectMemberManagedBy.LDAP,
-        }, ['userId', 'projectId'])
+        await upsertLdapManagedMembership({ id: existingAnyRow?.id ?? apId(), userId, projectId, projectRoleId, platformId })
         existingManagedByProjectId.delete(projectId)
     }
 
     const projectIdsToRemove = [...existingManagedByProjectId.keys()]
     if (projectIdsToRemove.length > 0) {
-        await projectMemberRepo(entityManager).delete({ userId, platformId, projectId: In(projectIdsToRemove), managedBy: ProjectMemberManagedBy.LDAP })
+        await projectMemberRepo().delete({ userId, platformId, projectId: In(projectIdsToRemove), managedBy: ProjectMemberManagedBy.LDAP })
     }
 }
 
-async function projectBelongsToPlatform({ projectId, platformId, log }: ProjectBelongsToPlatformParams): Promise<boolean> {
+// A plain `.upsert()` (`INSERT ... ON CONFLICT (userId, projectId) DO UPDATE SET ...`) updates
+// unconditionally on conflict — a race between this function's own pre-check above and this
+// insert (e.g. a concurrent invitation-acceptance creating a MANUAL row for the same user+project)
+// could otherwise flip a freshly-created MANUAL row to LDAP. The `WHERE` clause on the conflict
+// target makes the update itself conditional: a MANUAL row already there is left exactly as
+// written, and the `DO UPDATE` becomes a no-op for it, closing the window atomically rather than
+// only in the common (no-race) case the pre-check above already handles.
+async function upsertLdapManagedMembership({ id, userId, projectId, projectRoleId, platformId }: UpsertLdapManagedMembershipParams): Promise<void> {
+    const now = new Date().toISOString()
+    await projectMemberRepo()
+        .createQueryBuilder()
+        .insert()
+        .into(ProjectMemberEntity)
+        .values({
+            id,
+            userId,
+            projectId,
+            projectRoleId,
+            platformId,
+            managedBy: ProjectMemberManagedBy.LDAP,
+            created: now,
+            updated: now,
+        })
+        .onConflict('("userId", "projectId") DO UPDATE SET "projectRoleId" = EXCLUDED."projectRoleId", "managedBy" = EXCLUDED."managedBy", "updated" = EXCLUDED."updated" WHERE "project_member"."managedBy" = \'LDAP\'')
+        .execute()
+}
+
+async function projectBelongsToPlatformAsTeam({ projectId, platformId, log }: ProjectBelongsToPlatformParams): Promise<boolean> {
     const project = await projectService(log).getOne(projectId)
-    return !isNil(project) && project.platformId === platformId
+    return !isNil(project) && project.platformId === platformId && project.type === ProjectType.TEAM
 }
 
 type ApplyMappingParams = {
@@ -94,7 +126,6 @@ type ApplyMappingParams = {
     userId: UserId
     config: LdapConfig
     memberGroupDns: string[]
-    entityManager?: EntityManager
 }
 
 type ApplyPlatformRoleGrantParams = {
@@ -102,7 +133,6 @@ type ApplyPlatformRoleGrantParams = {
     userId: UserId
     platformRole: ReturnType<typeof ldapGroupMappingUtils.resolveGrants>['platformRole']
     log: FastifyBaseLogger
-    entityManager?: EntityManager
 }
 
 type ApplyProjectGrantsParams = {
@@ -110,7 +140,14 @@ type ApplyProjectGrantsParams = {
     userId: UserId
     projectRoles: ReturnType<typeof ldapGroupMappingUtils.resolveGrants>['projectRoles']
     log: FastifyBaseLogger
-    entityManager?: EntityManager
+}
+
+type UpsertLdapManagedMembershipParams = {
+    id: string
+    userId: UserId
+    projectId: string
+    projectRoleId: string
+    platformId: PlatformId
 }
 
 type ProjectBelongsToPlatformParams = {

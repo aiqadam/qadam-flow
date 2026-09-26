@@ -1,4 +1,4 @@
-import { apId, DefaultProjectRole, LdapConfig, LdapTlsMode, PlatformRole, ProjectMemberManagedBy, ProjectType, UserIdentityProvider } from '@aiqadam/shared'
+import { apId, DefaultProjectRole, LdapConfig, LdapTlsMode, PlatformRole, PlatformRoleManagedBy, ProjectMemberManagedBy, ProjectType, UserIdentityProvider } from '@aiqadam/shared'
 import pino from 'pino'
 import { ldapGroupMappingService } from '../../../../src/app/authentication/ldap/ldap-group-mapping-service'
 import { userIdentityService } from '../../../../src/app/authentication/user-identity/user-identity-service'
@@ -203,5 +203,105 @@ describe('ldapGroupMappingService.applyMapping — project grants', () => {
         })).resolves.toBeUndefined()
 
         expect(await databaseConnection().getRepository('project_member').findOneBy({ userId, projectId: otherPlatform.mockProject.id })).toBeNull()
+    })
+
+    it('ignores a mapping that targets a non-TEAM project, even when it is otherwise matched', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        const nonTeamProject = createMockProject({ platformId: mockPlatform.id, type: ProjectType.PERSONAL, ownerId: userId })
+        await databaseConnection().getRepository('project').save(nonTeamProject)
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: nonTeamProject.id, role: DefaultProjectRole.EDITOR }] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=editors,dc=example,dc=com'],
+        })
+
+        expect(await databaseConnection().getRepository('project_member').findOneBy({ userId, projectId: nonTeamProject.id })).toBeNull()
+    })
+
+    // Round 2 (app-sec finding #10): the `ON CONFLICT ... DO UPDATE ... WHERE "managedBy" = 'LDAP'`
+    // clause is a defense-in-depth guard against a race between this function's own JS-level
+    // "does a MANUAL row already exist" check and the insert that follows it — a concurrent write
+    // (e.g. an invitation acceptance) creating the MANUAL row in that exact window must still never
+    // be overwritten. `findOneBy` is stubbed to return `null` for one call only, simulating that
+    // race window (the MANUAL row already exists in Postgres by the time the upsert below runs, but
+    // this function's own pre-check did not see it) — everything else in the call goes through the
+    // real function and the real database.
+    it('never flips a MANUAL row to LDAP even when the pre-check misses it under a race', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        const project = createMockProject({ platformId: mockPlatform.id, type: ProjectType.TEAM, ownerId: userId })
+        await databaseConnection().getRepository('project').save(project)
+        const manualRole = await projectService(log).getOrCreateDefaultProjectRoleId({ platformId: mockPlatform.id, role: DefaultProjectRole.VIEWER })
+        const manualMembershipId = apId()
+        await databaseConnection().getRepository('project_member').save({
+            id: manualMembershipId,
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            userId,
+            projectId: project.id,
+            projectRoleId: manualRole,
+            platformId: mockPlatform.id,
+            managedBy: ProjectMemberManagedBy.MANUAL,
+        })
+        const projectMemberRepo = databaseConnection().getRepository('project_member')
+        const findOneBySpy = vi.spyOn(projectMemberRepo, 'findOneBy').mockResolvedValueOnce(null)
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: project.id, role: DefaultProjectRole.EDITOR }] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=editors,dc=example,dc=com'],
+        })
+
+        findOneBySpy.mockRestore()
+        const membership = await databaseConnection().getRepository('project_member').findOneBy({ userId, projectId: project.id })
+        expect(membership?.id).toBe(manualMembershipId)
+        expect(membership?.managedBy).toBe(ProjectMemberManagedBy.MANUAL)
+        expect(membership?.projectRoleId).toBe(manualRole)
+    })
+})
+
+describe('ldapGroupMappingService.applyMapping — platform-role provenance and revocation (round 2)', () => {
+    it('marks a group-granted platform role as LDAP-managed, and reverts it to MEMBER once no group grants one anymore', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=admins,dc=example,dc=com'],
+        })
+        const promoted = await userService(log).getOrThrow({ id: userId })
+        expect(promoted.platformRole).toBe(PlatformRole.ADMIN)
+        expect(promoted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+
+        // The user no longer belongs to any group that grants a platform role.
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+        })
+        const reverted = await userService(log).getOrThrow({ id: userId })
+        expect(reverted.platformRole).toBe(PlatformRole.MEMBER)
+        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+    })
+
+    it('never demotes a manually-granted ADMIN role when no mapping matches', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.ADMIN, source: 'ADMIN' })
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=members,dc=example,dc=com', platformRole: PlatformRole.MEMBER, projects: [] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+        })
+
+        const user = await userService(log).getOrThrow({ id: userId })
+        expect(user.platformRole).toBe(PlatformRole.ADMIN)
+        expect(user.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
     })
 })
