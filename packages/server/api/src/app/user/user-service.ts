@@ -102,6 +102,23 @@ export const userService = (log: FastifyBaseLogger) => ({
             })
         }
 
+        // Cleared *before* the status write, not after: reconcile's own reactivation
+        // (`clearDirectoryDisabledAtIfSet`) is itself a conditional, atomic "clear only if still
+        // set" — so whichever of the two clears (this one, or a concurrent reconcile tick's own)
+        // lands first "wins" the marker, and the loser's own attempt becomes a no-op. If this write
+        // instead cleared the marker *after* setting `status`, a concurrent reconcile tick could
+        // observe the marker still set (this admin write hasn't reached its second statement yet),
+        // see the status already flipped to INACTIVE by *this* write, and reactivate the user right
+        // back to ACTIVE before this write's own marker-clear ever runs — silently overwriting the
+        // admin's explicit decision. Clearing first closes that window: by the time `status` is
+        // written, reconcile can no longer find the marker set for this user at all, however the
+        // two racing writes interleave. Reconcile's own status writes (`source: 'LDAP'`) manage the
+        // marker themselves and never trigger this clear; only `source: 'ADMIN'` (the admin
+        // controller's own default) does, and only when `status` is actually part of this update.
+        if (status !== undefined && source === 'ADMIN') {
+            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId, entityManager })
+        }
+
         await userRepo(entityManager).update({
             id,
             platformId,
@@ -122,14 +139,6 @@ export const userService = (log: FastifyBaseLogger) => ({
             ...(platformRole !== undefined && source === 'ADMIN' ? { platformRoleManualBaseline: null } : {}),
             ...spreadIfNotUndefined('platformRoleManualBaseline', source === 'LDAP' ? platformRoleManualBaseline : undefined),
         })
-
-        // Any explicit *admin* status write — either direction — is a human decision that must
-        // stick: it clears the directory's own "I deactivated this" marker, so reconcile can never
-        // later reactivate a user an admin just acted on directly (app-sec: paths A and B).
-        // Reconcile's own status writes (`source: 'LDAP'`) manage that marker themselves.
-        if (status !== undefined && source === 'ADMIN') {
-            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId, entityManager })
-        }
 
         return this.getMetaInformation({ id })
     },
@@ -154,6 +163,23 @@ export const userService = (log: FastifyBaseLogger) => ({
     // treat that as "someone else already decided this", not merely "nothing to do".
     async transitionStatusIfCurrentlyEquals({ id, platformId, expectedStatus, newStatus, entityManager }: TransitionStatusIfCurrentlyEqualsParams): Promise<boolean> {
         const result = await userRepo(entityManager).update({ id, platformId, status: expectedStatus }, { status: newStatus })
+        return (result.affected ?? 0) > 0
+    },
+    // The same atomic-conditional-write pattern as `transitionStatusIfCurrentlyEquals`, for
+    // `platformRole`/`platformRoleManagedBy`/`platformRoleManualBaseline` together — used by
+    // `ldapGroupMappingService.applyPlatformRoleGrant`, which reads a user's current role/provenance
+    // (`getOrThrow`), decides what to write, and would otherwise write it back unconditionally: an
+    // admin write landing in that gap (e.g. demoting the same user) would get silently overwritten
+    // by the mapping's now-stale decision. Conditioning the write on the exact
+    // (`platformRole`, `platformRoleManagedBy`) pair the caller read makes the whole read-decide-
+    // write sequence equivalent to a single atomic compare-and-swap; `false` means someone else
+    // already changed the row since the read, and the caller must treat that as "someone else
+    // already decided this", the same as every other conditional transition in this codebase.
+    async transitionPlatformRoleIfCurrentlyEquals({ id, platformId, expectedPlatformRole, expectedPlatformRoleManagedBy, newPlatformRole, newPlatformRoleManagedBy, newPlatformRoleManualBaseline, entityManager }: TransitionPlatformRoleIfCurrentlyEqualsParams): Promise<boolean> {
+        const result = await userRepo(entityManager).update(
+            { id, platformId, platformRole: expectedPlatformRole, platformRoleManagedBy: expectedPlatformRoleManagedBy },
+            { platformRole: newPlatformRole, platformRoleManagedBy: newPlatformRoleManagedBy, platformRoleManualBaseline: newPlatformRoleManualBaseline },
+        )
         return (result.affected ?? 0) > 0
     },
     async list({ platformId, externalId, cursorRequest, limit }: ListParams): Promise<SeekPage<UserWithMetaInformation>> {
@@ -416,6 +442,17 @@ type TransitionStatusIfCurrentlyEqualsParams = {
     platformId: PlatformId
     expectedStatus: UserStatus
     newStatus: UserStatus
+    entityManager?: EntityManager
+}
+
+type TransitionPlatformRoleIfCurrentlyEqualsParams = {
+    id: UserId
+    platformId: PlatformId
+    expectedPlatformRole: PlatformRole
+    expectedPlatformRoleManagedBy: PlatformRoleManagedBy
+    newPlatformRole: PlatformRole
+    newPlatformRoleManagedBy: PlatformRoleManagedBy
+    newPlatformRoleManualBaseline: PlatformRole | null
     entityManager?: EntityManager
 }
 

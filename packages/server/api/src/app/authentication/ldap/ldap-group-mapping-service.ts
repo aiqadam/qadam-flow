@@ -43,9 +43,25 @@ export const ldapGroupMappingService = (log: FastifyBaseLogger) => ({
 //   never touched by the absence of a mapping match. The revert target is the recorded
 //   `platformRoleManualBaseline` when one is set (the admin's own role before this mapping ever
 //   raised it), or MEMBER when there is none (e.g. the row was created straight into an LDAP grant
-//   with no prior manual role to remember). The baseline is cleared in the same write, since a
-//   revert fully consumes it — a subsequent raise records a fresh one from whatever the role is at
-//   that point.
+//   with no prior manual role to remember). Restoring a recorded baseline is restoring a human
+//   decision, so provenance goes back to `MANUAL` too — leaving it `LDAP` would mean the *very
+//   next* mapping pass treats this already-restored MANUAL role as still LDAP-managed and eligible
+//   to raise again unconditionally, silently discarding the fact that the mapping's own grant was
+//   just revoked; the baseline would also never be recorded again on a later raise (the raise
+//   branch above only records one when raising *from* MANUAL), so a second raise-then-revert cycle
+//   would fall all the way to MEMBER instead of back to the admin's real role, the one-baseline-
+//   thick tracking silently correct on the first cycle and wrong on every one after. Falling back
+//   to MEMBER (no baseline recorded) keeps today's LDAP-managed provenance, since there is no human
+//   decision being restored. The baseline is cleared in the same write either way, since a revert
+//   fully consumes it — a subsequent raise records a fresh one from whatever the role is at that
+//   point.
+//
+// The read (`getOrThrow`) and the write below are not one atomic operation — an admin could change
+// this same user's role in the gap between them. `transitionPlatformRoleIfCurrentlyEquals` closes
+// that: the write only takes effect if the row still matches the exact `(platformRole,
+// platformRoleManagedBy)` pair just read, otherwise it is a no-op and this mapping pass's decision
+// is silently superseded by whatever the concurrent write left behind, the same as every other
+// conditional write in this codebase.
 async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }: ApplyPlatformRoleGrantParams): Promise<void> {
     const [platform, user] = await Promise.all([
         platformService(log).getOneOrThrow(platformId),
@@ -64,12 +80,14 @@ async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }:
             return
         }
         const isRaisingFromManual = isManuallyManaged
-        await userService(log).update({
+        await userService(log).transitionPlatformRoleIfCurrentlyEquals({
             id: userId,
             platformId,
-            platformRole,
-            source: 'LDAP',
-            ...(isRaisingFromManual ? { platformRoleManualBaseline: user.platformRole } : {}),
+            expectedPlatformRole: user.platformRole,
+            expectedPlatformRoleManagedBy: user.platformRoleManagedBy,
+            newPlatformRole: platformRole,
+            newPlatformRoleManagedBy: PlatformRoleManagedBy.LDAP,
+            newPlatformRoleManualBaseline: isRaisingFromManual ? user.platformRole : (user.platformRoleManualBaseline ?? null),
         })
         return
     }
@@ -77,9 +95,18 @@ async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }:
     if (isManuallyManaged) {
         return
     }
+    const revertingToBaseline = !isNil(user.platformRoleManualBaseline)
     const revertRole = user.platformRoleManualBaseline ?? PlatformRole.MEMBER
-    if (user.platformRole !== revertRole || !isNil(user.platformRoleManualBaseline)) {
-        await userService(log).update({ id: userId, platformId, platformRole: revertRole, source: 'LDAP', platformRoleManualBaseline: null })
+    if (user.platformRole !== revertRole || revertingToBaseline) {
+        await userService(log).transitionPlatformRoleIfCurrentlyEquals({
+            id: userId,
+            platformId,
+            expectedPlatformRole: user.platformRole,
+            expectedPlatformRoleManagedBy: user.platformRoleManagedBy,
+            newPlatformRole: revertRole,
+            newPlatformRoleManagedBy: revertingToBaseline ? PlatformRoleManagedBy.MANUAL : PlatformRoleManagedBy.LDAP,
+            newPlatformRoleManualBaseline: null,
+        })
     }
 }
 

@@ -285,7 +285,12 @@ describe('ldapGroupMappingService.applyMapping — platform-role provenance and 
         })
         const reverted = await userService(log).getOrThrow({ id: userId })
         expect(reverted.platformRole).toBe(PlatformRole.MEMBER)
-        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        // The raise recorded MEMBER as the pre-raise baseline — `createDirectoryUser` starts every
+        // user as a MANUAL MEMBER, the schema default, but that is still a real prior state to
+        // restore, not a value the baseline logic special-cases away. Restoring a recorded
+        // baseline is restoring a human decision, so provenance goes back to MANUAL, even though
+        // the restored role (MEMBER) happens to look identical to the no-baseline fallback.
+        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
     })
 
     it('never demotes a manually-granted ADMIN role when no mapping matches', async () => {
@@ -350,7 +355,10 @@ describe('ldapGroupMappingService.applyMapping — a mapping may only ever raise
         })
         const reverted = await userService(log).getOrThrow({ id: userId })
         expect(reverted.platformRole).toBe(PlatformRole.MEMBER)
-        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        // MEMBER was recorded as the pre-raise baseline (the same reasoning as the provenance test
+        // above) — restoring a recorded baseline is restoring a human decision, so this goes back
+        // to MANUAL, not LDAP.
+        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
     })
 })
 
@@ -381,8 +389,28 @@ describe('ldapGroupMappingService.applyMapping — a raised MANUAL role reverts 
         })
         const reverted = await userService(log).getOrThrow({ id: userId })
         expect(reverted.platformRole).toBe(PlatformRole.OPERATOR)
-        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+        // Restoring a recorded baseline restores a human decision — provenance goes back to
+        // MANUAL, not LDAP. Leaving it LDAP would mean the *next* mapping pass treats this
+        // already-restored MANUAL role as still eligible to raise unconditionally (silently
+        // discarding that the mapping's own grant was just revoked), and would never record a
+        // fresh baseline on a later raise either, since the raise branch only records one when
+        // raising *from* MANUAL — a second raise-then-revert cycle would then fall all the way to
+        // MEMBER instead of back to OPERATOR, which the third call below proves does not happen.
+        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
         expect(reverted.platformRoleManualBaseline).toBeNull()
+
+        // A third pass, still with no group match: the role is MANUAL again now, so
+        // `applyPlatformRoleGrant`'s own `isManuallyManaged` guard makes this a pure no-op — proving
+        // the revert really did restore MANUAL provenance, not just the OPERATOR role value. Under
+        // the pre-fix bug (provenance staying LDAP), this same call would incorrectly demote the
+        // user again, all the way to MEMBER (no baseline left to fall back on, since it was already
+        // cleared by the second call).
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+        })
+        const afterThirdPass = await userService(log).getOrThrow({ id: userId })
+        expect(afterThirdPass.platformRole).toBe(PlatformRole.OPERATOR)
+        expect(afterThirdPass.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
     })
 
     it('an admin role write in between forgets the recorded baseline, so the next raise captures the new manual role instead of the stale one', async () => {
