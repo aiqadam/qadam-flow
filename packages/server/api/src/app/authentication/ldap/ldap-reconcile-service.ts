@@ -5,6 +5,7 @@ import { transaction } from '../../core/db/transaction'
 import { distributedLock } from '../../database/redis-connections'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
+import { platformService } from '../../platform/platform.service'
 import { userService } from '../../user/user-service'
 import { userFederatedIdentityService } from '../federated-identity/user-federated-identity-service'
 import { ldapAttributeUtils } from './ldap-attributes'
@@ -72,6 +73,11 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
         return
     }
 
+    // Fetched once per platform, not once per user: the owner exclusion below and
+    // `ldapGroupMappingService`'s own per-user owner check are independent defense-in-depth layers
+    // for two different write paths (status vs. platformRole), not a single shared guard.
+    const platform = await platformService(log).getOneOrThrow(platformId)
+
     const deadline = Date.now() + (system.getNumber(AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) ?? DEFAULT_PLATFORM_TIME_BUDGET_MS)
 
     // FAIL-OPEN on outage: a connect or service-bind failure means the directory could not be
@@ -85,12 +91,15 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
     // Stamped for every identity this tick actually finished processing — gone, disabled, present
     // (whether or not its mapping re-application itself succeeded), and present-with-a-failed-group-
     // search (a deliberate, logged decision to skip mapping re-application, not an unresolved state)
-    // all count. An identity the time budget never reached this tick is not stamped, so the next
-    // tick's oldest-first ordering reaches it first.
-    await userFederatedIdentityService(log).markReconciled({ ids: processed.map((result) => result.identity.id), platformId, at: new Date().toISOString() })
+    // all count. A `skipped` identity (its own directory lookup failed) is deliberately excluded —
+    // it is retried *first* next tick (oldest/never-reconciled ordering), rather than being pushed
+    // to the back of the rotation as if it had been dealt with. An identity the time budget never
+    // reached this tick is never in `processed` at all, for the same reason.
+    const processedForStamping = processed.filter((result) => result.kind !== 'skipped')
+    await userFederatedIdentityService(log).markReconciled({ ids: processedForStamping.map((result) => result.identity.id), platformId, at: new Date().toISOString() })
 
     const pendingDeactivations = processed.filter((result): result is GoneOrDisabledResult => result.kind === 'gone' || result.kind === 'disabled')
-    await deactivateWithinSafetyValve({ platformId, linkedIdentities, pendingDeactivations, log })
+    await deactivateWithinSafetyValve({ platformId, platformOwnerId: platform.ownerId, linkedIdentities, processed: processedForStamping, pendingDeactivations, log })
 }
 
 // Connects once, then walks the (already oldest-reconciled-first-ordered) linked identities one at
@@ -141,7 +150,19 @@ async function processOneIdentity({ client, identity, resolved, log }: ProcessOn
         return { identity, kind: 'disabled' }
     }
 
-    await reactivateIfDirectoryDisabled({ identity, log })
+    // A failure here (a DB error, not a directory error) is this one user's own problem, exactly
+    // like the group-search failure below — never grounds to treat the whole platform as an
+    // outage. Before this was wrapped, an unhandled rejection here propagated out through the
+    // per-identity loop with no per-user catch, which `reconcileOnePlatform`'s own `tryCatch`
+    // around the *whole* budget-bounded loop then mistook for a directory outage — aborting every
+    // other identity in the same tick too, not just this one, and (since the loop's promise never
+    // resolved) stamping nobody at all, including identities already finished earlier in the same
+    // tick. The `directoryDisabledAt` marker is left exactly as it was on failure, so a later tick
+    // retries the reactivation once rotation reaches this identity again.
+    const { error: reactivateError } = await tryCatch(() => reactivateIfDirectoryDisabled({ identity, log }))
+    if (!isNil(reactivateError)) {
+        log.warn({ err: reactivateError, platformId: identity.platformId, userId: identity.userId }, '[ldapReconcileService] Could not reactivate this user this run')
+    }
 
     // A failure here is this one user's own problem (a bad `groupSearchFilter`, a transient
     // directory hiccup on the nested-group search) — never the whole platform's outage, and it
@@ -182,7 +203,18 @@ function isAccountDisabled(entry: Entry): boolean {
 // through per tick — and enough ticks add up to almost the whole platform being deactivated despite
 // the valve tripping on no single run. Both the slice-local and the platform-global thresholds are
 // checked; either one exceeded trips the valve for this tick.
-async function deactivateWithinSafetyValve({ platformId, linkedIdentities, pendingDeactivations, log }: DeactivateWithinSafetyValveParams): Promise<void> {
+//
+// The slice denominator is the ACTIVE count among every identity this tick actually *processed*
+// (`present`/`gone`/`disabled` — everything but `skipped`, which was never reached in any
+// meaningful sense), not merely the ones already headed for deactivation — using the
+// deactivation candidates as their own denominator makes the numerator and denominator the same
+// set, so the ratio is always ~100% and the valve trips on any tick with more than a
+// percent-of-one departure, breaking ordinary offboarding outright. A tiny, budget-limited slice
+// where every reached identity happens to be a genuine departure (e.g. two real departures land in
+// the same small slice) can still legitimately trip the valve — that is accepted, not a bug: the
+// next tick's rotation reaches a different slice, and a real, larger-than-expected wave of
+// departures across the *whole* platform is still bounded by the global threshold either way.
+async function deactivateWithinSafetyValve({ platformId, platformOwnerId, linkedIdentities, processed, pendingDeactivations, log }: DeactivateWithinSafetyValveParams): Promise<void> {
     const statusByUserId = await userService(log).getStatusesByIds({ ids: linkedIdentities.map((identity) => identity.userId), platformId })
     const globalActiveCount = [...statusByUserId.values()].filter((status) => status === UserStatus.ACTIVE).length
 
@@ -190,11 +222,7 @@ async function deactivateWithinSafetyValve({ platformId, linkedIdentities, pendi
 
     const safetyValvePercent = system.getNumber(AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT) ?? DEFAULT_SAFETY_VALVE_PERCENT
     const globalMaxDeactivations = Math.ceil((globalActiveCount * safetyValvePercent) / 100)
-    // The slice denominator is the count of currently-ACTIVE users among the identities *this tick
-    // actually processed* (present + pending-deactivation, i.e. everything but the ones the time
-    // budget never reached) — not the platform-wide ACTIVE count, which a budget-limited slice can
-    // be a small, misleading fraction of.
-    const sliceMaxDeactivations = Math.ceil((sliceActiveCount({ pendingDeactivations, statusByUserId }) * safetyValvePercent) / 100)
+    const sliceMaxDeactivations = Math.ceil((sliceActiveCount({ processed, statusByUserId }) * safetyValvePercent) / 100)
     const safetyValveTripped = realDeactivations.length > globalMaxDeactivations || realDeactivations.length > sliceMaxDeactivations
 
     if (safetyValveTripped) {
@@ -208,30 +236,32 @@ async function deactivateWithinSafetyValve({ platformId, linkedIdentities, pendi
         return
     }
     for (const result of realDeactivations) {
-        await deactivateUser({ identity: result.identity, log })
+        await deactivateUser({ identity: result.identity, platformOwnerId, log })
     }
 }
 
 type SliceActiveCountParams = {
-    pendingDeactivations: GoneOrDisabledResult[]
+    processed: PerUserResult[]
     statusByUserId: Map<string, UserStatus>
 }
 
-// This tick's processed slice, restricted to the identities whose current status is ACTIVE. Every
-// pending deactivation is, by construction, a member of the processed slice; a present identity
-// this tick also processed contributes to the slice too, but a present identity carries no
-// candidate-deactivation record to read it back from — so the slice's ACTIVE count for the safety
-// valve is intentionally the narrower, safer bound: at least the pending deactivations themselves,
-// which is exactly the set the valve's own numerator is compared against.
-function sliceActiveCount({ pendingDeactivations, statusByUserId }: SliceActiveCountParams): number {
-    return pendingDeactivations.filter((result) => statusByUserId.get(result.identity.userId) === UserStatus.ACTIVE).length
+// This tick's processed slice (every identity actually searched and classified this run —
+// `present`, `gone` or `disabled`; `skipped` was never reached in any meaningful sense and is
+// excluded), restricted to the ones whose current status is ACTIVE.
+function sliceActiveCount({ processed, statusByUserId }: SliceActiveCountParams): number {
+    return processed.filter((result) => statusByUserId.get(result.identity.userId) === UserStatus.ACTIVE).length
 }
 
 // The owner can never hold an LDAP federated identity in the first place
 // (`assertIdentityIsNotPrivilegedElsewhere` in `ldap-authn-service.ts` refuses to ever link or
-// adopt one), so `userService.update` refusing to deactivate the owner is defense in depth here,
-// not the primary guard — but it is still respected: a rejection just means this one user is
-// skipped, not that the whole run aborts.
+// adopt one), so the explicit `platformOwnerId` check below is defense in depth here, not the
+// primary guard — but it is still respected: skipping the owner just means this one user is
+// left alone, not that the whole run aborts. This check is this call site's own responsibility
+// now: `transitionStatusIfCurrentlyEquals` is a generic conditional status transition with no
+// owner awareness of its own (reactivation, the other caller, never needs one — the owner can
+// only ever reach it via this same fail-safe not mattering, since they can't hold a federated row
+// to reactivate in the first place), unlike `userService.update`, which used to carry this guard
+// internally for every caller.
 //
 // The conditional transition (`UPDATE ... WHERE status = 'ACTIVE'`) and the `directoryDisabledAt`
 // stamp both run inside one transaction: the conditional write is what makes "is this user still
@@ -242,7 +272,10 @@ function sliceActiveCount({ pendingDeactivations, statusByUserId }: SliceActiveC
 // used to be able to leave a user deactivated with no marker recording that reconcile was the one
 // that did it, which then makes that deactivation look exactly like an admin's own (never
 // auto-reactivated) — the single transaction closes that too.
-async function deactivateUser({ identity, log }: DeactivateUserParams): Promise<void> {
+async function deactivateUser({ identity, platformOwnerId, log }: DeactivateUserParams): Promise<void> {
+    if (identity.userId === platformOwnerId) {
+        return
+    }
     const { error } = await tryCatch(() => transaction(async (entityManager) => {
         const wasStillActive = await userService(log).transitionStatusIfCurrentlyEquals({
             id: identity.userId,
@@ -320,13 +353,16 @@ type ProcessOneIdentityParams = {
 
 type DeactivateWithinSafetyValveParams = {
     platformId: PlatformId
+    platformOwnerId: string
     linkedIdentities: UserFederatedIdentity[]
+    processed: PerUserResult[]
     pendingDeactivations: GoneOrDisabledResult[]
     log: FastifyBaseLogger
 }
 
 type DeactivateUserParams = {
     identity: UserFederatedIdentity
+    platformOwnerId: string
     log: FastifyBaseLogger
 }
 

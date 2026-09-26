@@ -28,6 +28,31 @@ vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
     },
 }))
 
+// Everything about `userFederatedIdentityService` runs for real *except*
+// `clearDirectoryDisabledAtIfSet`, which fails on demand for one specific federated-identity id —
+// simulating a per-user DB error during reactivation without faking the whole service, so a real
+// transaction still runs (and rolls back) for every other identity in the same tick.
+const { clearDirectoryDisabledAtIfSetFailuresById } = vi.hoisted(() => ({ clearDirectoryDisabledAtIfSetFailuresById: new Set<string>() }))
+
+vi.mock('../../../../src/app/authentication/federated-identity/user-federated-identity-service', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../../src/app/authentication/federated-identity/user-federated-identity-service')>()
+    return {
+        ...actual,
+        userFederatedIdentityService: (...args: Parameters<typeof actual.userFederatedIdentityService>) => {
+            const real = actual.userFederatedIdentityService(...args)
+            return {
+                ...real,
+                clearDirectoryDisabledAtIfSet: (params: Parameters<typeof real.clearDirectoryDisabledAtIfSet>[0]) => {
+                    if (clearDirectoryDisabledAtIfSetFailuresById.has(params.id)) {
+                        return Promise.reject(new Error('simulated DB error during reactivation'))
+                    }
+                    return real.clearDirectoryDisabledAtIfSet(params)
+                },
+            }
+        },
+    }
+})
+
 const log = pino({ level: 'silent' })
 
 beforeAll(async () => {
@@ -44,11 +69,13 @@ beforeEach(async () => {
     serviceBind.mockReset().mockResolvedValue(undefined)
     searchBySubject.mockReset()
     resolveMemberGroupDns.mockReset().mockResolvedValue([])
+    clearDirectoryDisabledAtIfSetFailuresById.clear()
 })
 
 afterEach(() => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
+    vi.useRealTimers()
 })
 
 async function saveEnabledLdapConfig(platformId: string, configOverrides: Record<string, unknown> = {}): Promise<void> {
@@ -148,6 +175,30 @@ describe('ldapReconcileService.reconcileAllPlatforms — deactivation', () => {
         const user = await userService(log).getOrThrow({ id: userId })
         expect(user.status).toBe(UserStatus.ACTIVE)
     })
+
+    // `deactivateUser` moved off `userService.update` (which used to carry an owner
+    // guard for every caller) onto the generic `transitionStatusIfCurrentlyEquals`, which has no
+    // owner awareness of its own — silently dropping this defense-in-depth layer for reconcile's
+    // deactivation path specifically. The owner can never acquire a federated LDAP identity through
+    // the normal sign-in path (`assertIdentityIsNotPrivilegedElsewhere` in `ldap-authn-service.ts`
+    // refuses it outright), so the row here is inserted directly to exercise reconcile's own guard
+    // in isolation, independent of that primary one.
+    it('never deactivates the platform owner, even if a federated row somehow points at them', async () => {
+        const { mockPlatform, mockOwner } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        await userFederatedIdentityService(log).create({
+            platformId: mockPlatform.id,
+            userId: mockOwner.id,
+            provider: FederatedIdentityProvider.LDAP,
+            subject: 'owner-subject-0000-0000-000000000000',
+        })
+        searchBySubject.mockResolvedValue(null)
+
+        await reconcile()
+
+        const owner = await userService(log).getOrThrow({ id: mockOwner.id })
+        expect(owner.status).toBe(UserStatus.ACTIVE)
+    })
 })
 
 describe('ldapReconcileService.reconcileAllPlatforms — reactivation', () => {
@@ -179,6 +230,51 @@ describe('ldapReconcileService.reconcileAllPlatforms — reactivation', () => {
 
         const user = await userService(log).getOrThrow({ id: userId })
         expect(user.status).toBe(UserStatus.INACTIVE)
+    })
+
+    // A DB error reactivating one specific user (not a directory error) used to
+    // propagate out of the per-identity loop with no per-user catch, which the outer `tryCatch`
+    // around the whole budget-bounded loop then mistook for a directory outage — aborting every
+    // other identity in the same tick too (nobody reactivated, nobody stamped, not even users
+    // already finished earlier in the same tick) rather than being this one user's own problem.
+    it('a DB error reactivating one user does not abort the rest of the platform\'s tick, and every identity still gets stamped', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        // The safety valve is irrelevant to what this test is about; a tiny linked population
+        // where every one of them is a genuine departure would otherwise trip it (a different,
+        // already-covered scenario), leaving nobody deactivated in the setup step below.
+        const originalGetNumber = system.getNumber.bind(system)
+        vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
+            if (prop === AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT) {
+                return 100
+            }
+            return originalGetNumber(prop)
+        })
+        searchBySubject.mockResolvedValue(null)
+        const linked = await Promise.all(Array.from({ length: 3 }, (_, i) =>
+            createLinkedUser({ platformId: mockPlatform.id, subject: `ff00000${i}-0000-0000-0000-000000000000` })))
+        await reconcile()
+        for (const { userId } of linked) {
+            expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.INACTIVE)
+        }
+
+        clearDirectoryDisabledAtIfSetFailuresById.add(linked[0].federatedId)
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) =>
+            Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }))
+
+        await reconcile()
+
+        const brokenUser = await userService(log).getOrThrow({ id: linked[0].userId })
+        expect(brokenUser.status).toBe(UserStatus.INACTIVE)
+        for (const { userId } of linked.slice(1)) {
+            expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.ACTIVE)
+        }
+
+        const federatedRepo = databaseConnection().getRepository('user_federated_identity')
+        for (const { federatedId } of linked) {
+            const row = await federatedRepo.findOneByOrFail({ id: federatedId })
+            expect(row.lastReconciledAt).not.toBeNull()
+        }
     })
 })
 
@@ -264,6 +360,44 @@ describe('ldapReconcileService.reconcileAllPlatforms — safety valve', () => {
         const newDepartureUser = await userService(log).getOrThrow({ id: newDeparture.userId })
         expect(newDepartureUser.status).toBe(UserStatus.INACTIVE)
         for (const { userId } of activePresent) {
+            const user = await userService(log).getOrThrow({ id: userId })
+            expect(user.status).toBe(UserStatus.ACTIVE)
+        }
+    })
+
+    // The slice denominator must be the ACTIVE count among *every* identity this
+    // tick processed (present, gone and disabled), not only the ones already headed for
+    // deactivation — using the deactivation candidates as their own denominator makes numerator and
+    // denominator the same set, so the ratio is always ~100% and the valve trips on any tick with
+    // more than a percent-of-one departure. With a realistic mix (dozens of present users, a
+    // handful of genuine departures) and the full default budget (every linked user reached in one
+    // tick, no rotation involved), ordinary offboarding must actually go through.
+    it('deactivates every genuine departure among dozens of present users, under the full default budget', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+
+        const present = await Promise.all(
+            Array.from({ length: 30 }, (_, i) => createLinkedUser({ platformId: mockPlatform.id, subject: `dd000000-0000-0000-0000-${String(i).padStart(12, '0')}` })),
+        )
+        const departed = await Promise.all(
+            Array.from({ length: 3 }, (_, i) => createLinkedUser({ platformId: mockPlatform.id, subject: `ee000000-0000-0000-0000-${String(i).padStart(12, '0')}` })),
+        )
+
+        const departedSubjects = new Set(departed.map((u) => u.subject))
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) => {
+            if (departedSubjects.has(subject)) {
+                return Promise.resolve(null)
+            }
+            return Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` })
+        })
+
+        await reconcile()
+
+        for (const { userId } of departed) {
+            const user = await userService(log).getOrThrow({ id: userId })
+            expect(user.status).toBe(UserStatus.INACTIVE)
+        }
+        for (const { userId } of present) {
             const user = await userService(log).getOrThrow({ id: userId })
             expect(user.status).toBe(UserStatus.ACTIVE)
         }
@@ -415,12 +549,11 @@ describe('ldapReconcileService.reconcileAllPlatforms — time budget rotates acr
         const afterSecondRun = await stampedSubjects()
         const newlyStampedBySecondRun = [...afterSecondRun].filter((subject) => !firstRunStamped.has(subject))
 
+        // Rotation, not re-processing the same slice: the second run reaches at least one user
+        // the first run's own budget left untouched. (`newlyStampedBySecondRun` is already
+        // filtered to exclude every subject `firstRunStamped` contains, by construction — a loop
+        // re-asserting that filter's own postcondition over its result would prove nothing.)
         expect(newlyStampedBySecondRun.length).toBeGreaterThan(0)
-        // Rotation, not re-processing the same slice: the second run's newly-stamped users are
-        // exactly the ones the first run's own budget left untouched.
-        for (const subject of newlyStampedBySecondRun) {
-            expect(firstRunStamped.has(subject)).toBe(false)
-        }
     })
 })
 
@@ -491,17 +624,18 @@ describe('ldapReconcileService.reconcileAllPlatforms — per-user processing und
         for (const row of rowsBefore) {
             expect(row.lastReconciledAt).not.toBeNull()
         }
-        // A single, one-time real delay (not a per-call sleep — that pattern is what made an
-        // earlier version of this suite's rotation test timing-fragile) guarantees the
-        // millisecond-resolution `lastReconciledAt` timestamp the tight tick below writes cannot
-        // collide with the one the generous pass above already wrote, however fast both happen to
-        // run — the "not stamped" assertion needs a real, not simulated, gap between the two.
-        await new Promise((resolve) => {
-            setTimeout(resolve, 5) 
-        })
 
         // The group no longer grants anyone a role, and a tiny, injectable-clock-driven time
-        // budget only lets this tick reach a strict prefix of the three linked users.
+        // budget only lets this tick reach a strict prefix of the three linked users. Faking only
+        // `Date` (not the timer scheduler `setTimeout` etc. run on) means real Postgres/Redis I/O
+        // in the reconcile call below is unaffected — only `Date.now()` (the deadline check) and
+        // `new Date()` (the `markReconciled` timestamp `reconcileOnePlatform` stamps with) move
+        // together, deterministically, off one fake clock. Jumping the clock forward a full
+        // second before this pass starts is what makes the "not stamped" assertion below reliable
+        // with no real sleep: the tight tick's own `lastReconciledAt` writes are guaranteed to be
+        // strictly later than the generous pass's, however fast both actually execute.
+        vi.useFakeTimers({ toFake: ['Date'] })
+        vi.setSystemTime(Date.now() + 1000)
         resolveMemberGroupDns.mockResolvedValue([])
         const originalGetNumber = system.getNumber.bind(system)
         vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
@@ -510,10 +644,8 @@ describe('ldapReconcileService.reconcileAllPlatforms — per-user processing und
             }
             return originalGetNumber(prop)
         })
-        let clock = 5_000_000
-        vi.spyOn(Date, 'now').mockImplementation(() => clock)
         searchBySubject.mockImplementation(({ subject }: { subject: string }) => {
-            clock += 60
+            vi.setSystemTime(Date.now() + 60)
             return Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` })
         })
 
@@ -548,7 +680,7 @@ describe('ldapReconcileService.reconcileAllPlatforms — per-user processing und
     })
 })
 
-// H2: the safety valve must be judged against the slice this tick actually processed, not only
+// The safety valve must be judged against the slice this tick actually processed, not only
 // the platform's full ACTIVE population — otherwise a directory-wide misconfiguration (a wrong
 // `baseDn` making every user look gone) can still slip a small, valve-respecting fraction of
 // ACTIVE users through per tick, and enough ticks add up to most of the platform being
