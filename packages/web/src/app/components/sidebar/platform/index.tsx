@@ -143,8 +143,6 @@ export function PlatformSidebar() {
           to: '/platform/security/sso',
           label: t('Single Sign On'),
           icon: LogInIcon,
-          locked: !platform.plan.ssoEnabled,
-          badge: !platform.plan.ssoEnabled ? t('Soon') : undefined,
         },
         {
           to: '/platform/security/project-roles',

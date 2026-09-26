@@ -1,10 +1,15 @@
 export { aiProviderApi } from './api/ai-provider-api';
 export { analyticsApi } from './api/analytics-api';
+export { ldapConfigApi } from './api/ldap-config-api';
 export { piecesTagsApi } from './api/qadams-tags';
 export { samlSsoApi } from './api/saml-sso-api';
 export { workersApi } from './api/workers-api';
 export { platformAnalyticsHooks } from './hooks/analytics-hooks';
-export { ssoMutations } from './hooks/sso-hooks';
+export {
+  ldapConfigKeys,
+  ldapConfigQueries,
+  ldapConfigMutations,
+} from './hooks/ldap-config-hooks';
 export {
   aiProviderQueries,
   aiProviderMutations,
