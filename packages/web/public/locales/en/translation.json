@@ -2077,6 +2077,7 @@
   "ldapGroupDnTooLong": "Group DN is too long",
   "tooManyLdapGroupMappings": "Too many group mappings — remove some and try again",
   "tooManyLdapGroupMappingProjects": "Too many projects in this group mapping — remove some and try again",
+  "invalidLdapGroupDnEncoding": "This group DN can't be reliably compared to a directory group name — check for a malformed escape sequence",
   "LDAP configuration updated": "LDAP configuration updated",
   "LDAP / Active Directory": "LDAP / Active Directory",
   "Let users sign in with their on-premise directory username and password.": "Let users sign in with their on-premise directory username and password.",

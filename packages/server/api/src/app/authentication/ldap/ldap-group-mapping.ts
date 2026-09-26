@@ -30,6 +30,22 @@ const PROJECT_ROLE_RANK: Record<DefaultProjectRole, number> = {
 // structure — still a string, but one whose *shape* fully determines equality, not one built by
 // concatenating fields that could have come from a different split.
 //
+// Every value in that structure is itself tagged — `['str', decodedString]` for an ordinary
+// escaped/literal value, `['ber', lowercasedHex]` for RFC 4514's `#<hex>` BER form (see
+// `normalizeAvaValue`) — as a *structural* array element, never as a string prefix folded into the
+// same space `decodedString` itself lives in. An in-band string sentinel (e.g. a literal
+// `"#ber:04024869"` prefix, or a `\u0000`-delimited marker) is forgeable: an attacker just writes
+// an ordinary, validly-escaped value whose *decoded* text happens to equal the sentinel verbatim,
+// and it then compares equal to whatever the sentinel was supposed to mean, defeating the very
+// distinction the sentinel existed to draw. Tagging with a distinct array shape closes this
+// permanently, because nothing a caller supplies as raw DN text can ever produce a bare `'ber'` or
+// `'str'` string in the *tag* position — that position is never fed from decoded input at all.
+// Invalid input (an attribute-value assertion with no unescaped `=`, or a hex escape that decodes
+// to invalid UTF-8) makes the *whole DN* normalize to `null` instead of embedding a sentinel value
+// anywhere in the structure, for the same reason: `resolveGrants` treats `null` as never matching
+// anything, including another `null` — two independently-invalid DNs must not accidentally compare
+// equal to each other just because they both failed to parse the same way.
+//
 // Further corrections, all defense-in-depth against a spoofed value colliding with a real one:
 // - Hex escapes (`\XX`) are decoded as raw bytes accumulated and decoded once as UTF-8 (in `fatal`
 //   mode — see `decodeTokens`), not one `String.fromCharCode` per byte — a multi-byte UTF-8
@@ -41,12 +57,15 @@ const PROJECT_ROLE_RANK: Record<DefaultProjectRole, number> = {
 //   only a token that is *itself* an unescaped literal ASCII space — a component that legitimately
 //   ends with an *escaped* space (`\ `) is never trimmed, because that token's kind is
 //   `escapedChar`, not `literal`, regardless of its position.
-// - An attribute-value assertion with no unescaped `=` at all (`parseAva`) and a value in RFC
-//   4514's BER-hex form (`normalizeAvaValue`) each get their own sentinel/tag rather than being
-//   coerced into the same shape a differently-written, but semantically different, DN would
-//   produce.
-function normalizeGroupDn(dn: string): string {
-    const rdns = splitOnUnescapedChar({ raw: dn, separator: ',' }).map(parseRdn)
+function normalizeGroupDn(dn: string): string | null {
+    const rdns: NormalizedRdn[] = []
+    for (const rawRdn of splitOnUnescapedChar({ raw: dn, separator: ',' })) {
+        const rdn = parseRdn(rawRdn)
+        if (isNil(rdn)) {
+            return null
+        }
+        rdns.push(rdn)
+    }
     return JSON.stringify(rdns)
 }
 
@@ -103,48 +122,65 @@ function isHexEscapeAt({ raw, backslashIndex }: IsHexEscapeAtParams): boolean {
 // One RDN is an order-independent set of attribute-value assertions (single-valued RDNs are the
 // common case of a one-element set); `+`-joined AVAs within it are sorted so that `a=1+b=2` and
 // `b=2+a=1` — the same multi-valued RDN, written in a different order — normalize identically,
-// without ever merging the `+` boundary into the same separator `,` uses between RDNs.
-function parseRdn(rawRdn: string): [string, string][] {
-    return splitOnUnescapedChar({ raw: rawRdn, separator: '+' })
-        .map(parseAva)
-        .sort(([typeA, valueA], [typeB, valueB]) => {
-            const keyA = `${typeA}=${valueA}`
-            const keyB = `${typeB}=${valueB}`
-            if (keyA < keyB) return -1
-            if (keyA > keyB) return 1
-            return 0
-        })
+// without ever merging the `+` boundary into the same separator `,` uses between RDNs. Any invalid
+// AVA anywhere in the RDN makes the whole RDN (and so the whole DN, via `normalizeGroupDn`) `null`.
+function parseRdn(rawRdn: string): NormalizedRdn | null {
+    const avas: NormalizedAva[] = []
+    for (const rawAva of splitOnUnescapedChar({ raw: rawRdn, separator: '+' })) {
+        const ava = parseAva(rawAva)
+        if (isNil(ava)) {
+            return null
+        }
+        avas.push(ava)
+    }
+    return avas.sort((a, b) => {
+        const keyA = JSON.stringify(a)
+        const keyB = JSON.stringify(b)
+        if (keyA < keyB) return -1
+        if (keyA > keyB) return 1
+        return 0
+    })
 }
 
-function parseAva(rawAva: string): [string, string] {
+function parseAva(rawAva: string): NormalizedAva | null {
     const equalsIndex = findFirstUnescapedChar({ raw: rawAva, char: '=' })
     if (equalsIndex === -1) {
         // No unescaped `=` at all means this is not a valid attribute-value assertion per RFC
         // 4514 — coercing it into `[wholeString, '']` would make the invalid `cn` and the valid,
-        // empty-valued `cn=` normalize identically (`cn=,dc=x` vs `cn,dc=x` colliding). The
-        // sentinel folds the raw text back in, so two different invalid AVAs can still only ever
-        // collide with each other when byte-for-byte identical, and never with a valid AVA at all
-        // — no real attribute type can contain a NUL.
-        return [`\u0000invalid-ava\u0000${rawAva}`, rawAva]
+        // empty-valued `cn=` normalize identically (`cn=,dc=x` vs `cn,dc=x` colliding).
+        return null
     }
     const rawType = rawAva.slice(0, equalsIndex)
     const rawValue = rawAva.slice(equalsIndex + 1)
-    return [normalizeComponent(rawType), normalizeAvaValue(rawValue)]
+    const type = normalizeComponent(rawType)
+    if (isNil(type)) {
+        return null
+    }
+    const value = normalizeAvaValue(rawValue)
+    if (isNil(value)) {
+        return null
+    }
+    return [type, value]
 }
 
 // RFC 4514's `#<hex>` form (an unescaped leading `#`) is a BER-encoded attribute value, not the
 // literal text "#<hex>" — actually decoding the BER (a meaningful amount of ASN.1 machinery for a
 // path directory administrators are not expected to exercise for a role-granting group) is more
-// than this comparison needs; instead the value is tagged so it can never normalize the same way
-// an escaped `\#<hex>` (the literal string starting with a hash character) does, closing the
-// collision without needing to understand the BER content itself. A `#` that isn't the value's
-// very first raw character — escaped or not — is always just a literal character, per the same
-// grammar, so only this leading, unescaped case needs the special path.
-function normalizeAvaValue(rawValue: string): string {
+// than this comparison needs; instead the value is tagged (`['ber', hex]`, structurally distinct
+// from `['str', decoded]`) so it can never normalize the same way an escaped `\#<hex>` (the literal
+// string starting with a hash character) does, closing the collision without needing to understand
+// the BER content itself. A `#` that isn't the value's very first raw character — escaped or not —
+// is always just a literal character, per the same grammar, so only this leading, unescaped case
+// needs the special path.
+function normalizeAvaValue(rawValue: string): NormalizedAvaValue | null {
     if (rawValue.startsWith('#')) {
-        return `#ber:${lowercaseAsciiOnly(rawValue.slice(1))}`
+        return ['ber', lowercaseAsciiOnly(rawValue.slice(1))]
     }
-    return normalizeComponent(rawValue)
+    const decoded = normalizeComponent(rawValue)
+    if (isNil(decoded)) {
+        return null
+    }
+    return ['str', decoded]
 }
 
 // Tokenises a raw (still-escaped) component into a sequence of literal characters, plain
@@ -192,18 +228,17 @@ function isLiteralAsciiSpace(token: RawToken): boolean {
     return token.kind === 'literal' && token.char === ' '
 }
 
-// Resolves the token list to its final string: a run of one or more consecutive `escapedHexByte`
-// tokens is decoded once, as UTF-8, from the accumulated raw bytes — never one
+// Resolves the token list to its final string, or `null`: a run of one or more consecutive
+// `escapedHexByte` tokens is decoded once, as UTF-8, from the accumulated raw bytes — never one
 // `String.fromCharCode` per byte, which would silently misdecode any multi-byte UTF-8 character
 // (see the design comment on `normalizeGroupDn`). The decoder runs in `fatal` mode: a byte
 // sequence a real UTF-8 producer could never have written (as opposed to `Buffer#toString('utf8')`,
-// which silently substitutes U+FFFD for it) instead makes the *whole* component the sentinel below
-// — an invalid escape must make the DN fail to match anything, never quietly compare equal to
-// whatever `�` happened to also come from. Every other token contributes its own resolved
-// character directly.
-const INVALID_UTF8_ESCAPE_SENTINEL = '\u0000invalid-utf8-escape\u0000'
-
-function decodeTokens(tokens: RawToken[]): string {
+// which silently substitutes U+FFFD for it) instead makes the *whole* component (and so, via
+// `normalizeGroupDn`, the whole DN) `null` — an invalid escape must make the DN fail to match
+// anything, never quietly compare equal to whatever a literal `�` — or another invalid escape
+// entirely — happened to also produce. Every other token contributes its own resolved character
+// directly.
+function decodeTokens(tokens: RawToken[]): string | null {
     let result = ''
     let hexRun: number[] = []
     let sawInvalidUtf8 = false
@@ -229,12 +264,16 @@ function decodeTokens(tokens: RawToken[]): string {
         result += token.char
     }
     flushHexRun()
-    return sawInvalidUtf8 ? INVALID_UTF8_ESCAPE_SENTINEL : result
+    return sawInvalidUtf8 ? null : result
 }
 
-function normalizeComponent(raw: string): string {
+function normalizeComponent(raw: string): string | null {
     const trimmed = trimLiteralAsciiSpaceTokens(tokenizeComponent(raw))
-    return lowercaseAsciiOnly(decodeTokens(trimmed))
+    const decoded = decodeTokens(trimmed)
+    if (isNil(decoded)) {
+        return null
+    }
+    return lowercaseAsciiOnly(decoded)
 }
 
 const ASCII_UPPER_A = 0x41
@@ -262,8 +301,16 @@ function lowercaseAsciiOnly(value: string): string {
 // the platform-role decision — "no mapping sets a platform role" (distinct from "every mapping
 // grants MEMBER") is exactly what leaves the caller's existing platform role untouched.
 function resolveGrants({ groupMappings, memberGroupDns }: ResolveGrantsParams): ResolvedGrants {
-    const normalizedMemberDns = new Set(memberGroupDns.map(normalizeGroupDn))
-    const matchedMappings = groupMappings.filter((mapping) => normalizedMemberDns.has(normalizeGroupDn(mapping.groupDn)))
+    // `null` (an unparseable DN, on either side) is filtered out here rather than added to the
+    // `Set`/checked against it — `Set#has(null)` would happily report `true` once any `null` is a
+    // member, treating every other unparseable DN as a match for it. Filtering first means a
+    // mapping whose own `groupDn` fails to normalize can never match anything, full stop, the same
+    // as an unparseable reported group.
+    const normalizedMemberDns = new Set(memberGroupDns.map(normalizeGroupDn).filter((dn): dn is string => dn !== null))
+    const matchedMappings = groupMappings.filter((mapping) => {
+        const normalized = normalizeGroupDn(mapping.groupDn)
+        return normalized !== null && normalizedMemberDns.has(normalized)
+    })
 
     const platformRole = matchedMappings.reduce<PlatformRole | null>((highest, mapping) => {
         if (isNil(mapping.platformRole)) {
@@ -290,8 +337,7 @@ function resolveGrants({ groupMappings, memberGroupDns }: ResolveGrantsParams): 
 
 // Exposed so `ldap-group-mapping-service.ts` can decide whether a mapped role *raises* a
 // MANUAL role (allowed — and the point at which provenance flips to LDAP) or would *lower* one
-// (never allowed — see the round-3 fix on `applyPlatformRoleGrant`'s own comment) without
-// duplicating the rank table.
+// (never allowed — see `applyPlatformRoleGrant`'s own comment) without duplicating the rank table.
 function platformRoleRank(role: PlatformRole): number {
     return PLATFORM_ROLE_RANK[role]
 }
@@ -315,6 +361,13 @@ type RawToken =
     | { kind: 'literal', char: string }
     | { kind: 'escapedChar', char: string }
     | { kind: 'escapedHexByte', byte: number }
+
+// The structural tag lives in the tuple's own shape (`'str'` vs `'ber'` at index 0), never as text
+// mixed into the decoded value at index 1 — see `normalizeGroupDn`'s own comment for why an in-band
+// string tag is forgeable and this one is not.
+type NormalizedAvaValue = ['str', string] | ['ber', string]
+type NormalizedAva = [string, NormalizedAvaValue]
+type NormalizedRdn = NormalizedAva[]
 
 type ResolveGrantsParams = {
     groupMappings: LdapGroupMapping[]

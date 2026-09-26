@@ -30,6 +30,7 @@ import { projectService } from '../../project/project-service'
 import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapClient, ResolvedLdapConnectionConfig } from './ldap-client'
 import { PlatformLdapConfigEntity, PlatformLdapConfigSchema } from './ldap-config-entity'
+import { ldapGroupMappingUtils } from './ldap-group-mapping'
 import { LdapStageError } from './ldap-stage-error'
 import { ldapUsernameUtils } from './ldap-username'
 
@@ -68,6 +69,7 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // the row in a state that would not have passed validation on its own.
         const config = LdapConfig.parse({ ...existingConfig, ...request })
         await assertGroupMappingProjectsBelongToPlatform({ platformId, groupMappings: config.groupMappings, log })
+        assertGroupMappingDnsAreComparable(config.groupMappings)
 
         // B2 (owner/admin takeover): `linkExistingByEmail: true` hands every future directory
         // entry that matches an existing local email the ability to sign in as that account.
@@ -88,7 +90,7 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // still resend the exact same config unchanged (a genuine no-op, checked by
         // `configHasChanged` below) without being the owner.
         //
-        // Round 3: `configHasChanged` only ever compares `LdapConfig` itself — `bindPassword` and
+        // `configHasChanged` only ever compares `LdapConfig` itself — `bindPassword` and
         // `caCertificate` are stored, and touched, entirely outside it, so a non-owner could swap
         // either one while the config stayed sensitive without the gate ever seeing a change. Both
         // are checked here explicitly, alongside `configHasChanged`, for exactly that reason.
@@ -341,6 +343,27 @@ async function assertGroupMappingProjectsBelongToPlatform({ platformId, groupMap
             throw new QadamFlowError({
                 code: ErrorCode.VALIDATION,
                 params: { message: `Group mapping project "${projectId}" must be a TEAM project` },
+            })
+        }
+    }
+}
+
+// A `groupDn` reconcile/sign-in can never actually compare (an attribute-value assertion with no
+// `=`, or a hex escape that decodes to invalid UTF-8 — `normalizeGroupDn` returns `null` for
+// either) would otherwise sit in the config forever, silently granting nothing: `resolveGrants`
+// treats a `null`-normalizing mapping as never matching any reported group, by design (M2b), so
+// there is no later point where this mistake becomes visible on its own. Refusing it at save time,
+// the one moment an admin can still see and fix their own typo, is the only point a stored mapping
+// like this is ever caught at all. Uses the i18n-key message convention (`params.message` reaches
+// the client's form as-is and is translated there), matching every other zod-adjacent validation
+// message this schema already carries — not the ad hoc plain-English messages elsewhere in this
+// function, which predate that convention.
+function assertGroupMappingDnsAreComparable(groupMappings: LdapGroupMapping[]): void {
+    for (const mapping of groupMappings) {
+        if (ldapGroupMappingUtils.normalizeGroupDn(mapping.groupDn) === null) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'invalidLdapGroupDnEncoding' },
             })
         }
     }

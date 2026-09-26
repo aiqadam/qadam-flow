@@ -2077,6 +2077,7 @@
   "ldapGroupDnTooLong": "DN группы слишком длинный",
   "tooManyLdapGroupMappings": "Слишком много сопоставлений групп — удалите некоторые и повторите попытку",
   "tooManyLdapGroupMappingProjects": "Слишком много проектов в этом сопоставлении групп — удалите некоторые и повторите попытку",
+  "invalidLdapGroupDnEncoding": "Этот DN группы невозможно надёжно сравнить с именем группы в каталоге — проверьте, нет ли некорректной escape-последовательности",
   "LDAP configuration updated": "Конфигурация LDAP обновлена",
   "LDAP / Active Directory": "LDAP / Active Directory",
   "Let users sign in with their on-premise directory username and password.": "Разрешить пользователям входить по имени пользователя и паролю из локального каталога.",

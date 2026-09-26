@@ -2077,6 +2077,7 @@
   "ldapGroupDnTooLong": "Топ DN тым ұзын",
   "tooManyLdapGroupMappings": "Топ сәйкестіктері тым көп — кейбіреулерін алып тастап, қайта көріңіз",
   "tooManyLdapGroupMappingProjects": "Бұл топ сәйкестігінде жобалар тым көп — кейбіреулерін алып тастап, қайта көріңіз",
+  "invalidLdapGroupDnEncoding": "Бұл топ DN-ін каталогтағы топ атауымен сенімді түрде салыстыру мүмкін емес — қате escape тізбегін тексеріңіз",
   "LDAP configuration updated": "LDAP конфигурациясы жаңартылды",
   "LDAP / Active Directory": "LDAP / Active Directory",
   "Let users sign in with their on-premise directory username and password.": "Пайдаланушыларға жергілікті каталогтағы пайдаланушы аты мен құпия сөзі арқылы кіруге рұқсат етіңіз.",

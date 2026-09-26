@@ -490,6 +490,19 @@ describe('Platform LDAP config API', () => {
 
             expect(response.statusCode).toBe(StatusCodes.CONFLICT)
         })
+
+        // A `groupDn` reconcile/sign-in can never actually compare against anything
+        // (an attribute-value assertion with no `=`) would otherwise sit in the stored config
+        // forever, silently granting nothing — `resolveGrants` treats it as never matching by
+        // design, so save time is the only point this mistake is ever visible at all.
+        it('rejects a group mapping whose groupDn cannot be normalized (an AVA with no "=")', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn,dc=example,dc=com', platformRole: 'ADMIN', projects: [] }],
+            }))
+
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response.json().params.message).toBe('invalidLdapGroupDnEncoding')
+        })
     })
 
     // Coordinator follow-up: deleting a config is exactly as sensitive as changing it while

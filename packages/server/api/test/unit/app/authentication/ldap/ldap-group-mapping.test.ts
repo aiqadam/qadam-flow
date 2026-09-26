@@ -199,18 +199,58 @@ describe('ldapGroupMappingUtils.normalizeGroupDn — structured comparison', () 
         expect(berForm).not.toBe(literalHashForm)
     })
 
-    it('does NOT match a group whose hex escape is not valid UTF-8 against anything, including a literal U+FFFD', () => {
+    it('normalizes a hex escape that is not valid UTF-8 to null, which never matches a literal U+FFFD', () => {
         // `\FF` alone is never a valid UTF-8 lead byte — a decoder that silently substitutes
         // U+FFFD (as `Buffer#toString('utf8')` does) would make this collide with a group whose
-        // name contains a literal replacement character.
+        // name contains a literal replacement character. The whole DN normalizes to `null` instead
+        // of a sentinel string; `resolveGrants` (see the structural-tagging suite below) is what
+        // actually guarantees two independently-`null` DNs are never treated as matching each
+        // other, not raw equality on this function's own return value.
         const invalidUtf8Escape = ldapGroupMappingUtils.normalizeGroupDn('cn=\\FF,dc=x')
         const literalReplacementChar = ldapGroupMappingUtils.normalizeGroupDn('cn=�,dc=x')
-        const sameInvalidEscapeAgain = ldapGroupMappingUtils.normalizeGroupDn('cn=\\FF,dc=x')
 
+        expect(invalidUtf8Escape).toBeNull()
         expect(invalidUtf8Escape).not.toBe(literalReplacementChar)
-        // Two occurrences of the exact same invalid input are still allowed to normalize the same
-        // way as each other — the sentinel only needs to never equal a *valid* decode, not to be
-        // unique per invalid input.
-        expect(invalidUtf8Escape).toBe(sameInvalidEscapeAgain)
+    })
+})
+
+// An in-band string sentinel/tag (a literal `#ber:` prefix, a `\u0000`-delimited marker)
+// is forgeable — an attacker just writes an ordinary, validly-escaped value whose *decoded* text
+// happens to equal the sentinel verbatim, and it then collides with whatever the sentinel meant.
+// Each pair below was a genuine collision under the previous (in-band sentinel) design; `resolveGrants`
+// is the actual entry point production code uses, so these are exercised through it rather than
+// through raw `normalizeGroupDn` string equality, proving the fix where it matters: nothing here
+// ever resolves a grant it should not.
+describe('ldapGroupMappingUtils.resolveGrants — structural tagging prevents in-band sentinel collisions', () => {
+    it('does NOT match a BER-form groupDn against a literal group name that spells out the old in-band BER tag text', () => {
+        const groupMappings = [mapping({ groupDn: 'cn=#04024869,dc=x', platformRole: PlatformRole.ADMIN })]
+
+        const { platformRole } = ldapGroupMappingUtils.resolveGrants({ groupMappings, memberGroupDns: ['cn=\\#ber:04024869,dc=x'] })
+
+        expect(platformRole).toBeNull()
+    })
+
+    it('does NOT match one invalid hex escape (\\FF) against a different invalid hex escape (\\FE)', () => {
+        const groupMappings = [mapping({ groupDn: 'cn=\\FF,dc=x', platformRole: PlatformRole.ADMIN })]
+
+        const { platformRole } = ldapGroupMappingUtils.resolveGrants({ groupMappings, memberGroupDns: ['cn=\\FE,dc=x'] })
+
+        expect(platformRole).toBeNull()
+    })
+
+    it('does NOT match an invalid hex escape against a literal group name that spells out the old in-band invalid-UTF-8 sentinel text', () => {
+        const groupMappings = [mapping({ groupDn: 'cn=\\FF,dc=x', platformRole: PlatformRole.ADMIN })]
+
+        const { platformRole } = ldapGroupMappingUtils.resolveGrants({ groupMappings, memberGroupDns: ['cn=\\00invalid-utf8-escape\\00,dc=x'] })
+
+        expect(platformRole).toBeNull()
+    })
+
+    it('does NOT match an AVA with no "=" against a valid AVA whose decoded type spells out the old in-band invalid-AVA sentinel text', () => {
+        const groupMappings = [mapping({ groupDn: 'cn,dc=x', platformRole: PlatformRole.ADMIN })]
+
+        const { platformRole } = ldapGroupMappingUtils.resolveGrants({ groupMappings, memberGroupDns: ['\\00invalid-ava\\00cn=cn,dc=x'] })
+
+        expect(platformRole).toBeNull()
     })
 })
