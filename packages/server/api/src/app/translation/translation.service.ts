@@ -299,14 +299,21 @@ async function upsertMergingValues(params: { entityManager: EntityManager, proje
     assertDescriptionIsWellFormed(description)
     const sanitizedValues = sanitizeObjectForPostgresql(values)
     const id = apId()
+    // `undefined` ("caller didn't mention description, keep whatever is there") and an explicit
+    // `null` ("caller wants it cleared") both become SQL NULL once bound as a query parameter, so
+    // `COALESCE(EXCLUDED."description", "translation"."description")` could never tell them apart
+    // — an explicit clear silently kept the old description forever. `descriptionProvided` carries
+    // that distinction across the JS/SQL boundary explicitly, instead of overloading NULL to mean
+    // two different things.
+    const descriptionProvided = description !== undefined
     await entityManager.query(
         `INSERT INTO "translation" ("id", "created", "updated", "projectId", "platformId", "key", "values", "description")
          VALUES ($1, now(), now(), $2, $3, $4, $5::jsonb, $6)
          ON CONFLICT ("projectId", "key") DO UPDATE
          SET "values" = "translation"."values" || EXCLUDED."values",
              "updated" = now(),
-             "description" = COALESCE(EXCLUDED."description", "translation"."description")`,
-        [id, projectId, platformId, key, JSON.stringify(sanitizedValues), description ?? null],
+             "description" = CASE WHEN $7 THEN EXCLUDED."description" ELSE "translation"."description" END`,
+        [id, projectId, platformId, key, JSON.stringify(sanitizedValues), description ?? null, descriptionProvided],
     )
 }
 

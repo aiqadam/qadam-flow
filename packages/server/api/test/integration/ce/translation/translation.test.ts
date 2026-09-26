@@ -121,6 +121,34 @@ describe('Translation CE API', () => {
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
+        it('clears an existing description when explicitly sent as null, and leaves it untouched when omitted (Low)', async () => {
+            const ctx = await setup()
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'has.description', values: { en: 'Hi' }, description: 'original note' }],
+            })
+
+            // Omitted entirely — same shape a values-only merge request already sends — must leave
+            // the existing description untouched, not clear it.
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'has.description', values: { ru: 'Привет' } }],
+            })
+            const afterOmitted = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'has.description' })
+            expect(afterOmitted.json().data[0].description).toBe('original note')
+
+            // An explicit null is a deliberate clear, not "no opinion" — both used to bind as SQL
+            // NULL, which COALESCE(EXCLUDED, existing) could never distinguish from "omitted".
+            const response = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'has.description', values: { en: 'Hi' }, description: null }],
+            })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+
+            const afterCleared = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'has.description' })
+            expect(afterCleared.json().data[0].description).toBeNull()
+        })
+
         it('two concurrent batch upserts to the same project both succeed (advisory lock does not deadlock or corrupt writes)', async () => {
             const ctx = await setup()
 

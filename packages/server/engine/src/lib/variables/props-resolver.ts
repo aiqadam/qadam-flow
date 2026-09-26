@@ -414,11 +414,12 @@ function parseSquareBracketConnectionPath(variableName: string): string | null {
     return match ? match[2] : null
 }
 
-// Exported for `EngineConstants#getRunLocale` — `FlowVersion.localeSource` is evaluated the same
-// way the `$t[...]` dynamic locale bracket is, so the engine has exactly one sandboxed-eval path
-// rather than two.
+// `FlowVersion.localeSource` is evaluated through `resolveInputAsync` (below), the same path every
+// other `{{...}}` expression in this file takes — including the `$t[...]` dynamic locale bracket —
+// so the engine has exactly one sandboxed-eval path, not two. Nothing outside this file calls this
+// directly.
 // eslint-disable-next-line @typescript-eslint/ban-types
-export async function evalInScope({ js, contextAsScope, functions, unresolvedReference, failOnUnreadablePath = false }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] }, failOnUnreadablePath?: boolean }): Promise<unknown> {
+async function evalInScope({ js, contextAsScope, functions, unresolvedReference, failOnUnreadablePath = false }: { js: string, contextAsScope: Record<string, unknown>, functions: Record<string, Function>, unresolvedReference?: { expression: string, stepNames: string[] }, failOnUnreadablePath?: boolean }): Promise<unknown> {
     const { data: result, error: resultError } = await utils.tryCatchAndThrowOnEngineError((async () => {
         const codeSandbox = await initCodeSandbox()
 
@@ -467,7 +468,7 @@ function assertReferenceIsResolvable({ error, unresolvedReference }: { error: Er
     throw new UnresolvedTemplateReferenceError({ expression: unresolvedReference.expression, reference, cause: error })
 }
 
-export function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
+function flattenNestedKeys(data: unknown, pathToMatch: string[]): unknown[] {
     if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
         for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
             if (key === pathToMatch[0]) {

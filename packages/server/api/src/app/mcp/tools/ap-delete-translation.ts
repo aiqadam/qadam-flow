@@ -14,7 +14,7 @@ export const apDeleteTranslationTool = (mcp: ProjectScopedMcpServer, log: Fastif
     return {
         title: 'ap_delete_translation',
         permission: Permission.WRITE_TRANSLATION,
-        description: 'Permanently delete a project translation key, by key or id. Any flow still referencing it with {{$t[...]}} will fail that step at run time.',
+        description: 'Permanently delete a project translation key, by key or id. Any flow still referencing it with {{$t[...]}} will fail that step at run time — the response lists the flows still referencing it (draft or published) so the caller can warn before it happens.',
         inputSchema: deleteTranslationInput.shape,
         annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {
@@ -40,9 +40,20 @@ export const apDeleteTranslationTool = (mcp: ProjectScopedMcpServer, log: Fastif
                     return { content: [{ type: 'text', text: '❌ Provide exactly one of key or id.' }] }
                 }
 
+                // Read before delete, deliberately: the row (and the key `usages` looks up flows
+                // by) is gone the instant `delete` returns, so this is the last point the caller can
+                // learn which flows were still referencing it.
+                const usages = await translationService(log).usages({ id: targetId, projectId: mcp.projectId, platformId })
                 const deleted = await translationService(log).delete({ id: targetId, projectId: mcp.projectId, platformId })
 
-                return { content: [{ type: 'text', text: `✅ Translation key "${deleted.key}" deleted.` }] }
+                const usageNote = usages.usages.length === 0
+                    ? ' No flow referenced it.'
+                    : ` ${usages.usages.length} flow(s) still referenced it and will now fail that step: ${usages.usages.map((usage) => mcpUtils.wrapUntrustedValue(usage.flowDisplayName)).join(', ')}.${usages.truncated ? ' (usage scan was truncated — more may exist)' : ''}`
+
+                return {
+                    content: [{ type: 'text', text: `✅ Translation key "${deleted.key}" deleted.${usageNote}` }],
+                    structuredContent: { deletedKey: deleted.key, usages: usages.usages, truncated: usages.truncated },
+                }
             }
             catch (err) {
                 log.error({ err, projectId: mcp.projectId }, 'ap_delete_translation failed')
