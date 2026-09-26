@@ -141,7 +141,12 @@ export const callFlow = createAction({
       context.run.waitForWaitpoint(waitpoint.id);
     }
 
-    const parentRunLocale = await context.run.locale();
+    // `context.run.locale` did not exist before this qadam started forwarding it (#420) - an
+    // engine older than the one this version was published against builds a RunContext without
+    // it, and calling a missing method throws rather than resolving to `undefined`. Guarding with
+    // `typeof` keeps this qadam loadable on such an engine (no locale forwarded, same as before)
+    // instead of failing every queue-mode Call Flow outright.
+    const parentRunLocale = typeof context.run.locale === 'function' ? await context.run.locale() : null;
     const response = await httpClient.sendRequest<CallableFlowRequest>({
       method: HttpMethod.POST,
       url: `${context.server.apiUrl}v1/webhooks/${flow?.id}`,

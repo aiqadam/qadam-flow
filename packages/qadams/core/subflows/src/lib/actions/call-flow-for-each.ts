@@ -108,7 +108,12 @@ export const callFlowForEach = createAction({
     // dispatched twice.
     const dispatched = new Set(waitpoint.dispatchedSlots ?? []);
     const toDispatch = items.map((_, index) => index).filter((index) => !dispatched.has(index));
-    const parentRunLocale = await context.run.locale();
+    // `context.run.locale` did not exist before this qadam started forwarding it (#420) - an
+    // engine older than the one this version was published against builds a RunContext without
+    // it, and calling a missing method throws rather than resolving to `undefined`. Guarding with
+    // `typeof` keeps this qadam loadable on such an engine (no locale forwarded, same as before)
+    // instead of failing every dispatched child outright.
+    const parentRunLocale = typeof context.run.locale === 'function' ? await context.run.locale() : null;
     await forEachWithConcurrency({
       count: toDispatch.length,
       concurrency: DISPATCH_CONCURRENCY,
