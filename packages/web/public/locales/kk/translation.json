@@ -2093,5 +2093,6 @@
   "translationValueTooLong": "Аударма мәні тым ұзын (ең көбі 10 000 таңба)",
   "invalidLocale": "Локаль жарамды BCP-47 тегі болуы керек (ең көбі 35 таңба)",
   "tooManyTranslationLocales": "Аударма кілтінде ең көбі 50 локаль болуы мүмкін",
+  "localeSourceTooLong": "Осы ағынның localeSource мәні тым ұзын (ең көбі 1000 таңба)",
   "translationDescriptionTooLong": "Сипаттама тым ұзын (ең көбі 500 таңба)"
 }

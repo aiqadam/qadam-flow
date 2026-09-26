@@ -16,6 +16,11 @@ export const MAX_TRANSLATION_KEYS_PER_PROJECT = 5_000
 // hand- or CI-maintained translation table.
 export const MAX_TRANSLATION_IMPORT_BYTES = 1_000_000
 export const MAX_LOCALE_TAG_LENGTH = 35
+// `FlowVersion.localeSource` is a mustache expression (e.g. `{{trigger['output'].lang}}`), not a
+// locale tag — bounded the same order of magnitude as other flow-authored expression/note fields
+// in this codebase (well beyond any realistic step-reference-plus-property-path expression) rather
+// than left unbounded, since it is stored on every flow version and evaluated on every run.
+export const LOCALE_SOURCE_MAX_LENGTH = 1_000
 export const MAX_TRANSLATION_KEYS_PER_UPSERT = 500
 // Well beyond the builder's own four locales (en/ru/uz/kk) to leave headroom for a project
 // translating its flows into a realistic global-product locale set (dialects included), while
@@ -59,7 +64,7 @@ export const MAX_TRANSLATION_USAGE_FLOWS_SCANNED = 500
 export const MAX_TRANSLATION_IMPORT_NODES = 50_000
 
 export const TranslationValues = z.record(z.string(), z.string().max(TRANSLATION_VALUE_MAX_LENGTH, formErrors.translationValueTooLong))
-    .refine((values) => Object.keys(values).length <= MAX_TRANSLATION_LOCALES_PER_KEY, 'tooManyTranslationLocales')
+    .refine((values) => Object.keys(values).length <= MAX_TRANSLATION_LOCALES_PER_KEY, formErrors.tooManyTranslationLocales)
 export type TranslationValues = z.infer<typeof TranslationValues>
 
 export const Translation = z.object({

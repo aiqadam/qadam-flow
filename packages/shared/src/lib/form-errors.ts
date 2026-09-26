@@ -28,4 +28,6 @@ export const formErrors = {
     translationKeyTooLong: 'translationKeyTooLong',
     translationValueTooLong: 'translationValueTooLong',
     invalidLocale: 'invalidLocale',
+    tooManyTranslationLocales: 'tooManyTranslationLocales',
+    localeSourceTooLong: 'localeSourceTooLong',
 } as const

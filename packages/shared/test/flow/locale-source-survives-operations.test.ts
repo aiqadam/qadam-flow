@@ -5,6 +5,8 @@ import {
     FlowTriggerType,
     FlowVersion,
     FlowVersionState,
+    LOCALE_SOURCE_MAX_LENGTH,
+    UpdateLocaleSourceRequest,
 } from '../../src'
 import { _importFlow } from '../../src/lib/automation/flows/operations/import-flow'
 
@@ -55,6 +57,16 @@ describe('UPDATE_LOCALE_SOURCE', () => {
         }
         const result = flowOperations.apply(baseFlowVersion, operation)
         expect(result.localeSource).toBeNull()
+    })
+
+    it('rejects a localeSource longer than LOCALE_SOURCE_MAX_LENGTH', () => {
+        const result = UpdateLocaleSourceRequest.safeParse({ localeSource: 'a'.repeat(LOCALE_SOURCE_MAX_LENGTH + 1) })
+        expect(result.success).toBe(false)
+    })
+
+    it('accepts a localeSource at exactly LOCALE_SOURCE_MAX_LENGTH', () => {
+        const result = UpdateLocaleSourceRequest.safeParse({ localeSource: 'a'.repeat(LOCALE_SOURCE_MAX_LENGTH) })
+        expect(result.success).toBe(true)
     })
 })
 

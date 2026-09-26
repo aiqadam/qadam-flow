@@ -2093,5 +2093,6 @@
   "translationValueTooLong": "Translation value is too long (max 10,000 characters)",
   "invalidLocale": "Locale must be a valid BCP-47 tag (max 35 characters)",
   "tooManyTranslationLocales": "A translation key can have at most 50 locales",
+  "localeSourceTooLong": "This flow's localeSource is too long (max 1,000 characters)",
   "translationDescriptionTooLong": "Description is too long (max 500 characters)"
 }

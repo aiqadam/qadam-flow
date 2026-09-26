@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { BoundedArray, Nullable } from '../../../core/common'
 import { Metadata } from '../../../core/common/metadata'
+import { formErrors } from '../../../form-errors'
+import { LOCALE_SOURCE_MAX_LENGTH } from '../../translation/translation'
 import { BranchCondition, CodeActionSchema, CodeActionSettings, FlowActionType, LoopOnItemsActionSchema, LoopOnItemsActionSettings, MAX_BRANCH_CONDITION_GROUPS, MAX_CONDITIONS_PER_GROUP, QadamActionSchema, QadamActionSettings, RouterActionSchema, RouterActionSettings } from '../actions/action'
 import { FlowStatus } from '../flow'
 import { FlowVersion, FlowVersionState } from '../flow-version'
@@ -229,7 +231,7 @@ export const UpdateOwnerRequest = z.object({
 export type UpdateOwnerRequest = z.infer<typeof UpdateOwnerRequest>
 
 export const UpdateLocaleSourceRequest = z.object({
-    localeSource: Nullable(z.string()),
+    localeSource: Nullable(z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong)),
 })
 export type UpdateLocaleSourceRequest = z.infer<typeof UpdateLocaleSourceRequest>
 

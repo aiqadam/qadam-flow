@@ -216,7 +216,7 @@ const ExportTranslationsRequest = {
         description: 'Export all translations for one locale as flat ({"a.b": "value"}) or nested ({"a": {"b": "value"}}) JSON',
         querystring: ExportTranslationsRequestQuery,
         response: {
-            // Wrapped, not a bare `z.record(...)` (M9): a translation key is flow-author-controlled
+            // Wrapped, not a bare `z.record(...)`: a translation key is flow-author-controlled
             // text, and an unwrapped response body is indistinguishable from any other top-level
             // property a caller or downstream middleware might expect — a key literally named
             // "projectId" (or any other field this API's response shapes otherwise carry) could
