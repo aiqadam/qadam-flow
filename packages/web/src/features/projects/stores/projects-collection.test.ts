@@ -419,24 +419,25 @@ describe('projectCollection onUpdate — outgoing request fields', () => {
       '@tanstack/query-db-collection'
     );
     await import('./project-collection');
-    const mockCalls = (
-      queryCollectionOptions as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls;
-    const options = mockCalls[0][0] as {
-      onUpdate: (params: {
-        transaction: {
-          mutations: {
-            original: ProjectWithLimits;
-            modified: ProjectWithLimits;
-          }[];
-        };
-      }) => Promise<void>;
-    };
+    const options = vi.mocked(queryCollectionOptions).mock.calls[0][0];
+    if (!options.onUpdate) {
+      throw new Error('queryCollectionOptions was not called with onUpdate');
+    }
+    // The real `onUpdate` signature takes a full `PendingMutation` (mutationId, changes, globalKey,
+    // collection, …) — this test only exercises the two fields `project-collection.ts`'s own
+    // `onUpdate` actually reads (`original`/`modified`), so the fixture below is intentionally a
+    // narrower shape than the library's; a cast at this one boundary is the least invasive way to
+    // keep that fixture simple rather than fabricating the rest of `PendingMutation` per test.
+    const onUpdate = options.onUpdate as (params: {
+      transaction: {
+        mutations: {
+          original: ProjectWithLimits;
+          modified: ProjectWithLimits;
+        }[];
+      };
+    }) => Promise<void>;
     const { api } = await import('@/lib/api');
-    return {
-      onUpdate: options.onUpdate,
-      apiPost: api.post as ReturnType<typeof vi.fn>,
-    };
+    return { onUpdate, apiPost: vi.mocked(api.post) };
   }
 
   it("forwards defaultLocale — regression test for #420 Phase 2: the field was set on the local draft but silently dropped before it reached the server, because this handler's outgoing request was a hardcoded field list that never named it", async () => {

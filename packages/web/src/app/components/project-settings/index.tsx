@@ -1,4 +1,4 @@
-import { isNil, Permission, PlatformRole, ProjectType } from '@aiqadam/shared';
+import { isNil, Permission, ProjectType } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { GitBranch, Puzzle, Settings, Users } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
@@ -22,6 +22,7 @@ import { ProjectAvatar } from '../project-avatar';
 import { EnvironmentSettings } from './environment';
 import { GeneralSettings, FormValues } from './general';
 import { McpServerSettings } from './mcp-server';
+import { projectSettingsUtils } from './project-settings-utils';
 import { PiecesSettings } from './qadams';
 
 type TabId = 'general' | 'team' | 'pieces' | 'environment' | 'mcp';
@@ -88,12 +89,10 @@ export function ProjectSettingsDialog({
     previousOpenRef.current = open;
   }, [open, project]);
 
-  // Platform ADMIN unlocks this tab unconditionally, not only when embedding is enabled — it is
-  // also where `maxConcurrentJobs` and the project's `defaultLocale` live, and neither of those
-  // is embedding-specific. Before this, an admin on a non-Team project with embedding off had no
-  // way to reach either field through this dialog.
-  const hasGeneralSettings =
-    project.type === ProjectType.TEAM || platformRole === PlatformRole.ADMIN;
+  const hasGeneralSettings = projectSettingsUtils.hasGeneralSettings({
+    projectType: project.type,
+    platformRole,
+  });
 
   const tabs = [
     {

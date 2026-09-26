@@ -98,10 +98,17 @@ export const translationsMutations = {
       },
     }),
 
-  useImport: (onSuccess: (result: { importedKeys: number }) => void) =>
+  useImport: ({
+    onSuccess,
+    onError,
+  }: {
+    onSuccess: (result: { importedKeys: number }) => void;
+    onError: (error: Error) => void;
+  }) =>
     useMutation({
       mutationFn: (request: ImportTranslationsRequestBody) =>
         translationsApi.import(request),
       onSuccess,
+      onError,
     }),
 };

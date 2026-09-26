@@ -1,8 +1,9 @@
 import {
-  ErrorCode,
   formErrors,
   Translation,
-  TRANSLATION_KEY_REGEX,
+  TRANSLATION_DESCRIPTION_MAX_LENGTH,
+  TRANSLATION_VALUE_MAX_LENGTH,
+  TranslationKeySchema,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { t } from 'i18next';
@@ -29,20 +30,22 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { internalErrorToast } from '@/components/ui/sonner';
 import { Textarea } from '@/components/ui/textarea';
+import { translationsApi } from '@/features/translations/api/translations';
 import { translationsMutations } from '@/features/translations/hooks/translations-hooks';
-import { api } from '@/lib/api';
+import { apiErrorUtils } from '@/lib/api-error-utils';
 import { authenticationSession } from '@/lib/authentication-session';
 
 const FormSchema = z.object({
-  key: z
+  key: TranslationKeySchema,
+  description: z
     .string()
-    .min(1, formErrors.required)
-    .regex(TRANSLATION_KEY_REGEX, 'invalidTranslationKey'),
-  description: z.string().optional(),
-  defaultLocale: z.string().optional(),
-  defaultValue: z.string().optional(),
+    .max(TRANSLATION_DESCRIPTION_MAX_LENGTH, 'translationDescriptionTooLong')
+    .optional(),
+  defaultValue: z
+    .string()
+    .max(TRANSLATION_VALUE_MAX_LENGTH, formErrors.translationValueTooLong)
+    .optional(),
 });
 
 type FormValues = z.infer<typeof FormSchema>;
@@ -101,20 +104,36 @@ function TranslationKeyForm(props: TranslationKeyFormProps) {
       );
     },
     onError: (error) => {
-      if (api.isApError(error, ErrorCode.VALIDATION)) {
-        form.setError('key', {
-          type: 'manual',
-          message: 'invalidTranslationKey',
-        });
-        return;
-      }
-      internalErrorToast();
+      form.setError('root.serverError', {
+        type: 'manual',
+        message: apiErrorUtils.extractServerMessage({
+          error,
+          fallback: t('Something went wrong, please try again later'),
+        }),
+      });
     },
   });
 
-  const handleSubmit = (values: FormValues) => {
+  const handleSubmit = async (values: FormValues) => {
     if (!projectId) {
       return;
+    }
+    form.clearErrors('root.serverError');
+    if (!isEdit) {
+      const existingByKey = await translationsApi.list({
+        projectId,
+        key: values.key,
+        limit: 50,
+      });
+      if (
+        existingByKey.data.some((translation) => translation.key === values.key)
+      ) {
+        form.setError('key', {
+          type: 'manual',
+          message: 'translationKeyAlreadyExists',
+        });
+        return;
+      }
     }
     save(
       {
@@ -122,7 +141,9 @@ function TranslationKeyForm(props: TranslationKeyFormProps) {
         translations: [
           {
             key: values.key,
-            description: values.description || null,
+            description: isEdit
+              ? values.description || null
+              : values.description || undefined,
             values:
               defaultLocale && values.defaultValue
                 ? { [defaultLocale]: values.defaultValue }
@@ -209,6 +230,11 @@ function TranslationKeyForm(props: TranslationKeyFormProps) {
               </FormItem>
             )}
           />
+        )}
+        {form.formState.errors.root?.serverError && (
+          <FormMessage>
+            {form.formState.errors.root.serverError.message}
+          </FormMessage>
         )}
         <DialogFooter>
           <DialogClose asChild>

@@ -6,6 +6,7 @@ import { useDebounce } from 'use-debounce';
 
 import { TranslationKeyDialog } from '@/app/translations/translation-key-dialog';
 import { SearchInput } from '@/components/custom/search-input';
+import { TextWithTooltip } from '@/components/custom/text-with-tooltip';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { projectCollectionUtils } from '@/features/projects';
@@ -138,9 +139,11 @@ const TranslationsTab = () => {
                   <Languages className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-mono text-sm truncate">
-                    {translation.key}
-                  </div>
+                  <TextWithTooltip tooltipMessage={translation.key}>
+                    <div className="font-mono text-sm truncate">
+                      {translation.key}
+                    </div>
+                  </TextWithTooltip>
                 </div>
               </div>
             ))}

@@ -1,11 +1,12 @@
 import {
   ErrorCode,
+  MAX_TRANSLATION_IMPORT_BYTES,
   TranslationImportFormat,
   TranslationImportMode,
 } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { TriangleAlert, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,40 @@ const detectFormat = (
     : TranslationImportFormat.FLAT;
 };
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isTranslationImportFormatOrAuto = (
+  value: string,
+): value is TranslationImportFormat | 'auto' =>
+  value === 'auto' ||
+  value === TranslationImportFormat.FLAT ||
+  value === TranslationImportFormat.NESTED;
+
+const isTranslationImportMode = (
+  value: string,
+): value is TranslationImportMode =>
+  value === TranslationImportMode.MERGE ||
+  value === TranslationImportMode.REPLACE;
+
+const resolveImportErrorMessage = (error: unknown): string => {
+  if (!api.isError(error)) {
+    return t('Something went wrong, please try again later');
+  }
+  if (error.response?.status === api.httpStatus.TooManyRequests) {
+    return t('Too many requests');
+  }
+  if (error.response?.status === api.httpStatus.Forbidden) {
+    return t("You don't have permission to import translations.");
+  }
+  if (api.isApError(error, ErrorCode.VALIDATION)) {
+    return t(
+      'The server rejected this import — check the key format and size limits.',
+    );
+  }
+  return t('Something went wrong, please try again later');
+};
+
 type ImportTranslationsDialogProps = {
   onImported: (result: { importedKeys: number }) => void;
   children: React.ReactNode;
@@ -76,7 +111,6 @@ function ImportTranslationsForm({
   onOpenChange,
   onImported,
 }: ImportTranslationsFormProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [locale, setLocale] = useState('');
   const [rawText, setRawText] = useState('');
   const [formatOverride, setFormatOverride] = useState<
@@ -88,14 +122,28 @@ function ImportTranslationsForm({
   const [errorMessage, setErrorMessage] = useState('');
 
   const { mutate: importTranslations, isPending } =
-    translationsMutations.useImport((result) => {
-      onImported(result);
-      onOpenChange(false);
+    translationsMutations.useImport({
+      onSuccess: (result) => {
+        onImported(result);
+        onOpenChange(false);
+      },
+      onError: (error) => {
+        setErrorMessage(resolveImportErrorMessage(error));
+      },
     });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_TRANSLATION_IMPORT_BYTES) {
+      setErrorMessage(
+        t(
+          'This import is larger than the 1 MB limit — split it into smaller files.',
+        ),
+      );
+      event.target.value = '';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => setRawText(String(reader.result ?? ''));
     reader.readAsText(file);
@@ -111,28 +159,36 @@ function ImportTranslationsForm({
     }
     let data: Record<string, unknown>;
     try {
-      data = JSON.parse(rawText) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(rawText);
+      if (!isPlainObject(parsed)) {
+        setErrorMessage(t('This is not valid JSON.'));
+        return;
+      }
+      data = parsed;
     } catch {
       setErrorMessage(t('This is not valid JSON.'));
       return;
     }
+    if (
+      new TextEncoder().encode(JSON.stringify(data)).length >
+      MAX_TRANSLATION_IMPORT_BYTES
+    ) {
+      setErrorMessage(
+        t(
+          'This import is larger than the 1 MB limit — split it into smaller files.',
+        ),
+      );
+      return;
+    }
     const format =
       formatOverride === 'auto' ? detectFormat(data) : formatOverride;
-    importTranslations(
-      { projectId, locale: locale.trim(), format, mode, data },
-      {
-        onError: (error) => {
-          if (api.isApError(error, ErrorCode.VALIDATION)) {
-            setErrorMessage(
-              t(
-                'The server rejected this import — check the key format and size limits.',
-              ),
-            );
-            return;
-          }
-        },
-      },
-    );
+    importTranslations({
+      projectId,
+      locale: locale.trim(),
+      format,
+      mode,
+      data,
+    });
   };
 
   return (
@@ -160,7 +216,6 @@ function ImportTranslationsForm({
           id="import-file"
           type="file"
           accept="application/json,.json"
-          ref={fileInputRef}
           onChange={handleFileChange}
         />
       </div>
@@ -180,9 +235,11 @@ function ImportTranslationsForm({
           <Label>{t('Shape')}</Label>
           <Select
             value={formatOverride}
-            onValueChange={(value) =>
-              setFormatOverride(value as TranslationImportFormat | 'auto')
-            }
+            onValueChange={(value) => {
+              if (isTranslationImportFormatOrAuto(value)) {
+                setFormatOverride(value);
+              }
+            }}
           >
             <SelectTrigger>
               <SelectValue />
@@ -202,7 +259,11 @@ function ImportTranslationsForm({
           <Label>{t('Mode')}</Label>
           <Select
             value={mode}
-            onValueChange={(value) => setMode(value as TranslationImportMode)}
+            onValueChange={(value) => {
+              if (isTranslationImportMode(value)) {
+                setMode(value);
+              }
+            }}
           >
             <SelectTrigger>
               <SelectValue />

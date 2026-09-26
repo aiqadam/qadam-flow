@@ -1,6 +1,7 @@
 import {
   ApFlagId,
   ColorName,
+  Permission,
   PlatformRole,
   PROJECT_COLOR_PALETTE,
   ProjectIcon,
@@ -28,10 +29,13 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { projectCollectionUtils } from '@/features/projects';
+import { useAuthorization } from '@/hooks/authorization-hooks';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
 import { userHooks } from '@/hooks/user-hooks';
 import { cn } from '@/lib/utils';
+
+import { generalSettingsUtils } from './general-settings-utils';
 
 export type FormValues = {
   projectName: string;
@@ -48,6 +52,7 @@ type GeneralSettingsProps = {
 export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
   const { platform } = platformHooks.useCurrentPlatform();
   const platformRole = userHooks.getCurrentUserPlatformRole();
+  const { checkAccess } = useAuthorization();
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const { project } = projectCollectionUtils.useCurrentProject();
   const { data: isRateLimiterEnabled } = flagsHooks.useFlag<boolean>(
@@ -59,6 +64,9 @@ export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
   const showGeneralSettings = project.type === ProjectType.TEAM;
   const showExternalIdSettings =
     platform.plan.embeddingEnabled && platformRole === PlatformRole.ADMIN;
+  const showDefaultLocale = generalSettingsUtils.canShowDefaultLocale({
+    canWriteProject: checkAccess(Permission.WRITE_PROJECT),
+  });
   const colorOptions = Object.values(ColorName);
 
   return (
@@ -217,7 +225,7 @@ export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
             )}
           />
         )}
-        {platformRole === PlatformRole.ADMIN && (
+        {showDefaultLocale && (
           <FormField
             name="defaultLocale"
             render={({ field }) => (

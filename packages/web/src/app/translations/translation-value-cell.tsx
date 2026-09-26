@@ -1,6 +1,7 @@
 import { Translation } from '@aiqadam/shared';
 import { useState } from 'react';
 
+import { TextWithTooltip } from '@/components/custom/text-with-tooltip';
 import { Input } from '@/components/ui/input';
 import { translationsMutations } from '@/features/translations/hooks/translations-hooks';
 import { authenticationSession } from '@/lib/authentication-session';
@@ -69,9 +70,13 @@ function TranslationValueCell({
       type="button"
       disabled={!canWrite}
       onClick={startEditing}
-      className="w-full max-w-[220px] truncate text-left text-sm disabled:cursor-default rounded-sm px-1 enabled:hover:bg-accent"
+      className="w-full max-w-[220px] min-w-0 text-left text-sm disabled:cursor-default rounded-sm px-1 enabled:hover:bg-accent"
     >
-      {translation.values[locale] || (
+      {translation.values[locale] ? (
+        <TextWithTooltip tooltipMessage={translation.values[locale]}>
+          <span className="block truncate">{translation.values[locale]}</span>
+        </TextWithTooltip>
+      ) : (
         <span className="text-muted-foreground">—</span>
       )}
     </button>

@@ -39,6 +39,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { internalErrorToast } from '@/components/ui/sonner';
 import { projectCollectionUtils } from '@/features/projects';
 import { translationsApi } from '@/features/translations/api/translations';
 import {
@@ -51,19 +52,23 @@ import { authenticationSession } from '@/lib/authentication-session';
 const exportLocale = async (locale: string) => {
   const projectId = authenticationSession.getProjectId();
   if (!projectId) return;
-  const { translations } = await translationsApi.exportAll({
-    projectId,
-    locale,
-  });
-  const blob = new Blob([JSON.stringify(translations, null, 2)], {
-    type: 'application/json',
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${locale}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+  try {
+    const { translations } = await translationsApi.exportAll({
+      projectId,
+      locale,
+    });
+    const blob = new Blob([JSON.stringify(translations, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${locale}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    internalErrorToast();
+  }
 };
 
 const isRowMissingAValue = ({
@@ -210,7 +215,11 @@ function TranslationsPage() {
       ),
       cell: ({ row }) => (
         <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="font-mono text-sm truncate">{row.original.key}</span>
+          <TextWithTooltip tooltipMessage={row.original.key}>
+            <span className="font-mono text-sm truncate">
+              {row.original.key}
+            </span>
+          </TextWithTooltip>
           {row.original.description && (
             <TextWithTooltip tooltipMessage={row.original.description}>
               <p className="text-xs text-muted-foreground truncate">
@@ -310,24 +319,23 @@ function TranslationsPage() {
   );
 
   const toolbarButtons = [
-    <ImportTranslationsDialog
-      key="import"
-      onImported={(result) => {
-        toast.success(
-          t('{count, plural, =1 {1 key imported} other {# keys imported}}', {
-            count: result.importedKeys,
-          }),
-        );
-        refetch();
-      }}
-    >
-      <PermissionNeededTooltip hasPermission={canWrite}>
+    <PermissionNeededTooltip key="import" hasPermission={canWrite}>
+      <ImportTranslationsDialog
+        onImported={(result) => {
+          toast.success(
+            t('{count, plural, =1 {1 key imported} other {# keys imported}}', {
+              count: result.importedKeys,
+            }),
+          );
+          refetch();
+        }}
+      >
         <Button disabled={!canWrite} size="sm" variant="outline">
           <Upload className="h-4 w-4 mr-1" />
           {t('Import')}
         </Button>
-      </PermissionNeededTooltip>
-    </ImportTranslationsDialog>,
+      </ImportTranslationsDialog>
+    </PermissionNeededTooltip>,
     <DropdownMenu key="export">
       <DropdownMenuTrigger asChild>
         <Button
