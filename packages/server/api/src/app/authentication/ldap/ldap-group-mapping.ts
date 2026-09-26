@@ -3,6 +3,7 @@ import { DefaultProjectRole, isNil, LdapGroupMapping, PlatformRole } from '@aiqa
 export const ldapGroupMappingUtils = {
     normalizeGroupDn,
     resolveGrants,
+    platformRoleRank,
 }
 
 const PLATFORM_ROLE_RANK: Record<PlatformRole, number> = {
@@ -17,48 +18,55 @@ const PROJECT_ROLE_RANK: Record<DefaultProjectRole, number> = {
     [DefaultProjectRole.ADMIN]: 2,
 }
 
-// Round 2 (app-sec): a naive `.trim().toLowerCase().split(',')` is a privilege-escalation hole,
-// not just an approximation. Three concrete ways a spoofed DN could pass as equal to a real one
-// under it: (1) `String#trim()` strips every ECMAScript "WhiteSpace" character, which includes
-// U+00A0 NBSP — a group named with a trailing NBSP would compare equal to the real group;
-// (2) `String#toLowerCase()` performs full Unicode case folding, which maps lookalike codepoints
-// (e.g. U+212A KELVIN SIGN) onto plain ASCII letters — a group name built from such a codepoint
-// would compare equal to the real ASCII spelling; (3) splitting on every literal `,` ignores RFC
-// 4515's `\,` escape, so an *escaped* comma inside a value (part of the value, not a separator)
-// gets treated as a component boundary, letting an attacker-chosen value with a differently-placed
-// escaped comma/space collide with an unrelated real DN.
+// Round 3 (app-sec): round 2's fix still flattened the parsed DN back into a single joined string
+// (`.join(',')`), which re-introduces exactly the ambiguity the tokeniser was built to remove — a
+// joined string cannot tell "one RDN whose value contains a real comma" apart from "two separate
+// RDNs", nor "one multi-valued RDN (`+`-joined)" apart from "two single-valued RDNs" (`,`-joined),
+// because both cases produce the identical output string once everything is glued back together
+// with the same separator. A DN is compared here as a *structured* value instead: an ordered list
+// of RDNs (order matters — root-to-leaf), each RDN itself an order-independent (sorted) list of
+// `[type, value]` pairs, with `+` (multi-valued RDN) kept structurally distinct from `,` (RDN
+// boundary) all the way through — never rejoined into one string before comparison.
+// `resolveGrants`'s `Set`/`Map` lookups need a primitive key, not a nested structure, so the
+// canonical form this function returns is `JSON.stringify` of that structure — still a string, but
+// one whose *shape* fully determines equality, not one built by concatenating fields that could
+// have come from a different split.
 //
-// This is a minimal RFC 4514 tokeniser, not a full parser (no attribute-type OID/short-name
-// equivalence, no semantic ordering of multi-valued RDNs) — deliberately scoped to close the three
-// holes above: split only on UNescaped `,`/`+`, trim only literal ASCII space (0x20, never NBSP or
-// any other WhiteSpace-adjacent character) at each component's boundary, and lowercase only ASCII
-// `A`-`Z` (never fold non-ASCII codepoints). Trimming happens on the still-escaped raw component
-// (before `\`-sequences are resolved), so a component that legitimately *starts or ends* with an
-// escaped space (`\ Admins`) is never confused with incidental DN-formatting whitespace and
-// stripped by mistake.
+// Two further corrections from round 2, both defense-in-depth against a spoofed value colliding
+// with a real one:
+// - Hex escapes (`\XX`) are decoded as raw bytes accumulated into a `Buffer` and decoded once as
+//   UTF-8, not one `String.fromCharCode` per byte — a multi-byte UTF-8 character (e.g. `é` as
+//   `\C3\A9`) decoded byte-by-byte via `fromCharCode` produces two separate Latin-1 code points
+//   (`Ã©`) instead of the one intended character, which is itself a distinct-string mismatch bug,
+//   not merely a cosmetic one.
+// - Boundary trimming (stripping incidental DN-formatting whitespace like `CN=Admins, DC=Example`)
+//   now operates on a token list built by the same escape-aware tokeniser used for decoding, and
+//   trims only a token that is *itself* an unescaped literal ASCII space — a component that
+//   legitimately ends with an *escaped* space (`\ `) is never trimmed, because that token's kind is
+//   `escapedChar`, not `literal`, regardless of its position. Round 2's separate raw-string trim
+//   pass (`trimRawAsciiSpaces`) trimmed by character code alone and could not make this distinction,
+//   which is exactly the bug this round fixes.
 function normalizeGroupDn(dn: string): string {
-    return splitOnUnescapedSeparators(dn)
-        .map((rawComponent) => lowercaseAsciiOnly(unescapeComponent(trimRawAsciiSpaces(rawComponent))))
-        .join(',')
+    const rdns = splitOnUnescapedChar(dn, ',').map(parseRdn)
+    return JSON.stringify(rdns)
 }
 
-// Splits on a top-level (unescaped) `,` or `+` — RFC 4514's RDN/attribute-value separators — while
-// keeping every escape sequence exactly as written (backslash + one char, or a `\XX` hex pair) for
-// the boundary-trim step that runs next; unescaping happens only after that.
-function splitOnUnescapedSeparators(dn: string): string[] {
+// Splits on a top-level (unescaped) occurrence of a single separator character, keeping every
+// escape sequence (backslash + one char, or a `\XX` hex pair) intact in each returned raw segment —
+// decoding happens later, per component, in `normalizeComponent`.
+function splitOnUnescapedChar(raw: string, separator: string): string[] {
     const parts: string[] = []
     let current = ''
     let i = 0
-    while (i < dn.length) {
-        const char = dn[i]
-        if (char === '\\' && i + 1 < dn.length) {
-            const isHexEscape = /^[0-9a-fA-F]{2}/.test(dn.slice(i + 1, i + 3))
-            const escapeLength = isHexEscape ? 3 : 2
-            current += dn.slice(i, i + escapeLength)
+    while (i < raw.length) {
+        const char = raw[i]
+        if (char === '\\' && i + 1 < raw.length) {
+            const escapeLength = isHexEscapeAt(raw, i) ? 3 : 2
+            current += raw.slice(i, i + escapeLength)
             i += escapeLength
             continue
         }
-        if (char === ',' || char === '+') {
+        if (char === separator) {
             parts.push(current)
             current = ''
             i += 1
@@ -71,44 +79,125 @@ function splitOnUnescapedSeparators(dn: string): string[] {
     return parts
 }
 
-// Strips only a literal ASCII space (0x20) from each end of the *raw* (still-escaped) component —
-// never any other whitespace character, and never a `\`-escaped one, since the escape sequence at
-// that position starts with `\`, not with a bare space.
-function trimRawAsciiSpaces(raw: string): string {
-    let start = 0
-    let end = raw.length
-    while (start < end && raw.charCodeAt(start) === 0x20) {
-        start += 1
-    }
-    while (end > start && raw.charCodeAt(end - 1) === 0x20) {
-        end -= 1
-    }
-    return raw.slice(start, end)
-}
-
-// Resolves RFC 4514's escapes: `\` followed by a hex pair is that literal byte; `\` followed by
-// any other character (`,`, `+`, `"`, `\`, `<`, `>`, `;`, `=`, or a leading `#`/space) is that
-// character literally. Runs after boundary-trimming, so an escaped space this unescapes never gets
-// mistaken for trimmable whitespace by a later step.
-function unescapeComponent(raw: string): string {
-    let result = ''
+// Index of the first top-level (unescaped) occurrence of `char` in `raw`, or -1. Used to split an
+// attribute-value assertion (`type=value`) on its separating `=` without being confused by an
+// escaped one inside the value.
+function findFirstUnescapedChar(raw: string, char: string): number {
     let i = 0
     while (i < raw.length) {
         if (raw[i] === '\\' && i + 1 < raw.length) {
-            const isHexEscape = /^[0-9a-fA-F]{2}/.test(raw.slice(i + 1, i + 3))
-            if (isHexEscape) {
-                result += String.fromCharCode(parseInt(raw.slice(i + 1, i + 3), 16))
+            i += isHexEscapeAt(raw, i) ? 3 : 2
+            continue
+        }
+        if (raw[i] === char) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+function isHexEscapeAt(raw: string, backslashIndex: number): boolean {
+    return /^[0-9a-fA-F]{2}/.test(raw.slice(backslashIndex + 1, backslashIndex + 3))
+}
+
+// One RDN is an order-independent set of attribute-value assertions (single-valued RDNs are the
+// common case of a one-element set); `+`-joined AVAs within it are sorted so that `a=1+b=2` and
+// `b=2+a=1` — the same multi-valued RDN, written in a different order — normalize identically,
+// without ever merging the `+` boundary into the same separator `,` uses between RDNs.
+function parseRdn(rawRdn: string): [string, string][] {
+    return splitOnUnescapedChar(rawRdn, '+')
+        .map(parseAva)
+        .sort(([typeA, valueA], [typeB, valueB]) => {
+            const keyA = `${typeA}=${valueA}`
+            const keyB = `${typeB}=${valueB}`
+            if (keyA < keyB) return -1
+            if (keyA > keyB) return 1
+            return 0
+        })
+}
+
+function parseAva(rawAva: string): [string, string] {
+    const equalsIndex = findFirstUnescapedChar(rawAva, '=')
+    const rawType = equalsIndex === -1 ? rawAva : rawAva.slice(0, equalsIndex)
+    const rawValue = equalsIndex === -1 ? '' : rawAva.slice(equalsIndex + 1)
+    return [normalizeComponent(rawType), normalizeComponent(rawValue)]
+}
+
+// Tokenises a raw (still-escaped) component into a sequence of literal characters, plain
+// backslash-escapes, and hex-escaped bytes — the unit both boundary-trimming and decoding operate
+// on, so trimming can tell a literal space apart from an escaped one and decoding can tell a run of
+// `\XX` bytes apart from a literal character that happens to look the same once resolved.
+function tokenizeComponent(raw: string): RawToken[] {
+    const tokens: RawToken[] = []
+    let i = 0
+    while (i < raw.length) {
+        const char = raw[i]
+        if (char === '\\' && i + 1 < raw.length) {
+            if (isHexEscapeAt(raw, i)) {
+                tokens.push({ kind: 'escapedHexByte', byte: parseInt(raw.slice(i + 1, i + 3), 16) })
                 i += 3
                 continue
             }
-            result += raw[i + 1]
+            tokens.push({ kind: 'escapedChar', char: raw[i + 1] })
             i += 2
             continue
         }
-        result += raw[i]
+        tokens.push({ kind: 'literal', char })
         i += 1
     }
+    return tokens
+}
+
+// Strips only a leading/trailing token that is itself an *unescaped* literal ASCII space (0x20) —
+// never an escaped one (`escapedChar`/`escapedHexByte`), so a component that legitimately starts or
+// ends with an escaped space (`\ Admins`, `Admins\ `) is never confused with incidental
+// DN-formatting whitespace and stripped by mistake.
+function trimLiteralAsciiSpaceTokens(tokens: RawToken[]): RawToken[] {
+    let start = 0
+    let end = tokens.length
+    while (start < end && isLiteralAsciiSpace(tokens[start])) {
+        start += 1
+    }
+    while (end > start && isLiteralAsciiSpace(tokens[end - 1])) {
+        end -= 1
+    }
+    return tokens.slice(start, end)
+}
+
+function isLiteralAsciiSpace(token: RawToken): boolean {
+    return token.kind === 'literal' && token.char === ' '
+}
+
+// Resolves the token list to its final string: a run of one or more consecutive `escapedHexByte`
+// tokens is decoded once, as UTF-8, from a `Buffer` of the accumulated raw bytes — never one
+// `String.fromCharCode` per byte, which would silently misdecode any multi-byte UTF-8 character
+// (see the design comment on `normalizeGroupDn`). Every other token contributes its own resolved
+// character directly.
+function decodeTokens(tokens: RawToken[]): string {
+    let result = ''
+    let hexRun: number[] = []
+    const flushHexRun = (): void => {
+        if (hexRun.length > 0) {
+            result += Buffer.from(hexRun).toString('utf8')
+            hexRun = []
+        }
+    }
+    for (const token of tokens) {
+        if (token.kind === 'escapedHexByte') {
+            hexRun.push(token.byte)
+            continue
+        }
+        flushHexRun()
+        result += token.char
+    }
+    flushHexRun()
     return result
+}
+
+function normalizeComponent(raw: string): string {
+    const trimmed = trimLiteralAsciiSpaceTokens(tokenizeComponent(raw))
+    return lowercaseAsciiOnly(decodeTokens(trimmed))
 }
 
 const ASCII_UPPER_A = 0x41
@@ -116,7 +205,10 @@ const ASCII_UPPER_Z = 0x5a
 const ASCII_CASE_OFFSET = 0x20
 
 // Deliberately ASCII-only — `String#toLowerCase()`'s full Unicode case folding is exactly the
-// homoglyph hole this function exists to close (see the comment on `normalizeGroupDn`).
+// homoglyph hole this function exists to close (e.g. U+212A KELVIN SIGN folding onto ASCII `k`, or
+// Turkish dotless `ı`/dotted `İ` folding across the ASCII `i`/`I` pair under some locales): never
+// touching a non-ASCII codepoint means a lookalike can never fold onto — or away from — a real
+// ASCII letter.
 function lowercaseAsciiOnly(value: string): string {
     return Array.from(value).map((char) => {
         const codePoint = char.codePointAt(0) ?? 0
@@ -158,6 +250,19 @@ function resolveGrants({ groupMappings, memberGroupDns }: ResolveGrantsParams): 
 
     return { platformRole, projectRoles }
 }
+
+// Exposed so `ldap-group-mapping-service.ts` can decide whether a mapped role *raises* a
+// MANUAL role (allowed — and the point at which provenance flips to LDAP) or would *lower* one
+// (never allowed — see the round-3 fix on `applyPlatformRoleGrant`'s own comment) without
+// duplicating the rank table.
+function platformRoleRank(role: PlatformRole): number {
+    return PLATFORM_ROLE_RANK[role]
+}
+
+type RawToken =
+    | { kind: 'literal', char: string }
+    | { kind: 'escapedChar', char: string }
+    | { kind: 'escapedHexByte', byte: number }
 
 type ResolveGrantsParams = {
     groupMappings: LdapGroupMapping[]

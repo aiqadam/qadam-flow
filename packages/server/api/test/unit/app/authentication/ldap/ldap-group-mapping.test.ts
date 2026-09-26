@@ -114,3 +114,73 @@ describe('ldapGroupMappingUtils.normalizeGroupDn — RFC 4514 tokenisation (roun
         expect(withMixedCaseAndSpacing).toBe(canonical)
     })
 })
+
+// Round 3 (app-sec): round 2's tokeniser still flattened the parsed DN back into one joined
+// string, which loses exactly the structural information (RDN boundary vs. multi-valued-RDN
+// boundary, escaped separator vs. real one) that made the tokenising worthwhile in the first place
+// — two structurally different DNs could still normalize to the identical string. `normalizeGroupDn`
+// now compares a structured, JSON-serialised form instead; these cases are each a DN pair that a
+// flattened comparison could not tell apart.
+describe('ldapGroupMappingUtils.normalizeGroupDn — structured comparison (round 3 hardening)', () => {
+    it('does NOT equate an escaped comma inside one RDN\'s value with two real, separate RDNs', () => {
+        const oneRdnWithEmbeddedComma = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins\\,ou=QadamFlow,ou=Groups,dc=corp,dc=com')
+        const twoRealRdns = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins,ou=QadamFlow,ou=Groups,dc=corp,dc=com')
+
+        expect(oneRdnWithEmbeddedComma).not.toBe(twoRealRdns)
+    })
+
+    it('does NOT equate a hex-escaped comma+equals inside one RDN\'s value with the real, fully-split DN', () => {
+        // `\2C` is the hex escape for `,` (0x2C) and `\3D` is the hex escape for `=` (0x3D) — this
+        // still resolves to a single `cn` value containing a literal comma and equals sign, the
+        // same shape as the plain-`\,`-escaped case above, and must still differ from the DN that
+        // actually splits into five separate RDNs.
+        const hexEscapedWithinOneRdn = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins\\2Cou\\3DQadamFlow,ou=Groups,dc=corp,dc=com')
+        const twoRealRdns = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins,ou=QadamFlow,ou=Groups,dc=corp,dc=com')
+
+        expect(hexEscapedWithinOneRdn).not.toBe(twoRealRdns)
+    })
+
+    it('does NOT equate a multi-valued RDN (`+`) with two separate single-valued RDNs (`,`)', () => {
+        const multiValuedRdn = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins+ou=Groups,dc=x')
+        const twoSeparateRdns = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins,ou=Groups,dc=x')
+
+        expect(multiValuedRdn).not.toBe(twoSeparateRdns)
+    })
+
+    it('does NOT equate a trailing escaped space with a trailing escaped backslash', () => {
+        const trailingEscapedSpace = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins\\ ,dc=x')
+        const trailingEscapedBackslash = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins\\\\,dc=x')
+
+        expect(trailingEscapedSpace).not.toBe(trailingEscapedBackslash)
+    })
+
+    it('decodes a multi-byte UTF-8 hex escape as one character, matching the real character and NOT the byte-by-byte mojibake', () => {
+        const hexEscaped = ldapGroupMappingUtils.normalizeGroupDn('cn=\\C3\\A9,dc=x')
+        const realCharacter = ldapGroupMappingUtils.normalizeGroupDn('cn=é,dc=x')
+        const byteByByteMojibake = ldapGroupMappingUtils.normalizeGroupDn('cn=Ã©,dc=x')
+
+        expect(hexEscaped).toBe(realCharacter)
+        expect(hexEscaped).not.toBe(byteByByteMojibake)
+    })
+
+    it('does NOT match a group name built with a dotless ı (U+0131) against the plain-ASCII "i"', () => {
+        const spoofed = ldapGroupMappingUtils.normalizeGroupDn('cn=admıns,dc=example,dc=com')
+        const real = ldapGroupMappingUtils.normalizeGroupDn('cn=admins,dc=example,dc=com')
+
+        expect(spoofed).not.toBe(real)
+    })
+
+    it('still DOES match genuine case and spacing differences with the structured comparison', () => {
+        const withMixedCaseAndSpacing = ldapGroupMappingUtils.normalizeGroupDn('CN=Admins, DC=Example, DC=Com')
+        const canonical = ldapGroupMappingUtils.normalizeGroupDn('cn=admins,dc=example,dc=com')
+
+        expect(withMixedCaseAndSpacing).toBe(canonical)
+    })
+
+    it('still normalizes a multi-valued RDN order-independently', () => {
+        const orderA = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins+ou=Groups,dc=x')
+        const orderB = ldapGroupMappingUtils.normalizeGroupDn('ou=Groups+cn=Admins,dc=x')
+
+        expect(orderA).toBe(orderB)
+    })
+})
