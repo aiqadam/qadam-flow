@@ -1,17 +1,22 @@
-import { Translation } from '@aiqadam/shared'
+import { Project, Translation } from '@aiqadam/shared'
 import { EntitySchema } from 'typeorm'
-import { BaseColumnSchemaPart } from '../database/database-common'
+import { ApIdSchema, BaseColumnSchemaPart } from '../database/database-common'
 
-export type TranslationSchema = Translation
+export type TranslationSchema = Translation & {
+    project?: Project
+}
 
 export const TranslationEntity = new EntitySchema<TranslationSchema>({
     name: 'translation',
     columns: {
         ...BaseColumnSchemaPart,
         projectId: {
-            type: String,
+            ...ApIdSchema,
             nullable: false,
         },
+        // No FK relation, deliberately: same precedent as `file.entity.ts` — `platformId` is
+        // derivable from `projectId` (every project belongs to exactly one platform) and platforms
+        // are not deleted the way projects are, so there is no cascade behavior for it to need.
         platformId: {
             type: String,
             nullable: false,
@@ -40,4 +45,16 @@ export const TranslationEntity = new EntitySchema<TranslationSchema>({
             columns: ['projectId'],
         },
     ],
+    relations: {
+        project: {
+            type: 'many-to-one',
+            target: 'project',
+            cascade: true,
+            onDelete: 'CASCADE',
+            joinColumn: {
+                name: 'projectId',
+                foreignKeyConstraintName: 'fk_translation_project_id',
+            },
+        },
+    },
 })

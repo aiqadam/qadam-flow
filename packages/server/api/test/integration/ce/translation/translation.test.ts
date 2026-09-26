@@ -63,7 +63,7 @@ describe('Translation CE API', () => {
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
-        it('rejects a key with more than 50 locales (M4)', async () => {
+        it('rejects a key with more than 50 locales', async () => {
             const ctx = await setup()
             const values: Record<string, string> = {}
             // 51 distinct, individually-valid BCP-47 tags — one past MAX_TRANSLATION_LOCALES_PER_KEY.
@@ -83,7 +83,7 @@ describe('Translation CE API', () => {
         // never the row that results once `"values" || EXCLUDED."values"` merges it into whatever a
         // key already has. Neither this request (5 locales) nor the earlier one that created the key
         // (48 locales) exceeds MAX_TRANSLATION_LOCALES_PER_KEY (50) on its own - only the MERGED row
-        // (53) does, and only a post-merge check inside the same transaction can catch that (M5).
+        // (53) does, and only a post-merge check inside the same transaction can catch that.
         it('rejects a merge that would push a key past MAX_TRANSLATION_LOCALES_PER_KEY, and keeps the existing locales intact', async () => {
             const ctx = await setup()
             const initialValues: Record<string, string> = {}
@@ -110,7 +110,7 @@ describe('Translation CE API', () => {
             expect(Object.keys(list.json().data[0].values)).toHaveLength(48)
         })
 
-        it('rejects a description longer than 500 characters (M4)', async () => {
+        it('rejects a description longer than 500 characters', async () => {
             const ctx = await setup()
 
             const response = await ctx.post('/v1/translations', {
@@ -121,7 +121,7 @@ describe('Translation CE API', () => {
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
-        it('clears an existing description when explicitly sent as null, and leaves it untouched when omitted (Low)', async () => {
+        it('clears an existing description when explicitly sent as null, and leaves it untouched when omitted', async () => {
             const ctx = await setup()
             await ctx.post('/v1/translations', {
                 projectId: ctx.project.id,
@@ -277,7 +277,7 @@ describe('Translation CE API', () => {
             expect(byKey['replace.dropped']).toEqual({ ru: 'dropped (ru)' })
         })
 
-        it('rejects a 50k-key import fast instead of hanging on a quadratic flatten (B1)', async () => {
+        it('rejects a 50k-key import fast instead of hanging on a quadratic flatten', async () => {
             const ctx = await setup()
             // Short keys/values keep the whole JSON payload comfortably under
             // `MAX_TRANSLATION_IMPORT_BYTES` (1 MB) — the point is to exercise the service's own
@@ -323,9 +323,9 @@ describe('Translation CE API', () => {
 
         // A nested payload accidentally sent with `format: 'flat'` has object values, not strings —
         // silently skipping them used to mean an existing key kept nothing from this import, so
-        // `mode: 'replace'` would strip its `en` locale entirely (M4). Rejecting the whole request
+        // `mode: 'replace'` would strip its `en` locale entirely. Rejecting the whole request
         // up front, before the transaction opens, means nothing is deleted.
-        it('rejects a nested payload sent as format: flat + replace, deleting nothing (M4)', async () => {
+        it('rejects a nested payload sent as format: flat + replace, deleting nothing', async () => {
             const ctx = await setup()
             await ctx.post('/v1/translations', {
                 projectId: ctx.project.id,
@@ -345,7 +345,7 @@ describe('Translation CE API', () => {
             expect(list.json().data[0].values).toEqual({ en: 'Hello', ru: 'Привет' })
         })
 
-        it('rejects a non-string leaf in a nested payload (M4)', async () => {
+        it('rejects a non-string leaf in a nested payload', async () => {
             const ctx = await setup()
             const response = await ctx.post('/v1/translations/import', {
                 projectId: ctx.project.id,
@@ -369,7 +369,7 @@ describe('Translation CE API', () => {
         // eager per-segment check produces is THIS specific message, thrown mid-walk rather than
         // after flattening completes — the pre-fix code's post-hoc rejection reads
         // `"<key>" is not a valid translation key`, never the "exceeds ... characters" wording below.
-        it('rejects a nested key path once it would exceed TRANSLATION_KEY_MAX_LENGTH (M4)', async () => {
+        it('rejects a nested key path once it would exceed TRANSLATION_KEY_MAX_LENGTH', async () => {
             const ctx = await setup()
             const letters = 'abcdefghijklmnopqrstuvwxyz'
             let node: unknown = 'leaf'
@@ -403,7 +403,7 @@ describe('Translation CE API', () => {
         // and new code end up returning 409 (the payload's over-length keys are invalid either way),
         // so status code alone can't tell them apart — the elapsed-time budget is what a regression
         // here would blow.
-        it('rejects a deep chain leading to a wide leaf object fast, staying under 1 MB (M4)', async () => {
+        it('rejects a deep chain leading to a wide leaf object fast, staying under 1 MB', async () => {
             const ctx = await setup()
             const segment = 's'.repeat(50)
             const wide: Record<string, string> = {}
@@ -435,7 +435,7 @@ describe('Translation CE API', () => {
         // node-visit cap is the ONLY thing that bounds this walk. 55,000 empty-object entries (each
         // the cheapest possible per-node JSON encoding) cross MAX_TRANSLATION_IMPORT_NODES (50,000)
         // while staying comfortably under the 1 MB byte cap.
-        it('rejects a payload of nested empty objects once the node-visit cap is exceeded, even though no leaf is ever invalid (M4)', async () => {
+        it('rejects a payload of nested empty objects once the node-visit cap is exceeded, even though no leaf is ever invalid', async () => {
             const ctx = await setup()
             const data: Record<string, unknown> = {}
             for (let i = 0; i < 55_000; i++) {
@@ -457,10 +457,10 @@ describe('Translation CE API', () => {
         })
 
         // `import`'s DTO has no per-value length schema (only the whole-payload byte cap) — this
-        // reaches ONLY the service-level `upsertMergingValues` re-validation (M4), not a REST DTO
+        // reaches ONLY the service-level `upsertMergingValues` re-validation, not a REST DTO
         // check, unlike the same cap on POST /v1/translations (already enforced by
         // UpsertTranslationRequestItem's zod schema before the request reaches the service).
-        it('rejects an imported value longer than TRANSLATION_VALUE_MAX_LENGTH (M4)', async () => {
+        it('rejects an imported value longer than TRANSLATION_VALUE_MAX_LENGTH', async () => {
             const ctx = await setup()
             const response = await ctx.post('/v1/translations/import', {
                 projectId: ctx.project.id,
@@ -492,7 +492,7 @@ describe('Translation CE API', () => {
         })
 
         // A translation key is flow-author-controlled text — a key literally named "projectId"
-        // must not collide with anything at the response's own top level (M9). Wrapped in
+        // must not collide with anything at the response's own top level. Wrapped in
         // { translations: ... }, it is just an ordinary entry inside that object.
         it('exports a key literally named "projectId" without colliding with the response envelope', async () => {
             const ctx = await setup()
@@ -508,7 +508,7 @@ describe('Translation CE API', () => {
         })
     })
 
-    describeWithAuth('GET /v1/translations/:id/usages (M7)', () => app!, (setup) => {
+    describeWithAuth('GET /v1/translations/:id/usages', () => app!, (setup) => {
         it('reports a flow whose draft references the key, and one whose published version does, separately', async () => {
             const ctx = await setup()
             const created = await ctx.post('/v1/translations', {
@@ -610,7 +610,7 @@ describe('Translation CE API', () => {
         })
     })
 
-    describe('whole-table byte cap (M4)', () => {
+    describe('whole-table byte cap', () => {
         it('rejects a write once the project\'s translation table already exceeds MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT', async () => {
             const ctx = await createTestContext(app!)
             // Seeded directly (bypassing the per-value 10k cap, which only the application layer
@@ -633,6 +633,23 @@ describe('Translation CE API', () => {
             })
 
             expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+    })
+
+    describeWithAuth('translation.projectId foreign key', () => app!, (setup) => {
+        it('cascades: deleting the project deletes its translation rows', async () => {
+            const ctx = await setup()
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'cascade.key', values: { en: 'Bye' } }],
+            })
+            const before = await db.find('translation', { projectId: ctx.project.id })
+            expect(before).toHaveLength(1)
+
+            await db.delete('project', { id: ctx.project.id })
+
+            const after = await db.find('translation', { projectId: ctx.project.id })
+            expect(after).toHaveLength(0)
         })
     })
 })
