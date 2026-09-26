@@ -39,6 +39,32 @@ const validConfig = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 })
 
+// Delta review: a non-PEM string was rejected by `assertValidPem` before the owner gate ever ran,
+// so on the parent (buggy) commit this returned 400, not the 403 the owner gate itself would have
+// produced — a false-red test that didn't actually prove the gate. This is a real, valid,
+// self-signed certificate (structurally valid PEM, not chained to any real CA) so the only thing
+// that can reject the request is the owner gate.
+const STATIC_TEST_CA_PEM = `-----BEGIN CERTIFICATE-----
+MIIDKTCCAhGgAwIBAgIUNv0V9QyocOGLv3oGffDbcwnqbxswDQYJKoZIhvcNAQEL
+BQAwIzEhMB8GA1UEAwwYbGRhcC1jb25maWctdGVzdC1maXh0dXJlMCAXDTI2MDky
+NjA2MTczNFoYDzIxMjYwOTAyMDYxNzM0WjAjMSEwHwYDVQQDDBhsZGFwLWNvbmZp
+Zy10ZXN0LWZpeHR1cmUwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDb
+KxPKEQQwfdIQ2uxTuQKPJ7DobnfbYgQfaG37ToR0xglHUulnlL6mYEVcak3L1Cq/
+rGhMfaldU0jkCyEZPfFTGLWxHKOm6HH1KtqBjVRuWFS7cSwQGDnob6ImSxUJLghM
+niDZiHr+5DMg1Ay254pcxz9j/BXXoySWLuO/E/GQm6AXZKnG5CBFl4GmRMauHuA2
+n0fvgkrJYNyEDJAFrJAto7hGWEYscaoCORPUbYDVY6zpdVYr+Nh/PJLzx1NzQreY
+d+oqZOblUDbggDTsMD7UfPAUdiNjspBfYP+1fPYQWgZHHTjV0wWX1+bYlEt3xKgZ
+XYthOGxjCOJXubsm+cBlAgMBAAGjUzBRMB0GA1UdDgQWBBRRj58wA7bN650yMo1H
+4XkytD7iYzAfBgNVHSMEGDAWgBRRj58wA7bN650yMo1H4XkytD7iYzAPBgNVHRMB
+Af8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQDP26Mm+23Zb+cdsHe3rNtvAdAK
+RtxX8zIpHAU3uNtKk/er/mDrPz8AiLYMatKWIUoXNzuqlrbtMi8GEytMlQEUtJrM
+AdtgtJhbRwl2rIiLns9h4FfTbfYaIPL7pxHVmqOuT8YgVP5LEvMrc6DOXDDk7yz1
+TCcN8qh/Ltgq1eRDhTQKqcQH8faBbLzoVQESOm96ddnk/I6S6VPQkvAMgMyYrmJN
+TYwHzBhuUdDOyZnehsJI/Xe3l74BsroxH2gra26zx5a+oq8WDdPwQXkmQK7xzeb9
+pBRrTmZpDlqDjBH7Ee9OtUx5zdp28mFJD9nzj77vYdwNw4Vj7qnECajWd+3h
+-----END CERTIFICATE-----
+`
+
 describe('Platform LDAP config API', () => {
     it('returns null when no config is saved yet', async () => {
         const response = await ctx.get('/v1/platform-ldap-configs')
@@ -289,7 +315,22 @@ describe('Platform LDAP config API', () => {
                 method: 'POST',
                 url: '/api/v1/platform-ldap-configs',
                 headers: { authorization: `Bearer ${token}` },
-                payload: validConfig({ linkExistingByEmail: true, caCertificate: 'a-different-ca-certificate' }),
+                payload: validConfig({ linkExistingByEmail: true, caCertificate: STATIC_TEST_CA_PEM }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        // Delta review: the CA-certificate case above doesn't prove `bindPassword` alone is covered
+        // — a non-owner rotating only the bind password, with every `LdapConfig` field and the CA
+        // certificate left untouched, must still be rejected.
+        it('rejects a non-owner admin rotating only the bind password while linkExistingByEmail is already on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ linkExistingByEmail: true, bindPassword: 'a-different-bind-password' }),
             })
             expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
         })

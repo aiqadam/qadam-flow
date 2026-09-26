@@ -277,7 +277,7 @@ Recorded deliberately, not discovered late — each of these is a property of th
 - **(a) Whoever controls a platform's LDAP config controls every LDAP-managed account on that
   platform.** The owner (and, for non-sensitive fields, any platform admin) chooses `baseDn`,
   `userFilter` and `attributeMap` — including which attribute is `subject`. A directory admin who
-  can edit an entry's subject attribute, or an Qadam Flow platform admin who can repoint the search
+  can edit an entry's subject attribute, or a Qadam Flow platform admin who can repoint the search
   filter to match a different entry, can retarget which directory identity an existing
   `user_federated_identity` row resolves to. This is the same trust boundary every identity
   provider integration has (whoever configures the IdP connection is trusted with the accounts it
