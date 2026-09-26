@@ -6,6 +6,7 @@ import {
     isNil,
     PlatformId,
     PlatformRole,
+    PlatformRoleManagedBy,
     ProjectId,
     ProjectType,
     QadamFlowError,
@@ -22,6 +23,7 @@ import dayjs from 'dayjs'
 import { FastifyBaseLogger } from 'fastify'
 import { nanoid } from 'nanoid'
 import { EntityManager, In, IsNull } from 'typeorm'
+import { userFederatedIdentityService } from '../authentication/federated-identity/user-federated-identity-service'
 import { userIdentityRepository, userIdentityService } from '../authentication/user-identity/user-identity-service'
 import { repoFactory } from '../core/db/repo-factory'
 import { buildPaginator } from '../helper/pagination/build-paginator'
@@ -40,6 +42,7 @@ export const userService = (log: FastifyBaseLogger) => ({
             id: apId(),
             identityId: params.identityId,
             platformRole: params.platformRole,
+            platformRoleManagedBy: PlatformRoleManagedBy.MANUAL,
             status: isActive ? UserStatus.ACTIVE : UserStatus.INACTIVE,
             externalId: params.externalId,
             platformId: params.platformId,
@@ -74,7 +77,7 @@ export const userService = (log: FastifyBaseLogger) => ({
     async updateLastActiveDate({ id }: UpdateLastActiveDateParams): Promise<void> {
         await userRepo().update({ id }, { lastActiveDate: dayjs().toISOString() })
     },
-    async update({ id, status, platformId, platformRole, externalId }: UpdateParams): Promise<UserWithMetaInformation> {
+    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN' }: UpdateParams): Promise<UserWithMetaInformation> {
         const user = await this.getOrThrow({ id })
         assertNotNullOrUndefined(user.platformId, 'platformId')
 
@@ -105,7 +108,20 @@ export const userService = (log: FastifyBaseLogger) => ({
             ...spreadIfDefined('status', status),
             ...spreadIfDefined('platformRole', platformRole),
             ...spreadIfDefined('externalId', externalId),
+            // An admin-path role write always resets provenance to MANUAL, so a later LDAP mapping
+            // re-applying the *same* role it previously granted doesn't leave a stale LDAP marker
+            // on what is now a manually-asserted role. The mapping's own write (`source: 'LDAP'`)
+            // is the only path that sets LDAP instead.
+            ...(platformRole !== undefined ? { platformRoleManagedBy: source === 'ADMIN' ? PlatformRoleManagedBy.MANUAL : PlatformRoleManagedBy.LDAP } : {}),
         })
+
+        // Any explicit *admin* status write — either direction — is a human decision that must
+        // stick: it clears the directory's own "I deactivated this" marker, so reconcile can never
+        // later reactivate a user an admin just acted on directly (app-sec: paths A and B).
+        // Reconcile's own status writes (`source: 'LDAP'`) manage that marker themselves.
+        if (status !== undefined && source === 'ADMIN') {
+            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId })
+        }
 
         return this.getMetaInformation({ id })
     },
@@ -243,6 +259,7 @@ export const userService = (log: FastifyBaseLogger) => ({
             lastName: identity.lastName,
             platformId: user.platformId,
             platformRole: user.platformRole,
+            platformRoleManagedBy: user.platformRoleManagedBy,
             status: user.status,
             externalId: user.externalId,
             created: user.created,
@@ -333,6 +350,11 @@ type UpdateParams = {
     platformId: PlatformId
     platformRole?: PlatformRole
     externalId?: string
+    // 'ADMIN' (the default) is every human-facing path — `POST /v1/users/:id`, invitation
+    // provisioning. 'LDAP' is `ldapReconcileService`/`ldapGroupMappingService`'s own writes, which
+    // manage `directoryDisabledAt`/`platformRoleManagedBy` themselves rather than having this
+    // method reset them to the human-decision defaults.
+    source?: 'ADMIN' | 'LDAP'
 }
 
 type CreateParams = {

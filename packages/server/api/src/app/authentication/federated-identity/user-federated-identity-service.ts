@@ -42,6 +42,14 @@ export const userFederatedIdentityService = (_log: FastifyBaseLogger) => ({
     async setDirectoryDisabledAt({ id, directoryDisabledAt, entityManager }: SetDirectoryDisabledAtParams): Promise<void> {
         await userFederatedIdentityRepo(entityManager).update({ id }, { directoryDisabledAt })
     },
+    // Called by `userService.update`'s admin path (app-sec paths A and B): any explicit status
+    // write a human makes must erase "the directory did this" provenance, whichever direction it
+    // goes, so a later reconcile tick can never treat a since-overridden decision as its own to
+    // undo. Scoped to (userId, platformId) — a federated row is already unique per platform, this
+    // just avoids assuming there is exactly one.
+    async clearDirectoryDisabledAtForUser({ userId, platformId, entityManager }: ClearDirectoryDisabledAtForUserParams): Promise<void> {
+        await userFederatedIdentityRepo(entityManager).update({ userId, platformId }, { directoryDisabledAt: null })
+    },
 })
 
 type FindBySubjectParams = {
@@ -75,5 +83,11 @@ type ListByPlatformAndProviderParams = {
 type SetDirectoryDisabledAtParams = {
     id: string
     directoryDisabledAt: string | null
+    entityManager?: EntityManager
+}
+
+type ClearDirectoryDisabledAtForUserParams = {
+    userId: UserId
+    platformId: PlatformId
     entityManager?: EntityManager
 }
