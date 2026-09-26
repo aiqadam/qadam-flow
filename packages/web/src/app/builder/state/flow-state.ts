@@ -36,6 +36,7 @@ export type FlowState = {
   applyOperation: (
     operation: FlowOperationRequest,
     onSuccess?: () => void,
+    onError?: (error: unknown) => void,
   ) => void;
   setFlow: (flow: PopulatedFlow) => void;
   setSampleDataLocally: (params: {
@@ -175,7 +176,11 @@ export const createFlowState = (
         };
       }),
     isPublishing: false,
-    applyOperation: (operation: FlowOperationRequest, onSuccess?: () => void) =>
+    applyOperation: (
+      operation: FlowOperationRequest,
+      onSuccess?: () => void,
+      onError?: (error: unknown) => void,
+    ) =>
       set((state) => {
         if (state.readonly) {
           if (operation.type === FlowOperationType.UPDATE_NOTE) {
@@ -230,6 +235,7 @@ export const createFlowState = (
             onSuccess?.();
           } catch (error) {
             console.error(error);
+            onError?.(error);
             flowUpdatesQueue.halt();
           }
         };

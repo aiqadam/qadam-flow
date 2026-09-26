@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BoxIcon } from '@/components/icons/box';
 import { ConnectIcon } from '@/components/icons/connect';
 import { HistoryIcon } from '@/components/icons/history';
+import { LanguagesIcon } from '@/components/icons/languages';
 import { VariableIcon } from '@/components/icons/variable';
 import { WorkflowIcon } from '@/components/icons/workflow';
 import { useEmbedding } from '@/components/providers/embed-provider';
@@ -100,6 +101,13 @@ export const ProjectDashboardLayoutHeader = () => {
       label: t('Variables'),
       icon: VariableIcon,
       hasPermission: checkAccess(Permission.READ_VARIABLE),
+      show: true,
+    },
+    {
+      to: authenticationSession.appendProjectRoutePrefix('/translations'),
+      label: t('Translations'),
+      icon: LanguagesIcon,
+      hasPermission: checkAccess(Permission.READ_TRANSLATION),
       show: true,
     },
     {

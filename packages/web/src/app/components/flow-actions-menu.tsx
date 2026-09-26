@@ -12,6 +12,7 @@ import {
   Download,
   GalleryVerticalEnd,
   Import,
+  Languages,
   Pencil,
   Share2,
   Trash2,
@@ -20,6 +21,7 @@ import React, { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { FlowLocaleSourceDialog } from '@/app/builder/flow-locale-source-dialog';
 import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { PermissionNeededTooltip } from '@/components/custom/permission-needed-tooltip';
 import { LoadingSpinner } from '@/components/custom/spinner';
@@ -78,6 +80,7 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(flowVersion.displayName);
+  const [isLocaleSettingsOpen, setIsLocaleSettingsOpen] = useState(false);
   const [isMoveOpen, setIsMoveOpen] = useState(false);
   const [folderToMoveId, setFolderToMoveId] = useState('');
   const { folders } = foldersHooks.useFolders();
@@ -245,6 +248,26 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
               </div>
             </DropdownMenuItem>
           )}
+          {insideBuilder && !readonly && (
+            <PermissionNeededTooltip
+              hasPermission={userHasPermissionToUpdateFlow}
+            >
+              <DropdownMenuItem
+                disabled={!userHasPermissionToUpdateFlow}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOpen(false);
+                  setIsLocaleSettingsOpen(true);
+                }}
+              >
+                <div className="flex cursor-pointer flex-row gap-2 items-center">
+                  <Languages className="h-4 w-4" />
+                  <span>{t('Locale settings')}</span>
+                </div>
+              </DropdownMenuItem>
+            </PermissionNeededTooltip>
+          )}
           {!readonly &&
             insideBuilder &&
             !embedState.hideExportAndImportFlow && (
@@ -332,6 +355,12 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
         onConfirm={() => renameFlow()}
         isRenaming={isRenamePending}
       />
+      {insideBuilder && (
+        <FlowLocaleSourceDialog
+          open={isLocaleSettingsOpen}
+          onOpenChange={setIsLocaleSettingsOpen}
+        />
+      )}
       <MoveToFolderDialog
         open={isMoveOpen}
         onOpenChange={setIsMoveOpen}

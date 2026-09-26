@@ -404,3 +404,65 @@ describe('setCurrentProject', () => {
     expect(window.location.href).toBe('/platform/projects');
   });
 });
+
+describe('projectCollection onUpdate — outgoing request fields', () => {
+  // `queryCollectionOptions` is mocked, so `projectCollection` never sees the real `onUpdate`
+  // this file's `project-collection.ts` builds — capture it from the mock's own call args
+  // instead, on a freshly reset module registry so an earlier describe's `vi.clearAllMocks()`
+  // (which wipes `.mock.calls` but not the mocked factory itself) can't leave this empty.
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function captureOnUpdate() {
+    const { queryCollectionOptions } = await import(
+      '@tanstack/query-db-collection'
+    );
+    await import('./project-collection');
+    const options = vi.mocked(queryCollectionOptions).mock.calls[0][0];
+    if (!options.onUpdate) {
+      throw new Error('queryCollectionOptions was not called with onUpdate');
+    }
+    // The real `onUpdate` signature takes a full `PendingMutation` (mutationId, changes, globalKey,
+    // collection, …) — this test only exercises the two fields `project-collection.ts`'s own
+    // `onUpdate` actually reads (`original`/`modified`), so the fixture below is intentionally a
+    // narrower shape than the library's; a cast at this one boundary is the least invasive way to
+    // keep that fixture simple rather than fabricating the rest of `PendingMutation` per test.
+    const onUpdate = options.onUpdate as (params: {
+      transaction: {
+        mutations: {
+          original: ProjectWithLimits;
+          modified: ProjectWithLimits;
+        }[];
+      };
+    }) => Promise<void>;
+    const { api } = await import('@/lib/api');
+    return { onUpdate, apiPost: vi.mocked(api.post) };
+  }
+
+  it("forwards defaultLocale — regression test for #420 Phase 2: the field was set on the local draft but silently dropped before it reached the server, because this handler's outgoing request was a hardcoded field list that never named it", async () => {
+    const { onUpdate, apiPost } = await captureOnUpdate();
+    const original = makeProject('p1', ProjectType.TEAM, 'owner');
+    const modified: ProjectWithLimits = { ...original, defaultLocale: 'ru' };
+
+    await onUpdate({ transaction: { mutations: [{ original, modified }] } });
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/v1/projects/p1',
+      expect.objectContaining({ defaultLocale: 'ru' }),
+    );
+  });
+
+  it('still forwards maxConcurrentJobs (pre-existing field, guards against a regression in the same handler)', async () => {
+    const { onUpdate, apiPost } = await captureOnUpdate();
+    const original = makeProject('p1', ProjectType.TEAM, 'owner');
+    const modified: ProjectWithLimits = { ...original, maxConcurrentJobs: 7 };
+
+    await onUpdate({ transaction: { mutations: [{ original, modified }] } });
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/v1/projects/p1',
+      expect.objectContaining({ maxConcurrentJobs: 7 }),
+    );
+  });
+});
