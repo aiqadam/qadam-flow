@@ -348,14 +348,14 @@ async function assertGroupMappingProjectsBelongToPlatform({ platformId, groupMap
     }
 }
 
-// A `groupDn` reconcile/sign-in can never actually compare (an attribute-value assertion with no
-// `=`, or a hex escape that decodes to invalid UTF-8 — `normalizeGroupDn` returns `null` for
+// A `groupDn` that `normalizeGroupDn` can never actually parse (an attribute-value assertion with
+// no `=`, or a hex escape that decodes to invalid UTF-8 — `normalizeGroupDn` returns `null` for
 // either) would otherwise sit in the config forever, silently granting nothing: `resolveGrants`
-// treats a `null`-normalizing mapping as never matching any reported group, by design (M2b), so
-// there is no later point where this mistake becomes visible on its own. Refusing it at save time,
-// the one moment an admin can still see and fix their own typo, is the only point a stored mapping
-// like this is ever caught at all. Uses the i18n-key message convention (`params.message` reaches
-// the client's form as-is and is translated there), matching every other zod-adjacent validation
+// treats a `null`-normalizing mapping as never matching any reported group, by design, so there is
+// no later point where this mistake becomes visible on its own. Refusing it at save time, the one
+// moment an admin can still see and fix their own typo, is the only point a stored mapping like
+// this is ever caught at all. Uses the i18n-key message convention (`params.message` reaches the
+// client as a key an i18n-aware form can translate), matching every other zod-adjacent validation
 // message this schema already carries — not the ad hoc plain-English messages elsewhere in this
 // function, which predate that convention.
 function assertGroupMappingDnsAreComparable(groupMappings: LdapGroupMapping[]): void {

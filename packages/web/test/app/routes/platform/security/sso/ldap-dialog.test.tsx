@@ -18,11 +18,17 @@ import { ConfigureLdapDialog } from '@/app/routes/platform/security/sso/ldap-dia
 const OWNER_ID = 'owner1';
 
 let capturedSaveRequest: UpsertLdapConfigRequest | undefined;
+let capturedSaveOnError: ((error: unknown) => void) | undefined;
 
-// i18next is not initialised in this harness, so the real `t` answers ''.
+// i18next is not initialised in this harness, so the real `t` answers ''. Most tests need only
+// that identity behavior, but the translated-server-error test below needs to actually tell "the
+// key was translated" apart from "the raw key was rendered untranslated" — which look identical
+// under a pure identity mock — so a handful of keys can be given a real, distinct translation via
+// this map.
+const translationOverrides: Record<string, string> = {};
 vi.mock('i18next', async (importOriginal) => ({
   ...(await importOriginal<typeof import('i18next')>()),
-  t: (key: string) => key,
+  t: (key: string) => translationOverrides[key] ?? key,
 }));
 
 vi.mock('@/lib/authentication-session', () => ({
@@ -43,12 +49,17 @@ vi.mock('@/features/platform-admin', () => ({
   ldapConfigApi: { delete: vi.fn() },
   ldapConfigKeys: { all: ['ldap-config'] },
   ldapConfigMutations: {
-    useUpsertLdapConfig: () => ({
-      mutate: (request: UpsertLdapConfigRequest) => {
-        capturedSaveRequest = request;
-      },
-      isPending: false,
-    }),
+    useUpsertLdapConfig: (
+      options: { onError?: (error: unknown) => void } = {},
+    ) => {
+      capturedSaveOnError = options.onError;
+      return {
+        mutate: (request: UpsertLdapConfigRequest) => {
+          capturedSaveRequest = request;
+        },
+        isPending: false,
+      };
+    },
     useTestLdapConfig: () => ({
       mutate: vi.fn(),
       isPending: false,
@@ -239,6 +250,10 @@ afterEach(async () => {
   root = undefined;
   container = undefined;
   capturedSaveRequest = undefined;
+  capturedSaveOnError = undefined;
+  for (const key of Object.keys(translationOverrides)) {
+    delete translationOverrides[key];
+  }
 });
 
 describe('ConfigureLdapDialog — empty-secret regression (the "" bug)', () => {
@@ -267,5 +282,44 @@ describe('ConfigureLdapDialog — empty-secret regression (the "" bug)', () => {
     expect(capturedSaveRequest).toBeDefined();
     expect(capturedSaveRequest?.bindPassword).toBeUndefined();
     expect(capturedSaveRequest?.baseDn).toBe('dc=new,dc=acme,dc=com');
+  });
+});
+
+describe('ConfigureLdapDialog — a server validation error is translated, not shown as a raw i18n key', () => {
+  it('renders the translated text for a params.message that is an i18n key, not the key itself', async () => {
+    // A pure identity `t` (the file's default mock) can't distinguish "translated" from "rendered
+    // raw" — both would show `invalidLdapGroupDnEncoding` verbatim. Giving this one key a distinct
+    // translation is what actually proves the render path calls `t()` on the server's message.
+    translationOverrides['invalidLdapGroupDnEncoding'] =
+      "This group DN can't be reliably compared to a directory group name";
+
+    await mount();
+    await click(findButtonByText('Edit')!);
+    await typeInto(inputById('bindPassword'), 'a-fresh-bind-password');
+    await click(findButtonByText('Save')!);
+
+    expect(capturedSaveOnError).toBeDefined();
+    await act(async () => {
+      capturedSaveOnError?.({
+        isAxiosError: true,
+        response: {
+          data: { params: { message: 'invalidLdapGroupDnEncoding' } },
+        },
+      });
+    });
+    await flush();
+
+    // `jest-dom`'s `toHaveTextContent` matcher isn't wired into this project's vitest setup (no
+    // test file here registers `@testing-library/jest-dom`), so the plain DOM property is what
+    // actually runs; the recommended-config lint rule that prefers the matcher doesn't fit this
+    // repo's test infra yet.
+    // eslint-disable-next-line jest-dom/prefer-to-have-text-content -- see comment above
+    expect(document.body.textContent).toContain(
+      "This group DN can't be reliably compared to a directory group name",
+    );
+    // eslint-disable-next-line jest-dom/prefer-to-have-text-content -- see comment above
+    expect(document.body.textContent).not.toContain(
+      'invalidLdapGroupDnEncoding',
+    );
   });
 });

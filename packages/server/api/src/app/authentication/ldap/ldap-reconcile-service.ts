@@ -1,4 +1,4 @@
-import { FederatedIdentityProvider, isNil, PlatformId, tryCatch, UserFederatedIdentity, UserStatus } from '@aiqadam/shared'
+import { FederatedIdentityProvider, isNil, PlatformId, tryCatch, UserFederatedIdentity, UserId, UserStatus } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { Client, Entry } from 'ldapts'
 import { transaction } from '../../core/db/transaction'
@@ -353,7 +353,7 @@ type ProcessOneIdentityParams = {
 
 type DeactivateWithinSafetyValveParams = {
     platformId: PlatformId
-    platformOwnerId: string
+    platformOwnerId: UserId
     linkedIdentities: UserFederatedIdentity[]
     processed: PerUserResult[]
     pendingDeactivations: GoneOrDisabledResult[]
@@ -362,7 +362,7 @@ type DeactivateWithinSafetyValveParams = {
 
 type DeactivateUserParams = {
     identity: UserFederatedIdentity
-    platformOwnerId: string
+    platformOwnerId: UserId
     log: FastifyBaseLogger
 }
 

@@ -12,7 +12,6 @@ import {
     QadamFlowError,
     SeekPage,
     spreadIfDefined,
-    spreadIfNotUndefined,
     User,
     UserId,
     UserIdentity,
@@ -78,7 +77,7 @@ export const userService = (log: FastifyBaseLogger) => ({
     async updateLastActiveDate({ id }: UpdateLastActiveDateParams): Promise<void> {
         await userRepo().update({ id }, { lastActiveDate: dayjs().toISOString() })
     },
-    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN', platformRoleManualBaseline, entityManager }: UpdateParams): Promise<UserWithMetaInformation> {
+    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN' }: UpdateParams): Promise<UserWithMetaInformation> {
         const user = await this.getOrThrow({ id })
         assertNotNullOrUndefined(user.platformId, 'platformId')
 
@@ -102,24 +101,31 @@ export const userService = (log: FastifyBaseLogger) => ({
             })
         }
 
-        // Cleared *before* the status write, not after: reconcile's own reactivation
-        // (`clearDirectoryDisabledAtIfSet`) is itself a conditional, atomic "clear only if still
-        // set" — so whichever of the two clears (this one, or a concurrent reconcile tick's own)
-        // lands first "wins" the marker, and the loser's own attempt becomes a no-op. If this write
-        // instead cleared the marker *after* setting `status`, a concurrent reconcile tick could
-        // observe the marker still set (this admin write hasn't reached its second statement yet),
-        // see the status already flipped to INACTIVE by *this* write, and reactivate the user right
-        // back to ACTIVE before this write's own marker-clear ever runs — silently overwriting the
-        // admin's explicit decision. Clearing first closes that window: by the time `status` is
-        // written, reconcile can no longer find the marker set for this user at all, however the
-        // two racing writes interleave. Reconcile's own status writes (`source: 'LDAP'`) manage the
-        // marker themselves and never trigger this clear; only `source: 'ADMIN'` (the admin
-        // controller's own default) does, and only when `status` is actually part of this update.
+        // Cleared *both before and after* the status write, not just before: reconcile's own
+        // reactivation (`clearDirectoryDisabledAtIfSet`) is a conditional, atomic "clear only if
+        // still set", but reconcile's *deactivation* path (`deactivateUser`) independently *sets*
+        // the marker whenever it decides — in its own, concurrently-running tick — that this same
+        // user is gone or disabled in the directory. That set can land in the window between this
+        // clear and this write's own `status` write below: this write then completes the admin's
+        // decision (e.g. re-activating a user, or deactivating one for a reason that has nothing to
+        // do with the directory), but leaves reconcile's freshly-set marker in place, stale — and a
+        // *later* directory re-enable would then reactivate this user on the strength of a marker
+        // the admin never intended to exist, undoing a decision `source: 'ADMIN'` is supposed to own
+        // outright. A single clear-before closes the narrower race this comment used to describe (a
+        // concurrent reconcile *reactivation* seeing the marker still set and this write's `status`
+        // already flipped), but not this one, since nothing before the status write can observe or
+        // prevent reconcile *setting* the marker fresh in that same window. Clearing again after the
+        // status write closes it: whatever value the marker holds by the time this write's own
+        // status change has committed, the second clear removes it, so an ADMIN write's completed
+        // decision is never left paired with a directory-owned marker it didn't set. Reconcile's own
+        // status writes (`source: 'LDAP'`) manage the marker themselves and never trigger either
+        // clear; only `source: 'ADMIN'` (the admin controller's own default) does, and only when
+        // `status` is actually part of this update.
         if (status !== undefined && source === 'ADMIN') {
-            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId, entityManager })
+            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId })
         }
 
-        await userRepo(entityManager).update({
+        await userRepo().update({
             id,
             platformId,
         }, {
@@ -128,17 +134,27 @@ export const userService = (log: FastifyBaseLogger) => ({
             ...spreadIfDefined('externalId', externalId),
             // An admin-path role write always resets provenance to MANUAL, so a later LDAP mapping
             // re-applying the *same* role it previously granted doesn't leave a stale LDAP marker
-            // on what is now a manually-asserted role. The mapping's own write (`source: 'LDAP'`)
-            // is the only path that sets LDAP instead.
+            // on what is now a manually-asserted role. `source: 'LDAP'` exists on this method only
+            // so a test can seed that prior state directly without going through the real LDAP flow
+            // (see `ldap-reconcile.test.ts`) — the actual LDAP-driven write path
+            // (`ldapGroupMappingService.applyPlatformRoleGrant`) never calls this method at all; it
+            // uses `transitionPlatformRoleIfCurrentlyEquals` instead, specifically so it can
+            // condition its own write on the exact row state it read (see that method's comment).
             ...(platformRole !== undefined ? { platformRoleManagedBy: source === 'ADMIN' ? PlatformRoleManagedBy.MANUAL : PlatformRoleManagedBy.LDAP } : {}),
             // An admin's own role write is a fresh manual decision, so it forgets any raise
-            // baseline a mapping recorded — the next mapping raise (if any) captures a new one from
-            // here. The mapping's own path (`source: 'LDAP'`) passes `platformRoleManualBaseline`
-            // explicitly (a role to set, or `null` once consumed by a revert) whenever it wants to
-            // touch this column; every other write leaves it exactly as it was.
+            // baseline a mapping recorded — the next mapping raise (if any) captures a fresh one
+            // through `transitionPlatformRoleIfCurrentlyEquals`'s own read, not a value left over
+            // here from before.
             ...(platformRole !== undefined && source === 'ADMIN' ? { platformRoleManualBaseline: null } : {}),
-            ...spreadIfNotUndefined('platformRoleManualBaseline', source === 'LDAP' ? platformRoleManualBaseline : undefined),
         })
+
+        // See the comment above the first clear: this second clear is what actually closes the
+        // race, since only *after* the status write has committed can we be sure no later marker
+        // set by a concurrently-running reconcile tick is still an accurate reflection of anything
+        // this admin write did.
+        if (status !== undefined && source === 'ADMIN') {
+            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId })
+        }
 
         return this.getMetaInformation({ id })
     },
@@ -405,20 +421,13 @@ type UpdateParams = {
     platformRole?: PlatformRole
     externalId?: string
     // 'ADMIN' (the default) is every human-facing path — `POST /v1/users/:id`, invitation
-    // provisioning. 'LDAP' is `ldapReconcileService`/`ldapGroupMappingService`'s own writes, which
-    // manage `directoryDisabledAt`/`platformRoleManagedBy` themselves rather than having this
-    // method reset them to the human-decision defaults.
+    // provisioning. 'LDAP' exists only so a test can seed a pre-existing LDAP-managed role/status
+    // directly, without going through the real LDAP flow (see `ldap-reconcile.test.ts`) — no
+    // production caller passes it: `ldapGroupMappingService`'s own platform-role write uses
+    // `transitionPlatformRoleIfCurrentlyEquals`, and `ldapReconcileService`'s own status writes use
+    // `transitionStatusIfCurrentlyEquals`/`setDirectoryDisabledAt` directly, neither of which goes
+    // through this method at all.
     source?: 'ADMIN' | 'LDAP'
-    // Only ever passed by `ldapGroupMappingService` (`source: 'LDAP'`): a `PlatformRole` to record
-    // as the pre-raise MANUAL baseline (the mapping is raising a MANUAL role right now), or `null`
-    // once a revert has consumed that baseline. Omitted (not merely `undefined` passed) by every
-    // other caller, which leaves the column untouched — an admin write already clears it
-    // unconditionally above, regardless of this param.
-    platformRoleManualBaseline?: PlatformRole | null
-    // `ldapReconcileService.deactivateUser` needs this write and its own `setDirectoryDisabledAt`
-    // write to commit atomically — join the caller's own transaction rather than defaulting to the
-    // pooled connection.
-    entityManager?: EntityManager
 }
 
 type CreateParams = {

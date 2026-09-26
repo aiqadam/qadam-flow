@@ -1,5 +1,6 @@
 import { apId, FederatedIdentityProvider, PlatformRole, PlatformRoleManagedBy, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
 import pino from 'pino'
+import { ObjectLiteral } from 'typeorm'
 import { userFederatedIdentityService } from '../../../../src/app/authentication/federated-identity/user-federated-identity-service'
 import { userIdentityService } from '../../../../src/app/authentication/user-identity/user-identity-service'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
@@ -28,11 +29,19 @@ vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
     },
 }))
 
-// Everything about `userFederatedIdentityService` runs for real *except*
+// Everything about `userFederatedIdentityService` runs for real *except* two hooks:
 // `clearDirectoryDisabledAtIfSet`, which fails on demand for one specific federated-identity id —
 // simulating a per-user DB error during reactivation without faking the whole service, so a real
-// transaction still runs (and rolls back) for every other identity in the same tick.
-const { clearDirectoryDisabledAtIfSetFailuresById } = vi.hoisted(() => ({ clearDirectoryDisabledAtIfSetFailuresById: new Set<string>() }))
+// transaction still runs (and rolls back) for every other identity in the same tick — and
+// `clearDirectoryDisabledAtForUser`'s first call for an armed userId, which (after doing its own
+// real clear) simulates a concurrently-running reconcile tick's own deactivation stamping the
+// marker again in the exact window `userService.update`'s double clear (before and after its own
+// status write) exists to close — JS has no real concurrency to race against, so this is how that
+// window gets exercised.
+const { clearDirectoryDisabledAtIfSetFailuresById, raceInjectionArmedForUserId } = vi.hoisted(() => ({
+    clearDirectoryDisabledAtIfSetFailuresById: new Set<string>(),
+    raceInjectionArmedForUserId: new Set<string>(),
+}))
 
 vi.mock('../../../../src/app/authentication/federated-identity/user-federated-identity-service', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../../../src/app/authentication/federated-identity/user-federated-identity-service')>()
@@ -47,6 +56,16 @@ vi.mock('../../../../src/app/authentication/federated-identity/user-federated-id
                         return Promise.reject(new Error('simulated DB error during reactivation'))
                     }
                     return real.clearDirectoryDisabledAtIfSet(params)
+                },
+                clearDirectoryDisabledAtForUser: async (params: Parameters<typeof real.clearDirectoryDisabledAtForUser>[0]) => {
+                    await real.clearDirectoryDisabledAtForUser(params)
+                    if (raceInjectionArmedForUserId.has(params.userId)) {
+                        raceInjectionArmedForUserId.delete(params.userId)
+                        const federated = await real.findByUser({ platformId: params.platformId, userId: params.userId, provider: FederatedIdentityProvider.LDAP })
+                        if (federated) {
+                            await real.setDirectoryDisabledAt({ id: federated.id, platformId: params.platformId, directoryDisabledAt: new Date().toISOString() })
+                        }
+                    }
                 },
             }
         },
@@ -70,6 +89,7 @@ beforeEach(async () => {
     searchBySubject.mockReset()
     resolveMemberGroupDns.mockReset().mockResolvedValue([])
     clearDirectoryDisabledAtIfSetFailuresById.clear()
+    raceInjectionArmedForUserId.clear()
 })
 
 afterEach(() => {
@@ -135,6 +155,18 @@ async function createLinkedUser({ platformId, subject }: { platformId: string, s
 async function reconcile(): Promise<void> {
     const { ldapReconcileService } = await import('../../../../src/app/authentication/ldap/ldap-reconcile-service')
     await ldapReconcileService(log).reconcileAllPlatforms()
+}
+
+// Asserts `lastReconciledAt` was actually stamped, then hands back the plain, narrowed string —
+// so a caller can compare two stamps as timestamps without repeating the same null check inline.
+// `getRepository('user_federated_identity')` (a string entity name, not the entity class) types
+// every row as `ObjectLiteral`, so the property access below is `any`, not `string | null`.
+function requireLastReconciledAt(row: ObjectLiteral): string {
+    expect(row.lastReconciledAt).not.toBeNull()
+    if (row.lastReconciledAt === null || row.lastReconciledAt === undefined) {
+        throw new Error('unreachable: asserted not null above')
+    }
+    return row.lastReconciledAt
 }
 
 describe('ldapReconcileService.reconcileAllPlatforms — deactivation', () => {
@@ -250,6 +282,7 @@ describe('ldapReconcileService.reconcileAllPlatforms — reactivation', () => {
             }
             return originalGetNumber(prop)
         })
+        vi.useFakeTimers({ toFake: ['Date'] })
         searchBySubject.mockResolvedValue(null)
         const linked = await Promise.all(Array.from({ length: 3 }, (_, i) =>
             createLinkedUser({ platformId: mockPlatform.id, subject: `ff00000${i}-0000-0000-0000-000000000000` })))
@@ -258,22 +291,53 @@ describe('ldapReconcileService.reconcileAllPlatforms — reactivation', () => {
             expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.INACTIVE)
         }
 
-        clearDirectoryDisabledAtIfSetFailuresById.add(linked[0].federatedId)
+        const federatedRepo = databaseConnection().getRepository('user_federated_identity')
+        const stampsAfterFirstRun = new Map<string, string>()
+        for (const { federatedId } of linked) {
+            const row = await federatedRepo.findOneByOrFail({ id: federatedId })
+            stampsAfterFirstRun.set(federatedId, requireLastReconciledAt(row))
+        }
+
+        // `listByPlatformAndProvider` ties break on `id ASC` once every row shares the same
+        // `lastReconciledAt` (as they do right after the identical stamp above), so the identity
+        // reconcile actually processes *first* this run is whichever of the three happens to have
+        // the alphabetically-smallest row id — not whichever `createLinkedUser` call happened
+        // first. The old, per-identity-uncaught-exception bug discarded the *whole* tick's results
+        // only once the loop actually threw; for a failure anywhere but the very first position in
+        // that real iteration order, the earlier identities' own reactivations were already
+        // committed by the time it threw, so this test's own status assertions below could pass by
+        // accident on the very bug it exists to catch — and the *only* assertion that could have
+        // told the difference (a stamp being non-null) was already true from the first run, above,
+        // regardless of whether the second run's `markReconciled` ever actually re-ran. Failing
+        // whichever identity sorts first removes both accidents: nothing this tick can have already
+        // committed ahead of the failure, and the stamps recorded above give something for the
+        // fixed code's fresh stamps to actually have to beat.
+        const brokenIdentity = [...linked].sort((a, b) => a.federatedId.localeCompare(b.federatedId))[0]
+
+        clearDirectoryDisabledAtIfSetFailuresById.add(brokenIdentity.federatedId)
         searchBySubject.mockImplementation(({ subject }: { subject: string }) =>
             Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }))
+        vi.setSystemTime(Date.now() + 1000)
 
         await reconcile()
 
-        const brokenUser = await userService(log).getOrThrow({ id: linked[0].userId })
+        const brokenUser = await userService(log).getOrThrow({ id: brokenIdentity.userId })
         expect(brokenUser.status).toBe(UserStatus.INACTIVE)
-        for (const { userId } of linked.slice(1)) {
+        for (const { userId, federatedId } of linked) {
+            if (federatedId === brokenIdentity.federatedId) {
+                continue
+            }
             expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.ACTIVE)
         }
 
-        const federatedRepo = databaseConnection().getRepository('user_federated_identity')
         for (const { federatedId } of linked) {
             const row = await federatedRepo.findOneByOrFail({ id: federatedId })
-            expect(row.lastReconciledAt).not.toBeNull()
+            const secondRunStamp = requireLastReconciledAt(row)
+            const firstRunStamp = stampsAfterFirstRun.get(federatedId)
+            if (firstRunStamp === undefined) {
+                throw new Error('unreachable: every linked federatedId was recorded after the first run')
+            }
+            expect(new Date(secondRunStamp).getTime()).toBeGreaterThan(new Date(firstRunStamp).getTime())
         }
     })
 })
@@ -301,6 +365,49 @@ describe('ldapReconcileService.reconcileAllPlatforms — fail-open on outage', (
 
         const user = await userService(log).getOrThrow({ id: userId })
         expect(user.status).toBe(UserStatus.ACTIVE)
+    })
+
+    // A `skipped` identity (its own directory lookup failed) is excluded from `markReconciled`'s
+    // stamping on purpose (see the comment in `reconcileOnePlatform`) — it is retried *first* next
+    // tick under the oldest/never-reconciled ordering, rather than being pushed to the back of the
+    // rotation as if it had been dealt with. Proven against a *previously-stamped* identity (not one
+    // whose `lastReconciledAt` was already null) so this test could actually distinguish "stamp
+    // left untouched" from "stamp reset to null", which a never-reconciled identity could not.
+    it('a skipped identity (its own search failed) keeps its old lastReconciledAt, not null and not advanced', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        vi.useFakeTimers({ toFake: ['Date'] })
+        const { userId: controlUserId, federatedId: controlFederatedId } = await createLinkedUser({ platformId: mockPlatform.id, subject: 'a1111111-1111-1111-1111-111111111111' })
+        const { federatedId: skippedFederatedId, subject: skippedSubject } = await createLinkedUser({ platformId: mockPlatform.id, subject: 'a2222222-2222-2222-2222-222222222222' })
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) =>
+            Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }))
+
+        await reconcile()
+
+        const federatedRepo = databaseConnection().getRepository('user_federated_identity')
+        const stampBeforeSkip = requireLastReconciledAt(await federatedRepo.findOneByOrFail({ id: skippedFederatedId }))
+
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) => {
+            if (subject === skippedSubject) {
+                return Promise.reject(new Error('simulated search timeout'))
+            }
+            return Promise.resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` })
+        })
+        vi.setSystemTime(Date.now() + 1000)
+
+        await reconcile()
+
+        const skippedRow = await federatedRepo.findOneByOrFail({ id: skippedFederatedId })
+        // `lastReconciledAt` comes back from TypeORM as a `Date` object despite its `string | null`
+        // schema type, so comparing via `.getTime()` — not `toBe`/reference equality, which two
+        // distinct `Date` instances holding the same instant will always fail — is what actually
+        // proves the value is unchanged.
+        expect(new Date(requireLastReconciledAt(skippedRow)).getTime()).toBe(new Date(stampBeforeSkip).getTime())
+
+        const controlSecondStamp = requireLastReconciledAt(await federatedRepo.findOneByOrFail({ id: controlFederatedId }))
+        expect(new Date(controlSecondStamp).getTime()).toBeGreaterThan(new Date(stampBeforeSkip).getTime())
+
+        expect((await userService(log).getOrThrow({ id: controlUserId })).status).toBe(UserStatus.ACTIVE)
     })
 })
 
@@ -501,6 +608,30 @@ describe('userService.update — admin-path provenance side effects', () => {
         const user = await userService(log).getOrThrow({ id: userId })
         expect(user.platformRole).toBe(PlatformRole.ADMIN)
         expect(user.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
+    })
+
+    // The mirror image of the "reactivation race with a concurrent admin write" describe block
+    // below: there, an admin write lands *during* reconcile's own tick; here, a concurrently-
+    // running reconcile tick's own deactivation (which independently *sets* `directoryDisabledAt`,
+    // never merely clears it) lands in the middle of an admin's own `update()` call — specifically
+    // in the window between its first (pre-status-write) clear and its status write completing.
+    // JS has no real concurrency to race against, so `clearDirectoryDisabledAtForUser`'s test mock
+    // simulates it: its first invocation for an armed userId re-sets the marker right after doing
+    // its own real clear, exactly modeling what a concurrent reconcile write landing in that window
+    // would do. Without the second, post-status-write clear, that freshly-set marker
+    // would survive this whole `update()` call — even though it completed a status decision that
+    // had nothing to do with the directory — and a later directory re-enable would incorrectly
+    // reactivate this user on the strength of it.
+    it('a concurrent reconcile deactivation landing between the admin\'s clear and its status write does not leave a stale marker', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const { userId, federatedId } = await createLinkedUser({ platformId: mockPlatform.id, subject: 'e0e0e0e0-0000-0000-0000-000000000000' })
+        raceInjectionArmedForUserId.add(userId)
+
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, status: UserStatus.ACTIVE })
+
+        expect(raceInjectionArmedForUserId.has(userId)).toBe(false)
+        const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({ id: federatedId })
+        expect(federated?.directoryDisabledAt).toBeNull()
     })
 })
 
