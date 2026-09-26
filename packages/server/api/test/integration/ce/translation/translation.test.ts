@@ -457,10 +457,26 @@ describe('Translation CE API', () => {
 
             const flat = await ctx.get('/v1/translations/export', { projectId: ctx.project.id, locale: 'en' })
             expect(flat.statusCode).toBe(StatusCodes.OK)
-            expect(flat.json()['export.key']).toBe('Exported')
+            expect(flat.json().translations['export.key']).toBe('Exported')
 
             const nested = await ctx.get('/v1/translations/export', { projectId: ctx.project.id, locale: 'en', format: TranslationImportFormat.NESTED })
-            expect(nested.json().export.key).toBe('Exported')
+            expect(nested.json().translations.export.key).toBe('Exported')
+        })
+
+        // A translation key is flow-author-controlled text — a key literally named "projectId"
+        // must not collide with anything at the response's own top level (M9). Wrapped in
+        // { translations: ... }, it is just an ordinary entry inside that object.
+        it('exports a key literally named "projectId" without colliding with the response envelope', async () => {
+            const ctx = await setup()
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'projectId', values: { en: 'not the real project id' } }],
+            })
+
+            const response = await ctx.get('/v1/translations/export', { projectId: ctx.project.id, locale: 'en' })
+
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            expect(response.json().translations.projectId).toBe('not the real project id')
         })
     })
 
@@ -570,8 +586,9 @@ describe('Translation CE API', () => {
         it('rejects a write once the project\'s translation table already exceeds MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT', async () => {
             const ctx = await createTestContext(app!)
             // Seeded directly (bypassing the per-value 10k cap, which only the application layer
-            // enforces) to cheaply cross the 20 MB whole-table cap without 20 MB of individually
-            // valid requests. 21 rows x ~1 MB each.
+            // enforces) to cheaply cross the 4 MB whole-table cap without needing that many
+            // individually valid requests. 21 rows x ~1 MB each is comfortably over the cap either
+            // way, so this test needs no adjustment when the cap's own value changes.
             const oversizedValue = 'x'.repeat(1_000_000)
             await db.save('translation', Array.from({ length: 21 }, (_, i) => ({
                 id: apId(),

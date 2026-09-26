@@ -28,12 +28,15 @@ export const TRANSLATION_DESCRIPTION_MAX_LENGTH = 500
 // A whole-project byte cap, checked on every write inside the same transaction (and behind the
 // same advisory lock) that enforces `MAX_TRANSLATION_KEYS_PER_PROJECT`, so a build-up of many
 // large values cannot slip past the per-key/per-value caps by spreading itself across more keys
-// than any single request touches. The original "~1 MB per 5,000 keys" planning figure assumed a
-// short (tens-of-bytes) UI string per key/locale pair, which is the common case; a hard cap has to
-// bound the worst *legitimate* case instead — a project that pushes many keys toward the
-// individual `TRANSLATION_VALUE_MAX_LENGTH` cap across several locales (e.g. long email-template
-// bodies) — so 20 MB is chosen deliberately larger than that figure rather than reproducing it.
-export const MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT = 20_000_000
+// than any single request touches. The engine loads this WHOLE table into memory once per run
+// (`EngineConstants#getTranslations`) — the cap bounds that per-run cost directly, not just
+// storage, so it stays close to the original "~1 MB per 5,000 keys" planning figure rather than
+// the individual per-value/per-locale caps' own much larger worst case (20 MB, a project pushing
+// every key toward `TRANSLATION_VALUE_MAX_LENGTH` across many locales) — that worst case is real
+// but deliberately NOT what this cap is sized against. 4 MB models a project at the full
+// `MAX_TRANSLATION_KEYS_PER_PROJECT` (5,000) with a realistic (not pathological) ~200-byte value
+// across 4 locales: 5,000 * 200 * 4 = 4,000,000 bytes.
+export const MAX_TRANSLATION_TABLE_BYTES_PER_PROJECT = 4_000_000
 // GET /v1/translations/:id/usages scans a project's flows rather than reading a precomputed
 // index, so this bounds the request's own cost rather than the table's storage: comfortably
 // above what a project management UI needs to show ("used by N flows, showing the first

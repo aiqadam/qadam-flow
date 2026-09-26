@@ -188,7 +188,14 @@ export const translationService = (log: FastifyBaseLogger) => ({
         }
     },
 
-    async exportAll(params: { projectId: string, platformId: string, locale: string, format: TranslationImportFormat }): Promise<Record<string, unknown>> {
+    // Wrapped in `{ translations: ... }` rather than returned as a bare top-level record (M9): a
+    // translation key is flow-author-controlled text, so a key literally named e.g. "projectId"
+    // would otherwise land as a sibling of nothing — but a bare object IS the response body, and
+    // response-shape-sniffing middleware downstream (the same reason a raw record is never handed
+    // back for any other resource in this API) can trip over a top-level property it wasn't
+    // expecting. A named envelope means no translation key can ever collide with anything the
+    // response's own shape is expected to carry.
+    async exportAll(params: { projectId: string, platformId: string, locale: string, format: TranslationImportFormat }): Promise<{ translations: Record<string, unknown> }> {
         const { projectId, platformId, locale, format } = params
         const canonicalLocale = localeUtil.canonicalize(locale)
         if (isNil(canonicalLocale)) {
@@ -205,7 +212,7 @@ export const translationService = (log: FastifyBaseLogger) => ({
                 Object.defineProperty(flat, row.key, { value, writable: true, enumerable: true, configurable: true })
             }
         }
-        return format === TranslationImportFormat.NESTED ? nestFlatData(flat) : flat
+        return { translations: format === TranslationImportFormat.NESTED ? nestFlatData(flat) : flat }
     },
 })
 
