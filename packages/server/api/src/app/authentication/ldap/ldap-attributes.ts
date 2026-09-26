@@ -7,7 +7,7 @@ import { Entry } from 'ldapts'
 // case-sensitive `entry[name]` lookup would then depend on a coincidence of casing between the
 // admin's configured attribute name and this one server's convention, silently returning
 // `undefined` — not a search failure — whenever they disagree.
-function getAttributeValue(entry: Entry, name: string): EntryAttributeValue {
+function getAttributeValue({ entry, name }: GetAttributeValueParams): EntryAttributeValue {
     if (name in entry) {
         return entry[name]
     }
@@ -40,7 +40,7 @@ function swapByteOrder(hex: string): string {
 }
 
 function readStringAttribute({ entry, name }: ReadAttributeParams): string | undefined {
-    const value = getAttributeValue(entry, name)
+    const value = getAttributeValue({ entry, name })
     if (isNil(value)) {
         return undefined
     }
@@ -59,9 +59,14 @@ function readStringAttribute({ entry, name }: ReadAttributeParams): string | und
 
 function resolveSubject({ entry, attributeMap }: ResolveSubjectParams): string | undefined {
     if (attributeMap.subject === 'objectGUID') {
-        const value = getAttributeValue(entry, attributeMap.subject)
+        const value = getAttributeValue({ entry, name: attributeMap.subject })
         const buffer = Array.isArray(value) ? value[0] : value
-        if (isNil(buffer) || !Buffer.isBuffer(buffer)) {
+        // A raw `objectGUID` is exactly 16 bytes (RFC-defined layout — see
+        // `objectGuidBufferToCanonicalString` below); a directory that sends anything else for this
+        // attribute is not sending a usable subject, and slicing/padding it into a GUID-shaped
+        // string anyway would fabricate an identifier collision-prone across entries instead of
+        // correctly reporting "no usable subject".
+        if (isNil(buffer) || !Buffer.isBuffer(buffer) || buffer.length !== 16) {
             return undefined
         }
         return objectGuidBufferToCanonicalString(buffer)
@@ -73,6 +78,11 @@ export const ldapAttributeUtils = {
     objectGuidBufferToCanonicalString,
     readStringAttribute,
     resolveSubject,
+}
+
+type GetAttributeValueParams = {
+    entry: Entry
+    name: string
 }
 
 type ReadAttributeParams = {

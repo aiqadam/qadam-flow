@@ -112,7 +112,7 @@ async function saveLdapConfig(): Promise<void> {
     })
 }
 
-async function signIn(username: string, password: string) {
+async function signIn({ username, password }: SignInParams) {
     return app!.inject({
         method: 'POST',
         url: '/api/v1/authn/ldap/sign-in',
@@ -127,7 +127,7 @@ describe('LDAP sign-in transactional rollback (B3)', () => {
         bindAsUser.mockResolvedValue(undefined)
         federatedCreateFailure.shouldFail = true
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.statusCode).not.toBe(StatusCodes.OK)
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' })
@@ -141,10 +141,15 @@ describe('LDAP sign-in transactional rollback (B3)', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.statusCode).toBe(StatusCodes.OK)
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' })
         expect(identity).not.toBeNull()
     })
 })
+
+type SignInParams = {
+    username: string
+    password: string
+}

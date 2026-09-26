@@ -1,3 +1,8 @@
+export const ldapFilterUtils = {
+    escapeFilterValue,
+    buildUserSearchFilter,
+}
+
 // RFC 4515 §3: a filter value must escape the five octets the grammar itself uses as
 // metacharacters, plus NUL — a value that reaches the wire unescaped can close the enclosing
 // `(uid=...)` term early and splice in extra filter terms (the classic `)(uid=*` /
@@ -24,11 +29,6 @@ function escapeFilterValue(value: string): string {
 // username. `split`/`join` are plain string operations with no such special-casing.
 function buildUserSearchFilter({ userFilter, username }: BuildUserSearchFilterParams): string {
     return userFilter.split('{username}').join(escapeFilterValue(username))
-}
-
-export const ldapFilterUtils = {
-    escapeFilterValue,
-    buildUserSearchFilter,
 }
 
 type BuildUserSearchFilterParams = {

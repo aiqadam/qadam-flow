@@ -7,8 +7,15 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 
 // Opt-in only, but exercised in CI: the "CE integration suite" job in `.github/workflows/ci.yml`
 // runs this file too (via a dedicated `run:` step that stands up the same container this header
-// documents, then sets `RUN_LDAP_OPENLDAP_TESTS=true`), so it is not "run locally only" the way an
-// opt-in suite normally is — the env-gate stays because the test-ce path (`npm run test-api`) has
+// documents, then sets `AP_RUN_LDAP_OPENLDAP_TESTS=true`), so it is not "run locally only" the way
+// an opt-in suite normally is. The flag is `AP_`-prefixed, not a bare name, because turbo's
+// `globalPassThroughEnv` (`turbo.json`) only forwards `AP_*`/`QF_*` to the spawned `vitest`
+// process under its strict env mode — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped,
+// which made every one of this suite's 8 cases skip in CI without ever failing the job (round 2 of
+// #339's review). The `describe.skipIf(!RUN)` below stays a *skip* for a genuinely local,
+// opted-out run, but `if (!RUN && IS_CI)` turns the same missing flag into a hard failure whenever
+// `CI=true`, so a future regression in the env plumbing fails loudly instead of quietly reporting
+// 8 skipped as green. The env-gate itself stays because the test-ce path (`npm run test-api`) has
 // no service-container equivalent for a directory that needs a fresh cert installed before slapd
 // starts (see below), so a local `test-ce` run still needs this opted in explicitly. Every other
 // LDAP behavior (JIT provisioning, linking, collisions, error-code mapping) is covered against the
@@ -19,8 +26,8 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 // row directly — the encryption-mismatch bug below was only catchable because a real `upsert` call
 // was in the loop.
 //
-// VALIDATED — run against a real directory, all 8 cases below passed, both locally (isolated
-// containers) and via the CI step. That local run is also what caught a real bug:
+// Run against a real directory, all 8 cases below passed, on isolated local containers. That run
+// is also what caught a real bug:
 // `ldapConfigService.upsert` encrypted `bindPassword`/`caCertificate` with `encryptObject` (which
 // JSON-stringifies before encrypting — meant for object-shaped secrets, e.g. `ai-provider`'s
 // `auth`), while `getResolvedForSignIn`/`test` decrypted with `decryptString` (no JSON.parse) — a
@@ -50,13 +57,18 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 //     -v /tmp/ldap-test-certs/ldap.crt:/etc/ldap/ssl/ldap.crt \
 //     -v /tmp/ldap-test-certs/ldap.key:/etc/ldap/ssl/ldap.key \
 //     ghcr.io/ldapjs/docker-test-openldap/openldap@sha256:2a8ad09a52aa5aa151d6286c383ac3454a0dc0170d6594656dc5710156fc821b
-//   for i in $(seq 1 30); do nc -z 127.0.0.1 23891 && break; sleep 1; done
+//   for i in $(seq 1 30); do
+//     docker exec ldap-openldap-test-339 ldapwhoami -x -H ldap://localhost \
+//       -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone >/dev/null 2>&1 && break
+//     sleep 1
+//   done
 //   docker exec ldap-openldap-test-339 ldappasswd -x -H ldap://localhost \
 //     -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone \
 //     -s "correct-horse-battery-staple" "cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com"
-//   RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
+//   AP_RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
 //   docker rm -f ldap-openldap-test-339   # afterwards
-const RUN = process.env['RUN_LDAP_OPENLDAP_TESTS'] === 'true'
+const RUN = process.env['AP_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
+const IS_CI = process.env['CI'] === 'true'
 
 const LDAP_HOST = process.env['LDAP_TEST_HOST'] ?? '127.0.0.1'
 const LDAPS_PORT = Number(process.env['LDAP_TEST_LDAPS_PORT'] ?? 23891)
@@ -74,6 +86,16 @@ const TEST_PASSWORD = process.env['LDAP_TEST_PASSWORD'] ?? 'correct-horse-batter
 // process env other test files in the same run might rely on.
 if (RUN) {
     process.env['AP_LDAP_ALLOW_LIST'] = LDAP_HOST
+}
+
+if (!RUN && IS_CI) {
+    describe('LDAP sign-in against a real OpenLDAP directory — CI must not silently skip this suite', () => {
+        it('fails instead of skipping when AP_RUN_LDAP_OPENLDAP_TESTS was not propagated to CI', () => {
+            throw new Error('AP_RUN_LDAP_OPENLDAP_TESTS was not \'true\' in CI. This suite\'s 8 real-directory '
+                + 'cases would otherwise silently report as skipped rather than failing the job — see the M5 '
+                + 'step in .github/workflows/ci.yml and this file\'s own header.')
+        })
+    })
 }
 
 describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)', () => {
@@ -99,7 +121,7 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
     // bind-password/CA-certificate encryption — rather than writing the entity row directly. That
     // real `upsert` call in the loop is exactly what let this suite catch the encryption-mismatch
     // bug documented above; a direct row write would have bypassed the buggy code path entirely.
-    async function saveConfig(overrides: Record<string, unknown> = {}, caCertificatePem?: string): Promise<void> {
+    async function saveConfig({ overrides = {}, caCertificatePem }: SaveConfigParams = {}): Promise<void> {
         const response = await ctx.post('/v1/platform-ldap-configs', {
             url: `ldaps://${LDAP_HOST}:${LDAPS_PORT}`,
             tlsMode: 'ldaps',
@@ -134,7 +156,7 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
         }
     }
 
-    async function signIn(username: string, password: string) {
+    async function signIn({ username, password }: SignInParams) {
         return app!.inject({
             method: 'POST',
             url: '/api/v1/authn/ldap/sign-in',
@@ -144,7 +166,7 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
 
     it('JIT-provisions and signs in successfully over LDAPS', async () => {
         await saveConfig()
-        const response = await signIn(TEST_USERNAME, TEST_PASSWORD)
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.statusCode).toBe(StatusCodes.OK)
         const body = response.json()
         expect(body.token).toBeDefined()
@@ -153,49 +175,51 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
 
     it('signs in successfully over StartTLS', async () => {
         await saveConfig({
-            url: `ldap://${LDAP_HOST}:${LDAP_PORT}`,
-            tlsMode: 'starttls',
+            overrides: {
+                url: `ldap://${LDAP_HOST}:${LDAP_PORT}`,
+                tlsMode: 'starttls',
+            },
         })
-        const response = await signIn(TEST_USERNAME, TEST_PASSWORD)
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.statusCode).toBe(StatusCodes.OK)
         expect(response.json().token).toBeDefined()
     })
 
     it('rejects a wrong password', async () => {
         await saveConfig()
-        const response = await signIn(TEST_USERNAME, 'the-wrong-password')
+        const response = await signIn({ username: TEST_USERNAME, password: 'the-wrong-password' })
         expect(response.json().code).toBe('INVALID_CREDENTIALS')
     })
 
     it('rejects an unknown username the same way as a wrong password', async () => {
         await saveConfig()
-        const response = await signIn('no-such-user', 'irrelevant')
+        const response = await signIn({ username: 'no-such-user', password: 'irrelevant' })
         expect(response.json().code).toBe('INVALID_CREDENTIALS')
     })
 
     it('rejects a bad bind account', async () => {
-        await saveConfig({ bindDn: 'cn=not-a-real-admin,dc=planetexpress,dc=com' })
-        const response = await signIn(TEST_USERNAME, TEST_PASSWORD)
+        await saveConfig({ overrides: { bindDn: 'cn=not-a-real-admin,dc=planetexpress,dc=com' } })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.json().code).toBe('LDAP_BIND_ACCOUNT_REJECTED')
     })
 
     it('reports the directory as unreachable when nothing listens on the configured host', async () => {
-        await saveConfig({ url: `ldaps://${LDAP_HOST}:1` })
-        const response = await signIn(TEST_USERNAME, TEST_PASSWORD)
+        await saveConfig({ overrides: { url: `ldaps://${LDAP_HOST}:1` } })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.json().code).toBe('LDAP_DIRECTORY_UNREACHABLE')
     })
 
     // `tlsVerify: true` with no CA supplied means Node validates against the system trust store,
     // which never contains a directory's own self-signed cert.
     it('refuses the self-signed certificate when tlsVerify is on and no CA is configured', async () => {
-        await saveConfig({ tlsVerify: true })
-        const response = await signIn(TEST_USERNAME, TEST_PASSWORD)
+        await saveConfig({ overrides: { tlsVerify: true } })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.json().code).toBe('LDAP_DIRECTORY_UNREACHABLE')
     })
 
     it('succeeds with tlsVerify on once the matching CA certificate is supplied', async () => {
-        await saveConfig({ tlsVerify: true }, serverCertificatePem)
-        const response = await signIn(TEST_USERNAME, TEST_PASSWORD)
+        await saveConfig({ overrides: { tlsVerify: true }, caCertificatePem: serverCertificatePem })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
         expect(response.statusCode).toBe(StatusCodes.OK)
         expect(response.json().token).toBeDefined()
     })
@@ -215,4 +239,14 @@ function fetchPeerCertificatePem({ host, port }: { host: string, port: number })
         })
         socket.once('error', reject)
     })
+}
+
+type SaveConfigParams = {
+    overrides?: Record<string, unknown>
+    caCertificatePem?: string
+}
+
+type SignInParams = {
+    username: string
+    password: string
 }

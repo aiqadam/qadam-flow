@@ -28,7 +28,7 @@ was read or copied (`.agents/rules/edition-safety.md`).
 - `packages/shared/src/lib/core/authentication/ldap/ldap-config.ts` — `LdapConfig`, `UpsertLdapConfigRequest`, `PlatformLdapConfig`, `LdapTestRequest`/`Response`, `LdapTestStage`
 - `packages/shared/src/lib/core/authentication/ldap/ldap-sign-in-request.ts` — `LdapSignInRequest`
 - `packages/shared/src/lib/core/authentication/federated-identity.ts` — `FederatedIdentityProvider`, `UserFederatedIdentity`
-- Guards added to existing files: `user-identity-service.ts` (`verifyIdentityPassword`, `updatePassword`, new `linkToFederatedProvider`), `otp-service.ts` (`createAndSend` for `PASSWORD_RESET`), `authentication-utils.ts` (`getProjectAndToken` gained an optional `expiresInSeconds`), `flag.service.ts` (`ApFlagId.LDAP_AUTH_ENABLED`)
+- Guards added to existing files: `user-identity-service.ts` (`verifyIdentityPassword`, `updatePassword`, new `linkToFederatedProvider`), `otp-service.ts` (`createAndSend` for `PASSWORD_RESET`), `authentication-utils.ts` (`getProjectAndToken` gained an optional `expiresInSeconds`), `flag.service.ts` (`ApFlagId.LDAP_AUTH_ENABLED`), `authentication.service.ts` (`switchPlatform`'s `getUserForPlatform` refuses an LDAP identity's `user` row with no federated row on the target platform), `user-invitation.service.ts` (`provisionUserInvitation` refuses to grant a new platform to an LDAP identity with no federated row there — see "Reverse-direction identity squatting guards" below)
 
 ## Domain Terms
 - **`platform_ldap_config`** — one row per platform (unique `platformId`); plaintext operational config in `config` jsonb, secrets (`bindPassword`, optional `caCertificate`) as `EncryptedObject`
@@ -79,17 +79,30 @@ was read or copied (`.agents/rules/edition-safety.md`).
 4. Resolve the platform user, in order:
    - `user_federated_identity` lookup by `(platformId, LDAP, subject)` → existing user (INACTIVE refused, never reactivated). This is the only unguarded path — everything below runs `assertIdentityIsNotPrivilegedElsewhere` first.
    - else `UserIdentity` lookup by email (case-insensitive). Before doing anything with it, `assertIdentityIsNotPrivilegedElsewhere` refuses (`LDAP_ACCOUNT_COLLISION`, indistinguishable from a plain collision) whenever the identity has a user on any *other* platform, or holds `platformRole: ADMIN` on any platform, or *is* the platform owner anywhere — **the owner's break-glass**: no directory, however configured, can ever link or adopt the owner, so their local password always keeps working. Past that gate:
-     - identity already `provider === LDAP` (no federated row for *this* platform — deleted user, half-finished JIT, rotated `objectGUID`, or a first sign-in on a second eligible platform) → recover: `getOrCreateWithProject`, then create the federated row if absent, or refuse (`LDAP_ACCOUNT_COLLISION`) if one exists with a *different* subject — a deliberate refusal, not a re-point, since silently repointing would hand a rotated directory entry someone else's account. No password scramble on this path; there is no local password to protect.
+     - identity already `provider === LDAP` (no federated row for *this* platform — deleted user or half-finished JIT, both scoped to `platformId` itself) → recover: `getOrCreateWithProject`, then create the federated row if absent, or refuse (`LDAP_ACCOUNT_COLLISION`) if one exists with a *different* subject — a deliberate refusal, not a re-point, since silently repointing would hand a rotated directory entry someone else's account. Never a route onto a *different* platform: `assertIdentityIsNotPrivilegedElsewhere`, just above, already refuses any identity with a user row on another platform, so a "first sign-in on a second platform" is a collision here, not a recovery. No password scramble on this path; there is no local password to protect.
      - else `linkExistingByEmail` off → `LDAP_ACCOUNT_COLLISION`; on → link (flip provider to `LDAP`, scramble password, rotate `tokenVersion`, create the federated row)
    - else, `jitProvisioning` on → `userIdentityService.create` (verified, random password, provider `LDAP`) + `userService.getOrCreateWithProject` (MEMBER + personal project); off → `INVALID_CREDENTIALS` (anti-enumeration)
    - Every branch below the fast subject-match one runs inside one DB transaction (`transaction()` in `core/db/transaction.ts`) — identity, user/project and federated row are created/linked atomically, so a mid-way failure leaves nothing half-created (in particular, never an identity with no federated row, which would be a permanently unreachable account: local password sign-in also refuses `provider === LDAP`).
 5. Mint a token via `accessTokenManager.generateToken(principal, config.sessionTtlSeconds)` and emit `USER_SIGNED_IN`
 
 ### `linkExistingByEmail` is owner-only
-`ldapConfigService.upsert` rejects (`AUTHORIZATION`, 403) any attempt to set `linkExistingByEmail:
-true` unless the caller is the platform's own owner (`platform.ownerId`) — any other admin could
-otherwise configure a directory they control and use the flag against every non-admin local
-account. Turning it back off, or leaving it unchanged, is unrestricted.
+`ldapConfigService.upsert` rejects (`AUTHORIZATION`, 403) any change to a config whose *merged*
+`linkExistingByEmail` is `true`, unless the caller is the platform's own owner (`platform.ownerId`)
+— gated on the merged value, not on whether this request's own body sets the field, so a non-owner
+admin can't dodge the check by repointing `url`/`attributeMap.email`/`userFilter` etc. on a config
+that already has linking-by-email on without ever mentioning that field. A caller may still resend
+the exact same config unchanged (a no-op, compared field-for-field against the stored config) even
+if not the owner; turning the flag back off, or never turning it on, is unrestricted.
+
+Fixing this surfaced a deeper, previously-undiscovered bug in `UpsertLdapConfigRequest`
+(`packages/shared`): `.partial()` layered over a field that already carries its own `.default(...)`
+(`tlsVerify`, `jitProvisioning`, `linkExistingByEmail`, `sessionTtlSeconds`, `enabled`) does not
+defeat that default in this zod version — an *omitted* field on a partial update was silently
+parsing to the schema's default value, not `undefined`, contradicting `upsert`'s own "an omitted
+field on update keeps the stored value" design and resetting all five fields to their base
+defaults on *any* update that didn't explicitly resend them. Fixed by redefining all five with a
+plain `.optional()` (no `.default()`) directly on `UpsertLdapConfigRequest`, overriding the
+inherited default-carrying field via `.extend(...)`.
 
 ### `/switch-platform` and the LDAP session TTL
 Reissuing a token on `/switch-platform` used to reset the clock to the default 7-day TTL,
@@ -111,24 +124,65 @@ update); rounding toward asking for the password more often than strictly necess
 direction.
 
 ### Rate limiting
-`ldapSignInRateLimit.assertNotRateLimited` keeps two independent fixed-window Redis counters, on
-top of the per-route `@fastify/rate-limit` bucket every `/v1/authn/*` route already gets:
-- `ldap-sign-in:{platformId}:{ip}:{normalizedUsername}` — caps attempts against one *username*
-  from one *IP* (10/60s).
-- `ldap-sign-in:{platformId}:{normalizedUsername}` — caps attempts against one *username*
-  regardless of source IP, which the per-IP bucket alone cannot do for a botnet (30/60s).
+Three independent buckets gate `POST /v1/authn/ldap/sign-in`, in this order:
+1. **Per-IP, route-level** — the same `@fastify/rate-limit` registration every `/v1/authn/*` route
+   opts into (`AppSystemProp.API_RATE_LIMIT_AUTHN_MAX`/`_WINDOW`, operator-configured; see
+   `ldap-authn-controller.ts`'s route config). Keys on the caller's IP alone, with no knowledge of
+   which username is being attempted.
+2. **`ldap-sign-in:{platformId}:{ip}:{normalizedUsername}`** (`ldapSignInRateLimit`, 10/60s) — caps
+   attempts against one *username* from one *IP*.
+3. **`ldap-sign-in:{platformId}:{normalizedUsername}`** (`ldapSignInRateLimit`, 30/60s) — caps
+   attempts against one *username* regardless of source IP, which bucket 2 alone cannot do for a
+   botnet spread across many source addresses.
 
-Both keys use `ldapUsernameUtils.normalize`, the same normalisation the directory search applies,
-so a Unicode-equivalent username can neither dodge the limit nor land in a bucket the actual
-sign-in attempt disagrees with. Each counter increments via one Redis `MULTI` (`INCR` +
-`EXPIRE ... NX`), not a separate `INCR`-then-conditional-`EXPIRE`, closing the window where a
-concurrent request could observe the key before it has a TTL.
+Buckets 2 and 3 both use `ldapUsernameUtils.normalize`, the same normalisation the directory search
+applies, so a Unicode-equivalent username can neither dodge the limit nor land in a bucket the
+actual sign-in attempt disagrees with. Each counter increments via one Redis `MULTI`
+(`SET key 0 EX <ttl> NX` + `INCR key`, not `EXPIRE ... NX` — the latter needs Redis 7, this is
+compatible back to 2.6.12), closing the window where a concurrent request could observe the key
+before it has a TTL; every reply in the `MULTI` is checked, and a Redis/`EXEC` failure refuses the
+sign-in attempt (fail closed) with an error log, rather than crashing as an unhandled 500 or
+silently allowing the attempt through unlimited.
+
+**Accepted risk**: bucket 3 is keyed on the username alone, deliberately — that is the one
+dimension bucket 2 cannot cover for a botnet. The same property means a single attacker who merely
+knows (or guesses) a valid username can lock out every legitimate sign-in attempt for that
+username, from any IP, for the rest of the window — a denial-of-service against one account, not a
+credential-stuffing defense against many. This is the accepted trade for closing the botnet gap.
 
 ### Errors
 `LDAP_DIRECTORY_UNREACHABLE`, `LDAP_BIND_ACCOUNT_REJECTED`, `LDAP_EMAIL_ATTRIBUTE_MISSING`,
 `LDAP_ACCOUNT_COLLISION` are new; an unknown username and a wrong password both surface as the
 existing `INVALID_CREDENTIALS` (anti-enumeration) — including when `jitProvisioning` is off for an
 unrecognized directory user, and when a subject-attribute lookup on the matched entry fails.
+
+### Anti-enumeration timing defense (app-sec L2)
+The response body already can't distinguish "unknown username" from "known username, wrong
+password" (both `INVALID_CREDENTIALS`), but *response latency* used to: an unknown username short-
+circuited after one connect+search, while a known one paid for a second connect+bind. `ldapAuthnService.lookupDirectoryUser`
+now performs a dummy `bindAsUser` — a fixed, directory-independent DN built only from the
+platform's own `baseDn`, never the caller's username — on the "not found" path specifically
+(`LdapStageError.notFound`), so both paths pay for the same second network round trip. The dummy
+bind's own outcome is discarded either way; only its cost matters.
+
+### Reverse-direction identity squatting guards (app-sec, round 2)
+An LDAP identity's standing access to *any* platform must be provable by a `user_federated_identity`
+row on that exact platform — proof it actually signed in through that platform's own directory —
+never merely by the existence of a `user` row, which other flows can create with no directory
+involvement at all:
+- **Invitations** (`userInvitationsService.provisionUserInvitation`) — for a `provider === LDAP`
+  identity, an invitation onto a platform where it has no existing federated row is refused (the
+  invitation itself is left unprocessed, not deleted); a non-LDAP identity is unaffected.
+- **`/switch-platform`** (`authenticationService`'s `getUserForPlatform`) — the same check, at the
+  point of actually switching: a `user` row with no federated row on the target platform (e.g. one
+  reached via a pre-fix invitation grant) refuses the switch with `AUTHORIZATION`, even though the
+  `user` row itself exists.
+
+Operationally, this also means **the configured email attribute must not be self-writable by the
+directory entry it belongs to** — the existing-identity email match (`linkOrAdoptExistingIdentity`)
+is one of the paths these guards protect, and a self-writable email attribute would let a directory
+entry retarget which local account it links to. This is stated here for now; the admin-facing
+config UI should carry the same warning next to the attribute-map email field.
 
 ## Local-password lockout for `provider === LDAP`
 Enforced in the **service** layer, not controllers, so nothing can route around it:
@@ -204,10 +258,20 @@ versa.
 - **`tlsVerify: false` logs a warning on every connect**, not only at config-save time.
 
 ## Real-directory test suite in CI (M5)
-`test/integration/ce/ldap/ldap-openldap.test.ts` is opt-in (`RUN_LDAP_OPENLDAP_TESTS=true`) but now
+`test/integration/ce/ldap/ldap-openldap.test.ts` is opt-in (`AP_RUN_LDAP_OPENLDAP_TESTS=true`) and
 runs in the "CE integration suite" GitHub Actions job: a `run:` step generates a fresh TLS cert,
-starts `ghcr.io/ldapjs/docker-test-openldap/openldap` pinned by digest, waits for the LDAPS port,
-resets the one seeded test account's password via `ldappasswd`, then the next step opts the suite
-in via env var — with an `if: always()` cleanup step after. Config in that suite is written
-through the real `POST /v1/platform-ldap-configs` `upsert` handler (including the CA-certificate
-round trip), never by writing the `platform_ldap_config` row directly.
+starts `ghcr.io/ldapjs/docker-test-openldap/openldap` pinned by digest, waits for slapd to actually
+answer (`ldapwhoami` in a retry loop, not `nc -z` — `nc` only proves docker-proxy accepted the TCP
+connection, before slapd itself is listening), resets the one seeded test account's password via
+`ldappasswd`, then the next step opts the suite in via env var — with an `if: always()` cleanup
+step after. Config in that suite is written through the real `POST /v1/platform-ldap-configs`
+`upsert` handler (including the CA-certificate round trip), never by writing the
+`platform_ldap_config` row directly.
+
+The flag is `AP_`-prefixed, not a bare name — round 1 of this shipped it as
+`RUN_LDAP_OPENLDAP_TESTS`, which turbo's `globalPassThroughEnv` (`AP_*`/`QF_*` only) silently
+stripped before it ever reached the spawned `vitest` process, so all 8 cases skipped in CI without
+failing the job. The suite itself now also fails outright (rather than skipping) whenever
+`CI=true` and the flag isn't `'true'`, so a repeat of that regression is caught by the suite, not
+only by a comment. This round's fix has not yet been proven by a real green CI run showing "8
+passed" for this file — that confirmation is a follow-up, not a claim made here.

@@ -40,4 +40,16 @@ describe('ldapAttributeUtils.resolveSubject — case-insensitive objectGUID look
             attributeMap: { subject: 'objectGUID', email: 'mail', firstName: 'givenName', lastName: 'sn' },
         })).toBe('12345678-1234-5678-9abc-def012345678')
     })
+
+    // A directory bug, a mismapped attribute, or an object class that reuses the name for something
+    // else entirely could all put a buffer of the wrong length behind `objectGUID` — slicing/padding
+    // that into a GUID-shaped string would fabricate an identifier rather than correctly reporting
+    // "no usable subject" (the same outcome a missing attribute gets).
+    it('treats a non-16-byte objectGUID buffer as no subject at all, not a malformed one', () => {
+        const entry = { dn: 'uid=jdoe,dc=example,dc=com', objectGUID: Buffer.alloc(15, 1) }
+        expect(ldapAttributeUtils.resolveSubject({
+            entry,
+            attributeMap: { subject: 'objectGUID', email: 'mail', firstName: 'givenName', lastName: 'sn' },
+        })).toBeUndefined()
+    })
 })

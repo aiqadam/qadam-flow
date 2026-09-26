@@ -1,5 +1,5 @@
 import { ErrorCode, QadamFlowError } from '@aiqadam/shared'
-import { FastifyBaseLogger } from 'fastify'
+import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getResolvedForSignIn = vi.fn()
@@ -26,11 +26,7 @@ vi.mock('../../../../../src/app/authentication/ldap/ldap-client', () => ({
     },
 }))
 
-const mockLog = {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-} as unknown as FastifyBaseLogger
+const log = pino({ level: 'silent' })
 
 describe('ldapAuthnService.signIn — empty password', () => {
     beforeEach(() => {
@@ -40,7 +36,7 @@ describe('ldapAuthnService.signIn — empty password', () => {
     it('refuses an empty password before reading the platform config or touching the network', async () => {
         const { ldapAuthnService } = await import('../../../../../src/app/authentication/ldap/ldap-authn-service')
 
-        const { error } = await ldapAuthnService(mockLog).signIn({ platformId: 'platform-1', username: 'jdoe', password: '' })
+        const { error } = await ldapAuthnService(log).signIn({ platformId: 'platform-1', username: 'jdoe', password: '' })
             .then(() => ({ error: null as unknown }))
             .catch((thrown: unknown) => ({ error: thrown }))
 

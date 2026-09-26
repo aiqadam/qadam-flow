@@ -140,6 +140,20 @@ describe('ldapClient.serviceBind / searchForUser — plaintext-reconnect guard (
             client, bindDn: 'cn=svc', bindPassword: 'secret', tlsMode: LdapTlsMode.LDAPS,
         })).resolves.toBeUndefined()
     })
+
+    // `bindAsUser` connects internally rather than taking an already-connected client, but the
+    // guard must still apply to it — the doc comment on `assertConnectionStillUpgraded` claims it
+    // runs "before serviceBind/searchForUser/the user bind", and this is what makes that true rather
+    // than aspirational.
+    it('applies the same guard to bindAsUser (the user bind)', async () => {
+        resolveVettedIps.mockResolvedValue(['10.0.0.5'])
+        fakeClientState.isConnectedValue = false
+        const ldapClient = await importClient()
+
+        await expect(ldapClient.bindAsUser({
+            config: starttlsConfig, userDn: 'uid=jdoe,dc=example,dc=com', password: 'secret',
+        })).rejects.toThrow(/plaintext|lost/)
+    })
 })
 
 describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait timeout and off-by-one (M1)', () => {
@@ -223,16 +237,6 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
     // could see a spuriously-free slot and take it via the fast path, on top of the woken waiter
     // also about to claim it. This drives heavy overlapping acquire/release churn and checks the
     // invariant the whole mechanism exists to guarantee: peak concurrency never exceeds the cap.
-    // Caveat, stated rather than silently assumed: Node's microtask queue drains in strict FIFO
-    // order, and every attempt to force the specific two-releases-then-an-intruder interleaving
-    // the bug needs — including a hand-rolled version issuing two synchronous `resolve()` calls
-    // back to back followed immediately by a fresh acquire — still resolved every waiter through
-    // the FIFO queue in order rather than reproducing the race, both with this fix and with it
-    // reverted to the original decrement-then-increment shape. This test does not, in other
-    // words, independently prove the historical bug via a failing-without-the-fix run; the fix
-    // itself is still correct by inspection (an atomic handoff cannot expose a transiently-free
-    // slot; a decrement-then-later-increment pair can), and this test is kept as a real invariant
-    // check on the cap under load, not as a claimed reproduction of the specific race.
     it('never lets peak concurrent holders exceed the cap under heavy overlapping churn', async () => {
         const ldapClient = await importClient()
         let concurrent = 0
@@ -256,5 +260,74 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
         }
         await Promise.all(Array.from({ length: 15 }, worker))
         expect(peak).toBeLessThanOrEqual(10)
+    })
+
+    function makeTrackedHolder(ldapClient: Awaited<ReturnType<typeof importClient>>, tracker: { concurrent: number, peak: number }): { started: Promise<void>, release: () => void, done: Promise<void> } {
+        let markStarted: (() => void) | undefined
+        const started = new Promise<void>((resolve) => {
+            markStarted = resolve
+        })
+        let release: (() => void) | undefined
+        const gate = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        const done = ldapClient.withConnectionSlot(async () => {
+            tracker.concurrent += 1
+            tracker.peak = Math.max(tracker.peak, tracker.concurrent)
+            markStarted?.()
+            await gate
+            tracker.concurrent -= 1
+        })
+        if (release === undefined) {
+            throw new Error('release was not assigned')
+        }
+        return { started, release, done }
+    }
+
+    // Direct reproduction of the historical off-by-one, swept across the exact variable the race
+    // depends on: how many microtask ticks separate `releaseConnectionSlot` handing the freed slot
+    // to the queued waiter from a brand-new, unrelated acquirer's own synchronous cap check. Against
+    // the *previous* (decrement-then-later-increment) shape, this goes red at some depth in the
+    // sweep — the decrement is visible to the intruder's synchronous check before the woken waiter's
+    // own `await`-resumed continuation re-increments, so both the waiter and the intruder end up
+    // holding a slot for what was really one freed slot, one over the cap. Verified by hand: with
+    // `releaseConnectionSlot` reverted to `activeConnections -= 1; const next =
+    // connectionWaiters.shift(); if (!isNil(next)) next()` and `acquireConnectionSlot`'s waiter path
+    // reverted to `await new Promise(...); activeConnections += 1`, this sweep failed at depth 2
+    // (`expected 11 to be less than or equal to 10`) — confirming this is a real reproduction, not
+    // merely an invariant check that happens to stay green regardless of the fix. Exactly which
+    // depth goes red is a property of the JS engine's own microtask scheduling, not guaranteed
+    // across Node versions, which is the whole reason this sweeps a range rather than asserting one
+    // fixed depth. Against the fix, the slot is handed over atomically with no decrement step at
+    // all, so no depth in the sweep can expose a transiently-free slot.
+    it.each([0, 1, 2, 3, 4, 5, 6, 7])('never lets a queued waiter and a same-window intruder both hold the one freed slot (intruder fires %i microtask tick(s) after the release)', async (depth) => {
+        const ldapClient = await importClient()
+        const tracker = { concurrent: 0, peak: 0 }
+
+        const holders = Array.from({ length: 10 }, () => makeTrackedHolder(ldapClient, tracker))
+        await Promise.all(holders.map((holder) => holder.started))
+
+        const waiter = makeTrackedHolder(ldapClient, tracker)
+        await Promise.resolve()
+        await Promise.resolve()
+
+        holders[0].release()
+        for (let i = 0; i < depth; i++) {
+            await Promise.resolve()
+        }
+        const intruder = makeTrackedHolder(ldapClient, tracker)
+
+        // Drain enough microtask ticks for anything the intruder's own acquire is going to do —
+        // synchronously take the fast path, or queue behind the waiter — to have already happened.
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(tracker.peak).toBeLessThanOrEqual(10)
+
+        holders.slice(1).forEach((holder) => holder.release())
+        waiter.release()
+        intruder.release()
+        await Promise.all([...holders.map((holder) => holder.done), waiter.done, intruder.done])
     })
 })

@@ -521,9 +521,13 @@ jobs:
             -v /tmp/ldap-test-certs/ldap.crt:/etc/ldap/ssl/ldap.crt \
             -v /tmp/ldap-test-certs/ldap.key:/etc/ldap/ssl/ldap.key \
             ghcr.io/ldapjs/docker-test-openldap/openldap@sha256:2a8ad09a52aa5aa151d6286c383ac3454a0dc0170d6594656dc5710156fc821b
+          # `nc -z` only proves docker-proxy accepted the TCP connection, which it does before
+          # slapd itself is listening — a false-positive "ready" signal that raced the next step.
+          # `ldapwhoami` speaks the real protocol, so it only succeeds once slapd actually answers.
           for i in $(seq 1 30); do
-            nc -z 127.0.0.1 23891 && break
-            [ "$i" -eq 30 ] && { echo "::error::OpenLDAP test directory never opened port 23891"; docker logs ldap-openldap-ci; exit 1; }
+            docker exec ldap-openldap-ci ldapwhoami -x -H ldap://localhost \
+              -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone >/dev/null 2>&1 && break
+            [ "$i" -eq 30 ] && { echo "::error::OpenLDAP test directory never answered ldapwhoami"; docker logs ldap-openldap-ci; exit 1; }
             sleep 1
           done
           docker exec ldap-openldap-ci ldappasswd -x -H ldap://localhost \
@@ -546,7 +550,13 @@ jobs:
       # back onto every docs PR.
       - name: Run CE integration tests
         env:
-          RUN_LDAP_OPENLDAP_TESTS: 'true'
+          # `AP_`-prefixed so turbo's `globalPassThroughEnv` (`AP_*`/`QF_*`) actually forwards it to
+          # the spawned vitest process — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped by
+          # turbo's strict env mode, which made every one of this suite's 8 cases skip in CI without
+          # ever failing the job. `ldap-openldap.test.ts` itself now fails loudly (rather than
+          # skipping) whenever `CI=true` and this flag isn't `'true'`, so a regression here is caught
+          # by the suite itself, not only by this comment.
+          AP_RUN_LDAP_OPENLDAP_TESTS: 'true'
         run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
 
       - name: Stop OpenLDAP test directory (M5)

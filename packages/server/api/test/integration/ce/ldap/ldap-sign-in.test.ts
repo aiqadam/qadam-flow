@@ -1,4 +1,4 @@
-import { apId, LdapTestStage, PlatformRole, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
+import { apId, FederatedIdentityProvider, LdapTestStage, PlatformRole, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -93,7 +93,7 @@ async function saveLdapConfig(overrides: Record<string, unknown> = {}): Promise<
     })
 }
 
-async function signIn(username: string, password: string) {
+async function signIn({ username, password }: SignInParams) {
     return app!.inject({
         method: 'POST',
         url: '/api/v1/authn/ldap/sign-in',
@@ -112,7 +112,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.statusCode).toBe(StatusCodes.OK)
         const body = response.json()
@@ -133,11 +133,11 @@ describe('LDAP sign-in', () => {
         await saveLdapConfig()
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
-        const first = await signIn('jdoe', 'correct-password')
+        const first = await signIn({ username: 'jdoe', password: 'correct-password' })
         expect(first.statusCode).toBe(StatusCodes.OK)
         await databaseConnection().getRepository('user').update({ id: first.json().id }, { status: UserStatus.INACTIVE })
 
-        const second = await signIn('jdoe', 'correct-password')
+        const second = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(second.json().code).toBe('USER_IS_INACTIVE')
     })
@@ -147,7 +147,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('INVALID_CREDENTIALS')
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' })
@@ -159,7 +159,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue({ ...DIRECTORY_ENTRY, mail: undefined })
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_EMAIL_ATTRIBUTE_MISSING')
     })
@@ -169,7 +169,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.USER_BIND, message: 'Invalid credentials', ldapResultCode: 49 }))
 
-        const response = await signIn('jdoe', 'wrong-password')
+        const response = await signIn({ username: 'jdoe', password: 'wrong-password' })
 
         expect(response.statusCode).toBe(StatusCodes.UNAUTHORIZED)
         expect(response.json().code).toBe('INVALID_CREDENTIALS')
@@ -177,19 +177,28 @@ describe('LDAP sign-in', () => {
 
     it('returns the same INVALID_CREDENTIALS for an unknown username', async () => {
         await saveLdapConfig()
-        searchForUser.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'No matching entry was found' }))
+        searchForUser.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'No matching entry was found', notFound: true }))
+        bindAsUser.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.USER_BIND, message: 'Invalid credentials', ldapResultCode: 49 }))
 
-        const response = await signIn('nobody', 'irrelevant')
+        const response = await signIn({ username: 'nobody', password: 'irrelevant' })
 
         expect(response.statusCode).toBe(StatusCodes.UNAUTHORIZED)
         expect(response.json().code).toBe('INVALID_CREDENTIALS')
+        // Anti-timing-oracle (app-sec L2): an unknown username must still pay for a second
+        // connect+bind round trip, the same one a known-username-wrong-password case pays for via
+        // its own real user bind — otherwise "not found" measurably returns faster than "found, but
+        // wrong password", which is itself a way to enumerate valid usernames without ever reading
+        // the (identical) response body.
+        expect(bindAsUser).toHaveBeenCalledTimes(1)
+        const [dummyBindCall] = bindAsUser.mock.calls
+        expect(dummyBindCall[0].userDn).not.toBe('nobody')
     })
 
     it('returns LDAP_BIND_ACCOUNT_REJECTED when the service account bind fails', async () => {
         await saveLdapConfig()
         serviceBind.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.SERVICE_BIND, message: 'The configured bind account was rejected by the directory', ldapResultCode: 49 }))
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_BIND_ACCOUNT_REJECTED')
     })
@@ -198,7 +207,7 @@ describe('LDAP sign-in', () => {
         await saveLdapConfig()
         connect.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.CONNECT, message: 'simulated connection failure' }))
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_DIRECTORY_UNREACHABLE')
     })
@@ -211,7 +220,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
     })
@@ -223,7 +232,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.statusCode).toBe(StatusCodes.OK)
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: existingIdentity.id })
@@ -236,7 +245,7 @@ describe('LDAP sign-in', () => {
         await databaseConnection().getRepository('user_identity').save(existingIdentity)
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
-        await signIn('jdoe', 'correct-password')
+        await signIn({ username: 'jdoe', password: 'correct-password' })
 
         const localSignIn = await app!.inject({
             method: 'POST',
@@ -251,7 +260,7 @@ describe('LDAP sign-in', () => {
         await saveLdapConfig()
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
-        await signIn('jdoe', 'correct-password')
+        await signIn({ username: 'jdoe', password: 'correct-password' })
 
         const otpResponse = await app!.inject({
             method: 'POST',
@@ -281,7 +290,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
         const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({
@@ -301,7 +310,7 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: ctx.userIdentity.id })
@@ -319,26 +328,30 @@ describe('LDAP sign-in', () => {
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
 
-        const response = await signIn('jdoe', 'correct-password')
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
 
         expect(response.json().code).toBe('LDAP_ACCOUNT_COLLISION')
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ id: mockUserIdentity.id })
         expect(identity?.provider).toBe(UserIdentityProvider.EMAIL)
     })
 
-    // B3: an LDAP identity with no federated row for this platform (deleted user, half-finished
-    // JIT, new objectGUID, or a first sign-in on a second eligible platform) must still be able to
-    // sign in — the fast `findBySubject` path only covers the common case where that row exists.
+    // B3: an LDAP identity with no federated row for *this* platform (the user row on this
+    // platform was deleted, or a previous JIT died after creating the identity but before the
+    // federated row) must still be able to sign in — the fast `findBySubject` path only covers the
+    // common case where that row already exists. This is never a route onto a *different*
+    // platform, or a way to silently repoint a rotated `objectGUID`: both are refused
+    // (`LDAP_ACCOUNT_COLLISION`), not recovered — see `assertIdentityIsNotPrivilegedElsewhere` and
+    // `adoptExistingLdapIdentity`'s own subject-mismatch check.
     describe('recovery when an LDAP identity has no federated row for this platform (B3)', () => {
         it('signs in again through the fast findBySubject path unaffected', async () => {
             await saveLdapConfig()
             searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
             bindAsUser.mockResolvedValue(undefined)
-            const first = await signIn('jdoe', 'correct-password')
+            const first = await signIn({ username: 'jdoe', password: 'correct-password' })
             expect(first.statusCode).toBe(StatusCodes.OK)
             const firstUserId = first.json().id
 
-            const second = await signIn('jdoe', 'correct-password')
+            const second = await signIn({ username: 'jdoe', password: 'correct-password' })
 
             expect(second.statusCode).toBe(StatusCodes.OK)
             expect(second.json().id).toBe(firstUserId)
@@ -348,7 +361,7 @@ describe('LDAP sign-in', () => {
             await saveLdapConfig()
             searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
             bindAsUser.mockResolvedValue(undefined)
-            const first = await signIn('jdoe', 'correct-password')
+            const first = await signIn({ username: 'jdoe', password: 'correct-password' })
             expect(first.statusCode).toBe(StatusCodes.OK)
             const firstUserId = first.json().id
 
@@ -356,7 +369,7 @@ describe('LDAP sign-in', () => {
             await databaseConnection().getRepository('project').delete({ ownerId: firstUserId })
             await databaseConnection().getRepository('user').delete({ id: firstUserId })
 
-            const second = await signIn('jdoe', 'correct-password')
+            const second = await signIn({ username: 'jdoe', password: 'correct-password' })
 
             expect(second.statusCode).toBe(StatusCodes.OK)
             const recreatedUser = await databaseConnection().getRepository('user').findOneBy({ identityId: (await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' }))!.id })
@@ -367,6 +380,26 @@ describe('LDAP sign-in', () => {
             })
             expect(federated).not.toBeNull()
         })
+
+        it('refuses (does not silently repoint) a rotated subject for an already-linked identity on this platform', async () => {
+            await saveLdapConfig()
+            searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+            bindAsUser.mockResolvedValue(undefined)
+            const first = await signIn({ username: 'jdoe', password: 'correct-password' })
+            expect(first.statusCode).toBe(StatusCodes.OK)
+
+            // The directory's own subject for this entry changed under the same email (deleted and
+            // recreated, or reassigned to a different real person) — `findBySubject` on the new
+            // value finds nothing, so this falls to the email match and reaches
+            // `adoptExistingLdapIdentity`, which must refuse rather than repoint the existing row.
+            searchForUser.mockResolvedValue({ ...DIRECTORY_ENTRY, entryUUID: '99999999-9999-9999-9999-999999999999' })
+
+            const second = await signIn({ username: 'jdoe', password: 'correct-password' })
+
+            expect(second.json().code).toBe('LDAP_ACCOUNT_COLLISION')
+            const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({ platformId: ctx.platform.id })
+            expect(federated?.subject).toBe(DIRECTORY_ENTRY.entryUUID)
+        })
     })
 
     // M2: `/switch-platform` reissuing a fresh default-lifetime token would silently undo the
@@ -375,21 +408,35 @@ describe('LDAP sign-in', () => {
         await saveLdapConfig({ sessionTtlSeconds: 300 })
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
-        const signInResponse = await signIn('jdoe', 'correct-password')
+        const signInResponse = await signIn({ username: 'jdoe', password: 'correct-password' })
         expect(signInResponse.statusCode).toBe(StatusCodes.OK)
         const { token } = signInResponse.json()
         const originalExp = decodeExp(token)
 
         const identity = await databaseConnection().getRepository('user_identity').findOneBy({ email: 'jdoe@example.com' })
         const secondSetup = await mockAndSaveBasicSetup()
+        const secondPlatformUserId = apId()
         await databaseConnection().getRepository('user').save({
-            id: apId(),
+            id: secondPlatformUserId,
             created: new Date().toISOString(),
             updated: new Date().toISOString(),
             status: UserStatus.ACTIVE,
             platformRole: PlatformRole.ADMIN,
             identityId: identity!.id,
             platformId: secondSetup.mockPlatform.id,
+        })
+        // A federated row on the second platform too — this test is about the M2 TTL cap, not the
+        // app-sec squatting guard `getUserForPlatform` now enforces; without this, the switch below
+        // would be refused (no federated row = no proof this identity ever signed in through the
+        // second platform's own directory) before ever reaching the code this test exists to check.
+        await databaseConnection().getRepository('user_federated_identity').save({
+            id: apId(),
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            platformId: secondSetup.mockPlatform.id,
+            userId: secondPlatformUserId,
+            provider: FederatedIdentityProvider.LDAP,
+            subject: '22222222-2222-2222-2222-222222222222',
         })
 
         const switchResponse = await app!.inject({
@@ -404,3 +451,8 @@ describe('LDAP sign-in', () => {
         expect(switchedExp).toBeLessThanOrEqual(originalExp)
     })
 })
+
+type SignInParams = {
+    username: string
+    password: string
+}

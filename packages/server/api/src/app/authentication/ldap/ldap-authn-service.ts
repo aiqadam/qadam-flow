@@ -8,6 +8,7 @@ import {
     PlatformId,
     PlatformRole,
     QadamFlowError,
+    tryCatch,
     UserIdentity,
     UserIdentityProvider,
     UserStatus,
@@ -26,6 +27,12 @@ import { ldapClient } from './ldap-client'
 import { ldapConfigService, ResolvedLdapConfig } from './ldap-config-service'
 import { LdapStageError } from './ldap-stage-error'
 import { ldapUsernameUtils } from './ldap-username'
+
+// Fixed and directory-independent — built only from the platform's own configured `baseDn`, never
+// from the caller-supplied username — so the dummy bind (below) carries no information of its own
+// and every dummy attempt for a given platform targets the exact same, guaranteed-nonexistent DN.
+const DUMMY_BIND_RDN = 'cn=__qadam_flow_timing_oracle_dummy_bind__'
+const DUMMY_BIND_PASSWORD = 'qadam-flow-timing-oracle-defense'
 
 export const ldapAuthnService = (log: FastifyBaseLogger) => ({
     async signIn({ platformId, username, password }: SignInParams): Promise<AuthenticationResponse> {
@@ -113,7 +120,28 @@ async function lookupDirectoryUser({ resolved, username, password, log }: Lookup
         return { entry, subject }
     }
     catch (error) {
+        if (error instanceof LdapStageError && error.stage === LdapTestStage.SEARCH && error.notFound === true) {
+            await performDummyBind({ connectionConfig, baseDn: config.baseDn, log })
+        }
         throw mapToSignInError(error)
+    }
+}
+
+// Anti-timing-oracle (app-sec L2): without this, "unknown username" short-circuits after one
+// connect+search, while "known username, wrong password" pays for a second connect+bind — a
+// measurable latency gap that lets a caller enumerate valid usernames from response timing alone,
+// even though both cases return the identical `INVALID_CREDENTIALS` body. Paying the same second
+// connect+bind cost here closes that gap. The bind is expected to fail (there is no such DN) and
+// its outcome — success or failure — is discarded either way; only the *cost* of attempting it
+// matters.
+async function performDummyBind({ connectionConfig, baseDn, log }: PerformDummyBindParams): Promise<void> {
+    const { error } = await tryCatch(() => ldapClient.bindAsUser({
+        config: connectionConfig,
+        userDn: `${DUMMY_BIND_RDN},${baseDn}`,
+        password: DUMMY_BIND_PASSWORD,
+    }))
+    if (!isNil(error)) {
+        log.debug({ err: error }, '[ldapAuthnService] Dummy timing-oracle bind finished (a failure here is expected and harmless)')
     }
 }
 
@@ -171,13 +199,15 @@ async function linkOrAdoptExistingIdentity({ platformId, config, subject, identi
     await assertIdentityIsNotPrivilegedElsewhere({ identity, platformId, log })
 
     if (identity.provider === UserIdentityProvider.LDAP) {
-        // Already migrated to LDAP — this is the recovery path (B3): the user row was deleted, a
-        // previous JIT died after creating the identity but before the federated row, or this is
-        // the identity's first sign-in on a *different* platform it is otherwise eligible for
-        // (`assertIdentityIsNotPrivilegedElsewhere` already refused the cross-platform cases that
-        // are not eligible). No password scramble here — the identity has no local password to
-        // protect in the first place, and re-running `linkToFederatedProvider` would immediately
-        // trip its own `updatePassword` guard against `provider === LDAP`.
+        // Already migrated to LDAP — this is the recovery path (B3), scoped to *this* platform
+        // only: the user row on `platformId` was deleted, or a previous JIT died after creating the
+        // identity but before the federated row. It is never a route onto a *different* platform —
+        // `assertIdentityIsNotPrivilegedElsewhere`, called just above, already refuses any identity
+        // that has a user row on another platform, so this branch is unreachable for a "first
+        // sign-in elsewhere" case; it would be a collision, not a recovery. No password scramble
+        // here — the identity has no local password to protect in the first place, and re-running
+        // `linkToFederatedProvider` would immediately trip its own `updatePassword` guard against
+        // `provider === LDAP`.
         return transaction((entityManager) => adoptExistingLdapIdentity({ platformId, subject, identity, log, entityManager }))
     }
     if (!config.linkExistingByEmail) {
@@ -259,6 +289,12 @@ type LookupDirectoryUserParams = {
     resolved: ResolvedLdapConfig
     username: string
     password: string
+    log: FastifyBaseLogger
+}
+
+type PerformDummyBindParams = {
+    connectionConfig: ResolvedLdapConfig['connectionConfig']
+    baseDn: string
     log: FastifyBaseLogger
 }
 

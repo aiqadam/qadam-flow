@@ -1,3 +1,4 @@
+import tls from 'node:tls'
 import { isNil, LdapAttributeMap, LdapTestStage, LdapTlsMode, matchesTlsScheme } from '@aiqadam/shared'
 import { Client, Entry, ResultCodeError } from 'ldapts'
 import { system } from '../../helper/system/system'
@@ -142,7 +143,7 @@ async function connect({ config }: ConnectParams): Promise<Client> {
         system.globalLogger().warn({ url: config.url }, '[ldapClient#connect] tlsVerify is disabled — the directory\'s certificate will not be validated')
     }
 
-    const tlsOptions = {
+    const tlsOptions: tls.ConnectionOptions = {
         servername: hostname,
         rejectUnauthorized: config.tlsVerify,
         ...(isNil(config.caCertificatePem) ? {} : { ca: [config.caCertificatePem] }),
@@ -160,7 +161,7 @@ async function connect({ config }: ConnectParams): Promise<Client> {
         })
         try {
             if (config.tlsMode === LdapTlsMode.STARTTLS) {
-                await withStartTlsTimeout(client, tlsOptions)
+                await withStartTlsTimeout({ client, tlsOptions })
             }
             else {
                 // `Client` only opens the socket lazily, on its first operation — an unauthenticated
@@ -195,7 +196,7 @@ async function connect({ config }: ConnectParams): Promise<Client> {
 // already broke this client's own data listener, so `unbind()`'s own reply wait can itself take up
 // to `LDAP_OPERATION_TIMEOUT_MS` to give up — this function must not block that long to report the
 // timeout it already detected.
-async function withStartTlsTimeout(client: Client, tlsOptions: Record<string, unknown>): Promise<void> {
+async function withStartTlsTimeout({ client, tlsOptions }: WithStartTlsTimeoutParams): Promise<void> {
     let timer: NodeJS.Timeout | undefined
     const timeout = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
@@ -286,7 +287,7 @@ async function searchForUser({ client, baseDn, userFilter, username, attributeMa
     }
 
     if (result.searchEntries.length === 0) {
-        throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'No matching entry was found' })
+        throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'No matching entry was found', notFound: true })
     }
     if (result.searchEntries.length > 1) {
         throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'The filter matched more than one entry' })
@@ -303,6 +304,7 @@ async function bindAsUser({ config, userDn, password }: BindAsUserParams): Promi
     await withConnectionSlot(async () => {
         const client = await connect({ config })
         try {
+            assertConnectionStillUpgraded({ client, tlsMode: config.tlsMode })
             await client.bind(userDn, password)
         }
         catch (error) {
@@ -345,6 +347,11 @@ export type ResolvedLdapConnectionConfig = {
 
 type ConnectParams = {
     config: ResolvedLdapConnectionConfig
+}
+
+type WithStartTlsTimeoutParams = {
+    client: Client
+    tlsOptions: tls.ConnectionOptions
 }
 
 type AssertConnectionStillUpgradedParams = {

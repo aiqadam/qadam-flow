@@ -1,3 +1,7 @@
+export const ldapUsernameUtils = {
+    normalize,
+}
+
 // One normalisation, used everywhere a username is compared or keyed on: the per-username rate
 // limit bucket (`ldap-sign-in-rate-limit.ts`) and the directory search itself
 // (`ldap-authn-service.ts`). Using two different normalisations for those two call sites would let
@@ -12,8 +16,4 @@ function normalize(username: string): string {
         .replace(/\s+/g, ' ')
         .normalize('NFKC')
         .toLowerCase()
-}
-
-export const ldapUsernameUtils = {
-    normalize,
 }
