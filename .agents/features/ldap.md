@@ -92,7 +92,13 @@ was read or copied (`.agents/rules/edition-safety.md`).
 admin can't dodge the check by repointing `url`/`attributeMap.email`/`userFilter` etc. on a config
 that already has linking-by-email on without ever mentioning that field. A caller may still resend
 the exact same config unchanged (a no-op, compared field-for-field against the stored config) even
-if not the owner; turning the flag back off, or never turning it on, is unrestricted.
+if not the owner; turning the flag back off, or never turning it on, is unrestricted. The gate
+covers the secrets too: re-supplying `bindPassword` or `caCertificate` while linking is on is also
+refused for a non-owner, even though a secret change is otherwise never compared field-for-field
+against the stored value (there is nothing to compare a plaintext secret against). This gate is on
+`upsert` only — `DELETE /v1/platform-ldap-configs` has no equivalent owner check yet; a non-owner
+admin can still delete the whole config while linking is on. Closing that gap is a Phase 2 backend
+item, not implemented here.
 
 Fixing this surfaced a deeper, previously-undiscovered bug in `UpsertLdapConfigRequest`
 (`packages/shared`): `.partial()` layered over a field that already carries its own `.default(...)`
@@ -177,7 +183,7 @@ Operationally, this also means **the configured email attribute must not be self
 directory entry it belongs to** — the existing-identity email match (`linkOrAdoptExistingIdentity`)
 is one of the paths these guards protect, and a self-writable email attribute would let a directory
 entry retarget which local account it links to. This is stated here for now; the admin-facing
-config UI should carry the same warning next to the attribute-map email field.
+config UI carries the same warning next to the attribute-map email field (see "Web UI" below).
 
 ## Local-password lockout for `provider === LDAP`
 Enforced in the **service** layer, not controllers, so nothing can route around it:
@@ -202,6 +208,55 @@ Same parser as `AP_SSRF_ALLOW_LIST` (`safeHttp.parseAllowList`, exported from
 from `@aiqadam/shared`, but a **separate** system prop (`AppSystemProp.LDAP_ALLOW_LIST`) — approving
 a domain controller's subnet must not also open it to arbitrary outbound HTTP from qadams, and vice
 versa.
+
+## Web UI (Phase 1)
+- `packages/web/src/app/routes/platform/security/sso/index.tsx` — the SSO settings page. The
+  page-level `LockedFeatureGuard` (a CE-inappropriate paywall gate — see
+  `.agents/rules/edition-safety.md`) is gone; **LDAP is the only item on this page that is actually
+  wired to a working backend**, so it is the only one with a live control. Google, SAML, Allowed
+  Domains and Allowed Email Login all show the same inline "Soon" badge — Google/SAML because their
+  backend routes don't exist yet (`authenticationService.federatedAuthn` has zero callers,
+  `/v1/authn/saml/*` 404s), and Allowed Domains/Allowed Email Login because `platform.plan.ssoEnabled`
+  is hardcoded `false` in `platform.service.ts` for CE, which makes both
+  `authentication-utils.ts#assertDomainIsAllowed` and `#assertEmailAuthIsEnabled` early-return before
+  ever consulting `allowedAuthDomains`/`emailAuthEnabled` — those two controls looked live in an
+  earlier revision of this UI (a review finding, not shipped) even though toggling them server-side
+  did nothing. Correcting an earlier claim here: this is not "per-item unlocking" of the whole page —
+  only LDAP moved from locked to functional; the other four items moved from a page-level lock to an
+  item-level "Soon", which is a more honest but not a more capable state.
+- `packages/web/src/app/routes/platform/security/sso/ldap-dialog.tsx` — `ConfigureLdapDialog` /
+  `LdapConfigForm`: the full config form (URL, TLS mode/verify, CA cert, bind DN/password, base DN,
+  user filter, attribute map — subject is a restricted `LdapSubjectAttribute` select, email carries
+  the self-writable-attribute warning above — JIT/link-by-email switches with explicit
+  takeover-risk copy, session length, enabled) plus a `TestConnectionPanel` that calls `POST …/test`
+  — that endpoint always tests the **saved** row, never in-flight form values, so the panel only
+  renders once a config exists. `linkExistingByEmail` is owner-only to touch, matching the
+  server's gate, and while it is already on, a non-owner sees the **entire form** disabled with an
+  explanatory banner (the server's gate is not limited to the switch itself, so the UI does not
+  pretend other fields are safe to edit). Changing `url`/`bindDn`/`tlsVerify`/`tlsMode`/the CA cert
+  requires re-entering the bind password before the client will submit, mirroring the server's own
+  requirement. The request-shaping logic (empty-secret normalization, the bind-password re-supply
+  matrix, the owner-lock check) lives in pure, independently unit-tested functions in
+  `ldap-config-form-helpers.ts` rather than inline in the component — in particular, a blank
+  `bindPassword`/`caCertificate` is normalized to `undefined` (never `''`) both at the input's own
+  `onChange` and again in the request builder, because the shared schema's `.min(1)` rejects an
+  empty string live (via `zodResolver`, on every keystroke) and an earlier revision that only
+  normalized at submit time never reached that code at all once live validation had already failed.
+  Deleting the config goes through the shared `ConfirmationDeleteDialog`, and both delete and the
+  page's own quick-enable `Switch` surface a failed mutation via `apiErrorUtils.extractServerMessage`
+  instead of failing silently.
+- `packages/web/src/features/platform-admin/api/ldap-config-api.ts` /
+  `hooks/ldap-config-hooks.ts` — CRUD + test client for `/v1/platform-ldap-configs`.
+- `packages/web/src/app/components/sidebar/platform/index.tsx` — the SSO sidebar entry no longer
+  carries `locked`/`badge: 'Soon'` (that gate lived on the whole page, which is no longer locked).
+- `packages/web/src/features/authentication/components/ldap-login-form.tsx` — sign-in-only
+  "directory account" mode (username, not email) calling `POST /v1/authn/ldap/sign-in`; maps each
+  LDAP error code (plus a generic 429) to a distinct, actionable message and otherwise reuses the
+  password sign-in's post-login handling (`authenticationSession.saveResponse` +
+  `redirectAfterLogin`). Wired into
+  `packages/web/src/features/authentication/components/auth-form-template.tsx` behind
+  `ApFlagId.LDAP_AUTH_ENABLED`, sign-in only — LDAP has no sign-up screen, JIT provisioning happens
+  through sign-in itself.
 
 ## `ldapts` findings (Phase 1 investigation)
 - **TLS `servername` is never derived automatically for either transport.** For `ldaps://`,
