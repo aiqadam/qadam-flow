@@ -126,6 +126,7 @@ const FlowActionMenu: React.FC<FlowActionMenuProps> = ({
           trigger: modifiedFlowVersion.trigger,
           schemaVersion: modifiedFlowVersion.schemaVersion,
           notes: modifiedFlowVersion.notes,
+          localeSource: modifiedFlowVersion.localeSource,
         },
       });
       return updatedFlow;

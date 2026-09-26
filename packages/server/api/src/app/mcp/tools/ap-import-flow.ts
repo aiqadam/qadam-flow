@@ -45,6 +45,7 @@ export const apImportFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBa
                         trigger: flowTemplate.trigger,
                         schemaVersion: flowTemplate.schemaVersion ?? null,
                         notes: flowTemplate.notes ?? null,
+                        localeSource: flowTemplate.localeSource ?? null,
                     },
                 }
 
@@ -135,6 +136,7 @@ type ImportFlowOperation = {
         trigger: FlowVersionTemplate['trigger']
         schemaVersion: string | null
         notes: FlowVersionTemplate['notes'] | null
+        localeSource: FlowVersionTemplate['localeSource']
     }
 }
 

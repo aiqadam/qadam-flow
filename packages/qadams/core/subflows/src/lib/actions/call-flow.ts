@@ -5,7 +5,7 @@ import {
   Property,
 } from '@aiqadam/qadams-framework';
 import { httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { ExecutionType, FAIL_PARENT_ON_FAILURE_HEADER, FlowStatus, isNil, PARENT_RUN_ID_HEADER } from '@aiqadam/shared';
+import { ExecutionType, FAIL_PARENT_ON_FAILURE_HEADER, FlowStatus, isNil, PARENT_RUN_ID_HEADER, PARENT_RUN_LOCALE_HEADER, spreadIfDefined } from '@aiqadam/shared';
 import { callableFlowDropdown, CallableFlowRequest, CallableFlowResponse, CallableFlowValue, findFlowByExternalIdOrThrow } from '../common';
 
 export const callFlow = createAction({
@@ -141,6 +141,12 @@ export const callFlow = createAction({
       context.run.waitForWaitpoint(waitpoint.id);
     }
 
+    // `context.run.locale` did not exist before this qadam started forwarding it (#420) - an
+    // engine older than the one this version was published against builds a RunContext without
+    // it, and calling a missing method throws rather than resolving to `undefined`. Guarding with
+    // `typeof` keeps this qadam loadable on such an engine (no locale forwarded, same as before)
+    // instead of failing every queue-mode Call Flow outright.
+    const parentRunLocale = typeof context.run.locale === 'function' ? await context.run.locale() : null;
     const response = await httpClient.sendRequest<CallableFlowRequest>({
       method: HttpMethod.POST,
       url: `${context.server.apiUrl}v1/webhooks/${flow?.id}`,
@@ -148,6 +154,11 @@ export const callFlow = createAction({
         'Content-Type': 'application/json',
         [PARENT_RUN_ID_HEADER]: context.run.id,
         [FAIL_PARENT_ON_FAILURE_HEADER]: context.propsValue.waitForResponse ? 'true' : 'false',
+        // The child inherits this run's resolved locale (own `localeSource`, or one already
+        // inherited from further up the chain) so `$t[...]` in the child resolves the same way an
+        // Inline call's direct field-pass would. Omitted entirely when nothing resolved to a
+        // locale, so the consumer's own project-default fallback still applies.
+        ...spreadIfDefined(PARENT_RUN_LOCALE_HEADER, parentRunLocale),
       },
       body: {
         data: payload,

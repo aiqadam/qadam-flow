@@ -64,6 +64,7 @@ export const testExecutionContext = {
                         engineToken,
                         contextVersion: LATEST_CONTEXT_VERSION,
                         stepNames: engineConstants.stepNames,
+                        constants: engineConstants,
                     }).resolve<{ items: unknown[] }>({
                         unresolvedInput: { items: step.settings.items },
                         executionState: flowExecutionContext,
@@ -116,6 +117,7 @@ async function withCollectedSamples({ flowExecutionContext, flowSteps, apiUrl, p
             engineToken,
             contextVersion: LATEST_CONTEXT_VERSION,
             stepNames: engineConstants.stepNames,
+            constants: engineConstants,
         }).resolve<{ value: unknown }>({
             unresolvedInput: { value: step.settings.collect?.value },
             executionState: context,

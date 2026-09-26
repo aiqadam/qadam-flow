@@ -194,6 +194,7 @@ export function useAutomationsMutations(deps: MutationDeps) {
           trigger: version.trigger,
           schemaVersion: version.schemaVersion,
           notes: version.notes,
+          localeSource: version.localeSource,
         },
       });
     },

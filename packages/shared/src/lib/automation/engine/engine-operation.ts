@@ -96,6 +96,9 @@ type BaseExecuteFlowOperation<T extends ExecutionType> = BaseEngineOperation & {
     stepNameToTest: string | null
     sampleData?: Record<string, unknown>
     logsFileId?: string
+    // The parent run's resolved locale, for a subflow started via queue-mode `callFlow`. Used only
+    // as a fallback in the child's own locale chain — the child's own `localeSource` still wins.
+    inheritedRunLocale?: string
 }
 
 export enum StreamStepProgress {

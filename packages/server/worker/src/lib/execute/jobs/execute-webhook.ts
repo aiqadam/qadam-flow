@@ -150,6 +150,7 @@ export const executeWebhookJob: JobHandler<WebhookJobData, FireAndForgetJobResul
                     failParentOnFailure: data.failParentOnFailure,
                     parentWaitpointId: data.parentWaitpointId,
                     parentSlotId: data.parentSlotId,
+                    inheritedRunLocale: data.inheritedRunLocale,
                 })
             }
         }

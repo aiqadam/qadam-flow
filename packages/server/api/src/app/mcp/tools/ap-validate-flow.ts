@@ -1,16 +1,21 @@
 import { PauseBehaviour, QadamMetadataModel } from '@aiqadam/qadams-framework'
 import {
+    extractMustacheTokens,
     FlowActionType,
     flowStructureUtil,
     FlowTriggerType,
     isNil,
+    localeUtil,
     LoopExecutionMode,
     LoopOnItemsAction,
+    MAX_TRANSLATION_KEYS_PER_PROJECT,
     McpToolDefinition,
+    parseTranslationToken,
     Permission,
     ProjectScopedMcpServer,
     RouterActionSettingsWithValidation,
     Step,
+    TRANSLATION_KEY_REGEX,
     tryCatch,
     unique,
 } from '@aiqadam/shared'
@@ -20,6 +25,7 @@ import { flowService } from '../../flows/flow/flow.service'
 import { projectService } from '../../project/project-service'
 import { qadamMetadataService } from '../../qadams/metadata/qadam-metadata-service'
 import { qadamPinUtil } from '../../qadams/metadata/qadam-pin-util'
+import { translationService } from '../../translation/translation.service'
 import { mcpUtils } from './mcp-utils'
 
 export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -40,7 +46,7 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
 
                 const structural = validateFlow({ trigger: flow.version.trigger })
                 const platformId = await projectService(log).getPlatformId(mcp.projectId)
-                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues] = await Promise.all([
+                const [callFlowIssues, qadamVersionIssues, concurrentLoopIssues, translationIssues] = await Promise.all([
                     validateCallFlowSteps({
                         trigger: flow.version.trigger,
                         projectId: mcp.projectId,
@@ -58,17 +64,34 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                         platformId,
                         log,
                     }),
+                    validateFlowTranslations({
+                        trigger: flow.version.trigger,
+                        localeSource: flow.version.localeSource,
+                        projectId: mcp.projectId,
+                        platformId,
+                        log,
+                    }),
                 ])
-                const result = { ...structural, issues: [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues] }
+                const allIssues = [...structural.issues, ...qadamVersionIssues, ...callFlowIssues, ...concurrentLoopIssues, ...translationIssues]
+                const result = { ...structural, issues: allIssues }
+                // A warning is reported in the output but never blocks `valid` or counts toward
+                // "invalid" in the summary — today that is exactly (and only) the translation
+                // categories that describe something the run can recover from at run time (a
+                // fallback locale, a self-referential localeSource), never the ones that will
+                // actually throw.
+                const errorIssues = allIssues.filter((issue) => issue.severity !== 'warning')
+                const warningIssues = allIssues.filter((issue) => issue.severity === 'warning')
+                const valid = errorIssues.length === 0 && result.validSteps > 0
                 return {
-                    content: [{ type: 'text', text: formatValidationResult({ result, flowDisplayName: flow.version.displayName }) }],
+                    content: [{ type: 'text', text: formatValidationResult({ result, valid, flowDisplayName: flow.version.displayName }) }],
                     structuredContent: {
-                        valid: result.issues.length === 0 && result.validSteps > 0,
+                        valid,
                         totalSteps: result.totalSteps,
                         validSteps: result.validSteps,
                         invalidSteps: result.invalidSteps,
                         skippedSteps: result.skippedSteps,
-                        issues: result.issues.map(i => ({ category: i.category, stepName: i.stepName, message: i.message })),
+                        issues: errorIssues.map(i => ({ category: i.category, stepName: i.stepName, message: i.message })),
+                        warnings: warningIssues.map(i => ({ category: i.category, stepName: i.stepName, message: i.message })),
                     },
                 }
             }
@@ -420,6 +443,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+// A flow triggered by subflows' own Callable Flow trigger is designed to be invoked as a subflow —
+// its run can inherit a resolved locale from whichever parent called it (`inheritedRunLocale`, set
+// from `PARENT_RUN_LOCALE_HEADER`), even when the flow itself has no `localeSource` and the project
+// has no default locale. `validateFlowTranslations` uses this to downgrade its "no locale chain at
+// all" finding to a warning for this trigger only.
+function isCallableFlowTrigger(trigger: Step): boolean {
+    return trigger.type === FlowTriggerType.PIECE
+        && trigger.settings.qadamName === SUBFLOWS_QADAM
+        && trigger.settings.triggerName === CALLABLE_FLOW_TRIGGER
+}
+
 function findPausingFlow({ root, graph, markers }: { root: string, graph: Map<string, FlowNode>, markers: PauseMarkers }): PausingStep | null {
     const seen = new Set<string>()
     const pending = [root]
@@ -576,6 +610,172 @@ function validateLoopCollectReferences({ loop, allStepNames, seenSteps }: { loop
     })
 }
 
+// Static check: every `{{$t['key']}}` reference is checked against the project's translation
+// table, using the exact same grammar the engine's `handleTranslation` accepts
+// (`parseTranslationToken`, shared from `@aiqadam/shared`) — a token the engine would reject at
+// run time (a trailing `.field`, an unterminated locale bracket) is never reported as a valid
+// reference here, and vice versa. The bracket's own dynamic-locale expression (`$t['key'][expr]`)
+// is never evaluated here — only the literal key is checked, and the message says so.
+//
+// Three severities, not two: a key referenced nowhere in the table is always an error (it fails
+// every run, per `TranslationKeyNotFoundError`). A key that resolves against the project's own
+// `defaultLocale` (base language included, mirroring the engine's own fallback) is also an error —
+// with no explicit/dynamic locale and nothing the run inherits, the chain ends there, so this is
+// the case that actually fails at run time for the common no-override configuration. A key that
+// is merely missing a locale *other* keys in the project have is a warning: it may simply not have
+// been translated yet, and unlike the other two it never fails the run by itself.
+async function validateFlowTranslations({ trigger, localeSource, projectId, platformId, log }: {
+    trigger: Step
+    localeSource: string | null | undefined
+    projectId: string
+    platformId: string
+    log: FastifyBaseLogger
+}): Promise<ValidationIssue[]> {
+    const localeSourceIssues = validateLocaleSourceItself({ localeSource })
+    const hasUsableLocaleSource = !isNil(localeSource) && localeSource.trim().length > 0
+    const isCallableFlow = isCallableFlowTrigger(trigger)
+
+    const steps = flowStructureUtil.getAllSteps(trigger).filter(step => !('skip' in step && step.skip === true))
+    const refsByStep = steps.flatMap((step) => {
+        const refs = collectStringValues({ step }).flatMap((value) => extractTranslationKeyRefs({ value }))
+        return refs.map((ref) => ({ step, ...ref }))
+    })
+    if (refsByStep.length === 0) {
+        return localeSourceIssues
+    }
+
+    const [table, project] = await Promise.all([
+        translationService(log).list({
+            projectId,
+            platformId,
+            cursor: undefined,
+            limit: MAX_TRANSLATION_KEYS_PER_PROJECT,
+            key: undefined,
+        }),
+        projectService(log).getOneOrThrow(projectId),
+    ])
+    const byKey = new Map(table.data.map((row) => [row.key, row]))
+    const allLocales = unique(table.data.flatMap((row) => Object.keys(row.values)))
+    const canonicalDefaultLocale = isNil(project.defaultLocale) ? null : localeUtil.canonicalize(project.defaultLocale)
+
+    const seen = new Set<string>()
+    const keyIssues = refsByStep.flatMap(({ step, key, hasDynamicLocale, malformed }): ValidationIssue[] => {
+        const dedupeKey = `${step.name}:${key}`
+        if (seen.has(dedupeKey)) {
+            return []
+        }
+        seen.add(dedupeKey)
+        const displayKey = TRANSLATION_KEY_REGEX.test(key) ? key : mcpUtils.wrapUntrustedValue(key)
+
+        if (malformed) {
+            return [{
+                category: 'translation_key',
+                stepName: step.name,
+                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} contains "$t[${displayKey}...]"-shaped text that is not a valid $t[...] reference (a trailing .field, an unterminated locale bracket, or similar) and will fail with an unresolved-reference error at run time — use ap_upsert_translations to check the key, or fix the reference.`,
+            }]
+        }
+
+        const row = byKey.get(key)
+        if (isNil(row)) {
+            return [{
+                category: 'translation_key',
+                stepName: step.name,
+                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}" which does not exist — use ap_upsert_translations to create it.`,
+            }]
+        }
+
+        // With no explicit locale bracket, this ref resolves purely off `localeUtil.buildCandidateChain`'s
+        // run-locale/default-locale legs — if BOTH are unset, that chain is empty, `localeUtil.resolve`
+        // never has a candidate to try, and the step fails at run time no matter what the table holds
+        // for this key (even a row with every locale filled in cannot help: nothing selects one). This
+        // is checked instead of (not in addition to) the "missing the default locale's value" check
+        // below, since there is no default locale here to be missing a value for in the first place.
+        //
+        // NOT a guaranteed failure when the trigger is subflows' Callable Flow: `EngineConstants#getRunLocale`
+        // falls back to `inheritedRunLocale` when this flow's own `localeSource` resolves to nothing, and a
+        // Callable Flow's `inheritedRunLocale` is set whenever its caller forwarded a resolved locale
+        // (`PARENT_RUN_LOCALE_HEADER`, see call-flow.ts/call-flow-for-each.ts) — something this static check
+        // cannot know without simulating every possible caller. Downgraded to a warning for that trigger only;
+        // every other trigger type can never receive an inherited locale, so the guaranteed-failure error still
+        // applies there.
+        const noLocaleChainAtAll = !hasDynamicLocale && !hasUsableLocaleSource && isNil(canonicalDefaultLocale)
+        const defaultLocaleIssue: ValidationIssue[] = noLocaleChainAtAll
+            ? [{
+                category: 'translation_default_locale',
+                stepName: step.name,
+                severity: isCallableFlow ? 'warning' : 'error',
+                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}" with no explicit locale, but this project has neither a default locale nor is this flow's localeSource set — ${isCallableFlow ? 'a Callable Flow inherits its caller\'s locale, so this only fails when it is called without one' : 'there is nothing for the run to resolve a locale from, so this step will fail at run time'} regardless of which locales the key has values for. Set the project's default locale, set this flow's localeSource, or reference an explicit locale (e.g. $t['${key}']['en']).`,
+            }]
+            : (!isNil(canonicalDefaultLocale) && !keyHasValueForLocaleOrBase({ row, locale: canonicalDefaultLocale }))
+                ? [{
+                    category: 'translation_default_locale',
+                    stepName: step.name,
+                    message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}", which has no value for the project's default locale ("${canonicalDefaultLocale}") — a run with no explicit or inherited locale will fail this step.`,
+                }]
+                : []
+
+        const missingLocales = allLocales.filter((locale) => locale !== canonicalDefaultLocale && row.values[locale] === undefined)
+        const dynamicNote = hasDynamicLocale ? ' This step\'s locale is chosen dynamically at run time and is not statically checked.' : ''
+        const localeWarning: ValidationIssue[] = missingLocales.length === 0 ? [] : [{
+            category: 'translation_locale',
+            stepName: step.name,
+            severity: 'warning',
+            message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}", which has no value for locale(s): ${missingLocales.join(', ')}.${dynamicNote}`,
+        }]
+
+        return [...defaultLocaleIssue, ...localeWarning]
+    })
+    return [...localeSourceIssues, ...keyIssues]
+}
+
+// A `$t` nested inside `localeSource` cannot resolve to anything useful: the engine's own
+// `resolvingLocaleSource` guard (props-resolver.ts's `handleTranslation`, threaded through the one
+// `resolveInputAsync` call `EngineConstants#getRunLocale` makes to evaluate `localeSource` itself)
+// reports "no run locale yet" to it rather than recursing, which means the nested lookup always
+// resolves against the project's default locale chain regardless of what the run's real locale
+// would otherwise have been — never a crash, but never the flow author's intent either.
+function validateLocaleSourceItself({ localeSource }: { localeSource: string | null | undefined }): ValidationIssue[] {
+    if (isNil(localeSource)) {
+        return []
+    }
+    const referencesTranslation = extractMustacheTokens(localeSource).some((token) => token.inner.trim().startsWith('$t'))
+    if (!referencesTranslation) {
+        return []
+    }
+    return [{
+        category: 'translation_locale',
+        stepName: 'localeSource',
+        severity: 'warning',
+        message: 'This flow\'s localeSource references a translation ($t[...]) — a $t nested inside localeSource cannot resolve the run\'s own locale (the engine reports "no run locale yet" to it instead of recursing), so it always falls back to the project\'s default locale chain. Use a plain step reference or literal instead.',
+    }]
+}
+
+function keyHasValueForLocaleOrBase({ row, locale }: { row: { values: Record<string, string> }, locale: string }): boolean {
+    if (row.values[locale] !== undefined) {
+        return true
+    }
+    const base = localeUtil.baseLanguage(locale)
+    return !isNil(base) && row.values[base] !== undefined
+}
+
+function extractTranslationKeyRefs({ value }: { value: string }): { key: string, hasDynamicLocale: boolean, malformed: boolean }[] {
+    return extractMustacheTokens(value).flatMap((token): { key: string, hasDynamicLocale: boolean, malformed: boolean }[] => {
+        const inner = token.inner.trim()
+        if (!inner.startsWith('$t')) {
+            return []
+        }
+        const parsed = parseTranslationToken(inner)
+        if (isNil(parsed)) {
+            // Not parseable at all as `$t[...]` — still worth a malformed-reference key, built
+            // from whatever text follows `$t` so the message has something to point at, entirely
+            // untrusted (never matches TRANSLATION_KEY_REGEX by construction, so it is always
+            // wrapped before being echoed).
+            return [{ key: inner.slice(2), hasDynamicLocale: false, malformed: true }]
+        }
+        return [{ key: parsed.key, hasDynamicLocale: !isNil(parsed.localeExpr), malformed: false }]
+    })
+}
+
 function collectStringValues({ step }: { step: Step }): string[] {
     const result: string[] = []
 
@@ -632,7 +832,10 @@ function extractReferencedStepNames({ value }: { value: string }): string[] {
         // `variables` belongs beside `connections`: both are context roots, not steps. Reporting
         // `{{variables['X']}}` as "references a step that does not exist" put a false positive on
         // the exact form the engine's unresolved-reference error tells the author to switch to.
-        if (name !== 'connections' && name !== 'variables') {
+        // `$t` (translations) is a third root, checked here defensively even though `\w+` can
+        // never actually capture a name starting with `$` — future-proofing against this pattern
+        // being loosened rather than a live gap today.
+        if (name !== 'connections' && name !== 'variables' && name !== '$t') {
             names.add(name)
         }
     }
@@ -641,6 +844,7 @@ function extractReferencedStepNames({ value }: { value: string }): string[] {
 
 const SUBFLOWS_QADAM = '@aiqadam/qadam-subflows'
 const CALL_FLOW_ACTION = 'callFlow'
+const CALLABLE_FLOW_TRIGGER = 'callableFlow'
 const INLINE_EXECUTION_MODE = 'inline'
 const DELAY_QADAM = '@aiqadam/qadam-delay'
 const DELAY_FOR_ACTION = 'delayFor'
@@ -687,45 +891,60 @@ const CONDITIONAL_PAUSE_EVALUATORS: Record<string, (step: QadamStep) => string |
     [`${ASSEMBLYAI_QADAM}:${ASSEMBLYAI_TRANSCRIBE_ACTION}`]: readTranscribePauseReason,
 }
 
-const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
+const CATEGORY_ORDER: ValidationIssue['category'][] = ['step_validity', 'qadam_version', 'template_reference', 'translation_key', 'translation_default_locale', 'translation_locale', 'empty_branch', 'subflow_payload', 'inline_pause', 'concurrent_pause']
 const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     step_validity: 'Step Validity',
     qadam_version: 'Unavailable Qadam Versions',
     template_reference: 'Template References',
+    translation_key: 'Unknown Translation Keys',
+    translation_default_locale: 'Translations Missing The Default Locale',
+    translation_locale: 'Translations Missing Locales',
     empty_branch: 'Empty Branches',
     subflow_payload: 'Subflow Payloads',
     inline_pause: 'Inline Subflows That Pause',
     concurrent_pause: 'Pausing Steps In Concurrent Loops',
 }
 
-function formatValidationResult({ result, flowDisplayName }: { result: ValidationResult, flowDisplayName: string }): string {
-    if (result.issues.length === 0 && result.validSteps > 0) {
+// `valid` is the SAME boolean the tool's `structuredContent.valid` reports, computed once by the
+// caller (`errorIssues.length === 0 && result.validSteps > 0`) and passed in rather than re-derived
+// here from `result.issues` a second time — two independent computations of the same fact drift the
+// moment one of them gains a case the other does not (this happened: a `$t` reference this project
+// can never resolve produced no issue at all, so both formulas agreed on "valid" by both missing the
+// same thing — but the fix belongs to `validateFlowTranslations` emitting the issue, not to keeping
+// two formulas in sync forever after). Gating "ready to publish" on `valid` directly means a NEW
+// issue category some future change forgets to filter into `errors` still prints the flow as invalid
+// here, because there is only one source of truth to forget.
+//
+// A warning (`severity: 'warning'`) never blocks "ready to publish" and is never counted in
+// "invalid" — it gets its own labeled section below the blocking issues instead, so it stays
+// visible without being confused for something that will fail the run.
+function formatValidationResult({ result, valid, flowDisplayName }: { result: ValidationResult, valid: boolean, flowDisplayName: string }): string {
+    const errors = result.issues.filter((issue) => issue.severity !== 'warning')
+    const warnings = result.issues.filter((issue) => issue.severity === 'warning')
+
+    if (valid && warnings.length === 0) {
         const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
         return `✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}).`
     }
 
-    if (result.issues.length === 0 && result.validSteps === 0) {
+    if (!valid && errors.length === 0 && warnings.length === 0 && result.validSteps === 0) {
         return `⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has no valid steps (${result.totalSteps} total). Configure the trigger and actions before publishing.`
     }
 
-    const grouped = new Map<ValidationIssue['category'], ValidationIssue[]>()
-    for (const issue of result.issues) {
-        const list = grouped.get(issue.category) ?? []
-        list.push(issue)
-        grouped.set(issue.category, list)
-    }
-
     const lines: string[] = []
-    lines.push(`⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has ${result.issues.length} issue(s):`)
+    if (valid) {
+        const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
+        lines.push(`✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}), with ${warnings.length} warning(s):`)
+    }
+    else {
+        lines.push(`⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has ${errors.length} issue(s)${warnings.length > 0 ? ` and ${warnings.length} warning(s)` : ''}:`)
+    }
     lines.push('')
 
-    for (const category of CATEGORY_ORDER) {
-        const issues = grouped.get(category)
-        if (issues && issues.length > 0) {
-            lines.push(`${CATEGORY_LABELS[category]}:`)
-            for (const issue of issues) lines.push(`- ${issue.stepName}: ${issue.message}`)
-            lines.push('')
-        }
+    lines.push(...formatIssueGroups(errors))
+    if (warnings.length > 0) {
+        lines.push('Warnings (do not block publishing):')
+        lines.push(...formatIssueGroups(warnings))
     }
 
     lines.push(`Summary: ${result.totalSteps} total, ${result.validSteps} valid, ${result.invalidSteps} invalid, ${result.skippedSteps} skipped`)
@@ -733,10 +952,38 @@ function formatValidationResult({ result, flowDisplayName }: { result: Validatio
     return lines.join('\n')
 }
 
+function formatIssueGroups(issues: ValidationIssue[]): string[] {
+    const grouped = new Map<ValidationIssue['category'], ValidationIssue[]>()
+    for (const issue of issues) {
+        const list = grouped.get(issue.category) ?? []
+        list.push(issue)
+        grouped.set(issue.category, list)
+    }
+
+    const lines: string[] = []
+    for (const category of CATEGORY_ORDER) {
+        const categoryIssues = grouped.get(category)
+        if (categoryIssues && categoryIssues.length > 0) {
+            lines.push(`${CATEGORY_LABELS[category]}:`)
+            for (const issue of categoryIssues) lines.push(`- ${issue.stepName}: ${issue.message}`)
+            lines.push('')
+        }
+    }
+    return lines
+}
+
 type ValidationIssue = {
-    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
+    category: 'step_validity' | 'qadam_version' | 'template_reference' | 'translation_key' | 'translation_locale' | 'translation_default_locale' | 'empty_branch' | 'subflow_payload' | 'inline_pause' | 'concurrent_pause'
     stepName: string
     message: string
+    // Omitted (or 'error') blocks `structuredContent.valid` and counts toward "invalid" in the
+    // summary; 'warning' is reported but never blocks. `translation_locale` (missing a non-default
+    // locale, or a `$t` nested inside `localeSource`) is always a warning. `translation_default_locale`
+    // (no usable locale for this `$t` reference) is an error for every trigger except subflows'
+    // Callable Flow, where it is a warning — that trigger can inherit a real locale from its caller
+    // at run time, which this static check cannot rule out, so it is not a guaranteed failure there
+    // the way it is for every other trigger type.
+    severity?: 'error' | 'warning'
 }
 
 type QadamStep = Extract<Step, { type: FlowActionType.PIECE }>

@@ -154,6 +154,32 @@ describe('Retry flow run', () => {
         expect(body.parentWaitpointId).toBe(waitpoint.id)
     })
 
+    it('carries inheritedRunLocale forward when retrying ON_LATEST_VERSION', async () => {
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+        const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })
+        await db.save('flow_version', flowVersion)
+        const flowRun = createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            status: FlowRunStatus.FAILED,
+            environment: RunEnvironment.TESTING,
+            inheritedRunLocale: 'ru',
+        })
+        await db.save('flow_run', flowRun)
+
+        const response = await ctx.post(`/v1/flow-runs/${flowRun.id}/retry`, {
+            strategy: FlowRetryStrategy.ON_LATEST_VERSION,
+            projectId: ctx.project.id,
+        })
+
+        expect(response.statusCode).toBe(200)
+        const body = response.json()
+        expect(body.id).not.toBe(flowRun.id)
+        expect(body.inheritedRunLocale).toBe('ru')
+    })
+
     it('drops a retried run\'s parentWaitpointId when the parent waitpoint no longer re-verifies (already completed)', async () => {
         const parentFlow = createMockFlow({ projectId: ctx.project.id })
         await db.save('flow', parentFlow)

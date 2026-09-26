@@ -72,7 +72,7 @@ const RUNS_METADATA_UPSERT_KEYS: (keyof RunsMetadataUpsertData)[] = [
     'triggeredBy', 'startTime', 'finishTime', 'status', 'tags',
     'failedStep', 'stepNameToTest', 'parentRunId', 'failParentOnFailure',
     'parentWaitpointId', 'parentSlotId', 'logsFileId', 'updated', 'stepsCount', 'requestId',
-    'dispatchMode',
+    'dispatchMode', 'inheritedRunLocale',
 ]
 
 function stripToRunsMetadataUpsertData(params: RunsMetadataUpsertData): RunsMetadataUpsertData {
@@ -125,6 +125,11 @@ export type RunsMetadataUpsertData = {
     parentWaitpointId?: string
     // Same rule as `parentWaitpointId`: creation-time only, never updated through this queue (#374).
     parentSlotId?: string
+    // Same rule again: set once, on the creation-time `add()` call the PRODUCTION branch of
+    // `persistOrQueueRun` makes with the freshly-built `flowRun` object — a queued subflow's
+    // inherited locale never changes after the run is created, so no later update call needs it,
+    // and none of the update-only callers in this file set it either.
+    inheritedRunLocale?: string | null
     logsFileId?: string | null
     updated?: string
     stepsCount?: number

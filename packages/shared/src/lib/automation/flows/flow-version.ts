@@ -27,6 +27,10 @@ export const FlowVersion = z.object({
     connectionIds: z.array(z.string()),
     backupFiles: Nullable(z.record(z.string(), z.string())),
     notes: z.array(Note),
+    // A template expression resolved once per run, lazily, to pick the run's translation locale
+    // (see `$t[...]` in props-resolver.ts). `null` means "no override" — the run falls back to the
+    // parent run's locale (for a subflow) or the project's `defaultLocale`.
+    localeSource: Nullable(z.string()),
 })
 
 export type FlowVersion = z.infer<typeof FlowVersion>

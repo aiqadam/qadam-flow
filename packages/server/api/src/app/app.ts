@@ -56,6 +56,7 @@ import { tagsModule } from './qadams/tags/tags-module'
 import { storeEntryModule } from './store-entry/store-entry.module'
 import { tablesModule } from './tables/tables.module'
 import { templateModule } from './template/template.module'
+import { translationModule } from './translation/translation.module'
 import { appEventRoutingModule } from './trigger/app-event-routing/app-event-routing.module'
 import { longPollingHost } from './trigger/long-polling/long-polling-host'
 import { longPollingTransportChange } from './trigger/long-polling/long-polling-transport-change'
@@ -159,6 +160,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(appConnectionModule)
     await app.register(platformAppConnectionModule)
     await app.register(variableModule)
+    await app.register(translationModule)
     await app.register(openapiModule)
     await app.register(appEventRoutingModule)
     await app.register(authenticationModule)

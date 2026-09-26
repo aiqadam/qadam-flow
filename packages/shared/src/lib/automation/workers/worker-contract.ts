@@ -32,6 +32,7 @@ export type SubmitPayloadsRequest = {
     failParentOnFailure?: boolean
     parentWaitpointId?: string
     parentSlotId?: string
+    inheritedRunLocale?: string
 }
 
 export type SavePayloadRequest = {
