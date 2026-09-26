@@ -15,7 +15,9 @@ import { t } from 'i18next';
 import { CheckCircle2, TriangleAlert, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { toast } from 'sonner';
 
+import { ConfirmationDeleteDialog } from '@/components/custom/delete-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,18 +50,11 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { ldapConfigMutations } from '@/features/platform-admin';
+import { flagsHooks } from '@/hooks/flags-hooks';
 import { apiErrorUtils } from '@/lib/api-error-utils';
 import { authenticationSession } from '@/lib/authentication-session';
 
-// Any of these five requires the bind password to be re-entered on save — the server treats them
-// as re-authenticating the bind account against the directory, not a cosmetic edit.
-const FIELDS_REQUIRING_BIND_PASSWORD_CONFIRMATION = [
-  'url',
-  'bindDn',
-  'tlsVerify',
-  'tlsMode',
-  'caCertificate',
-] as const;
+import { ldapConfigFormUtils } from './ldap-config-form-helpers';
 
 const SESSION_TTL_OPTIONS = [
   3600, 14400, 28800, 43200, 86400, 259200, 604800,
@@ -77,14 +72,13 @@ export const ConfigureLdapDialog = ({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="basic" onClick={() => setOpen(true)}>
+        <Button size="sm" variant="basic">
           {config ? t('Edit') : t('Configure')}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         {open && (
           <LdapConfigForm
-            key={open ? 'open' : 'closed'}
             platform={platform}
             config={config}
             onClose={() => setOpen(false)}
@@ -111,8 +105,12 @@ const LdapConfigForm = ({
   // local account, and the platform's own admins are exactly the accounts that protects. So the
   // whole form (not only the switch) goes read-only for a non-owner once linking is already on.
   const formLockedForNonOwner =
-    !isOwner && (config?.config.linkExistingByEmail ?? false);
+    ldapConfigFormUtils.computeFormLockedForNonOwner({
+      isOwner,
+      linkExistingByEmail: config?.config.linkExistingByEmail ?? false,
+    });
   const [clearCaCertificate, setClearCaCertificate] = useState(false);
+  const branding = flagsHooks.useWebsiteBranding();
 
   const form = useForm<LdapFormValues>({
     resolver: zodResolver(UpsertLdapConfigRequest),
@@ -122,11 +120,11 @@ const LdapConfigForm = ({
 
   const tlsMode = form.watch('tlsMode');
   const bindPasswordConfirmationRequired =
-    isEditMode &&
-    (clearCaCertificate ||
-      FIELDS_REQUIRING_BIND_PASSWORD_CONFIRMATION.some(
-        (name) => form.formState.dirtyFields[name],
-      ));
+    ldapConfigFormUtils.computeBindPasswordConfirmationRequired({
+      isEditMode,
+      clearCaCertificate,
+      dirtyFields: form.formState.dirtyFields,
+    });
 
   const { mutate: save, isPending } = ldapConfigMutations.useUpsertLdapConfig({
     onSuccess: onClose,
@@ -141,7 +139,7 @@ const LdapConfigForm = ({
     },
   });
 
-  const { mutate: remove, isPending: isDeleting } =
+  const { mutateAsync: removeAsync, isPending: isDeleting } =
     ldapConfigMutations.useDeleteLdapConfig({ onSuccess: onClose });
 
   const fieldsDisabled = isPending || formLockedForNonOwner;
@@ -151,27 +149,25 @@ const LdapConfigForm = ({
       return;
     }
     form.clearErrors('root.serverError');
-    const bindPassword = (values.bindPassword ?? '').trim();
     if (
-      (!isEditMode || bindPasswordConfirmationRequired) &&
-      bindPassword.length === 0
+      ldapConfigFormUtils.isBindPasswordRequiredButMissing({
+        isEditMode,
+        bindPasswordConfirmationRequired,
+        bindPassword: values.bindPassword,
+      })
     ) {
       form.setError('bindPassword', {
         type: 'manual',
-        message: t(formErrors.required),
+        message: formErrors.required,
       });
       return;
     }
-    const request: UpsertLdapConfigRequest = {
-      ...values,
-      bindPassword: bindPassword.length > 0 ? bindPassword : undefined,
-      caCertificate: clearCaCertificate
-        ? null
-        : values.caCertificate && values.caCertificate.trim().length > 0
-        ? values.caCertificate
-        : undefined,
-    };
-    save(request);
+    save(
+      ldapConfigFormUtils.buildUpsertLdapConfigRequest({
+        values,
+        clearCaCertificate,
+      }),
+    );
   };
 
   return (
@@ -308,7 +304,10 @@ const LdapConfigForm = ({
                             disabled={fieldsDisabled}
                             onClick={() => {
                               setClearCaCertificate(true);
-                              field.onChange('');
+                              // `undefined`, never `''` — an empty string still has to satisfy the
+                              // shared schema's `.min(1)`, and `clearCaCertificate` alone is what
+                              // drives sending `null` on submit (see ldapConfigFormUtils).
+                              field.onChange(undefined);
                             }}
                           >
                             {t('Remove')}
@@ -329,7 +328,9 @@ const LdapConfigForm = ({
                         disabled={fieldsDisabled || clearCaCertificate}
                         onChange={(e) => {
                           setClearCaCertificate(false);
-                          field.onChange(e);
+                          field.onChange(
+                            e.target.value === '' ? undefined : e.target.value,
+                          );
                         }}
                       />
                     </FormControl>
@@ -386,9 +387,14 @@ const LdapConfigForm = ({
                         onBlur={field.onBlur}
                         ref={field.ref}
                         value={field.value ?? ''}
-                        onChange={field.onChange}
+                        onChange={(e) =>
+                          field.onChange(
+                            e.target.value === '' ? undefined : e.target.value,
+                          )
+                        }
                         id="bindPassword"
                         type="password"
+                        autoComplete="new-password"
                         placeholder={
                           isEditMode && config?.hasBindPassword
                             ? t('Stored — leave empty to keep')
@@ -570,7 +576,8 @@ const LdapConfigForm = ({
                     </div>
                     <FormDescription>
                       {t(
-                        'Automatically creates a Qadam Flow account the first time a directory user signs in. Turn off to only allow directory sign-in for accounts that already exist.',
+                        'Automatically creates a {brandName} account the first time a directory user signs in. Turn off to only allow directory sign-in for accounts that already exist.',
+                        { brandName: branding.websiteName ?? platform.name },
                       )}
                     </FormDescription>
                   </FormItem>
@@ -689,16 +696,35 @@ const LdapConfigForm = ({
 
           <DialogFooter>
             {isEditMode && (
-              <Button
-                type="button"
-                variant="basic"
-                className="text-destructive mr-auto"
-                loading={isDeleting}
-                disabled={fieldsDisabled}
-                onClick={() => remove()}
+              <ConfirmationDeleteDialog
+                title={t('Delete LDAP / Active Directory configuration?')}
+                message={t(
+                  'This removes the saved configuration. Existing directory-linked accounts are not deleted, but directory sign-in stops working until it is reconfigured.',
+                )}
+                entityName={t('LDAP / Active Directory')}
+                buttonText={t('Delete')}
+                mutationFn={async () => {
+                  await removeAsync();
+                }}
+                onError={(error) => {
+                  toast.error(
+                    apiErrorUtils.extractServerMessage({
+                      error,
+                      fallback: t("Couldn't delete the LDAP configuration"),
+                    }),
+                  );
+                }}
               >
-                {t('Delete')}
-              </Button>
+                <Button
+                  type="button"
+                  variant="basic"
+                  className="text-destructive mr-auto"
+                  loading={isDeleting}
+                  disabled={fieldsDisabled}
+                >
+                  {t('Delete')}
+                </Button>
+              </ConfirmationDeleteDialog>
             )}
             <Button
               type="button"
@@ -746,6 +772,7 @@ const TestConnectionPanel = () => {
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           disabled={isPending}
+          autoComplete="off"
         />
         <Input
           type="password"
@@ -753,6 +780,7 @@ const TestConnectionPanel = () => {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           disabled={isPending}
+          autoComplete="new-password"
         />
       </div>
       <div>

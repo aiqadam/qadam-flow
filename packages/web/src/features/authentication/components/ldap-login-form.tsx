@@ -6,6 +6,7 @@ import {
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
+import { isAxiosError } from 'axios';
 import { t } from 'i18next';
 import { ArrowLeft } from 'lucide-react';
 import { useForm } from 'react-hook-form';
@@ -124,15 +125,13 @@ export const LdapLoginForm = ({ onBack }: LdapLoginFormProps) => {
 };
 
 function resolveLdapSignInErrorMessage(error: HttpError): string {
-  if (!api.isError(error)) {
+  if (!isAxiosError<{ code?: ErrorCode }>(error)) {
     return t('Something went wrong, please try again later');
   }
   if (error.response?.status === api.httpStatus.TooManyRequests) {
-    return t('Too many attempts. Please wait a minute and try again.');
+    return t('Too many attempts. Wait and try again.');
   }
-  const errorCode: ErrorCode | undefined = (
-    error.response?.data as { code: ErrorCode }
-  )?.code;
+  const errorCode = error.response?.data?.code;
   if (isNil(errorCode)) {
     return t('Something went wrong, please try again later');
   }
@@ -157,6 +156,14 @@ function resolveLdapSignInErrorMessage(error: HttpError): string {
       return t('User has been deactivated');
     case ErrorCode.INVALID_CREDENTIALS:
       return t('Invalid username or password');
+    case ErrorCode.INVITATION_ONLY_SIGN_UP:
+      return t(
+        'Sign up is restricted. You need an invitation to join. Please contact the administrator.',
+      );
+    case ErrorCode.EMAIL_IS_NOT_VERIFIED:
+      return t(
+        "Your account's email address hasn't been verified. Contact your administrator.",
+      );
     default:
       return t('Something went wrong, please try again later');
   }

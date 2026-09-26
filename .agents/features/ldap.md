@@ -95,8 +95,10 @@ the exact same config unchanged (a no-op, compared field-for-field against the s
 if not the owner; turning the flag back off, or never turning it on, is unrestricted. The gate
 covers the secrets too: re-supplying `bindPassword` or `caCertificate` while linking is on is also
 refused for a non-owner, even though a secret change is otherwise never compared field-for-field
-against the stored value (there is nothing to compare a plaintext secret against) — a non-owner
-simply cannot touch the config at all once linking is on.
+against the stored value (there is nothing to compare a plaintext secret against). This gate is on
+`upsert` only — `DELETE /v1/platform-ldap-configs` has no equivalent owner check yet; a non-owner
+admin can still delete the whole config while linking is on. Closing that gap is a Phase 2 backend
+item, not implemented here.
 
 Fixing this surfaced a deeper, previously-undiscovered bug in `UpsertLdapConfigRequest`
 (`packages/shared`): `.partial()` layered over a field that already carries its own `.default(...)`
@@ -209,11 +211,19 @@ versa.
 
 ## Web UI (Phase 1)
 - `packages/web/src/app/routes/platform/security/sso/index.tsx` — the SSO settings page. The
-  page-level lock moved to per-item: the LDAP item is always usable (no `plan.ssoEnabled` gate,
-  never flipped by this feature); Google and SAML show the same inline "Soon" badge the sidebar and
-  `LockedFeatureGuard` already use, instead of their old action, because their backend routes don't
-  exist yet (`authenticationService.federatedAuthn` has zero callers, `/v1/authn/saml/*` 404s) —
-  tracked separately, not fixed here.
+  page-level `LockedFeatureGuard` (a CE-inappropriate paywall gate — see
+  `.agents/rules/edition-safety.md`) is gone; **LDAP is the only item on this page that is actually
+  wired to a working backend**, so it is the only one with a live control. Google, SAML, Allowed
+  Domains and Allowed Email Login all show the same inline "Soon" badge — Google/SAML because their
+  backend routes don't exist yet (`authenticationService.federatedAuthn` has zero callers,
+  `/v1/authn/saml/*` 404s), and Allowed Domains/Allowed Email Login because `platform.plan.ssoEnabled`
+  is hardcoded `false` in `platform.service.ts` for CE, which makes both
+  `authentication-utils.ts#assertDomainIsAllowed` and `#assertEmailAuthIsEnabled` early-return before
+  ever consulting `allowedAuthDomains`/`emailAuthEnabled` — those two controls looked live in an
+  earlier revision of this UI (a review finding, not shipped) even though toggling them server-side
+  did nothing. Correcting an earlier claim here: this is not "per-item unlocking" of the whole page —
+  only LDAP moved from locked to functional; the other four items moved from a page-level lock to an
+  item-level "Soon", which is a more honest but not a more capable state.
 - `packages/web/src/app/routes/platform/security/sso/ldap-dialog.tsx` — `ConfigureLdapDialog` /
   `LdapConfigForm`: the full config form (URL, TLS mode/verify, CA cert, bind DN/password, base DN,
   user filter, attribute map — subject is a restricted `LdapSubjectAttribute` select, email carries
@@ -225,7 +235,16 @@ versa.
   explanatory banner (the server's gate is not limited to the switch itself, so the UI does not
   pretend other fields are safe to edit). Changing `url`/`bindDn`/`tlsVerify`/`tlsMode`/the CA cert
   requires re-entering the bind password before the client will submit, mirroring the server's own
-  requirement.
+  requirement. The request-shaping logic (empty-secret normalization, the bind-password re-supply
+  matrix, the owner-lock check) lives in pure, independently unit-tested functions in
+  `ldap-config-form-helpers.ts` rather than inline in the component — in particular, a blank
+  `bindPassword`/`caCertificate` is normalized to `undefined` (never `''`) both at the input's own
+  `onChange` and again in the request builder, because the shared schema's `.min(1)` rejects an
+  empty string live (via `zodResolver`, on every keystroke) and an earlier revision that only
+  normalized at submit time never reached that code at all once live validation had already failed.
+  Deleting the config goes through the shared `ConfirmationDeleteDialog`, and both delete and the
+  page's own quick-enable `Switch` surface a failed mutation via `apiErrorUtils.extractServerMessage`
+  instead of failing silently.
 - `packages/web/src/features/platform-admin/api/ldap-config-api.ts` /
   `hooks/ldap-config-hooks.ts` — CRUD + test client for `/v1/platform-ldap-configs`.
 - `packages/web/src/app/components/sidebar/platform/index.tsx` — the SSO sidebar entry no longer

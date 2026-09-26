@@ -4,7 +4,7 @@ import { Clock, FolderKey, LockIcon, MailIcon, Earth } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { CenteredPage } from '@/app/components/centered-page';
-import { AllowedDomainDialog } from '@/app/routes/platform/security/sso/allowed-domain';
+import { ldapConfigFormUtils } from '@/app/routes/platform/security/sso/ldap-config-form-helpers';
 import { ConfigureLdapDialog } from '@/app/routes/platform/security/sso/ldap-dialog';
 import {
   Item,
@@ -15,13 +15,15 @@ import {
   ItemActions,
 } from '@/components/custom/item';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
   ldapConfigMutations,
   ldapConfigQueries,
-  ssoMutations,
 } from '@/features/platform-admin';
 import { platformHooks } from '@/hooks/platform-hooks';
+import { apiErrorUtils } from '@/lib/api-error-utils';
+import { authenticationSession } from '@/lib/authentication-session';
 
 import GoogleIcon from '../../../../../assets/img/custom/auth/google-icon.svg';
 
@@ -33,24 +35,32 @@ const SoonBadge = () => (
 );
 
 const SSOPage = () => {
-  const { platform, refetch } = platformHooks.useCurrentPlatform();
-  const { data: ldapConfig } = ldapConfigQueries.useLdapConfig();
+  const { platform } = platformHooks.useCurrentPlatform();
+  const {
+    data: ldapConfig,
+    isLoading: isLdapConfigLoading,
+    isError: isLdapConfigError,
+  } = ldapConfigQueries.useLdapConfig();
 
-  const emailAuthEnabled = platform.emailAuthEnabled;
-
-  const { mutate: toggleEmailAuthentication, isPending: isEmailAuthPending } =
-    ssoMutations.useUpdatePlatformSso({
-      platformId: platform.id,
-      refetch,
-      onSuccess: () => {
-        toast.success(t('Email authentication updated'), { duration: 3000 });
-      },
+  const isOwner = platform.ownerId === authenticationSession.getCurrentUserId();
+  const ldapQuickToggleLockedForNonOwner =
+    ldapConfigFormUtils.computeFormLockedForNonOwner({
+      isOwner,
+      linkExistingByEmail: ldapConfig?.config.linkExistingByEmail ?? false,
     });
 
   const { mutate: toggleLdapEnabled, isPending: isLdapTogglePending } =
     ldapConfigMutations.useUpsertLdapConfig({
       onSuccess: () => {
         toast.success(t('LDAP configuration updated'), { duration: 3000 });
+      },
+      onError: (error) => {
+        toast.error(
+          apiErrorUtils.extractServerMessage({
+            error,
+            fallback: t("Couldn't save the LDAP configuration"),
+          }),
+        );
       },
     });
 
@@ -69,18 +79,9 @@ const SSOPage = () => {
             <ItemDescription>
               {t('Restrict authentication to specific email domains.')}
             </ItemDescription>
-            {(platform?.allowedAuthDomains ?? []).length > 0 && (
-              <div className="mt-1 gap-2 flex">
-                {(platform?.allowedAuthDomains ?? []).map((text, index) => (
-                  <Badge key={index} variant={'outline'}>
-                    {text}
-                  </Badge>
-                ))}
-              </div>
-            )}
           </ItemContent>
           <ItemActions>
-            <AllowedDomainDialog platform={platform} refetch={refetch} />
+            <SoonBadge />
           </ItemActions>
         </Item>
 
@@ -102,25 +103,44 @@ const SSOPage = () => {
                 </Badge>
               </div>
             )}
+            {isLdapConfigError && (
+              <p className="mt-1 text-sm text-destructive">
+                {t("Couldn't load the LDAP configuration")}
+              </p>
+            )}
           </ItemContent>
           <ItemActions>
-            {ldapConfig && (
-              <Switch
-                checked={ldapConfig.config.enabled}
-                disabled={isLdapTogglePending}
-                onCheckedChange={(checked) => {
-                  const request: UpsertLdapConfigRequest = {
-                    ...ldapConfig.config,
-                    enabled: checked,
-                  };
-                  toggleLdapEnabled(request);
-                }}
-              />
+            {isLdapConfigLoading ? (
+              <Button size="sm" variant="basic" disabled>
+                {t('Loading…')}
+              </Button>
+            ) : isLdapConfigError ? (
+              <Button size="sm" variant="basic" disabled>
+                {t('Configure')}
+              </Button>
+            ) : (
+              <>
+                {ldapConfig && (
+                  <Switch
+                    checked={ldapConfig.config.enabled}
+                    disabled={
+                      isLdapTogglePending || ldapQuickToggleLockedForNonOwner
+                    }
+                    onCheckedChange={(checked) => {
+                      const request: UpsertLdapConfigRequest = {
+                        ...ldapConfig.config,
+                        enabled: checked,
+                      };
+                      toggleLdapEnabled(request);
+                    }}
+                  />
+                )}
+                <ConfigureLdapDialog
+                  platform={platform}
+                  config={ldapConfig ?? null}
+                />
+              </>
             )}
-            <ConfigureLdapDialog
-              platform={platform}
-              config={ldapConfig ?? null}
-            />
           </ItemActions>
         </Item>
 
@@ -167,15 +187,7 @@ const SSOPage = () => {
             </ItemDescription>
           </ItemContent>
           <ItemActions>
-            <Switch
-              checked={emailAuthEnabled}
-              onCheckedChange={() =>
-                toggleEmailAuthentication({
-                  emailAuthEnabled: !platform.emailAuthEnabled,
-                })
-              }
-              disabled={isEmailAuthPending}
-            />
+            <SoonBadge />
           </ItemActions>
         </Item>
       </div>
