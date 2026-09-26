@@ -30,6 +30,16 @@ export enum UserStatus {
     INACTIVE = 'INACTIVE',
 }
 
+// Tracks *who* last decided this user's platformRole, the same idea `ProjectMemberManagedBy`
+// tracks for a project membership (`.agents/features/ldap.md` LDAP Phase 2) — a role an LDAP group
+// mapping granted is revocable by that same mapping (reverted to MEMBER once the user no longer
+// matches any role-granting group); a role an admin set by hand through `POST /v1/users/:id` never
+// is, regardless of what any mapping later resolves.
+export enum PlatformRoleManagedBy {
+    MANUAL = 'MANUAL',
+    LDAP = 'LDAP',
+}
+
 export const EmailType = z.string().email()
 
 export const PasswordType = z.string().min(8).max(64)
@@ -37,6 +47,7 @@ export const PasswordType = z.string().min(8).max(64)
 export const User = z.object({
     ...BaseModelSchema,
     platformRole: z.nativeEnum(PlatformRole),
+    platformRoleManagedBy: z.enum(PlatformRoleManagedBy),
     status: z.nativeEnum(UserStatus),
     identityId: z.string(),
     externalId: Nullable(z.string()),
@@ -54,6 +65,7 @@ export const UserWithMetaInformation = z.object({
     externalId: Nullable(z.string()),
     platformId: Nullable(z.string()),
     platformRole: z.enum(PlatformRole),
+    platformRoleManagedBy: z.enum(PlatformRoleManagedBy),
     lastName: z.string(),
     created: DateOrString,
     updated: DateOrString,

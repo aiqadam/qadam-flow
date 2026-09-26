@@ -168,6 +168,10 @@ export enum LdapTestStage {
     SERVICE_BIND = 'SERVICE_BIND',
     SEARCH = 'SEARCH',
     USER_BIND = 'USER_BIND',
+    // Phase 2: the group-membership resolution step (`memberOf`, plus the optional nested-group
+    // search), exercised by `/test` only when the platform has `groupMappings` configured — its
+    // own stage so a broken `groupSearchFilter` is reported distinctly from a broken user search.
+    GROUP_SEARCH = 'GROUP_SEARCH',
     SUCCESS = 'SUCCESS',
 }
 
