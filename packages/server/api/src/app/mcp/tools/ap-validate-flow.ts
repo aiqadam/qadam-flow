@@ -81,10 +81,11 @@ export const apValidateFlowTool = (mcp: ProjectScopedMcpServer, log: FastifyBase
                 // actually throw.
                 const errorIssues = allIssues.filter((issue) => issue.severity !== 'warning')
                 const warningIssues = allIssues.filter((issue) => issue.severity === 'warning')
+                const valid = errorIssues.length === 0 && result.validSteps > 0
                 return {
-                    content: [{ type: 'text', text: formatValidationResult({ result, flowDisplayName: flow.version.displayName }) }],
+                    content: [{ type: 'text', text: formatValidationResult({ result, valid, flowDisplayName: flow.version.displayName }) }],
                     structuredContent: {
-                        valid: errorIssues.length === 0 && result.validSteps > 0,
+                        valid,
                         totalSteps: result.totalSteps,
                         validSteps: result.validSteps,
                         invalidSteps: result.invalidSteps,
@@ -670,13 +671,26 @@ async function validateFlowTranslations({ trigger, localeSource, projectId, plat
             }]
         }
 
-        const defaultLocaleIssue: ValidationIssue[] = (!isNil(canonicalDefaultLocale) && !keyHasValueForLocaleOrBase({ row, locale: canonicalDefaultLocale }))
+        // With no explicit locale bracket, this ref resolves purely off `localeUtil.buildCandidateChain`'s
+        // run-locale/default-locale legs — if BOTH are unset, that chain is empty, `localeUtil.resolve`
+        // never has a candidate to try, and the step fails at run time no matter what the table holds
+        // for this key (even a row with every locale filled in cannot help: nothing selects one). This
+        // is checked instead of (not in addition to) the "missing the default locale's value" check
+        // below, since there is no default locale here to be missing a value for in the first place.
+        const noLocaleChainAtAll = !hasDynamicLocale && isNil(localeSource) && isNil(canonicalDefaultLocale)
+        const defaultLocaleIssue: ValidationIssue[] = noLocaleChainAtAll
             ? [{
                 category: 'translation_default_locale',
                 stepName: step.name,
-                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}", which has no value for the project's default locale ("${canonicalDefaultLocale}") — a run with no explicit or inherited locale will fail this step.`,
+                message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}" with no explicit locale, but this project has neither a default locale nor is this flow's localeSource set — there is nothing for the run to resolve a locale from, so this step will fail at run time regardless of which locales the key has values for. Set the project's default locale, set this flow's localeSource, or reference an explicit locale (e.g. $t['${key}']['en']).`,
             }]
-            : []
+            : (!isNil(canonicalDefaultLocale) && !keyHasValueForLocaleOrBase({ row, locale: canonicalDefaultLocale }))
+                ? [{
+                    category: 'translation_default_locale',
+                    stepName: step.name,
+                    message: `${mcpUtils.wrapUntrustedValue(step.displayName)} references translation key "${displayKey}", which has no value for the project's default locale ("${canonicalDefaultLocale}") — a run with no explicit or inherited locale will fail this step.`,
+                }]
+                : []
 
         const missingLocales = allLocales.filter((locale) => locale !== canonicalDefaultLocale && row.values[locale] === undefined)
         const dynamicNote = hasDynamicLocale ? ' This step\'s locale is chosen dynamically at run time and is not statically checked.' : ''
@@ -867,24 +881,34 @@ const CATEGORY_LABELS: Record<ValidationIssue['category'], string> = {
     concurrent_pause: 'Pausing Steps In Concurrent Loops',
 }
 
+// `valid` is the SAME boolean the tool's `structuredContent.valid` reports, computed once by the
+// caller (`errorIssues.length === 0 && result.validSteps > 0`) and passed in rather than re-derived
+// here from `result.issues` a second time — two independent computations of the same fact drift the
+// moment one of them gains a case the other does not (this happened: a `$t` reference this project
+// can never resolve produced no issue at all, so both formulas agreed on "valid" by both missing the
+// same thing — but the fix belongs to `validateFlowTranslations` emitting the issue, not to keeping
+// two formulas in sync forever after). Gating "ready to publish" on `valid` directly means a NEW
+// issue category some future change forgets to filter into `errors` still prints the flow as invalid
+// here, because there is only one source of truth to forget.
+//
 // A warning (`severity: 'warning'`) never blocks "ready to publish" and is never counted in
 // "invalid" — it gets its own labeled section below the blocking issues instead, so it stays
 // visible without being confused for something that will fail the run.
-function formatValidationResult({ result, flowDisplayName }: { result: ValidationResult, flowDisplayName: string }): string {
+function formatValidationResult({ result, valid, flowDisplayName }: { result: ValidationResult, valid: boolean, flowDisplayName: string }): string {
     const errors = result.issues.filter((issue) => issue.severity !== 'warning')
     const warnings = result.issues.filter((issue) => issue.severity === 'warning')
 
-    if (errors.length === 0 && warnings.length === 0 && result.validSteps > 0) {
+    if (valid && warnings.length === 0) {
         const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
         return `✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}).`
     }
 
-    if (errors.length === 0 && warnings.length === 0 && result.validSteps === 0) {
+    if (!valid && errors.length === 0 && warnings.length === 0 && result.validSteps === 0) {
         return `⚠️ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} has no valid steps (${result.totalSteps} total). Configure the trigger and actions before publishing.`
     }
 
     const lines: string[] = []
-    if (errors.length === 0) {
+    if (valid) {
         const skippedNote = result.skippedSteps > 0 ? `, ${result.skippedSteps} skipped` : ''
         lines.push(`✅ Flow ${mcpUtils.wrapUntrustedValue(flowDisplayName)} is ready to publish (${result.totalSteps} steps, ${result.validSteps} valid${skippedNote}), with ${warnings.length} warning(s):`)
     }

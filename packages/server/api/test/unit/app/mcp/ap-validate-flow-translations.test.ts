@@ -176,6 +176,86 @@ describe('ap_validate_flow — translation references', () => {
         expect(await warningsOf('translation_default_locale')).toEqual([])
     })
 
+    it('fails a $t reference with no explicit locale when the project has no default locale and the flow has no localeSource (M7)', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'no.chain\']}}', localeSource: null }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'no.chain', values: { en: 'Hi', ru: 'Привет' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        // Every locale the key actually has a value for is irrelevant here: with no default
+        // locale AND no localeSource, the candidate chain this reference resolves against is
+        // empty, so this fails at run time no matter what the table holds.
+        const issues = await issuesOf('translation_default_locale')
+        expect(issues).toHaveLength(1)
+        expect(issues[0]).toContain('no.chain')
+        expect(issues[0]).toContain('neither a default locale')
+
+        const result = await apValidateFlowTool(mcp, log).execute({ flowId: 'flow-1' })
+        expect((result.structuredContent as { valid: boolean }).valid).toBe(false)
+        expect(result.content[0].text).not.toContain('ready to publish')
+    })
+
+    it('does not flag a $t reference with no explicit locale when the flow has a localeSource, even with no project default locale (M7)', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'has.source\']}}', localeSource: '{{trigger[\'output\'].lang}}' }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'has.source', values: { en: 'Hi' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        expect(await issuesOf('translation_default_locale')).toEqual([])
+    })
+
+    it('does not flag a $t reference that already carries an explicit locale bracket, even with no default locale and no localeSource (M7)', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'explicit.locale\'][\'en\']}}', localeSource: null }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'explicit.locale', values: { en: 'Hi' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        expect(await issuesOf('translation_default_locale')).toEqual([])
+    })
+
+    it('does not flag a $t reference when the project has a default locale, even with no localeSource (M7)', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: 'en' })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'has.default\']}}', localeSource: null }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'has.default', values: { en: 'Hi' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        expect(await issuesOf('translation_default_locale')).toEqual([])
+    })
+
+    it('does not flag a $t reference when the project has no default locale but the flow has a localeSource (M7)', async () => {
+        mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: null })
+        mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'fine.key\']}}', localeSource: '{{trigger[\'output\'].lang}}' }))
+        mockTranslationList.mockResolvedValue({
+            data: [
+                { id: 't1', key: 'fine.key', values: { en: 'Hi' }, description: null, projectId: 'project-1', platformId: 'platform-1', created: '', updated: '' },
+            ],
+            next: null,
+            previous: null,
+        })
+
+        expect(await issuesOf('translation_default_locale')).toEqual([])
+    })
+
     it('does not flag a key whose base language covers the project\'s default locale (M6)', async () => {
         mockGetOneOrThrow.mockResolvedValue({ id: 'project-1', defaultLocale: 'en-US' })
         mockGetOnePopulated.mockResolvedValue(flowWithStepInput({ input: '{{$t[\'base.covered\']}}' }))
