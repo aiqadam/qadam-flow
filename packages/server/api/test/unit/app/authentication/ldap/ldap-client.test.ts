@@ -379,7 +379,7 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
     })
 })
 
-describe('ldapClient.searchBySubject — objectGUID round trip and malformed-subject guard (round 2)', () => {
+describe('ldapClient.searchBySubject — objectGUID round trip and malformed-subject guard', () => {
     const objectGuidAttributeMap = { subject: 'objectGUID' as const, email: 'mail', firstName: 'givenName', lastName: 'sn' }
 
     it('converts a known canonical objectGUID string to the RFC 4515 octet-escaped filter value', async () => {

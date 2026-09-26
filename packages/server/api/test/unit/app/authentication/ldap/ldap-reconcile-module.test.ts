@@ -38,8 +38,8 @@ describe('ldapReconcileModuleUtils.resolveReconcileCron', () => {
 
     it('falls back to the default and logs an error when LDAP_RECONCILE_CRON is not a valid cron expression', () => {
         vi.spyOn(system, 'get').mockReturnValue('not-a-cron-expression')
-        const errorSpy = vi.fn()
-        const log = { error: errorSpy } as unknown as ReturnType<typeof pino>
+        const log = pino({ level: 'silent' })
+        const errorSpy = vi.spyOn(log, 'error')
 
         const resolved = ldapReconcileModuleUtils.resolveReconcileCron(log)
 

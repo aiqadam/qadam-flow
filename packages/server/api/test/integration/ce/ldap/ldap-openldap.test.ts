@@ -2,7 +2,7 @@ import tls from 'node:tls'
 import { isNil, tryCatch } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
-import { Client } from 'ldapts'
+import { AlreadyExistsError, Client, NoSuchObjectError } from 'ldapts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
@@ -14,9 +14,9 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 // an opt-in suite normally is. The flag is `QF_`-prefixed, not a bare name, because turbo's
 // `globalPassThroughEnv` (`turbo.json`) only forwards `AP_*`/`QF_*` to the spawned `vitest`
 // process under its strict env mode — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped,
-// which made every one of this suite's 8 cases skip in CI without ever failing the job (round 2 of
-// #339's review). `QF_` is the canonical (and only) prefix (#339 Phase 2 round 3) — the
-// `AP_RUN_LDAP_OPENLDAP_TESTS` fallback this file used to also read was dropped: it duplicated the
+// which made every one of this suite's 8 cases skip in CI without ever failing the job. `QF_` is
+// the canonical (and only) prefix — the `AP_RUN_LDAP_OPENLDAP_TESTS` fallback this file used to
+// also read was dropped: it duplicated the
 // same env-migration coverage every other `AP_*`/`QF_*` prop gets through `system.get()`, but this
 // one file bypassed that mirror by reading `process.env` directly, so the fallback here was its own
 // small, one-off maintenance burden rather than shared infrastructure. The `describe.skipIf(!RUN)`
@@ -249,7 +249,7 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
         expect(response.json().token).toBeDefined()
     })
 
-    // Phase 2 (#339), round 3: the fixture image's `memberof` overlay is live (confirmed by
+    // The fixture image's `memberof` overlay is live (confirmed by
     // directly probing the running container — adding a `Group`/`member` entry immediately grows a
     // matching `memberOf` back-link on the member), so a mapping keyed on a real `Group` the signed-
     // in user already belongs to would be granted by the plain direct-`memberOf` half of
@@ -320,7 +320,7 @@ async function addSearchOnlyGroupFixture(): Promise<void> {
         })
     })
     await client.unbind().catch(() => undefined)
-    if (!isNil(error) && (!(error instanceof Error) || !error.message.includes('Entry Already Exists'))) {
+    if (!isNil(error) && !(error instanceof AlreadyExistsError)) {
         throw error
     }
 }
@@ -334,7 +334,7 @@ async function removeSearchOnlyGroupFixture(): Promise<void> {
         await client.del(GROUP_SEARCH_ONLY_GROUP_DN)
     })
     await client.unbind().catch(() => undefined)
-    if (!isNil(error) && (!(error instanceof Error) || !error.message.includes('No Such Object'))) {
+    if (!isNil(error) && !(error instanceof NoSuchObjectError)) {
         throw error
     }
 }
