@@ -72,11 +72,10 @@ describe('ldapGroupMappingUtils.resolveGrants — project roles', () => {
     })
 })
 
-// Round 2 (app-sec finding #1): `normalizeGroupDn` used to be a naive
-// `.trim().toLowerCase().split(',')`, which is a privilege-escalation hole — these cases each
-// exercise one concrete way a spoofed DN could otherwise slip past it and compare equal to a real
-// group, per the design comment on `normalizeGroupDn` in `ldap-group-mapping.ts`.
-describe('ldapGroupMappingUtils.normalizeGroupDn — RFC 4514 tokenisation (round 2 hardening)', () => {
+// A naive `.trim().toLowerCase().split(',')` normalizer is a privilege-escalation hole — these
+// cases each exercise one concrete way a spoofed DN could otherwise slip past it and compare equal
+// to a real group, per the design comment on `normalizeGroupDn` in `ldap-group-mapping.ts`.
+describe('ldapGroupMappingUtils.normalizeGroupDn — RFC 4514 tokenisation', () => {
     it('does NOT treat an escaped comma followed by a space the same as one immediately followed by the next char', () => {
         // Both DNs have a single RDN whose value contains a literal (escaped) comma. Naive
         // `.split(',')` would cut both of these into an extra bogus component at the escaped
@@ -115,13 +114,12 @@ describe('ldapGroupMappingUtils.normalizeGroupDn — RFC 4514 tokenisation (roun
     })
 })
 
-// Round 3 (app-sec): round 2's tokeniser still flattened the parsed DN back into one joined
-// string, which loses exactly the structural information (RDN boundary vs. multi-valued-RDN
-// boundary, escaped separator vs. real one) that made the tokenising worthwhile in the first place
-// — two structurally different DNs could still normalize to the identical string. `normalizeGroupDn`
-// now compares a structured, JSON-serialised form instead; these cases are each a DN pair that a
-// flattened comparison could not tell apart.
-describe('ldapGroupMappingUtils.normalizeGroupDn — structured comparison (round 3 hardening)', () => {
+// A tokeniser that flattens the parsed DN back into one joined string loses exactly the structural
+// information (RDN boundary vs. multi-valued-RDN boundary, escaped separator vs. real one) that
+// made the tokenising worthwhile in the first place — two structurally different DNs could still
+// normalize to the identical string. `normalizeGroupDn` compares a structured, JSON-serialised form
+// instead; these cases are each a DN pair a flattened comparison could not tell apart.
+describe('ldapGroupMappingUtils.normalizeGroupDn — structured comparison', () => {
     it('does NOT equate an escaped comma inside one RDN\'s value with two real, separate RDNs', () => {
         const oneRdnWithEmbeddedComma = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins\\,ou=QadamFlow,ou=Groups,dc=corp,dc=com')
         const twoRealRdns = ldapGroupMappingUtils.normalizeGroupDn('cn=Admins,ou=QadamFlow,ou=Groups,dc=corp,dc=com')
@@ -182,5 +180,37 @@ describe('ldapGroupMappingUtils.normalizeGroupDn — structured comparison (roun
         const orderB = ldapGroupMappingUtils.normalizeGroupDn('ou=Groups+cn=Admins,dc=x')
 
         expect(orderA).toBe(orderB)
+    })
+
+    it('does NOT equate an attribute-value assertion with no `=` at all with the same text written as an empty-valued assertion', () => {
+        // `cn,dc=x` has an invalid first AVA (no `=` anywhere in it); `cn=,dc=x` has a valid one
+        // (`cn` with an empty value). Coercing the invalid case into `[wholeString, '']` made both
+        // normalize to the same `['cn', '']` pair.
+        const noEqualsAtAll = ldapGroupMappingUtils.normalizeGroupDn('cn,dc=x')
+        const emptyValuedAva = ldapGroupMappingUtils.normalizeGroupDn('cn=,dc=x')
+
+        expect(noEqualsAtAll).not.toBe(emptyValuedAva)
+    })
+
+    it('does NOT equate an unescaped BER-hex value (`#...`) with the literal string of the same digits written escaped (`\\#...`)', () => {
+        const berForm = ldapGroupMappingUtils.normalizeGroupDn('cn=#04024869,dc=x')
+        const literalHashForm = ldapGroupMappingUtils.normalizeGroupDn('cn=\\#04024869,dc=x')
+
+        expect(berForm).not.toBe(literalHashForm)
+    })
+
+    it('does NOT match a group whose hex escape is not valid UTF-8 against anything, including a literal U+FFFD', () => {
+        // `\FF` alone is never a valid UTF-8 lead byte — a decoder that silently substitutes
+        // U+FFFD (as `Buffer#toString('utf8')` does) would make this collide with a group whose
+        // name contains a literal replacement character.
+        const invalidUtf8Escape = ldapGroupMappingUtils.normalizeGroupDn('cn=\\FF,dc=x')
+        const literalReplacementChar = ldapGroupMappingUtils.normalizeGroupDn('cn=�,dc=x')
+        const sameInvalidEscapeAgain = ldapGroupMappingUtils.normalizeGroupDn('cn=\\FF,dc=x')
+
+        expect(invalidUtf8Escape).not.toBe(literalReplacementChar)
+        // Two occurrences of the exact same invalid input are still allowed to normalize the same
+        // way as each other — the sentinel only needs to never equal a *valid* decode, not to be
+        // unique per invalid input.
+        expect(invalidUtf8Escape).toBe(sameInvalidEscapeAgain)
     })
 })

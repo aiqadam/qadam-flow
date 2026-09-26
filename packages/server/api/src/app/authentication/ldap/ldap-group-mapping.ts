@@ -1,4 +1,4 @@
-import { DefaultProjectRole, isNil, LdapGroupMapping, PlatformRole } from '@aiqadam/shared'
+import { DefaultProjectRole, isNil, LdapGroupMapping, PlatformRole, tryCatchSync } from '@aiqadam/shared'
 
 export const ldapGroupMappingUtils = {
     normalizeGroupDn,
@@ -18,50 +18,49 @@ const PROJECT_ROLE_RANK: Record<DefaultProjectRole, number> = {
     [DefaultProjectRole.ADMIN]: 2,
 }
 
-// Round 3 (app-sec): round 2's fix still flattened the parsed DN back into a single joined string
-// (`.join(',')`), which re-introduces exactly the ambiguity the tokeniser was built to remove — a
-// joined string cannot tell "one RDN whose value contains a real comma" apart from "two separate
-// RDNs", nor "one multi-valued RDN (`+`-joined)" apart from "two single-valued RDNs" (`,`-joined),
-// because both cases produce the identical output string once everything is glued back together
-// with the same separator. A DN is compared here as a *structured* value instead: an ordered list
-// of RDNs (order matters — root-to-leaf), each RDN itself an order-independent (sorted) list of
+// A DN is compared here as a *structured* value, never flattened back into a single joined string
+// before comparison — a joined string cannot tell "one RDN whose value contains a real comma"
+// apart from "two separate RDNs", nor "one multi-valued RDN (`+`-joined)" apart from "two
+// single-valued RDNs" (`,`-joined), because both cases produce the identical output string once
+// everything is glued back together with the same separator. The structure is: an ordered list of
+// RDNs (order matters — root-to-leaf), each RDN itself an order-independent (sorted) list of
 // `[type, value]` pairs, with `+` (multi-valued RDN) kept structurally distinct from `,` (RDN
-// boundary) all the way through — never rejoined into one string before comparison.
-// `resolveGrants`'s `Set`/`Map` lookups need a primitive key, not a nested structure, so the
-// canonical form this function returns is `JSON.stringify` of that structure — still a string, but
-// one whose *shape* fully determines equality, not one built by concatenating fields that could
-// have come from a different split.
+// boundary) all the way through. `resolveGrants`'s `Set`/`Map` lookups need a primitive key, not a
+// nested structure, so the canonical form this function returns is `JSON.stringify` of that
+// structure — still a string, but one whose *shape* fully determines equality, not one built by
+// concatenating fields that could have come from a different split.
 //
-// Two further corrections from round 2, both defense-in-depth against a spoofed value colliding
-// with a real one:
-// - Hex escapes (`\XX`) are decoded as raw bytes accumulated into a `Buffer` and decoded once as
-//   UTF-8, not one `String.fromCharCode` per byte — a multi-byte UTF-8 character (e.g. `é` as
-//   `\C3\A9`) decoded byte-by-byte via `fromCharCode` produces two separate Latin-1 code points
-//   (`Ã©`) instead of the one intended character, which is itself a distinct-string mismatch bug,
-//   not merely a cosmetic one.
+// Further corrections, all defense-in-depth against a spoofed value colliding with a real one:
+// - Hex escapes (`\XX`) are decoded as raw bytes accumulated and decoded once as UTF-8 (in `fatal`
+//   mode — see `decodeTokens`), not one `String.fromCharCode` per byte — a multi-byte UTF-8
+//   character (e.g. `é` as `\C3\A9`) decoded byte-by-byte via `fromCharCode` produces two separate
+//   Latin-1 code points (`Ã©`) instead of the one intended character, which is itself a
+//   distinct-string mismatch bug, not merely a cosmetic one.
 // - Boundary trimming (stripping incidental DN-formatting whitespace like `CN=Admins, DC=Example`)
-//   now operates on a token list built by the same escape-aware tokeniser used for decoding, and
-//   trims only a token that is *itself* an unescaped literal ASCII space — a component that
-//   legitimately ends with an *escaped* space (`\ `) is never trimmed, because that token's kind is
-//   `escapedChar`, not `literal`, regardless of its position. Round 2's separate raw-string trim
-//   pass (`trimRawAsciiSpaces`) trimmed by character code alone and could not make this distinction,
-//   which is exactly the bug this round fixes.
+//   operates on a token list built by the same escape-aware tokeniser used for decoding, and trims
+//   only a token that is *itself* an unescaped literal ASCII space — a component that legitimately
+//   ends with an *escaped* space (`\ `) is never trimmed, because that token's kind is
+//   `escapedChar`, not `literal`, regardless of its position.
+// - An attribute-value assertion with no unescaped `=` at all (`parseAva`) and a value in RFC
+//   4514's BER-hex form (`normalizeAvaValue`) each get their own sentinel/tag rather than being
+//   coerced into the same shape a differently-written, but semantically different, DN would
+//   produce.
 function normalizeGroupDn(dn: string): string {
-    const rdns = splitOnUnescapedChar(dn, ',').map(parseRdn)
+    const rdns = splitOnUnescapedChar({ raw: dn, separator: ',' }).map(parseRdn)
     return JSON.stringify(rdns)
 }
 
 // Splits on a top-level (unescaped) occurrence of a single separator character, keeping every
 // escape sequence (backslash + one char, or a `\XX` hex pair) intact in each returned raw segment —
 // decoding happens later, per component, in `normalizeComponent`.
-function splitOnUnescapedChar(raw: string, separator: string): string[] {
+function splitOnUnescapedChar({ raw, separator }: SplitOnUnescapedCharParams): string[] {
     const parts: string[] = []
     let current = ''
     let i = 0
     while (i < raw.length) {
         const char = raw[i]
         if (char === '\\' && i + 1 < raw.length) {
-            const escapeLength = isHexEscapeAt(raw, i) ? 3 : 2
+            const escapeLength = isHexEscapeAt({ raw, backslashIndex: i }) ? 3 : 2
             current += raw.slice(i, i + escapeLength)
             i += escapeLength
             continue
@@ -82,11 +81,11 @@ function splitOnUnescapedChar(raw: string, separator: string): string[] {
 // Index of the first top-level (unescaped) occurrence of `char` in `raw`, or -1. Used to split an
 // attribute-value assertion (`type=value`) on its separating `=` without being confused by an
 // escaped one inside the value.
-function findFirstUnescapedChar(raw: string, char: string): number {
+function findFirstUnescapedChar({ raw, char }: FindFirstUnescapedCharParams): number {
     let i = 0
     while (i < raw.length) {
         if (raw[i] === '\\' && i + 1 < raw.length) {
-            i += isHexEscapeAt(raw, i) ? 3 : 2
+            i += isHexEscapeAt({ raw, backslashIndex: i }) ? 3 : 2
             continue
         }
         if (raw[i] === char) {
@@ -97,7 +96,7 @@ function findFirstUnescapedChar(raw: string, char: string): number {
     return -1
 }
 
-function isHexEscapeAt(raw: string, backslashIndex: number): boolean {
+function isHexEscapeAt({ raw, backslashIndex }: IsHexEscapeAtParams): boolean {
     return /^[0-9a-fA-F]{2}/.test(raw.slice(backslashIndex + 1, backslashIndex + 3))
 }
 
@@ -106,7 +105,7 @@ function isHexEscapeAt(raw: string, backslashIndex: number): boolean {
 // `b=2+a=1` — the same multi-valued RDN, written in a different order — normalize identically,
 // without ever merging the `+` boundary into the same separator `,` uses between RDNs.
 function parseRdn(rawRdn: string): [string, string][] {
-    return splitOnUnescapedChar(rawRdn, '+')
+    return splitOnUnescapedChar({ raw: rawRdn, separator: '+' })
         .map(parseAva)
         .sort(([typeA, valueA], [typeB, valueB]) => {
             const keyA = `${typeA}=${valueA}`
@@ -118,10 +117,34 @@ function parseRdn(rawRdn: string): [string, string][] {
 }
 
 function parseAva(rawAva: string): [string, string] {
-    const equalsIndex = findFirstUnescapedChar(rawAva, '=')
-    const rawType = equalsIndex === -1 ? rawAva : rawAva.slice(0, equalsIndex)
-    const rawValue = equalsIndex === -1 ? '' : rawAva.slice(equalsIndex + 1)
-    return [normalizeComponent(rawType), normalizeComponent(rawValue)]
+    const equalsIndex = findFirstUnescapedChar({ raw: rawAva, char: '=' })
+    if (equalsIndex === -1) {
+        // No unescaped `=` at all means this is not a valid attribute-value assertion per RFC
+        // 4514 — coercing it into `[wholeString, '']` would make the invalid `cn` and the valid,
+        // empty-valued `cn=` normalize identically (`cn=,dc=x` vs `cn,dc=x` colliding). The
+        // sentinel folds the raw text back in, so two different invalid AVAs can still only ever
+        // collide with each other when byte-for-byte identical, and never with a valid AVA at all
+        // — no real attribute type can contain a NUL.
+        return [`\u0000invalid-ava\u0000${rawAva}`, rawAva]
+    }
+    const rawType = rawAva.slice(0, equalsIndex)
+    const rawValue = rawAva.slice(equalsIndex + 1)
+    return [normalizeComponent(rawType), normalizeAvaValue(rawValue)]
+}
+
+// RFC 4514's `#<hex>` form (an unescaped leading `#`) is a BER-encoded attribute value, not the
+// literal text "#<hex>" — actually decoding the BER (a meaningful amount of ASN.1 machinery for a
+// path directory administrators are not expected to exercise for a role-granting group) is more
+// than this comparison needs; instead the value is tagged so it can never normalize the same way
+// an escaped `\#<hex>` (the literal string starting with a hash character) does, closing the
+// collision without needing to understand the BER content itself. A `#` that isn't the value's
+// very first raw character — escaped or not — is always just a literal character, per the same
+// grammar, so only this leading, unescaped case needs the special path.
+function normalizeAvaValue(rawValue: string): string {
+    if (rawValue.startsWith('#')) {
+        return `#ber:${lowercaseAsciiOnly(rawValue.slice(1))}`
+    }
+    return normalizeComponent(rawValue)
 }
 
 // Tokenises a raw (still-escaped) component into a sequence of literal characters, plain
@@ -134,7 +157,7 @@ function tokenizeComponent(raw: string): RawToken[] {
     while (i < raw.length) {
         const char = raw[i]
         if (char === '\\' && i + 1 < raw.length) {
-            if (isHexEscapeAt(raw, i)) {
+            if (isHexEscapeAt({ raw, backslashIndex: i })) {
                 tokens.push({ kind: 'escapedHexByte', byte: parseInt(raw.slice(i + 1, i + 3), 16) })
                 i += 3
                 continue
@@ -170,18 +193,32 @@ function isLiteralAsciiSpace(token: RawToken): boolean {
 }
 
 // Resolves the token list to its final string: a run of one or more consecutive `escapedHexByte`
-// tokens is decoded once, as UTF-8, from a `Buffer` of the accumulated raw bytes — never one
+// tokens is decoded once, as UTF-8, from the accumulated raw bytes — never one
 // `String.fromCharCode` per byte, which would silently misdecode any multi-byte UTF-8 character
-// (see the design comment on `normalizeGroupDn`). Every other token contributes its own resolved
+// (see the design comment on `normalizeGroupDn`). The decoder runs in `fatal` mode: a byte
+// sequence a real UTF-8 producer could never have written (as opposed to `Buffer#toString('utf8')`,
+// which silently substitutes U+FFFD for it) instead makes the *whole* component the sentinel below
+// — an invalid escape must make the DN fail to match anything, never quietly compare equal to
+// whatever `�` happened to also come from. Every other token contributes its own resolved
 // character directly.
+const INVALID_UTF8_ESCAPE_SENTINEL = '\u0000invalid-utf8-escape\u0000'
+
 function decodeTokens(tokens: RawToken[]): string {
     let result = ''
     let hexRun: number[] = []
+    let sawInvalidUtf8 = false
     const flushHexRun = (): void => {
-        if (hexRun.length > 0) {
-            result += Buffer.from(hexRun).toString('utf8')
-            hexRun = []
+        if (hexRun.length === 0) {
+            return
         }
+        const { data, error } = tryCatchSync(() => new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(hexRun)))
+        if (!isNil(error) || isNil(data)) {
+            sawInvalidUtf8 = true
+        }
+        else {
+            result += data
+        }
+        hexRun = []
     }
     for (const token of tokens) {
         if (token.kind === 'escapedHexByte') {
@@ -192,7 +229,7 @@ function decodeTokens(tokens: RawToken[]): string {
         result += token.char
     }
     flushHexRun()
-    return result
+    return sawInvalidUtf8 ? INVALID_UTF8_ESCAPE_SENTINEL : result
 }
 
 function normalizeComponent(raw: string): string {
@@ -257,6 +294,21 @@ function resolveGrants({ groupMappings, memberGroupDns }: ResolveGrantsParams): 
 // duplicating the rank table.
 function platformRoleRank(role: PlatformRole): number {
     return PLATFORM_ROLE_RANK[role]
+}
+
+type SplitOnUnescapedCharParams = {
+    raw: string
+    separator: string
+}
+
+type FindFirstUnescapedCharParams = {
+    raw: string
+    char: string
+}
+
+type IsHexEscapeAtParams = {
+    raw: string
+    backslashIndex: number
 }
 
 type RawToken =
