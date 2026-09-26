@@ -1,4 +1,4 @@
-import { apId, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, PlatformRole, QadamFlowError, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
+import { apId, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, PlatformRole, QadamFlowError, tryCatch, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
 import pino from 'pino'
 import { authenticationService } from '../../../../src/app/authentication/authentication.service'
 import { userFederatedIdentityService } from '../../../../src/app/authentication/federated-identity/user-federated-identity-service'
@@ -6,7 +6,7 @@ import { userIdentityService } from '../../../../src/app/authentication/user-ide
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { userService } from '../../../../src/app/user/user-service'
 import { userInvitationsService } from '../../../../src/app/user-invitations/user-invitation.service'
-import { mockAndSaveBasicSetup } from '../../../helpers/mocks'
+import { createMockProjectRole, mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 // app-sec (round 2): reverse-direction identity squatting. An LDAP identity's standing access to a
@@ -109,6 +109,41 @@ describe('Reverse-direction LDAP identity squatting guards', () => {
         expect(grantedUser).not.toBeNull()
     })
 
+    // Positive control for the guard above: a PROJECT invitation on the *same* platform an LDAP
+    // identity already has a federated row on must still be applied normally — the guard exists to
+    // stop a *new* platform being granted with no directory involvement, not to block legitimate
+    // project-membership grants on a platform the identity is already eligible for.
+    it('provisionUserInvitation applies a same-platform PROJECT invitation for an LDAP identity with a federated row there', async () => {
+        const platformA = await mockAndSaveBasicSetup()
+        const { identityId } = await createLdapIdentityWithFederatedRowOnPlatform(platformA.mockPlatform.id)
+        const projectRole = createMockProjectRole({ platformId: platformA.mockPlatform.id })
+        await databaseConnection().getRepository('project_role').save(projectRole)
+
+        await databaseConnection().getRepository('user_invitation').save({
+            id: apId(),
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            email: 'directory-user@example.com',
+            platformId: platformA.mockPlatform.id,
+            type: InvitationType.PROJECT,
+            platformRole: null,
+            projectId: platformA.mockProject.id,
+            projectRoleId: projectRole.id,
+            status: InvitationStatus.ACCEPTED,
+        })
+
+        await userInvitationsService(log).provisionUserInvitation({ email: 'directory-user@example.com' })
+
+        const grantedUser = await userService(log).getOneByIdentityAndPlatform({ identityId, platformId: platformA.mockPlatform.id })
+        expect(grantedUser).not.toBeNull()
+        const membership = await databaseConnection().getRepository('project_member').findOneBy({
+            userId: grantedUser!.id,
+            projectId: platformA.mockProject.id,
+        })
+        expect(membership).not.toBeNull()
+        expect(membership?.projectRoleId).toBe(projectRole.id)
+    })
+
     it('switchPlatform refuses a platform whose user row has no federated row for an LDAP identity', async () => {
         const platformA = await mockAndSaveBasicSetup()
         const platformB = await mockAndSaveBasicSetup()
@@ -126,10 +161,10 @@ describe('Reverse-direction LDAP identity squatting guards', () => {
             platformId: platformB.mockPlatform.id,
         })
 
-        const { error } = await authenticationService(log).switchPlatform({
+        const { error } = await tryCatch(() => authenticationService(log).switchPlatform({
             identityId,
             platformId: platformB.mockPlatform.id,
-        }).then(() => ({ error: null as unknown })).catch((thrown: unknown) => ({ error: thrown }))
+        }))
 
         expect(error).toBeInstanceOf(QadamFlowError)
         expect(error instanceof QadamFlowError ? error.error.code : undefined).toBe(ErrorCode.AUTHORIZATION)

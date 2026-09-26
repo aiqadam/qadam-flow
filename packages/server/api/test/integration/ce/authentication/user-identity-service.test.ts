@@ -1,4 +1,4 @@
-import { UserIdentityProvider } from '@aiqadam/shared'
+import { tryCatch, UserIdentityProvider } from '@aiqadam/shared'
 import pino from 'pino'
 import { userIdentityService } from '../../../../src/app/authentication/user-identity/user-identity-service'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
@@ -22,9 +22,7 @@ describe('userIdentityService.updatePassword', () => {
         const identity = createMockUserIdentity({ provider: UserIdentityProvider.LDAP })
         await databaseConnection().getRepository('user_identity').save(identity)
 
-        const { error } = await userIdentityService(pino({ level: 'silent' })).updatePassword({ id: identity.id, newPassword: 'a-new-password' })
-            .then(() => ({ error: null as unknown }))
-            .catch((thrown: unknown) => ({ error: thrown }))
+        const { error } = await tryCatch(() => userIdentityService(pino({ level: 'silent' })).updatePassword({ id: identity.id, newPassword: 'a-new-password' }))
 
         expect(error).not.toBeNull()
         const unchanged = await databaseConnection().getRepository('user_identity').findOneByOrFail({ id: identity.id })

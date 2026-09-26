@@ -120,7 +120,12 @@ async function lookupDirectoryUser({ resolved, username, password, log }: Lookup
         return { entry, subject }
     }
     catch (error) {
-        if (error instanceof LdapStageError && error.stage === LdapTestStage.SEARCH && error.notFound === true) {
+        // Round 3: not just "no matching entry" (`notFound`) — a matched entry with a missing or
+        // unreadable subject attribute (thrown just above) is the same timing residual: both bail
+        // out after one connect+search, never reaching the second connect+bind a real
+        // wrong-password case always pays for. Any `SEARCH`-stage failure shares that profile, so
+        // the dummy bind covers the whole stage, not only the `notFound` case within it.
+        if (error instanceof LdapStageError && error.stage === LdapTestStage.SEARCH) {
             await performDummyBind({ connectionConfig, baseDn: config.baseDn, log })
         }
         throw mapToSignInError(error)

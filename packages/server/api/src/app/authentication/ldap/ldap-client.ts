@@ -1,5 +1,5 @@
 import tls from 'node:tls'
-import { isNil, LdapAttributeMap, LdapTestStage, LdapTlsMode, matchesTlsScheme } from '@aiqadam/shared'
+import { isNil, LdapAttributeMap, LdapTestStage, LdapTlsMode, matchesTlsScheme, unique } from '@aiqadam/shared'
 import { Client, Entry, ResultCodeError } from 'ldapts'
 import { system } from '../../helper/system/system'
 import { ldapFilterUtils } from './ldap-filter'
@@ -332,10 +332,6 @@ function toStageError({ stage, error, fallbackMessage }: ToStageErrorParams): Ld
         stage: LdapTestStage.CONNECT,
         message: error instanceof Error ? error.message : fallbackMessage,
     })
-}
-
-function unique(values: string[]): string[] {
-    return Array.from(new Set(values))
 }
 
 export type ResolvedLdapConnectionConfig = {

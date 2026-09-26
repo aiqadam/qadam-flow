@@ -60,7 +60,13 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // owner check at all, since the field-level check never fired. A caller may still resend
         // the exact same config unchanged (a no-op) without being the owner — only an actual change
         // while linking-by-email is (or becomes) active requires it.
-        if (config.linkExistingByEmail === true && configHasChanged({ existing: existing?.config, config })) {
+        //
+        // Round 3: `configHasChanged` only ever compares `LdapConfig` itself — `bindPassword` and
+        // `caCertificate` are stored, and touched, entirely outside it, so a non-owner could swap
+        // either one while linking-by-email stayed on without the gate ever seeing a change. Both
+        // are checked here explicitly, alongside `configHasChanged`, for exactly that reason.
+        const secretsTouched = request.caCertificate !== undefined || !isNil(request.bindPassword)
+        if (config.linkExistingByEmail === true && (configHasChanged({ existing: existing?.config, config }) || secretsTouched)) {
             await assertCallerIsPlatformOwner({ platformId, callingUserId, log })
         }
 
@@ -236,15 +242,18 @@ async function assertCallerIsPlatformOwner({ platformId, callingUserId, log }: A
     if (platform.ownerId !== callingUserId) {
         throw new QadamFlowError({
             code: ErrorCode.AUTHORIZATION,
-            params: { message: 'Only the platform owner may enable linking existing local accounts by email' },
+            params: { message: 'Only the platform owner may change this configuration while linking existing local accounts by email is enabled' },
         })
     }
 }
 
 // Whole-config equality, not a field-by-field allowlist — deliberately, so a future field added to
-// `LdapConfig` is covered by this check for free. `LdapConfig.parse`'s output key order matches the
-// schema's own declared shape regardless of the input's key order, so two JSON-stringified parsed
-// configs compare equal exactly when their values do.
+// `LdapConfig` is covered by this check for free. This only ever compares `LdapConfig` itself,
+// though — `bindPassword`/`caCertificate` live outside it entirely and are never "covered for
+// free" here; the caller checks those two explicitly, alongside this function's result.
+// `LdapConfig.parse`'s output key order matches the schema's own declared shape regardless of the
+// input's key order, so two JSON-stringified parsed configs compare equal exactly when their
+// values do.
 function configHasChanged({ existing, config }: ConfigHasChangedParams): boolean {
     if (isNil(existing)) {
         return true

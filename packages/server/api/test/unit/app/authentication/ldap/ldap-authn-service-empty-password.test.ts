@@ -1,4 +1,4 @@
-import { ErrorCode, QadamFlowError } from '@aiqadam/shared'
+import { ErrorCode, QadamFlowError, tryCatch } from '@aiqadam/shared'
 import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -36,9 +36,7 @@ describe('ldapAuthnService.signIn — empty password', () => {
     it('refuses an empty password before reading the platform config or touching the network', async () => {
         const { ldapAuthnService } = await import('../../../../../src/app/authentication/ldap/ldap-authn-service')
 
-        const { error } = await ldapAuthnService(log).signIn({ platformId: 'platform-1', username: 'jdoe', password: '' })
-            .then(() => ({ error: null as unknown }))
-            .catch((thrown: unknown) => ({ error: thrown }))
+        const { error } = await tryCatch(() => ldapAuthnService(log).signIn({ platformId: 'platform-1', username: 'jdoe', password: '' }))
 
         expect(error).toBeInstanceOf(QadamFlowError)
         expect(error instanceof QadamFlowError ? error.error.code : undefined).toBe(ErrorCode.INVALID_CREDENTIALS)

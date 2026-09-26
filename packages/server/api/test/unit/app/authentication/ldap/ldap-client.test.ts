@@ -262,7 +262,7 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
         expect(peak).toBeLessThanOrEqual(10)
     })
 
-    function makeTrackedHolder(ldapClient: Awaited<ReturnType<typeof importClient>>, tracker: { concurrent: number, peak: number }): { started: Promise<void>, release: () => void, done: Promise<void> } {
+    function makeTrackedHolder({ ldapClient, tracker }: MakeTrackedHolderParams): { started: Promise<void>, release: () => void, done: Promise<void> } {
         let markStarted: (() => void) | undefined
         const started = new Promise<void>((resolve) => {
             markStarted = resolve
@@ -304,10 +304,10 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
         const ldapClient = await importClient()
         const tracker = { concurrent: 0, peak: 0 }
 
-        const holders = Array.from({ length: 10 }, () => makeTrackedHolder(ldapClient, tracker))
+        const holders = Array.from({ length: 10 }, () => makeTrackedHolder({ ldapClient, tracker }))
         await Promise.all(holders.map((holder) => holder.started))
 
-        const waiter = makeTrackedHolder(ldapClient, tracker)
+        const waiter = makeTrackedHolder({ ldapClient, tracker })
         await Promise.resolve()
         await Promise.resolve()
 
@@ -315,7 +315,7 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
         for (let i = 0; i < depth; i++) {
             await Promise.resolve()
         }
-        const intruder = makeTrackedHolder(ldapClient, tracker)
+        const intruder = makeTrackedHolder({ ldapClient, tracker })
 
         // Drain enough microtask ticks for anything the intruder's own acquire is going to do —
         // synchronously take the fast path, or queue behind the waiter — to have already happened.
@@ -331,3 +331,8 @@ describe('ldapClient.withConnectionSlot — concurrency cap, queue cap, wait tim
         await Promise.all([...holders.map((holder) => holder.done), waiter.done, intruder.done])
     })
 })
+
+type MakeTrackedHolderParams = {
+    ldapClient: Awaited<ReturnType<typeof importClient>>
+    tracker: { concurrent: number, peak: number }
+}

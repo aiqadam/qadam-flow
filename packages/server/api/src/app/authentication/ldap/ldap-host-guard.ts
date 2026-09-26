@@ -6,6 +6,10 @@ import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { LdapStageError } from './ldap-stage-error'
 
+export const ldapHostGuard = {
+    resolveVettedIps,
+}
+
 // A directory server almost always lives on the same private network the SSRF filter exists to
 // keep code steps and outbound-webhook qadams out of — an operator's domain controllers are
 // squarely inside RFC 1918 space. `AP_SSRF_ALLOW_LIST` stays scoped to what an admin explicitly
@@ -90,10 +94,6 @@ async function resolveVettedIps({ host }: ResolveVettedIpsParams): Promise<strin
 async function resolveHostname(host: string): Promise<string[]> {
     const results = await dns.lookup(host, { all: true }).catch(() => [])
     return results.map((result) => result.address)
-}
-
-export const ldapHostGuard = {
-    resolveVettedIps,
 }
 
 type ResolveVettedIpsParams = {

@@ -280,6 +280,20 @@ describe('Platform LDAP config API', () => {
             expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
         })
 
+        // Round 3: the owner gate must also cover the two fields `configHasChanged` cannot see at
+        // all — `bindPassword`/`caCertificate` live outside `LdapConfig` entirely.
+        it('rejects a non-owner admin swapping the CA certificate while linkExistingByEmail is already on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ linkExistingByEmail: true, caCertificate: 'a-different-ca-certificate' }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
         // A no-op resend is fine, even from a non-owner: nothing about the account-takeover flag
         // actually changes, so there is nothing for the owner-only gate to protect against here.
         it('allows a non-owner admin to resend the exact same config unchanged while linkExistingByEmail is already on', async () => {

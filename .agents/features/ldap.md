@@ -12,7 +12,7 @@ generic `user_federated_identity` join table, separate from `UserIdentity` and f
 was read or copied (`.agents/rules/edition-safety.md`).
 
 ## Key Files
-- `packages/server/api/src/app/authentication/ldap/ldap-config-entity.ts` — `platform_ldap_config` TypeORM entity (plaintext config jsonb + `EncryptedObject` bind password / CA cert)
+- `packages/server/api/src/app/authentication/ldap/ldap-config-entity.ts` — `platform_ldap_config` TypeORM entity (plaintext config json + `EncryptedObject` bind password / CA cert)
 - `packages/server/api/src/app/authentication/ldap/ldap-config-service.ts` — CRUD (no network I/O on save), `/test` orchestration, `getResolvedForSignIn` (decrypted config for the sign-in flow only, never returned over HTTP)
 - `packages/server/api/src/app/authentication/ldap/ldap-config-controller.ts` / `ldap-config-module.ts` — platform-admin routes at `/v1/platform-ldap-configs`
 - `packages/server/api/src/app/authentication/ldap/ldap-host-guard.ts` — resolves every A/AAAA record for the configured host via `dns.lookup(host, { all: true })` (the OS resolver — honours `/etc/hosts`/Docker `extra_hosts`, unlike `resolve4`/`resolve6`) and vets each IP with `ssrfIpClassifier.isBlockedIp` (`@aiqadam/shared`) against the `AP_LDAP_ALLOW_LIST` allow list (parsed via `safeHttp.parseAllowList`, shared with the SSRF filter's own parser); an IP literal skips DNS entirely; an `::ffff:`-mapped IPv4 metadata address is unwrapped before the metadata-address comparison
@@ -31,7 +31,7 @@ was read or copied (`.agents/rules/edition-safety.md`).
 - Guards added to existing files: `user-identity-service.ts` (`verifyIdentityPassword`, `updatePassword`, new `linkToFederatedProvider`), `otp-service.ts` (`createAndSend` for `PASSWORD_RESET`), `authentication-utils.ts` (`getProjectAndToken` gained an optional `expiresInSeconds`), `flag.service.ts` (`ApFlagId.LDAP_AUTH_ENABLED`), `authentication.service.ts` (`switchPlatform`'s `getUserForPlatform` refuses an LDAP identity's `user` row with no federated row on the target platform), `user-invitation.service.ts` (`provisionUserInvitation` refuses to grant a new platform to an LDAP identity with no federated row there — see "Reverse-direction identity squatting guards" below)
 
 ## Domain Terms
-- **`platform_ldap_config`** — one row per platform (unique `platformId`); plaintext operational config in `config` jsonb, secrets (`bindPassword`, optional `caCertificate`) as `EncryptedObject`
+- **`platform_ldap_config`** — one row per platform (unique `platformId`); plaintext operational config in `config` json, secrets (`bindPassword`, optional `caCertificate`) as `EncryptedObject`
 - **`user_federated_identity`** — generic external-identity join: `(platformId, provider, subject)` unique and `(platformId, userId, provider)` unique; `provider` is `FederatedIdentityProvider` (`LDAP` now, meant to be reused by a future OIDC `sub`); rows survive deleting the LDAP config
 - **subject** — the directory's own stable identifier for the entry, restricted to `LdapSubjectAttribute` (`objectGUID` canonical mixed-endian string form, or OpenLDAP `entryUUID`) — not an operator-chosen custom attribute: a mutable attribute like `uid`/`mail` here would let whoever controls the directory repoint an account to a different real person by editing that attribute, with no admin-side re-link step to notice it
 - **Host guard** — `AP_LDAP_ALLOW_LIST`, resolved/classified independently of `AP_SSRF_ALLOW_LIST` so approving the directory does not also open its subnet to outbound-HTTP qadams
@@ -63,7 +63,7 @@ was read or copied (`.agents/rules/edition-safety.md`).
 | POST | `/v1/platform-ldap-configs` | platformAdminOnly (USER) | Upsert; an omitted secret field keeps the stored value; zod validation only, no network I/O |
 | DELETE | `/v1/platform-ldap-configs` | platformAdminOnly (USER) | Deletes the platform's config (does not touch `user_federated_identity` rows) |
 | POST | `/v1/platform-ldap-configs/test` | platformAdminOnly (USER) | Connects through the host guard; optional test username/password exercises the full bind+search+user-bind path, including verifying the email/subject attributes actually resolve on the matched entry; returns the failing `stage` + LDAP result code. Response schema is `LdapTestResponse`. |
-| POST | `/v1/authn/ldap/sign-in` | public, rate-limited (IP + IP:username) | `{ username, password }`; empty password refused before any I/O |
+| POST | `/v1/authn/ldap/sign-in` | public, rate-limited (IP + IP:username + username) | `{ username, password }`; empty password refused before any I/O |
 
 ## Service Methods
 
@@ -142,13 +142,8 @@ actual sign-in attempt disagrees with. Each counter increments via one Redis `MU
 compatible back to 2.6.12), closing the window where a concurrent request could observe the key
 before it has a TTL; every reply in the `MULTI` is checked, and a Redis/`EXEC` failure refuses the
 sign-in attempt (fail closed) with an error log, rather than crashing as an unhandled 500 or
-silently allowing the attempt through unlimited.
-
-**Accepted risk**: bucket 3 is keyed on the username alone, deliberately — that is the one
-dimension bucket 2 cannot cover for a botnet. The same property means a single attacker who merely
-knows (or guesses) a valid username can lock out every legitimate sign-in attempt for that
-username, from any IP, for the rest of the window — a denial-of-service against one account, not a
-credential-stuffing defense against many. This is the accepted trade for closing the botnet gap.
+silently allowing the attempt through unlimited. The per-username lockout trade this design makes
+is recorded in "Accepted risks" below.
 
 ### Errors
 `LDAP_DIRECTORY_UNREACHABLE`, `LDAP_BIND_ACCOUNT_REJECTED`, `LDAP_EMAIL_ATTRIBUTE_MISSING`,
@@ -275,3 +270,28 @@ failing the job. The suite itself now also fails outright (rather than skipping)
 `CI=true` and the flag isn't `'true'`, so a repeat of that regression is caught by the suite, not
 only by a comment. This round's fix has not yet been proven by a real green CI run showing "8
 passed" for this file — that confirmation is a follow-up, not a claim made here.
+
+## Accepted risks
+Recorded deliberately, not discovered late — each of these is a property of the design, not a bug:
+
+- **(a) Whoever controls a platform's LDAP config controls every LDAP-managed account on that
+  platform.** The owner (and, for non-sensitive fields, any platform admin) chooses `baseDn`,
+  `userFilter` and `attributeMap` — including which attribute is `subject`. A directory admin who
+  can edit an entry's subject attribute, or an Qadam Flow platform admin who can repoint the search
+  filter to match a different entry, can retarget which directory identity an existing
+  `user_federated_identity` row resolves to. This is the same trust boundary every identity
+  provider integration has (whoever configures the IdP connection is trusted with the accounts it
+  federates) — not something specific to this LDAP integration, and not something a code-level
+  guard can close without refusing to let admins administer the directory connection at all.
+- **(b) The connection-slot cap and the dummy-bind cost are shared across every platform on this
+  process, not per-platform.** `MAX_CONCURRENT_LDAP_CONNECTIONS` (10) and the anti-enumeration
+  dummy bind's extra connect+bind both draw from one process-wide pool — a platform with heavy
+  sign-in traffic (legitimate or not) can exhaust slots or add latency that a different platform on
+  the same process feels too. Per-platform caps are a Phase 2 item, not implemented here.
+- **(c) The per-username rate-limit bucket (`ldap-sign-in:{platformId}:{normalizedUsername}`,
+  30/60s) is keyed on the username alone, deliberately — the one dimension the per-IP bucket cannot
+  cover for a botnet spread across many source addresses. The same property means a single attacker
+  who merely knows (or guesses) a valid username can lock out every legitimate sign-in attempt for
+  that username, from any IP, for the rest of the window — a denial-of-service against one account,
+  not a credential-stuffing defense against many. This is the accepted trade for closing the botnet
+  gap.

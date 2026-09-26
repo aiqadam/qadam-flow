@@ -34,7 +34,7 @@ const ldapConfigShape = {
     baseDn: z.string().min(1, formErrors.required),
     bindDn: z.string().min(1, formErrors.required),
     userFilter: z.string().min(1, formErrors.required).refine(
-        (value) => countOccurrences(value, '{username}') === 1,
+        (value) => countOccurrences({ value, needle: '{username}' }) === 1,
         'invalidLdapUserFilter',
     ),
     attributeMap: LdapAttributeMap,
@@ -154,6 +154,11 @@ export function matchesTlsScheme(config: { url: string, tlsMode: LdapTlsMode }):
     return config.url.toLowerCase().startsWith(expectedScheme)
 }
 
-function countOccurrences(value: string, needle: string): number {
+function countOccurrences({ value, needle }: CountOccurrencesParams): number {
     return value.split(needle).length - 1
+}
+
+type CountOccurrencesParams = {
+    value: string
+    needle: string
 }

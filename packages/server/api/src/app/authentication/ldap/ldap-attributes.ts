@@ -1,6 +1,12 @@
 import { isNil, LdapAttributeMap } from '@aiqadam/shared'
 import { Entry } from 'ldapts'
 
+export const ldapAttributeUtils = {
+    objectGuidBufferToCanonicalString,
+    readStringAttribute,
+    resolveSubject,
+}
+
 // The directory, not the admin's own typing, decides how an attribute name comes back on the
 // wire — some servers echo it back exactly as schema-defined (`objectGUID`, mixed case) while
 // others normalise to lowercase, and `Entry`'s keys are whatever the server actually sent. A
@@ -25,12 +31,12 @@ function getAttributeValue({ entry, name }: GetAttributeValueParams): EntryAttri
 // out byte-reversed in the first three groups and fail to match the GUID an AD admin sees
 // anywhere else).
 function objectGuidBufferToCanonicalString(buffer: Buffer): string {
-    const hex = (start: number, end: number): string => buffer.subarray(start, end).toString('hex')
-    const group1 = swapByteOrder(hex(0, 4))
-    const group2 = swapByteOrder(hex(4, 6))
-    const group3 = swapByteOrder(hex(6, 8))
-    const group4 = hex(8, 10)
-    const group5 = hex(10, 16)
+    const hex = ({ start, end }: { start: number, end: number }): string => buffer.subarray(start, end).toString('hex')
+    const group1 = swapByteOrder(hex({ start: 0, end: 4 }))
+    const group2 = swapByteOrder(hex({ start: 4, end: 6 }))
+    const group3 = swapByteOrder(hex({ start: 6, end: 8 }))
+    const group4 = hex({ start: 8, end: 10 })
+    const group5 = hex({ start: 10, end: 16 })
     return `${group1}-${group2}-${group3}-${group4}-${group5}`
 }
 
@@ -72,12 +78,6 @@ function resolveSubject({ entry, attributeMap }: ResolveSubjectParams): string |
         return objectGuidBufferToCanonicalString(buffer)
     }
     return readStringAttribute({ entry, name: attributeMap.subject })
-}
-
-export const ldapAttributeUtils = {
-    objectGuidBufferToCanonicalString,
-    readStringAttribute,
-    resolveSubject,
 }
 
 type GetAttributeValueParams = {

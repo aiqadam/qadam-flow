@@ -194,6 +194,23 @@ describe('LDAP sign-in', () => {
         expect(dummyBindCall[0].userDn).not.toBe('nobody')
     })
 
+    it('also pays the dummy-bind cost for a matched entry with a missing subject attribute', async () => {
+        await saveLdapConfig()
+        searchForUser.mockResolvedValue({ ...DIRECTORY_ENTRY, entryUUID: undefined })
+        bindAsUser.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.USER_BIND, message: 'Invalid credentials', ldapResultCode: 49 }))
+
+        const response = await signIn({ username: 'jdoe', password: 'irrelevant' })
+
+        expect(response.statusCode).toBe(StatusCodes.UNAUTHORIZED)
+        expect(response.json().code).toBe('INVALID_CREDENTIALS')
+        // Round 3: an entry that *matched* but has no readable subject attribute never reaches a
+        // real user bind either — the same timing residual as "not found" (both bail out after one
+        // connect+search), so it must pay the same dummy connect+bind cost before returning.
+        expect(bindAsUser).toHaveBeenCalledTimes(1)
+        const [dummyBindCall] = bindAsUser.mock.calls
+        expect(dummyBindCall[0].userDn).not.toBe(DIRECTORY_ENTRY.dn)
+    })
+
     it('returns LDAP_BIND_ACCOUNT_REJECTED when the service account bind fails', async () => {
         await saveLdapConfig()
         serviceBind.mockRejectedValue(new LdapStageError({ stage: LdapTestStage.SERVICE_BIND, message: 'The configured bind account was rejected by the directory', ldapResultCode: 49 }))
