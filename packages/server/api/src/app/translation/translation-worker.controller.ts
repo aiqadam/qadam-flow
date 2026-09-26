@@ -1,7 +1,7 @@
 import {
     assertNotNullOrUndefined,
-    EnginePrincipal,
     GetTranslationsForWorkerResponse,
+    PrincipalType,
 } from '@aiqadam/shared'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
@@ -15,9 +15,12 @@ import { translationService } from './translation.service'
 // proof.
 export const translationWorkerController: FastifyPluginAsyncZod = async (app) => {
     app.get('/', GetTranslationsForWorkerRequest, async (request): Promise<GetTranslationsForWorkerResponse> => {
-        const enginePrincipal = (request.principal as EnginePrincipal)
-        assertNotNullOrUndefined(enginePrincipal.projectId, 'projectId')
-        const rows = await translationService(request.log).listForWorker({ projectId: enginePrincipal.projectId })
+        // `securityAccess.engine()` already guarantees only an ENGINE principal reaches here — this
+        // narrows the discriminated union on its own `type` field instead of casting, the same
+        // pattern `entitiesMustBeOwnedByCurrentProject` (authorization.ts) uses for the same union.
+        const projectId = request.principal.type === PrincipalType.ENGINE ? request.principal.projectId : undefined
+        assertNotNullOrUndefined(projectId, 'projectId')
+        const rows = await translationService(request.log).listForWorker({ projectId })
         return {
             translations: rows.map((row) => ({ key: row.key, values: row.values })),
         }
