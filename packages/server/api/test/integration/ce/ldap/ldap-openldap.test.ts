@@ -1,6 +1,7 @@
 import tls from 'node:tls'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { Client } from 'ldapts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
@@ -84,6 +85,22 @@ const BIND_PASSWORD = process.env['LDAP_TEST_BIND_PASSWORD'] ?? 'GoodNewsEveryon
 const BASE_DN = process.env['LDAP_TEST_BASE_DN'] ?? 'dc=planetexpress,dc=com'
 const TEST_USERNAME = process.env['LDAP_TEST_USERNAME'] ?? 'fry'
 const TEST_PASSWORD = process.env['LDAP_TEST_PASSWORD'] ?? 'correct-horse-battery-staple'
+const TEST_USER_DN = process.env['LDAP_TEST_USER_DN'] ?? 'cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com'
+
+// Round 3 (app-sec finding #3): the group-mapping case below used to configure
+// `groupSearchBaseDn`/`groupSearchFilter` without ever setting `nestedGroups: true` — the one flag
+// `resolveMemberGroupDns` actually gates the nested-group search on (`ldap-client.ts`) — so the
+// search never ran at all. The assertion still passed, but for the wrong reason: this fixture's
+// `memberof` overlay (confirmed live against the real container — adding *any* new `Group`/`member`
+// entry immediately grows a matching `memberOf` back-link on the member) already puts
+// `cn=ship_crew,...` directly on the signed-in user's own entry, so the *direct*-`memberOf` half of
+// `resolveMemberGroupDns` alone was resolving the mapped group, independent of whether the search
+// ran. This fixture group is the deterministic fix: `groupOfUniqueNames`/`uniqueMember` is not a
+// `member`-attribute the overlay watches (verified empirically: adding one does not grow the
+// member's `memberOf`), so a mapping resolved via this group can only ever match through the
+// configured `(uniqueMember={userDn})` nested search itself — proving the search, not `memberOf`,
+// is what grants the role.
+const GROUP_SEARCH_ONLY_GROUP_DN = 'cn=qa_crew_search_only,ou=people,dc=planetexpress,dc=com'
 
 // The directory in this suite listens on loopback, which the LDAP host guard blocks by default —
 // deliberately, the same as any other private/loopback address. Allow-listing it here is the
@@ -112,9 +129,11 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
     beforeAll(async () => {
         app = await setupTestEnvironment()
         serverCertificatePem = await fetchPeerCertificatePem({ host: LDAP_HOST, port: LDAPS_PORT })
+        await addSearchOnlyGroupFixture()
     })
 
     afterAll(async () => {
+        await removeSearchOnlyGroupFixture()
         await teardownTestEnvironment()
     })
 
@@ -230,23 +249,25 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
         expect(response.json().token).toBeDefined()
     })
 
-    // Phase 2 (#339): the fixture image does have groups — `slapcat` shows
-    // `cn=ship_crew,ou=people,dc=planetexpress,dc=com` with `member: cn=Philip J. Fry,...` — so this
-    // extends the real-directory suite rather than skipping it. Two things this specific fixture
-    // cannot prove, stated rather than silently assumed: (1) it has no `memberOf` back-link overlay
-    // configured, so the default `memberOf`-on-the-user-entry path resolves zero groups here — this
-    // test instead configures the optional `groupSearchBaseDn`/`groupSearchFilter` and searches the
-    // group's own `member` attribute; (2) the filter uses plain equality (`member={userDn}`), not
-    // AD's `LDAP_MATCHING_RULE_IN_CHAIN` OID — slapd's default backend does not implement that
-    // Microsoft-specific extensible-match control, so the nested-group (transitive membership) case
-    // is unprovable against this OpenLDAP fixture and is covered only by the mocked unit/integration
-    // tests instead.
-    it('applies a group mapping resolved via a real nested-group-style search, granting the mapped platform role', async () => {
+    // Phase 2 (#339), round 3: the fixture image's `memberof` overlay is live (confirmed by
+    // directly probing the running container — adding a `Group`/`member` entry immediately grows a
+    // matching `memberOf` back-link on the member), so a mapping keyed on a real `Group` the signed-
+    // in user already belongs to would be granted by the plain direct-`memberOf` half of
+    // `resolveMemberGroupDns` alone, regardless of whether `nestedGroups`/the configured search ran
+    // at all — `addSearchOnlyGroupFixture` seeds a `groupOfUniqueNames` entry specifically because
+    // the overlay does not watch `uniqueMember`, so a mapping resolved via *that* group can only
+    // ever match through the search this test configures, never through `memberOf`. The filter uses
+    // plain equality (`uniqueMember={userDn})`), not AD's `LDAP_MATCHING_RULE_IN_CHAIN` OID — slapd's
+    // default backend does not implement that Microsoft-specific extensible-match control, so the
+    // nested-group (transitive membership) case is unprovable against this OpenLDAP fixture and is
+    // covered only by the mocked unit/integration tests instead.
+    it('applies a group mapping resolved via a real nested-group search, granting the mapped platform role', async () => {
         await saveConfig({
             overrides: {
+                nestedGroups: true,
                 groupSearchBaseDn: BASE_DN,
-                groupSearchFilter: '(member={userDn})',
-                groupMappings: [{ groupDn: 'cn=ship_crew,ou=people,dc=planetexpress,dc=com', platformRole: 'OPERATOR', projects: [] }],
+                groupSearchFilter: '(uniqueMember={userDn})',
+                groupMappings: [{ groupDn: GROUP_SEARCH_ONLY_GROUP_DN, platformRole: 'OPERATOR', projects: [] }],
             },
         })
         const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
@@ -256,7 +277,71 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
         const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
         expect(user?.platformRole).toBe('OPERATOR')
     })
+
+    // The negative case that makes the positive one above provable: with `nestedGroups` left off,
+    // `resolveMemberGroupDns` never runs the configured search at all (`ldap-client.ts`) — since the
+    // mapped group is only reachable through that search (never through `memberOf`, per the fixture
+    // comment above), the mapping must not apply and the JIT-provisioned user must be the default
+    // MEMBER, not OPERATOR.
+    it('does NOT apply that same mapping when nestedGroups is off, since only the search resolves it', async () => {
+        await saveConfig({
+            overrides: {
+                nestedGroups: false,
+                groupSearchBaseDn: BASE_DN,
+                groupSearchFilter: '(uniqueMember={userDn})',
+                groupMappings: [{ groupDn: GROUP_SEARCH_ONLY_GROUP_DN, platformRole: 'OPERATOR', projects: [] }],
+            },
+        })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        expect(response.statusCode).toBe(StatusCodes.OK)
+
+        const identity = await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'fry@planetexpress.com' })
+        const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
+        expect(user?.platformRole).toBe('MEMBER')
+    })
 })
+
+// Seeds (and, on teardown, removes) the `groupOfUniqueNames` fixture the group-search-only test
+// depends on — plain `ldap://`, admin-bound, entirely separate from the app's own `ldapClient`
+// under test. `add` failing with "already exists" (a re-run against a container that already has
+// it) and `del` failing with "no such object" (nothing to remove) are both swallowed; any other
+// failure is real and should fail the suite loudly rather than silently leaving stale/missing
+// fixture state for the next run.
+async function addSearchOnlyGroupFixture(): Promise<void> {
+    const client = new Client({ url: `ldap://${LDAP_HOST}:${LDAP_PORT}` })
+    try {
+        await client.bind(BIND_DN, BIND_PASSWORD)
+        await client.add(GROUP_SEARCH_ONLY_GROUP_DN, {
+            objectClass: 'groupOfUniqueNames',
+            cn: 'qa_crew_search_only',
+            uniqueMember: TEST_USER_DN,
+        })
+    }
+    catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('Entry Already Exists')) {
+            throw error
+        }
+    }
+    finally {
+        await client.unbind().catch(() => undefined)
+    }
+}
+
+async function removeSearchOnlyGroupFixture(): Promise<void> {
+    const client = new Client({ url: `ldap://${LDAP_HOST}:${LDAP_PORT}` })
+    try {
+        await client.bind(BIND_DN, BIND_PASSWORD)
+        await client.del(GROUP_SEARCH_ONLY_GROUP_DN)
+    }
+    catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('No Such Object')) {
+            throw error
+        }
+    }
+    finally {
+        await client.unbind().catch(() => undefined)
+    }
+}
 
 function fetchPeerCertificatePem({ host, port }: { host: string, port: number }): Promise<string> {
     return new Promise((resolve, reject) => {

@@ -19,6 +19,7 @@ const connect = vi.fn()
 const serviceBind = vi.fn()
 const searchForUser = vi.fn()
 const bindAsUser = vi.fn()
+const resolveMemberGroupDns = vi.fn()
 
 vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
     ldapClient: {
@@ -28,8 +29,9 @@ vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
         bindAsUser: (...args: unknown[]) => bindAsUser(...args),
         withConnectionSlot: (fn: () => unknown) => fn(),
         // Group mapping (Phase 2) reads this on every sign-in; the mock directory entry never
-        // carries `memberOf`, so no group DNs is the correct, non-crashing default here.
-        resolveMemberGroupDns: () => Promise.resolve([]),
+        // carries `memberOf`, so no group DNs is the correct, non-crashing default here. A `vi.fn()`
+        // (not a static resolver) so round-3's added cases can override it per test.
+        resolveMemberGroupDns: (...args: unknown[]) => resolveMemberGroupDns(...args),
     },
 }))
 
@@ -51,6 +53,7 @@ beforeEach(async () => {
     serviceBind.mockReset().mockResolvedValue(undefined)
     searchForUser.mockReset()
     bindAsUser.mockReset()
+    resolveMemberGroupDns.mockReset().mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -130,6 +133,49 @@ describe('LDAP sign-in', () => {
             subject: DIRECTORY_ENTRY.entryUUID,
         })
         expect(federated).not.toBeNull()
+    })
+
+    // Round 3 (app-sec, missing-test finding #8): every other sign-in test in this file resolves
+    // zero groups (the mocked default), so none of them ever actually exercised `applyMapping`
+    // being called with a non-empty `memberGroupDns` from the sign-in path itself — only the
+    // DB-level `ldapGroupMappingService.applyMapping` unit/integration tests did.
+    it('applies a group mapping resolved during sign-in when the directory reports a non-empty group list', async () => {
+        await saveLdapConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+        resolveMemberGroupDns.mockResolvedValue(['cn=admins,dc=example,dc=com'])
+
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        const identity = await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'jdoe@example.com' })
+        const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
+        expect(user?.platformRole).toBe(PlatformRole.ADMIN)
+    })
+
+    // Round 3 (app-sec, missing-test finding #8): a broken group search (a bad `groupSearchFilter`,
+    // a transient directory hiccup on the nested-group search) must never fail the sign-in itself —
+    // only the mapping re-application it would have driven.
+    it('still succeeds a sign-in when group resolution throws', async () => {
+        await saveLdapConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+        searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
+        bindAsUser.mockResolvedValue(undefined)
+        resolveMemberGroupDns.mockRejectedValue(new Error('simulated group search failure'))
+
+        const response = await signIn({ username: 'jdoe', password: 'correct-password' })
+
+        expect(response.statusCode).toBe(StatusCodes.OK)
+        expect(response.json().token).toBeDefined()
+        const identity = await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'jdoe@example.com' })
+        const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
+        // Group resolution failed, so the mapping was never applied — the JIT-provisioned default
+        // (MEMBER) stands, proving the sign-in itself did not fail, and also did not misread the
+        // failure as "resolved to no groups".
+        expect(user?.platformRole).toBe(PlatformRole.MEMBER)
     })
 
     it('refuses an INACTIVE user, even with correct credentials', async () => {
