@@ -85,8 +85,7 @@ export const FlowRun = z.object({
     // which may since have completed, been retried itself, or no longer exist. `Nullable`, not
     // just `.optional()`: the backing column is a nullable varchar, so an ordinary run (nothing
     // ever inherited) reads back `null` here, not `undefined` — `.optional()` alone rejected that
-    // at response-serialization time for every run without an inherited locale (#…, caught by this
-    // review round's own verification pass).
+    // at response-serialization time for every run without an inherited locale.
     inheritedRunLocale: Nullable(z.string()),
     dispatchMode: FlowRunDispatchMode.optional(),
     failParentOnFailure: z.boolean(),

@@ -1,4 +1,4 @@
-import { MAX_TRANSLATION_KEYS_PER_UPSERT, McpToolDefinition, Permission, ProjectScopedMcpServer, TranslationKeySchema, TranslationValues } from '@aiqadam/shared'
+import { formErrors, MAX_TRANSLATION_KEYS_PER_UPSERT, McpToolDefinition, Permission, ProjectScopedMcpServer, TranslationKeySchema, TranslationValues } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { z } from 'zod'
 import { projectService } from '../../project/project-service'
@@ -10,7 +10,7 @@ const upsertTranslationsInput = z.object({
         key: TranslationKeySchema.describe('Translation key (letters, digits, underscores, dot-separated segments — e.g. "welcome.title"). Used as the mention key: {{$t[\'key\']}}.'),
         values: TranslationValues.describe('Locale (BCP-47 tag) to value. Merged with any existing values on the key — an omitted locale is left untouched.'),
         description: z.string().optional().describe('Optional note for translators, shown alongside the key.'),
-    })).min(1, 'formErrors.required').max(MAX_TRANSLATION_KEYS_PER_UPSERT),
+    })).min(1, formErrors.required).max(MAX_TRANSLATION_KEYS_PER_UPSERT),
 })
 
 export const apUpsertTranslationsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {

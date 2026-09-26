@@ -58,7 +58,7 @@ export const MAX_TRANSLATION_USAGE_FLOWS_SCANNED = 500
 // than a number the byte cap would always catch first.
 export const MAX_TRANSLATION_IMPORT_NODES = 50_000
 
-export const TranslationValues = z.record(z.string(), z.string().max(TRANSLATION_VALUE_MAX_LENGTH, 'translationValueTooLong'))
+export const TranslationValues = z.record(z.string(), z.string().max(TRANSLATION_VALUE_MAX_LENGTH, formErrors.translationValueTooLong))
     .refine((values) => Object.keys(values).length <= MAX_TRANSLATION_LOCALES_PER_KEY, 'tooManyTranslationLocales')
 export type TranslationValues = z.infer<typeof TranslationValues>
 
@@ -74,8 +74,8 @@ export type Translation = z.infer<typeof Translation>
 
 export const TranslationKeySchema = z.string()
     .min(1, formErrors.required)
-    .max(TRANSLATION_KEY_MAX_LENGTH, 'translationKeyTooLong')
-    .regex(TRANSLATION_KEY_REGEX, 'invalidTranslationKey')
+    .max(TRANSLATION_KEY_MAX_LENGTH, formErrors.translationKeyTooLong)
+    .regex(TRANSLATION_KEY_REGEX, formErrors.invalidTranslationKey)
 
 export const localeUtil = {
     /**
