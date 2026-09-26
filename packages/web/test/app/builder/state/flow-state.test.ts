@@ -7,6 +7,7 @@ import {
   FlowTriggerType,
   FlowVersion,
   FlowVersionState,
+  NoteColorVariant,
   PopulatedFlow,
 } from '@aiqadam/shared';
 import { QueryClient } from '@tanstack/react-query';
@@ -238,6 +239,42 @@ describe('createFlowState — a failed update halts later updates visibly', () =
     });
     expect(firstOnError).toHaveBeenCalledTimes(1);
     expect(queuedOnSuccess).not.toHaveBeenCalled();
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().saving).toBe(false);
+  });
+
+  it('reports a debounced edit made before the failure through onError once its debounce fires, instead of sending it', async () => {
+    const flowVersion = createTestFlowVersion();
+    const flow = createTestFlow(flowVersion);
+    updateMock.mockRejectedValueOnce(new Error('network down'));
+    const store = buildTestStore(flow, flowVersion);
+
+    const debouncedOnError = vi.fn();
+    store.getState().applyOperation({
+      type: FlowOperationType.UPDATE_LOCALE_SOURCE,
+      request: { localeSource: 'ru' },
+    });
+    store.getState().applyOperation(
+      {
+        type: FlowOperationType.ADD_NOTE,
+        request: {
+          id: 'note-1',
+          content: 'hello',
+          color: NoteColorVariant.BLUE,
+          position: { x: 0, y: 0 },
+          size: { width: 100, height: 100 },
+        },
+      },
+      undefined,
+      debouncedOnError,
+    );
+
+    await vi.waitFor(
+      () => {
+        expect(debouncedOnError).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3000 },
+    );
     expect(updateMock).toHaveBeenCalledTimes(1);
     expect(store.getState().saving).toBe(false);
   });
