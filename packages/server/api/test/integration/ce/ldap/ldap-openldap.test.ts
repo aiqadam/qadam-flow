@@ -13,10 +13,12 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 // `globalPassThroughEnv` (`turbo.json`) only forwards `AP_*`/`QF_*` to the spawned `vitest`
 // process under its strict env mode — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped,
 // which made every one of this suite's 8 cases skip in CI without ever failing the job (round 2 of
-// #339's review). `QF_` is the canonical prefix (#339 Phase 2); `AP_RUN_LDAP_OPENLDAP_TESTS` is
-// read too, as a deprecated fallback, since this file reads `process.env` directly rather than
-// through `system.get()` and so does not go through `environmentMigrations`' generic AP_/QF_
-// mirror. The `describe.skipIf(!RUN)` below stays a *skip* for a genuinely local,
+// #339's review). `QF_` is the canonical (and only) prefix (#339 Phase 2 round 3) — the
+// `AP_RUN_LDAP_OPENLDAP_TESTS` fallback this file used to also read was dropped: it duplicated the
+// same env-migration coverage every other `AP_*`/`QF_*` prop gets through `system.get()`, but this
+// one file bypassed that mirror by reading `process.env` directly, so the fallback here was its own
+// small, one-off maintenance burden rather than shared infrastructure. The `describe.skipIf(!RUN)`
+// below stays a *skip* for a genuinely local,
 // opted-out run, but `if (!RUN && IS_CI)` turns the same missing flag into a hard failure whenever
 // `CI=true`, so a future regression in the env plumbing fails loudly instead of quietly reporting
 // 8 skipped as green. The env-gate itself stays because the test-ce path (`npm run test-api`) has
@@ -71,7 +73,7 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 //     -s "correct-horse-battery-staple" "cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com"
 //   QF_RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
 //   docker rm -f ldap-openldap-test-339   # afterwards
-const RUN = process.env['QF_RUN_LDAP_OPENLDAP_TESTS'] === 'true' || process.env['AP_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
+const RUN = process.env['QF_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
 const IS_CI = process.env['CI'] === 'true'
 
 const LDAP_HOST = process.env['LDAP_TEST_HOST'] ?? '127.0.0.1'

@@ -555,8 +555,8 @@ jobs:
           # turbo's strict env mode, which made every one of this suite's 8 cases skip in CI without
           # ever failing the job. `ldap-openldap.test.ts` itself now fails loudly (rather than
           # skipping) whenever `CI=true` and this flag isn't `'true'`, so a regression here is caught
-          # by the suite itself, not only by this comment. `QF_` (not `AP_`) is the canonical name —
-          # `AP_RUN_LDAP_OPENLDAP_TESTS` is still read as a deprecated fallback (#339 Phase 2).
+          # by the suite itself, not only by this comment. `QF_` is the canonical (and only) name —
+          # the `AP_RUN_LDAP_OPENLDAP_TESTS` fallback was dropped in #339 Phase 2 round 3.
           QF_RUN_LDAP_OPENLDAP_TESTS: 'true'
         run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
 
