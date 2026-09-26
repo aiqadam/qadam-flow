@@ -88,16 +88,15 @@ const TEST_USERNAME = process.env['LDAP_TEST_USERNAME'] ?? 'fry'
 const TEST_PASSWORD = process.env['LDAP_TEST_PASSWORD'] ?? 'correct-horse-battery-staple'
 const TEST_USER_DN = process.env['LDAP_TEST_USER_DN'] ?? 'cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com'
 
-// Round 3 (app-sec finding #3): the group-mapping case below used to configure
-// `groupSearchBaseDn`/`groupSearchFilter` without ever setting `nestedGroups: true` — the one flag
-// `resolveMemberGroupDns` actually gates the nested-group search on (`ldap-client.ts`) — so the
-// search never ran at all. The assertion still passed, but for the wrong reason: this fixture's
-// `memberof` overlay (confirmed live against the real container — adding *any* new `Group`/`member`
-// entry immediately grows a matching `memberOf` back-link on the member) already puts
-// `cn=ship_crew,...` directly on the signed-in user's own entry, so the *direct*-`memberOf` half of
-// `resolveMemberGroupDns` alone was resolving the mapped group, independent of whether the search
-// ran. This fixture group is the deterministic fix: `groupOfUniqueNames`/`uniqueMember` is not a
-// `member`-attribute the overlay watches (verified empirically: adding one does not grow the
+// Configuring `groupSearchBaseDn`/`groupSearchFilter` without also setting `nestedGroups: true` —
+// the one flag `resolveMemberGroupDns` actually gates the nested-group search on (`ldap-client.ts`)
+// — would let the group-mapping case below pass for the wrong reason: this fixture's `memberof`
+// overlay (confirmed live against the real container — adding *any* new `Group`/`member` entry
+// immediately grows a matching `memberOf` back-link on the member) already puts `cn=ship_crew,...`
+// directly on the signed-in user's own entry, so the *direct*-`memberOf` half of
+// `resolveMemberGroupDns` alone would resolve the mapped group, independent of whether the search
+// ran. This fixture group closes that gap deterministically: `groupOfUniqueNames`/`uniqueMember` is
+// not a `member`-attribute the overlay watches (verified empirically: adding one does not grow the
 // member's `memberOf`), so a mapping resolved via this group can only ever match through the
 // configured `(uniqueMember={userDn})` nested search itself — proving the search, not `memberOf`,
 // is what grants the role.

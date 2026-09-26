@@ -10,9 +10,9 @@ afterEach(() => {
     vi.restoreAllMocks()
 })
 
-// Round 2 (app-sec finding #12): BullMQ's own cron parsing throws synchronously at schedule time —
-// an operator's malformed `LDAP_RECONCILE_CRON` must fall back to the default and log an error,
-// never crash server boot over one optional feature's schedule string.
+// BullMQ's own cron parsing throws synchronously at schedule time — an operator's malformed
+// `LDAP_RECONCILE_CRON` must fall back to the default and log an error, never crash server boot
+// over one optional feature's schedule string.
 describe('ldapReconcileModuleUtils.resolveReconcileCron', () => {
     it('falls back to the default when LDAP_RECONCILE_CRON is unset', () => {
         vi.spyOn(system, 'get').mockReturnValue(undefined)

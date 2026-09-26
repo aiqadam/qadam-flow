@@ -135,10 +135,10 @@ describe('LDAP sign-in', () => {
         expect(federated).not.toBeNull()
     })
 
-    // Round 3 (app-sec, missing-test finding #8): every other sign-in test in this file resolves
-    // zero groups (the mocked default), so none of them ever actually exercised `applyMapping`
-    // being called with a non-empty `memberGroupDns` from the sign-in path itself — only the
-    // DB-level `ldapGroupMappingService.applyMapping` unit/integration tests did.
+    // Every other sign-in test in this file resolves zero groups (the mocked default), so this is
+    // the one case that actually exercises `applyMapping` being called with a non-empty
+    // `memberGroupDns` from the sign-in path itself, rather than only from the DB-level
+    // `ldapGroupMappingService.applyMapping` unit/integration tests.
     it('applies a group mapping resolved during sign-in when the directory reports a non-empty group list', async () => {
         await saveLdapConfig({
             groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
@@ -155,9 +155,9 @@ describe('LDAP sign-in', () => {
         expect(user?.platformRole).toBe(PlatformRole.ADMIN)
     })
 
-    // Round 3 (app-sec, missing-test finding #8): a broken group search (a bad `groupSearchFilter`,
-    // a transient directory hiccup on the nested-group search) must never fail the sign-in itself —
-    // only the mapping re-application it would have driven.
+    // A broken group search (a bad `groupSearchFilter`, a transient directory hiccup on the
+    // nested-group search) must never fail the sign-in itself — only the mapping re-application it
+    // would have driven.
     it('still succeeds a sign-in when group resolution throws', async () => {
         await saveLdapConfig({
             groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],

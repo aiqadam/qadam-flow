@@ -136,8 +136,8 @@ describe('POST /v1/platform-ldap-configs/test', () => {
         expect(bindAsUser).toHaveBeenCalledTimes(1)
     })
 
-    // Round 2 (app-sec finding #3): `/test` exercises the group search as its own reported stage,
-    // but only when the platform actually has group mappings configured.
+    // `/test` exercises the group search as its own reported stage, but only when the platform
+    // actually has group mappings configured.
     describe('group-search stage (exercised only when groupMappings is non-empty)', () => {
         it('never calls resolveMemberGroupDns when the platform has no group mappings', async () => {
             await saveConfig()

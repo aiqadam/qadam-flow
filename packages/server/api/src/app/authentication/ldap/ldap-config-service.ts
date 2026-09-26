@@ -56,12 +56,11 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
     // a config an admin has not yet asked to try.
     async upsert({ platformId, callingUserId, request }: UpsertParams): Promise<PlatformLdapConfig> {
         const existing = await platformLdapConfigRepo().findOneBy({ platformId })
-        // Round 4 (app-sec finding #4): a row saved before Phase 2 has no `groupMappings`/
-        // `nestedGroups`/`groupSearchBaseDn`/`groupSearchFilter` at all in its stored JSON —
-        // `LdapConfig.parse` backfills each with its schema default, the same way the *merged*
-        // `config` below already relies on `.parse` to fill in anything neither side supplied.
-        // Every other raw read of `existing.config` in this function goes through this parsed copy
-        // for the same reason.
+        // A row saved before Phase 2 has no `groupMappings`/`nestedGroups`/`groupSearchBaseDn`/
+        // `groupSearchFilter` at all in its stored JSON — `LdapConfig.parse` backfills each with
+        // its schema default, the same way the *merged* `config` below already relies on `.parse`
+        // to fill in anything neither side supplied. Every other raw read of `existing.config` in
+        // this function goes through this parsed copy for the same reason.
         const existingConfig = isNil(existing) ? undefined : resolveStoredConfig(existing)
         // An omitted field on update keeps the stored value; `LdapConfig.parse` both fills in the
         // defaults a brand-new config needs and re-validates the merged result (e.g. the
@@ -78,16 +77,16 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // platform ADMIN, which is exactly as powerful: any directory user in that group becomes
         // a platform admin on their next sign-in or the next reconcile pass.
         //
-        // Round 4 (app-sec finding #5): gated on *either* the existing stored config or the merged
-        // one being sensitive, not the merged one alone. Gating on the merged config only let a
-        // non-owner admin submit a request that both turns `linkExistingByEmail` off (or drops the
-        // ADMIN mapping) *and* repoints `url`/`bindDn`/other fields in the same call — since the
-        // *merged* result no longer looked sensitive, the gate never fired at all, even though the
-        // request changed a config that, a moment before, was. The safer rule this repo takes
-        // throughout: a non-owner may never touch a config that is, or was, in this sensitive
-        // state, full stop — including turning the sensitive flag off by itself, with no other
-        // field touched. A caller may still resend the exact same config unchanged (a genuine
-        // no-op, checked by `configHasChanged` below) without being the owner.
+        // Gated on *either* the existing stored config or the merged one being sensitive, not the
+        // merged one alone — gating on the merged config only would let a non-owner admin submit a
+        // request that both turns `linkExistingByEmail` off (or drops the ADMIN mapping) *and*
+        // repoints `url`/`bindDn`/other fields in the same call, since the *merged* result no
+        // longer looks sensitive and the gate never fires, even though the request changed a
+        // config that, a moment before, was. The rule this repo takes throughout: a non-owner may
+        // never touch a config that is, or was, in this sensitive state, full stop — including
+        // turning the sensitive flag off by itself, with no other field touched. A caller may
+        // still resend the exact same config unchanged (a genuine no-op, checked by
+        // `configHasChanged` below) without being the owner.
         //
         // Round 3: `configHasChanged` only ever compares `LdapConfig` itself — `bindPassword` and
         // `caCertificate` are stored, and touched, entirely outside it, so a non-owner could swap
@@ -142,8 +141,8 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
     // or a group mapping granting ADMIN) and immediately re-create an unchanged one to dodge
     // `upsert`'s own owner gate — deleting is itself the sensitive operation here, since it
     // destroys the very row that gate was protecting. The same "existing OR merged" reasoning
-    // `upsert` applies (round 4, app-sec finding #5) applies to removing the row outright: there is
-    // no "merged" config on a delete, only the existing one, so this checks that alone.
+    // `upsert` applies also applies to removing the row outright: there is no "merged" config on a
+    // delete, only the existing one, so this checks that alone.
     async delete({ platformId, callingUserId }: DeleteParams): Promise<void> {
         const existing = await platformLdapConfigRepo().findOneBy({ platformId })
         if (!isNil(existing)) {
@@ -199,12 +198,12 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
                         tlsMode: config.tlsMode,
                     })
                     assertResolvableAttributes({ entry, attributeMap: config.attributeMap })
-                    // Round 2 (app-sec finding #3): exercised only when the platform actually has
-                    // group mappings configured — an admin testing plain sign-in on a platform with
-                    // no mappings at all should not pay for (or be told about) a search step that
-                    // has nothing to resolve. A failure here is its own stage, distinct from
-                    // `SEARCH`, so a broken `groupSearchFilter` is reported for what it is rather
-                    // than looking like the user search itself failed.
+                    // Exercised only when the platform actually has group mappings configured — an
+                    // admin testing plain sign-in on a platform with no mappings at all should not
+                    // pay for (or be told about) a search step that has nothing to resolve. A
+                    // failure here is its own stage, distinct from `SEARCH`, so a broken
+                    // `groupSearchFilter` is reported for what it is rather than looking like the
+                    // user search itself failed.
                     if (config.groupMappings.length > 0) {
                         const { error: groupError } = await tryCatch(() => ldapClient.resolveMemberGroupDns({ client, entry, config, tlsMode: config.tlsMode }))
                         if (!isNil(groupError)) {
@@ -275,12 +274,12 @@ async function decryptForConnection(row: PlatformLdapConfigSchema): Promise<Reso
     }
 }
 
-// Round 4 (app-sec finding #4): a config row saved before Phase 2 shipped has no `groupMappings`/
-// `nestedGroups`/`groupSearchBaseDn`/`groupSearchFilter` in its stored JSON at all — every reader
-// of a *raw* `row.config` (this file's own `existing.config` checks, `decryptForConnection`,
-// `toResponse`) must go through `LdapConfig.parse` first, the same way `upsert`'s own merged
-// `config` already does, so a Phase-1-shaped row backfills each new field with its schema default
-// instead of the reader crashing on a missing one (e.g. `undefined.some(...)`).
+// A config row saved before Phase 2 shipped has no `groupMappings`/`nestedGroups`/
+// `groupSearchBaseDn`/`groupSearchFilter` in its stored JSON at all — every reader of a *raw*
+// `row.config` (this file's own `existing.config` checks, `decryptForConnection`, `toResponse`)
+// must go through `LdapConfig.parse` first, the same way `upsert`'s own merged `config` already
+// does, so a Phase-1-shaped row backfills each new field with its schema default instead of the
+// reader crashing on a missing one (e.g. `undefined.some(...)`).
 function resolveStoredConfig(row: PlatformLdapConfigSchema): LdapConfig {
     return LdapConfig.parse(row.config)
 }
@@ -325,9 +324,9 @@ async function assertCallerIsPlatformOwner({ platformId, callingUserId, log }: A
 // deleted (or its type changed) after the mapping is saved. A stale or ineligible reference here
 // is refused outright, not silently dropped, so an admin who typos, reuses a projectId from
 // another platform, or names a PERSONAL project gets an error instead of a mapping that quietly
-// never grants anything. PERSONAL projects are refused (round 4, app-sec finding #8): they are one
-// user's own workspace, created as an onboarding side effect, not a workspace a directory group is
-// meant to grant shared access to.
+// never grants anything. PERSONAL projects are refused: they are one user's own workspace,
+// created as an onboarding side effect, not a workspace a directory group is meant to grant shared
+// access to.
 async function assertGroupMappingProjectsBelongToPlatform({ platformId, groupMappings, log }: AssertGroupMappingProjectsBelongToPlatformParams): Promise<void> {
     const projectIds = unique(groupMappings.flatMap((mapping) => mapping.projects.map((project) => project.projectId)))
     for (const projectId of projectIds) {

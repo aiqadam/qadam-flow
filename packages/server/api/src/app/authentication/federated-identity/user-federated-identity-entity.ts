@@ -38,11 +38,10 @@ export const UserFederatedIdentityEntity = new EntitySchema<UserFederatedIdentit
             type: 'timestamp with time zone',
             nullable: true,
         },
-        // Round 3 (app-sec finding #5): stamped every time reconcile actually resolves this
-        // identity's directory state within its per-platform time budget. `listByPlatformAndProvider`'s
-        // `orderByLastReconciledAt` reads this back (oldest/never-reconciled first, `NULLS FIRST`) so
-        // the starting point rotates across ticks instead of a slow/huge directory always starving
-        // the same prefix of users.
+        // Stamped every time reconcile actually resolves this identity's directory state within
+        // its per-platform time budget. `listByPlatformAndProvider` reads this back (oldest/
+        // never-reconciled first, `NULLS FIRST`) so the starting point rotates across ticks
+        // instead of a slow/huge directory always starving the same prefix of users.
         lastReconciledAt: {
             type: 'timestamp with time zone',
             nullable: true,

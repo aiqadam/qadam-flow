@@ -163,12 +163,12 @@ describe('Platform LDAP config API', () => {
         expect(resolved?.bindPassword).not.toContain('"')
     })
 
-    // Round 2 (app-sec finding #4): a config saved before Phase 2 has no `groupMappings`,
-    // `nestedGroups`, `groupSearchBaseDn` or `groupSearchFilter` key at all in its stored JSON —
-    // this row is written directly to the table, bypassing the upsert endpoint entirely, the same
-    // way a real pre-Phase-2 row would have been written. Both `getResolvedForSignIn` (the
-    // sign-in/reconcile path) and the GET response (`toResponse`) must backfill schema defaults
-    // rather than crash or return `undefined` for a field callers now assume is always an array.
+    // A config saved before Phase 2 has no `groupMappings`, `nestedGroups`, `groupSearchBaseDn` or
+    // `groupSearchFilter` key at all in its stored JSON — this row is written directly to the
+    // table, bypassing the upsert endpoint entirely, the same way a real pre-Phase-2 row would
+    // have been written. Both `getResolvedForSignIn` (the sign-in/reconcile path) and the GET
+    // response (`toResponse`) must backfill schema defaults rather than crash or return `undefined`
+    // for a field callers now assume is always an array.
     it('backfills schema defaults for a Phase-1-shaped config row missing every Phase-2 field', async () => {
         const bindPassword = await encryptUtils.encryptString('bind-secret')
         await databaseConnection().getRepository('platform_ldap_config').save({
@@ -324,11 +324,10 @@ describe('Platform LDAP config API', () => {
             expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
         })
 
-        // Round 3 (app-sec, missing-test finding #8): the exact bypass round 4's "existing OR
-        // merged" gate closed — a single request that both turns `linkExistingByEmail` off *and*
-        // repoints the URL. Gating on the merged config alone would have missed this: the merged
-        // result no longer looks sensitive, so the gate would never have fired, even though the
-        // request changed a config that, a moment before, was.
+        // The exact bypass the "existing OR merged" gate closes — a single request that both
+        // turns `linkExistingByEmail` off *and* repoints the URL. Gating on the merged config
+        // alone would miss this: the merged result no longer looks sensitive, so the gate would
+        // never fire, even though the request changed a config that, a moment before, was.
         it('rejects a non-owner admin who both turns linkExistingByEmail off and repoints the URL in the same request', async () => {
             await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
             const token = await tokenForNonOwnerAdmin()
@@ -481,7 +480,7 @@ describe('Platform LDAP config API', () => {
             expect(response.statusCode).toBe(StatusCodes.OK)
         })
 
-        it('rejects a projectId that belongs to a non-TEAM project on the configuring platform (round 2, app-sec finding #8)', async () => {
+        it('rejects a projectId that belongs to a non-TEAM project on the configuring platform', async () => {
             const personalProject = createMockProject({ platformId: ctx.platform.id, type: ProjectType.PERSONAL, ownerId: ctx.platform.ownerId })
             await databaseConnection().getRepository('project').save(personalProject)
 
@@ -522,9 +521,9 @@ describe('Platform LDAP config API', () => {
             expect(response.statusCode).toBe(StatusCodes.NO_CONTENT)
         })
 
-        // Round 3 (app-sec, missing-test finding #8): the delete-time gate also fires for a group
-        // mapping granting ADMIN, not only for `linkExistingByEmail` — the ADMIN-granting-mapping
-        // owner-gate tests above only ever exercised the upsert path.
+        // The delete-time gate also fires for a group mapping granting ADMIN, not only for
+        // `linkExistingByEmail` — the ADMIN-granting-mapping owner-gate tests above only ever
+        // exercise the upsert path.
         it('rejects a non-owner admin deleting a config with a group mapping granting ADMIN', async () => {
             await ctx.post('/v1/platform-ldap-configs', validConfig({
                 groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
