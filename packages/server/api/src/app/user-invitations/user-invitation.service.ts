@@ -1,4 +1,4 @@
-import { apId, assertNotNullOrUndefined, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, isNil, PlatformRole, QadamFlowError, SeekPage, spreadIfDefined, tryCatch, UserIdentity, UserIdentityProvider, UserInvitation, UserInvitationWithLink } from '@aiqadam/shared'
+import { apId, assertNotNullOrUndefined, ErrorCode, FederatedIdentityProvider, InvitationStatus, InvitationType, isNil, PlatformRole, ProjectMemberManagedBy, QadamFlowError, SeekPage, spreadIfDefined, tryCatch, UserIdentity, UserIdentityProvider, UserInvitation, UserInvitationWithLink } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { IsNull } from 'typeorm'
 import { userFederatedIdentityService } from '../authentication/federated-identity/user-federated-identity-service'
@@ -99,6 +99,7 @@ export const userInvitationsService = (log: FastifyBaseLogger) => ({
                         projectId: invitation.projectId,
                         projectRoleId: invitation.projectRoleId,
                         platformId: invitation.platformId,
+                        managedBy: ProjectMemberManagedBy.MANUAL,
                     }, ['userId', 'projectId'])
                     await sendProjectMemberAddedEmail({ invitation, log })
                     break

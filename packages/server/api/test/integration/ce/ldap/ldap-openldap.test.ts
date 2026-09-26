@@ -1,18 +1,26 @@
 import tls from 'node:tls'
+import { isNil, tryCatch } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { AlreadyExistsError, Client, NoSuchObjectError } from 'ldapts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 // Opt-in only, but exercised in CI: the "CE integration suite" job in `.github/workflows/ci.yml`
 // runs this file too (via a dedicated `run:` step that stands up the same container this header
-// documents, then sets `AP_RUN_LDAP_OPENLDAP_TESTS=true`), so it is not "run locally only" the way
-// an opt-in suite normally is. The flag is `AP_`-prefixed, not a bare name, because turbo's
+// documents, then sets `QF_RUN_LDAP_OPENLDAP_TESTS=true`), so it is not "run locally only" the way
+// an opt-in suite normally is. The flag is `QF_`-prefixed, not a bare name, because turbo's
 // `globalPassThroughEnv` (`turbo.json`) only forwards `AP_*`/`QF_*` to the spawned `vitest`
 // process under its strict env mode — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped,
-// which made every one of this suite's 8 cases skip in CI without ever failing the job (round 2 of
-// #339's review). The `describe.skipIf(!RUN)` below stays a *skip* for a genuinely local,
+// which made every one of this suite's 8 cases skip in CI without ever failing the job. `QF_` is
+// the canonical (and only) prefix — the `AP_RUN_LDAP_OPENLDAP_TESTS` fallback this file used to
+// also read was dropped: it duplicated the
+// same env-migration coverage every other `AP_*`/`QF_*` prop gets through `system.get()`, but this
+// one file bypassed that mirror by reading `process.env` directly, so the fallback here was its own
+// small, one-off maintenance burden rather than shared infrastructure. The `describe.skipIf(!RUN)`
+// below stays a *skip* for a genuinely local,
 // opted-out run, but `if (!RUN && IS_CI)` turns the same missing flag into a hard failure whenever
 // `CI=true`, so a future regression in the env plumbing fails loudly instead of quietly reporting
 // 8 skipped as green. The env-gate itself stays because the test-ce path (`npm run test-api`) has
@@ -65,9 +73,9 @@ import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '..
 //   docker exec ldap-openldap-test-339 ldappasswd -x -H ldap://localhost \
 //     -D "cn=admin,dc=planetexpress,dc=com" -w GoodNewsEveryone \
 //     -s "correct-horse-battery-staple" "cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com"
-//   AP_RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
+//   QF_RUN_LDAP_OPENLDAP_TESTS=true npx vitest run test/integration/ce/ldap/ldap-openldap.test.ts
 //   docker rm -f ldap-openldap-test-339   # afterwards
-const RUN = process.env['AP_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
+const RUN = process.env['QF_RUN_LDAP_OPENLDAP_TESTS'] === 'true'
 const IS_CI = process.env['CI'] === 'true'
 
 const LDAP_HOST = process.env['LDAP_TEST_HOST'] ?? '127.0.0.1'
@@ -78,6 +86,21 @@ const BIND_PASSWORD = process.env['LDAP_TEST_BIND_PASSWORD'] ?? 'GoodNewsEveryon
 const BASE_DN = process.env['LDAP_TEST_BASE_DN'] ?? 'dc=planetexpress,dc=com'
 const TEST_USERNAME = process.env['LDAP_TEST_USERNAME'] ?? 'fry'
 const TEST_PASSWORD = process.env['LDAP_TEST_PASSWORD'] ?? 'correct-horse-battery-staple'
+const TEST_USER_DN = process.env['LDAP_TEST_USER_DN'] ?? 'cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com'
+
+// Configuring `groupSearchBaseDn`/`groupSearchFilter` without also setting `nestedGroups: true` —
+// the one flag `resolveMemberGroupDns` actually gates the nested-group search on (`ldap-client.ts`)
+// — would let the group-mapping case below pass for the wrong reason: this fixture's `memberof`
+// overlay (confirmed live against the real container — adding *any* new `Group`/`member` entry
+// immediately grows a matching `memberOf` back-link on the member) already puts `cn=ship_crew,...`
+// directly on the signed-in user's own entry, so the *direct*-`memberOf` half of
+// `resolveMemberGroupDns` alone would resolve the mapped group, independent of whether the search
+// ran. This fixture group closes that gap deterministically: `groupOfUniqueNames`/`uniqueMember` is
+// not a `member`-attribute the overlay watches (verified empirically: adding one does not grow the
+// member's `memberOf`), so a mapping resolved via this group can only ever match through the
+// configured `(uniqueMember={userDn})` nested search itself — proving the search, not `memberOf`,
+// is what grants the role.
+const GROUP_SEARCH_ONLY_GROUP_DN = 'cn=qa_crew_search_only,ou=people,dc=planetexpress,dc=com'
 
 // The directory in this suite listens on loopback, which the LDAP host guard blocks by default —
 // deliberately, the same as any other private/loopback address. Allow-listing it here is the
@@ -90,8 +113,8 @@ if (RUN) {
 
 if (!RUN && IS_CI) {
     describe('LDAP sign-in against a real OpenLDAP directory — CI must not silently skip this suite', () => {
-        it('fails instead of skipping when AP_RUN_LDAP_OPENLDAP_TESTS was not propagated to CI', () => {
-            throw new Error('AP_RUN_LDAP_OPENLDAP_TESTS was not \'true\' in CI. This suite\'s 8 real-directory '
+        it('fails instead of skipping when QF_RUN_LDAP_OPENLDAP_TESTS was not propagated to CI', () => {
+            throw new Error('QF_RUN_LDAP_OPENLDAP_TESTS was not \'true\' in CI. This suite\'s 8 real-directory '
                 + 'cases would otherwise silently report as skipped rather than failing the job — see the M5 '
                 + 'step in .github/workflows/ci.yml and this file\'s own header.')
         })
@@ -106,9 +129,11 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
     beforeAll(async () => {
         app = await setupTestEnvironment()
         serverCertificatePem = await fetchPeerCertificatePem({ host: LDAP_HOST, port: LDAPS_PORT })
+        await addSearchOnlyGroupFixture()
     })
 
     afterAll(async () => {
+        await removeSearchOnlyGroupFixture()
         await teardownTestEnvironment()
     })
 
@@ -223,7 +248,96 @@ describe.skipIf(!RUN)('LDAP sign-in against a real OpenLDAP directory (opt-in)',
         expect(response.statusCode).toBe(StatusCodes.OK)
         expect(response.json().token).toBeDefined()
     })
+
+    // The fixture image's `memberof` overlay is live (confirmed by
+    // directly probing the running container — adding a `Group`/`member` entry immediately grows a
+    // matching `memberOf` back-link on the member), so a mapping keyed on a real `Group` the signed-
+    // in user already belongs to would be granted by the plain direct-`memberOf` half of
+    // `resolveMemberGroupDns` alone, regardless of whether `nestedGroups`/the configured search ran
+    // at all — `addSearchOnlyGroupFixture` seeds a `groupOfUniqueNames` entry specifically because
+    // the overlay does not watch `uniqueMember`, so a mapping resolved via *that* group can only
+    // ever match through the search this test configures, never through `memberOf`. The filter uses
+    // plain equality (`uniqueMember={userDn})`), not AD's `LDAP_MATCHING_RULE_IN_CHAIN` OID — slapd's
+    // default backend does not implement that Microsoft-specific extensible-match control, so the
+    // nested-group (transitive membership) case is unprovable against this OpenLDAP fixture and is
+    // covered only by the mocked unit/integration tests instead.
+    it('applies a group mapping resolved via a real nested-group search, granting the mapped platform role', async () => {
+        await saveConfig({
+            overrides: {
+                nestedGroups: true,
+                groupSearchBaseDn: BASE_DN,
+                groupSearchFilter: '(uniqueMember={userDn})',
+                groupMappings: [{ groupDn: GROUP_SEARCH_ONLY_GROUP_DN, platformRole: 'OPERATOR', projects: [] }],
+            },
+        })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        expect(response.statusCode).toBe(StatusCodes.OK)
+
+        const identity = await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'fry@planetexpress.com' })
+        const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
+        expect(user?.platformRole).toBe('OPERATOR')
+    })
+
+    // The negative case that makes the positive one above provable: with `nestedGroups` left off,
+    // `resolveMemberGroupDns` never runs the configured search at all (`ldap-client.ts`) — since the
+    // mapped group is only reachable through that search (never through `memberOf`, per the fixture
+    // comment above), the mapping must not apply and the JIT-provisioned user must be the default
+    // MEMBER, not OPERATOR.
+    it('does NOT apply that same mapping when nestedGroups is off, since only the search resolves it', async () => {
+        await saveConfig({
+            overrides: {
+                nestedGroups: false,
+                groupSearchBaseDn: BASE_DN,
+                groupSearchFilter: '(uniqueMember={userDn})',
+                groupMappings: [{ groupDn: GROUP_SEARCH_ONLY_GROUP_DN, platformRole: 'OPERATOR', projects: [] }],
+            },
+        })
+        const response = await signIn({ username: TEST_USERNAME, password: TEST_PASSWORD })
+        expect(response.statusCode).toBe(StatusCodes.OK)
+
+        const identity = await databaseConnection().getRepository('user_identity').findOneByOrFail({ email: 'fry@planetexpress.com' })
+        const user = await databaseConnection().getRepository('user').findOneBy({ platformId: ctx.platform.id, identityId: identity.id })
+        expect(user?.platformRole).toBe('MEMBER')
+    })
 })
+
+// Seeds (and, on teardown, removes) the `groupOfUniqueNames` fixture the group-search-only test
+// depends on — plain `ldap://`, admin-bound, entirely separate from the app's own `ldapClient`
+// under test. `add` failing with "already exists" (a re-run against a container that already has
+// it) and `del` failing with "no such object" (nothing to remove) are both swallowed; any other
+// failure is real and should fail the suite loudly rather than silently leaving stale/missing
+// fixture state for the next run.
+// Idempotent against a fixture already left behind by a previous run of this suite — "already
+// exists" from a prior `add` is expected and swallowed; any other failure still fails the setup.
+async function addSearchOnlyGroupFixture(): Promise<void> {
+    const client = new Client({ url: `ldap://${LDAP_HOST}:${LDAP_PORT}` })
+    const { error } = await tryCatch(async () => {
+        await client.bind(BIND_DN, BIND_PASSWORD)
+        await client.add(GROUP_SEARCH_ONLY_GROUP_DN, {
+            objectClass: 'groupOfUniqueNames',
+            cn: 'qa_crew_search_only',
+            uniqueMember: TEST_USER_DN,
+        })
+    })
+    await client.unbind().catch(() => undefined)
+    if (!isNil(error) && !(error instanceof AlreadyExistsError)) {
+        throw error
+    }
+}
+
+// Symmetric with `addSearchOnlyGroupFixture` — "no such object" from a prior successful teardown
+// (or a run that never got far enough to create the fixture) is expected and swallowed.
+async function removeSearchOnlyGroupFixture(): Promise<void> {
+    const client = new Client({ url: `ldap://${LDAP_HOST}:${LDAP_PORT}` })
+    const { error } = await tryCatch(async () => {
+        await client.bind(BIND_DN, BIND_PASSWORD)
+        await client.del(GROUP_SEARCH_ONLY_GROUP_DN)
+    })
+    await client.unbind().catch(() => undefined)
+    if (!isNil(error) && !(error instanceof NoSuchObjectError)) {
+        throw error
+    }
+}
 
 function fetchPeerCertificatePem({ host, port }: { host: string, port: number }): Promise<string> {
     return new Promise((resolve, reject) => {

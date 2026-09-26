@@ -23,6 +23,7 @@ vi.mock('../../../../../src/app/authentication/ldap/ldap-client', () => ({
         serviceBind: vi.fn(),
         searchForUser: vi.fn(),
         bindAsUser: vi.fn(),
+        resolveMemberGroupDns: vi.fn(),
     },
 }))
 

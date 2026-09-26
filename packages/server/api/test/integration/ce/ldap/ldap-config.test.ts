@@ -1,10 +1,12 @@
-import { PlatformRole, PrincipalType } from '@aiqadam/shared'
+import { apId, PlatformRole, PrincipalType, ProjectType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import pino from 'pino'
 import { ldapConfigService } from '../../../../src/app/authentication/ldap/ldap-config-service'
+import { databaseConnection } from '../../../../src/app/database/database-connection'
+import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { generateMockToken } from '../../../helpers/auth'
-import { mockBasicUser } from '../../../helpers/mocks'
+import { createMockProject, mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -161,6 +163,48 @@ describe('Platform LDAP config API', () => {
         expect(resolved?.bindPassword).not.toContain('"')
     })
 
+    // A config saved before Phase 2 has no `groupMappings`, `nestedGroups`, `groupSearchBaseDn` or
+    // `groupSearchFilter` key at all in its stored JSON — this row is written directly to the
+    // table, bypassing the upsert endpoint entirely, the same way a real pre-Phase-2 row would
+    // have been written. Both `getResolvedForSignIn` (the sign-in/reconcile path) and the GET
+    // response (`toResponse`) must backfill schema defaults rather than crash or return `undefined`
+    // for a field callers now assume is always an array.
+    it('backfills schema defaults for a Phase-1-shaped config row missing every Phase-2 field', async () => {
+        const bindPassword = await encryptUtils.encryptString('bind-secret')
+        await databaseConnection().getRepository('platform_ldap_config').save({
+            id: apId(),
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            platformId: ctx.platform.id,
+            bindPassword,
+            caCertificate: null,
+            config: {
+                url: 'ldaps://ldap.example.com:636',
+                tlsMode: 'ldaps',
+                baseDn: 'dc=example,dc=com',
+                bindDn: 'cn=service,dc=example,dc=com',
+                userFilter: '(uid={username})',
+                attributeMap: { subject: 'entryUUID', email: 'mail', firstName: 'givenName', lastName: 'sn' },
+                tlsVerify: true,
+                jitProvisioning: true,
+                linkExistingByEmail: false,
+                sessionTtlSeconds: 43200,
+                enabled: true,
+                // Deliberately no `nestedGroups`, `groupMappings`, `groupSearchBaseDn` or
+                // `groupSearchFilter` — this is exactly what a Phase-1 row looks like.
+            },
+        })
+
+        const resolved = await ldapConfigService(pino({ level: 'silent' })).getResolvedForSignIn({ platformId: ctx.platform.id })
+        expect(resolved?.config.groupMappings).toEqual([])
+        expect(resolved?.config.nestedGroups).toBe(false)
+
+        const getResponse = await ctx.get('/v1/platform-ldap-configs')
+        expect(getResponse.statusCode).toBe(StatusCodes.OK)
+        expect(getResponse.json().config.groupMappings).toEqual([])
+        expect(getResponse.json().config.nestedGroups).toBe(false)
+    })
+
     it('reports the failing stage from /test when the directory is unreachable', async () => {
         await ctx.post('/v1/platform-ldap-configs', validConfig({
             url: 'ldaps://ldap.invalid.internal.example:636',
@@ -280,6 +324,22 @@ describe('Platform LDAP config API', () => {
             expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
         })
 
+        // The exact bypass the "existing OR merged" gate closes — a single request that both
+        // turns `linkExistingByEmail` off *and* repoints the URL. Gating on the merged config
+        // alone would miss this: the merged result no longer looks sensitive, so the gate would
+        // never fire, even though the request changed a config that, a moment before, was.
+        it('rejects a non-owner admin who both turns linkExistingByEmail off and repoints the URL in the same request', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const token = await tokenForNonOwnerAdmin()
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({ linkExistingByEmail: false, url: 'ldaps://attacker.example.com:636' }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
         it('rejects a non-owner admin repointing attributeMap.email while linkExistingByEmail is already on', async () => {
             await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
             const token = await tokenForNonOwnerAdmin()
@@ -347,6 +407,173 @@ describe('Platform LDAP config API', () => {
                 payload: validConfig({ linkExistingByEmail: true, bindPassword: undefined }),
             })
             expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    // Phase 2: a group mapping that grants platform ADMIN is exactly as powerful as
+    // `linkExistingByEmail` — any directory user in that group becomes a platform admin — so it is
+    // gated the same way.
+    describe('a group mapping granting platform ADMIN is owner-only', () => {
+        it('allows the platform owner to save a mapping granting ADMIN', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+            }))
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects a non-owner admin saving a mapping granting ADMIN', async () => {
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({
+                    groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+                }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('still allows a non-owner admin to save a mapping granting only MEMBER/OPERATOR', async () => {
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'POST',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+                payload: validConfig({
+                    groupMappings: [{ groupDn: 'cn=staff,dc=example,dc=com', platformRole: PlatformRole.OPERATOR, projects: [] }],
+                }),
+            })
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+    })
+
+    describe('group mapping projectId is validated against the configuring platform', () => {
+        it('rejects a projectId that belongs to a different platform', async () => {
+            const otherPlatform = await mockAndSaveBasicSetup()
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: otherPlatform.mockProject.id, role: 'Editor' }] }],
+            }))
+            // `ErrorCode.VALIDATION` maps to 409 (CONFLICT) in this codebase's error handler, not
+            // 400 — asserted on the specific status the route actually returns, not merely "not OK".
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        it('accepts a projectId that belongs to the configuring platform', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: ctx.project.id, role: 'Editor' }] }],
+            }))
+            expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects a projectId that belongs to a non-TEAM project on the configuring platform', async () => {
+            const personalProject = createMockProject({ platformId: ctx.platform.id, type: ProjectType.PERSONAL, ownerId: ctx.platform.ownerId })
+            await databaseConnection().getRepository('project').save(personalProject)
+
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: personalProject.id, role: 'Editor' }] }],
+            }))
+
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
+        // A `groupDn` reconcile/sign-in can never actually compare against anything
+        // (an attribute-value assertion with no `=`) would otherwise sit in the stored config
+        // forever, silently granting nothing — `resolveGrants` treats it as never matching by
+        // design, so save time is the only point this mistake is ever visible at all.
+        it('rejects a group mapping whose groupDn cannot be normalized (an AVA with no "=")', async () => {
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn,dc=example,dc=com', platformRole: 'ADMIN', projects: [] }],
+            }))
+
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+            expect(response.json().params.message).toBe('invalidLdapGroupDnEncoding')
+        })
+    })
+
+    // Coordinator follow-up: deleting a config is exactly as sensitive as changing it while
+    // `linkExistingByEmail` is on — a non-owner admin must not be able to delete and immediately
+    // re-create an unchanged config to dodge the upsert-time owner gate.
+    describe('deleting a config with linkExistingByEmail on is owner-only', () => {
+        it('rejects a non-owner admin deleting a config with linkExistingByEmail on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(await ldapConfigService(pino({ level: 'silent' })).get({ platformId: ctx.platform.id })).not.toBeNull()
+        })
+
+        it('allows the platform owner to delete a config with linkExistingByEmail on', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({ linkExistingByEmail: true }))
+            const response = await ctx.delete('/v1/platform-ldap-configs')
+            expect(response.statusCode).toBe(StatusCodes.NO_CONTENT)
+        })
+
+        // The delete-time gate also fires for a group mapping granting ADMIN, not only for
+        // `linkExistingByEmail` — the ADMIN-granting-mapping owner-gate tests above only ever
+        // exercise the upsert path.
+        it('rejects a non-owner admin deleting a config with a group mapping granting ADMIN', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+            }))
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+            })
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+            expect(await ldapConfigService(pino({ level: 'silent' })).get({ platformId: ctx.platform.id })).not.toBeNull()
+        })
+
+        it('allows a non-owner admin to delete a config with linkExistingByEmail off', async () => {
+            await ctx.post('/v1/platform-ldap-configs', validConfig())
+            const { mockUser } = await mockBasicUser({
+                user: { platformId: ctx.platform.id, platformRole: PlatformRole.ADMIN },
+            })
+            const token = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: { id: ctx.platform.id },
+            })
+            const response = await ctx.inject({
+                method: 'DELETE',
+                url: '/api/v1/platform-ldap-configs',
+                headers: { authorization: `Bearer ${token}` },
+            })
+            expect(response.statusCode).toBe(StatusCodes.NO_CONTENT)
         })
     })
 })

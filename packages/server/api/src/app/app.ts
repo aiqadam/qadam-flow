@@ -18,6 +18,7 @@ import { platformAppConnectionModule } from './app-connection/platform-app-conne
 import { authenticationModule } from './authentication/authentication.module'
 import { ldapAuthnModule } from './authentication/ldap/ldap-authn-module'
 import { ldapConfigModule } from './authentication/ldap/ldap-config-module'
+import { ldapReconcileModule } from './authentication/ldap/ldap-reconcile-module'
 import { localAuthnModule } from './authentication/local-authn/local-authn-module'
 import { otpModule } from './authentication/otp/otp-module'
 import { chatModule } from './chat/chat.module'
@@ -168,6 +169,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(localAuthnModule)
     await app.register(ldapAuthnModule)
     await app.register(ldapConfigModule)
+    await app.register(ldapReconcileModule)
     await app.register(alertsModule)
     await app.register(apiKeyModule)
     await app.register(projectMemberModule)

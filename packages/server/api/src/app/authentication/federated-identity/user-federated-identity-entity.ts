@@ -30,6 +30,22 @@ export const UserFederatedIdentityEntity = new EntitySchema<UserFederatedIdentit
             type: String,
             nullable: false,
         },
+        // Set only by the reconcile job when it deactivates this user because the directory
+        // account is gone or disabled; cleared when reconcile reactivates them. Never set by a
+        // sign-in, and never by an admin's own deactivation — reconcile reads it back to decide
+        // whether *it* may reactivate the user, so a manual admin deactivation always sticks.
+        directoryDisabledAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
+        // Stamped every time reconcile actually resolves this identity's directory state within
+        // its per-platform time budget. `listByPlatformAndProvider` reads this back (oldest/
+        // never-reconciled first, `NULLS FIRST`) so the starting point rotates across ticks
+        // instead of a slow/huge directory always starving the same prefix of users.
+        lastReconciledAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
     },
     indices: [
         {
@@ -41,6 +57,10 @@ export const UserFederatedIdentityEntity = new EntitySchema<UserFederatedIdentit
             name: 'idx_user_federated_identity_platform_user_provider',
             columns: ['platformId', 'userId', 'provider'],
             unique: true,
+        },
+        {
+            name: 'idx_user_federated_identity_platform_provider_last_reconciled',
+            columns: ['platformId', 'provider', 'lastReconciledAt'],
         },
     ],
     relations: {

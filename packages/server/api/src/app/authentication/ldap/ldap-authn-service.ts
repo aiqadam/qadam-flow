@@ -25,6 +25,7 @@ import { userIdentityService } from '../user-identity/user-identity-service'
 import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapClient } from './ldap-client'
 import { ldapConfigService, ResolvedLdapConfig } from './ldap-config-service'
+import { ldapGroupMappingService } from './ldap-group-mapping-service'
 import { LdapStageError } from './ldap-stage-error'
 import { ldapUsernameUtils } from './ldap-username'
 
@@ -51,7 +52,7 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
             throw new QadamFlowError({ code: ErrorCode.LDAP_DIRECTORY_UNREACHABLE, params: {} })
         }
 
-        const { entry, subject } = await lookupDirectoryUser({ resolved, username, password, log })
+        const { entry, subject, memberGroupDns } = await lookupDirectoryUser({ resolved, username, password, log })
         const email = ldapAttributeUtils.readStringAttribute({ entry, name: resolved.config.attributeMap.email })
         if (isNil(email) || email.length === 0) {
             throw new QadamFlowError({
@@ -65,6 +66,25 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
         const user = await resolveUser({ platformId, config: resolved.config, subject, email, firstName, lastName, log })
         if (user.status === UserStatus.INACTIVE) {
             throw new QadamFlowError({ code: ErrorCode.USER_IS_INACTIVE, params: { email } })
+        }
+
+        // Applied on every successful sign-in, after the user is guaranteed to exist (JIT or
+        // otherwise) — never blocks the sign-in itself: a mapping problem here is a configuration
+        // issue for an admin to fix, not a reason to refuse a directory account its own login.
+        // `memberGroupDns === null` means group resolution itself already failed inside
+        // `lookupDirectoryUser` (logged there) — skip applying the mapping entirely rather than
+        // calling it with an empty group list, which would read as "this user is in no groups" and
+        // strip every directory-managed project membership on a merely transient search error.
+        if (!isNil(memberGroupDns)) {
+            const { error: mappingError } = await tryCatch(() => ldapGroupMappingService(log).applyMapping({
+                platformId,
+                userId: user.id,
+                config: resolved.config,
+                memberGroupDns,
+            }))
+            if (!isNil(mappingError)) {
+                log.error({ err: mappingError, platformId, userId: user.id }, '[ldapAuthnService] Failed to apply LDAP group mapping on sign-in')
+            }
         }
 
         log.info({ platformId, userId: user.id }, 'User signed in via LDAP')
@@ -82,14 +102,14 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
 // `ldapClient`) or, once the subject attribute is checked, a plain misconfiguration signal — both
 // are translated to one of the four public sign-in error codes by `mapToSignInError`, never leaked
 // as their own stage-specific detail (that detail is what the admin-only `/test` endpoint is for).
-async function lookupDirectoryUser({ resolved, username, password, log }: LookupDirectoryUserParams): Promise<{ entry: Entry, subject: string }> {
+async function lookupDirectoryUser({ resolved, username, password, log }: LookupDirectoryUserParams): Promise<{ entry: Entry, subject: string, memberGroupDns: string[] | null }> {
     const { config, bindPassword, connectionConfig } = resolved
     try {
         // The whole connect -> service bind -> search -> unbind sequence runs inside one
         // connection slot, held for its entire lifetime (M1) — the concurrency cap this slot
         // enforces is otherwise only a bound on simultaneous *connects*, not on how many
         // directory connections are actually open at once.
-        const { entry, subject } = await ldapClient.withConnectionSlot(async () => {
+        const { entry, subject, memberGroupDns } = await ldapClient.withConnectionSlot(async () => {
             const client = await ldapClient.connect({ config: connectionConfig })
             try {
                 await ldapClient.serviceBind({ client, bindDn: config.bindDn, bindPassword, tlsMode: config.tlsMode })
@@ -110,14 +130,25 @@ async function lookupDirectoryUser({ resolved, username, password, log }: Lookup
                     log.error({ attribute: config.attributeMap.subject }, '[ldapAuthnService] Subject attribute missing or unreadable on the matched directory entry')
                     throw new LdapStageError({ stage: LdapTestStage.SEARCH, message: 'The configured subject attribute is missing on the matched entry' })
                 }
-                return { entry, subject }
+                // Read on the same connection, before the service-bind connection is unbound — a
+                // nested-group search (when configured) needs its own service-bound client, not the
+                // user's own credentials. Deliberately its own try/catch, separate from the block
+                // above: a broken group search (a bad `groupSearchFilter`, a directory that
+                // temporarily can't answer it) must not fail the *sign-in* itself — `null` tells
+                // the caller to skip applying the mapping this time rather than stripping
+                // memberships over what is likely a transient or config error.
+                const { data: memberGroupDns, error: groupError } = await tryCatch(() => ldapClient.resolveMemberGroupDns({ client, entry, config, tlsMode: config.tlsMode }))
+                if (!isNil(groupError)) {
+                    log.warn({ err: groupError, bindDn: config.bindDn }, '[ldapAuthnService] Group resolution failed; the sign-in proceeds without applying the LDAP group mapping this time')
+                }
+                return { entry, subject, memberGroupDns: isNil(groupError) ? memberGroupDns : null }
             }
             finally {
                 await client.unbind().catch(() => undefined)
             }
         })
         await ldapClient.bindAsUser({ config: connectionConfig, userDn: entry.dn, password })
-        return { entry, subject }
+        return { entry, subject, memberGroupDns }
     }
     catch (error) {
         // Round 3: not just "no matching entry" (`notFound`) — a matched entry with a missing or

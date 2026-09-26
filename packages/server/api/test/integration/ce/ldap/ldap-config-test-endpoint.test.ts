@@ -1,4 +1,4 @@
-import { LdapTestStage } from '@aiqadam/shared'
+import { LdapTestStage, PlatformRole } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +13,7 @@ const connect = vi.fn()
 const serviceBind = vi.fn()
 const searchForUser = vi.fn()
 const bindAsUser = vi.fn()
+const resolveMemberGroupDns = vi.fn()
 
 vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
     ldapClient: {
@@ -21,6 +22,7 @@ vi.mock('../../../../src/app/authentication/ldap/ldap-client', () => ({
         searchForUser: (...args: unknown[]) => searchForUser(...args),
         bindAsUser: (...args: unknown[]) => bindAsUser(...args),
         withConnectionSlot: (fn: () => unknown) => fn(),
+        resolveMemberGroupDns: (...args: unknown[]) => resolveMemberGroupDns(...args),
     },
 }))
 
@@ -42,13 +44,14 @@ beforeEach(async () => {
     serviceBind.mockReset().mockResolvedValue(undefined)
     searchForUser.mockReset()
     bindAsUser.mockReset()
+    resolveMemberGroupDns.mockReset().mockResolvedValue([])
 })
 
 afterEach(() => {
     vi.clearAllMocks()
 })
 
-async function saveConfig(): Promise<void> {
+async function saveConfig(overrides: Record<string, unknown> = {}): Promise<void> {
     const response = await ctx.post('/v1/platform-ldap-configs', {
         url: 'ldaps://ldap.example.com:636',
         tlsMode: 'ldaps',
@@ -67,6 +70,7 @@ async function saveConfig(): Promise<void> {
         linkExistingByEmail: false,
         sessionTtlSeconds: 43200,
         enabled: true,
+        ...overrides,
     })
     if (response.statusCode !== StatusCodes.OK) {
         throw new Error(`upsert failed while preparing the test fixture: ${response.statusCode} ${response.body}`)
@@ -130,5 +134,63 @@ describe('POST /v1/platform-ldap-configs/test', () => {
         expect(body.success).toBe(true)
         expect(body.stage).toBe(LdapTestStage.SUCCESS)
         expect(bindAsUser).toHaveBeenCalledTimes(1)
+    })
+
+    // `/test` exercises the group search as its own reported stage, but only when the platform
+    // actually has group mappings configured.
+    describe('group-search stage (exercised only when groupMappings is non-empty)', () => {
+        it('never calls resolveMemberGroupDns when the platform has no group mappings', async () => {
+            await saveConfig()
+            searchForUser.mockResolvedValue({
+                dn: 'uid=jdoe,dc=example,dc=com',
+                entryUUID: '11111111-1111-1111-1111-111111111111',
+                mail: 'jdoe@example.com',
+            })
+            bindAsUser.mockResolvedValue(undefined)
+
+            const response = await ctx.post('/v1/platform-ldap-configs/test', { username: 'jdoe', password: 'correct-password' })
+
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            expect(response.json().stage).toBe(LdapTestStage.SUCCESS)
+            expect(resolveMemberGroupDns).not.toHaveBeenCalled()
+        })
+
+        it('reports its own GROUP_SEARCH-stage failure, not SUCCESS, when group resolution fails and mappings exist', async () => {
+            await saveConfig({
+                groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+            })
+            searchForUser.mockResolvedValue({
+                dn: 'uid=jdoe,dc=example,dc=com',
+                entryUUID: '11111111-1111-1111-1111-111111111111',
+                mail: 'jdoe@example.com',
+            })
+            resolveMemberGroupDns.mockRejectedValue(new Error('simulated nested-group search failure'))
+
+            const response = await ctx.post('/v1/platform-ldap-configs/test', { username: 'jdoe', password: 'correct-password' })
+
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            const body = response.json()
+            expect(body.success).toBe(false)
+            expect(body.stage).toBe(LdapTestStage.GROUP_SEARCH)
+            expect(bindAsUser).not.toHaveBeenCalled()
+        })
+
+        it('calls resolveMemberGroupDns and still reports SUCCESS when group mappings exist and resolution succeeds', async () => {
+            await saveConfig({
+                groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+            })
+            searchForUser.mockResolvedValue({
+                dn: 'uid=jdoe,dc=example,dc=com',
+                entryUUID: '11111111-1111-1111-1111-111111111111',
+                mail: 'jdoe@example.com',
+            })
+            bindAsUser.mockResolvedValue(undefined)
+
+            const response = await ctx.post('/v1/platform-ldap-configs/test', { username: 'jdoe', password: 'correct-password' })
+
+            expect(response.statusCode).toBe(StatusCodes.OK)
+            expect(response.json().stage).toBe(LdapTestStage.SUCCESS)
+            expect(resolveMemberGroupDns).toHaveBeenCalledTimes(1)
+        })
     })
 })

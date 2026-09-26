@@ -8,12 +8,22 @@ export enum DefaultProjectRole {
     VIEWER = 'Viewer',
 }
 
+// Distinguishes a membership an admin added by hand from one an LDAP group mapping created, so
+// reconcile (`.agents/features/ldap.md` Phase 2) knows which rows it may update or remove — a
+// manually-added membership must never be touched by the directory, even when it also happens to
+// match a group mapping.
+export enum ProjectMemberManagedBy {
+    MANUAL = 'MANUAL',
+    LDAP = 'LDAP',
+}
+
 export const ProjectMemberSchema = z.object({
     ...BaseModelSchema,
     userId: ApId,
     projectId: ApId,
     projectRoleId: ApId,
     platformId: ApId,
+    managedBy: z.enum(ProjectMemberManagedBy),
 })
 
 export type ProjectMember = z.infer<typeof ProjectMemberSchema>

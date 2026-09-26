@@ -209,6 +209,14 @@ const systemPropValidators: {
     // LDAP directory host guard — separate from AP_SSRF_ALLOW_LIST so approving the directory
     // does not also open its subnet to every outbound-HTTP qadam
     [AppSystemProp.LDAP_ALLOW_LIST]: stringValidator,
+    // LDAP reconcile (Phase 2)
+    [AppSystemProp.LDAP_RECONCILE_ENABLED]: booleanValidator,
+    [AppSystemProp.LDAP_RECONCILE_CRON]: stringValidator,
+    [AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT]: (value: string) => {
+        const percent = Number(value)
+        return Number.isInteger(percent) && percent >= 1 && percent <= 100 ? true : 'Value must be an integer between 1 and 100'
+    },
+    [AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS]: positiveIntegerValidator,
 
     // Embed
     [AppSystemProp.ALLOWED_EMBED_ORIGINS]: stringValidator,

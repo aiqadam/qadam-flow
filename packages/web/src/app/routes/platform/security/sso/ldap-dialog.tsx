@@ -136,10 +136,19 @@ const LdapConfigForm = ({
     onError: (error) => {
       form.setError('root.serverError', {
         type: 'manual',
-        message: apiErrorUtils.extractServerMessage({
-          error,
-          fallback: t("Couldn't save the LDAP configuration"),
-        }),
+        // This root-level error is rendered manually below, outside any `<FormField>`, so
+        // `FormMessage`'s own `useFormField()`-driven translation never runs for it — that branch
+        // only fires when `error` comes from field-state context, and falls straight through to
+        // raw `children` otherwise. A server validation message (e.g. `invalidLdapGroupDnEncoding`)
+        // is an i18n key, not display text, so it must be translated here, at the point the message
+        // is produced. `t()` on the `fallback` string (already `t()`-wrapped English prose) is a
+        // safe no-op: i18next returns an unrecognized key unchanged, which is exactly that prose.
+        message: t(
+          apiErrorUtils.extractServerMessage({
+            error,
+            fallback: t("Couldn't save the LDAP configuration"),
+          }),
+        ),
       });
     },
   });

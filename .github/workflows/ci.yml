@@ -550,13 +550,14 @@ jobs:
       # back onto every docs PR.
       - name: Run CE integration tests
         env:
-          # `AP_`-prefixed so turbo's `globalPassThroughEnv` (`AP_*`/`QF_*`) actually forwards it to
+          # `QF_`-prefixed so turbo's `globalPassThroughEnv` (`AP_*`/`QF_*`) actually forwards it to
           # the spawned vitest process — a bare `RUN_LDAP_OPENLDAP_TESTS` was silently stripped by
           # turbo's strict env mode, which made every one of this suite's 8 cases skip in CI without
           # ever failing the job. `ldap-openldap.test.ts` itself now fails loudly (rather than
           # skipping) whenever `CI=true` and this flag isn't `'true'`, so a regression here is caught
-          # by the suite itself, not only by this comment.
-          AP_RUN_LDAP_OPENLDAP_TESTS: 'true'
+          # by the suite itself, not only by this comment. `QF_` is the canonical (and only) name —
+          # the `AP_RUN_LDAP_OPENLDAP_TESTS` fallback was dropped in #339 Phase 2 round 3.
+          QF_RUN_LDAP_OPENLDAP_TESTS: 'true'
         run: npx turbo run check-migrations test-ce --filter=api --concurrency=1
 
       - name: Stop OpenLDAP test directory (M5)

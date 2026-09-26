@@ -5,14 +5,19 @@ import {
     isNil,
     LdapAttributeMap,
     LdapConfig,
+    LdapGroupMapping,
     LdapTestRequest,
     LdapTestResponse,
     LdapTestStage,
     PlatformId,
     PlatformLdapConfig,
+    PlatformRole,
+    ProjectType,
     QadamFlowError,
     spreadIfDefined,
+    tryCatch,
     tryCatchSync,
+    unique,
     UpsertLdapConfigRequest,
     UserId,
 } from '@aiqadam/shared'
@@ -21,9 +26,11 @@ import { Entry } from 'ldapts'
 import { repoFactory } from '../../core/db/repo-factory'
 import { EncryptedObject, encryptUtils } from '../../helper/encryption'
 import { platformService } from '../../platform/platform.service'
+import { projectService } from '../../project/project-service'
 import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapClient, ResolvedLdapConnectionConfig } from './ldap-client'
 import { PlatformLdapConfigEntity, PlatformLdapConfigSchema } from './ldap-config-entity'
+import { ldapGroupMappingUtils } from './ldap-group-mapping'
 import { LdapStageError } from './ldap-stage-error'
 import { ldapUsernameUtils } from './ldap-username'
 
@@ -34,39 +41,63 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         const row = await platformLdapConfigRepo().findOneBy({ platformId })
         return isNil(row) ? null : toResponse(row)
     },
+    // Reconcile's own entry point (Phase 2): a light query for *which* platforms it has work to do
+    // for, so the per-platform secret decryption (`getResolvedForSignIn`) only ever happens once
+    // reconcile is actually about to process that one platform, inside its own `distributedLock`.
+    async listEnabledPlatformIds(): Promise<PlatformId[]> {
+        const rows = await platformLdapConfigRepo()
+            .createQueryBuilder('c')
+            .where('c.config->>\'enabled\' = \'true\'')
+            .select('c."platformId"', 'platformId')
+            .getRawMany<{ platformId: PlatformId }>()
+        return rows.map((row) => row.platformId)
+    },
     // No network I/O happens here — deliberately. The directory is only ever reached from the
     // sign-in path and from the explicit `/test` endpoint below, never as a side effect of saving
     // a config an admin has not yet asked to try.
     async upsert({ platformId, callingUserId, request }: UpsertParams): Promise<PlatformLdapConfig> {
         const existing = await platformLdapConfigRepo().findOneBy({ platformId })
+        // A row saved before Phase 2 has no `groupMappings`/`nestedGroups`/`groupSearchBaseDn`/
+        // `groupSearchFilter` at all in its stored JSON — `LdapConfig.parse` backfills each with
+        // its schema default, the same way the *merged* `config` below already relies on `.parse`
+        // to fill in anything neither side supplied. Every other raw read of `existing.config` in
+        // this function goes through this parsed copy for the same reason.
+        const existingConfig = isNil(existing) ? undefined : resolveStoredConfig(existing)
         // An omitted field on update keeps the stored value; `LdapConfig.parse` both fills in the
         // defaults a brand-new config needs and re-validates the merged result (e.g. the
         // `{username}`-placeholder and URL/`tlsMode` checks), so a partial update can never leave
         // the row in a state that would not have passed validation on its own.
-        const config = LdapConfig.parse({ ...existing?.config, ...request })
+        const config = LdapConfig.parse({ ...existingConfig, ...request })
+        await assertGroupMappingProjectsBelongToPlatform({ platformId, groupMappings: config.groupMappings, log })
+        assertGroupMappingDnsAreComparable(config.groupMappings)
 
         // B2 (owner/admin takeover): `linkExistingByEmail: true` hands every future directory
         // entry that matches an existing local email the ability to sign in as that account.
-        // Restricting who may turn it on to the platform owner is the other half of the
-        // guarantee `assertIdentityIsNotPrivilegedElsewhere` enforces at sign-in time (which
-        // refuses to link the owner/any admin no matter who set this flag) — without this check
-        // a non-owner admin could still use the flag against every *non*-admin local account.
+        // Restricting who may turn it on — and, by the same reasoning, off — to the platform
+        // owner is the other half of the guarantee `assertIdentityIsNotPrivilegedElsewhere`
+        // enforces at sign-in time. Phase 2 extends the same gate to a group mapping granting
+        // platform ADMIN, which is exactly as powerful: any directory user in that group becomes
+        // a platform admin on their next sign-in or the next reconcile pass.
         //
-        // The exact rule (round 2 of review): gated on the *merged* config's `linkExistingByEmail`,
-        // not on whether `request.linkExistingByEmail === true` was explicitly sent this call —
-        // checking only the request field let a non-owner admin who never touches
-        // `linkExistingByEmail` at all (it stays `true` from a previous, legitimately owner-made
-        // change) freely repoint `url`/`bindDn`/`attributeMap.email`/`userFilter` etc. with no
-        // owner check at all, since the field-level check never fired. A caller may still resend
-        // the exact same config unchanged (a no-op) without being the owner — only an actual change
-        // while linking-by-email is (or becomes) active requires it.
+        // Gated on *either* the existing stored config or the merged one being sensitive, not the
+        // merged one alone — gating on the merged config only would let a non-owner admin submit a
+        // request that both turns `linkExistingByEmail` off (or drops the ADMIN mapping) *and*
+        // repoints `url`/`bindDn`/other fields in the same call, since the *merged* result no
+        // longer looks sensitive and the gate never fires, even though the request changed a
+        // config that, a moment before, was. The rule this repo takes throughout: a non-owner may
+        // never touch a config that is, or was, in this sensitive state, full stop — including
+        // turning the sensitive flag off by itself, with no other field touched. A caller may
+        // still resend the exact same config unchanged (a genuine no-op, checked by
+        // `configHasChanged` below) without being the owner.
         //
-        // Round 3: `configHasChanged` only ever compares `LdapConfig` itself — `bindPassword` and
+        // `configHasChanged` only ever compares `LdapConfig` itself — `bindPassword` and
         // `caCertificate` are stored, and touched, entirely outside it, so a non-owner could swap
-        // either one while linking-by-email stayed on without the gate ever seeing a change. Both
+        // either one while the config stayed sensitive without the gate ever seeing a change. Both
         // are checked here explicitly, alongside `configHasChanged`, for exactly that reason.
         const secretsTouched = request.caCertificate !== undefined || !isNil(request.bindPassword)
-        if (config.linkExistingByEmail === true && (configHasChanged({ existing: existing?.config, config }) || secretsTouched)) {
+        const wasSensitive = !isNil(existingConfig) && (existingConfig.linkExistingByEmail === true || grantsPlatformAdminViaMapping(existingConfig.groupMappings))
+        const isSensitive = config.linkExistingByEmail === true || grantsPlatformAdminViaMapping(config.groupMappings)
+        if ((wasSensitive || isSensitive) && (configHasChanged({ existing: existingConfig, config }) || secretsTouched)) {
             await assertCallerIsPlatformOwner({ platformId, callingUserId, log })
         }
 
@@ -76,7 +107,7 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // verified, must force the caller to re-supply the password rather than silently carry the
         // old one forward onto the new destination.
         const caCertificateTouched = request.caCertificate !== undefined
-        if (!isNil(existing) && isNil(request.bindPassword) && (connectionSensitiveFieldsChanged({ existing: existing.config, config }) || caCertificateTouched)) {
+        if (!isNil(existingConfig) && isNil(request.bindPassword) && (connectionSensitiveFieldsChanged({ existing: existingConfig, config }) || caCertificateTouched)) {
             throw new QadamFlowError({
                 code: ErrorCode.VALIDATION,
                 params: { message: 'The bind password must be re-supplied when the URL, bind DN, TLS mode, TLS verification or CA certificate changes' },
@@ -108,7 +139,20 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         log.info({ platformId }, 'Saved LDAP configuration')
         return toResponse(saved)
     },
-    async delete({ platformId }: PlatformScopedParams): Promise<void> {
+    // A non-owner admin must not be able to delete a sensitive config (`linkExistingByEmail: true`
+    // or a group mapping granting ADMIN) and immediately re-create an unchanged one to dodge
+    // `upsert`'s own owner gate — deleting is itself the sensitive operation here, since it
+    // destroys the very row that gate was protecting. The same "existing OR merged" reasoning
+    // `upsert` applies also applies to removing the row outright: there is no "merged" config on a
+    // delete, only the existing one, so this checks that alone.
+    async delete({ platformId, callingUserId }: DeleteParams): Promise<void> {
+        const existing = await platformLdapConfigRepo().findOneBy({ platformId })
+        if (!isNil(existing)) {
+            const existingConfig = resolveStoredConfig(existing)
+            if (existingConfig.linkExistingByEmail === true || grantsPlatformAdminViaMapping(existingConfig.groupMappings)) {
+                await assertCallerIsPlatformOwner({ platformId, callingUserId, log })
+            }
+        }
         await platformLdapConfigRepo().delete({ platformId })
     },
     // The only two callers that ever need the decrypted bind password / CA certificate: this
@@ -156,6 +200,21 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
                         tlsMode: config.tlsMode,
                     })
                     assertResolvableAttributes({ entry, attributeMap: config.attributeMap })
+                    // Exercised only when the platform actually has group mappings configured — an
+                    // admin testing plain sign-in on a platform with no mappings at all should not
+                    // pay for (or be told about) a search step that has nothing to resolve. A
+                    // failure here is its own stage, distinct from `SEARCH`, so a broken
+                    // `groupSearchFilter` is reported for what it is rather than looking like the
+                    // user search itself failed.
+                    if (config.groupMappings.length > 0) {
+                        const { error: groupError } = await tryCatch(() => ldapClient.resolveMemberGroupDns({ client, entry, config, tlsMode: config.tlsMode }))
+                        if (!isNil(groupError)) {
+                            throw new LdapStageError({
+                                stage: LdapTestStage.GROUP_SEARCH,
+                                message: `Group resolution failed: ${groupError instanceof Error ? groupError.message : 'unknown error'}`,
+                            })
+                        }
+                    }
                     return { kind: 'userBindNeeded', userDn: entry.dn, password: request.password }
                 }
                 finally {
@@ -202,18 +261,33 @@ function assertResolvableAttributes({ entry, attributeMap }: AssertResolvableAtt
 }
 
 async function decryptForConnection(row: PlatformLdapConfigSchema): Promise<ResolvedLdapConfig> {
+    const config = resolveStoredConfig(row)
     const bindPassword = await encryptUtils.decryptString(row.bindPassword)
     const caCertificatePem = isNil(row.caCertificate) ? undefined : await encryptUtils.decryptString(row.caCertificate)
     return {
-        config: row.config,
+        config,
         bindPassword,
         connectionConfig: {
-            url: row.config.url,
-            tlsMode: row.config.tlsMode,
-            tlsVerify: row.config.tlsVerify,
+            url: config.url,
+            tlsMode: config.tlsMode,
+            tlsVerify: config.tlsVerify,
             caCertificatePem,
         },
     }
+}
+
+// A config row saved before Phase 2 shipped has no `groupMappings`/`nestedGroups`/
+// `groupSearchBaseDn`/`groupSearchFilter` in its stored JSON at all — every reader of a *raw*
+// `row.config` (this file's own `existing.config` checks, `decryptForConnection`, `toResponse`)
+// must go through `LdapConfig.parse` first, the same way `upsert`'s own merged `config` already
+// does, so a Phase-1-shaped row backfills each new field with its schema default instead of the
+// reader crashing on a missing one (e.g. `undefined.some(...)`).
+function resolveStoredConfig(row: PlatformLdapConfigSchema): LdapConfig {
+    return LdapConfig.parse(row.config)
+}
+
+function grantsPlatformAdminViaMapping(groupMappings: LdapGroupMapping[]): boolean {
+    return groupMappings.some((mapping) => mapping.platformRole === PlatformRole.ADMIN)
 }
 
 async function resolveCaCertificate({ request, existing }: ResolveCaCertificateParams): Promise<EncryptedObject | null> {
@@ -242,8 +316,56 @@ async function assertCallerIsPlatformOwner({ platformId, callingUserId, log }: A
     if (platform.ownerId !== callingUserId) {
         throw new QadamFlowError({
             code: ErrorCode.AUTHORIZATION,
-            params: { message: 'Only the platform owner may change this configuration while linking existing local accounts by email is enabled' },
+            params: { message: 'Only the platform owner may change this configuration while linking existing local accounts by email, or a group mapping granting platform ADMIN, is enabled' },
         })
+    }
+}
+
+// Save-time half of the "every projectId validated to belong to the configuring platform" rule —
+// the other half is `ldapGroupMappingService`'s own re-check at apply time, since a project can be
+// deleted (or its type changed) after the mapping is saved. A stale or ineligible reference here
+// is refused outright, not silently dropped, so an admin who typos, reuses a projectId from
+// another platform, or names a PERSONAL project gets an error instead of a mapping that quietly
+// never grants anything. PERSONAL projects are refused: they are one user's own workspace,
+// created as an onboarding side effect, not a workspace a directory group is meant to grant shared
+// access to.
+async function assertGroupMappingProjectsBelongToPlatform({ platformId, groupMappings, log }: AssertGroupMappingProjectsBelongToPlatformParams): Promise<void> {
+    const projectIds = unique(groupMappings.flatMap((mapping) => mapping.projects.map((project) => project.projectId)))
+    for (const projectId of projectIds) {
+        const project = await projectService(log).getOne(projectId)
+        if (isNil(project) || project.platformId !== platformId) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Group mapping project "${projectId}" does not belong to this platform` },
+            })
+        }
+        if (project.type !== ProjectType.TEAM) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Group mapping project "${projectId}" must be a TEAM project` },
+            })
+        }
+    }
+}
+
+// A `groupDn` that `normalizeGroupDn` can never actually parse (an attribute-value assertion with
+// no `=`, or a hex escape that decodes to invalid UTF-8 — `normalizeGroupDn` returns `null` for
+// either) would otherwise sit in the config forever, silently granting nothing: `resolveGrants`
+// treats a `null`-normalizing mapping as never matching any reported group, by design, so there is
+// no later point where this mistake becomes visible on its own. Refusing it at save time, the one
+// moment an admin can still see and fix their own typo, is the only point a stored mapping like
+// this is ever caught at all. Uses the i18n-key message convention (`params.message` reaches the
+// client as a key an i18n-aware form can translate), matching every other zod-adjacent validation
+// message this schema already carries — not the ad hoc plain-English messages elsewhere in this
+// function, which predate that convention.
+function assertGroupMappingDnsAreComparable(groupMappings: LdapGroupMapping[]): void {
+    for (const mapping of groupMappings) {
+        if (ldapGroupMappingUtils.normalizeGroupDn(mapping.groupDn) === null) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: 'invalidLdapGroupDnEncoding' },
+            })
+        }
     }
 }
 
@@ -279,7 +401,7 @@ function toResponse(row: PlatformLdapConfigSchema): PlatformLdapConfig {
         created: row.created,
         updated: row.updated,
         platformId: row.platformId,
-        config: row.config,
+        config: resolveStoredConfig(row),
         hasBindPassword: !isNil(row.bindPassword),
         hasCaCertificate: !isNil(row.caCertificate),
     }
@@ -295,9 +417,20 @@ type UpsertParams = {
     request: UpsertLdapConfigRequest
 }
 
+type DeleteParams = {
+    platformId: PlatformId
+    callingUserId: UserId
+}
+
 type AssertCallerIsPlatformOwnerParams = {
     platformId: PlatformId
     callingUserId: UserId
+    log: FastifyBaseLogger
+}
+
+type AssertGroupMappingProjectsBelongToPlatformParams = {
+    platformId: PlatformId
+    groupMappings: LdapGroupMapping[]
     log: FastifyBaseLogger
 }
 

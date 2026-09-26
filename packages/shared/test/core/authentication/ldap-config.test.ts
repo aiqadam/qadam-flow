@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { LdapConfig, LdapTlsMode, MAX_LDAP_SESSION_TTL_SECONDS, MIN_LDAP_SESSION_TTL_SECONDS, UpsertLdapConfigRequest } from '../../../src'
+import {
+    LdapConfig,
+    LdapTlsMode,
+    MAX_LDAP_GROUP_DN_LENGTH,
+    MAX_LDAP_GROUP_MAPPING_PROJECTS,
+    MAX_LDAP_GROUP_MAPPINGS,
+    MAX_LDAP_SESSION_TTL_SECONDS,
+    MIN_LDAP_SESSION_TTL_SECONDS,
+    UpsertLdapConfigRequest,
+    UpsertLdapGroupMapping,
+} from '../../../src'
 
 const validAttributeMap = {
     subject: 'objectGUID',
@@ -104,7 +114,7 @@ describe('LdapConfig', () => {
     })
 })
 
-describe('UpsertLdapConfigRequest — omitted defaulted fields stay undefined (round 2 of #339 review)', () => {
+describe('UpsertLdapConfigRequest — omitted defaulted fields stay undefined', () => {
     // `ldapConfigService.upsert` merges `{ ...existing?.config, ...request }` on the promise that
     // an omitted field in `request` keeps the stored value. That promise only holds if `.parse()`
     // actually leaves an omitted field as `undefined` — in this zod version, `.optional()` layered
@@ -143,5 +153,51 @@ describe('UpsertLdapConfigRequest — omitted defaulted fields stay undefined (r
     it('still enforces the sessionTtlSeconds bounds when it is explicitly sent', () => {
         const result = UpsertLdapConfigRequest.safeParse(baseConfig({ sessionTtlSeconds: MIN_LDAP_SESSION_TTL_SECONDS - 1 }))
         expect(result.success).toBe(false)
+    })
+})
+
+describe('UpsertLdapGroupMapping', () => {
+    it('rejects a mapping with no projects field at all — the request must always supply it', () => {
+        const result = UpsertLdapGroupMapping.safeParse({ groupDn: 'cn=admins,dc=example,dc=com', platformRole: 'ADMIN' })
+        expect(result.success).toBe(false)
+    })
+
+    it('accepts a mapping with an explicit, empty projects array', () => {
+        const result = UpsertLdapGroupMapping.safeParse({ groupDn: 'cn=admins,dc=example,dc=com', projects: [] })
+        expect(result.success).toBe(true)
+    })
+
+    it('rejects a groupDn over the length cap', () => {
+        const result = UpsertLdapGroupMapping.safeParse({ groupDn: 'a'.repeat(MAX_LDAP_GROUP_DN_LENGTH + 1), projects: [] })
+        expect(result.success).toBe(false)
+        if (!result.success) {
+            expect(result.error.issues[0].message).toBe('ldapGroupDnTooLong')
+        }
+    })
+
+    it('rejects more projects than the per-mapping cap', () => {
+        const projects = Array.from({ length: MAX_LDAP_GROUP_MAPPING_PROJECTS + 1 }, (_, i) => ({ projectId: `proj_${i}`, role: 'Viewer' as const }))
+        const result = UpsertLdapGroupMapping.safeParse({ groupDn: 'cn=admins,dc=example,dc=com', projects })
+        expect(result.success).toBe(false)
+        if (!result.success) {
+            expect(result.error.issues[0].message).toBe('tooManyLdapGroupMappingProjects')
+        }
+    })
+})
+
+describe('LdapConfig.groupMappings size cap', () => {
+    it('rejects more group mappings than the platform-wide cap', () => {
+        const groupMappings = Array.from({ length: MAX_LDAP_GROUP_MAPPINGS + 1 }, (_, i) => ({ groupDn: `cn=group${i},dc=example,dc=com`, projects: [] }))
+        const result = LdapConfig.safeParse(baseConfig({ groupMappings }))
+        expect(result.success).toBe(false)
+        if (!result.success) {
+            expect(result.error.issues[0].message).toBe('tooManyLdapGroupMappings')
+        }
+    })
+
+    it('accepts exactly the cap', () => {
+        const groupMappings = Array.from({ length: MAX_LDAP_GROUP_MAPPINGS }, (_, i) => ({ groupDn: `cn=group${i},dc=example,dc=com`, projects: [] }))
+        const result = LdapConfig.safeParse(baseConfig({ groupMappings }))
+        expect(result.success).toBe(true)
     })
 })

@@ -24,7 +24,7 @@ export const ldapConfigController: FastifyPluginAsyncZod = async (app) => {
 
     app.delete('/', DeleteLdapConfig, async (request, reply) => {
         const platformId = request.principal.platform.id
-        await ldapConfigService(app.log).delete({ platformId })
+        await ldapConfigService(app.log).delete({ platformId, callingUserId: request.principal.id })
         return reply.status(StatusCodes.NO_CONTENT).send()
     })
 

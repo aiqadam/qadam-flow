@@ -38,9 +38,11 @@ import {
     Platform,
     PlatformPlan,
     PlatformRole,
+    PlatformRoleManagedBy,
     Project,
     ProjectIcon,
     ProjectMember,
+    ProjectMemberManagedBy,
     ProjectPlan,
     ProjectRelease,
     ProjectReleaseType,
@@ -101,6 +103,7 @@ export const createMockUser = (user?: Partial<User>): User => {
         updated: user?.updated ?? faker.date.recent().toISOString(),
         status: user?.status ?? UserStatus.ACTIVE,
         platformRole: user?.platformRole ?? faker.helpers.enumValue(PlatformRole),
+        platformRoleManagedBy: user?.platformRoleManagedBy ?? PlatformRoleManagedBy.MANUAL,
         externalId: user?.externalId,
         identityId: user?.identityId ?? apId(),
         platformId: user?.platformId ?? null,
@@ -249,6 +252,7 @@ export const createMockProjectMember = (
         projectRoleId: projectMember.projectRoleId,
         userId: projectMember?.userId,
         projectId: projectMember?.projectId ?? apId(),
+        managedBy: projectMember?.managedBy ?? ProjectMemberManagedBy.MANUAL,
     }
 }
 

@@ -232,6 +232,7 @@ function mapToUserWithMetaInformation(owner: (User & { identity?: UserIdentity }
         lastName: identity.lastName,
         platformId: owner.platformId,
         platformRole: owner.platformRole,
+        platformRoleManagedBy: owner.platformRoleManagedBy,
         status: owner.status,
         externalId: owner.externalId,
         created: owner.created,

@@ -1,10 +1,55 @@
 import { z } from 'zod'
 import { formErrors } from '../../../form-errors'
+import { DefaultProjectRole } from '../../../management/project/project-member'
 import { BaseModelSchema } from '../../common/base-model'
+import { PlatformRole } from '../../user/user'
 
 export const MIN_LDAP_SESSION_TTL_SECONDS = 3600
 export const MAX_LDAP_SESSION_TTL_SECONDS = 604800
 export const DEFAULT_LDAP_SESSION_TTL_SECONDS = 43200
+
+// AD's "walk the whole nested-group chain" control extension (RFC 4511 §4.1.11 extensible-match,
+// this specific OID is Microsoft's own): `(member:1.2.840.113556.1.4.1941:=<userDn>)` matches an
+// entry that has the user as a direct OR transitive member, which a plain `memberOf` read on the
+// user's own entry cannot express — `memberOf` only ever lists a user's *direct* group membership.
+export const LDAP_MATCHING_RULE_IN_CHAIN_OID = '1.2.840.113556.1.4.1941'
+
+// Every `projectId` here is re-validated against the configuring platform's own projects, both at
+// save time (`ldapConfigService.upsert`) and again at apply time (sign-in / reconcile) — a project
+// can be deleted, or a config row can predate a stricter check, after the mapping was saved.
+export const LdapGroupProjectMapping = z.object({
+    projectId: z.string().min(1, formErrors.required),
+    role: z.enum(DefaultProjectRole),
+})
+export type LdapGroupProjectMapping = z.infer<typeof LdapGroupProjectMapping>
+
+// Caps guard against an admin-authored config becoming an unbounded payload — every mapping is
+// re-walked on every sign-in and every reconcile tick, so `groupMappings`/`projects` sizes feed
+// directly into per-request and per-tick cost. `groupDn` matches the 1024-char cap already used
+// for `username`/`password` below.
+export const MAX_LDAP_GROUP_DN_LENGTH = 1024
+export const MAX_LDAP_GROUP_MAPPINGS = 200
+export const MAX_LDAP_GROUP_MAPPING_PROJECTS = 200
+
+export const LdapGroupMapping = z.object({
+    groupDn: z.string().min(1, 'invalidLdapGroupDn').max(MAX_LDAP_GROUP_DN_LENGTH, 'ldapGroupDnTooLong'),
+    platformRole: z.enum(PlatformRole).optional(),
+    projects: z.array(LdapGroupProjectMapping).max(MAX_LDAP_GROUP_MAPPING_PROJECTS, 'tooManyLdapGroupMappingProjects').default([]),
+})
+export type LdapGroupMapping = z.infer<typeof LdapGroupMapping>
+
+// `projects` has no `.default([])` here, unlike `LdapGroupMapping` — a field carrying `.default(...)`
+// makes `z.input` (what a caller may omit) diverge from `z.output` (what parsing always produces),
+// and nesting that anywhere inside `UpsertLdapConfigRequest` was enough to break `zodResolver`'s
+// `Resolver<T>` typing in `ldap-dialog.tsx` with a "two different types, but they are unrelated"
+// error. Requiring `projects` here keeps this schema's `z.input`/`z.output` identical; the request
+// must always supply it (empty array or not). `LdapConfig.parse` — every actual merge/parse point —
+// still runs the original `LdapGroupMapping` (with its default intact) over the final merged
+// config, so an omitted `projects` still backfills to `[]` there, same as before.
+export const UpsertLdapGroupMapping = LdapGroupMapping.extend({
+    projects: z.array(LdapGroupProjectMapping).max(MAX_LDAP_GROUP_MAPPING_PROJECTS, 'tooManyLdapGroupMappingProjects'),
+})
+export type UpsertLdapGroupMapping = z.infer<typeof UpsertLdapGroupMapping>
 
 export enum LdapTlsMode {
     LDAPS = 'ldaps',
@@ -46,6 +91,19 @@ const ldapConfigShape = {
         .max(MAX_LDAP_SESSION_TTL_SECONDS, 'invalidLdapSessionTtl')
         .default(DEFAULT_LDAP_SESSION_TTL_SECONDS),
     enabled: z.boolean().default(false),
+    // AD's `LDAP_MATCHING_RULE_IN_CHAIN` walk, gated behind its own switch since it costs the
+    // directory an extra, more expensive search per sign-in/reconcile — off leaves `memberOf`
+    // (direct membership only) as the only source of group membership.
+    nestedGroups: z.boolean().default(false),
+    // Both optional and only meaningful when `nestedGroups` is on: absent, group membership is
+    // read from the signed-in entry's own `memberOf` attribute. Present, a nested-group search is
+    // run against this base with this filter instead (or in addition — see ldap.md).
+    groupSearchBaseDn: z.string().min(1, formErrors.required).optional(),
+    groupSearchFilter: z.string().min(1, formErrors.required).optional().refine(
+        (value) => value === undefined || countOccurrences({ value, needle: '{userDn}' }) === 1,
+        'invalidLdapGroupSearchFilter',
+    ),
+    groupMappings: z.array(LdapGroupMapping).max(MAX_LDAP_GROUP_MAPPINGS, 'tooManyLdapGroupMappings').default([]),
 }
 
 // A directory login page cannot be more permissive than the transport it authenticates over —
@@ -60,6 +118,7 @@ export const LdapConfig = z.object(ldapConfigShape).superRefine((config, ctx) =>
             path: ['url'],
         })
     }
+    assertGroupSearchConfigIsPaired(config, ctx)
 })
 export type LdapConfig = z.infer<typeof LdapConfig>
 
@@ -88,6 +147,14 @@ export const UpsertLdapConfigRequest = z.object(ldapConfigShape).partial({
         .max(MAX_LDAP_SESSION_TTL_SECONDS, 'invalidLdapSessionTtl')
         .optional(),
     enabled: z.boolean().optional(),
+    // Same default-defeat footgun as the five booleans above: `nestedGroups`/`groupMappings` both
+    // carry their own `.default(...)` on `ldapConfigShape`, so they need the same plain-`.optional()`
+    // override here to actually parse an omitted field to `undefined` rather than the default.
+    // `groupMappings` additionally swaps its element schema for `UpsertLdapGroupMapping` (see its
+    // own comment) so the request's own inferred type has no default-carrying field anywhere
+    // inside it.
+    nestedGroups: z.boolean().optional(),
+    groupMappings: z.array(UpsertLdapGroupMapping).max(MAX_LDAP_GROUP_MAPPINGS, 'tooManyLdapGroupMappings').optional(),
     // Omitted keeps the value already stored for the platform; present-and-empty is refused
     // (never a way to blank out the bind account) so the only way to clear a credential is
     // deleting the whole config.
@@ -125,6 +192,10 @@ export enum LdapTestStage {
     SERVICE_BIND = 'SERVICE_BIND',
     SEARCH = 'SEARCH',
     USER_BIND = 'USER_BIND',
+    // Phase 2: the group-membership resolution step (`memberOf`, plus the optional nested-group
+    // search), exercised by `/test` only when the platform has `groupMappings` configured — its
+    // own stage so a broken `groupSearchFilter` is reported distinctly from a broken user search.
+    GROUP_SEARCH = 'GROUP_SEARCH',
     SUCCESS = 'SUCCESS',
 }
 
@@ -156,6 +227,22 @@ export function matchesTlsScheme(config: { url: string, tlsMode: LdapTlsMode }):
 
 function countOccurrences({ value, needle }: CountOccurrencesParams): number {
     return value.split(needle).length - 1
+}
+
+// `groupSearchBaseDn` and `groupSearchFilter` are a pair: a base with no filter (or vice versa)
+// cannot be turned into a search, and would otherwise silently fall back to `memberOf`-only
+// resolution — the admin configured a nested-group search and got direct-membership-only instead,
+// with nothing in the response telling them why.
+function assertGroupSearchConfigIsPaired(config: { groupSearchBaseDn?: string, groupSearchFilter?: string }, ctx: z.RefinementCtx): void {
+    const hasBaseDn = config.groupSearchBaseDn !== undefined
+    const hasFilter = config.groupSearchFilter !== undefined
+    if (hasBaseDn !== hasFilter) {
+        ctx.addIssue({
+            code: 'custom',
+            message: 'invalidLdapGroupSearchConfig',
+            path: ['groupSearchFilter'],
+        })
+    }
 }
 
 type CountOccurrencesParams = {

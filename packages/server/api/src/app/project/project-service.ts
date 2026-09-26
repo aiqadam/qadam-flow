@@ -11,6 +11,7 @@ import {
     Project,
     ProjectIcon,
     ProjectId,
+    ProjectMemberManagedBy,
     ProjectRole,
     ProjectType,
     QadamFlowError,
@@ -356,6 +357,19 @@ export const projectService = (log: FastifyBaseLogger) => ({
 
         return normalizedEmails.filter((email) => activeMemberEmails.has(email))
     },
+    // Exposed for the LDAP group-mapping applier (`.agents/features/ldap.md` Phase 2): a platform
+    // may reach its first group-mapping grant before it ever creates a TEAM project (the only
+    // other caller of `ensureDefaultProjectRoles`), so the mapping applier must be able to seed the
+    // three default roles itself rather than assume they already exist.
+    async getOrCreateDefaultProjectRoleId({ platformId, role, entityManager }: GetOrCreateDefaultProjectRoleIdParams): Promise<string> {
+        await ensureDefaultProjectRoles(platformId, entityManager)
+        const projectRole = await projectRoleRepo(entityManager).findOneByOrFail({
+            platformId,
+            name: role,
+            type: RoleType.DEFAULT,
+        })
+        return projectRole.id
+    },
 })
 
 
@@ -492,6 +506,7 @@ async function addCreatorAsProjectAdmin(params: AddCreatorAsProjectAdminParams):
         projectId,
         projectRoleId: adminRole.id,
         platformId,
+        managedBy: ProjectMemberManagedBy.MANUAL,
     }, ['userId', 'projectId'])
 }
 
@@ -733,5 +748,11 @@ type AssertTeamProjectsLimitNotExceededParams = {
 type CountByPlatformIdAndTypeParams = {
     platformId: string
     type: ProjectType
+    entityManager?: EntityManager
+}
+
+type GetOrCreateDefaultProjectRoleIdParams = {
+    platformId: string
+    role: DefaultProjectRole
     entityManager?: EntityManager
 }
