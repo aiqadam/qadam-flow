@@ -14,7 +14,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { internalErrorToast } from '@/components/ui/sonner';
 
 import { useBuilderStateContext } from './builder-hooks';
 import { TextInputWithMentions } from './qadam-properties/text-input-with-mentions';
@@ -53,11 +52,17 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
   );
   const [localeSource, setLocaleSource] = useState(initialLocaleSource ?? '');
   const [isSaving, setIsSaving] = useState(false);
+  // Once a save fails, `flowUpdatesQueue` (promise-queue.ts) is permanently halted for the rest of
+  // this builder session — every later operation (including a retried Save here) is silently
+  // dropped, never resolving or rejecting, so re-enabling Save would just spin forever a second
+  // time. There is no in-app recovery from a halted queue, so this state is sticky for the
+  // dialog's lifetime rather than something a retry can clear.
+  const [hasSaveFailed, setHasSaveFailed] = useState(false);
 
   const isTooLong = localeSource.trim().length > LOCALE_SOURCE_MAX_LENGTH;
 
   const handleSave = () => {
-    if (isTooLong) {
+    if (isTooLong || hasSaveFailed) {
       return;
     }
     setIsSaving(true);
@@ -72,7 +77,7 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
       },
       () => {
         setIsSaving(false);
-        internalErrorToast();
+        setHasSaveFailed(true);
       },
     );
   };
@@ -105,6 +110,13 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
           <AlertDescription>{t('localeSourceTooLong')}</AlertDescription>
         </Alert>
       )}
+      {hasSaveFailed && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {t('This change was not saved. Refresh the page to try again.')}
+          </AlertDescription>
+        </Alert>
+      )}
       <DialogFooter>
         <DialogClose asChild>
           <Button type="button" variant="outline">
@@ -114,7 +126,7 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
         <Button
           type="button"
           loading={isSaving}
-          disabled={isTooLong}
+          disabled={isTooLong || hasSaveFailed}
           onClick={handleSave}
         >
           {t('Save')}

@@ -2067,6 +2067,7 @@
   "invalidLocale": "Til hududi to'g'ri BCP-47 tegi bo'lishi kerak (maksimum 35 belgi)",
   "tooManyTranslationLocales": "Tarjima kaliti eng ko'pi bilan 50 ta lokalga ega bo'lishi mumkin",
   "localeSourceTooLong": "Ushbu oqimning localeSource qiymati juda uzun (maksimum 1000 belgi)",
+  "This change was not saved. Refresh the page to try again.": "Bu o'zgarish saqlanmadi. Qayta urinish uchun sahifani yangilang.",
   "translationDescriptionTooLong": "Tavsif juda uzun (maksimum 500 belgi)",
   "translationKeyAlreadyExists": "Bu nomdagi tarjima kaliti allaqachon mavjud",
   "invalidLdapUserFilter": "Filtr '{username}' joy egallovchisini aynan bir marta o'z ichiga olishi kerak",

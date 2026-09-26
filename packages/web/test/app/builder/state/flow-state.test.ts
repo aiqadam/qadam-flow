@@ -10,7 +10,7 @@ import {
   PopulatedFlow,
 } from '@aiqadam/shared';
 import { QueryClient } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore, StoreApi } from 'zustand/vanilla';
 
 import { BuilderState } from '@/app/builder/builder-hooks';
@@ -95,6 +95,10 @@ const buildTestStore = (
   }));
 
 describe('createFlowState — applyOperation onError', () => {
+  beforeEach(() => {
+    updateMock.mockClear();
+  });
+
   it('calls the optional onError callback (and not onSuccess) when the server update rejects, without affecting callers that omit it', async () => {
     const flowVersion = createTestFlowVersion();
     const flow = createTestFlow(flowVersion);

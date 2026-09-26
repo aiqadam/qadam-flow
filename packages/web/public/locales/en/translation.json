@@ -2067,6 +2067,7 @@
   "invalidLocale": "Locale must be a valid BCP-47 tag (max 35 characters)",
   "tooManyTranslationLocales": "A translation key can have at most 50 locales",
   "localeSourceTooLong": "This flow's localeSource is too long (max 1,000 characters)",
+  "This change was not saved. Refresh the page to try again.": "This change was not saved. Refresh the page to try again.",
   "translationDescriptionTooLong": "Description is too long (max 500 characters)",
   "translationKeyAlreadyExists": "A translation key with this name already exists",
   "invalidLdapUserFilter": "The filter must contain the placeholder '{username}' exactly once",

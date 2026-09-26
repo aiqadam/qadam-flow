@@ -2067,6 +2067,7 @@
   "invalidLocale": "Локаль жарамды BCP-47 тегі болуы керек (ең көбі 35 таңба)",
   "tooManyTranslationLocales": "Аударма кілтінде ең көбі 50 локаль болуы мүмкін",
   "localeSourceTooLong": "Осы ағынның localeSource мәні тым ұзын (ең көбі 1000 таңба)",
+  "This change was not saved. Refresh the page to try again.": "Бұл өзгеріс сақталмады. Қайта әрекеттену үшін бетті жаңартыңыз.",
   "translationDescriptionTooLong": "Сипаттама тым ұзын (ең көбі 500 таңба)",
   "translationKeyAlreadyExists": "Бұл атаудағы аударма кілті бұрыннан бар",
   "invalidLdapUserFilter": "Сүзгіде '{username}' орынбасары дәл бір рет болуы керек",
