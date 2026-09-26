@@ -83,9 +83,11 @@ export const translationService = (log: FastifyBaseLogger) => ({
             await acquireProjectTranslationWriteLock({ entityManager, projectId })
             await assertKeyCapNotExceeded({ entityManager, projectId, platformId, incomingKeys: canonicalized.map((item) => item.key) })
 
+            const touchedKeys = canonicalized.map((item) => item.key)
             for (const item of canonicalized) {
                 await upsertMergingValues({ entityManager, projectId, platformId, key: item.key, values: item.values, description: item.description })
             }
+            await assertLocalesPerKeyCapNotExceededAfterMerge({ entityManager, projectId, platformId, touchedKeys })
             await assertTableByteCapNotExceeded({ entityManager, projectId, platformId })
 
             return translationRepo(entityManager)
@@ -138,6 +140,7 @@ export const translationService = (log: FastifyBaseLogger) => ({
             if (mode === TranslationImportMode.REPLACE) {
                 removedFromLocale = await removeLocaleFromKeysNotIn({ entityManager, projectId, platformId, locale: canonicalLocale, keptKeys: keys })
             }
+            await assertLocalesPerKeyCapNotExceededAfterMerge({ entityManager, projectId, platformId, touchedKeys: keys })
             await assertTableByteCapNotExceeded({ entityManager, projectId, platformId })
             return { importedKeys: keys.length, removedFromLocale }
         })
@@ -334,6 +337,36 @@ async function assertKeyCapNotExceeded(params: { entityManager: EntityManager, p
         throw new QadamFlowError({
             code: ErrorCode.RESOURCE_LIMIT_EXCEEDED,
             params: { resource: 'translation_keys', limit: MAX_TRANSLATION_KEYS_PER_PROJECT },
+        })
+    }
+}
+
+// `assertValuesAreWellFormed` (called from `upsertMergingValues`) only ever sees THIS write's own
+// incoming values, never the row that results after `"values" || EXCLUDED."values"` merges them
+// into whatever locales a key already had — so an incoming request adding a handful of new locales
+// to a key already near the cap could push the merged row over `MAX_TRANSLATION_LOCALES_PER_KEY`
+// without either check ever seeing the full, post-merge count. Checked here, after every write this
+// transaction makes, against only the keys THIS write touched (an untouched existing row cannot
+// newly exceed a cap it already satisfied) — inside the same transaction and behind the same
+// advisory lock as the other post-write caps, so throwing here rolls back every insert/update this
+// call made.
+async function assertLocalesPerKeyCapNotExceededAfterMerge(params: { entityManager: EntityManager, projectId: string, platformId: string, touchedKeys: string[] }): Promise<void> {
+    const { entityManager, projectId, platformId, touchedKeys } = params
+    if (touchedKeys.length === 0) {
+        return
+    }
+    const overCap = await entityManager.query(
+        `SELECT "key"
+         FROM "translation"
+         WHERE "projectId" = $1 AND "platformId" = $2 AND "key" = ANY($3)
+           AND (SELECT COUNT(*) FROM jsonb_object_keys("values")) > $4
+         LIMIT 1`,
+        [projectId, platformId, touchedKeys, MAX_TRANSLATION_LOCALES_PER_KEY],
+    )
+    if (overCap.length > 0) {
+        throw new QadamFlowError({
+            code: ErrorCode.RESOURCE_LIMIT_EXCEEDED,
+            params: { resource: 'translation_locales_per_key', limit: MAX_TRANSLATION_LOCALES_PER_KEY },
         })
     }
 }

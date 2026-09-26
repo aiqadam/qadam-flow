@@ -79,6 +79,37 @@ describe('Translation CE API', () => {
             expect(response.statusCode).toBe(StatusCodes.BAD_REQUEST)
         })
 
+        // `assertValuesAreWellFormed` only ever sees a single request's OWN incoming locale count,
+        // never the row that results once `"values" || EXCLUDED."values"` merges it into whatever a
+        // key already has. Neither this request (5 locales) nor the earlier one that created the key
+        // (48 locales) exceeds MAX_TRANSLATION_LOCALES_PER_KEY (50) on its own - only the MERGED row
+        // (53) does, and only a post-merge check inside the same transaction can catch that (M5).
+        it('rejects a merge that would push a key past MAX_TRANSLATION_LOCALES_PER_KEY, and keeps the existing locales intact', async () => {
+            const ctx = await setup()
+            const initialValues: Record<string, string> = {}
+            for (let i = 0; i < 48; i++) {
+                initialValues[`en-x-${i.toString().padStart(4, '0')}`] = 'v'
+            }
+            await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'merge.overflow', values: initialValues }],
+            })
+
+            const additionalValues: Record<string, string> = {}
+            for (let i = 48; i < 53; i++) {
+                additionalValues[`en-x-${i.toString().padStart(4, '0')}`] = 'v'
+            }
+            const response = await ctx.post('/v1/translations', {
+                projectId: ctx.project.id,
+                translations: [{ key: 'merge.overflow', values: additionalValues }],
+            })
+
+            expect(response.statusCode).toBe(StatusCodes.FORBIDDEN)
+
+            const list = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'merge.overflow' })
+            expect(Object.keys(list.json().data[0].values)).toHaveLength(48)
+        })
+
         it('rejects a description longer than 500 characters (M4)', async () => {
             const ctx = await setup()
 
