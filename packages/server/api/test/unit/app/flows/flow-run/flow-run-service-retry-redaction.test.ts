@@ -235,7 +235,7 @@ describe('flowRunService().retry — refuses to replay a redacted trigger payloa
     })
 })
 
-// #420 review M2: neither branch of FROM_FAILED_STEP used to forward the run's own persisted
+// Neither branch of FROM_FAILED_STEP used to forward the run's own persisted
 // `inheritedRunLocale` into the re-dispatched job at all — a queued subflow child that later
 // failed and was retried silently lost its parent's inherited locale, even though the value was
 // sitting right there on the row `retry()` already re-reads.

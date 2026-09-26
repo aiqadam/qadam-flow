@@ -516,6 +516,12 @@ function flattenNestedInto(params: { node: unknown, prefix: string, result: Reco
         })
     }
     for (const [segment, value] of Object.entries(node)) {
+        if (segment.length === 0) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Translation key segment at "${prefix}" must not be empty` },
+            })
+        }
         const nextPrefix = prefix.length === 0 ? segment : `${prefix}.${segment}`
         if (nextPrefix.length > TRANSLATION_KEY_MAX_LENGTH) {
             throw new QadamFlowError({

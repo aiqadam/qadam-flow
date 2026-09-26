@@ -360,6 +360,37 @@ describe('Translation CE API', () => {
             expect(list.json().data).toHaveLength(0)
         })
 
+        // Same `ErrorCode.VALIDATION` path as the non-string-leaf and max-length checks above, which
+        // this codebase maps to 409 CONFLICT (`error-handler.ts`), not 400 — an empty object key
+        // (`{"": ...}`) would otherwise flatten to a key starting with a stray leading/embedded
+        // `.`, which is not a valid translation key but was never rejected before it reached the DB.
+        it('rejects an empty key segment nested under an object', async () => {
+            const ctx = await setup()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.NESTED,
+                mode: TranslationImportMode.MERGE,
+                data: { '': { a: 'x' } },
+            })
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+
+            const list = await ctx.get('/v1/translations', { projectId: ctx.project.id, key: 'a' })
+            expect(list.json().data).toHaveLength(0)
+        })
+
+        it('rejects an empty key segment at the root', async () => {
+            const ctx = await setup()
+            const response = await ctx.post('/v1/translations/import', {
+                projectId: ctx.project.id,
+                locale: 'en',
+                format: TranslationImportFormat.NESTED,
+                mode: TranslationImportMode.MERGE,
+                data: { '': 'x' },
+            })
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
+        })
+
         // `nextPrefix.length > TRANSLATION_KEY_MAX_LENGTH` is checked the instant a child segment
         // would be appended, before ever recursing into it — a chain of 150 single-letter levels
         // crosses 255 characters around level 128. This does NOT distinguish old from new code by

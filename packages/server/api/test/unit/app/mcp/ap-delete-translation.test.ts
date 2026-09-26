@@ -22,7 +22,17 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 
 import { apDeleteTranslationTool } from '../../../../src/app/mcp/tools/ap-delete-translation'
 
-const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
+const log: FastifyBaseLogger = {
+    level: 'info',
+    fatal: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    silent: vi.fn(),
+    child: () => log,
+}
 const mcp: ProjectScopedMcpServer = {
     id: 'mcp-1',
     created: '2026-01-01T00:00:00.000Z',

@@ -5,7 +5,9 @@ import {
     FlowOperationType,
     flowStructureUtil,
     FlowTriggerType,
+    formErrors,
     isNil,
+    LOCALE_SOURCE_MAX_LENGTH,
     McpToolContext,
     McpToolDefinition,
     Permission,
@@ -56,7 +58,7 @@ const buildFlowInput = z.object({
         auth: z.string().optional(),
     }),
     steps: z.array(stepSpec),
-    localeSource: z.string().optional().describe('Expression evaluated once per run to pick this flow\'s translation locale for {{$t[...]}} references. Omit for no override (falls back to project defaultLocale).'),
+    localeSource: z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong).optional().describe('Expression evaluated once per run to pick this flow\'s translation locale for {{$t[...]}} references. Omit for no override (falls back to project defaultLocale).'),
 })
 
 export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBaseLogger): McpToolDefinition => {
@@ -73,7 +75,7 @@ export const apBuildFlowTool = ({ mcp, userId }: McpToolContext, log: FastifyBas
                 auth: z.string().optional().describe('Connection externalId for trigger auth'),
             }).describe('Trigger configuration'),
             steps: z.array(stepSpec).describe('Array of steps. By default added sequentially after trigger. Use parentStepName + stepLocationRelativeToParent to nest steps inside loops. Each step supports: PIECE (qadamName+actionName+input), CODE (sourceCode+input), LOOP_ON_ITEMS (loopItems), ROUTER.'),
-            localeSource: z.string().optional().describe('Expression evaluated once per run to pick this flow\'s translation locale for {{$t[...]}} references. Omit for no override.'),
+            localeSource: z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong).optional().describe('Expression evaluated once per run to pick this flow\'s translation locale for {{$t[...]}} references. Omit for no override.'),
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
         execute: async (args) => {

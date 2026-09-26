@@ -136,7 +136,7 @@ export const ImportFlowRequest = z.object({
     trigger: FlowTrigger,
     schemaVersion: Nullable(z.string()),
     notes: Nullable(BoundedArray({ element: Note, max: MAX_NOTES_PER_FLOW })),
-    localeSource: Nullable(z.string()).optional(),
+    localeSource: Nullable(z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong)).optional(),
 })
 
 export type ImportFlowRequest = z.infer<typeof ImportFlowRequest>

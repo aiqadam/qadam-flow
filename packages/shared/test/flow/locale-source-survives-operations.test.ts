@@ -70,7 +70,7 @@ describe('UPDATE_LOCALE_SOURCE', () => {
     })
 })
 
-// #420 review M1: `_importFlow` used to coalesce an absent `localeSource` (a caller expressing no
+// `_importFlow` used to coalesce an absent `localeSource` (a caller expressing no
 // opinion — a duplicate/use-as-draft path that never carried it forward) to `null`, silently
 // wiping the target's existing value on every import that omitted the field.
 describe('IMPORT_FLOW carries/clears localeSource explicitly, never implicitly', () => {
