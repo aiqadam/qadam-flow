@@ -21,8 +21,11 @@ export const UserEntity = new EntitySchema<UserSchema>({
         },
         // Tracks who last decided `platformRole` — MANUAL for every admin-set change (including
         // through `POST /v1/users/:id`), LDAP for a role an LDAP group mapping granted. Only an
-        // LDAP-managed role is ever reverted by a mapping that no longer grants one; a MANUAL role
-        // is never demoted by one (`.agents/features/ldap.md` Phase 2).
+        // LDAP-managed role is ever reverted by a mapping that no longer grants one, or overwritten
+        // (in either direction) by one that does; a matching mapping may only ever *raise* a MANUAL
+        // role (which is what flips it to LDAP going forward), never lower or hold it at or below
+        // its current rank, and a MANUAL role is never demoted by a mapping that no longer matches
+        // at all (`.agents/features/ldap.md` Phase 2).
         platformRoleManagedBy: {
             type: String,
             nullable: false,

@@ -33,8 +33,10 @@ export enum UserStatus {
 // Tracks *who* last decided this user's platformRole, the same idea `ProjectMemberManagedBy`
 // tracks for a project membership (`.agents/features/ldap.md` LDAP Phase 2) — a role an LDAP group
 // mapping granted is revocable by that same mapping (reverted to MEMBER once the user no longer
-// matches any role-granting group); a role an admin set by hand through `POST /v1/users/:id` never
-// is, regardless of what any mapping later resolves.
+// matches any role-granting group). A role an admin set by hand through `POST /v1/users/:id` can
+// never be *lowered* by a mapping, regardless of what it resolves — a mapping may only ever
+// *raise* a MANUAL role (which is itself what flips this to LDAP going forward, since the raise is
+// now a real, current directory decision); it may never demote one.
 export enum PlatformRoleManagedBy {
     MANUAL = 'MANUAL',
     LDAP = 'LDAP',

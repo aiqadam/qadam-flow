@@ -305,3 +305,52 @@ describe('ldapGroupMappingService.applyMapping — platform-role provenance and 
         expect(user.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
     })
 })
+
+// Round 3 (app-sec finding #4, blocking): round 2's `applyPlatformRoleGrant` applied *any* matched
+// mapping's role unconditionally, which meant a MEMBER/OPERATOR-mapped group would silently demote
+// a MANUAL ADMIN the moment that admin's own directory account happened to match it — the exact
+// opposite of "a manually set role is never demoted by a mapping". These cases are the matched-role
+// scenario the round-2 tests above never covered (they only exercised the *no-match* revert path).
+describe('ldapGroupMappingService.applyMapping — a mapping may only ever raise a MANUAL role, never lower it (round 3)', () => {
+    it('a manual ADMIN in a MEMBER-mapped group stays ADMIN and MANUAL', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.ADMIN, source: 'ADMIN' })
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=members,dc=example,dc=com', platformRole: PlatformRole.MEMBER, projects: [] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=members,dc=example,dc=com'],
+        })
+
+        const user = await userService(log).getOrThrow({ id: userId })
+        expect(user.platformRole).toBe(PlatformRole.ADMIN)
+        expect(user.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
+    })
+
+    it('a manual MEMBER in an ADMIN-mapped group becomes ADMIN and LDAP, then reverts to MEMBER once removed from the group', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const userId = await createDirectoryUser(mockPlatform.id)
+        // `createDirectoryUser` already starts as a MANUAL MEMBER (the default); the mapping raises it.
+        const config = baseConfig({
+            groupMappings: [{ groupDn: 'cn=admins,dc=example,dc=com', platformRole: PlatformRole.ADMIN, projects: [] }],
+        })
+
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: ['cn=admins,dc=example,dc=com'],
+        })
+        const raised = await userService(log).getOrThrow({ id: userId })
+        expect(raised.platformRole).toBe(PlatformRole.ADMIN)
+        expect(raised.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+
+        // Removed from the group on the directory side — the next sign-in/reconcile pass resolves
+        // no platform role at all.
+        await ldapGroupMappingService(log).applyMapping({
+            platformId: mockPlatform.id, userId, config, memberGroupDns: [],
+        })
+        const reverted = await userService(log).getOrThrow({ id: userId })
+        expect(reverted.platformRole).toBe(PlatformRole.MEMBER)
+        expect(reverted.platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+    })
+})

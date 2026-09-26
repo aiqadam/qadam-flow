@@ -26,10 +26,18 @@ export const ldapGroupMappingService = (log: FastifyBaseLogger) => ({
 })
 
 // Never touches the platform owner. Two directions, both gated on provenance (round 2, app-sec
-// finding #7 — a directory-granted ADMIN must be revocable):
-// - A resolved role (some group matched with a `platformRole` set) is always applied and always
-//   marks the role LDAP-managed — an explicit group grant is a real, current directory decision,
-//   and always wins regardless of what set the *previous* role.
+// finding #7 — a directory-granted ADMIN must be revocable) — and round 3 (app-sec finding #4)
+// tightened the first direction, which used to demote a MANUAL role rather than only ever raising
+// it:
+// - A resolved role (some group matched with a `platformRole` set) always applies, and always
+//   marks the role LDAP-managed, when the role is *already* LDAP-managed — an explicit group grant
+//   is a real, current directory decision, and always wins over whatever the *previous* mapping
+//   decided, in either direction. Against a MANUAL role, though, a mapping may only ever *raise*
+//   it (e.g. a manually-set MEMBER promoted to ADMIN by a matching group) — never lower or hold it
+//   at or below its current rank. Raising a MANUAL role is itself what flips its provenance to
+//   LDAP going forward; the spec this closes a gap against is explicit that "a manually set role is
+//   never demoted by a [lower-ranked] mapping" — a mapped MEMBER/OPERATOR must never overwrite an
+//   admin's own ADMIN promotion, which the pre-round-3 code did unconditionally.
 // - No resolved role (no matching group grants one) only *reverts* the role, to MEMBER, and only
 //   when the role is currently LDAP-managed — a manually-set role (`platformRoleManagedBy:
 //   'MANUAL'`, e.g. an admin's own promotion) is never touched by the absence of a mapping match.
@@ -41,8 +49,12 @@ async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }:
     if (user.id === platform.ownerId) {
         return
     }
+    const isManuallyManaged = user.platformRoleManagedBy === PlatformRoleManagedBy.MANUAL
 
     if (!isNil(platformRole)) {
+        if (isManuallyManaged && ldapGroupMappingUtils.platformRoleRank(platformRole) <= ldapGroupMappingUtils.platformRoleRank(user.platformRole)) {
+            return
+        }
         if (user.platformRole === platformRole && user.platformRoleManagedBy === PlatformRoleManagedBy.LDAP) {
             return
         }
@@ -50,7 +62,7 @@ async function applyPlatformRoleGrant({ platformId, userId, platformRole, log }:
         return
     }
 
-    if (user.platformRoleManagedBy === PlatformRoleManagedBy.LDAP && user.platformRole !== PlatformRole.MEMBER) {
+    if (!isManuallyManaged && user.platformRole !== PlatformRole.MEMBER) {
         await userService(log).update({ id: userId, platformId, platformRole: PlatformRole.MEMBER, source: 'LDAP' })
     }
 }
