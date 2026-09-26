@@ -38,6 +38,7 @@ export type FormValues = {
   icon: ProjectIcon;
   externalId?: string;
   maxConcurrentJobs?: number | null;
+  defaultLocale?: string | null;
 };
 
 type GeneralSettingsProps = {
@@ -210,6 +211,33 @@ export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
                     : t(
                         'Maximum number of flows that can run at the same time for this project',
                       )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+        {platformRole === PlatformRole.ADMIN && (
+          <FormField
+            name="defaultLocale"
+            render={({ field }) => (
+              <FormItem>
+                <Label htmlFor="defaultLocale" className="text-sm font-medium">
+                  {t('Default locale')}
+                </Label>
+                <ClearableInput
+                  {...field}
+                  id="defaultLocale"
+                  placeholder="ru"
+                  value={field.value ?? ''}
+                  onChange={(e) => field.onChange(e.target.value || null)}
+                  onClear={() => field.onChange(null)}
+                  disabled={form.formState.disabled}
+                />
+                <FormDescription className="text-xs text-muted-foreground">
+                  {t(
+                    'BCP-47 locale tag (e.g. ru, uz-Latn) flows fall back to when resolving translation keys with no run locale.',
+                  )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

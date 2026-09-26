@@ -14,7 +14,6 @@ import { ProjectMembersTab } from '@/features/invitations/components/project-mem
 import { projectCollectionUtils } from '@/features/projects';
 import { ApProjectDisplay } from '@/features/projects/components/ap-project-display';
 import { useAuthorization } from '@/hooks/authorization-hooks';
-import { platformHooks } from '@/hooks/platform-hooks';
 import { userHooks } from '@/hooks/user-hooks';
 import { cn } from '@/lib/utils';
 
@@ -48,7 +47,6 @@ export function ProjectSettingsDialog({
   const { project } = projectCollectionUtils.useCurrentProject();
   const previousOpenRef = useRef(open);
 
-  const { platform } = platformHooks.useCurrentPlatform();
   const platformRole = userHooks.getCurrentUserPlatformRole();
 
   const form = useForm<FormValues>({
@@ -57,6 +55,7 @@ export function ProjectSettingsDialog({
       icon: project.icon,
       externalId: initialValues?.externalId,
       maxConcurrentJobs: project.maxConcurrentJobs,
+      defaultLocale: project.defaultLocale,
     },
     disabled: checkAccess(Permission.WRITE_PROJECT) === false,
   });
@@ -67,6 +66,7 @@ export function ProjectSettingsDialog({
       externalId: values.externalId,
       icon: values.icon,
       maxConcurrentJobs: values.maxConcurrentJobs,
+      defaultLocale: values.defaultLocale,
     });
     toast.success(t('Your changes have been saved.'), {
       duration: 3000,
@@ -81,15 +81,19 @@ export function ProjectSettingsDialog({
         ...initialValues,
         icon: project.icon,
         maxConcurrentJobs: project.maxConcurrentJobs,
+        defaultLocale: project.defaultLocale,
       });
       setActiveTab(initialTab);
     }
     previousOpenRef.current = open;
   }, [open, project]);
 
+  // Platform ADMIN unlocks this tab unconditionally, not only when embedding is enabled — it is
+  // also where `maxConcurrentJobs` and the project's `defaultLocale` live, and neither of those
+  // is embedding-specific. Before this, an admin on a non-Team project with embedding off had no
+  // way to reach either field through this dialog.
   const hasGeneralSettings =
-    project.type === ProjectType.TEAM ||
-    (platform.plan.embeddingEnabled && platformRole === PlatformRole.ADMIN);
+    project.type === ProjectType.TEAM || platformRole === PlatformRole.ADMIN;
 
   const tabs = [
     {
