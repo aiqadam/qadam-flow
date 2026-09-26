@@ -2138,6 +2138,7 @@
   "Test password (optional)": "Тест құпия сөзі (міндетті емес)",
   "Stage": "Кезең",
   "LDAP result code": "LDAP нәтиже коды",
+  "No configuration saved": "Ешбір конфигурация сақталмаған",
   "Host allow-list check": "Рұқсат етілген хосттар тізімін тексеру",
   "Service account bind": "Қызметтік есептік жазбаны байланыстыру",
   "User search": "Пайдаланушыны іздеу",

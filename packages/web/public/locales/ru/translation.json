@@ -2138,6 +2138,7 @@
   "Test password (optional)": "Тестовый пароль (необязательно)",
   "Stage": "Этап",
   "LDAP result code": "Код результата LDAP",
+  "No configuration saved": "Конфигурация не сохранена",
   "Host allow-list check": "Проверка разрешённого списка хостов",
   "Service account bind": "Привязка служебной учётной записи",
   "User search": "Поиск пользователя",

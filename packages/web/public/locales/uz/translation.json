@@ -2138,6 +2138,7 @@
   "Test password (optional)": "Test paroli (ixtiyoriy)",
   "Stage": "Bosqich",
   "LDAP result code": "LDAP natija kodi",
+  "No configuration saved": "Hech qanday konfiguratsiya saqlanmagan",
   "Host allow-list check": "Ruxsat etilgan xostlar ro'yxatini tekshirish",
   "Service account bind": "Xizmat hisobini bog'lash",
   "User search": "Foydalanuvchini qidirish",

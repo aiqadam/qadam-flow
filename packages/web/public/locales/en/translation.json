@@ -2138,6 +2138,7 @@
   "Test password (optional)": "Test password (optional)",
   "Stage": "Stage",
   "LDAP result code": "LDAP result code",
+  "No configuration saved": "No configuration saved",
   "Host allow-list check": "Host allow-list check",
   "Service account bind": "Service account bind",
   "User search": "User search",

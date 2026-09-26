@@ -1,6 +1,7 @@
 import {
   DEFAULT_LDAP_SESSION_TTL_SECONDS,
   formErrors,
+  LdapSubjectAttribute,
   LdapTestRequest,
   LdapTestResponse,
   LdapTestStage,
@@ -49,8 +50,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { ldapConfigMutations } from '@/features/platform-admin';
 import { apiErrorUtils } from '@/lib/api-error-utils';
 import { authenticationSession } from '@/lib/authentication-session';
-
-const SUBJECT_ATTRIBUTE_OPTIONS = ['objectGUID', 'entryUUID'] as const;
 
 // Any of these five requires the bind password to be re-entered on save — the server treats them
 // as re-authenticating the bind account against the directory, not a cosmetic edit.
@@ -475,7 +474,7 @@ const LdapConfigForm = ({
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {SUBJECT_ATTRIBUTE_OPTIONS.map((attribute) => (
+                          {LdapSubjectAttribute.options.map((attribute) => (
                             <SelectItem key={attribute} value={attribute}>
                               {attribute}
                             </SelectItem>
@@ -792,6 +791,8 @@ const TestConnectionResult = ({ result }: { result: LdapTestResponse }) => (
 
 function formatStage(stage: LdapTestStage): string {
   switch (stage) {
+    case LdapTestStage.NOT_CONFIGURED:
+      return t('No configuration saved');
     case LdapTestStage.ALLOW_LIST:
       return t('Host allow-list check');
     case LdapTestStage.CONNECT:
