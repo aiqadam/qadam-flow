@@ -1950,6 +1950,7 @@
   "You don't have permission to import this template": "Бұл үлгіні импорттауға рұқсатыңыз жоқ",
   "You don't have permission to import translations.": "Аудармаларды импорттауға рұқсатыңыз жоқ.",
   "This import is larger than the 1 MB limit — split it into smaller files.": "Бұл импорт 1 МБ шегінен асып тұр — оны кішірек файлдарға бөліңіз.",
+  "This file is too large to import.": "Бұл файл импорттау үшін тым үлкен.",
   "Steps in this flow": "Осы flow-дағы қадамдар",
   "Browse Templates": "Үлгілерді шолу",
   "Try a different search term or category": "Басқа іздеу сөзін немесе санатты көріңіз",

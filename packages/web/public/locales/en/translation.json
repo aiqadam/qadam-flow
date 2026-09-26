@@ -1974,6 +1974,7 @@
   "You don't have permission to import this template": "You don't have permission to import this template",
   "You don't have permission to import translations.": "You don't have permission to import translations.",
   "This import is larger than the 1 MB limit — split it into smaller files.": "This import is larger than the 1 MB limit — split it into smaller files.",
+  "This file is too large to import.": "This file is too large to import.",
   "Steps in this flow": "Steps in this flow",
   "Browse Templates": "Browse Templates",
   "Try a different search term or category": "Try a different search term or category",

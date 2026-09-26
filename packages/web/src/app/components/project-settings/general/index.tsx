@@ -35,8 +35,6 @@ import { platformHooks } from '@/hooks/platform-hooks';
 import { userHooks } from '@/hooks/user-hooks';
 import { cn } from '@/lib/utils';
 
-import { generalSettingsUtils } from './general-settings-utils';
-
 export type FormValues = {
   projectName: string;
   icon: ProjectIcon;
@@ -64,9 +62,15 @@ export const GeneralSettings = ({ form }: GeneralSettingsProps) => {
   const showGeneralSettings = project.type === ProjectType.TEAM;
   const showExternalIdSettings =
     platform.plan.embeddingEnabled && platformRole === PlatformRole.ADMIN;
-  const showDefaultLocale = generalSettingsUtils.canShowDefaultLocale({
-    canWriteProject: checkAccess(Permission.WRITE_PROJECT),
-  });
+  // Gated on WRITE_PROJECT rather than `platformRole === PlatformRole.ADMIN` (unlike
+  // maxConcurrentJobs below, which the server itself restricts to platform ADMIN/OPERATOR via
+  // `assertCallerMayWriteMaxConcurrentJobs`): the server accepts `defaultLocale` from anyone
+  // `callerCanAdministerProject` allows. This is a subset of that, not an exact match — a Team
+  // owner without project-ADMIN membership, a personal-project owner who is only a platform
+  // MEMBER, and an OPERATOR on a personal project can all write `defaultLocale` on the server
+  // today but do not see this field under `WRITE_PROJECT`. Narrower-but-safe (a hidden control the
+  // server would accept) beats broader-but-wrong (a visible control the server would reject).
+  const showDefaultLocale = checkAccess(Permission.WRITE_PROJECT);
   const colorOptions = Object.values(ColorName);
 
   return (

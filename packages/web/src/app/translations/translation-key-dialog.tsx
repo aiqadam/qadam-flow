@@ -4,9 +4,11 @@ import {
   TRANSLATION_DESCRIPTION_MAX_LENGTH,
   TRANSLATION_VALUE_MAX_LENGTH,
   TranslationKeySchema,
+  tryCatch,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { t } from 'i18next';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -50,6 +52,35 @@ const FormSchema = z.object({
 
 type FormValues = z.infer<typeof FormSchema>;
 
+// `translationsApi.list`'s `key` filter is a substring search (ILIKE `%key%`), not an exact match,
+// so a project with more matching keys than fit in one page could otherwise let a duplicate slip
+// past this check unnoticed — paginate with the `next` cursor until an exact match turns up or the
+// list is exhausted, rather than trusting the first page alone.
+const findExistingTranslationByExactKey = async ({
+  projectId,
+  key,
+}: {
+  projectId: string;
+  key: string;
+}): Promise<boolean> => {
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await translationsApi.list({
+      projectId,
+      key,
+      limit: 50,
+      cursor,
+    });
+    if (page.data.some((translation) => translation.key === key)) {
+      return true;
+    }
+    if (!page.next) {
+      return false;
+    }
+    cursor = page.next;
+  }
+};
+
 type TranslationKeyDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -86,6 +117,7 @@ function TranslationKeyForm(props: TranslationKeyFormProps) {
   const { existing, defaultLocale, onOpenChange, onSaved } = props;
   const isEdit = !!existing;
   const projectId = authenticationSession.getProjectId();
+  const [isCheckingKey, setIsCheckingKey] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(FormSchema),
@@ -120,14 +152,22 @@ function TranslationKeyForm(props: TranslationKeyFormProps) {
     }
     form.clearErrors('root.serverError');
     if (!isEdit) {
-      const existingByKey = await translationsApi.list({
-        projectId,
-        key: values.key,
-        limit: 50,
-      });
-      if (
-        existingByKey.data.some((translation) => translation.key === values.key)
-      ) {
+      setIsCheckingKey(true);
+      const { data: keyAlreadyExists, error } = await tryCatch(() =>
+        findExistingTranslationByExactKey({ projectId, key: values.key }),
+      );
+      setIsCheckingKey(false);
+      if (error) {
+        form.setError('root.serverError', {
+          type: 'manual',
+          message: apiErrorUtils.extractServerMessage({
+            error,
+            fallback: t('Something went wrong, please try again later'),
+          }),
+        });
+        return;
+      }
+      if (keyAlreadyExists) {
         form.setError('key', {
           type: 'manual',
           message: 'translationKeyAlreadyExists',
@@ -242,7 +282,7 @@ function TranslationKeyForm(props: TranslationKeyFormProps) {
               {t('Cancel')}
             </Button>
           </DialogClose>
-          <Button type="submit" loading={isPending}>
+          <Button type="submit" loading={isPending || isCheckingKey}>
             {isEdit ? t('Save') : t('Create')}
           </Button>
         </DialogFooter>

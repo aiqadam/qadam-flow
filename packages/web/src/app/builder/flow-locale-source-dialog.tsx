@@ -1,6 +1,6 @@
 import { FlowOperationType, LOCALE_SOURCE_MAX_LENGTH } from '@aiqadam/shared';
 import { t } from 'i18next';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -14,18 +14,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { internalErrorToast } from '@/components/ui/sonner';
 
 import { useBuilderStateContext } from './builder-hooks';
 import { TextInputWithMentions } from './qadam-properties/text-input-with-mentions';
-
-// `applyOperation` (flow-state.ts) exposes only an `onSuccess` callback — on a failed request it
-// logs the error and halts the update queue, never calling back here at all, so `isSaving` would
-// otherwise stay true forever with no way for this dialog to know the save failed. Without a
-// dedicated error path to plug into, a bounded timeout is the least invasive way to guarantee the
-// Save button becomes clickable again; it does not by itself mean the save failed — genuinely slow
-// networks resolve normally via the `onSuccess` callback well before this fires, and it's cleared on
-// unmount so it can't fire after the dialog has already closed and remounted fresh.
-const SAVE_TIMEOUT_MS = 15_000;
 
 type FlowLocaleSourceDialogProps = {
   open: boolean;
@@ -61,17 +53,6 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
   );
   const [localeSource, setLocaleSource] = useState(initialLocaleSource ?? '');
   const [isSaving, setIsSaving] = useState(false);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
-
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const isTooLong = localeSource.trim().length > LOCALE_SOURCE_MAX_LENGTH;
 
@@ -80,20 +61,18 @@ function FlowLocaleSourceForm({ onOpenChange }: FlowLocaleSourceFormProps) {
       return;
     }
     setIsSaving(true);
-    saveTimeoutRef.current = setTimeout(() => {
-      setIsSaving(false);
-    }, SAVE_TIMEOUT_MS);
     applyOperation(
       {
         type: FlowOperationType.UPDATE_LOCALE_SOURCE,
         request: { localeSource: localeSource.trim() || null },
       },
       () => {
-        if (saveTimeoutRef.current) {
-          clearTimeout(saveTimeoutRef.current);
-        }
         setIsSaving(false);
         onOpenChange(false);
+      },
+      () => {
+        setIsSaving(false);
+        internalErrorToast();
       },
     );
   };

@@ -1950,6 +1950,7 @@
   "You don't have permission to import this template": "У вас нет прав на импорт этого шаблона",
   "You don't have permission to import translations.": "У вас нет прав на импорт переводов.",
   "This import is larger than the 1 MB limit — split it into smaller files.": "Этот импорт превышает ограничение в 1 МБ — разделите его на файлы меньшего размера.",
+  "This file is too large to import.": "Этот файл слишком велик для импорта.",
   "Steps in this flow": "Шаги в этом flow",
   "Browse Templates": "Просмотр шаблонов",
   "Try a different search term or category": "Попробуйте другой поисковый запрос или категорию",

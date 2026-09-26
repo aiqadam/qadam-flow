@@ -33,6 +33,10 @@ import { translationsMutations } from '@/features/translations/hooks/translation
 import { api } from '@/lib/api';
 import { authenticationSession } from '@/lib/authentication-session';
 
+// Loose sanity bound for the raw file at selection time — the real cap is enforced at submit
+// against the parsed-and-re-serialized payload, which is what the server actually measures.
+const FILE_SIZE_SANITY_MULTIPLIER = 4;
+
 const detectFormat = (
   data: Record<string, unknown>,
 ): TranslationImportFormat => {
@@ -135,12 +139,15 @@ function ImportTranslationsForm({
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > MAX_TRANSLATION_IMPORT_BYTES) {
-      setErrorMessage(
-        t(
-          'This import is larger than the 1 MB limit — split it into smaller files.',
-        ),
-      );
+    // A raw file's byte size doesn't line up with `MAX_TRANSLATION_IMPORT_BYTES`, which bounds the
+    // re-serialized `data` field (checked below, at submit, against the actual parsed payload) —
+    // a nicely-indented file can read larger on disk than its minified JSON, so this is a loose
+    // sanity bound to reject only an obviously pathological file early, not the real cap.
+    if (
+      file.size >
+      MAX_TRANSLATION_IMPORT_BYTES * FILE_SIZE_SANITY_MULTIPLIER
+    ) {
+      setErrorMessage(t('This file is too large to import.'));
       event.target.value = '';
       return;
     }
