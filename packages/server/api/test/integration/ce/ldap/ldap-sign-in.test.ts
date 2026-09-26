@@ -425,7 +425,10 @@ describe('LDAP sign-in', () => {
     // M2: `/switch-platform` reissuing a fresh default-lifetime token would silently undo the
     // directory admin's own session TTL every time an LDAP-signed-in user switched platforms.
     it('caps a switched-platform token so it never outlives the current LDAP session (M2)', async () => {
-        await saveLdapConfig({ sessionTtlSeconds: 300 })
+        // `MIN_LDAP_SESSION_TTL_SECONDS` (3600) is the schema floor — using it here is the
+        // shortest session TTL `LdapConfig` will actually accept, still well under the
+        // non-LDAP default token lifetime the cap is meant to beat.
+        await saveLdapConfig({ sessionTtlSeconds: 3600 })
         searchForUser.mockResolvedValue(DIRECTORY_ENTRY)
         bindAsUser.mockResolvedValue(undefined)
         const signInResponse = await signIn({ username: 'jdoe', password: 'correct-password' })

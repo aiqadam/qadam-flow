@@ -71,14 +71,20 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
         // Applied on every successful sign-in, after the user is guaranteed to exist (JIT or
         // otherwise) — never blocks the sign-in itself: a mapping problem here is a configuration
         // issue for an admin to fix, not a reason to refuse a directory account its own login.
-        const { error: mappingError } = await tryCatch(() => ldapGroupMappingService(log).applyMapping({
-            platformId,
-            userId: user.id,
-            config: resolved.config,
-            memberGroupDns,
-        }))
-        if (!isNil(mappingError)) {
-            log.error({ err: mappingError, platformId, userId: user.id }, '[ldapAuthnService] Failed to apply LDAP group mapping on sign-in')
+        // `memberGroupDns === null` means group resolution itself already failed inside
+        // `lookupDirectoryUser` (logged there) — skip applying the mapping entirely rather than
+        // calling it with an empty group list, which would read as "this user is in no groups" and
+        // strip every directory-managed project membership on a merely transient search error.
+        if (!isNil(memberGroupDns)) {
+            const { error: mappingError } = await tryCatch(() => ldapGroupMappingService(log).applyMapping({
+                platformId,
+                userId: user.id,
+                config: resolved.config,
+                memberGroupDns,
+            }))
+            if (!isNil(mappingError)) {
+                log.error({ err: mappingError, platformId, userId: user.id }, '[ldapAuthnService] Failed to apply LDAP group mapping on sign-in')
+            }
         }
 
         log.info({ platformId, userId: user.id }, 'User signed in via LDAP')
@@ -96,7 +102,7 @@ export const ldapAuthnService = (log: FastifyBaseLogger) => ({
 // `ldapClient`) or, once the subject attribute is checked, a plain misconfiguration signal — both
 // are translated to one of the four public sign-in error codes by `mapToSignInError`, never leaked
 // as their own stage-specific detail (that detail is what the admin-only `/test` endpoint is for).
-async function lookupDirectoryUser({ resolved, username, password, log }: LookupDirectoryUserParams): Promise<{ entry: Entry, subject: string, memberGroupDns: string[] }> {
+async function lookupDirectoryUser({ resolved, username, password, log }: LookupDirectoryUserParams): Promise<{ entry: Entry, subject: string, memberGroupDns: string[] | null }> {
     const { config, bindPassword, connectionConfig } = resolved
     try {
         // The whole connect -> service bind -> search -> unbind sequence runs inside one
@@ -126,9 +132,16 @@ async function lookupDirectoryUser({ resolved, username, password, log }: Lookup
                 }
                 // Read on the same connection, before the service-bind connection is unbound — a
                 // nested-group search (when configured) needs its own service-bound client, not the
-                // user's own credentials.
-                const memberGroupDns = await ldapClient.resolveMemberGroupDns({ client, entry, config, tlsMode: config.tlsMode })
-                return { entry, subject, memberGroupDns }
+                // user's own credentials. Deliberately its own try/catch, separate from the block
+                // above: a broken group search (a bad `groupSearchFilter`, a directory that
+                // temporarily can't answer it) must not fail the *sign-in* itself — `null` tells
+                // the caller to skip applying the mapping this time rather than stripping
+                // memberships over what is likely a transient or config error.
+                const { data: memberGroupDns, error: groupError } = await tryCatch(() => ldapClient.resolveMemberGroupDns({ client, entry, config, tlsMode: config.tlsMode }))
+                if (!isNil(groupError)) {
+                    log.warn({ err: groupError, bindDn: config.bindDn }, '[ldapAuthnService] Group resolution failed; the sign-in proceeds without applying the LDAP group mapping this time')
+                }
+                return { entry, subject, memberGroupDns: isNil(groupError) ? memberGroupDns : null }
             }
             finally {
                 await client.unbind().catch(() => undefined)
