@@ -17,9 +17,18 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 import { apUpsertTranslationsTool } from '../../../../src/app/mcp/tools/ap-upsert-translations'
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
-const mcp = { type: McpServerType.PROJECT, projectId: 'project-1', platformId: 'platform-1' } as unknown as ProjectScopedMcpServer
+const mcp: ProjectScopedMcpServer = {
+    id: 'mcp-1',
+    created: '2026-01-01T00:00:00.000Z',
+    updated: '2026-01-01T00:00:00.000Z',
+    type: McpServerType.PROJECT,
+    projectId: 'project-1',
+    platformId: 'platform-1',
+    token: 'token',
+    disabledTools: null,
+}
 
-describe('ap_upsert_translations — empty translations array (Low)', () => {
+describe('ap_upsert_translations — empty translations array', () => {
     beforeEach(() => {
         vi.clearAllMocks()
     })

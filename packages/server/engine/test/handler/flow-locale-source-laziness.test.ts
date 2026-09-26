@@ -64,7 +64,7 @@ function buildConstants(): EngineConstants {
     })
 }
 
-describe('$t/localeSource laziness (B3): a run-level context.run.locale() must not freeze the answer before the step it depends on has run', () => {
+describe('$t/localeSource laziness: a run-level context.run.locale() must not freeze the answer before the step it depends on has run', () => {
     it('resolves $t against step_1\'s real output in step_2, not against an empty context.run.locale() read made while step_1 itself was still running', async () => {
         const constants = buildConstants()
 

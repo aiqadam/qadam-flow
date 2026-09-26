@@ -264,11 +264,12 @@ describe('props-resolver: $t translations', () => {
 
     // A `$t` reached while `localeSource` is itself still resolving (directly, or nested inside a
     // formula) used to call back into `getRunLocale` while `runLocale` was still `undefined`,
-    // recursing without bound. The sentinel in `EngineConstants#getRunLocale` breaks the cycle by
-    // reporting "no run locale yet" to that one reentrant read — this only asserts the resolution
-    // terminates with a sane fallback; a regression here manifests as the test hanging past its
-    // timeout (or a stack overflow), not merely a wrong value.
-    test('a $t nested inside localeSource resolves without recursing without bound (B4)', async () => {
+    // recursing without bound. The `resolvingLocaleSource` flag threaded through that one
+    // `resolveInputAsync` call breaks the cycle by reporting "no run locale yet" to that one
+    // reentrant read — this only asserts the resolution terminates with a sane fallback; a
+    // regression here manifests as the test hanging past its timeout (or a stack overflow), not
+    // merely a wrong value.
+    test('a $t nested inside localeSource resolves without recursing without bound', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         const constants = buildConstants({ localeSource: '{{$t[\'welcome.title\']}}' })
         const executionState = await buildExecutionState()

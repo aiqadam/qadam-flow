@@ -414,7 +414,7 @@ function parseSquareBracketConnectionPath(variableName: string): string | null {
     return match ? match[2] : null
 }
 
-// `FlowVersion.localeSource` is evaluated through `resolveInputAsync` (below), the same path every
+// `FlowVersion.localeSource` is evaluated through `resolveInputAsync` (above), the same path every
 // other `{{...}}` expression in this file takes — including the `$t[...]` dynamic locale bracket —
 // so the engine has exactly one sandboxed-eval path, not two. Nothing outside this file calls this
 // directly.

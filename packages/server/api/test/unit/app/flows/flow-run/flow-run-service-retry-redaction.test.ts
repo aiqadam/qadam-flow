@@ -239,7 +239,7 @@ describe('flowRunService().retry — refuses to replay a redacted trigger payloa
 // `inheritedRunLocale` into the re-dispatched job at all — a queued subflow child that later
 // failed and was retried silently lost its parent's inherited locale, even though the value was
 // sitting right there on the row `retry()` already re-reads.
-describe('flowRunService().retry — forwards inheritedRunLocale into the re-dispatched job (M2)', () => {
+describe('flowRunService().retry — forwards inheritedRunLocale into the re-dispatched job', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mockGetPlatformId.mockResolvedValue('platform-1')

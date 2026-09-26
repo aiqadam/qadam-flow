@@ -154,7 +154,7 @@ describe('Retry flow run', () => {
         expect(body.parentWaitpointId).toBe(waitpoint.id)
     })
 
-    it('carries inheritedRunLocale forward when retrying ON_LATEST_VERSION (M2)', async () => {
+    it('carries inheritedRunLocale forward when retrying ON_LATEST_VERSION', async () => {
         const flow = createMockFlow({ projectId: ctx.project.id })
         await db.save('flow', flow)
         const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })

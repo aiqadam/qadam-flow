@@ -188,7 +188,7 @@ export const translationService = (log: FastifyBaseLogger) => ({
         }
     },
 
-    // Wrapped in `{ translations: ... }` rather than returned as a bare top-level record (M9): a
+    // Wrapped in `{ translations: ... }` rather than returned as a bare top-level record: a
     // translation key is flow-author-controlled text, so a key literally named e.g. "projectId"
     // would otherwise land as a sibling of nothing — but a bare object IS the response body, and
     // response-shape-sniffing middleware downstream (the same reason a raw record is never handed
@@ -599,9 +599,9 @@ function escapeLikeWildcards(value: string): string {
 // `items`, router `branches`), deliberately not shared with `ap_validate_flow`'s own
 // `collectStringValues` — that validator's version also needs to distinguish a step's `input` vs
 // `branches` shape for its own step-reference checks, and reusing it here would mean importing
-// from an MCP tool module into a service, the wrong direction for that dependency. Only the two
-// finding a real `$t[...]` key reference (not malformed-reference detection, not the dynamic-locale
-// flag) is needed for a usages lookup, so this stays a smaller, purpose-built duplicate.
+// from an MCP tool module into a service, the wrong direction for that dependency. A usages lookup
+// only needs to find a real `$t[...]` key reference — not malformed-reference detection, not the
+// dynamic-locale flag — so this stays a smaller, purpose-built duplicate.
 function flowReferencesTranslationKey(params: { trigger: Step, key: string }): boolean {
     const { trigger, key } = params
     return flowStructureUtil.getAllSteps(trigger).some((step) => stepReferencesTranslationKey({ step, key }))
@@ -619,12 +619,19 @@ function stepReferencesTranslationKey(params: { step: Step, key: string }): bool
     }))
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function collectStepStrings(step: Step): string[] {
     const result: string[] = []
-    if (!('settings' in step) || typeof step.settings !== 'object' || step.settings === null) {
+    if (!('settings' in step)) {
         return result
     }
-    const settings = step.settings as Record<string, unknown>
+    const settings: unknown = step.settings
+    if (!isPlainRecord(settings)) {
+        return result
+    }
 
     if ('input' in settings && typeof settings.input === 'object' && settings.input !== null) {
         result.push(...walkForStrings(settings.input))
@@ -650,10 +657,6 @@ function collectStepStrings(step: Step): string[] {
     return result
 }
 
-// Returns its own findings rather than taking a callback the caller uses to mutate its own
-// collection — the caller (`collectStepStrings`) still mutates a LOCAL array from these results,
-// which is fine (mutation confined to one function's own body); what this avoids is a mutation that
-// crosses the function boundary, one caller's `onString` at a time.
 function walkForStrings(value: unknown): string[] {
     if (value === null || value === undefined) {
         return []

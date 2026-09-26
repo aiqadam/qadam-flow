@@ -23,9 +23,18 @@ vi.mock('../../../../src/app/project/project-service', () => ({
 import { apDeleteTranslationTool } from '../../../../src/app/mcp/tools/ap-delete-translation'
 
 const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn() } as unknown as FastifyBaseLogger
-const mcp = { type: McpServerType.PROJECT, projectId: 'project-1', platformId: 'platform-1' } as unknown as ProjectScopedMcpServer
+const mcp: ProjectScopedMcpServer = {
+    id: 'mcp-1',
+    created: '2026-01-01T00:00:00.000Z',
+    updated: '2026-01-01T00:00:00.000Z',
+    type: McpServerType.PROJECT,
+    projectId: 'project-1',
+    platformId: 'platform-1',
+    token: 'token',
+    disabledTools: null,
+}
 
-describe('ap_delete_translation — usages in the response (Low)', () => {
+describe('ap_delete_translation — usages in the response', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         mockGetByKeyOrNull.mockResolvedValue({ id: 'translation-1', key: 'greeting' })
