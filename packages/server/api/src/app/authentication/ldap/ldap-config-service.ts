@@ -5,14 +5,17 @@ import {
     isNil,
     LdapAttributeMap,
     LdapConfig,
+    LdapGroupMapping,
     LdapTestRequest,
     LdapTestResponse,
     LdapTestStage,
     PlatformId,
     PlatformLdapConfig,
+    PlatformRole,
     QadamFlowError,
     spreadIfDefined,
     tryCatchSync,
+    unique,
     UpsertLdapConfigRequest,
     UserId,
 } from '@aiqadam/shared'
@@ -21,6 +24,7 @@ import { Entry } from 'ldapts'
 import { repoFactory } from '../../core/db/repo-factory'
 import { EncryptedObject, encryptUtils } from '../../helper/encryption'
 import { platformService } from '../../platform/platform.service'
+import { projectService } from '../../project/project-service'
 import { ldapAttributeUtils } from './ldap-attributes'
 import { ldapClient, ResolvedLdapConnectionConfig } from './ldap-client'
 import { PlatformLdapConfigEntity, PlatformLdapConfigSchema } from './ldap-config-entity'
@@ -34,6 +38,17 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         const row = await platformLdapConfigRepo().findOneBy({ platformId })
         return isNil(row) ? null : toResponse(row)
     },
+    // Reconcile's own entry point (Phase 2): a light query for *which* platforms it has work to do
+    // for, so the per-platform secret decryption (`getResolvedForSignIn`) only ever happens once
+    // reconcile is actually about to process that one platform, inside its own `distributedLock`.
+    async listEnabledPlatformIds(): Promise<PlatformId[]> {
+        const rows = await platformLdapConfigRepo()
+            .createQueryBuilder('c')
+            .where('c.config->>\'enabled\' = \'true\'')
+            .select('c."platformId"', 'platformId')
+            .getRawMany<{ platformId: PlatformId }>()
+        return rows.map((row) => row.platformId)
+    },
     // No network I/O happens here — deliberately. The directory is only ever reached from the
     // sign-in path and from the explicit `/test` endpoint below, never as a side effect of saving
     // a config an admin has not yet asked to try.
@@ -44,6 +59,7 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // `{username}`-placeholder and URL/`tlsMode` checks), so a partial update can never leave
         // the row in a state that would not have passed validation on its own.
         const config = LdapConfig.parse({ ...existing?.config, ...request })
+        await assertGroupMappingProjectsBelongToPlatform({ platformId, groupMappings: config.groupMappings, log })
 
         // B2 (owner/admin takeover): `linkExistingByEmail: true` hands every future directory
         // entry that matches an existing local email the ability to sign in as that account.
@@ -66,7 +82,13 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         // either one while linking-by-email stayed on without the gate ever seeing a change. Both
         // are checked here explicitly, alongside `configHasChanged`, for exactly that reason.
         const secretsTouched = request.caCertificate !== undefined || !isNil(request.bindPassword)
-        if (config.linkExistingByEmail === true && (configHasChanged({ existing: existing?.config, config }) || secretsTouched)) {
+        // Phase 2's own owner-gate: a group mapping that grants platform ADMIN is exactly as
+        // powerful as `linkExistingByEmail` — any directory user in that group becomes a platform
+        // admin on their next sign-in or the next reconcile pass — so it is gated the same way,
+        // for the same reason (a non-owner admin must not be able to grant ADMIN to arbitrary
+        // directory users, including themselves via a group they also control membership of).
+        const grantsAdminViaMapping = config.groupMappings.some((mapping) => mapping.platformRole === PlatformRole.ADMIN)
+        if ((config.linkExistingByEmail === true || grantsAdminViaMapping) && (configHasChanged({ existing: existing?.config, config }) || secretsTouched)) {
             await assertCallerIsPlatformOwner({ platformId, callingUserId, log })
         }
 
@@ -108,7 +130,16 @@ export const ldapConfigService = (log: FastifyBaseLogger) => ({
         log.info({ platformId }, 'Saved LDAP configuration')
         return toResponse(saved)
     },
-    async delete({ platformId }: PlatformScopedParams): Promise<void> {
+    // A non-owner admin must not be able to delete a config carrying `linkExistingByEmail: true`
+    // and immediately re-create it (unchanged, since a fresh config never trips `configHasChanged`
+    // against nothing) — deleting is itself the sensitive operation here, since it destroys the
+    // one config `upsert`'s own gate was protecting. The same owner check `upsert` applies to a
+    // *change* under active linking applies to removing the row outright.
+    async delete({ platformId, callingUserId }: DeleteParams): Promise<void> {
+        const existing = await platformLdapConfigRepo().findOneBy({ platformId })
+        if (!isNil(existing) && existing.config.linkExistingByEmail === true) {
+            await assertCallerIsPlatformOwner({ platformId, callingUserId, log })
+        }
         await platformLdapConfigRepo().delete({ platformId })
     },
     // The only two callers that ever need the decrypted bind password / CA certificate: this
@@ -242,8 +273,26 @@ async function assertCallerIsPlatformOwner({ platformId, callingUserId, log }: A
     if (platform.ownerId !== callingUserId) {
         throw new QadamFlowError({
             code: ErrorCode.AUTHORIZATION,
-            params: { message: 'Only the platform owner may change this configuration while linking existing local accounts by email is enabled' },
+            params: { message: 'Only the platform owner may change this configuration while linking existing local accounts by email, or a group mapping granting platform ADMIN, is enabled' },
         })
+    }
+}
+
+// Save-time half of the "every projectId validated to belong to the configuring platform" rule —
+// the other half is `ldapGroupMappingService`'s own re-check at apply time, since a project can be
+// deleted after the mapping is saved. A stale reference here is refused outright, not silently
+// dropped, so an admin who typos or reuses a projectId from another platform gets an error instead
+// of a mapping that quietly never grants anything.
+async function assertGroupMappingProjectsBelongToPlatform({ platformId, groupMappings, log }: AssertGroupMappingProjectsBelongToPlatformParams): Promise<void> {
+    const projectIds = unique(groupMappings.flatMap((mapping) => mapping.projects.map((project) => project.projectId)))
+    for (const projectId of projectIds) {
+        const project = await projectService(log).getOne(projectId)
+        if (isNil(project) || project.platformId !== platformId) {
+            throw new QadamFlowError({
+                code: ErrorCode.VALIDATION,
+                params: { message: `Group mapping project "${projectId}" does not belong to this platform` },
+            })
+        }
     }
 }
 
@@ -295,9 +344,20 @@ type UpsertParams = {
     request: UpsertLdapConfigRequest
 }
 
+type DeleteParams = {
+    platformId: PlatformId
+    callingUserId: UserId
+}
+
 type AssertCallerIsPlatformOwnerParams = {
     platformId: PlatformId
     callingUserId: UserId
+    log: FastifyBaseLogger
+}
+
+type AssertGroupMappingProjectsBelongToPlatformParams = {
+    platformId: PlatformId
+    groupMappings: LdapGroupMapping[]
     log: FastifyBaseLogger
 }
 

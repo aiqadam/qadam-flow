@@ -1,4 +1,4 @@
-# LDAP / Active Directory Sign-In (Phase 1)
+# LDAP / Active Directory Sign-In (Phase 1 + Phase 2 group mapping/reconcile)
 
 ## Summary
 Per-platform LDAP/AD directory sign-in, additive to local password auth. A platform admin
@@ -253,7 +253,7 @@ versa.
 - **`tlsVerify: false` logs a warning on every connect**, not only at config-save time.
 
 ## Real-directory test suite in CI (M5)
-`test/integration/ce/ldap/ldap-openldap.test.ts` is opt-in (`AP_RUN_LDAP_OPENLDAP_TESTS=true`) and
+`test/integration/ce/ldap/ldap-openldap.test.ts` is opt-in (`QF_RUN_LDAP_OPENLDAP_TESTS=true`) and
 runs in the "CE integration suite" GitHub Actions job: a `run:` step generates a fresh TLS cert,
 starts `ghcr.io/ldapjs/docker-test-openldap/openldap` pinned by digest, waits for slapd to actually
 answer (`ldapwhoami` in a retry loop, not `nc -z` — `nc` only proves docker-proxy accepted the TCP
@@ -263,13 +263,114 @@ step after. Config in that suite is written through the real `POST /v1/platform-
 `upsert` handler (including the CA-certificate round trip), never by writing the
 `platform_ldap_config` row directly.
 
-The flag is `AP_`-prefixed, not a bare name — round 1 of this shipped it as
+The flag is `QF_`-prefixed, not a bare name — round 1 of this shipped it as
 `RUN_LDAP_OPENLDAP_TESTS`, which turbo's `globalPassThroughEnv` (`AP_*`/`QF_*` only) silently
 stripped before it ever reached the spawned `vitest` process, so all 8 cases skipped in CI without
 failing the job. The suite itself now also fails outright (rather than skipping) whenever
 `CI=true` and the flag isn't `'true'`, so a repeat of that regression is caught by the suite, not
-only by a comment. This round's fix has not yet been proven by a real green CI run showing "8
-passed" for this file — that confirmation is a follow-up, not a claim made here.
+only by a comment. Round 2 (#339 Phase 2) renamed the canonical prefix from `AP_` to `QF_` — this
+repo's general `AP_`→`QF_` migration (`env-migrations.ts`) — while still reading
+`AP_RUN_LDAP_OPENLDAP_TESTS` as a deprecated fallback directly in the test file, since it reads
+`process.env` itself rather than through `system.get()` and so bypasses that module's generic
+mirror.
+
+## Phase 2 — group→role mapping and reconcile
+
+### Summary
+The LDAP config's `config` json (`LdapConfig`, `packages/shared/src/lib/core/authentication/ldap/ldap-config.ts`)
+gains `groupMappings: LdapGroupMapping[]`, `nestedGroups: boolean`, and optional `groupSearchBaseDn`/
+`groupSearchFilter`. Each mapping is `{ groupDn, platformRole?, projects: [{ projectId, role }] }`.
+Applied at every successful LDAP sign-in and by a reconcile system job: the platform role becomes
+the *highest* matched role (`ADMIN > OPERATOR > MEMBER`); the platform owner is never changed;
+project memberships the mapping creates are marked `managedBy: 'LDAP'` on `project_member` and are
+the only ones reconcile or sign-in may update or remove — a manually-added membership (`managedBy:
+'MANUAL'`) is never touched, even when it also matches a mapping. No mapping match at all leaves
+the platform role untouched (not reset to anything).
+
+### Key Files (additions)
+- `packages/server/api/src/app/authentication/ldap/ldap-group-mapping.ts` — pure grant resolver: `resolveGrants({ groupMappings, memberGroupDns })` → highest-wins platform role + per-project role map; `normalizeGroupDn` (trim/lowercase/per-component trim — not full RFC 4514 parsing, a documented simplification)
+- `packages/server/api/src/app/authentication/ldap/ldap-group-mapping-service.ts` — `applyMapping`: writes the platform-role grant (skips the owner) and the directory-managed `project_member` rows (create/update/remove), re-validating every `projectId` still belongs to the platform (defense in depth; save-time validation is in `ldapConfigService.upsert`)
+- `packages/server/api/src/app/authentication/ldap/ldap-reconcile-service.ts` — `reconcileAllPlatforms`: lists enabled platforms, then per platform under `distributedLock`, connects once and does one `searchBySubject` per linked user; fail-open on a connect/bind error (touches nobody that run); fail-closed per account on a search error (skips only that user); a configurable safety valve aborts the whole platform run (deactivating nobody) if it would deactivate more than `LDAP_RECONCILE_SAFETY_VALVE_PERCENT` (default 20%) of that platform's linked users
+- `packages/server/api/src/app/authentication/ldap/ldap-reconcile-module.ts` — registers the `SystemJobName.LDAP_RECONCILE` handler and a repeated BullMQ job (default hourly, `LDAP_RECONCILE_CRON`); the handler itself re-reads `LDAP_RECONCILE_ENABLED` every tick rather than the job being conditionally registered, so toggling the flag takes effect on the next tick with no restart
+- `ldap-client.ts` additions: `resolveMemberGroupDns` (reads `memberOf` on the already-fetched user entry, plus an optional nested-group search when `nestedGroups`+`groupSearchBaseDn`+`groupSearchFilter` are all configured), `searchNestedGroups` (templated `{userDn}` filter — AD's own nested-group idiom is `(member:1.2.840.113556.1.4.1941:={userDn})`, but the filter is admin-configured and directory-agnostic; OpenLDAP cannot evaluate that AD-specific extensible-match OID, so a plain `(member={userDn})` is what the real-directory test in `ldap-openldap.test.ts` actually exercises), `searchBySubject` (reconcile's own lookup — canonical `objectGUID` string is converted back to the RFC 4515 §3 escaped-octet filter syntax via `canonicalGuidToFilterValue`, the inverse of `ldapAttributeUtils.objectGuidBufferToCanonicalString`)
+- `searchForUser` now also requests `memberOf` unconditionally (cheap, needed by every sign-in for group mapping)
+- `ldap-client.ts`'s `connect()` TLS `servername`: omitted (not just left as the dialed IP) when the *configured* host is itself an IP literal — Node's `tls.connect` warns (DEP0123) and ignores `servername` set to an IP address (RFC 6066 §3 restricts SNI to hostnames); `servername = hostname` is kept for a real DNS name
+
+### Entities (columns added)
+| Table | Column | Notes |
+|---|---|---|
+| `project_member` | `managedBy` | `ProjectMemberManagedBy` (`MANUAL`/`LDAP`), `NOT NULL DEFAULT 'MANUAL'`; every existing writer (`project-service.ts#addCreatorAsProjectAdmin`, `user-invitation.service.ts#provisionUserInvitation`) now sets it explicitly to `MANUAL` |
+| `user_federated_identity` | `directoryDisabledAt` | nullable timestamptz; set only by reconcile when it deactivates a user, cleared only by reconcile when it reactivates one it deactivated itself — never touched by sign-in or by an admin's own deactivation |
+
+Migration: `1791100000000-AddLdapGroupMappingColumns` (additive, non-breaking; both columns are
+plain `ADD COLUMN`). `groupMappings`/`nestedGroups`/`groupSearchBaseDn`/`groupSearchFilter` live
+inside the existing `platform_ldap_config.config` json blob — no schema change needed for those.
+
+### Save-time and apply-time validation
+- Every `groupMappings[].projects[].projectId` must belong to the configuring platform —
+  `ldapConfigService.upsert` throws `ErrorCode.VALIDATION` otherwise (`assertGroupMappingProjectsBelongToPlatform`).
+  Re-checked again at apply time (`ldapGroupMappingService`'s own `projectBelongsToPlatform`), since
+  a project can be deleted after the mapping is saved — apply time silently skips (logs a warning)
+  rather than throwing, since a background reconcile run must not fail outright over one stale entry.
+- `groupSearchBaseDn` and `groupSearchFilter` are a pair: set one without the other and `LdapConfig`'s
+  own `superRefine` refuses the save (`invalidLdapGroupSearchConfig`) — a lone `groupSearchBaseDn`
+  would otherwise silently fall back to `memberOf`-only resolution with no indication why.
+- **Owner gate, extended.** A group mapping with `platformRole: 'ADMIN'` is exactly as powerful as
+  `linkExistingByEmail: true` — any directory user in that group becomes a platform admin on their
+  next sign-in or the next reconcile pass — so saving or changing a config with such a mapping active
+  requires the platform owner, the same `assertCallerIsPlatformOwner` gate `linkExistingByEmail`
+  already used (`grantsPlatformAdminViaMapping` in `ldapConfigService.upsert`).
+- **`DELETE /v1/platform-ldap-configs` also requires the owner** whenever the *stored* config has
+  `linkExistingByEmail: true` — deleting is exactly as sensitive as changing a config under active
+  linking (it destroys the very row the upsert-time gate protects), so a non-owner admin cannot dodge
+  that gate by deleting and re-creating an unchanged config instead of editing it in place.
+
+### Reconcile semantics
+- **Fail-open on outage, fail-closed per account.** A connect or service-bind failure aborts the
+  whole platform's run (nobody touched, logged as an error). A `searchBySubject` failure for one
+  specific linked user skips only that user (logged as a warning) — the rest of the platform's
+  linked users are still processed normally.
+- **Disabled-account detection is `userAccountControl` bit 2 (AD `ACCOUNTDISABLE`) only** in this
+  PR. A configurable "disabled account filter" for directories using a different convention is a
+  documented follow-up, not implemented here.
+- **Safety valve** (`LDAP_RECONCILE_SAFETY_VALVE_PERCENT`, default 20): computed against the
+  platform's total linked-user count, checked once after every user has been classified gone/
+  disabled/present; tripping it aborts *only* the deactivation half of the run for that platform —
+  reactivation and mapping re-application for present/enabled users still proceed, since those are
+  the restorative direction and safe to apply even during a suspected `baseDn`/filter misconfiguration.
+- **Reactivation is scoped to reconcile's own marker.** Only a user whose federated row carries a
+  non-null `directoryDisabledAt` is ever reactivated automatically; an admin's own manual
+  deactivation carries no such marker and is never touched.
+
+### System props (new)
+`LDAP_RECONCILE_ENABLED` (boolean, default `true`), `LDAP_RECONCILE_CRON` (string, default
+`23 * * * *` — hourly), `LDAP_RECONCILE_SAFETY_VALVE_PERCENT` (1–100, default `20`).
+
+### Env-migration follow-up folded in
+`test/integration/ce/ldap/ldap-openldap.test.ts`'s opt-in flag is now `QF_RUN_LDAP_OPENLDAP_TESTS`
+(was `AP_RUN_LDAP_OPENLDAP_TESTS`) — see the "Real-directory test suite in CI (M5)" section above.
+`AP_RUN_LDAP_OPENLDAP_TESTS` is still read as a deprecated fallback directly in the test file (it
+reads `process.env` itself, bypassing `environmentMigrations`' generic AP_/QF_ mirror).
+
+### Tests (Phase 2)
+- Pure resolver: `test/unit/app/authentication/ldap/ldap-group-mapping.test.ts` — highest-wins
+  platform role, no-match leaves role untouched, DN case/whitespace normalisation, highest-wins per
+  project.
+- DB-backed: `test/integration/ce/ldap/ldap-group-mapping.test.ts` — owner never changed; directory-managed
+  membership create/update/remove; manual membership untouched even when it matches a mapping; a
+  stale cross-platform `projectId` is skipped (not thrown) at apply time.
+- Reconcile: `test/integration/ce/ldap/ldap-reconcile.test.ts` — deactivates gone/disabled users and
+  stamps `directoryDisabledAt`; reactivates only directory-deactivated users, never a manual
+  deactivation; fail-open on a connect/bind error; fail-closed per account on a search error; the
+  safety valve aborting deactivation for an over-threshold run.
+- Save/apply validation and owner gates: appended to `test/integration/ce/ldap/ldap-config.test.ts`
+  (ADMIN-granting-mapping owner gate, cross-platform `projectId` rejected at save, DELETE owner gate).
+- Real directory: `ldap-openldap.test.ts` gained one case applying a group mapping resolved via a
+  real `(member={userDn})` search against the planetexpress fixture's real `cn=ship_crew` group,
+  confirming the mapped platform role is actually granted — see the file's own comment for what this
+  specific fixture cannot prove (no `memberOf` back-link overlay; OpenLDAP cannot evaluate AD's
+  `LDAP_MATCHING_RULE_IN_CHAIN` OID, so the nested-group *transitive*-membership case stays covered
+  only by the mocked tests).
 
 ## Accepted risks
 Recorded deliberately, not discovered late — each of these is a property of the design, not a bug:
@@ -295,3 +396,18 @@ Recorded deliberately, not discovered late — each of these is a property of th
   that username, from any IP, for the rest of the window — a denial-of-service against one account,
   not a credential-stuffing defense against many. This is the accepted trade for closing the botnet
   gap.
+- **(d) Per-platform connection caps are still not implemented (Phase 2 note on (b)).** Reconcile
+  shares the same process-wide `MAX_CONCURRENT_LDAP_CONNECTIONS` pool sign-in uses; a platform with
+  many linked users being reconciled can transiently reduce the slots available to another
+  platform's sign-ins. Reconcile processes platforms and users sequentially (no internal
+  concurrency), which bounds its own contribution but does not eliminate this.
+- **(e) DN comparison for group mappings is a pragmatic normalisation, not RFC 4514 parsing.**
+  `ldapGroupMappingUtils.normalizeGroupDn` trims and lowercases each comma-separated component; it
+  does not handle an escaped comma inside an RDN's value, multi-valued RDNs, or attribute-type OID
+  vs. short-name equivalence (`2.5.4.3` vs `cn`). A group DN using any of those forms would need to
+  be entered into `groupMappings` in a form that matches what the directory actually reports.
+- **(f) Disabled-account detection covers AD's `userAccountControl` bit 2 only.** A directory that
+  signals "disabled" a different way (a custom attribute, a different bit, group membership) is not
+  detected by reconcile; such an account is only caught by "gone" (searchBySubject returns nothing)
+  if it is also removed from the directory, not merely disabled. A configurable disabled-account
+  filter is a natural follow-up, not implemented in this PR.

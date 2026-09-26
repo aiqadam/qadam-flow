@@ -30,6 +30,14 @@ export const UserFederatedIdentityEntity = new EntitySchema<UserFederatedIdentit
             type: String,
             nullable: false,
         },
+        // Set only by the reconcile job when it deactivates this user because the directory
+        // account is gone or disabled; cleared when reconcile reactivates them. Never set by a
+        // sign-in, and never by an admin's own deactivation — reconcile reads it back to decide
+        // whether *it* may reactivate the user, so a manual admin deactivation always sticks.
+        directoryDisabledAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
     },
     indices: [
         {

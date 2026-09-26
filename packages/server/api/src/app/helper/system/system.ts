@@ -73,6 +73,16 @@ const systemPropDefaultValues: Partial<Record<SystemProp, string>> = {
     // time. See webhook-backpressure-service.ts for the trip point.
     [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_ENABLED]: 'true',
     [AppSystemProp.SYNC_WEBHOOK_BACKPRESSURE_RETRY_AFTER_SECONDS]: '5',
+    // LDAP reconcile (`.agents/features/ldap.md` Phase 2): hourly by default, disable-able via
+    // `LDAP_RECONCILE_ENABLED=false`. The handler itself re-reads `LDAP_RECONCILE_ENABLED` on every
+    // tick rather than this job being conditionally registered, so toggling it takes effect on the
+    // next scheduled run without needing the BullMQ repeatable job removed and re-added.
+    [AppSystemProp.LDAP_RECONCILE_ENABLED]: 'true',
+    [AppSystemProp.LDAP_RECONCILE_CRON]: '23 * * * *',
+    // Aborts a platform's reconcile run (deactivating nobody) if it would otherwise deactivate more
+    // than this share of that platform's LDAP-linked users in one run — the failure mode a wrong
+    // `baseDn` or a directory outage misreported as "everyone is gone" produces.
+    [AppSystemProp.LDAP_RECONCILE_SAFETY_VALVE_PERCENT]: '20',
 }
 
 let globalLogger: FastifyBaseLogger

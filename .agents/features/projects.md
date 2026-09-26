@@ -71,6 +71,15 @@ Relations (one-to-many): `flows`, `files`, `folders`, `events`, `appConnections`
 - When a finite cap is configured, `createTeamProject()` wraps the count (`countByPlatformIdAndType`) and the insert in `distributedLock(log).runExclusive({ key: 'team-project-limit:${platformId}', ... })` to close the count-then-insert race between concurrent requests. When no cap is configured (the default), the lock is skipped entirely — no Redis round trip on the common path.
 - Breaching the cap throws `QadamFlowError({ code: ErrorCode.RESOURCE_LIMIT_EXCEEDED, params: { resource: 'team_projects', limit } })`, mapped to HTTP `403` in `error-handler.ts`. This is a dedicated code, deliberately distinct from `ErrorCode.QUOTA_EXCEEDED`/`FEATURE_DISABLED` (plan/billing vocabulary reserved for a real plan-persistence feature that doesn't exist in this repo) and from `PlatformUsageMetric` (plan-usage vocabulary with no `teamProjects` field).
 
+## `project_member` and directory-managed memberships
+`project_member` (`project-member.entity.ts`) carries `userId`, `projectId`, `projectRoleId`,
+`platformId` and — since LDAP Phase 2 — `managedBy` (`ProjectMemberManagedBy`: `MANUAL`/`LDAP`).
+Every existing writer (`addCreatorAsProjectAdmin` in `project-service.ts`,
+`provisionUserInvitation` in `user-invitation.service.ts`) sets `MANUAL` explicitly. An LDAP group
+mapping's own writer (`ldapGroupMappingService`, `.agents/features/ldap.md`) sets `LDAP` and is the
+only writer allowed to update or remove a row it created; a `MANUAL` row is never touched by it,
+even when the same project also appears in a matching group mapping.
+
 ## Side Effects
 - Creating a project calls `projectHooks.postCreate(project, context?)`. The only registered implementation is the no-op default in `project-hooks.ts` — no `ProjectPlan` row, qadam filter, or alert receiver is created.
 - Soft-deleted projects remain in DB and can be hard-deleted by a background job

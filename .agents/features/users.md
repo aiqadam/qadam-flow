@@ -39,7 +39,7 @@ Manages user identity, platform membership, roles, session security, and a gamif
 
 ## Entities
 
-**User**: id, platformRole (ADMIN/MEMBER/OPERATOR), status (ACTIVE/INACTIVE), identityId (FK to UserIdentity), externalId (nullable), platformId (FK), lastActiveDate. Unique on (platformId, identityId).
+**User**: id, platformRole (ADMIN/MEMBER/OPERATOR), status (ACTIVE/INACTIVE), identityId (FK to UserIdentity), externalId (nullable), platformId (FK), lastActiveDate. Unique on (platformId, identityId). For an LDAP-linked user, both `platformRole` and `status` can be written by the directory itself — see LDAP Phase 2 group→role mapping and reconcile in `.agents/features/ldap.md` (the platform owner is never touched by either path).
 
 **UserIdentity**: id, email, password (hashed), firstName, lastName, provider (EMAIL/GOOGLE/SAML/JWT/LDAP), verified (boolean), tokenVersion (for session invalidation). One identity → many users (across platforms). `LDAP` identities are excluded from every local-password path (sign-in, password reset, password change) — see `.agents/features/ldap.md`.
 

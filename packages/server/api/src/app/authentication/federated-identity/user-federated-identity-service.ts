@@ -27,8 +27,20 @@ export const userFederatedIdentityService = (_log: FastifyBaseLogger) => ({
             userId,
             provider,
             subject,
+            directoryDisabledAt: null,
         }
         return userFederatedIdentityRepo(entityManager).save(newIdentity)
+    },
+    // Reconcile's own population (Phase 2): every user this platform's directory has ever linked,
+    // regardless of current `user.status` — reconcile itself decides deactivate/reactivate/leave.
+    async listByPlatformAndProvider({ platformId, provider, entityManager }: ListByPlatformAndProviderParams): Promise<UserFederatedIdentity[]> {
+        return userFederatedIdentityRepo(entityManager).findBy({ platformId, provider })
+    },
+    // Only ever called by reconcile — never by sign-in, and never by an admin action — so this
+    // field stays a reliable record of "the directory itself did this", not "someone deactivated
+    // this user for any reason".
+    async setDirectoryDisabledAt({ id, directoryDisabledAt, entityManager }: SetDirectoryDisabledAtParams): Promise<void> {
+        await userFederatedIdentityRepo(entityManager).update({ id }, { directoryDisabledAt })
     },
 })
 
@@ -51,5 +63,17 @@ type CreateParams = {
     userId: UserId
     provider: FederatedIdentityProvider
     subject: string
+    entityManager?: EntityManager
+}
+
+type ListByPlatformAndProviderParams = {
+    platformId: PlatformId
+    provider: FederatedIdentityProvider
+    entityManager?: EntityManager
+}
+
+type SetDirectoryDisabledAtParams = {
+    id: string
+    directoryDisabledAt: string | null
     entityManager?: EntityManager
 }

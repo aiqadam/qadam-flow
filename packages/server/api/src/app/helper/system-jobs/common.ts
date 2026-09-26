@@ -14,6 +14,7 @@ export enum SystemJobName {
     RESUME_DELAY_WAITPOINT = 'resume-delay-waitpoint',
     JOIN_WAITPOINT_TIMEOUT = 'join-waitpoint-timeout',
     APPLY_DELIVERY_MODE_CHANGE = 'apply-delivery-mode-change',
+    LDAP_RECONCILE = 'ldap-reconcile',
 }
 
 type DeleteFlowDurableSystemJobData =  {
@@ -78,6 +79,7 @@ type SystemJobDataMap = {
     [SystemJobName.RESUME_DELAY_WAITPOINT]: ResumeDelayWaitpointSystemJobData
     [SystemJobName.JOIN_WAITPOINT_TIMEOUT]: JoinWaitpointTimeoutSystemJobData
     [SystemJobName.APPLY_DELIVERY_MODE_CHANGE]: ApplyDeliveryModeChangeSystemJobData
+    [SystemJobName.LDAP_RECONCILE]: Record<string, never>
 }
 
 export type SystemJobData<T extends SystemJobName = SystemJobName> = T extends SystemJobName ? SystemJobDataMap[T] : never

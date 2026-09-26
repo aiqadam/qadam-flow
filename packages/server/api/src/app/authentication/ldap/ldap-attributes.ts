@@ -3,7 +3,9 @@ import { Entry } from 'ldapts'
 
 export const ldapAttributeUtils = {
     objectGuidBufferToCanonicalString,
+    swapByteOrder,
     readStringAttribute,
+    readMultiValueAttribute,
     resolveSubject,
 }
 
@@ -61,6 +63,22 @@ function readStringAttribute({ entry, name }: ReadAttributeParams): string | und
         return Buffer.isBuffer(first) ? first.toString('utf8') : first
     }
     return value
+}
+
+// `memberOf` (and any other multi-valued attribute) comes back as an array whenever a directory
+// entry has more than one value — `readStringAttribute` deliberately reads only the first, which
+// is wrong for group membership: every value matters, not just one. `ldapts` returns a bare string
+// (not a one-element array) when an entry happens to have exactly one value for the attribute, so
+// this normalises both shapes to an array before returning.
+function readMultiValueAttribute({ entry, name }: ReadAttributeParams): string[] {
+    const value = getAttributeValue({ entry, name })
+    if (isNil(value)) {
+        return []
+    }
+    const values = Array.isArray(value) ? value : [value]
+    return values
+        .map((item) => Buffer.isBuffer(item) ? item.toString('utf8') : item)
+        .filter((item): item is string => typeof item === 'string')
 }
 
 function resolveSubject({ entry, attributeMap }: ResolveSubjectParams): string | undefined {

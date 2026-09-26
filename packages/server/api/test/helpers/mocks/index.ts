@@ -41,6 +41,7 @@ import {
     Project,
     ProjectIcon,
     ProjectMember,
+    ProjectMemberManagedBy,
     ProjectPlan,
     ProjectRelease,
     ProjectReleaseType,
@@ -249,6 +250,7 @@ export const createMockProjectMember = (
         projectRoleId: projectMember.projectRoleId,
         userId: projectMember?.userId,
         projectId: projectMember?.projectId ?? apId(),
+        managedBy: projectMember?.managedBy ?? ProjectMemberManagedBy.MANUAL,
     }
 }
 
