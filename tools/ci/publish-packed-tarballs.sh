@@ -50,33 +50,33 @@ set -euo pipefail
 PUBLISH_ORDER_FILENAME="publish-order.txt"
 NPM_DIST_TAG="${NPM_DIST_TAG:-latest}"
 
-# RATE LIMITING. npm publishes no number for its publish rate limit, and #476's first run found
-# one the hard way: 23 packages into a 239-entry manifest the registry answered
+# RATE LIMITING. npm publishes no number for its publish rate limit, and #476 found out the hard
+# way, twice. The first run died 23 packages into a 239-entry manifest on
 #   npm error code E429
 #   npm error 429 Too Many Requests - PUT https://registry.npmjs.org/@aiqadam%2fqadam-baserow
-# and `set -e` took the job down with 216 packages unpublished. Nothing here could resume it —
-# the loop was a bare `npm publish` per line — so recovery meant another approved dispatch that
-# would publish another ~20 and stop again. At a 239-package manifest that is not a tail case,
-# it is the expected outcome.
+# and `set -e` took the job down with 216 packages unpublished — nothing here could resume it,
+# since the loop was a bare `npm publish` per line. #508's answer was retry-with-backoff on the
+# package that tripped it, plus a throttle that paced the rest of the manifest once one package
+# was refused, built on the ordinary assumption that E429 here meant what it means almost
+# everywhere: too many requests too fast.
 #
-# Two knobs, because a 429 needs two different answers. RETRY gets the CURRENT package published
-# once the window clears. THROTTLE stops the remaining two hundred from walking into the same
-# wall: the loop starts unpaced, and the first 429 is what teaches it a pace, which it doubles
-# again every time the registry pushes back after that. A limit nobody documents is one you can
-# only find by being pushed off it, so the script finds it at run time rather than carrying a
-# guessed constant that would be wrong on the day npm changes it.
+# #476 then measured what it actually is: a CUMULATIVE DAILY CAP on first-time publishes to the
+# scope, not a request rate. Across four dispatches — one completely unpaced at ~4s between
+# publishes, one that retried a single package through backoff for minutes — every run hit the
+# wall at the same package count regardless of pacing, and the very first PUT of the next
+# dispatch, hours later, was refused before anything about THAT run could have tripped a rate.
+# Retrying the package that got refused, or slowing down the ones behind it, cannot clear a cap
+# that is not about speed — it only spends the job's timeout finding that out one backoff at a
+# time. So a 429 now fails the run immediately, with no retry and no throttle: re-dispatching
+# (tomorrow, or once npm support lifts the cap) is the only thing that resumes it, and the pack
+# step already skips whatever the registry has, so a re-run picks up exactly where this stopped.
+#
+# The knobs below still exist, but only for the OTHER retryable class: a lost response (a 5xx or
+# a dropped connection), where the registry genuinely may not have seen the request at all and a
+# retry is not fighting a cap.
 NPM_PUBLISH_MAX_ATTEMPTS="${NPM_PUBLISH_MAX_ATTEMPTS:-6}"
 NPM_PUBLISH_RETRY_BASE_SECONDS="${NPM_PUBLISH_RETRY_BASE_SECONDS:-30}"
 NPM_PUBLISH_RETRY_MAX_SECONDS="${NPM_PUBLISH_RETRY_MAX_SECONDS:-600}"
-NPM_PUBLISH_THROTTLE_SECONDS="${NPM_PUBLISH_THROTTLE_SECONDS:-0}"
-NPM_PUBLISH_THROTTLE_ON_LIMIT_SECONDS="${NPM_PUBLISH_THROTTLE_ON_LIMIT_SECONDS:-10}"
-# The ceiling is a wall-clock budget as much as a pace. 120s across a 239-entry manifest is about
-# eight hours, and a GitHub-hosted job is killed at six — so a run that escalates all the way to
-# the cap will not finish the manifest, and is not meant to. It ends on the timeout with a few
-# hundred packages published and the rest untouched, and the next dispatch resumes: the pack step
-# skips versions already on the registry, so a re-run packs only what is left. Raising this does
-# not buy a completed run, it buys a longer one that also does not complete.
-NPM_PUBLISH_THROTTLE_MAX_SECONDS="${NPM_PUBLISH_THROTTLE_MAX_SECONDS:-120}"
 
 # Same pattern publish-npm-package.ts enforced before the split moved the publish off that
 # path. Not exploitable here — the value reaches `npm publish --tag` as a quoted argv element,
@@ -173,21 +173,22 @@ fi
 # failing publish, so no failure could be counted as a success. File paths inside a package are
 # contributor-controlled input; npm's `npm error` lines are not.
 #
-# `rate-limited` and `lost-response` are both retried, and the loop paces itself after either —
-# but they are NOT the same class and the conflict handler below turns on the difference. A 429
-# is the registry declining to process the PUT, so nothing was written and a later conflict on
-# the same name@version was not put there by us. A 5xx or a dropped connection says only that we
-# never learned the outcome, which is the one case where a conflict on the retry is our own
-# earlier PUT coming back to us.
+# Only `lost-response` is retried now — `rate-limited` fails the run immediately, below — but the
+# conflict handler still turns on the distinction, because a conflict on THIS package can still
+# arrive after an earlier lost-response retry on it. A 429 is the registry declining to process
+# the PUT, so nothing was written, and since it is no longer retried a conflict can never follow
+# one on the same package at all. A 5xx or a dropped connection says only that we never learned
+# the outcome, which is the one case where a conflict on the retry is our own earlier PUT coming
+# back to us.
 #
 # Each test is a HERESTRING, never `printf ... | grep -q`. Under this script's `set -o pipefail`
 # the pipeline form is wrong whenever the match is early and the log is long: `grep -q` exits at
 # the first hit, `printf` takes SIGPIPE on the next write, and the pipeline's status becomes 141
 # even though grep matched. Reproduced directly — 20k `npm error` padding lines after an
 # `npm error code E429` first line gives status 141 and the branch is skipped, so a genuine 429
-# classifies as `fatal` and the run stops instead of retrying. It needs the log to outrun the
-# pipe buffer (~64 KB), which is why it is latent rather than live; a herestring has no pipeline
-# and no status to poison.
+# classifies as `fatal` — the run still stops either way, but the message told the reader the
+# wrong thing about why. It needs the log to outrun the pipe buffer (~64 KB), which is why it is
+# latent rather than live; a herestring has no pipeline and no status to poison.
 classify_failure() { # attempt-log -> rate-limited | lost-response | conflict | fatal
   local errors
   errors="$(grep -E '^npm (error|ERR!)' "$1" || true)"
@@ -223,17 +224,8 @@ trap 'rm -f "$attempt_log"' EXIT
 published=0
 processed=0
 preexisting=""
-throttle_seconds="$NPM_PUBLISH_THROTTLE_SECONDS"
-paced=0
 while IFS= read -r filename || [ -n "$filename" ]; do
   [ -n "$filename" ] || continue
-
-  # Between publishes, never before the first: an unpaced run that never trips a 429 must stay
-  # exactly as fast as it was before this loop grew a throttle.
-  if [ "$paced" -eq 1 ] && [ "$throttle_seconds" -gt 0 ]; then
-    sleep "$throttle_seconds"
-  fi
-  paced=1
 
   attempt=1
   # Reset per package: only a failure on THIS name@version can make a conflict on it ours.
@@ -274,12 +266,16 @@ while IFS= read -r filename || [ -n "$filename" ]; do
         # and only its response was lost, which is the ordinary way a retried non-idempotent
         # request ends. Counting that as published is what makes the retry above safe to have.
         #
-        # After a 429 — or on the first attempt — it is not. A 429 is the registry declining to
-        # process the request, so nothing of ours was written; and the pack step refuses to pack
-        # a version already on the registry. Either that check read a stale packument, or a
-        # version under the official scope was published by something that is not this pipeline.
-        # An earlier version of this code took `attempt > 1` as proof of a lost response, which
-        # accepted exactly that case silently. The loop keeps going (the other packages are the
+        # On the first attempt it is not: nothing has been sent yet for this package, so a
+        # conflict there cannot be an earlier PUT of ours coming back — and the pack step refuses
+        # to pack a version already on the registry. Either that check read a stale packument, or
+        # a version under the official scope was published by something that is not this
+        # pipeline. (A 429 preceding a conflict on the SAME package is no longer a case to weigh:
+        # rate-limited fails the run below before a second attempt on that package ever runs, so
+        # this branch only ever sees a 429's aftermath by way of a lost response having also
+        # happened, which is exactly what `lost_response` records.) An earlier version of this
+        # code took `attempt > 1` as proof of a lost response, which accepted exactly that case
+        # silently. The loop keeps going (the other packages are the
         # deliverable, and no outcome here can change bytes already on the registry), but the run
         # ends red with the names listed. Disambiguating is a packument read away: if
         # `npm view <name>@<version> dist.tarball` resolves to a publish from this run's commit,
@@ -295,27 +291,23 @@ while IFS= read -r filename || [ -n "$filename" ]; do
         processed=$((processed + 1))
         break
         ;;
-      rate-limited | lost-response)
-        if [ "$failure_class" = lost-response ]; then
-          lost_response=1
-        fi
+      rate-limited)
+        # #476 measured this to be a cumulative daily cap on the scope, not a rate — so no
+        # retry, backoff or pace applied to THIS package or the rest of the manifest can clear
+        # it within this run. Dying here immediately, rather than working through
+        # NPM_PUBLISH_MAX_ATTEMPTS first, is what stops the job spending its timeout finding
+        # that out one backoff at a time.
+        echo "::error::publish-packed-tarballs: the registry answered 429 on ${filename} — a cumulative daily publish cap on the scope (see #476), not a transient rate limit, so retrying within this run cannot clear it. Stopping immediately. Re-dispatch (tomorrow, or once npm support lifts the cap) to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
+        exit 1
+        ;;
+      lost-response)
+        lost_response=1
         if [ "$attempt" -ge "$NPM_PUBLISH_MAX_ATTEMPTS" ]; then
-          echo "::error::publish-packed-tarballs: the registry is still refusing ${filename} after ${attempt} attempts. Re-dispatch to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
+          echo "::error::publish-packed-tarballs: the registry is still not answering for ${filename} after ${attempt} attempts. Re-dispatch to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
           exit 1
         fi
-        # The pace this run settles on. Doubling from the configured starting point rather than
-        # from zero means a manifest that trips the limit twice ends up slower than one that
-        # trips it once, which is the only signal available about how far over the line it is.
-        if [ "$throttle_seconds" -lt "$NPM_PUBLISH_THROTTLE_ON_LIMIT_SECONDS" ]; then
-          throttle_seconds="$NPM_PUBLISH_THROTTLE_ON_LIMIT_SECONDS"
-        else
-          throttle_seconds=$((throttle_seconds * 2))
-        fi
-        if [ "$throttle_seconds" -gt "$NPM_PUBLISH_THROTTLE_MAX_SECONDS" ]; then
-          throttle_seconds="$NPM_PUBLISH_THROTTLE_MAX_SECONDS"
-        fi
         backoff="$(retry_sleep_seconds "$attempt")"
-        echo "publish-packed-tarballs: the registry pushed back on ${filename} (${failure_class}); waiting ${backoff}s before attempt $((attempt + 1)), and pacing the rest of the manifest at ${throttle_seconds}s between publishes."
+        echo "publish-packed-tarballs: no response yet for ${filename} (attempt ${attempt}); waiting ${backoff}s before attempt $((attempt + 1))."
         sleep "$backoff"
         attempt=$((attempt + 1))
         ;;
