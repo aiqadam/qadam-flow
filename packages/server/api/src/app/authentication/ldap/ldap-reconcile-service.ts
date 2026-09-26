@@ -1,6 +1,7 @@
 import { FederatedIdentityProvider, isNil, PlatformId, tryCatch, UserFederatedIdentity, UserStatus } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { Client, Entry } from 'ldapts'
+import { transaction } from '../../core/db/transaction'
 import { distributedLock } from '../../database/redis-connections'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
@@ -52,6 +53,9 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
         return
     }
 
+    // Round 3 (app-sec finding #5): oldest-reconciled-first (`NULLS FIRST`) — the order the time
+    // budget below slices into is what rotates which users get attempted this tick, so a slow/huge
+    // directory starves a *different* slice each run rather than always the same tail of the list.
     const linkedIdentities = await userFederatedIdentityService(log).listByPlatformAndProvider({
         platformId,
         provider: FederatedIdentityProvider.LDAP,
@@ -60,13 +64,21 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
         return
     }
 
+    const deadline = Date.now() + (system.getNumber(AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) ?? DEFAULT_PLATFORM_TIME_BUDGET_MS)
+
     // FAIL-OPEN on outage: a connect or service-bind failure means the directory could not be
     // reached at all for this run — every linked user is left exactly as-is, not deactivated.
-    const { data: results, error: outageError } = await tryCatch(() => collectDirectoryState({ platformId, resolved, linkedIdentities, log }))
+    const { data: results, error: outageError } = await tryCatch(() => collectDirectoryState({ platformId, resolved, linkedIdentities, log, deadline }))
     if (!isNil(outageError) || isNil(results)) {
         log.error({ err: outageError, platformId }, '[ldapReconcileService] Could not reach the directory for this platform; deactivating nobody this run (fail-open)')
         return
     }
+
+    // Round 3 (app-sec finding #5): every identity the search phase actually resolved (any of
+    // gone/disabled/present/skipped — attempted within budget, regardless of outcome) is stamped
+    // now, before the write-back phase below, which is itself separately bounded by the same
+    // deadline and may stop before finishing all of them.
+    await userFederatedIdentityService(log).markReconciled({ ids: results.map((result) => result.identity.id), at: new Date().toISOString() })
 
     const goneOrDisabled = results.filter((result): result is GoneOrDisabledResult => result.kind === 'gone' || result.kind === 'disabled')
     const present = results.filter((result): result is PresentResult => result.kind === 'present')
@@ -77,10 +89,8 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
     // that trips the valve. The denominator is the count of currently-ACTIVE linked users, not
     // every linked user ever — an already-mostly-inactive platform must not make the valve harder
     // to trip for the still-active minority a wrong `baseDn` would actually be affecting.
-    const statusByUserId = new Map(await Promise.all(linkedIdentities.map(async (identity) => {
-        const user = await userService(log).getOrThrow({ id: identity.userId })
-        return [identity.userId, user.status] as const
-    })))
+    // Round 3 (app-sec finding #5): one `IN (...)` query instead of N concurrent `getOrThrow` calls.
+    const statusByUserId = await userService(log).getStatusesByIds({ ids: linkedIdentities.map((identity) => identity.userId) })
     const activeLinkedCount = [...statusByUserId.values()].filter((status) => status === UserStatus.ACTIVE).length
     const realDeactivations = goneOrDisabled.filter((result) => statusByUserId.get(result.identity.userId) === UserStatus.ACTIVE)
 
@@ -102,8 +112,21 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
         }
     }
 
+    // Round 3 (app-sec finding #5): this write-back loop is itself bounded by the same deadline the
+    // search phase used — a large `present` batch of fast per-user LDAP lookups (which leaves
+    // plenty of the budget still unspent) could otherwise still spend an unbounded amount of *this*
+    // platform's turn on local DB writes alone. Stopping early here just leaves the remaining
+    // present users' reactivation/mapping re-application for the next tick, the same as the search
+    // phase leaving unattempted users for next time — both are idempotent to repeat.
     for (const result of present) {
-        await reactivateIfDirectoryDisabled({ identity: result.identity, log })
+        if (Date.now() > deadline) {
+            log.warn({ platformId }, '[ldapReconcileService] Per-platform time budget exceeded during reactivation/mapping re-application; remaining present users picked up on the next run')
+            break
+        }
+        const { error: reactivateError } = await tryCatch(() => reactivateIfDirectoryDisabled({ identity: result.identity, log }))
+        if (!isNil(reactivateError)) {
+            log.warn({ err: reactivateError, platformId, userId: result.identity.userId }, '[ldapReconcileService] Could not reactivate this user this run')
+        }
         // Round 2 (app-sec finding #3): a broken group search for one user (`null`, logged inside
         // `resolveOneIdentity`) must not strip that user's directory-managed memberships over what
         // is likely transient — skip re-applying the mapping for them this tick, and keep
@@ -133,9 +156,10 @@ async function reconcileOnePlatform({ platformId, log }: ReconcileOnePlatformPar
 // Round 2 (app-sec finding #12): bounded by a per-platform time budget so one slow or huge
 // directory can't starve every other platform's own turn in the same tick — the loop simply stops
 // early, leaving the remaining linked users untouched (picked up again on the next scheduled run),
-// rather than blocking the whole `reconcileAllPlatforms` loop indefinitely.
-async function collectDirectoryState({ platformId, resolved, linkedIdentities, log }: CollectDirectoryStateParams): Promise<PerUserResult[]> {
-    const deadline = Date.now() + (system.getNumber(AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) ?? DEFAULT_PLATFORM_TIME_BUDGET_MS)
+// rather than blocking the whole `reconcileAllPlatforms` loop indefinitely. Round 3 (app-sec finding
+// #5) moved the deadline computation up into the caller, since the write-back phase after this one
+// needs to share it rather than getting a fresh budget of its own.
+async function collectDirectoryState({ platformId, resolved, linkedIdentities, log, deadline }: CollectDirectoryStateParams): Promise<PerUserResult[]> {
     return ldapClient.withConnectionSlot(async () => {
         const client = await ldapClient.connect({ config: resolved.connectionConfig })
         try {
@@ -202,23 +226,38 @@ function isAccountDisabled(entry: Entry): boolean {
 // adopt one), so `userService.update` refusing to deactivate the owner is defense in depth here,
 // not the primary guard — but it is still respected: a rejection just means this one user is
 // skipped, not that the whole run aborts.
+//
+// Round 3 (app-sec finding #7): the status write and the `directoryDisabledAt` stamp now commit in
+// one transaction — a crash or error between the two used to be able to leave a user deactivated
+// with no marker recording that reconcile was the one that did it, which would then make that
+// deactivation look exactly like an admin's own (never auto-reactivated).
 async function deactivateUser({ identity, log }: DeactivateUserParams): Promise<void> {
     const user = await userService(log).getOrThrow({ id: identity.userId })
     if (user.status === UserStatus.INACTIVE) {
         return
     }
-    const { error } = await tryCatch(() => userService(log).update({ id: identity.userId, platformId: identity.platformId, status: UserStatus.INACTIVE, source: 'LDAP' }))
+    const { error } = await tryCatch(() => transaction(async (entityManager) => {
+        await userService(log).update({ id: identity.userId, platformId: identity.platformId, status: UserStatus.INACTIVE, source: 'LDAP', entityManager })
+        await userFederatedIdentityService(log).setDirectoryDisabledAt({ id: identity.id, directoryDisabledAt: new Date().toISOString(), entityManager })
+    }))
     if (!isNil(error)) {
         log.warn({ err: error, userId: identity.userId, platformId: identity.platformId }, '[ldapReconcileService] Could not deactivate a user this run')
-        return
     }
-    await userFederatedIdentityService(log).setDirectoryDisabledAt({ id: identity.id, directoryDisabledAt: new Date().toISOString() })
 }
 
 // Reactivates only a user *this* reconcile job itself deactivated (`directoryDisabledAt` set) —
 // never a user an admin deactivated by hand, which never carries this marker (and, since
 // `userService.update`'s admin path now clears it on every explicit status write, can never
 // reacquire one without reconcile itself setting it again).
+//
+// Round 3 (app-sec finding #6): the `identity` passed in is a snapshot taken during the earlier
+// search phase — potentially the other side of this platform's whole time budget away from this
+// write-back phase running. An admin re-deactivating (or reactivating) the same user in between
+// also clears this exact marker, and a stale read-then-write here could otherwise silently
+// reactivate a user an admin just, moments ago, deliberately deactivated. `clearDirectoryDisabledAtIfSet`
+// is the atomic gate: it clears the marker (and reports whether it did) only if the marker is
+// *still* set at the moment of that write, not at the moment this function started running — so a
+// concurrent admin clear always wins the race, whichever order the two actually land in.
 async function reactivateIfDirectoryDisabled({ identity, log }: ReactivateIfDirectoryDisabledParams): Promise<void> {
     if (isNil(identity.directoryDisabledAt)) {
         return
@@ -227,11 +266,17 @@ async function reactivateIfDirectoryDisabled({ identity, log }: ReactivateIfDire
     if (user.status !== UserStatus.INACTIVE) {
         // Reactivated some other way already (or never actually deactivated) — clear the stale
         // marker so a future disable-then-reconcile cycle is tracked correctly from a clean state.
-        await userFederatedIdentityService(log).setDirectoryDisabledAt({ id: identity.id, directoryDisabledAt: null })
+        // A concurrent clear here (this call returning `false`) is a no-op either way.
+        await userFederatedIdentityService(log).clearDirectoryDisabledAtIfSet({ id: identity.id })
+        return
+    }
+    const wasStillDirectoryDisabled = await userFederatedIdentityService(log).clearDirectoryDisabledAtIfSet({ id: identity.id })
+    if (!wasStillDirectoryDisabled) {
+        // Someone else — an admin's own re-deactivation — cleared it first; that INACTIVE status
+        // is now a human decision, not reconcile's own, and must not be reactivated.
         return
     }
     await userService(log).update({ id: identity.userId, platformId: identity.platformId, status: UserStatus.ACTIVE, source: 'LDAP' })
-    await userFederatedIdentityService(log).setDirectoryDisabledAt({ id: identity.id, directoryDisabledAt: null })
 }
 
 type ReconcileOnePlatformParams = {
@@ -244,6 +289,7 @@ type CollectDirectoryStateParams = {
     resolved: ResolvedLdapConfig
     linkedIdentities: UserFederatedIdentity[]
     log: FastifyBaseLogger
+    deadline: number
 }
 
 type ResolveOneIdentityParams = {

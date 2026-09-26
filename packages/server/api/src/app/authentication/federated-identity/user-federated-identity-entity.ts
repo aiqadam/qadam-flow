@@ -38,6 +38,15 @@ export const UserFederatedIdentityEntity = new EntitySchema<UserFederatedIdentit
             type: 'timestamp with time zone',
             nullable: true,
         },
+        // Round 3 (app-sec finding #5): stamped every time reconcile actually resolves this
+        // identity's directory state within its per-platform time budget. `listByPlatformAndProvider`'s
+        // `orderByLastReconciledAt` reads this back (oldest/never-reconciled first, `NULLS FIRST`) so
+        // the starting point rotates across ticks instead of a slow/huge directory always starving
+        // the same prefix of users.
+        lastReconciledAt: {
+            type: 'timestamp with time zone',
+            nullable: true,
+        },
     },
     indices: [
         {
@@ -49,6 +58,10 @@ export const UserFederatedIdentityEntity = new EntitySchema<UserFederatedIdentit
             name: 'idx_user_federated_identity_platform_user_provider',
             columns: ['platformId', 'userId', 'provider'],
             unique: true,
+        },
+        {
+            name: 'idx_user_federated_identity_platform_provider_last_reconciled',
+            columns: ['platformId', 'provider', 'lastReconciledAt'],
         },
     ],
     relations: {

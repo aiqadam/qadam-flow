@@ -1,9 +1,11 @@
-import { apId, FederatedIdentityProvider, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
+import { apId, FederatedIdentityProvider, PlatformRole, PlatformRoleManagedBy, UserIdentityProvider, UserStatus } from '@aiqadam/shared'
 import pino from 'pino'
 import { userFederatedIdentityService } from '../../../../src/app/authentication/federated-identity/user-federated-identity-service'
 import { userIdentityService } from '../../../../src/app/authentication/user-identity/user-identity-service'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
 import { encryptUtils } from '../../../../src/app/helper/encryption'
+import { system } from '../../../../src/app/helper/system/system'
+import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { userService } from '../../../../src/app/user/user-service'
 import { mockAndSaveBasicSetup } from '../../../helpers/mocks'
 import { cleanDatabase, setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
@@ -46,6 +48,7 @@ beforeEach(async () => {
 
 afterEach(() => {
     vi.clearAllMocks()
+    vi.restoreAllMocks()
 })
 
 async function saveEnabledLdapConfig(platformId: string, configOverrides: Record<string, unknown> = {}): Promise<void> {
@@ -332,5 +335,111 @@ describe('ldapReconcileService.reconcileAllPlatforms — disabled configs', () =
         const user = await userService(log).getOrThrow({ id: userId })
         expect(user.status).toBe(UserStatus.ACTIVE)
         expect(searchBySubject).not.toHaveBeenCalled()
+    })
+})
+
+// Round 3 (app-sec, missing-test finding #8): direct coverage of the two `userService.update` side
+// effects the reconcile design depends on, exercised through the real admin path (`source: 'ADMIN'`,
+// the controller's own default) rather than only inferred from reconcile's own end-to-end behavior.
+describe('userService.update — admin-path provenance side effects', () => {
+    it('an admin status write clears directoryDisabledAt on the user\'s federated rows', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        const { userId, federatedId } = await createLinkedUser({ platformId: mockPlatform.id, subject: 'a0a0a0a0-0000-0000-0000-000000000000' })
+        searchBySubject.mockResolvedValue(null)
+        await reconcile()
+        expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.INACTIVE)
+        expect((await databaseConnection().getRepository('user_federated_identity').findOneBy({ id: federatedId }))?.directoryDisabledAt).not.toBeNull()
+
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, status: UserStatus.ACTIVE })
+
+        const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({ id: federatedId })
+        expect(federated?.directoryDisabledAt).toBeNull()
+    })
+
+    it('an admin role write resets provenance to MANUAL, even for a role reconcile itself granted', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        const { userId } = await createLinkedUser({ platformId: mockPlatform.id, subject: 'b0b0b0b0-0000-0000-0000-000000000000' })
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.ADMIN, source: 'LDAP' })
+        expect((await userService(log).getOrThrow({ id: userId })).platformRoleManagedBy).toBe(PlatformRoleManagedBy.LDAP)
+
+        await userService(log).update({ id: userId, platformId: mockPlatform.id, platformRole: PlatformRole.ADMIN })
+
+        const user = await userService(log).getOrThrow({ id: userId })
+        expect(user.platformRole).toBe(PlatformRole.ADMIN)
+        expect(user.platformRoleManagedBy).toBe(PlatformRoleManagedBy.MANUAL)
+    })
+})
+
+// Round 3 (app-sec finding #5, must-fix): the per-platform time budget used to slice into
+// `linkedIdentities` in whatever order `listByPlatformAndProvider` happened to return them, with no
+// rotation — a slow/huge directory would starve the exact same prefix of users every single tick,
+// forever. `searchBySubject` carries a small artificial delay here so a small
+// `LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS` reliably only covers a strict subset of the linked users
+// each run.
+describe('ldapReconcileService.reconcileAllPlatforms — time budget rotates across runs', () => {
+    it('processes a different subset of users on a second run than the first, under a tiny budget', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        await Promise.all(Array.from({ length: 4 }, (_, i) =>
+            createLinkedUser({ platformId: mockPlatform.id, subject: `c0c0c0c${i}-0000-0000-0000-000000000000` })))
+
+        const originalGetNumber = system.getNumber.bind(system)
+        vi.spyOn(system, 'getNumber').mockImplementation((prop) => {
+            if (prop === AppSystemProp.LDAP_RECONCILE_PLATFORM_TIME_BUDGET_MS) {
+                return 40
+            }
+            return originalGetNumber(prop)
+        })
+        searchBySubject.mockImplementation(({ subject }: { subject: string }) => new Promise((resolve) => {
+            setTimeout(() => resolve({ dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }), 25)
+        }))
+
+        await reconcile()
+        const firstRunSubjects = searchBySubject.mock.calls.map((call) => (call[0] as { subject: string }).subject)
+        expect(firstRunSubjects.length).toBeGreaterThan(0)
+        expect(firstRunSubjects.length).toBeLessThan(4)
+
+        searchBySubject.mockClear()
+        await reconcile()
+        const secondRunSubjects = searchBySubject.mock.calls.map((call) => (call[0] as { subject: string }).subject)
+        expect(secondRunSubjects.length).toBeGreaterThan(0)
+
+        const overlap = secondRunSubjects.filter((subject) => firstRunSubjects.includes(subject))
+        expect(overlap).toEqual([])
+    })
+})
+
+// Round 3 (app-sec finding #6, blocking): the identity snapshot the write-back phase acts on is
+// taken at the start of the tick — an admin re-deactivating (or reactivating) the same user can
+// land in between that snapshot and this phase actually running. `searchBySubject`'s own mock
+// implementation performs the competing admin write as a side effect, simulating it landing at
+// the one point in the tick that matters: after reconcile's own snapshot read, before its
+// write-back phase.
+describe('ldapReconcileService.reconcileAllPlatforms — reactivation race with a concurrent admin write', () => {
+    it('never reactivates a user an admin re-deactivated in the moment between the snapshot and the write-back phase', async () => {
+        const { mockPlatform } = await mockAndSaveBasicSetup()
+        await saveEnabledLdapConfig(mockPlatform.id)
+        const { userId, federatedId } = await createLinkedUser({ platformId: mockPlatform.id, subject: 'd0d0d0d0-0000-0000-0000-000000000000' })
+        searchBySubject.mockResolvedValue(null)
+        await reconcile()
+        expect((await userService(log).getOrThrow({ id: userId })).status).toBe(UserStatus.INACTIVE)
+        expect((await databaseConnection().getRepository('user_federated_identity').findOneBy({ id: federatedId }))?.directoryDisabledAt).not.toBeNull()
+
+        searchBySubject.mockImplementation(async ({ subject }: { subject: string }) => {
+            // The race: an admin deactivates (again) this exact user mid-tick, which clears the
+            // marker reconcile's write-back phase is about to act on — landing after reconcile's
+            // own snapshot read (`listByPlatformAndProvider`, already done by the time this search
+            // call runs) but before that write-back phase runs.
+            await userService(log).update({ id: userId, platformId: mockPlatform.id, status: UserStatus.INACTIVE })
+            return { dn: `cn=${subject},dc=example,dc=com`, mail: `${subject}@example.com` }
+        })
+
+        await reconcile()
+
+        const user = await userService(log).getOrThrow({ id: userId })
+        expect(user.status).toBe(UserStatus.INACTIVE)
+        const federated = await databaseConnection().getRepository('user_federated_identity').findOneBy({ id: federatedId })
+        expect(federated?.directoryDisabledAt).toBeNull()
     })
 })

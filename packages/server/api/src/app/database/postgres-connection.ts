@@ -31,6 +31,7 @@ import { AddInheritedRunLocaleToFlowRun1790900000000 } from './migration/postgre
 import { AddTranslationProjectForeignKey1791000000000 } from './migration/postgres/1791000000000-AddTranslationProjectForeignKey'
 import { AddLdapGroupMappingColumns1791100000000 } from './migration/postgres/1791100000000-AddLdapGroupMappingColumns'
 import { AddPlatformRoleManagedByToUser1791200000000 } from './migration/postgres/1791200000000-AddPlatformRoleManagedByToUser'
+import { AddLastReconciledAtToUserFederatedIdentity1791300000000 } from './migration/postgres/1791300000000-AddLastReconciledAtToUserFederatedIdentity'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -69,6 +70,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddTranslationProjectForeignKey1791000000000,
         AddLdapGroupMappingColumns1791100000000,
         AddPlatformRoleManagedByToUser1791200000000,
+        AddLastReconciledAtToUserFederatedIdentity1791300000000,
     ]
 }
 

@@ -77,7 +77,7 @@ export const userService = (log: FastifyBaseLogger) => ({
     async updateLastActiveDate({ id }: UpdateLastActiveDateParams): Promise<void> {
         await userRepo().update({ id }, { lastActiveDate: dayjs().toISOString() })
     },
-    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN' }: UpdateParams): Promise<UserWithMetaInformation> {
+    async update({ id, status, platformId, platformRole, externalId, source = 'ADMIN', entityManager }: UpdateParams): Promise<UserWithMetaInformation> {
         const user = await this.getOrThrow({ id })
         assertNotNullOrUndefined(user.platformId, 'platformId')
 
@@ -101,7 +101,7 @@ export const userService = (log: FastifyBaseLogger) => ({
             })
         }
 
-        await userRepo().update({
+        await userRepo(entityManager).update({
             id,
             platformId,
         }, {
@@ -120,13 +120,23 @@ export const userService = (log: FastifyBaseLogger) => ({
         // later reactivate a user an admin just acted on directly (app-sec: paths A and B).
         // Reconcile's own status writes (`source: 'LDAP'`) manage that marker themselves.
         if (status !== undefined && source === 'ADMIN') {
-            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId })
+            await userFederatedIdentityService(log).clearDirectoryDisabledAtForUser({ userId: id, platformId, entityManager })
         }
 
         return this.getMetaInformation({ id })
     },
     async getUsersByIdentityId({ identityId }: GetUsersByIdentityIdParams): Promise<Pick<User, 'id' | 'platformId'>[]> {
         return userRepo().find({ where: { identityId } }).then((users) => users.map((user) => ({ id: user.id, platformId: user.platformId })))
+    },
+    // Round 3 (app-sec finding #5): reconcile used to fetch each linked user's status with its own
+    // `getOrThrow` call inside a `Promise.all` — N round trips for N linked users. One `IN (...)`
+    // query does the same job.
+    async getStatusesByIds({ ids }: GetStatusesByIdsParams): Promise<Map<UserId, UserStatus>> {
+        if (ids.length === 0) {
+            return new Map()
+        }
+        const users = await userRepo().find({ where: { id: In(ids) }, select: { id: true, status: true } })
+        return new Map(users.map((user) => [user.id, user.status]))
     },
     async list({ platformId, externalId, cursorRequest, limit }: ListParams): Promise<SeekPage<UserWithMetaInformation>> {
         const decodedCursor = paginationHelper.decodeCursor(cursorRequest)
@@ -355,6 +365,10 @@ type UpdateParams = {
     // manage `directoryDisabledAt`/`platformRoleManagedBy` themselves rather than having this
     // method reset them to the human-decision defaults.
     source?: 'ADMIN' | 'LDAP'
+    // Round 3 (app-sec finding #7): `ldapReconcileService.deactivateUser` needs this write and its
+    // own `setDirectoryDisabledAt` write to commit atomically — join the caller's own transaction
+    // rather than defaulting to the pooled connection.
+    entityManager?: EntityManager
 }
 
 type CreateParams = {
@@ -367,6 +381,9 @@ type CreateParams = {
 }
 type GetUsersByIdentityIdParams = {
     identityId: string
+}
+type GetStatusesByIdsParams = {
+    ids: UserId[]
 }
 
 type NewUser = Omit<User, 'created' | 'updated'>
