@@ -27,7 +27,7 @@ describe('ldapConfigFormUtils.buildUpsertLdapConfigRequest', () => {
     expect(request.caCertificate).toBeNull();
   });
 
-  it('omits a typed-then-cleared CA certificate (undefined) instead of sending an empty string', () => {
+  it('omits a blank (undefined) CA certificate instead of sending an empty string', () => {
     const request = ldapConfigFormUtils.buildUpsertLdapConfigRequest({
       values: { ...baseValues, caCertificate: undefined },
       clearCaCertificate: false,
@@ -54,7 +54,16 @@ describe('ldapConfigFormUtils.buildUpsertLdapConfigRequest', () => {
     expect(request.caCertificate).toBeUndefined();
   });
 
-  it('omits a typed-then-cleared bind password (undefined) instead of sending an empty string', () => {
+  it('treats a whitespace-only CA certificate as blank too', () => {
+    const request = ldapConfigFormUtils.buildUpsertLdapConfigRequest({
+      values: { ...baseValues, caCertificate: '   \n  ' },
+      clearCaCertificate: false,
+    });
+
+    expect(request.caCertificate).toBeUndefined();
+  });
+
+  it('omits a blank (undefined) bind password instead of sending an empty string', () => {
     const request = ldapConfigFormUtils.buildUpsertLdapConfigRequest({
       values: { ...baseValues, bindPassword: undefined },
       clearCaCertificate: false,
@@ -70,6 +79,15 @@ describe('ldapConfigFormUtils.buildUpsertLdapConfigRequest', () => {
     });
 
     expect(request.bindPassword).toBe('  leading and trailing  ');
+  });
+
+  it('never treats a whitespace-only bind password as blank — unlike the CA certificate, a directory password may legitimately be all whitespace', () => {
+    const request = ldapConfigFormUtils.buildUpsertLdapConfigRequest({
+      values: { ...baseValues, bindPassword: '   ' },
+      clearCaCertificate: false,
+    });
+
+    expect(request.bindPassword).toBe('   ');
   });
 
   it('treats an empty-string bind password the same as an absent one (never sends "")', () => {

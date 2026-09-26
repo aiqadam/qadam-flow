@@ -6,10 +6,10 @@ export { samlSsoApi } from './api/saml-sso-api';
 export { workersApi } from './api/workers-api';
 export { platformAnalyticsHooks } from './hooks/analytics-hooks';
 export {
+  ldapConfigKeys,
   ldapConfigQueries,
   ldapConfigMutations,
 } from './hooks/ldap-config-hooks';
-export { ssoMutations } from './hooks/sso-hooks';
 export {
   aiProviderQueries,
   aiProviderMutations,

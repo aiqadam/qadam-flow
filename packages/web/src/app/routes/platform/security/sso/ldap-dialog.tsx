@@ -11,6 +11,7 @@ import {
   UpsertLdapConfigRequest,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { CheckCircle2, TriangleAlert, XCircle } from 'lucide-react';
 import { useState } from 'react';
@@ -49,7 +50,11 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { ldapConfigMutations } from '@/features/platform-admin';
+import {
+  ldapConfigApi,
+  ldapConfigKeys,
+  ldapConfigMutations,
+} from '@/features/platform-admin';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { apiErrorUtils } from '@/lib/api-error-utils';
 import { authenticationSession } from '@/lib/authentication-session';
@@ -139,8 +144,13 @@ const LdapConfigForm = ({
     },
   });
 
-  const { mutateAsync: removeAsync, isPending: isDeleting } =
-    ldapConfigMutations.useDeleteLdapConfig({ onSuccess: onClose });
+  // Deleting goes straight through the API here rather than through another `useUpsertLdapConfig`
+  // -style mutation hook nested inside `ConfirmationDeleteDialog`'s own: two nested mutations meant
+  // two `useMutation` objects could each fail independently, and the app-wide `MutationCache.onError`
+  // (`query-client.ts`) shows its own generic toast for any mutation with no `onError` of its own —
+  // so a failure that only the outer mutation's `onError` handled still produced a second, generic
+  // toast from the inner one. One mutation, one `onError`, one toast.
+  const queryClient = useQueryClient();
 
   const fieldsDisabled = isPending || formLockedForNonOwner;
 
@@ -699,12 +709,19 @@ const LdapConfigForm = ({
               <ConfirmationDeleteDialog
                 title={t('Delete LDAP / Active Directory configuration?')}
                 message={t(
-                  'This removes the saved configuration. Existing directory-linked accounts are not deleted, but directory sign-in stops working until it is reconfigured.',
+                  'This permanently removes the saved LDAP configuration.',
+                )}
+                warning={t(
+                  'Existing directory-linked accounts are not deleted, but directory sign-in stops working until it is reconfigured.',
                 )}
                 entityName={t('LDAP / Active Directory')}
                 buttonText={t('Delete')}
                 mutationFn={async () => {
-                  await removeAsync();
+                  await ldapConfigApi.delete();
+                  await queryClient.invalidateQueries({
+                    queryKey: ldapConfigKeys.all,
+                  });
+                  onClose();
                 }}
                 onError={(error) => {
                   toast.error(
@@ -719,7 +736,6 @@ const LdapConfigForm = ({
                   type="button"
                   variant="basic"
                   className="text-destructive mr-auto"
-                  loading={isDeleting}
                   disabled={fieldsDisabled}
                 >
                   {t('Delete')}

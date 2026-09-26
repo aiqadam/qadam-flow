@@ -1,15 +1,5 @@
 import { UpsertLdapConfigRequest } from '@aiqadam/shared';
 
-// Any of these five requires the bind password to be re-entered on save — the server treats them
-// as re-authenticating the bind account against the directory, not a cosmetic edit.
-export const FIELDS_REQUIRING_BIND_PASSWORD_CONFIRMATION = [
-  'url',
-  'bindDn',
-  'tlsVerify',
-  'tlsMode',
-  'caCertificate',
-] as const;
-
 export const ldapConfigFormUtils = {
   buildUpsertLdapConfigRequest,
   computeBindPasswordConfirmationRequired,
@@ -34,13 +24,26 @@ function buildUpsertLdapConfigRequest({
     bindPassword: isBlank(values.bindPassword)
       ? undefined
       : values.bindPassword,
+    // A CA certificate has no meaningful whitespace-only value the way a password might, so its
+    // emptiness check trims first — pasting a certificate and then selecting-all-and-deleting
+    // sometimes leaves a stray newline/space behind, and that should count as blank too.
     caCertificate: clearCaCertificate
       ? null
-      : isBlank(values.caCertificate)
+      : isCaCertificateBlank(values.caCertificate)
       ? undefined
       : values.caCertificate,
   };
 }
+
+// Any of these five requires the bind password to be re-entered on save — the server treats them
+// as re-authenticating the bind account against the directory, not a cosmetic edit.
+const FIELDS_REQUIRING_BIND_PASSWORD_CONFIRMATION = [
+  'url',
+  'bindDn',
+  'tlsVerify',
+  'tlsMode',
+  'caCertificate',
+] as const;
 
 function computeBindPasswordConfirmationRequired({
   isEditMode,
@@ -89,6 +92,10 @@ function isBindPasswordRequiredButMissing({
 
 function isBlank(value: string | null | undefined): boolean {
   return value === undefined || value === null || value.length === 0;
+}
+
+function isCaCertificateBlank(value: string | null | undefined): boolean {
+  return value === undefined || value === null || value.trim().length === 0;
 }
 
 type LdapFormValues = UpsertLdapConfigRequest;

@@ -34,16 +34,6 @@ export const ldapConfigMutations = {
       onError,
     });
   },
-  useDeleteLdapConfig: ({ onSuccess }: { onSuccess?: () => void } = {}) => {
-    const queryClient = useQueryClient();
-    return useMutation({
-      mutationFn: () => ldapConfigApi.delete(),
-      onSuccess: async () => {
-        await queryClient.invalidateQueries({ queryKey: ldapConfigKeys.all });
-        onSuccess?.();
-      },
-    });
-  },
   useTestLdapConfig: () =>
     useMutation({
       mutationFn: (request: LdapTestRequest) => ldapConfigApi.test(request),
