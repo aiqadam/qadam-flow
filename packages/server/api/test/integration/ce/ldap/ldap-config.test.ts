@@ -1,10 +1,12 @@
-import { PlatformRole, PrincipalType } from '@aiqadam/shared'
+import { apId, PlatformRole, PrincipalType, ProjectType } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import pino from 'pino'
 import { ldapConfigService } from '../../../../src/app/authentication/ldap/ldap-config-service'
+import { databaseConnection } from '../../../../src/app/database/database-connection'
+import { encryptUtils } from '../../../../src/app/helper/encryption'
 import { generateMockToken } from '../../../helpers/auth'
-import { mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
+import { createMockProject, mockAndSaveBasicSetup, mockBasicUser } from '../../../helpers/mocks'
 import { createTestContext, TestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -159,6 +161,48 @@ describe('Platform LDAP config API', () => {
         const resolved = await ldapConfigService(pino({ level: 'silent' })).getResolvedForSignIn({ platformId: ctx.platform.id })
         expect(resolved?.bindPassword).toBe('super-secret-bind-password')
         expect(resolved?.bindPassword).not.toContain('"')
+    })
+
+    // Round 2 (app-sec finding #4): a config saved before Phase 2 has no `groupMappings`,
+    // `nestedGroups`, `groupSearchBaseDn` or `groupSearchFilter` key at all in its stored JSON —
+    // this row is written directly to the table, bypassing the upsert endpoint entirely, the same
+    // way a real pre-Phase-2 row would have been written. Both `getResolvedForSignIn` (the
+    // sign-in/reconcile path) and the GET response (`toResponse`) must backfill schema defaults
+    // rather than crash or return `undefined` for a field callers now assume is always an array.
+    it('backfills schema defaults for a Phase-1-shaped config row missing every Phase-2 field', async () => {
+        const bindPassword = await encryptUtils.encryptString('bind-secret')
+        await databaseConnection().getRepository('platform_ldap_config').save({
+            id: apId(),
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            platformId: ctx.platform.id,
+            bindPassword,
+            caCertificate: null,
+            config: {
+                url: 'ldaps://ldap.example.com:636',
+                tlsMode: 'ldaps',
+                baseDn: 'dc=example,dc=com',
+                bindDn: 'cn=service,dc=example,dc=com',
+                userFilter: '(uid={username})',
+                attributeMap: { subject: 'entryUUID', email: 'mail', firstName: 'givenName', lastName: 'sn' },
+                tlsVerify: true,
+                jitProvisioning: true,
+                linkExistingByEmail: false,
+                sessionTtlSeconds: 43200,
+                enabled: true,
+                // Deliberately no `nestedGroups`, `groupMappings`, `groupSearchBaseDn` or
+                // `groupSearchFilter` — this is exactly what a Phase-1 row looks like.
+            },
+        })
+
+        const resolved = await ldapConfigService(pino({ level: 'silent' })).getResolvedForSignIn({ platformId: ctx.platform.id })
+        expect(resolved?.config.groupMappings).toEqual([])
+        expect(resolved?.config.nestedGroups).toBe(false)
+
+        const getResponse = await ctx.get('/v1/platform-ldap-configs')
+        expect(getResponse.statusCode).toBe(StatusCodes.OK)
+        expect(getResponse.json().config.groupMappings).toEqual([])
+        expect(getResponse.json().config.nestedGroups).toBe(false)
     })
 
     it('reports the failing stage from /test when the directory is unreachable', async () => {
@@ -408,7 +452,9 @@ describe('Platform LDAP config API', () => {
             const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
                 groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: otherPlatform.mockProject.id, role: 'Editor' }] }],
             }))
-            expect(response.statusCode).not.toBe(StatusCodes.OK)
+            // `ErrorCode.VALIDATION` maps to 409 (CONFLICT) in this codebase's error handler, not
+            // 400 — asserted on the specific status the route actually returns, not merely "not OK".
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
         })
 
         it('accepts a projectId that belongs to the configuring platform', async () => {
@@ -416,6 +462,17 @@ describe('Platform LDAP config API', () => {
                 groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: ctx.project.id, role: 'Editor' }] }],
             }))
             expect(response.statusCode).toBe(StatusCodes.OK)
+        })
+
+        it('rejects a projectId that belongs to a non-TEAM project on the configuring platform (round 2, app-sec finding #8)', async () => {
+            const personalProject = createMockProject({ platformId: ctx.platform.id, type: ProjectType.PERSONAL, ownerId: ctx.platform.ownerId })
+            await databaseConnection().getRepository('project').save(personalProject)
+
+            const response = await ctx.post('/v1/platform-ldap-configs', validConfig({
+                groupMappings: [{ groupDn: 'cn=editors,dc=example,dc=com', projects: [{ projectId: personalProject.id, role: 'Editor' }] }],
+            }))
+
+            expect(response.statusCode).toBe(StatusCodes.CONFLICT)
         })
     })
 
