@@ -170,12 +170,18 @@ describe('UpsertLdapGroupMapping', () => {
     it('rejects a groupDn over the length cap', () => {
         const result = UpsertLdapGroupMapping.safeParse({ groupDn: 'a'.repeat(MAX_LDAP_GROUP_DN_LENGTH + 1), projects: [] })
         expect(result.success).toBe(false)
+        if (!result.success) {
+            expect(result.error.issues[0].message).toBe('ldapGroupDnTooLong')
+        }
     })
 
     it('rejects more projects than the per-mapping cap', () => {
-        const projects = Array.from({ length: MAX_LDAP_GROUP_MAPPING_PROJECTS + 1 }, (_, i) => ({ projectId: `proj_${i}`, role: 'VIEWER' as const }))
+        const projects = Array.from({ length: MAX_LDAP_GROUP_MAPPING_PROJECTS + 1 }, (_, i) => ({ projectId: `proj_${i}`, role: 'Viewer' as const }))
         const result = UpsertLdapGroupMapping.safeParse({ groupDn: 'cn=admins,dc=example,dc=com', projects })
         expect(result.success).toBe(false)
+        if (!result.success) {
+            expect(result.error.issues[0].message).toBe('tooManyLdapGroupMappingProjects')
+        }
     })
 })
 
@@ -184,6 +190,9 @@ describe('LdapConfig.groupMappings size cap', () => {
         const groupMappings = Array.from({ length: MAX_LDAP_GROUP_MAPPINGS + 1 }, (_, i) => ({ groupDn: `cn=group${i},dc=example,dc=com`, projects: [] }))
         const result = LdapConfig.safeParse(baseConfig({ groupMappings }))
         expect(result.success).toBe(false)
+        if (!result.success) {
+            expect(result.error.issues[0].message).toBe('tooManyLdapGroupMappings')
+        }
     })
 
     it('accepts exactly the cap', () => {
