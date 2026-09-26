@@ -323,7 +323,7 @@ async function handleTranslation(params: ResolveSingleTokenParams): Promise<unkn
         throw new TranslationKeyNotFoundError({ key })
     }
     if (chain.length > 0 && resolved.locale !== chain[0]) {
-        constants.warnTranslationFallbackOnce(`${key}:${chain[0]}`, `translation key "${key}" has no value for locale "${chain[0]}" — falling back to "${resolved.locale}"`)
+        constants.warnTranslationFallbackOnce({ dedupeKey: `${key}:${chain[0]}`, message: `translation key "${key}" has no value for locale "${chain[0]}" — falling back to "${resolved.locale}"` })
     }
     return resolved.value
 }

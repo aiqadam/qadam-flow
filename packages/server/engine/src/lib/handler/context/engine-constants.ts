@@ -403,17 +403,18 @@ export class EngineConstants {
             resolvingLocaleSource: true,
         }))
         if (!isNil(error)) {
-            this.warnTranslationFallbackOnce(`localeSource:${this.flowVersionId}`, `localeSource "${expression}" failed to evaluate (${error instanceof Error ? error.message : String(error)}); falling back to the inherited or default locale`)
+            this.warnTranslationFallbackOnce({ dedupeKey: `localeSource:${this.flowVersionId}`, message: `localeSource "${expression}" failed to evaluate (${error instanceof Error ? error.message : String(error)}); falling back to the inherited or default locale` })
             return null
         }
         const canonical = isString(resolved) && resolved.length > 0 ? localeUtil.canonicalize(resolved) : null
         if (isNil(canonical)) {
-            this.warnTranslationFallbackOnce(`localeSource:${this.flowVersionId}`, `localeSource "${expression}" did not resolve to a usable locale; falling back to the inherited or default locale`)
+            this.warnTranslationFallbackOnce({ dedupeKey: `localeSource:${this.flowVersionId}`, message: `localeSource "${expression}" did not resolve to a usable locale; falling back to the inherited or default locale` })
         }
         return canonical
     }
 
-    public warnTranslationFallbackOnce(dedupeKey: string, message: string): void {
+    public warnTranslationFallbackOnce(params: { dedupeKey: string, message: string }): void {
+        const { dedupeKey, message } = params
         if (this.warnedTranslationFallbacks.has(dedupeKey)) {
             return
         }

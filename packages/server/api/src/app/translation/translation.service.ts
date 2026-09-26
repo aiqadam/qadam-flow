@@ -557,11 +557,13 @@ function isNestedNode(value: string | NestedNode | undefined): value is NestedNo
 // `Object.defineProperty` throughout, not bracket assignment (`cursor[segment] = ...`): the latter
 // is `[[Set]]`, which for a segment literally named `__proto__` walks up to
 // `Object.prototype`'s `__proto__` accessor instead of creating an own property on `cursor`.
-function setOwnProperty(target: NestedNode, key: string, value: string | NestedNode): void {
+function setOwnProperty(params: { target: NestedNode, key: string, value: string | NestedNode }): void {
+    const { target, key, value } = params
     Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true })
 }
 
-function getOwnProperty(target: NestedNode, key: string): string | NestedNode | undefined {
+function getOwnProperty(params: { target: NestedNode, key: string }): string | NestedNode | undefined {
+    const { target, key } = params
     return Object.getOwnPropertyDescriptor(target, key)?.value
 }
 
@@ -572,12 +574,12 @@ function nestFlatData(flat: Record<string, string>): NestedNode {
         let cursor = root
         segments.forEach((segment, index) => {
             if (index === segments.length - 1) {
-                setOwnProperty(cursor, segment, value)
+                setOwnProperty({ target: cursor, key: segment, value })
                 return
             }
-            const existing = getOwnProperty(cursor, segment)
+            const existing = getOwnProperty({ target: cursor, key: segment })
             const next = isNestedNode(existing) ? existing : {}
-            setOwnProperty(cursor, segment, next)
+            setOwnProperty({ target: cursor, key: segment, value: next })
             cursor = next
         })
     }
@@ -625,7 +627,7 @@ function collectStepStrings(step: Step): string[] {
     const settings = step.settings as Record<string, unknown>
 
     if ('input' in settings && typeof settings.input === 'object' && settings.input !== null) {
-        walkForStrings(settings.input, (val) => result.push(val))
+        result.push(...walkForStrings(settings.input))
     }
     if ('items' in settings && typeof settings.items === 'string') {
         result.push(settings.items)
@@ -648,21 +650,24 @@ function collectStepStrings(step: Step): string[] {
     return result
 }
 
-function walkForStrings(value: unknown, onString: (val: string) => void): void {
+// Returns its own findings rather than taking a callback the caller uses to mutate its own
+// collection — the caller (`collectStepStrings`) still mutates a LOCAL array from these results,
+// which is fine (mutation confined to one function's own body); what this avoids is a mutation that
+// crosses the function boundary, one caller's `onString` at a time.
+function walkForStrings(value: unknown): string[] {
     if (value === null || value === undefined) {
-        return
+        return []
     }
     if (typeof value === 'string') {
-        onString(value)
-        return
+        return [value]
     }
     if (Array.isArray(value)) {
-        for (const item of value) walkForStrings(item, onString)
-        return
+        return value.flatMap((item) => walkForStrings(item))
     }
     if (typeof value === 'object') {
-        for (const val of Object.values(value)) walkForStrings(val, onString)
+        return Object.values(value).flatMap((val) => walkForStrings(val))
     }
+    return []
 }
 
 type ListParams = {
