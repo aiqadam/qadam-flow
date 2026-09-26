@@ -30,6 +30,27 @@ export const LdapGroupMapping = z.object({
 })
 export type LdapGroupMapping = z.infer<typeof LdapGroupMapping>
 
+// `UpsertLdapConfigRequest` needs its own mapping shape, without `projects`'s `.default([])` —
+// a field carrying `.default(...)` makes `z.input` (what a caller may omit) diverge from
+// `z.output` (what parsing always produces) for the schema that owns it, and that divergence
+// propagates outward: `z.infer<UpsertLdapConfigRequest>` (used for the request's own TS type, e.g.
+// `zodResolver`'s generic in `ldap-dialog.tsx`) is normally `z.output`, but nesting a
+// default-carrying field anywhere inside the object is enough to make TS treat the two forms as
+// structurally different types for the request as a whole, not just for the one nested field —
+// exactly the "two different types with this name exist, but they are unrelated" error `Resolver<T>`
+// hit. `projects` is required here instead (the request always supplies it, empty array or not);
+// `LdapConfig.parse` — every actual merge/parse point (`ldapConfigService.upsert`'s
+// `{ ...existingConfig, ...request }`, `resolveStoredConfig`) — still runs the *original*
+// `LdapGroupMapping` (with its `.default([])` intact) over the final merged config, so a mapping a
+// caller does omit `projects` from still backfills to `[]` there, the same as before; the default
+// simply now applies at that parse layer instead of inside the request's own inferred type.
+export const UpsertLdapGroupMapping = z.object({
+    groupDn: z.string().min(1, 'invalidLdapGroupDn'),
+    platformRole: z.enum(PlatformRole).optional(),
+    projects: z.array(LdapGroupProjectMapping),
+})
+export type UpsertLdapGroupMapping = z.infer<typeof UpsertLdapGroupMapping>
+
 export enum LdapTlsMode {
     LDAPS = 'ldaps',
     STARTTLS = 'starttls',
@@ -129,8 +150,11 @@ export const UpsertLdapConfigRequest = z.object(ldapConfigShape).partial({
     // Same default-defeat footgun as the five booleans above: `nestedGroups`/`groupMappings` both
     // carry their own `.default(...)` on `ldapConfigShape`, so they need the same plain-`.optional()`
     // override here to actually parse an omitted field to `undefined` rather than the default.
+    // `groupMappings` additionally swaps its element schema for `UpsertLdapGroupMapping` (see its
+    // own comment) so the request's own inferred type has no default-carrying field anywhere
+    // inside it.
     nestedGroups: z.boolean().optional(),
-    groupMappings: z.array(LdapGroupMapping).optional(),
+    groupMappings: z.array(UpsertLdapGroupMapping).optional(),
     // Omitted keeps the value already stored for the platform; present-and-empty is refused
     // (never a way to blank out the bind account) so the only way to clear a credential is
     // deleting the whole config.

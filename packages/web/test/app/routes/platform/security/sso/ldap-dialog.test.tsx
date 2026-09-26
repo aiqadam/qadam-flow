@@ -140,6 +140,8 @@ const LDAP_CONFIG: PlatformLdapConfig = {
     linkExistingByEmail: false,
     sessionTtlSeconds: 43200,
     enabled: true,
+    nestedGroups: false,
+    groupMappings: [],
   },
   hasBindPassword: true,
   hasCaCertificate: true,
