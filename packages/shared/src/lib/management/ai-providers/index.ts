@@ -69,10 +69,31 @@ export type AnthropicProviderConfig = z.infer<typeof AnthropicProviderConfig>
 const MAX_MODEL_IDENTIFIER_LENGTH = 200
 const MAX_MODELS_PER_PROVIDER = 200
 
+// What the chat assumes when neither the provider's model list nor the operator says how large a
+// model's context window is. Not smaller: the chat's own system prompt and tool schemas are about
+// 23k tokens before the first message, so a 32k assumption would leave an empty conversation
+// already due for compaction. Every current cloud chat model offers at least this much, so for them
+// an unknown size can only make the chat compact earlier than it had to, never overflow.
+export const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS = 128_000
+export const MIN_MODEL_CONTEXT_WINDOW_TOKENS = 1_024
+export const MAX_MODEL_CONTEXT_WINDOW_TOKENS = 10_000_000
+
+export const ModelContextWindowTokens = z.int(formErrors.contextWindowTokensOutOfRange)
+    .min(MIN_MODEL_CONTEXT_WINDOW_TOKENS, formErrors.contextWindowTokensOutOfRange)
+    .max(MAX_MODEL_CONTEXT_WINDOW_TOKENS, formErrors.contextWindowTokensOutOfRange)
+
+// A provider's model list is third-party data, so a size it reports is kept only when it is one
+// the operator could have typed in themselves; anything else reads as "not reported".
+export function parseModelContextWindowTokens(value: unknown): number | undefined {
+    const parsed = ModelContextWindowTokens.safeParse(value)
+    return parsed.success ? parsed.data : undefined
+}
+
 export const ProviderModelConfig = z.object({
     modelId: z.string().max(MAX_MODEL_IDENTIFIER_LENGTH, formErrors.modelIdentifierTooLong),
     modelName: z.string().max(MAX_MODEL_IDENTIFIER_LENGTH, formErrors.modelIdentifierTooLong),
     modelType: z.nativeEnum(AIProviderModelType),
+    contextWindowTokens: ModelContextWindowTokens.optional(),
 })
 export type ProviderModelConfig = z.infer<typeof ProviderModelConfig>
 
@@ -105,6 +126,10 @@ export const OpenAICompatibleProviderConfig = z.object({
     models: z.array(ProviderModelConfig).max(MAX_MODELS_PER_PROVIDER, formErrors.tooManyModels),
     defaultHeaders: z.record(z.string(), z.string()).optional(),
     extraBody: OpenAICompatibleExtraBody.optional(),
+    // Whether chat asks for token counts (`stream_options.include_usage`). Absent means yes. An
+    // opt-out exists because the parameter is one the SDK owns — `extraBody` cannot remove it — and
+    // a strict server that rejects unknown body fields would otherwise fail every chat turn.
+    streamUsage: z.boolean().optional(),
 })
 export type OpenAICompatibleProviderConfig = z.infer<typeof OpenAICompatibleProviderConfig>
 
@@ -404,6 +429,9 @@ export const AIProviderModel = z.object({
     id: z.string(),
     name: z.string(),
     type: z.nativeEnum(AIProviderModelType),
+    // Absent when neither the provider's model list nor the operator's own catalogue says; the
+    // reader then falls back to `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS`.
+    contextWindowTokens: z.int().optional(),
 })
 export type AIProviderModel = z.infer<typeof AIProviderModel>
 

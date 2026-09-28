@@ -118,10 +118,33 @@ const PersistedChatPartSchema = z.discriminatedUnion('type', [
     PersistedToolApprovalResponsePartSchema,
 ])
 
+const TokenCount = z.int().nonnegative()
+
+// How full the model's context was when it wrote this reply, as the chat's Context popover shows
+// it. `usedTokens` is the provider's own count, not an estimate: the last step's input plus the
+// reply text, which is what the next turn sends back. The breakdown is an estimate — each part's
+// share of the characters sent, scaled so the parts add up to `usedTokens` exactly.
+export const ChatContextUsageSchema = z.object({
+    modelId: z.string(),
+    usedTokens: TokenCount,
+    // Null when neither the provider's model list nor the operator says; readers then assume
+    // `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS` and say so.
+    contextWindowTokens: z.int().positive().nullable(),
+    breakdown: z.object({
+        systemPrompt: TokenCount,
+        tools: TokenCount,
+        toolCount: TokenCount,
+        messages: TokenCount,
+        toolOutputs: TokenCount,
+    }),
+})
+export type ChatContextUsage = z.infer<typeof ChatContextUsageSchema>
+
 export const PersistedChatMessageSchema = z.object({
     role: z.enum([PersistedChatRole.USER, PersistedChatRole.ASSISTANT]),
     parts: z.array(PersistedChatPartSchema),
     thinkingDurationMs: z.number().optional(),
+    contextUsage: ChatContextUsageSchema.optional(),
 })
 
 export type PersistedTextPart = z.infer<typeof PersistedTextPartSchema>

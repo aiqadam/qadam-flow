@@ -1,45 +1,30 @@
-import { isNil } from '@aiqadam/shared';
-import { t } from 'i18next';
 import {
-  Brain,
-  Folder,
-  Layers,
-  LucideIcon,
-  MessagesSquare,
-} from 'lucide-react';
+  ChatContextUsage,
+  DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
+  isNil,
+} from '@aiqadam/shared';
+import { t } from 'i18next';
+import { Gauge } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
-import { TextWithTooltip } from '@/components/custom/text-with-tooltip';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { getProjectName } from '@/features/projects';
+import { Progress } from '@/components/ui/progress';
 
-import { useChatProjects } from './chat-project-picker';
-
-// What the next turn will actually send the model. Each row describes the server's real behaviour
-// rather than an aspiration: the transcript is a window of the newest messages
-// (`chatContextUtils.replayWindowStart`), and `chat-transcript.ts` never replays reasoning. There is
-// no row for a summary or for how full the provider's context window is — nothing writes
-// `summary` yet, and no provider row records a model's context size, so either row could only
-// ever show a placeholder.
+// How full the model's context was on the last reply, and what filled it. The total is the
+// provider's own count; the parts are the server's estimate, scaled to add up to it
+// (`chat-context-usage.ts`). Nothing is shown before a reply has been measured — a guessed number
+// here would read as a measurement.
 export function ChatContextIndicator({
-  projectId,
-  isProjectLocked,
-  totalMessages,
-  replayedMessages,
+  usage,
+  hasReply,
 }: ChatContextIndicatorProps) {
-  const { projects, defaultProject } = useChatProjects();
-
-  // Same resolution as `ChatProjectPicker`, so the two controls never name different projects.
-  const project = isNil(projectId)
-    ? isProjectLocked
-      ? undefined
-      : defaultProject
-    : projects.find((candidate) => candidate.id === projectId);
-  const isTrimmed = replayedMessages < totalMessages;
+  const { i18n } = useTranslation();
+  const fill = isNil(usage) ? null : contextFill(usage);
 
   return (
     <Popover>
@@ -49,53 +34,58 @@ export function ChatContextIndicator({
           variant="outline"
           className="h-7 gap-1.5 rounded-full px-3 text-xs font-medium"
         >
-          <Layers className="size-3.5 text-muted-foreground shrink-0" />
-          <span>{t('Context')}</span>
+          <Gauge className="size-3.5 text-muted-foreground shrink-0" />
+          <span>
+            {isNil(fill)
+              ? t('Context')
+              : t('Context · {percent}%', { percent: fill.percent })}
+          </span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-4" align="start">
-        <p className="text-sm font-medium">{t('What the assistant sees')}</p>
-        <div className="mt-3 space-y-3">
-          <ContextRow
-            icon={Folder}
-            label={t('Project')}
-            value={isNil(project) ? t('No project') : getProjectName(project)}
-          />
-          <ContextRow
-            icon={MessagesSquare}
-            label={t('Messages')}
-            value={
-              isTrimmed
-                ? t('Latest {count} of {total}', {
-                    count: replayedMessages,
-                    total: totalMessages,
+      <PopoverContent className="w-80 p-4" align="start">
+        {isNil(usage) || isNil(fill) ? (
+          <p className="text-sm font-medium">{t('Model context')}</p>
+        ) : (
+          <p className="text-sm break-words">
+            <span className="font-medium">{t('Model context')}</span>
+            <span className="text-muted-foreground">
+              {' · '}
+              {isNil(usage.contextWindowTokens)
+                ? t('{model} · window not set, assuming {tokens}', {
+                    model: usage.modelId,
+                    tokens: formatTokens({
+                      tokens: fill.windowTokens,
+                      locale: i18n.language,
+                    }),
                   })
-                : t('{count, plural, =1 {# message} other {All # messages}}', {
-                    count: totalMessages,
-                  })
-            }
-            note={
-              isTrimmed
-                ? t('Older messages are no longer sent to the model.')
-                : undefined
-            }
-          />
-          <ContextRow
-            icon={Brain}
-            label={t('Reasoning')}
-            value={t('Current reply only')}
-            note={t(
-              'Reasoning from earlier replies is not sent back to the model.',
-            )}
-          />
-        </div>
+                : t('{model} · window {tokens}', {
+                    model: usage.modelId,
+                    tokens: formatTokens({
+                      tokens: fill.windowTokens,
+                      locale: i18n.language,
+                    }),
+                  })}
+            </span>
+          </p>
+        )}
+        {isNil(usage) || isNil(fill) ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            {hasReply
+              ? t(
+                  'No measurement for the last reply. It appears after the next one, if the provider reports token usage.',
+                )
+              : t('Shows up once a reply finishes.')}
+          </p>
+        ) : (
+          <ContextBreakdown usage={usage} fill={fill} locale={i18n.language} />
+        )}
       </PopoverContent>
     </Popover>
   );
 }
 
 // Marks where the replayed window starts, so the messages the model no longer sees are visible as
-// such in the conversation itself rather than only in the popover.
+// such in the conversation itself.
 export function ContextWindowDivider() {
   return (
     <div className="flex items-center gap-3 py-4 text-xs text-muted-foreground">
@@ -106,36 +96,126 @@ export function ContextWindowDivider() {
   );
 }
 
-function ContextRow({
-  icon: Icon,
-  label,
-  value,
-  note,
+function ContextBreakdown({
+  usage,
+  fill,
+  locale,
 }: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  note?: string;
+  usage: ChatContextUsage;
+  fill: ContextFill;
+  locale: string;
 }) {
+  const { breakdown } = usage;
+  const format = (tokens: number) => formatTokens({ tokens, locale });
   return (
-    <div className="flex gap-2">
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2 text-sm">
-          <span className="shrink-0 text-muted-foreground">{label}</span>
-          <TextWithTooltip tooltipMessage={value}>
-            <p className="min-w-0 font-medium">{value}</p>
-          </TextWithTooltip>
-        </div>
-        {note && <p className="mt-1 text-xs text-muted-foreground">{note}</p>}
+    <div className="mt-3 space-y-3">
+      <div className="space-y-1.5">
+        <Progress
+          value={fill.percent}
+          aria-label={t('Model context')}
+          indicatorClassName={fill.percent >= 90 ? 'bg-destructive' : undefined}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t('{used} of {total} · {percent}%', {
+            used: format(usage.usedTokens),
+            total: format(fill.windowTokens),
+            percent: fill.percent,
+          })}
+        </p>
       </div>
+      <dl className="space-y-1 text-sm">
+        <BreakdownRow
+          label={t('System prompt')}
+          value={format(breakdown.systemPrompt)}
+        />
+        <BreakdownRow
+          label={t(
+            'Tools ({count, plural, one {# schema} other {# schemas}})',
+            { count: breakdown.toolCount },
+          )}
+          value={format(breakdown.tools)}
+        />
+        <BreakdownRow
+          label={t('Messages')}
+          value={format(breakdown.messages)}
+        />
+        <BreakdownRow
+          label={t('Tool outputs')}
+          value={format(breakdown.toolOutputs)}
+        />
+        <BreakdownRow
+          label={t('Free')}
+          value={format(fill.freeTokens)}
+          isEstimate={false}
+        />
+      </dl>
+      <p className="text-xs text-muted-foreground">
+        {t(
+          'The total is what the provider counted. The parts are estimated from their share of what was sent.',
+        )}
+      </p>
     </div>
   );
 }
 
+function BreakdownRow({
+  label,
+  value,
+  isEstimate = true,
+}: {
+  label: string;
+  value: string;
+  isEstimate?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <dt className="min-w-0 truncate text-muted-foreground">{label}</dt>
+      <dd className="shrink-0 font-mono tabular-nums">
+        {isEstimate ? '≈ ' : ''}
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function contextFill(usage: ChatContextUsage): ContextFill {
+  const windowTokens =
+    usage.contextWindowTokens ?? DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS;
+  return {
+    windowTokens,
+    freeTokens: Math.max(0, windowTokens - usage.usedTokens),
+    // Capped: with an assumed window a conversation can outgrow it, and a bar past 100% says
+    // nothing the number beside it does not.
+    percent: Math.min(100, Math.round((usage.usedTokens / windowTokens) * 100)),
+  };
+}
+
+// "81k", "1.2M" in every language, as agreed for this popover, rather than `Intl`'s compact
+// notation: that reads "81 тыс." in Russian and "200 м." in Kazakh, which is ambiguous. Only the
+// digits are localised.
+function formatTokens({
+  tokens,
+  locale,
+}: {
+  tokens: number;
+  locale: string;
+}): string {
+  const digits = (value: number) =>
+    new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
+  // Chosen on the rounded value, so 999,960 reads "1M" rather than "1,000k".
+  if (Math.round(tokens / 100_000) >= 10)
+    return `${digits(tokens / 1_000_000)}M`;
+  if (Math.round(tokens / 100) >= 10) return `${digits(tokens / 1_000)}k`;
+  return digits(tokens);
+}
+
+type ContextFill = {
+  windowTokens: number;
+  freeTokens: number;
+  percent: number;
+};
+
 type ChatContextIndicatorProps = {
-  projectId: string | null;
-  isProjectLocked: boolean;
-  totalMessages: number;
-  replayedMessages: number;
+  usage: ChatContextUsage | null;
+  hasReply: boolean;
 };

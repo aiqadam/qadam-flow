@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, OpenRouterProviderAuthConfig, OpenRouterProviderConfig } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, OpenRouterProviderAuthConfig, OpenRouterProviderConfig, parseModelContextWindowTokens, spreadIfDefined } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -28,6 +28,7 @@ export const openRouterProvider: AIProviderStrategy<OpenRouterProviderAuthConfig
             id: model.id,
             name: model.name,
             type: model.architecture.output_modalities.includes('image') ? AIProviderModelType.IMAGE : AIProviderModelType.TEXT,
+            ...spreadIfDefined('contextWindowTokens', parseModelContextWindowTokens(model.context_length)),
         }))
     },
 }
@@ -35,6 +36,8 @@ export const openRouterProvider: AIProviderStrategy<OpenRouterProviderAuthConfig
 type OpenRouterModel = {
     id: string
     name: string
+    // Required but nullable in OpenRouter's OpenAPI `Model` schema.
+    context_length?: number | null
     architecture: {
         output_modalities: string[]
     }

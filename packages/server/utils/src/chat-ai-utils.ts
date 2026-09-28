@@ -89,16 +89,24 @@ function createChatModel({ provider, auth, config, modelId }: {
             return createOpenAICompatible({
                 name: 'cloudflare',
                 fetch: safeHttp.fetch,
+                // See CUSTOM below. No opt-out here: the gateway's compat endpoint is OpenAI's own
+                // wire format, which defines `stream_options`. Not exercised against a live gateway.
+                includeUsage: true,
                 baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/compat`,
                 headers: { 'cf-aig-authorization': `Bearer ${apiKey}` },
             }).chatModel(actualModelId)
         }
         case AIProviderName.CUSTOM: {
             const { apiKey } = auth as BaseAIProviderAuthConfig
-            const { apiKeyHeader, baseUrl, defaultHeaders, extraBody } = config as OpenAICompatibleProviderConfig
+            const { apiKeyHeader, baseUrl, defaultHeaders, extraBody, streamUsage } = config as OpenAICompatibleProviderConfig
             return createOpenAICompatible({
                 name: 'openai-compatible',
                 fetch: safeHttp.fetch,
+                // Sends `stream_options: { include_usage: true }`. Without it an OpenAI-compatible
+                // server streams no token counts at all, and the chat's Context popover has nothing
+                // to show for exactly the local models whose small windows it matters most for.
+                // On unless the operator turned it off for a server that rejects the parameter.
+                includeUsage: streamUsage !== false,
                 baseURL: baseUrl,
                 headers: {
                     ...(defaultHeaders ?? {}),

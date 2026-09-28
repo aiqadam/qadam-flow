@@ -1,4 +1,4 @@
-import { AIProviderModel, OpenAICompatibleProviderAuthConfig, OpenAICompatibleProviderConfig } from '@aiqadam/shared'
+import { AIProviderModel, OpenAICompatibleProviderAuthConfig, OpenAICompatibleProviderConfig, spreadIfDefined } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 
@@ -12,6 +12,7 @@ export const openAICompatibleProvider: AIProviderStrategy<OpenAICompatibleProvid
             id: m.modelId,
             name: m.modelName,
             type: m.modelType,
+            ...spreadIfDefined('contextWindowTokens', m.contextWindowTokens),
         }))
     },
 }

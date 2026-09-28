@@ -9,6 +9,7 @@ export const formErrors = {
     messageRequiresContentOrFiles: 'messageRequiresContentOrFiles',
     tooManyModels: 'tooManyModels',
     modelIdentifierTooLong: 'modelIdentifierTooLong',
+    contextWindowTokensOutOfRange: 'contextWindowTokensOutOfRange',
     extraBodyMustBeObject: 'extraBodyMustBeObject',
     extraBodyReservedKey: 'extraBodyReservedKey',
     extraBodyTooLarge: 'extraBodyTooLarge',

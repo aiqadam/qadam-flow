@@ -96,6 +96,30 @@ describe('chatModel.resolve', () => {
         expect(listModels).not.toHaveBeenCalled()
     })
 
+    it('carries the context window the operator entered on the catalogue entry', async () => {
+        getChatProvider.mockResolvedValue(provider({
+            models: [{ modelId: 'qwen3-32b', modelType: AIProviderModelType.TEXT, contextWindowTokens: 32_768 }],
+        }))
+
+        const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
+
+        expect(resolved.contextWindowTokens).toBe(32_768)
+    })
+
+    it('carries the context window the provider reported for a pinned model, and null when it reported none', async () => {
+        getChatProvider.mockResolvedValue(provider({ resourceName: 'res' }, AIProviderName.AZURE))
+        listModels.mockResolvedValue([
+            { id: 'sized', type: AIProviderModelType.TEXT, contextWindowTokens: 1_048_576 },
+            { id: 'unsized', type: AIProviderModelType.TEXT },
+        ])
+
+        const sized = await chatModel.resolve({ platformId: 'plat', modelName: 'sized', log })
+        const unsized = await chatModel.resolve({ platformId: 'plat', modelName: 'unsized', log })
+
+        expect(sized.contextWindowTokens).toBe(1_048_576)
+        expect(unsized.contextWindowTokens).toBeNull()
+    })
+
     // The case that makes chat work at all on OpenAI/Anthropic/Google: no pinned model, no stored
     // catalogue, so the provider itself is asked.
     it('asks the provider for a model when the config carries no catalogue', async () => {

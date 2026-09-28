@@ -1,17 +1,14 @@
 // @vitest-environment jsdom
-import { ProjectType } from '@aiqadam/shared';
+import { ChatContextUsage } from '@aiqadam/shared';
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ChatContextIndicator } from '@/app/routes/chat-with-ai/components/chat-context-indicator';
-import { TooltipProvider } from '@/components/ui/tooltip';
 
-const CURRENT_USER_ID = 'currentUser1';
-
-// Interpolates the arguments too, so a test can tell "Latest 20 of 25" from a message with the
-// numbers swapped. i18next is not initialised in this harness.
+// Interpolates the arguments too, so a test can tell "81k of 200k" from the numbers swapped.
+// i18next is not initialised in this harness, so plural arguments stay as written.
 vi.mock('i18next', async (importOriginal) => ({
   ...(await importOriginal<typeof import('i18next')>()),
   t: (key: string, args?: Record<string, unknown>) =>
@@ -22,31 +19,8 @@ vi.mock('i18next', async (importOriginal) => ({
     ),
 }));
 
-const personal = {
-  id: 'personal1',
-  displayName: 'ignored',
-  type: ProjectType.PERSONAL,
-  ownerId: CURRENT_USER_ID,
-};
-const marketing = {
-  id: 'marketing1',
-  displayName: 'Marketing',
-  type: ProjectType.TEAM,
-  ownerId: 'someoneElse',
-};
-
-vi.mock('@/features/projects', () => ({
-  projectCollectionUtils: {
-    useAll: () => ({ data: [personal, marketing] }),
-  },
-  getProjectName: (project: { type: ProjectType; displayName: string }) =>
-    project.type === ProjectType.PERSONAL
-      ? 'Personal Project'
-      : project.displayName,
-}));
-
-vi.mock('@/lib/authentication-session', () => ({
-  authenticationSession: { getCurrentUserId: () => CURRENT_USER_ID },
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ i18n: { language: 'en' } }),
 }));
 
 let container: HTMLDivElement | undefined;
@@ -54,24 +28,34 @@ let root: Root | undefined;
 
 const openIndicator = async (
   props: React.ComponentProps<typeof ChatContextIndicator>,
-) => {
+): Promise<{ trigger: string; content: string }> => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root?.render(
-      <TooltipProvider>
-        <ChatContextIndicator {...props} />
-      </TooltipProvider>,
-    );
+    root?.render(<ChatContextIndicator {...props} />);
   });
   const button = container.querySelector('button');
   if (!button) throw new Error('context indicator not rendered');
+  const trigger = button.textContent ?? '';
   await act(async () => {
     button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
   // The popover portals to the body, outside the container.
-  return document.body.textContent ?? '';
+  return { trigger, content: document.body.textContent ?? '' };
+};
+
+const measured: ChatContextUsage = {
+  modelId: 'claude-sonnet-4',
+  usedTokens: 81_000,
+  contextWindowTokens: 200_000,
+  breakdown: {
+    systemPrompt: 7_000,
+    tools: 16_000,
+    toolCount: 51,
+    messages: 13_000,
+    toolOutputs: 45_000,
+  },
 };
 
 describe('ChatContextIndicator', () => {
@@ -86,64 +70,61 @@ describe('ChatContextIndicator', () => {
     root = undefined;
   });
 
-  it('names the pinned project and says every message is still sent', async () => {
-    const shown = await openIndicator({
-      projectId: marketing.id,
-      isProjectLocked: true,
-      totalMessages: 6,
-      replayedMessages: 6,
-    });
+  it('shows how full the context is on the button itself', async () => {
+    const { trigger } = await openIndicator({ usage: measured, hasReply: true });
 
-    expect(shown).toContain('Marketing');
-    expect(shown).not.toContain('Latest');
-    expect(shown).not.toContain('Older messages are no longer sent');
+    expect(trigger).toBe('Context · 41%');
   });
 
-  it('says how many messages the model still sees once the window has trimmed the rest', async () => {
-    const shown = await openIndicator({
-      projectId: marketing.id,
-      isProjectLocked: true,
-      totalMessages: 25,
-      replayedMessages: 20,
-    });
+  it('shows the total against the window, what filled it, and what is left', async () => {
+    const { content } = await openIndicator({ usage: measured, hasReply: true });
 
-    expect(shown).toContain('Latest 20 of 25');
-    expect(shown).toContain('Older messages are no longer sent to the model.');
+    expect(content).toContain('claude-sonnet-4 · window 200k');
+    expect(content).toContain('81k of 200k · 41%');
+    expect(content).toContain('System prompt≈ 7k');
+    expect(content).toContain('≈ 16k');
+    expect(content).toContain('Messages≈ 13k');
+    expect(content).toContain('Tool outputs≈ 45k');
+    // Free is arithmetic on two real numbers, not an estimate.
+    expect(content).toContain('Free119k');
   });
 
-  it('names the default project before the conversation has pinned one', async () => {
-    const shown = await openIndicator({
-      projectId: null,
-      isProjectLocked: false,
-      totalMessages: 1,
-      replayedMessages: 1,
+  it('says when the window is assumed rather than known', async () => {
+    const { content } = await openIndicator({
+      usage: { ...measured, contextWindowTokens: null },
+      hasReply: true,
     });
 
-    expect(shown).toContain('Personal Project');
+    expect(content).toContain('claude-sonnet-4 · window not set, assuming 128k');
+    expect(content).toContain('81k of 128k · 63%');
   });
 
-  it('does not claim a project for a locked conversation that lost its project', async () => {
-    const shown = await openIndicator({
-      projectId: null,
-      isProjectLocked: true,
-      totalMessages: 4,
-      replayedMessages: 4,
+  it('never shows more than a full context, or negative room', async () => {
+    const { trigger, content } = await openIndicator({
+      usage: { ...measured, usedTokens: 150_000, contextWindowTokens: null },
+      hasReply: true,
     });
 
-    expect(shown).toContain('No project');
-    expect(shown).not.toContain('Personal Project');
+    expect(trigger).toBe('Context · 100%');
+    expect(content).toContain('Free0');
   });
 
-  it('says reasoning is not carried into later turns', async () => {
-    const shown = await openIndicator({
-      projectId: marketing.id,
-      isProjectLocked: true,
-      totalMessages: 2,
-      replayedMessages: 2,
+  it('shows no number before the first reply has been measured', async () => {
+    const { trigger, content } = await openIndicator({
+      usage: null,
+      hasReply: false,
     });
 
-    expect(shown).toContain(
-      'Reasoning from earlier replies is not sent back to the model.',
+    expect(trigger).toBe('Context');
+    expect(content).toContain('Shows up once a reply finishes.');
+  });
+
+  it('says the provider reported nothing rather than inventing a figure', async () => {
+    const { content } = await openIndicator({ usage: null, hasReply: true });
+
+    expect(content).toContain(
+      'No measurement for the last reply. It appears after the next one, if the provider reports token usage.',
     );
+    expect(content).not.toContain('%');
   });
 });

@@ -55,6 +55,24 @@ An optional JSON object merged into every chat-completions body the row sends, t
 - Keys the SDK owns (`OPENAI_COMPATIBLE_RESERVED_BODY_KEYS`: `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `response_format`) are rejected by the schema and dropped again at merge time, since the qadam reads `config` back as an unchecked cast.
 - Capped at 8192 serialized characters (`JSON.stringify(...).length`, not bytes). Chat models only: CUSTOM image models ignore it. Redacted from non-admin list responses like `defaultHeaders`, because gateways that authenticate in the body put their token there.
 
+## Model context window
+
+`AIProviderModel.contextWindowTokens` is the model's context window in tokens. It is optional, because most providers do not say. The chat reads it to decide when to compact a long conversation (#567).
+
+- **Where it comes from:**
+  - **Model lists that report it:** OpenRouter `context_length` (nullable), Google `inputTokenLimit` and Mistral `max_context_length`.
+  - **The operator:** the optional `contextWindowTokens` on a CUSTOM or Cloudflare Gateway catalogue entry (`ProviderModelConfig`), set in the model popover.
+  - **Nothing else:** OpenAI, Anthropic, Azure and Bedrock do not report it through the endpoints we call, and there is no per-model editor for them.
+- **Validation:** a reported value goes through `parseModelContextWindowTokens`, the same `ModelContextWindowTokens` bounds (1,024 to 10,000,000, integer) the operator is held to. Anything else reads as "not reported".
+- **When unknown:** readers assume `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS`, which is 128k. It is not smaller because the chat's own system prompt and tool schemas are about 23k tokens before the first message. The model list in the provider form states the assumption on every text model without a size.
+
+## CUSTOM `streamUsage`
+
+When this optional boolean is absent or true, chat asks the server for token counts (`includeUsage` → `stream_options.include_usage`). The chat's context fill reads those counts (see `chat.md`).
+
+- **Why the opt-out exists:** `stream_options` is a reserved key, so `extraBody` cannot remove it, and a server that rejects unknown body fields would otherwise fail every chat turn.
+- **Scope:** chat only. The qadam's own `createAIModel` does not read it.
+
 ## Model Caching
 
 Models listed per provider are cached in an in-process LRU bounded at 200 entries (`packages/server/api/src/app/ai/models-cache.ts`), keyed by the provider row's `id` and its `updated` timestamp — so editing credentials or config invalidates the entry, and two rows never share one. Providers whose config carries an explicit `models` list bypass the cache. `aiProviderService.setup()` registers a `0 0 * * *` node-cron job that clears the whole cache daily at midnight.

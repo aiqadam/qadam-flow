@@ -1,3 +1,4 @@
+import { ChatContextUsage } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { motion } from 'motion/react';
 
@@ -197,12 +198,10 @@ export function ChatBottomBar({
                   disabled={isStreaming}
                 />
               )}
-              {context && context.totalMessages > 0 && (
+              {context && context.hasMessages && (
                 <ChatContextIndicator
-                  projectId={projectId ?? null}
-                  isProjectLocked={isProjectLocked}
-                  totalMessages={context.totalMessages}
-                  replayedMessages={context.replayedMessages}
+                  usage={context.usage}
+                  hasReply={context.hasReply}
                 />
               )}
             </>
@@ -278,5 +277,9 @@ type ChatBottomBarProps = {
   projectId?: string | null;
   onProjectChange?: (projectId: string) => void;
   isProjectLocked?: boolean;
-  context?: { totalMessages: number; replayedMessages: number };
+  context?: {
+    usage: ChatContextUsage | null;
+    hasMessages: boolean;
+    hasReply: boolean;
+  };
 };

@@ -1,4 +1,9 @@
-import { ChatConversation, chatContextUtils, SeekPage } from '@aiqadam/shared';
+import {
+  ChatConversation,
+  chatContextUtils,
+  isNil,
+  SeekPage,
+} from '@aiqadam/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { AlertTriangle, RefreshCw, Square } from 'lucide-react';
@@ -155,6 +160,11 @@ function ChatBoxContent({
     [messages],
   );
 
+  const contextUsage = useMemo(
+    () => chatUtils.latestContextUsage({ messages }),
+    [messages],
+  );
+
   const hasBlockingCard = useChatStoreContext((s) =>
     chatStoreSelectors.hasBlockingCard({ state: s, lastAssistantMessage }),
   );
@@ -307,8 +317,10 @@ function ChatBoxContent({
               onProjectChange={setProjectId}
               isProjectLocked={!isEmpty}
               context={{
-                totalMessages: messages.length,
-                replayedMessages: messages.length - replayStart,
+                usage: contextUsage,
+                hasMessages: messages.length > 0,
+                // A reply still streaming has not been measured yet, so it does not count.
+                hasReply: !isStreaming && !isNil(lastAssistantMessage),
               }}
             />
           </div>
