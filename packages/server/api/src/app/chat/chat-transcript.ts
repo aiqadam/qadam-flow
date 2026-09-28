@@ -1,4 +1,5 @@
 import {
+    chatContextUtils,
     isNil,
     PersistedChatMessage,
     PersistedChatPart,
@@ -48,25 +49,12 @@ export const chatTranscript = {
     },
 }
 
-// Replaying the whole history every turn makes each message cost more than the last, without
-// bound: tool outputs are the bulk of it and a long build session accumulates a lot of them. The
-// entity carries `summary`/`summarizedUpToIndex` for a proper compaction pass, which nothing
-// writes yet — until it does, a window is the honest version of the same idea. It has to start on
-// a user turn, or the transcript can open with an assistant message answering a question the model
-// can no longer see, and it must never split an assistant turn from the tool results that answer
-// its calls, which is why the whole message is the unit.
+// The entity carries `summary`/`summarizedUpToIndex` for a proper compaction pass, which nothing
+// writes yet — until it does, a window of the newest messages is the honest version of the same
+// idea. The window's size and where it starts live in `chatContextUtils`, because the chat UI shows
+// the user the same boundary and must not work it out differently.
 function recentTurns(uiMessages: PersistedChatMessage[]): PersistedChatMessage[] {
-    if (uiMessages.length <= MAX_REPLAYED_MESSAGES) {
-        return uiMessages
-    }
-    const window = uiMessages.slice(-MAX_REPLAYED_MESSAGES)
-    // The first user turn that actually produces a message, not merely the first user turn: a
-    // files-only message is persisted with empty text, `toUserModelMessages` drops it, and the
-    // transcript would then open with an assistant turn answering a question the model can no
-    // longer see — which is the one shape a provider rejects outright.
-    const firstReplayableTurn = window.findIndex((message) => message.role === PersistedChatRole.USER
-        && toUserModelMessages(message.parts).length > 0)
-    return firstReplayableTurn <= 0 ? window : window.slice(firstReplayableTurn)
+    return uiMessages.slice(chatContextUtils.replayWindowStart(uiMessages))
 }
 
 function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
@@ -219,6 +207,3 @@ const AWAITING_APPROVAL_OUTPUT = 'Not executed. This action is waiting for the u
 const APPROVED_OUTPUT = 'The user approved this action.'
 const DECLINED_OUTPUT = 'Not executed. The user declined this action.'
 
-// Twenty messages is roughly ten exchanges — enough that a build session keeps its thread, while
-// capping what any single turn re-sends.
-const MAX_REPLAYED_MESSAGES = 20

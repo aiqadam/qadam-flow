@@ -16,6 +16,7 @@ import {
 } from '../lib/message-parsers';
 
 import { ActionPreviewCard } from './action-preview-card';
+import { ChatContextIndicator } from './chat-context-indicator';
 import { ChatInput } from './chat-input';
 import { ChatModelPicker } from './chat-model-picker';
 import { ChatProjectPicker } from './chat-project-picker';
@@ -42,6 +43,7 @@ export function ChatBottomBar({
   projectId,
   onProjectChange,
   isProjectLocked = false,
+  context,
 }: ChatBottomBarProps) {
   const pendingPlanPart = useChatStoreContext((s) =>
     chatStoreSelectors.pendingPlanApproval({
@@ -178,7 +180,7 @@ export function ChatBottomBar({
         onInputChange={onInputChange}
         placeholder={placeholder ?? t('Reply...')}
         leftActions={
-          (onProjectChange || onModelChange) && (
+          (onProjectChange || onModelChange || context) && (
             <>
               {onProjectChange && (
                 <ChatProjectPicker
@@ -193,6 +195,14 @@ export function ChatBottomBar({
                   modelName={modelName ?? null}
                   onModelChange={onModelChange}
                   disabled={isStreaming}
+                />
+              )}
+              {context && context.totalMessages > 0 && (
+                <ChatContextIndicator
+                  projectId={projectId ?? null}
+                  isProjectLocked={isProjectLocked}
+                  totalMessages={context.totalMessages}
+                  replayedMessages={context.replayedMessages}
                 />
               )}
             </>
@@ -268,4 +278,5 @@ type ChatBottomBarProps = {
   projectId?: string | null;
   onProjectChange?: (projectId: string) => void;
   isProjectLocked?: boolean;
+  context?: { totalMessages: number; replayedMessages: number };
 };

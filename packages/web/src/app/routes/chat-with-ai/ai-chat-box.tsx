@@ -1,9 +1,9 @@
-import { ChatConversation, SeekPage } from '@aiqadam/shared';
+import { ChatConversation, chatContextUtils, SeekPage } from '@aiqadam/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { AlertTriangle, RefreshCw, Square } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   ChatContainerContent,
@@ -17,12 +17,14 @@ import {
   ChatStoreProvider,
   useChatStoreContext,
 } from '@/features/chat/lib/chat-store-context';
+import { ChatUIMessage } from '@/features/chat/lib/chat-types';
 import { useAgentChat } from '@/features/chat/lib/use-chat';
 import { aiProviderQueries } from '@/features/platform-admin';
 import { cn } from '@/lib/utils';
 
 import { AssistantMessage } from './components/assistant-message';
 import { ChatBottomBar } from './components/chat-bottom-bar';
+import { ContextWindowDivider } from './components/chat-context-indicator';
 import {
   EmptyState,
   MessageSkeletons,
@@ -135,6 +137,18 @@ function ChatBoxContent({
     if (lastUser) void sendMessage(getTextFromParts(lastUser.parts));
   }, [messages, sendMessage]);
 
+  // The same boundary the server applies when it rebuilds the transcript, over the same messages.
+  // Between runs this list is the persisted `uiMessages` (reconciled after every run), which is what
+  // the next send windows. During a run it also holds what the server windowed *without*, so those
+  // are set aside first — otherwise the divider would move past messages the running turn was sent.
+  const replayStart = useMemo(
+    () =>
+      chatContextUtils.replayWindowStart(
+        messagesWindowedByRun({ messages, isStreaming }),
+      ),
+    [messages, isStreaming],
+  );
+
   const lastMessage = messages[messages.length - 1];
   const lastAssistantMessage = useMemo(
     () => messages.findLast((m) => m.role === 'assistant'),
@@ -194,13 +208,20 @@ function ChatBoxContent({
                 {isLoadingHistory && <MessageSkeletons />}
 
                 {messages.map((msg, idx) => {
+                  const divider =
+                    replayStart > 0 && idx === replayStart ? (
+                      <ContextWindowDivider />
+                    ) : null;
+
                   if (msg.role === 'user') {
                     return (
-                      <UserMessage
-                        key={msg.id}
-                        message={msg}
-                        isLastMessage={idx === messages.length - 1}
-                      />
+                      <Fragment key={msg.id}>
+                        {divider}
+                        <UserMessage
+                          message={msg}
+                          isLastMessage={idx === messages.length - 1}
+                        />
+                      </Fragment>
                     );
                   }
 
@@ -210,13 +231,15 @@ function ChatBoxContent({
                   const isLastAssistant = idx === messages.length - 1;
 
                   return (
-                    <AssistantMessage
-                      key={msg.id}
-                      message={msg}
-                      isStreaming={isLastStreamingAssistant}
-                      isLastMessage={isLastAssistant}
-                      onRetry={handleRetry}
-                    />
+                    <Fragment key={msg.id}>
+                      {divider}
+                      <AssistantMessage
+                        message={msg}
+                        isStreaming={isLastStreamingAssistant}
+                        isLastMessage={isLastAssistant}
+                        onRetry={handleRetry}
+                      />
+                    </Fragment>
                   );
                 })}
 
@@ -283,12 +306,34 @@ function ChatBoxContent({
               projectId={projectId}
               onProjectChange={setProjectId}
               isProjectLocked={!isEmpty}
+              context={{
+                totalMessages: messages.length,
+                replayedMessages: messages.length - replayStart,
+              }}
             />
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+// `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
+// run resumed from an approval windows everything persisted. So a run in flight is described by the
+// list minus its reply in progress and, when one was just sent, minus that user turn.
+function messagesWindowedByRun({
+  messages,
+  isStreaming,
+}: {
+  messages: ChatUIMessage[];
+  isStreaming: boolean;
+}): ChatUIMessage[] {
+  if (!isStreaming) return messages;
+  const withoutReply =
+    messages.at(-1)?.role === 'assistant' ? messages.slice(0, -1) : messages;
+  return withoutReply.at(-1)?.role === 'user'
+    ? withoutReply.slice(0, -1)
+    : withoutReply;
 }
 
 type AIChatBoxProps = {
