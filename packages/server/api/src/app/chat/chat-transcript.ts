@@ -25,8 +25,8 @@ export const chatTranscript = {
     // other run has to answer it. Inferring it from "is the gate the last message" was wrong,
     // because `start` passes `uiMessages.slice(0, -1)` and re-adds the user turn afterwards — which
     // makes an auto-denied gate the last element on exactly the path that needed the answer.
-    toModelMessages(uiMessages: PersistedChatMessage[], { resumingGate = false }: { resumingGate?: boolean } = {}): ModelMessage[] {
-        const window = recentTurns(uiMessages)
+    toModelMessages(uiMessages: PersistedChatMessage[], { summarizedUpToIndex = null, resumingGate = false }: { summarizedUpToIndex?: number | null, resumingGate?: boolean } = {}): ModelMessage[] {
+        const window = uiMessages.slice(chatContextUtils.transcriptStart({ messages: uiMessages, summarizedUpToIndex }))
         // Collected across the whole window rather than per message, so the check below asks the
         // question the SDK asks: is there a request for this response anywhere in what we are about
         // to send?
@@ -40,22 +40,29 @@ export const chatTranscript = {
                 knownApprovalIds: requestedApprovalIds,
                 // `resumingGate` is the condition that decides this; the index check is
                 // belt-and-braces. `chatApprovals.assertAnswerable` refuses to answer a gate whose
-                // message is not the newest, and `recentTurns` only ever drops *leading* messages,
+                // message is not the newest, and the transcript only ever drops *leading* messages,
                 // so on the approve path the resumed gate is already guaranteed to be last. Kept
                 // because this is a general helper and a future caller could pass a different array
                 // — but do not read it as load-bearing, or as a second guard on the same risk.
                 isResumedGateTurn: resumingGate && index === window.length - 1,
             }))
     },
+
+    // What stands in for the messages before the transcript's start, sent ahead of it as a system
+    // message. Null when there is nothing to send: no pass has run, or the conversation has
+    // auto-compact off, in which case those messages are dropped rather than summarised.
+    summaryMessage({ summary, autoCompact }: { summary: string | null, autoCompact: boolean }): ModelMessage | null {
+        if (!autoCompact || isNil(summary) || summary.trim().length === 0) {
+            return null
+        }
+        return { role: 'system', content: `${SUMMARY_PREAMBLE}\n\n${summary}` }
+    },
 }
 
-// The entity carries `summary`/`summarizedUpToIndex` for a proper compaction pass, which nothing
-// writes yet — until it does, a window of the newest messages is the honest version of the same
-// idea. The window's size and where it starts live in `chatContextUtils`, because the chat UI shows
-// the user the same boundary and must not work it out differently.
-function recentTurns(uiMessages: PersistedChatMessage[]): PersistedChatMessage[] {
-    return uiMessages.slice(chatContextUtils.replayWindowStart(uiMessages))
-}
+// A system message rather than a user turn: it is context, not something the user said, and a user
+// turn here would sit next to the transcript's own first user turn. It follows the system prompt,
+// so providers that only accept system content at the start of a conversation still take it.
+const SUMMARY_PREAMBLE = 'Summary of the earlier part of this conversation, which is no longer shown to you in full. Treat it as what was said and done before the messages that follow.'
 
 function toUserModelMessages(parts: PersistedChatPart[]): ModelMessage[] {
     const text = parts

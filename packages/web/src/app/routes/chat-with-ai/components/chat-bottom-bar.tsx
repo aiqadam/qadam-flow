@@ -202,6 +202,8 @@ export function ChatBottomBar({
                 <ChatContextIndicator
                   usage={context.usage}
                   hasReply={context.hasReply}
+                  compaction={context.compaction}
+                  onAutoCompactChange={context.onAutoCompactChange}
                 />
               )}
             </>
@@ -281,5 +283,7 @@ type ChatBottomBarProps = {
     usage: ChatContextUsage | null;
     hasMessages: boolean;
     hasReply: boolean;
+    compaction: { autoCompact: boolean; compactedSinceMeasured: boolean };
+    onAutoCompactChange?: (autoCompact: boolean) => void;
   };
 };

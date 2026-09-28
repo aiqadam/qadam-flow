@@ -7,16 +7,42 @@ A platform-scoped conversation between one user and the chat agent. The agent is
 - `packages/server/api/src/app/chat/chat-agent.service.ts`: the run loop (`runAgentLoop`), which forwards `toUIMessageStream()` chunks and persists `buildStepParts` output through `finishRun`.
 - `packages/server/api/src/app/chat/chat-transcript.ts`: rebuilds the next turn's `ModelMessage[]` from `uiMessages`.
 - `packages/server/api/src/app/chat/chat-context-usage.ts`: measures how full the context was on each reply (#568).
-- `packages/server/api/src/app/chat/chat-conversation-entity.ts`: the `chat_conversation` table (`projectId` nullable, `summary` / `summarizedUpToIndex`).
+- `packages/server/api/src/app/chat/chat-compaction.ts`: moves the transcript's start forward and writes the summary (#567).
+- `packages/server/api/src/app/chat/chat-conversation-entity.ts`: the `chat_conversation` table (`projectId` nullable, `summary` / `summarizedUpToIndex` / `autoCompact`).
 - `packages/server/utils/src/chat-ai-utils.ts`: provider factories, `buildStepParts`, and `buildProviderOptions` / `stripThinkingBlocks`. Neither of the last two has a caller.
-- `packages/shared/src/lib/automation/chat/index.ts`: persisted part schemas, plus `CHAT_MAX_REPLAYED_MESSAGES` and `chatContextUtils.replayWindowStart`, which the server and the browser share.
+- `packages/shared/src/lib/automation/chat/index.ts`: persisted part schemas, plus `chatContextUtils` (`transcriptStart`, `contextBudget`, `isCompactionDue`), which the server and the browser share.
 - `packages/web/src/app/routes/chat-with-ai/`: the page. `ai-chat-box.tsx` renders the message list and the window divider. `components/chat-context-indicator.tsx` is the context popover: fill and breakdown. `components/activity-accordion.tsx` (`ThinkingBlock`) and `components/assistant-message.tsx` render reasoning.
 
 ## Context the model gets on each turn
 - **Project.** The conversation's `projectId` is null until the first run pins it, and it cannot be changed after that (`repinProject`). The UI shows it in the project picker (only when the user has two or more projects).
-- **History window.** The model is sent only the newest `CHAT_MAX_REPLAYED_MESSAGES` (20) persisted messages. The window is moved forward so it opens on a user turn that has text. The browser runs the same `replayWindowStart` over its own message list, which matches the persisted list one to one between runs. It uses the result to draw a divider above the first message still sent.
-- **Summary / compaction.** Nothing is written to `summary` / `summarizedUpToIndex`, and `assets/prompts/chat-compaction-prompt.md` is loaded by no code path. Messages that fall out of the window are dropped, not summarized. The UI therefore shows no summary state. Add a row to the popover when a compaction pass actually exists.
+- **Transcript.** A run replays every persisted message from `summarizedUpToIndex` on, moved forward to a user turn that has text (`chatContextUtils.transcriptStart`). The browser draws a divider at the same index. There is no fixed message-count window any more. It was replaced by compaction in #567, and the migration set `summarizedUpToIndex` to where that window used to start for every conversation longer than it, so nothing they send changed.
+- **Summary.** When `autoCompact` is on and a summary exists, it goes ahead of the transcript as a system message (`chatTranscript.summaryMessage`), right after the system prompt.
 - **Reasoning.** It is never replayed: `toAssistantModelMessages` emits only text and tool-call parts.
+
+## Compaction (#567)
+- **When.**
+  - After every reply, in the background, once the reply's own measurement crosses `chatContextUtils.isCompactionDue`.
+  - The threshold is the system prompt plus tool schemas (never compacted) plus 60% of the room left after them in the model's window. The popover's "until auto-compact" uses the same number.
+  - No measurement means no pass.
+- **How much.**
+  - The newest messages are kept while their estimated size fits 25% of that room, and the boundary goes to a user turn. The last exchange is always kept.
+  - Sizes are characters, calibrated against the last reply's counted conversation tokens (`chatCompactionPlan.cutIndex`).
+- **Summary.**
+  - The conversation's own model writes it with `generateText` and `assets/prompts/chat-compaction-prompt.md`.
+  - The input is the previous summary plus only the messages leaving the transcript. Tool inputs and outputs are clipped, and reasoning is skipped.
+  - An empty or failed reply writes nothing.
+- **Auto-compact off.** A per-conversation switch in the Context popover (`autoCompact`, via `POST /v1/chat/conversations/:id`). Off means the boundary still moves, but nothing is summarised and no summary is sent, the way the chat behaved before #567. A summary written earlier is kept, and is sent again if the switch goes back on.
+- **Concurrency.**
+  - `saveCompaction` locks the row and writes only if `summarizedUpToIndex` is still the one the pass started from.
+  - A run admitted meanwhile replays from the old boundary with the old summary, which is still a correct transcript.
+  - `finishRun` and `admitRun` save the row they read under the same lock, so they never write a stale summary back.
+- **Overflow safety net.**
+  - When the provider refuses a turn as too long (`PROVIDER_CONTEXT_LENGTH_EXCEEDED`) before any tool ran, `compactForOverflow` compacts harder: half the usual kept tail, or 20% of the window when there is no measurement.
+  - The turn is then retried once on the rebuilt transcript, in the same run and stream. A second refusal fails as before.
+  - Not yet shown: a live "compacting" status in the stream. While it runs the user sees the ordinary "Thinking..." state.
+- **The browser sees the new boundary on its next read of the row**, which is at the reconcile after the next reply or on reload. A pass that lands after the reconcile is not reflected until then. The popover says when its figures predate a pass (`transcriptStartIndex` on the measurement).
+- **Never fails a turn.** Every pass swallows and logs its own errors, and leaves the row unchanged.
+- **Tests.** `chat-compaction.test.ts` (the plan and both entry points, with a mocked model), `chat-transcript.test.ts` (start and summary message), `chat-context.test.ts` in shared (start and budget). `chat-agent.test.ts` covers background compaction then the next turn, the overflow retry, and auto-compact off.
 
 ## Context fill (#568)
 The Context button shows how full the model's context was on the last reply (`Context · 41%`). Its popover breaks that down: system prompt, tool schemas, messages, tool outputs and free space, against the model's window.
@@ -47,5 +73,6 @@ The Context button shows how full the model's context was on the last reply (`Co
 
 ## Domain Terms
 - **Run**: one `streamText` loop answering one user message, owned by the conversation's `activeRunId`.
-- **Replayed window**: the persisted messages that the next run sends to the model.
+- **Transcript start**: `summarizedUpToIndex`, moved forward to a user turn. The messages from it on are what the next run sends verbatim.
+- **Compaction pass**: one move of the transcript start, which summarises what it passed over when `autoCompact` is on.
 - **Reasoning**: provider "thinking" text, persisted as `PersistedChatPartType.REASONING`. It is display-only and never sent back to the model.

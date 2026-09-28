@@ -32,6 +32,7 @@ import { AddTranslationProjectForeignKey1791000000000 } from './migration/postgr
 import { AddLdapGroupMappingColumns1791100000000 } from './migration/postgres/1791100000000-AddLdapGroupMappingColumns'
 import { AddPlatformRoleManagedByToUser1791200000000 } from './migration/postgres/1791200000000-AddPlatformRoleManagedByToUser'
 import { AddLastReconciledAtToUserFederatedIdentity1791300000000 } from './migration/postgres/1791300000000-AddLastReconciledAtToUserFederatedIdentity'
+import { AddAutoCompactToChatConversation1791400000000 } from './migration/postgres/1791400000000-AddAutoCompactToChatConversation'
 
 const getSslConfig = (): boolean | TlsOptions => {
     const useSsl = system.get(AppSystemProp.POSTGRES_USE_SSL)
@@ -71,6 +72,7 @@ export const getMigrations = (): (new () => Migration)[] => {
         AddLdapGroupMappingColumns1791100000000,
         AddPlatformRoleManagedByToUser1791200000000,
         AddLastReconciledAtToUserFederatedIdentity1791300000000,
+        AddAutoCompactToChatConversation1791400000000,
     ]
 }
 

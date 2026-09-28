@@ -7,9 +7,11 @@ import {
     ChatAgentEventType,
     ChatContextUsage,
     ChatContextUsageSchema,
+    chatContextUtils,
     ChatConversation,
     ErrorCode,
     isNil,
+    PersistedChatMessage,
     PersistedChatPartType,
     PersistedChatRole,
     ProjectScopedMcpServer,
@@ -30,9 +32,10 @@ import { AppSystemProp } from '../helper/system/system-props'
 import { mcpServerService } from '../mcp/mcp-service'
 import { qadamMetadataService } from '../qadams/metadata/qadam-metadata-service'
 import { chatApprovals } from './chat-approvals'
+import { chatCompaction } from './chat-compaction'
 import { chatContextUsage } from './chat-context-usage'
 import { chatConversationService } from './chat-conversation.service'
-import { classifyChatError, describeChatError } from './chat-error-classify'
+import { CHAT_ERROR_CODES, classifyChatError, describeChatError } from './chat-error-classify'
 import { chatModel, ResolvedChatModel } from './chat-model'
 import { chatProjects } from './chat-projects'
 import { chatTools } from './chat-tools'
@@ -69,10 +72,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
         // admitting a message auto-denies any gate still waiting and that denial lands on an older
         // message. The just-appended user turn is dropped and rebuilt by `buildUserMessage`, which
         // is the only path that can carry attachments — the persisted turn is text alone.
-        const messages = [
-            ...chatTranscript.toModelMessages(uiMessages.slice(0, -1)),
-            buildUserMessage(request),
-        ]
+        const transcript = buildRunTranscript({ conversation, uiMessages: uiMessages.slice(0, -1), request, resumingGate: false })
 
         // A takeover only rewrites the row. If the run it displaced is still looping in this
         // process, it has to be stopped too, or two loops stream the same conversation.
@@ -85,7 +85,14 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             runId,
             resolvedModel,
             systemPrompt,
-            messages,
+            transcript,
+            // Re-read rather than recomputed from `uiMessages`: the overflow safety net moves the
+            // row's transcript start, and the retry has to replay from the new one. The admitted
+            // user turn is still the row's last message — the run that appends the reply is this one.
+            rebuildTranscript: async () => {
+                const fresh = await chatConversationService.getOneOrThrow({ id, platformId, userId })
+                return buildRunTranscript({ conversation: fresh, uiMessages: (fresh.uiMessages ?? []).slice(0, -1), request, resumingGate: false })
+            },
             tools,
             log,
         }), log)
@@ -158,7 +165,11 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             // call (`:2737`) and the approved tool would silently never execute. Every other run —
             // `start` included, which is where an auto-denied gate is replayed — must answer it, or
             // the provider rejects an assistant `tool-call` that nothing responds to.
-            messages: chatTranscript.toModelMessages(uiMessages, { resumingGate: true }),
+            transcript: buildRunTranscript({ conversation, uiMessages, request: null, resumingGate: true }),
+            rebuildTranscript: async () => {
+                const fresh = await chatConversationService.getOneOrThrow({ id, platformId, userId })
+                return buildRunTranscript({ conversation: fresh, uiMessages: fresh.uiMessages ?? [], request: null, resumingGate: true })
+            },
             tools,
             log,
         }), log)
@@ -216,10 +227,14 @@ const MAX_AGENT_STEPS = 25
 // the compiled `dist/` never contains assets, so a dist-relative path would break the image.
 const SYSTEM_PROMPT_PATH = 'packages/server/api/src/assets/prompts/chat-system-prompt.md'
 
-async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, systemPrompt, messages, tools, log }: RunLoopParams): Promise<void> {
+async function runAgentLoop(params: RunLoopParams): Promise<void> {
+    const { id, platformId, userId, runId, resolvedModel, systemPrompt, transcript, tools, retriedAfterOverflow = false, log } = params
     const abortController = new AbortController()
     activeRuns.set(runId, abortController)
+    const messages = isNil(transcript.summaryMessage) ? transcript.messages : [transcript.summaryMessage, ...transcript.messages]
     const streamedText: string[] = []
+    // Once a tool has run, a retry would run it again — the overflow safety net must not.
+    let toolExecuted = false
     // The SDK's `tool-approval-request` UI chunk carries `{ type, approvalId, toolCallId }` and
     // nothing else (`ai/dist/index.mjs:5136-5140`), but the card is useless without the tool and its
     // arguments. The gated call's `tool-input-available` chunk is enqueued *before* the approval
@@ -269,6 +284,7 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             // `result.steps` rejects along with the stream — this is the only copy of the partial
             // reply that survives a cancel.
             collectStreamedText({ chunk, into: streamedText })
+            toolExecuted ||= isToolOutputChunk(chunk)
             emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.CHUNK, data: chunk } })
             const approvalEvent = trackToolApproval({ chunk, gatedCallInputs })
             if (!isNil(approvalEvent)) {
@@ -278,14 +294,13 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
 
         const steps = await result.steps
         const response = await result.response
-        const history = [...messages, ...response.messages]
-        const contextUsage = await measureContextUsage({ resolvedModel, systemPrompt, tools, history, steps, conversationId: id, runId, log })
+        const contextUsage = await measureContextUsage({ resolvedModel, systemPrompt, transcript, tools, responseMessages: response.messages, steps, conversationId: id, runId, log })
         await chatConversationService.finishRun({
             id,
             platformId,
             userId,
             runId,
-            messages: history,
+            messages: [...messages, ...response.messages],
             assistantMessage: {
                 role: PersistedChatRole.ASSISTANT,
                 parts: chatAiUtils.buildStepParts({ content: toContentParts(steps) }),
@@ -293,6 +308,10 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
             },
         })
         emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.FINISHED, data: { conversationId: id } } })
+        // After FINISHED, so the user never waits on it, and without awaiting: the next turn needs
+        // only what is on the row when it is admitted, and a pass still running then is harmless
+        // (`saveCompaction` is conditional on the boundary it started from).
+        rejectedPromiseHandler(chatCompaction(log).compactAfterReply({ id, platformId, userId, resolvedModel }), log)
     })
 
     activeRuns.delete(runId)
@@ -328,6 +347,15 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
     // one rejection it raises in place of the provider's. Anything else that threw here (e.g.
     // `finishRun` failing after a later step's provider error) is its own cause.
     const cause = NoOutputGeneratedError.isInstance(error) && !isNil(providerError) ? providerError : error
+    // The safety net for a window the measurements got wrong (#567): shorten the transcript and try
+    // the turn once more. Only before any tool ran, since the retry replays the turn from the start,
+    // and only once, since a second refusal means shortening did not help.
+    if (!retriedAfterOverflow && !toolExecuted && classifyChatError(cause).code === CHAT_ERROR_CODES.PROVIDER_CONTEXT_LENGTH_EXCEEDED) {
+        const retried = await retryAfterOverflow(params)
+        if (retried) {
+            return
+        }
+    }
     // Only the error's name, message and HTTP status are read, never the error object: an AI SDK
     // `APICallError` carries `requestBodyValues` and the response headers, which is where the
     // provider API key lives. classifyChatError is deliberately pure and reads the same three, so
@@ -526,9 +554,43 @@ function buildUserMessage({ content, files }: SendChatMessageRequest): ModelMess
     return { role: 'user', content: fileParts }
 }
 
+async function retryAfterOverflow(params: RunLoopParams): Promise<boolean> {
+    const { id, platformId, userId, runId, resolvedModel, rebuildTranscript, log } = params
+    const compacted = await chatCompaction(log).compactForOverflow({ id, platformId, userId, resolvedModel })
+    if (!compacted) {
+        return false
+    }
+    const { data: transcript, error } = await tryCatch(rebuildTranscript)
+    if (!isNil(error) || isNil(transcript)) {
+        log.warn({ conversationId: id, runId, errorName: error?.name }, '[chatAgentService#runAgentLoop] could not rebuild the transcript after compacting; the turn fails')
+        return false
+    }
+    log.info({ conversationId: id, runId }, '[chatAgentService#runAgentLoop] the provider refused the turn as too long; retrying once on a compacted transcript')
+    await runAgentLoop({ ...params, transcript, retriedAfterOverflow: true })
+    return true
+}
+
+// What a run sends: the summary standing for what the transcript's start has passed over (#567), the
+// replayed messages, and — for a run started by a message — the new user turn, rebuilt here because it
+// is the only path that can carry attachments.
+function buildRunTranscript({ conversation, uiMessages, request, resumingGate }: BuildRunTranscriptParams): RunTranscript {
+    const summarizedUpToIndex = conversation.summarizedUpToIndex ?? null
+    const replayed = chatTranscript.toModelMessages(uiMessages, { summarizedUpToIndex, resumingGate })
+    return {
+        messages: isNil(request) ? replayed : [...replayed, buildUserMessage(request)],
+        summaryMessage: chatTranscript.summaryMessage({ summary: conversation.summary ?? null, autoCompact: conversation.autoCompact }),
+        startIndex: chatContextUtils.transcriptStart({ messages: uiMessages, summarizedUpToIndex }),
+    }
+}
+
+function isToolOutputChunk(chunk: unknown): boolean {
+    return typeof chunk === 'object' && !isNil(chunk) && 'type' in chunk
+        && (chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error')
+}
+
 // The popover is a view on the run, never a reason for it to fail: a measurement that throws is
 // logged and the reply is persisted without one.
-async function measureContextUsage({ resolvedModel, systemPrompt, tools, history, steps, conversationId, runId, log }: MeasureContextUsageParams): Promise<ChatContextUsage | null> {
+async function measureContextUsage({ resolvedModel, systemPrompt, transcript, tools, responseMessages, steps, conversationId, runId, log }: MeasureContextUsageParams): Promise<ChatContextUsage | null> {
     const lastStep = steps.at(-1)
     if (isNil(lastStep)) {
         return null
@@ -537,9 +599,11 @@ async function measureContextUsage({ resolvedModel, systemPrompt, tools, history
         modelId: resolvedModel.modelId,
         contextWindowTokens: resolvedModel.contextWindowTokens,
         systemPrompt,
+        summary: typeof transcript.summaryMessage?.content === 'string' ? transcript.summaryMessage.content : null,
         tools,
-        history,
+        history: [...transcript.messages, ...responseMessages],
         lastStepUsage: lastStep.usage,
+        transcriptStartIndex: transcript.startIndex,
     }))
     if (!isNil(error)) {
         log.warn({ conversationId, runId, errorName: error.name }, '[chatAgentService#runAgentLoop] could not measure the context usage; the reply is saved without it')
@@ -608,9 +672,25 @@ type RunLoopParams = {
     runId: string
     resolvedModel: ResolvedChatModel
     systemPrompt: string
-    messages: ModelMessage[]
+    transcript: RunTranscript
+    rebuildTranscript: () => Promise<RunTranscript>
     tools: ToolSet
+    retriedAfterOverflow?: boolean
     log: FastifyBaseLogger
+}
+
+type RunTranscript = {
+    messages: ModelMessage[]
+    summaryMessage: ModelMessage | null
+    // Where `messages` began in `uiMessages`, recorded with the measurement.
+    startIndex: number
+}
+
+type BuildRunTranscriptParams = {
+    conversation: ChatConversation
+    uiMessages: PersistedChatMessage[]
+    request: SendChatMessageRequest | null
+    resumingGate: boolean
 }
 
 type CancelledRunParams = {
@@ -626,8 +706,9 @@ type CancelledRunParams = {
 type MeasureContextUsageParams = {
     resolvedModel: ResolvedChatModel
     systemPrompt: string
+    transcript: RunTranscript
     tools: ToolSet
-    history: ModelMessage[]
+    responseMessages: ModelMessage[]
     steps: StepResult<ToolSet>[]
     conversationId: string
     runId: string

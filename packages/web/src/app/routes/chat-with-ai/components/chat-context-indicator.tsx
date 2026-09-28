@@ -1,19 +1,17 @@
-import {
-  ChatContextUsage,
-  DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
-  isNil,
-} from '@aiqadam/shared';
+import { ChatContextUsage, chatContextUtils, isNil } from '@aiqadam/shared';
 import { t } from 'i18next';
 import { Gauge } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 
 // How full the model's context was on the last reply, and what filled it. The total is the
 // provider's own count; the parts are the server's estimate, scaled to add up to it
@@ -22,6 +20,8 @@ import { Progress } from '@/components/ui/progress';
 export function ChatContextIndicator({
   usage,
   hasReply,
+  compaction,
+  onAutoCompactChange,
 }: ChatContextIndicatorProps) {
   const { i18n } = useTranslation();
   const fill = isNil(usage) ? null : contextFill(usage);
@@ -77,20 +77,51 @@ export function ChatContextIndicator({
               : t('Shows up once a reply finishes.')}
           </p>
         ) : (
-          <ContextBreakdown usage={usage} fill={fill} locale={i18n.language} />
+          <ContextBreakdown
+            usage={usage}
+            fill={fill}
+            locale={i18n.language}
+            compaction={compaction}
+          />
         )}
+        <div className="mt-4 flex items-start justify-between gap-3 border-t border-border pt-3">
+          <div className="min-w-0 space-y-1">
+            <Label htmlFor="chat-auto-compact" className="text-sm font-medium">
+              {t('Auto-compact')}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {compaction.autoCompact
+                ? t(
+                    'Older messages are summarised for the model when the context fills up.',
+                  )
+                : t(
+                    'Older messages are dropped, not summarised, when the context fills up.',
+                  )}
+            </p>
+          </div>
+          <Switch
+            id="chat-auto-compact"
+            checked={compaction.autoCompact}
+            onCheckedChange={onAutoCompactChange}
+            disabled={isNil(onAutoCompactChange)}
+          />
+        </div>
       </PopoverContent>
     </Popover>
   );
 }
 
-// Marks where the replayed window starts, so the messages the model no longer sees are visible as
-// such in the conversation itself.
-export function ContextWindowDivider() {
+// Marks where the transcript the model is sent begins, so what it no longer sees verbatim is visible
+// as such in the conversation itself.
+export function ContextWindowDivider({ summarized }: { summarized: boolean }) {
   return (
     <div className="flex items-center gap-3 py-4 text-xs text-muted-foreground">
       <div className="h-px flex-1 bg-border" />
-      <span>{t('Messages above are no longer sent to the model')}</span>
+      <span>
+        {summarized
+          ? t('Messages above are summarised for the model')
+          : t('Messages above are no longer sent to the model')}
+      </span>
       <div className="h-px flex-1 bg-border" />
     </div>
   );
@@ -100,13 +131,19 @@ function ContextBreakdown({
   usage,
   fill,
   locale,
+  compaction,
 }: {
   usage: ChatContextUsage;
   fill: ContextFill;
   locale: string;
+  compaction: ChatCompactionView;
 }) {
   const { breakdown } = usage;
   const format = (tokens: number) => formatTokens({ tokens, locale });
+  const untilCompact = Math.max(
+    0,
+    chatContextUtils.contextBudget(usage).compactAtTokens - usage.usedTokens,
+  );
   return (
     <div className="mt-3 space-y-3">
       <div className="space-y-1.5">
@@ -135,6 +172,12 @@ function ContextBreakdown({
           )}
           value={format(breakdown.tools)}
         />
+        {(breakdown.summary ?? 0) > 0 && (
+          <BreakdownRow
+            label={t('Summary')}
+            value={format(breakdown.summary ?? 0)}
+          />
+        )}
         <BreakdownRow
           label={t('Messages')}
           value={format(breakdown.messages)}
@@ -149,6 +192,27 @@ function ContextBreakdown({
           isEstimate={false}
         />
       </dl>
+      <p className="text-sm">
+        {compaction.autoCompact
+          ? untilCompact > 0
+            ? t('Until auto-compact ≈ {compact} · until overflow {free}', {
+                compact: format(untilCompact),
+                free: format(fill.freeTokens),
+              })
+            : t('Compacts after this reply · until overflow {free}', {
+                free: format(fill.freeTokens),
+              })
+          : t('Auto-compact off · until overflow {free}', {
+              free: format(fill.freeTokens),
+            })}
+      </p>
+      {compaction.compactedSinceMeasured && (
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'History was compacted after this reply. The figures update after the next one.',
+          )}
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">
         {t(
           'The total is what the provider counted. The parts are estimated from their share of what was sent.',
@@ -179,8 +243,7 @@ function BreakdownRow({
 }
 
 function contextFill(usage: ChatContextUsage): ContextFill {
-  const windowTokens =
-    usage.contextWindowTokens ?? DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS;
+  const { windowTokens } = chatContextUtils.contextBudget(usage);
   return {
     windowTokens,
     freeTokens: Math.max(0, windowTokens - usage.usedTokens),
@@ -215,7 +278,16 @@ type ContextFill = {
   percent: number;
 };
 
+type ChatCompactionView = {
+  autoCompact: boolean;
+  // The transcript's start moved past where the shown measurement began, so its figures describe
+  // a longer history than the next turn will send.
+  compactedSinceMeasured: boolean;
+};
+
 type ChatContextIndicatorProps = {
   usage: ChatContextUsage | null;
   hasReply: boolean;
+  compaction: ChatCompactionView;
+  onAutoCompactChange?: (autoCompact: boolean) => void;
 };

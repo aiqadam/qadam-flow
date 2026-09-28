@@ -41,6 +41,7 @@ export const chatConversationService = {
             uiMessages: null,
             summary: null,
             summarizedUpToIndex: null,
+            autoCompact: true,
         })
     },
 
@@ -99,6 +100,7 @@ export const chatConversationService = {
         const changes = {
             ...spreadIfNotUndefined('title', request.title),
             ...spreadIfNotUndefined('modelName', request.modelName),
+            ...spreadIfNotUndefined('autoCompact', request.autoCompact),
         }
         if (Object.keys(changes).length > 0) {
             await repo().update({ id, platformId, userId }, changes)
@@ -161,6 +163,34 @@ export const chatConversationService = {
                     ? conversation.uiMessages
                     : [...(conversation.uiMessages ?? []), assistantMessage],
             })
+        })
+    },
+
+    /**
+     * Moves the transcript boundary forward after a compaction pass (#567), and writes the summary
+     * that now stands for what it passed over.
+     *
+     * Conditional on the boundary the pass started from, not on `activeRunId`: compaction runs after
+     * `finishRun`, often while the next run is already streaming, and that run has nothing to lose —
+     * it was admitted with the previous summary and replays from the previous boundary, which is
+     * still a correct transcript. What must not happen is two passes landing on each other and one
+     * overwriting a summary that already covers more. The row lock serialises this with
+     * `finishRun` and `admitRun`, which save the whole row they read under the same lock, so neither
+     * can write a stale summary back.
+     *
+     * Returns whether the write happened.
+     */
+    async saveCompaction({ id, platformId, userId, fromIndex, toIndex, summary }: SaveCompactionParams): Promise<boolean> {
+        return repo().manager.transaction(async (entityManager) => {
+            const conversation = await entityManager.findOne(ChatConversationEntity, {
+                where: { id, platformId, userId },
+                lock: { mode: 'pessimistic_write' },
+            })
+            if (isNil(conversation) || (conversation.summarizedUpToIndex ?? 0) !== fromIndex) {
+                return false
+            }
+            await entityManager.update(ChatConversationEntity, { id, platformId, userId }, { summary, summarizedUpToIndex: toIndex })
+            return true
         })
     },
 
@@ -374,7 +404,7 @@ function isAbandoned(conversation: ChatConversationSchema): boolean {
 
 // Everything the conversation list needs to render a row, and nothing that grows with the
 // conversation. `paginationHelper` needs `created`/`id` for its cursor.
-const LIST_COLUMNS = ['id', 'created', 'updated', 'platformId', 'projectId', 'userId', 'title', 'modelName', 'status', 'summary', 'summarizedUpToIndex']
+const LIST_COLUMNS = ['id', 'created', 'updated', 'platformId', 'projectId', 'userId', 'title', 'modelName', 'status', 'summary', 'summarizedUpToIndex', 'autoCompact']
 
 type CreateParams = {
     platformId: string
@@ -414,6 +444,13 @@ type RepinProjectParams = GetParams & {
 
 type RunScopedParams = GetParams & {
     runId: string
+}
+
+type SaveCompactionParams = GetParams & {
+    // The boundary the pass read; the write happens only if it is still the row's.
+    fromIndex: number
+    toIndex: number
+    summary: string | null
 }
 
 type AdmitRunParams = RunScopedParams & {

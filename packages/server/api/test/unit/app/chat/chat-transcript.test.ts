@@ -230,7 +230,7 @@ describe('chatTranscript.toModelMessages — an approval gate', () => {
     })
 })
 
-describe('chatTranscript.toModelMessages — history window', () => {
+describe('chatTranscript.toModelMessages — transcript start', () => {
     function turn(role: PersistedChatRole, text: string): PersistedChatMessage {
         return { role, parts: [{ type: PersistedChatPartType.TEXT, text }] }
     }
@@ -242,36 +242,37 @@ describe('chatTranscript.toModelMessages — history window', () => {
         ))
     }
 
-    it('replays a short conversation whole', () => {
-        expect(chatTranscript.toModelMessages(longHistory(6))).toHaveLength(6)
+    // #567: the message-count window is gone. What a long conversation re-sends is bounded by
+    // compaction moving `summarizedUpToIndex` forward, not by a fixed number of messages.
+    it('replays everything until a compaction pass has moved the start', () => {
+        expect(chatTranscript.toModelMessages(longHistory(60))).toHaveLength(60)
     })
 
-    // Unbounded replay makes every turn cost more than the last; tool outputs dominate and a long
-    // build session accumulates a lot of them.
-    it('caps what a long conversation re-sends', () => {
-        const replayed = chatTranscript.toModelMessages(longHistory(60))
+    it('replays from where the last pass stopped', () => {
+        const replayed = chatTranscript.toModelMessages(longHistory(60), { summarizedUpToIndex: 40 })
 
-        expect(replayed.length).toBeLessThanOrEqual(20)
-        expect(JSON.stringify(replayed)).toContain('turn 59')
-        expect(JSON.stringify(replayed)).not.toContain('turn 0')
+        expect(replayed).toHaveLength(20)
+        expect(JSON.stringify(replayed)).toContain('turn 40')
+        expect(JSON.stringify(replayed)).not.toContain('turn 39')
     })
 
     // Opening on an assistant turn would show the model its own reply to a question that is no
-    // longer in the transcript.
-    it('starts the window on a user turn', () => {
-        const replayed = chatTranscript.toModelMessages(longHistory(61))
+    // longer in the transcript. The migration backfill sets the boundary by plain arithmetic, so it
+    // can land on one.
+    it('moves a boundary that lands on an assistant turn forward to the next user turn', () => {
+        const replayed = chatTranscript.toModelMessages(longHistory(61), { summarizedUpToIndex: 41 })
 
         expect(replayed[0].role).toBe('user')
+        expect(JSON.stringify(replayed[0])).toContain('turn 42')
     })
 })
 
 describe('chatTranscript.toModelMessages — a turn that produces nothing', () => {
-    // A files-only message is stored with empty text and replays as nothing. If the window opened
-    // on one, the transcript would start with an assistant turn — the shape a provider rejects.
-    it('skips past a user turn that replays as nothing when choosing where the window starts', () => {
-        // 21 messages, so the 20-message window opens exactly on index 1 — the files-only turn.
+    // A files-only message is stored with empty text and replays as nothing. If the transcript opened
+    // on one, it would start with an assistant turn — the shape a provider rejects.
+    it('skips past a user turn that replays as nothing when choosing where the transcript starts', () => {
         const history: PersistedChatMessage[] = [
-            { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'dropped by the window' }] },
+            { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'summarized away' }] },
             { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: '' }] },
             ...Array.from({ length: 19 }, (_unused, index): PersistedChatMessage => ({
                 role: index % 2 === 0 ? PersistedChatRole.ASSISTANT : PersistedChatRole.USER,
@@ -279,10 +280,28 @@ describe('chatTranscript.toModelMessages — a turn that produces nothing', () =
             })),
         ]
 
-        const replayed = chatTranscript.toModelMessages(history)
+        const replayed = chatTranscript.toModelMessages(history, { summarizedUpToIndex: 1 })
 
         expect(replayed[0].role).toBe('user')
         expect(replayed[0].content).not.toBe('')
+    })
+})
+
+describe('chatTranscript.summaryMessage', () => {
+    it('sends the summary as a system message ahead of the transcript', () => {
+        const message = chatTranscript.summaryMessage({ summary: '- The user builds a Slack flow.', autoCompact: true })
+
+        expect(message?.role).toBe('system')
+        expect(message?.content).toContain('- The user builds a Slack flow.')
+    })
+
+    it('sends nothing when auto-compact is off, even if a summary was written before', () => {
+        expect(chatTranscript.summaryMessage({ summary: '- An old summary.', autoCompact: false })).toBeNull()
+    })
+
+    it('sends nothing when no pass has written one', () => {
+        expect(chatTranscript.summaryMessage({ summary: null, autoCompact: true })).toBeNull()
+        expect(chatTranscript.summaryMessage({ summary: '  ', autoCompact: true })).toBeNull()
     })
 })
 

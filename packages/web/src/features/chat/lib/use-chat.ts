@@ -4,6 +4,7 @@ import {
   ActionReceiptEvent,
   apId,
   ChatAllowedMimeType,
+  ChatConversation,
   ChatConversationStatus,
   ChatHistoryMessage,
   CHAT_ALLOWED_MIME_TYPES,
@@ -216,6 +217,8 @@ export function useAgentChat({
   );
   const [modelName, setModelNameState] = useState<string | null>(null);
   const [projectId, setProjectIdState] = useState<string | null>(null);
+  const [compaction, setCompaction] =
+    useState<ChatCompactionState>(NO_COMPACTION);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isPollingForAgentReply, setIsPollingForAgentReply] = useState(false);
   const pollDeadlineRef = useRef(0);
@@ -335,16 +338,14 @@ export function useAgentChat({
   const reconcile = useCallback(
     async (convId: string) => {
       if (conversationIdRef.current !== convId) return;
-      // A conversation created before the project list loaded goes out with no project, and the
-      // server pins its own default on the first run. Asked only while the project is still unknown,
-      // so a conversation that already knows its project costs no extra request per run — and asked
-      // alongside the messages rather than after them, because anything awaited between
-      // `setPersistedMessages` and clearing the optimistic turn renders that turn twice.
+      // The row is read on every reconcile: it carries the project the server pinned when none was
+      // sent (a conversation created before the project list loaded), and where compaction has moved
+      // the transcript's start (#567). Asked alongside the messages rather than after them, because
+      // anything awaited between `setPersistedMessages` and clearing the optimistic turn renders that
+      // turn twice.
       const [{ data: result }, { data: conv }] = await Promise.all([
         tryCatch(() => chatApi.getMessages(convId)),
-        tryCatch(async () =>
-          isNil(projectIdRef.current) ? chatApi.getConversation(convId) : null,
-        ),
+        tryCatch(() => chatApi.getConversation(convId)),
       ]);
       if (conversationIdRef.current !== convId) return;
       if (result) {
@@ -359,6 +360,9 @@ export function useAgentChat({
           data: result.data,
           setState: store.setState,
         });
+      }
+      if (!isNil(conv)) {
+        setCompaction(compactionStateOf(conv));
       }
       if (isNil(projectIdRef.current) && !isNil(conv?.projectId)) {
         projectIdRef.current = conv.projectId;
@@ -655,6 +659,7 @@ export function useAgentChat({
       lastSentFileNamesRef.current = [];
       setOptimisticUserMessage(null);
       setLiveGate(null);
+      setCompaction(NO_COMPACTION);
 
       setIsLoadingHistory(true);
       const [historyResult, convResult] = await Promise.all([
@@ -685,6 +690,7 @@ export function useAgentChat({
       setModelNameState(convResult.data.modelName ?? null);
       projectIdRef.current = convResult.data.projectId ?? null;
       setProjectIdState(convResult.data.projectId ?? null);
+      setCompaction(compactionStateOf(convResult.data));
       if (convResult.data.status === ChatConversationStatus.STREAMING) {
         const lastAssistantIdx = mapped.findLastIndex(
           (m) => m.role === 'assistant',
@@ -770,6 +776,7 @@ export function useAgentChat({
       const hasChanged =
         mapped.length !== current.length ||
         mapped.some((m, i) => m.parts.length !== current[i]?.parts.length);
+      setCompaction(compactionStateOf(convResult));
       if (convResult.status !== ChatConversationStatus.STREAMING) {
         setIsPollingForAgentReply(false);
       }
@@ -867,10 +874,27 @@ export function useAgentChat({
     setProjectIdState(newProjectId);
   }, []);
 
+  const setAutoCompact = useCallback(async (autoCompact: boolean) => {
+    const convId = conversationIdRef.current;
+    if (!convId) return;
+    // Persist-then-reflect, for the same reason as `setModelName`.
+    const { data: conv, error } = await tryCatch(() =>
+      chatApi.updateConversation(convId, { autoCompact }),
+    );
+    if (error || isNil(conv) || conversationIdRef.current !== convId) {
+      if (error)
+        toast.error(t('Could not change auto-compact. Please try again.'));
+      return;
+    }
+    setCompaction(compactionStateOf(conv));
+  }, []);
+
   return {
     conversationId,
     modelName,
     projectId,
+    compaction,
+    setAutoCompact,
     messages,
     isStreaming,
     wasCancelled,
@@ -883,3 +907,29 @@ export function useAgentChat({
     setProjectId,
   };
 }
+
+// What the chat shows of the compaction state (#567). The summary text itself is not shown — the
+// user agreed to see only that one exists.
+function compactionStateOf(
+  conversation: ChatConversation,
+): ChatCompactionState {
+  return {
+    summarizedUpToIndex: conversation.summarizedUpToIndex ?? null,
+    hasSummary:
+      !isNil(conversation.summary) && conversation.summary.trim().length > 0,
+    // Absent on a row read before the column existed; the column defaults to on.
+    autoCompact: conversation.autoCompact !== false,
+  };
+}
+
+const NO_COMPACTION: ChatCompactionState = {
+  summarizedUpToIndex: null,
+  hasSummary: false,
+  autoCompact: true,
+};
+
+export type ChatCompactionState = {
+  summarizedUpToIndex: number | null;
+  hasSummary: boolean;
+  autoCompact: boolean;
+};

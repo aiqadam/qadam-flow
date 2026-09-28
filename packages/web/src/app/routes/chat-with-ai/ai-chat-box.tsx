@@ -90,6 +90,8 @@ function ChatBoxContent({
     setModelName,
     projectId,
     setProjectId,
+    compaction,
+    setAutoCompact,
   } = useAgentChat({
     onTitleUpdate,
     onConversationCreated,
@@ -142,16 +144,16 @@ function ChatBoxContent({
     if (lastUser) void sendMessage(getTextFromParts(lastUser.parts));
   }, [messages, sendMessage]);
 
-  // The same boundary the server applies when it rebuilds the transcript, over the same messages.
-  // Between runs this list is the persisted `uiMessages` (reconciled after every run), which is what
-  // the next send windows. During a run it also holds what the server windowed *without*, so those
-  // are set aside first — otherwise the divider would move past messages the running turn was sent.
+  // The same boundary the server replays from (#567): where compaction has moved the transcript's
+  // start, forward to a user turn. Persisted messages map one to one onto `uiMessages`, and anything
+  // in flight is appended after them, so the index holds during a run too.
   const replayStart = useMemo(
     () =>
-      chatContextUtils.replayWindowStart(
-        chatUtils.messagesWindowedByRun({ messages, isStreaming }),
-      ),
-    [messages, isStreaming],
+      chatContextUtils.transcriptStart({
+        messages,
+        summarizedUpToIndex: compaction.summarizedUpToIndex,
+      }),
+    [messages, compaction.summarizedUpToIndex],
   );
 
   const lastMessage = messages[messages.length - 1];
@@ -220,7 +222,11 @@ function ChatBoxContent({
                 {messages.map((msg, idx) => {
                   const divider =
                     replayStart > 0 && idx === replayStart ? (
-                      <ContextWindowDivider />
+                      <ContextWindowDivider
+                        summarized={
+                          compaction.hasSummary && compaction.autoCompact
+                        }
+                      />
                     ) : null;
 
                   if (msg.role === 'user') {
@@ -321,6 +327,14 @@ function ChatBoxContent({
                 hasMessages: messages.length > 0,
                 // A reply still streaming has not been measured yet, so it does not count.
                 hasReply: !isStreaming && !isNil(lastAssistantMessage),
+                compaction: {
+                  autoCompact: compaction.autoCompact,
+                  compactedSinceMeasured:
+                    !isNil(contextUsage?.transcriptStartIndex) &&
+                    replayStart > contextUsage.transcriptStartIndex,
+                },
+                onAutoCompactChange: (autoCompact: boolean) =>
+                  void setAutoCompact(autoCompact),
               }}
             />
           </div>

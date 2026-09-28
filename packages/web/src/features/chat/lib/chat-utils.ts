@@ -422,24 +422,6 @@ function latestContextUsage({
   return null;
 }
 
-// `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
-// run resumed from an approval windows everything persisted. So a run in flight is described by the
-// list minus its reply in progress and, when one was just sent, minus that user turn.
-function messagesWindowedByRun({
-  messages,
-  isStreaming,
-}: {
-  messages: ChatUIMessage[];
-  isStreaming: boolean;
-}): ChatUIMessage[] {
-  if (!isStreaming) return messages;
-  const withoutReply =
-    messages.at(-1)?.role === 'assistant' ? messages.slice(0, -1) : messages;
-  return withoutReply.at(-1)?.role === 'user'
-    ? withoutReply.slice(0, -1)
-    : withoutReply;
-}
-
 export const chatUtils = {
   describeSendError,
   formatToolLabel: ({ part }: { part: AnyToolPart }) =>
@@ -450,6 +432,5 @@ export const chatUtils = {
   mapHistoryToUIMessages,
   extractQuickRepliesFromHistory,
   extractReceiptsFromHistory,
-  messagesWindowedByRun,
   latestContextUsage,
 };
