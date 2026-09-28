@@ -1,5 +1,7 @@
 import {
   ActionReceiptEvent,
+  ChatContextUsage,
+  ChatContextUsageSchema,
   ChatHistoryMessage,
   isObject,
   PersistedChatMessage,
@@ -306,6 +308,11 @@ function mapPersistedToUIMessages(
     ...(msg.thinkingDurationMs !== undefined && {
       thinkingDurationMs: msg.thinkingDurationMs,
     }),
+    // On `metadata`, the AI SDK's own slot for per-message data, so it survives every place a
+    // message is copied without a field of its own; `latestContextUsage` validates it back out.
+    ...(msg.contextUsage !== undefined && {
+      metadata: { contextUsage: msg.contextUsage },
+    }),
   }));
 }
 
@@ -400,6 +407,24 @@ function describeSendError(error: unknown): string {
 // `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
 // run resumed from an approval windows everything persisted. So a run in flight is described by the
 // list minus its reply in progress and, when one was just sent, minus that user turn.
+// The newest measurement, not the newest message: a reply still streaming has none yet, and neither
+// does one from a provider that reports no usage, and the popover should keep showing the last
+// real figure rather than go blank.
+function latestContextUsage({
+  messages,
+}: {
+  messages: readonly ChatUIMessage[];
+}): ChatContextUsage | null {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== 'assistant' || !isObject(message.metadata)) continue;
+    const parsed = ChatContextUsageSchema.safeParse(
+      message.metadata.contextUsage,
+    );
+    if (parsed.success) return parsed.data;
+  }
+  return null;
+}
+
 function messagesWindowedByRun({
   messages,
   isStreaming,
@@ -426,4 +451,5 @@ export const chatUtils = {
   extractQuickRepliesFromHistory,
   extractReceiptsFromHistory,
   messagesWindowedByRun,
+  latestContextUsage,
 };

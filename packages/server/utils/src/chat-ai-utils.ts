@@ -89,6 +89,8 @@ function createChatModel({ provider, auth, config, modelId }: {
             return createOpenAICompatible({
                 name: 'cloudflare',
                 fetch: safeHttp.fetch,
+                // See CUSTOM below.
+                includeUsage: true,
                 baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/compat`,
                 headers: { 'cf-aig-authorization': `Bearer ${apiKey}` },
             }).chatModel(actualModelId)
@@ -99,6 +101,10 @@ function createChatModel({ provider, auth, config, modelId }: {
             return createOpenAICompatible({
                 name: 'openai-compatible',
                 fetch: safeHttp.fetch,
+                // Sends `stream_options: { include_usage: true }`. Without it an OpenAI-compatible
+                // server streams no token counts at all, and the chat's Context popover has nothing
+                // to show for exactly the local models whose small windows it matters most for.
+                includeUsage: true,
                 baseURL: baseUrl,
                 headers: {
                     ...(defaultHeaders ?? {}),

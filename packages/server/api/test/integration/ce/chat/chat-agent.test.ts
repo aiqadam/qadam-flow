@@ -14,6 +14,7 @@ import {
     PersistedChatRole,
     PersistedToolCallStatus,
     Project,
+    ProviderModelConfig,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -117,7 +118,7 @@ async function createConversation(context: TestContext, body: Record<string, unk
  * config, so resolving a model needs no network call and the only outbound request left to fake
  * is the completion itself.
  */
-async function enableChatProvider(platformId: string, models = [{ modelId: MODEL_ID, modelName: 'Test chat model', modelType: AIProviderModelType.TEXT }]): Promise<void> {
+async function enableChatProvider(platformId: string, models: ProviderModelConfig[] = [{ modelId: MODEL_ID, modelName: 'Test chat model', modelType: AIProviderModelType.TEXT }]): Promise<void> {
     await db.save('ai_provider', {
         id: apId(),
         created: new Date().toISOString(),
@@ -191,6 +192,30 @@ function reasoningStream({ reasoning, text }: { reasoning: string, text: string 
         chunk({ role: 'assistant', reasoning_content: reasoning }),
         chunk({ content: text }),
         chunk({}, 'stop'),
+        'data: [DONE]\n\n',
+    ].join('')
+}
+
+// The final usage-only chunk is what an OpenAI-compatible server sends when asked for
+// `stream_options.include_usage`: no choices, just the counts for the whole completion.
+function usageStream({ text, promptTokens, completionTokens }: { text: string, promptTokens: number, completionTokens: number }): string {
+    return [
+        textChunk(text),
+        sseChunk({
+            id: 'chatcmpl-usage',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: MODEL_ID,
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        }),
+        sseChunk({
+            id: 'chatcmpl-usage',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: MODEL_ID,
+            choices: [],
+            usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
+        }),
         'data: [DONE]\n\n',
     ].join('')
 }
@@ -501,6 +526,42 @@ describe('Chat agent API', () => {
             const replayed = JSON.stringify(providerBodies[0].messages)
             expect(replayed).toContain('You have no flows yet.')
             expect(replayed).not.toContain(reasoning)
+        })
+
+        it('records how full the context was, from the usage the provider streamed', async () => {
+            await enableChatProvider(ctx.platform.id, [{ modelId: MODEL_ID, modelName: 'Test chat model', modelType: AIProviderModelType.TEXT, contextWindowTokens: 32_768 }])
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [usageStream({ text: 'You have no flows yet.', promptTokens: 24_000, completionTokens: 12 })]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list my flows', runId: apId() })
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            // Without `include_usage` an OpenAI-compatible server streams no token counts at all.
+            expect(providerBodies[0].stream_options).toEqual({ include_usage: true })
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(reply).toMatchObject({
+                role: PersistedChatRole.ASSISTANT,
+                contextUsage: { modelId: MODEL_ID, usedTokens: 24_012, contextWindowTokens: 32_768 },
+            })
+            const breakdown = isRecord(reply) && isRecord(reply.contextUsage) && isRecord(reply.contextUsage.breakdown) ? reply.contextUsage.breakdown : {}
+            const parts = [breakdown.systemPrompt, breakdown.tools, breakdown.messages, breakdown.toolOutputs]
+            expect(parts.reduce((total: number, part) => total + (typeof part === 'number' ? part : Number.NaN), 0)).toBe(24_012)
+            // The real tool set, not a stub: the system prompt and the tool schemas are most of an
+            // opening turn.
+            expect(breakdown.toolCount).toBeGreaterThan(10)
+        })
+
+        it('saves the reply without a context measurement when the provider streams no usage', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            scriptedResponses = [completionStream('Hello.')]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hi', runId: apId() })
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(reply).toMatchObject({ role: PersistedChatRole.ASSISTANT })
+            expect(reply).not.toHaveProperty('contextUsage')
         })
 
         // #267. `llama3.1:8b` sends every argument as a string, so a strict `z.object(shape)` on

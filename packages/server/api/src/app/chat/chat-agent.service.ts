@@ -5,6 +5,7 @@ import {
     apId,
     ChatAgentEvent,
     ChatAgentEventType,
+    ChatContextUsage,
     ChatConversation,
     ErrorCode,
     isNil,
@@ -28,6 +29,7 @@ import { AppSystemProp } from '../helper/system/system-props'
 import { mcpServerService } from '../mcp/mcp-service'
 import { qadamMetadataService } from '../qadams/metadata/qadam-metadata-service'
 import { chatApprovals } from './chat-approvals'
+import { chatContextUsage } from './chat-context-usage'
 import { chatConversationService } from './chat-conversation.service'
 import { classifyChatError, describeChatError } from './chat-error-classify'
 import { chatModel, ResolvedChatModel } from './chat-model'
@@ -275,15 +277,18 @@ async function runAgentLoop({ id, platformId, userId, runId, resolvedModel, syst
 
         const steps = await result.steps
         const response = await result.response
+        const history = [...messages, ...response.messages]
+        const contextUsage = await measureContextUsage({ resolvedModel, systemPrompt, tools, history, steps, conversationId: id, runId, log })
         await chatConversationService.finishRun({
             id,
             platformId,
             userId,
             runId,
-            messages: [...messages, ...response.messages],
+            messages: history,
             assistantMessage: {
                 role: PersistedChatRole.ASSISTANT,
                 parts: chatAiUtils.buildStepParts({ content: toContentParts(steps) }),
+                ...spreadIfDefined('contextUsage', contextUsage ?? undefined),
             },
         })
         emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.FINISHED, data: { conversationId: id } } })
@@ -520,6 +525,28 @@ function buildUserMessage({ content, files }: SendChatMessageRequest): ModelMess
     return { role: 'user', content: fileParts }
 }
 
+// The popover is a view on the run, never a reason for it to fail: a measurement that throws is
+// logged and the reply is persisted without one.
+async function measureContextUsage({ resolvedModel, systemPrompt, tools, history, steps, conversationId, runId, log }: MeasureContextUsageParams): Promise<ChatContextUsage | null> {
+    const lastStep = steps.at(-1)
+    if (isNil(lastStep)) {
+        return null
+    }
+    const { data, error } = await tryCatch(() => chatContextUsage.measure({
+        modelId: resolvedModel.modelId,
+        contextWindowTokens: resolvedModel.contextWindowTokens,
+        systemPrompt,
+        tools,
+        history,
+        lastStepUsage: lastStep.usage,
+    }))
+    if (!isNil(error)) {
+        log.warn({ conversationId, runId, errorName: error.name }, '[chatAgentService#runAgentLoop] could not measure the context usage; the reply is saved without it')
+        return null
+    }
+    return data
+}
+
 function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {
     return steps.flatMap((step) => step.content.map((part) => ({
         type: part.type,
@@ -584,6 +611,17 @@ type CancelledRunParams = {
     runId: string
     messages: ModelMessage[]
     streamedText: string[]
+    log: FastifyBaseLogger
+}
+
+type MeasureContextUsageParams = {
+    resolvedModel: ResolvedChatModel
+    systemPrompt: string
+    tools: ToolSet
+    history: ModelMessage[]
+    steps: StepResult<ToolSet>[]
+    conversationId: string
+    runId: string
     log: FastifyBaseLogger
 }
 
