@@ -28,10 +28,16 @@ const harness = vi.hoisted(() => {
     body: { projectId?: string | null };
   }[] = [];
   let updateConversationShouldFail = false;
+  const held: { getConversation: Promise<void> | null } = {
+    getConversation: null,
+  };
+  const persisted: { messages: unknown[] } = { messages: [] };
   const socketHandlers = new Map<string, Set<(payload: unknown) => void>>();
   return {
     createConversationCalls,
     updateConversationCalls,
+    held,
+    persisted,
     setUpdateConversationShouldFail: (value: boolean) => {
       updateConversationShouldFail = value;
     },
@@ -55,13 +61,16 @@ const harness = vi.hoisted(() => {
           projectId: body.projectId ?? null,
         };
       },
-      getConversation: async () => ({
-        id: 'conv-1',
-        modelName: null,
-        projectId: 'pinned-project',
-        status: 'IDLE',
-      }),
-      getMessages: async () => ({ data: [] }),
+      getConversation: async () => {
+        await held.getConversation;
+        return {
+          id: 'conv-1',
+          modelName: null,
+          projectId: 'pinned-project',
+          status: 'IDLE',
+        };
+      },
+      getMessages: async () => ({ data: persisted.messages }),
       sendMessage: async () => ({ conversationId: 'conv-1' }),
       getPendingGate: async () => null,
       cancelConversation: async () => undefined,
@@ -141,6 +150,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   harness.socketHandlers.clear();
+  harness.held.getConversation = null;
+  harness.persisted.messages = [];
   harness.createConversationCalls.length = 0;
   harness.updateConversationCalls.length = 0;
   harness.setUpdateConversationShouldFail(false);
@@ -192,6 +203,16 @@ describe('useAgentChat — project', () => {
     ]);
     expect(chat?.projectId).toBeNull();
 
+    // The run is persisted, and the conversation read is held so the state in between is visible.
+    harness.persisted.messages = [
+      { role: 'user', parts: [{ type: 'text', text: 'hello' }] },
+      { role: 'assistant', parts: [{ type: 'text', text: 'hi there' }] },
+    ];
+    let releaseConversation: () => void = () => undefined;
+    harness.held.getConversation = new Promise<void>((resolve) => {
+      releaseConversation = resolve;
+    });
+
     await act(async () => {
       emitChatEvent({
         conversationId: 'conv-1',
@@ -200,7 +221,21 @@ describe('useAgentChat — project', () => {
       });
     });
 
+    // While the project is still being read, the finished turn must not show twice: once as the
+    // persisted copy and again as the optimistic one.
+    const helloCount = () =>
+      (chat?.messages ?? []).filter((message) =>
+        message.parts.some(
+          (part) => part.type === 'text' && part.text === 'hello',
+        ),
+      ).length;
+    expect(helloCount()).toBeLessThanOrEqual(1);
+
+    await act(async () => {
+      releaseConversation();
+    });
     await vi.waitFor(() => expect(chat?.projectId).toBe('pinned-project'));
+    expect(helloCount()).toBe(1);
   });
 
   it('keeps a pick made before the first message local, then creates the conversation in it', async () => {

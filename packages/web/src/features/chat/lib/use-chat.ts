@@ -335,9 +335,17 @@ export function useAgentChat({
   const reconcile = useCallback(
     async (convId: string) => {
       if (conversationIdRef.current !== convId) return;
-      const { data: result } = await tryCatch(() =>
-        chatApi.getMessages(convId),
-      );
+      // A conversation created before the project list loaded goes out with no project, and the
+      // server pins its own default on the first run. Asked only while the project is still unknown,
+      // so a conversation that already knows its project costs no extra request per run — and asked
+      // alongside the messages rather than after them, because anything awaited between
+      // `setPersistedMessages` and clearing the optimistic turn renders that turn twice.
+      const [{ data: result }, { data: conv }] = await Promise.all([
+        tryCatch(() => chatApi.getMessages(convId)),
+        tryCatch(async () =>
+          isNil(projectIdRef.current) ? chatApi.getConversation(convId) : null,
+        ),
+      ]);
       if (conversationIdRef.current !== convId) return;
       if (result) {
         const mapped = chatUtils.mapHistoryToUIMessages(result.data);
@@ -352,18 +360,9 @@ export function useAgentChat({
           setState: store.setState,
         });
       }
-      // A conversation created before the project list loaded goes out with no project, and the
-      // server pins its own default on the first run. Asked only while the project is still unknown,
-      // so a conversation that already knows its project costs no extra request per run.
-      if (isNil(projectIdRef.current)) {
-        const { data: conv } = await tryCatch(() =>
-          chatApi.getConversation(convId),
-        );
-        if (conversationIdRef.current !== convId) return;
-        if (!isNil(conv?.projectId)) {
-          projectIdRef.current = conv.projectId;
-          setProjectIdState(conv.projectId);
-        }
+      if (isNil(projectIdRef.current) && !isNil(conv?.projectId)) {
+        projectIdRef.current = conv.projectId;
+        setProjectIdState(conv.projectId);
       }
       setOptimisticUserMessage(null);
     },
