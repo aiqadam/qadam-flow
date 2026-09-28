@@ -2,12 +2,16 @@ import {
   ActionReceiptEvent,
   ChatContextUsage,
   ChatContextUsageSchema,
+  chatContextUtils,
+  ChatConversation,
   ChatHistoryMessage,
+  isNil,
   isObject,
   PersistedChatMessage,
   PersistedChatPart,
   PersistedChatPartType,
   PersistedToolCallStatus,
+  tryCatch,
 } from '@aiqadam/shared';
 import { isAxiosError } from 'axios';
 import { t } from 'i18next';
@@ -422,22 +426,72 @@ function latestContextUsage({
   return null;
 }
 
-// `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
-// run resumed from an approval windows everything persisted. So a run in flight is described by the
-// list minus its reply in progress and, when one was just sent, minus that user turn.
-function messagesWindowedByRun({
+// Whether the server is about to compact after the newest reply — the test `compactAfterReply`
+// applies: the newest reply's own measurement (not an older one, as the popover shows), over the
+// threshold, and taken from the current start rather than before a pass that has since moved it.
+function isCompactionPending({
   messages,
-  isStreaming,
+  summarizedUpToIndex,
+  autoCompact,
 }: {
-  messages: ChatUIMessage[];
-  isStreaming: boolean;
-}): ChatUIMessage[] {
-  if (!isStreaming) return messages;
-  const withoutReply =
-    messages.at(-1)?.role === 'assistant' ? messages.slice(0, -1) : messages;
-  return withoutReply.at(-1)?.role === 'user'
-    ? withoutReply.slice(0, -1)
-    : withoutReply;
+  messages: readonly ChatUIMessage[];
+  summarizedUpToIndex: number | null;
+  autoCompact: boolean;
+}): boolean {
+  if (!autoCompact) return false;
+  // A turn stopped before its first token saves no reply, so the newest message is the user's and
+  // the server ran no pass after it — an older reply's measurement must not start a poll.
+  const lastReply = messages.at(-1);
+  if (
+    isNil(lastReply) ||
+    lastReply.role !== 'assistant' ||
+    !isObject(lastReply.metadata)
+  ) {
+    return false;
+  }
+  const parsed = ChatContextUsageSchema.safeParse(
+    lastReply.metadata.contextUsage,
+  );
+  if (!parsed.success || !chatContextUtils.isCompactionDue(parsed.data)) {
+    return false;
+  }
+  const { transcriptStartIndex } = parsed.data;
+  return (
+    isNil(transcriptStartIndex) ||
+    transcriptStartIndex >=
+      chatContextUtils.transcriptStart({ messages, summarizedUpToIndex })
+  );
+}
+
+// Re-reads the conversation until its transcript start moves off `fromIndex`, and returns the row
+// that shows it — or null at the deadline, or once `isCurrent` says the wait is no longer wanted.
+async function waitForCompaction({
+  fromIndex,
+  read,
+  isCurrent,
+  deadlineMs,
+  intervalMs,
+}: {
+  fromIndex: number | null;
+  read: () => Promise<ChatConversation>;
+  isCurrent: () => boolean;
+  deadlineMs: number;
+  intervalMs: number;
+}): Promise<ChatConversation | null> {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (!isCurrent()) return null;
+    const { data: conversation } = await tryCatch(read);
+    if (!isCurrent()) return null;
+    if (
+      !isNil(conversation) &&
+      (conversation.summarizedUpToIndex ?? null) !== fromIndex
+    ) {
+      return conversation;
+    }
+  }
+  return null;
 }
 
 export const chatUtils = {
@@ -450,6 +504,7 @@ export const chatUtils = {
   mapHistoryToUIMessages,
   extractQuickRepliesFromHistory,
   extractReceiptsFromHistory,
-  messagesWindowedByRun,
   latestContextUsage,
+  isCompactionPending,
+  waitForCompaction,
 };

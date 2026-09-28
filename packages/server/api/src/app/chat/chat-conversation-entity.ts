@@ -81,6 +81,11 @@ export const ChatConversationEntity = new EntitySchema<ChatConversationSchema>({
             type: Number,
             nullable: true,
         },
+        autoCompact: {
+            type: Boolean,
+            nullable: false,
+            default: true,
+        },
     },
     indices: [
         // Matches the only list query there is — a user's own conversations, newest first.

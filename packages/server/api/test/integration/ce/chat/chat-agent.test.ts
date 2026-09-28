@@ -51,6 +51,14 @@ let providerHolds: Promise<void>[] = []
 let providerFirstChunkOnly = ''
 let providerStreamedFirstChunk = false
 let providerFailure: { status: number, body: Record<string, unknown> } | null = null
+// One failure per request, taken in order, for a test that needs the provider to refuse once and
+// then answer — the overflow safety net retrying a turn.
+let providerFailuresOnce: { status: number, body: Record<string, unknown> }[] = []
+// What a non-streaming request (`generateText`, i.e. a compaction pass) is answered with.
+let providerSummaryReply = '- The user asked earlier questions about their flows.'
+// Holds the next non-streaming request open, so a test can act while a compaction pass is running.
+let providerSummaryHold: Promise<void> | null = null
+let providerSummaryRequested = false
 
 beforeAll(async () => {
     providerServer = http.createServer((req, res) => {
@@ -58,10 +66,26 @@ beforeAll(async () => {
         req.on('data', (chunk: Buffer) => chunks.push(chunk))
         req.on('end', () => {
             providerCalls.push(`${providerOrigin}${req.url}`)
-            providerBodies.push(JSON.parse(Buffer.concat(chunks).toString()))
-            if (!isNil(providerFailure)) {
-                res.writeHead(providerFailure.status, { 'content-type': 'application/json' })
-                res.end(JSON.stringify(providerFailure.body))
+            const body: Record<string, unknown> = JSON.parse(Buffer.concat(chunks).toString())
+            providerBodies.push(body)
+            const failure = providerFailuresOnce.shift() ?? providerFailure
+            if (!isNil(failure)) {
+                res.writeHead(failure.status, { 'content-type': 'application/json' })
+                res.end(JSON.stringify(failure.body))
+                return
+            }
+            if (body.stream !== true) {
+                const summaryHold = providerSummaryHold
+                providerSummaryHold = null
+                providerSummaryRequested = true
+                void (summaryHold ?? Promise.resolve()).then(() => {
+                    // The caller may have aborted while held; its socket is gone then.
+                    if (req.socket.destroyed) {
+                        return
+                    }
+                    res.writeHead(StatusCodes.OK, { 'content-type': 'application/json' })
+                    res.end(JSON.stringify(completionJson(providerSummaryReply)))
+                })
                 return
             }
             res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
@@ -104,6 +128,10 @@ afterEach(() => {
     providerFirstChunkOnly = ''
     providerStreamedFirstChunk = false
     providerFailure = null
+    providerFailuresOnce = []
+    providerSummaryReply = '- The user asked earlier questions about their flows.'
+    providerSummaryHold = null
+    providerSummaryRequested = false
     vi.restoreAllMocks()
 })
 
@@ -194,6 +222,31 @@ function reasoningStream({ reasoning, text }: { reasoning: string, text: string 
         chunk({}, 'stop'),
         'data: [DONE]\n\n',
     ].join('')
+}
+
+function completionJson(text: string): Record<string, unknown> {
+    return {
+        id: 'chatcmpl-summary',
+        object: 'chat.completion',
+        created: 1,
+        model: MODEL_ID,
+        choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+    }
+}
+
+// A history long enough that a compaction pass has something to fold away: 30 exchanges of ~5,000
+// characters, which is most of what the scripted usage below attributes to the conversation.
+function longHistory(): Record<string, unknown>[] {
+    return Array.from({ length: 30 }, (_, index) => [
+        { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: `old question ${index} ${'q'.repeat(2_500)}` }] },
+        { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: `old answer ${index} ${'a'.repeat(2_500)}` }] },
+    ]).flat()
+}
+
+function systemContents(body: Record<string, unknown>): string[] {
+    const messages = Array.isArray(body.messages) ? body.messages : []
+    return messages.flatMap((message) => isRecord(message) && message.role === 'system' && typeof message.content === 'string' ? [message.content] : [])
 }
 
 // The final usage-only chunk is what an OpenAI-compatible server sends when asked for
@@ -562,6 +615,147 @@ describe('Chat agent API', () => {
             const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
             expect(reply).toMatchObject({ role: PersistedChatRole.ASSISTANT })
             expect(reply).not.toHaveProperty('contextUsage')
+        })
+
+        it('compacts a long conversation after a reply that crossed the threshold, and sends the summary next turn', async () => {
+            await enableChatProvider(ctx.platform.id, [{ modelId: MODEL_ID, modelName: 'Test chat model', modelType: AIProviderModelType.TEXT, contextWindowTokens: 100_000 }])
+            const conversationId = await createConversation(ctx)
+            // A conversation that already ran once, so its project is pinned, with a long history.
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            // 90% of a 100k window: well past the 60% threshold whatever the split.
+            scriptedResponses = [usageStream({ text: 'Here you go.', promptTokens: 90_000, completionTokens: 10 })]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            const compacted = await waitForCondition(async () => {
+                const row = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return isNil(row?.summary) ? null : row
+            })
+
+            expect(compacted.summary).toBe('- The user asked earlier questions about their flows.')
+            expect(compacted.summarizedUpToIndex).toBeGreaterThan(0)
+            // The pass asked the model non-streaming, with the history leaving the transcript.
+            const summaryRequest = providerBodies.find((body) => body.stream !== true)
+            expect(JSON.stringify(summaryRequest)).toContain('old question 0 ')
+
+            providerBodies = []
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'and then?', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const nextTurn = providerBodies[0]
+            expect(systemContents(nextTurn).some((content) => content.includes('- The user asked earlier questions about their flows.'))).toBe(true)
+            expect(JSON.stringify(nextTurn.messages)).not.toContain('old question 0 ')
+            expect(JSON.stringify(nextTurn.messages)).toContain('and then?')
+        })
+
+        it('retries a turn the provider refused as too long, on a compacted transcript', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'This model\'s maximum context length is 8192 tokens.', type: 'invalid_request_error' } } }]
+            scriptedResponses = [completionStream('Answered after compacting.')]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            expect(row.summary).toBe('- The user asked earlier questions about their flows.')
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(JSON.stringify(reply)).toContain('Answered after compacting.')
+            // Refused, then the compaction pass, then the retried turn carrying the summary.
+            expect(providerBodies).toHaveLength(3)
+            expect(systemContents(providerBodies[2]).some((content) => content.includes('- The user asked earlier'))).toBe(true)
+            expect(JSON.stringify(providerBodies[2].messages).length).toBeLessThan(JSON.stringify(providerBodies[0].messages).length)
+        })
+
+        it('settles as cancelled, and does not retry, when the user stops the turn while it compacts', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'prompt is too long', type: 'invalid_request_error' } } }]
+            let releaseSummary: () => void = () => {}
+            providerSummaryHold = new Promise<void>((resolve) => {
+                releaseSummary = resolve
+            })
+            scriptedResponses = [completionStream('Must never be sent.')]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitFor(() => providerSummaryRequested)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
+            releaseSummary()
+            const row = await waitForCondition(async () => {
+                const candidate = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return candidate?.status === ChatConversationStatus.IDLE && isNil(candidate.activeRunId) ? candidate : null
+            })
+
+            // Refused, then the pass the Stop cut short — no retried turn.
+            expect(providerBodies).toHaveLength(2)
+            expect(row.summary).toBeNull()
+            expect(row.summarizedUpToIndex).toBeNull()
+            expect(JSON.stringify(row.uiMessages)).not.toContain('Must never be sent.')
+        })
+
+        it('settles as cancelled, not failed, when another instance stopped the turn while a pass that shortened nothing ran', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'prompt is too long', type: 'invalid_request_error' } } }]
+            let releaseSummary: () => void = () => {}
+            providerSummaryHold = new Promise<void>((resolve) => {
+                releaseSummary = resolve
+            })
+            // A blank summary is refused, so the pass reports it shortened nothing.
+            providerSummaryReply = '   '
+            scriptedResponses = [completionStream('Must never be sent.')]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitFor(() => providerSummaryRequested)
+            // What `cancelRun` writes when the Stop lands on an instance not running this loop:
+            // status only, `activeRunId` kept, and no local abort.
+            await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.IDLE })
+            releaseSummary()
+            const row = await waitForCondition(async () => {
+                const candidate = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return candidate?.status !== ChatConversationStatus.STREAMING && isNil(candidate?.activeRunId) ? candidate : null
+            })
+
+            expect(row.status).toBe(ChatConversationStatus.IDLE)
+            expect(row.summary).toBeNull()
+            expect(JSON.stringify(row.uiMessages)).not.toContain('Must never be sent.')
+        })
+
+        it('drops instead of summarising when the conversation has auto-compact off', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            const updated = await ctx.post(`/v1/chat/conversations/${conversationId}`, { autoCompact: false })
+            expect(updated?.json().autoCompact).toBe(false)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory(), summary: '- An old summary.' })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'prompt is too long', type: 'invalid_request_error' } } }]
+            scriptedResponses = [completionStream('Answered after dropping.')]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            // No summarisation request: refused, then the retried turn.
+            expect(providerBodies).toHaveLength(2)
+            expect(row.summarizedUpToIndex).toBeGreaterThan(0)
+            // Kept for when auto-compact is turned back on, with a note that messages after it are gone.
+            expect(row.summary).toMatch(/^- An old summary\.\n- Some later messages.*dropped without being summarised/)
+            expect(systemContents(providerBodies[1]).some((content) => content.includes('An old summary'))).toBe(false)
         })
 
         // #267. `llama3.1:8b` sends every argument as a string, so a strict `z.object(shape)` on

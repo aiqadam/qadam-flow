@@ -43,9 +43,11 @@ async function measure(lastStepUsage: LanguageModelUsage) {
         modelId: 'claude-sonnet-4',
         contextWindowTokens: 200_000,
         systemPrompt: 'z'.repeat(2_000),
+        summary: null,
         tools,
         history,
         lastStepUsage,
+        transcriptStartIndex: 0,
     })
 }
 

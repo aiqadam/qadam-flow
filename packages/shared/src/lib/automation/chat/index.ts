@@ -1,6 +1,15 @@
 import { z } from 'zod'
 import { BaseModelSchema, isObject, Nullable } from '../../core/common'
 import { formErrors } from '../../form-errors'
+import { DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS } from '../../management/ai-providers'
+
+// Not later than 60%: compaction runs after the reply, and the next run grows the prompt with every
+// tool round it makes (up to 25) before it could run again. Every step also re-sends the whole
+// transcript, so a fuller context is paid for many times over, and models degrade on long contexts.
+export const CHAT_COMPACT_AT_RATIO = 0.6
+// How much of the room the history kept verbatim may take after a pass: enough for the current
+// thread of work, and far enough under the trigger that a pass buys several turns.
+export const CHAT_COMPACTION_KEEP_RATIO = 0.25
 
 const MAX_FILE_BINARY_SIZE = 10 * 1024 * 1024
 const MAX_FILE_BASE64_CHARS = Math.ceil(MAX_FILE_BINARY_SIZE * 4 / 3)
@@ -130,12 +139,17 @@ export const ChatContextUsageSchema = z.object({
     // Null when neither the provider's model list nor the operator says; readers then assume
     // `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS` and say so.
     contextWindowTokens: z.int().positive().nullable(),
+    // Where the measured transcript began in `uiMessages`. A compaction pass that moves the boundary
+    // past it makes this measurement stale until the next reply, and the popover says so.
+    transcriptStartIndex: z.int().nonnegative().optional(),
     breakdown: z.object({
         systemPrompt: TokenCount,
         tools: TokenCount,
         toolCount: TokenCount,
         messages: TokenCount,
         toolOutputs: TokenCount,
+        // Optional because replies measured before compaction existed carry none.
+        summary: TokenCount.optional(),
     }),
 })
 export type ChatContextUsage = z.infer<typeof ChatContextUsageSchema>
@@ -175,6 +189,9 @@ export const ChatConversation = z.object({
     uiMessages: z.array(PersistedChatMessageSchema).nullable().default(null),
     summary: Nullable(z.string()),
     summarizedUpToIndex: Nullable(z.number().int()),
+    // Whether messages leaving the transcript are summarised (true) or dropped (false). Per
+    // conversation, so a user who distrusts the summary for one thread can turn it off there.
+    autoCompact: z.boolean().default(true),
 })
 export type ChatConversation = z.infer<typeof ChatConversation>
 
@@ -193,6 +210,7 @@ export const UpdateChatConversationRequest = z.object({
     // Not nullable, unlike on create: clearing the pick would let a run that already resolved the
     // old project pin it anyway, because `admitRun` cannot tell a cleared row from a fresh one.
     projectId: z.string().optional(),
+    autoCompact: z.boolean().optional(),
 })
 export type UpdateChatConversationRequest = z.infer<typeof UpdateChatConversationRequest>
 
@@ -293,26 +311,24 @@ export const chatPersistenceUtils = {
     unwrapToolOutput,
 }
 
-// Replaying the whole history every turn makes each message cost more than the last, without
-// bound: tool outputs are the bulk of it and a long build session accumulates a lot of them. So a
-// run sends the model only the newest messages. Twenty is roughly ten exchanges — enough that a
-// build session keeps its thread, while capping what any single turn re-sends. It lives here
-// rather than in the server because the chat UI tells the user where that window starts, and a
-// second copy of the number would let the two drift apart silently.
-export const CHAT_MAX_REPLAYED_MESSAGES = 20
-
-// The window has to start on a user turn, or the transcript can open with an assistant message
-// answering a question the model can no longer see — the one shape a provider rejects outright.
-// The whole message is the unit, so an assistant turn is never split from the tool results that
-// answer its calls. Typed structurally so the server's persisted messages and the browser's UI
-// messages both go through the same function.
-function replayWindowStart(messages: readonly ReplayableChatMessage[]): number {
-    if (messages.length <= CHAT_MAX_REPLAYED_MESSAGES) {
+// Where the transcript a run sends begins. Everything before `summarizedUpToIndex` has left the
+// transcript: folded into the conversation's `summary` by a compaction pass, or — with auto-compact
+// off, or for conversations that predate compaction — simply dropped. The rest is replayed verbatim.
+// It lives here rather than in the server because the chat UI draws the same boundary, and a second
+// copy would let the two drift apart silently.
+//
+// The start is moved forward to a user turn, or the transcript could open with an assistant message
+// answering a question the model can no longer see — the one shape a provider rejects outright. The
+// whole message is the unit, so an assistant turn is never split from the tool results that answer
+// its calls. Typed structurally so the server's persisted messages and the browser's UI messages both
+// go through it.
+function transcriptStart({ messages, summarizedUpToIndex }: { messages: readonly ReplayableChatMessage[], summarizedUpToIndex: number | null }): number {
+    const from = Math.min(Math.max(summarizedUpToIndex ?? 0, 0), messages.length)
+    if (from === 0) {
         return 0
     }
-    const offset = messages.length - CHAT_MAX_REPLAYED_MESSAGES
-    const firstReplayableTurn = messages.slice(offset).findIndex(isReplayableUserTurn)
-    return firstReplayableTurn <= 0 ? offset : offset + firstReplayableTurn
+    const firstReplayableTurn = messages.slice(from).findIndex(isReplayableUserTurn)
+    return firstReplayableTurn <= 0 ? from : from + firstReplayableTurn
 }
 
 // The first user turn that actually produces a message, not merely the first user turn: a
@@ -328,8 +344,33 @@ function isReplayableUserTurn(message: ReplayableChatMessage): boolean {
     return text.length > 0
 }
 
+// The token budget a measured reply implies (#567). The system prompt and the tool schemas are sent
+// on every turn whatever happens to the history, so the thresholds are fractions of the room left
+// after them — against the whole window, a 64k model would compact at 38k of which 23k can never be
+// freed. Shared so that when the server compacts and what the Context popover says it will are the
+// same number.
+function contextBudget(usage: ChatContextUsage): ChatContextBudget {
+    const windowTokens = usage.contextWindowTokens ?? DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
+    const fixedTokens = usage.breakdown.systemPrompt + usage.breakdown.tools
+    const roomTokens = Math.max(0, windowTokens - fixedTokens)
+    return {
+        windowTokens,
+        fixedTokens,
+        conversationTokens: Math.max(0, usage.usedTokens - fixedTokens),
+        compactAtTokens: fixedTokens + Math.round(roomTokens * CHAT_COMPACT_AT_RATIO),
+        keepTokens: Math.round(roomTokens * CHAT_COMPACTION_KEEP_RATIO),
+    }
+}
+
+function isCompactionDue(usage: ChatContextUsage): boolean {
+    return usage.usedTokens > contextBudget(usage).compactAtTokens
+}
+
 export const chatContextUtils = {
-    replayWindowStart,
+    transcriptStart,
+    isReplayableUserTurn,
+    contextBudget,
+    isCompactionDue,
 }
 
 function isBatchItemResult(value: unknown): value is BatchItemResult {
@@ -382,6 +423,18 @@ export { CHAT_ALLOWED_MIME_TYPES }
 // `getConversation` keeps reporting STREAMING for a run nobody is running, and a browser copy that
 // drifted above the server's would spin on that status forever.
 export const ABANDONED_CHAT_RUN_AFTER_MS = 5 * 60 * 1000
+
+export type ChatContextBudget = {
+    windowTokens: number
+    // The system prompt and the tool schemas: sent every turn, never compacted.
+    fixedTokens: number
+    // Everything else: the summary, the replayed messages and their tool outputs.
+    conversationTokens: number
+    // The used-token level past which the next reply triggers a compaction pass.
+    compactAtTokens: number
+    // Roughly how much history a pass keeps verbatim.
+    keepTokens: number
+}
 
 export type ReplayableChatMessage = {
     role: string

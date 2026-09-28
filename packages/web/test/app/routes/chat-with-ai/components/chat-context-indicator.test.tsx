@@ -26,14 +26,23 @@ vi.mock('react-i18next', () => ({
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 
+const compactionOn = { autoCompact: true, compactedSinceMeasured: false };
+
 const openIndicator = async (
-  props: React.ComponentProps<typeof ChatContextIndicator>,
+  props: Omit<
+    React.ComponentProps<typeof ChatContextIndicator>,
+    'compaction'
+  > & {
+    compaction?: React.ComponentProps<typeof ChatContextIndicator>['compaction'];
+  },
 ): Promise<{ trigger: string; content: string }> => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root?.render(<ChatContextIndicator {...props} />);
+    root?.render(
+      <ChatContextIndicator compaction={compactionOn} {...props} />,
+    );
   });
   const button = container.querySelector('button');
   if (!button) throw new Error('context indicator not rendered');
@@ -126,5 +135,66 @@ describe('ChatContextIndicator', () => {
       'No measurement for the last reply. It appears after the next one, if the provider reports token usage.',
     );
     expect(content).not.toContain('%');
+  });
+
+  it('says how far the context is from the next auto-compact and from overflowing', async () => {
+    const { content } = await openIndicator({ usage: measured, hasReply: true });
+
+    // Fixed 23k, room 177k, compacts at 23k + 60% of 177k = 129.2k: 48.2k to go from 81k.
+    expect(content).toContain('Until auto-compact ≈ 48.2k · until overflow 119k');
+  });
+
+  it('says compaction is next once the reply went past the threshold', async () => {
+    const { content } = await openIndicator({
+      usage: { ...measured, usedTokens: 150_000 },
+      hasReply: true,
+    });
+
+    expect(content).toContain('Compacts after this reply · until overflow 50k');
+  });
+
+  it('shows the summary as its own part once there is one', async () => {
+    const { content } = await openIndicator({
+      usage: { ...measured, breakdown: { ...measured.breakdown, summary: 1_000 } },
+      hasReply: true,
+    });
+
+    expect(content).toContain('Summary≈ 1k');
+  });
+
+  it('says auto-compact is off instead of counting down to it', async () => {
+    const { content } = await openIndicator({
+      usage: measured,
+      hasReply: true,
+      compaction: { autoCompact: false, compactedSinceMeasured: false },
+    });
+
+    expect(content).toContain('Auto-compact off · until overflow 119k');
+    expect(content).toContain(
+      'Older messages are dropped, not summarised, when the context fills up.',
+    );
+  });
+
+  it('warns that the figures predate a compaction pass', async () => {
+    const { content } = await openIndicator({
+      usage: measured,
+      hasReply: true,
+      compaction: { autoCompact: true, compactedSinceMeasured: true },
+    });
+
+    expect(content).toContain('History was compacted after this reply.');
+  });
+
+  it('turns auto-compact off from the switch', async () => {
+    const onAutoCompactChange = vi.fn();
+    await openIndicator({ usage: measured, hasReply: true, onAutoCompactChange });
+
+    const toggle = document.getElementById('chat-auto-compact');
+    if (!toggle) throw new Error('auto-compact switch not rendered');
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onAutoCompactChange).toHaveBeenCalledWith(false);
   });
 });

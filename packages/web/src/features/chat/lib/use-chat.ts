@@ -4,6 +4,7 @@ import {
   ActionReceiptEvent,
   apId,
   ChatAllowedMimeType,
+  ChatConversation,
   ChatConversationStatus,
   ChatHistoryMessage,
   CHAT_ALLOWED_MIME_TYPES,
@@ -216,6 +217,8 @@ export function useAgentChat({
   );
   const [modelName, setModelNameState] = useState<string | null>(null);
   const [projectId, setProjectIdState] = useState<string | null>(null);
+  const [compaction, setCompaction] =
+    useState<ChatCompactionState>(NO_COMPACTION);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isPollingForAgentReply, setIsPollingForAgentReply] = useState(false);
   const pollDeadlineRef = useRef(0);
@@ -332,23 +335,60 @@ export function useAgentChat({
     setSendStatus(next);
   }, []);
 
+  // The server compacts in the background once a reply is saved, which is after the reconcile that
+  // reply triggers has read the row. Without a second look the new boundary would show only after
+  // the next reply or a reload, so a reply that crossed the threshold is followed by a short poll
+  // that stops as soon as the boundary moves. A newer watch, or a conversation switch, ends it.
+  const compactionWatchRef = useRef(0);
+  const watchForCompaction = useCallback(
+    async ({
+      convId,
+      fromIndex,
+    }: {
+      convId: string;
+      fromIndex: number | null;
+    }) => {
+      compactionWatchRef.current += 1;
+      const watch = compactionWatchRef.current;
+      const moved = await chatUtils.waitForCompaction({
+        fromIndex,
+        read: () => chatApi.getConversation(convId),
+        isCurrent: () =>
+          compactionWatchRef.current === watch &&
+          conversationIdRef.current === convId,
+        deadlineMs: COMPACTION_WATCH_MS,
+        intervalMs: COMPACTION_WATCH_INTERVAL_MS,
+      });
+      if (!isNil(moved)) {
+        setCompaction(compactionStateOf(moved));
+      }
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      compactionWatchRef.current += 1;
+    },
+    [],
+  );
+
   const reconcile = useCallback(
     async (convId: string) => {
       if (conversationIdRef.current !== convId) return;
-      // A conversation created before the project list loaded goes out with no project, and the
-      // server pins its own default on the first run. Asked only while the project is still unknown,
-      // so a conversation that already knows its project costs no extra request per run — and asked
-      // alongside the messages rather than after them, because anything awaited between
-      // `setPersistedMessages` and clearing the optimistic turn renders that turn twice.
+      // The row is read on every reconcile: it carries the project the server pinned when none was
+      // sent (a conversation created before the project list loaded), and where compaction has moved
+      // the transcript's start (#567). Asked alongside the messages rather than after them, because
+      // anything awaited between `setPersistedMessages` and clearing the optimistic turn renders that
+      // turn twice.
       const [{ data: result }, { data: conv }] = await Promise.all([
         tryCatch(() => chatApi.getMessages(convId)),
-        tryCatch(async () =>
-          isNil(projectIdRef.current) ? chatApi.getConversation(convId) : null,
-        ),
+        tryCatch(() => chatApi.getConversation(convId)),
       ]);
       if (conversationIdRef.current !== convId) return;
-      if (result) {
-        const mapped = chatUtils.mapHistoryToUIMessages(result.data);
+      const mapped = result
+        ? chatUtils.mapHistoryToUIMessages(result.data)
+        : null;
+      if (result && mapped) {
         setPersistedMessages(mapped);
         const restoredReplies =
           chatUtils.extractQuickRepliesFromHistory(mapped);
@@ -360,13 +400,30 @@ export function useAgentChat({
           setState: store.setState,
         });
       }
+      if (!isNil(conv)) {
+        const state = compactionStateOf(conv);
+        setCompaction(state);
+        if (
+          !isNil(mapped) &&
+          chatUtils.isCompactionPending({
+            messages: mapped,
+            summarizedUpToIndex: state.summarizedUpToIndex,
+            autoCompact: state.autoCompact,
+          })
+        ) {
+          void watchForCompaction({
+            convId,
+            fromIndex: state.summarizedUpToIndex,
+          });
+        }
+      }
       if (isNil(projectIdRef.current) && !isNil(conv?.projectId)) {
         projectIdRef.current = conv.projectId;
         setProjectIdState(conv.projectId);
       }
       setOptimisticUserMessage(null);
     },
-    [store],
+    [store, watchForCompaction],
   );
 
   const reconcileAndClearRef = useRef<(convId: string) => void>(() => {});
@@ -655,6 +712,8 @@ export function useAgentChat({
       lastSentFileNamesRef.current = [];
       setOptimisticUserMessage(null);
       setLiveGate(null);
+      setCompaction(NO_COMPACTION);
+      compactionWatchRef.current += 1;
 
       setIsLoadingHistory(true);
       const [historyResult, convResult] = await Promise.all([
@@ -685,6 +744,7 @@ export function useAgentChat({
       setModelNameState(convResult.data.modelName ?? null);
       projectIdRef.current = convResult.data.projectId ?? null;
       setProjectIdState(convResult.data.projectId ?? null);
+      setCompaction(compactionStateOf(convResult.data));
       if (convResult.data.status === ChatConversationStatus.STREAMING) {
         const lastAssistantIdx = mapped.findLastIndex(
           (m) => m.role === 'assistant',
@@ -770,6 +830,7 @@ export function useAgentChat({
       const hasChanged =
         mapped.length !== current.length ||
         mapped.some((m, i) => m.parts.length !== current[i]?.parts.length);
+      setCompaction(compactionStateOf(convResult));
       if (convResult.status !== ChatConversationStatus.STREAMING) {
         setIsPollingForAgentReply(false);
       }
@@ -867,10 +928,27 @@ export function useAgentChat({
     setProjectIdState(newProjectId);
   }, []);
 
+  const setAutoCompact = useCallback(async (autoCompact: boolean) => {
+    const convId = conversationIdRef.current;
+    if (!convId) return;
+    // Persist-then-reflect, for the same reason as `setModelName`.
+    const { data: conv, error } = await tryCatch(() =>
+      chatApi.updateConversation(convId, { autoCompact }),
+    );
+    if (error || isNil(conv) || conversationIdRef.current !== convId) {
+      if (error)
+        toast.error(t('Could not change auto-compact. Please try again.'));
+      return;
+    }
+    setCompaction(compactionStateOf(conv));
+  }, []);
+
   return {
     conversationId,
     modelName,
     projectId,
+    compaction,
+    setAutoCompact,
     messages,
     isStreaming,
     wasCancelled,
@@ -883,3 +961,34 @@ export function useAgentChat({
     setProjectId,
   };
 }
+
+// What the chat shows of the compaction state (#567). The summary text itself is not shown — the
+// user agreed to see only that one exists.
+function compactionStateOf(
+  conversation: ChatConversation,
+): ChatCompactionState {
+  return {
+    summarizedUpToIndex: conversation.summarizedUpToIndex ?? null,
+    hasSummary:
+      !isNil(conversation.summary) && conversation.summary.trim().length > 0,
+    // Absent on a row read before the column existed; the column defaults to on.
+    autoCompact: conversation.autoCompact !== false,
+  };
+}
+
+// A pass is one to four summariser calls of up to 90 s each on the server; two minutes covers the
+// usual one-call pass with room to spare, and a slower pass still shows after the next reply.
+const COMPACTION_WATCH_MS = 120_000;
+const COMPACTION_WATCH_INTERVAL_MS = 5_000;
+
+const NO_COMPACTION: ChatCompactionState = {
+  summarizedUpToIndex: null,
+  hasSummary: false,
+  autoCompact: true,
+};
+
+export type ChatCompactionState = {
+  summarizedUpToIndex: number | null;
+  hasSummary: boolean;
+  autoCompact: boolean;
+};

@@ -27,7 +27,7 @@ export const chatContextUsage = {
      * reported too — the openai-compatible SDK turns a `usage` object without `prompt_tokens` into
      * 0, and a real turn always sends at least the system prompt.
      */
-    async measure({ modelId, contextWindowTokens, systemPrompt, tools, history, lastStepUsage }: MeasureParams): Promise<ChatContextUsage | null> {
+    async measure({ modelId, contextWindowTokens, systemPrompt, summary, tools, history, lastStepUsage, transcriptStartIndex }: MeasureParams): Promise<ChatContextUsage | null> {
         const inputTokens = lastStepUsage.inputTokens
         if (isNil(inputTokens) || inputTokens <= 0) {
             return null
@@ -39,6 +39,7 @@ export const chatContextUsage = {
         const toolEntries = Object.entries(tools)
         const sizes: PartSizes = {
             systemPrompt: systemPrompt.length,
+            summary: summary?.length ?? 0,
             tools: (await Promise.all(toolEntries.map(([name, tool]) => toolDefinitionSize({ name, tool })))).reduce(sum, 0),
             ...historySizes(history),
         }
@@ -48,12 +49,14 @@ export const chatContextUsage = {
             modelId,
             usedTokens,
             contextWindowTokens,
+            transcriptStartIndex,
             breakdown: {
                 systemPrompt: shares.systemPrompt,
                 tools: shares.tools,
                 toolCount: toolEntries.length,
                 messages: shares.messages,
                 toolOutputs: shares.toolOutputs,
+                summary: shares.summary,
             },
         }
     },
@@ -110,7 +113,7 @@ function scaleToTotal({ sizes, total }: { sizes: PartSizes, total: number }): Pa
     const entries = PART_KEYS.map((key) => ({ key, size: sizes[key] }))
     const characters = entries.map(({ size }) => size).reduce(sum, 0)
     if (characters === 0) {
-        return { systemPrompt: 0, tools: 0, messages: 0, toolOutputs: 0 }
+        return { systemPrompt: 0, tools: 0, summary: 0, messages: 0, toolOutputs: 0 }
     }
     const floored = entries.map(({ key, size }) => {
         const exact = (size * total) / characters
@@ -125,6 +128,7 @@ function scaleToTotal({ sizes, total }: { sizes: PartSizes, total: number }): Pa
     return {
         systemPrompt: scaled('systemPrompt'),
         tools: scaled('tools'),
+        summary: scaled('summary'),
         messages: scaled('messages'),
         toolOutputs: scaled('toolOutputs'),
     }
@@ -134,7 +138,7 @@ function sum(total: number, value: number): number {
     return total + value
 }
 
-const PART_KEYS = ['systemPrompt', 'tools', 'messages', 'toolOutputs'] as const
+const PART_KEYS = ['systemPrompt', 'tools', 'summary', 'messages', 'toolOutputs'] as const
 
 type PartKey = typeof PART_KEYS[number]
 
@@ -144,9 +148,12 @@ type MeasureParams = {
     modelId: string
     contextWindowTokens: number | null
     systemPrompt: string
+    // The summary sent ahead of the transcript, if one was (#567).
+    summary: string | null
     tools: ToolSet
     // Everything the last step was sent, plus the reply it produced: the run's input transcript
     // followed by `response.messages`.
     history: ModelMessage[]
     lastStepUsage: LanguageModelUsage
+    transcriptStartIndex: number
 }
