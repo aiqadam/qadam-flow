@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, GoogleProviderAuthConfig, GoogleProviderConfig } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, GoogleProviderAuthConfig, GoogleProviderConfig, parseModelContextWindowTokens, spreadIfDefined } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -21,6 +21,7 @@ export const googleProvider: AIProviderStrategy<GoogleProviderAuthConfig, Google
             id: stripModelsPrefix(model.name),
             name: model.displayName,
             type: model.name.includes('image') ? AIProviderModelType.IMAGE : AIProviderModelType.TEXT,
+            ...spreadIfDefined('contextWindowTokens', parseModelContextWindowTokens(model.inputTokenLimit)),
         }))
     },
 }
@@ -34,4 +35,6 @@ function stripModelsPrefix(modelName: string): string {
 type GoogleModel = {
     name: string
     displayName: string
+    // Not marked required on the `Model` resource, and proto3 JSON omits unset fields.
+    inputTokenLimit?: number
 }

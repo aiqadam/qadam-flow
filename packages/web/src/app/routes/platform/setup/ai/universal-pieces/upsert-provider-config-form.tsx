@@ -2,6 +2,7 @@ import {
   AIProviderName,
   AIProviderModelType,
   CreateAIProviderRequest,
+  DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
   ProviderModelConfig,
   tryCatchSync,
 } from '@aiqadam/shared';
@@ -537,6 +538,9 @@ const ProviderConfigModelItem = ({
           <div className="flex flex-col gap-0">
             <p className="text-sm">{model.modelName}</p>
             <p className="text-sm text-muted-foreground">{model.modelId}</p>
+            {model.modelType === AIProviderModelType.TEXT && (
+              <ModelContextWindowNote tokens={model.contextWindowTokens} />
+            )}
           </div>
         </div>
       </div>
@@ -567,6 +571,31 @@ const ProviderConfigModelItem = ({
         </Button>
       </div>
     </div>
+  );
+};
+
+// Stated on every text model rather than only in the edit popover, because an unset size is the
+// case that needs the operator's attention: the chat then compacts as if the window were
+// `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS`, which is too large for most local models.
+const ModelContextWindowNote = ({ tokens }: { tokens: number | undefined }) => {
+  if (tokens === undefined) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {t(
+          'Context window not set. Chat assumes {count, plural, one {# token} other {# tokens}}.',
+          {
+            count: DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
+          },
+        )}
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-muted-foreground">
+      {t('Context window: {count, plural, one {# token} other {# tokens}}', {
+        count: tokens,
+      })}
+    </p>
   );
 };
 

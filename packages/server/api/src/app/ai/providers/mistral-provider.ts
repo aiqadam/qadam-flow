@@ -1,4 +1,4 @@
-import { AIProviderModel, AIProviderModelType, MistralProviderAuthConfig, MistralProviderConfig } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, MistralProviderAuthConfig, MistralProviderConfig, parseModelContextWindowTokens, spreadIfDefined } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
 import { providerHttp } from './provider-http'
@@ -24,12 +24,15 @@ export const mistralProvider: AIProviderStrategy<MistralProviderAuthConfig, Mist
                 id: model.id,
                 name: model.id,
                 type: AIProviderModelType.TEXT,
+                ...spreadIfDefined('contextWindowTokens', parseModelContextWindowTokens(model.max_context_length)),
             }))
     },
 }
 
 type MistralModel = {
     id: string
+    // Optional on Mistral's `BaseModelCard`.
+    max_context_length?: number
     capabilities?: {
         completion_chat: boolean
     }

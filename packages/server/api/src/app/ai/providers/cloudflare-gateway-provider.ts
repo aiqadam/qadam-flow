@@ -1,6 +1,6 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { safeHttp } from '@aiqadam/server-utils'
-import { AIProviderModel, AIProviderModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId } from '@aiqadam/shared'
+import { AIProviderModel, AIProviderModelType, CloudflareGatewayProviderAuthConfig, CloudflareGatewayProviderConfig, isNil, splitCloudflareGatewayModelId, spreadIfDefined } from '@aiqadam/shared'
 import { generateText } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { AIProviderStrategy } from './ai-provider'
@@ -74,6 +74,7 @@ export const cloudflareGatewayProvider: AIProviderStrategy<CloudflareGatewayProv
             id: m.modelId,
             name: m.modelName,
             type: m.modelType,
+            ...spreadIfDefined('contextWindowTokens', m.contextWindowTokens),
         }))
     },
 }
