@@ -571,29 +571,36 @@ function buildUserMessage({ content, files }: SendChatMessageRequest): ModelMess
 
 async function retryAfterOverflow(params: RunAttemptParams): Promise<RetryOutcome> {
     const { id, platformId, userId, runId, resolvedModel, rebuildTranscript, abortController, log } = params
-    const compacted = await chatCompaction(log).compactForOverflow({ id, platformId, userId, resolvedModel, abortSignal: abortController.signal })
+    const compacted = await chatCompaction(log).compactForOverflow({
+        id,
+        platformId,
+        userId,
+        resolvedModel,
+        abortSignal: abortController.signal,
+        heartbeat: () => rejectedPromiseHandler(chatConversationService.touchRun({ id, platformId, userId, runId }), log),
+    })
     if (abortController.signal.aborted) {
         return RetryOutcome.STOPPED
     }
-    if (!compacted) {
+    // A cancel handled by another process, or a takeover, rewrites the row without reaching this
+    // controller. The run is then no longer wanted — whether or not the pass shortened anything, so
+    // a stopped turn never settles as a failed one — and a retry would be a second loop on the row.
+    // Its own read because `activeRunId` is deliberately not in the `ChatConversation` contract.
+    const { data: isActive, error: activeError } = await tryCatch(() => chatConversationService.isRunActive({ id, platformId, userId, runId }))
+    if (isNil(activeError) && isActive === false) {
+        log.info({ conversationId: id, runId }, '[chatAgentService#runAgentLoop] the run was stopped or taken over while compacting; not retrying')
+        return RetryOutcome.STOPPED
+    }
+    if (!compacted || !isNil(activeError)) {
         return RetryOutcome.FAILED
     }
-    const { data: fresh, error } = await tryCatch(async () => ({
-        isActive: await chatConversationService.isRunActive({ id, platformId, userId, runId }),
-        conversation: await chatConversationService.getOneOrThrow({ id, platformId, userId }),
-    }))
+    const { data: fresh, error } = await tryCatch(() => chatConversationService.getOneOrThrow({ id, platformId, userId }))
     if (!isNil(error) || isNil(fresh)) {
         log.warn({ conversationId: id, runId, errorName: error?.name }, '[chatAgentService#runAgentLoop] could not rebuild the transcript after compacting; the turn fails')
         return RetryOutcome.FAILED
     }
-    // A cancel handled by another process, or a takeover, rewrites the row without reaching this
-    // controller. The run is then no longer wanted, and a retry would be a second loop on the row.
-    if (!fresh.isActive) {
-        log.info({ conversationId: id, runId }, '[chatAgentService#runAgentLoop] the run was stopped or taken over while compacting; not retrying')
-        return RetryOutcome.STOPPED
-    }
     log.info({ conversationId: id, runId }, '[chatAgentService#runAgentLoop] the provider refused the turn as too long; retrying once on a compacted transcript')
-    await runAttempt({ ...params, transcript: rebuildTranscript(fresh.conversation), retriedAfterOverflow: true })
+    await runAttempt({ ...params, transcript: rebuildTranscript(fresh), retriedAfterOverflow: true })
     return RetryOutcome.RETRIED
 }
 

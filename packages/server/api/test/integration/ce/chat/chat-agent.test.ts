@@ -56,6 +56,9 @@ let providerFailure: { status: number, body: Record<string, unknown> } | null = 
 let providerFailuresOnce: { status: number, body: Record<string, unknown> }[] = []
 // What a non-streaming request (`generateText`, i.e. a compaction pass) is answered with.
 let providerSummaryReply = '- The user asked earlier questions about their flows.'
+// Holds the next non-streaming request open, so a test can act while a compaction pass is running.
+let providerSummaryHold: Promise<void> | null = null
+let providerSummaryRequested = false
 
 beforeAll(async () => {
     providerServer = http.createServer((req, res) => {
@@ -72,8 +75,17 @@ beforeAll(async () => {
                 return
             }
             if (body.stream !== true) {
-                res.writeHead(StatusCodes.OK, { 'content-type': 'application/json' })
-                res.end(JSON.stringify(completionJson(providerSummaryReply)))
+                const summaryHold = providerSummaryHold
+                providerSummaryHold = null
+                providerSummaryRequested = true
+                void (summaryHold ?? Promise.resolve()).then(() => {
+                    // The caller may have aborted while held; its socket is gone then.
+                    if (req.socket.destroyed) {
+                        return
+                    }
+                    res.writeHead(StatusCodes.OK, { 'content-type': 'application/json' })
+                    res.end(JSON.stringify(completionJson(providerSummaryReply)))
+                })
                 return
             }
             res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
@@ -118,6 +130,8 @@ afterEach(() => {
     providerFailure = null
     providerFailuresOnce = []
     providerSummaryReply = '- The user asked earlier questions about their flows.'
+    providerSummaryHold = null
+    providerSummaryRequested = false
     vi.restoreAllMocks()
 })
 
@@ -657,6 +671,36 @@ describe('Chat agent API', () => {
             expect(providerBodies).toHaveLength(3)
             expect(systemContents(providerBodies[2]).some((content) => content.includes('- The user asked earlier'))).toBe(true)
             expect(JSON.stringify(providerBodies[2].messages).length).toBeLessThan(JSON.stringify(providerBodies[0].messages).length)
+        })
+
+        it('settles as cancelled, and does not retry, when the user stops the turn while it compacts', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'prompt is too long', type: 'invalid_request_error' } } }]
+            let releaseSummary: () => void = () => {}
+            providerSummaryHold = new Promise<void>((resolve) => {
+                releaseSummary = resolve
+            })
+            scriptedResponses = [completionStream('Must never be sent.')]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitFor(() => providerSummaryRequested)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
+            releaseSummary()
+            const row = await waitForCondition(async () => {
+                const candidate = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return candidate?.status === ChatConversationStatus.IDLE && isNil(candidate.activeRunId) ? candidate : null
+            })
+
+            // Refused, then the pass the Stop cut short — no retried turn.
+            expect(providerBodies).toHaveLength(2)
+            expect(row.summary).toBeNull()
+            expect(row.summarizedUpToIndex).toBeNull()
+            expect(JSON.stringify(row.uiMessages)).not.toContain('Must never be sent.')
         })
 
         it('drops instead of summarising when the conversation has auto-compact off', async () => {

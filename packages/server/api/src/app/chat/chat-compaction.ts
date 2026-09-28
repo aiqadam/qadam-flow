@@ -10,6 +10,7 @@ import {
     PersistedChatPart,
     PersistedChatPartType,
     PersistedChatRole,
+    sanitizeObjectForPostgresql,
     tryCatch,
 } from '@aiqadam/shared'
 import { generateText } from 'ai'
@@ -51,9 +52,10 @@ export const chatCompaction = (log: FastifyBaseLogger) => ({
             await compact({
                 conversation: toCompactionState(conversation),
                 keepTokens: chatContextUtils.contextBudget(usage).keepTokens,
-                tokensPerChar: tokensPerChar({ usage, uiMessages, summarizedUpToIndex: conversation.summarizedUpToIndex ?? null }),
+                tokensPerChar: chatCompactionPlan.tokensPerChar({ usage, uiMessages, summarizedUpToIndex: conversation.summarizedUpToIndex ?? null }),
                 resolvedModel,
                 abortSignal: null,
+                heartbeat: null,
                 log,
             })
         })
@@ -68,9 +70,11 @@ export const chatCompaction = (log: FastifyBaseLogger) => ({
      * estimate that let the conversation get here was evidently low. Returns whether the transcript
      * got shorter, which is the only case in which retrying the turn can help.
      *
-     * Runs inside the turn, so it takes the run's abort signal: a Stop while it summarises stops it.
+     * Runs inside the turn, so it takes the run's abort signal — a Stop while it summarises stops it —
+     * and a heartbeat called before each summariser call: a pass can take several, longer together
+     * than `ABANDONED_CHAT_RUN_AFTER_MS`, and a run that stops beating is taken over as abandoned.
      */
-    async compactForOverflow({ id, platformId, userId, resolvedModel, abortSignal }: CompactForOverflowParams): Promise<boolean> {
+    async compactForOverflow({ id, platformId, userId, resolvedModel, abortSignal, heartbeat }: CompactForOverflowParams): Promise<boolean> {
         const { data, error } = await tryCatch(async () => {
             const conversation = await chatConversationService.getOneOrThrow({ id, platformId, userId })
             const uiMessages = conversation.uiMessages ?? []
@@ -81,9 +85,10 @@ export const chatCompaction = (log: FastifyBaseLogger) => ({
             return compact({
                 conversation: toCompactionState(conversation),
                 keepTokens,
-                tokensPerChar: isNil(usage) ? DEFAULT_TOKENS_PER_CHAR : tokensPerChar({ usage, uiMessages, summarizedUpToIndex: conversation.summarizedUpToIndex ?? null }),
+                tokensPerChar: isNil(usage) ? DEFAULT_TOKENS_PER_CHAR : chatCompactionPlan.tokensPerChar({ usage, uiMessages, summarizedUpToIndex: conversation.summarizedUpToIndex ?? null }),
                 resolvedModel,
                 abortSignal,
+                heartbeat,
                 log,
             })
         })
@@ -117,6 +122,23 @@ export const chatCompactionPlan = {
         const sizes = uiMessages.map((message) => messageChars(message) * ratio)
         const keptFrom = (index: number): number => sizes.slice(index).reduce(sum, 0)
         return userTurns.find((index) => keptFrom(index) <= keepTokens) ?? lastUserTurn
+    },
+
+    // Calibrates the character estimate against what the provider actually counted for the same
+    // history, so the kept tail is sized in this model's tokens rather than a rule of thumb. "The same"
+    // is the span the measurement was taken over: a pass that landed after the reply was admitted has
+    // moved the row's start since, and dividing the old count by the new, shorter span would overstate
+    // the ratio and fold far more than the kept share away. The summary's own share is taken out by its
+    // estimated tokens, since the summary that was sent may have been replaced since.
+    // A measurement from before the start was recorded falls back to the row's current start.
+    tokensPerChar({ usage, uiMessages, summarizedUpToIndex }: TokensPerCharParams): number {
+        const measuredFrom = usage.transcriptStartIndex ?? chatContextUtils.transcriptStart({ messages: uiMessages, summarizedUpToIndex })
+        const characters = uiMessages.slice(measuredFrom).map(messageChars).reduce(sum, 0)
+        const tokens = chatContextUtils.contextBudget(usage).conversationTokens - (usage.breakdown.summary ?? 0)
+        if (characters === 0 || tokens <= 0) {
+            return DEFAULT_TOKENS_PER_CHAR
+        }
+        return Math.min(1, Math.max(0.05, tokens / characters))
     },
 
     // The characters one summariser call may carry, derived from the window it will be sent to.
@@ -185,7 +207,7 @@ const DROPPED_WITHOUT_SUMMARY_NOTE = '- Some later messages, after the points ab
 // Same relative-to-cwd form as the system prompt (`chat-agent.service.ts`, `SYSTEM_PROMPT_PATH`).
 const COMPACTION_PROMPT_PATH = 'packages/server/api/src/assets/prompts/chat-compaction-prompt.md'
 
-async function compact({ conversation, keepTokens, tokensPerChar: ratio, resolvedModel, abortSignal, log }: CompactRunParams): Promise<boolean> {
+async function compact({ conversation, keepTokens, tokensPerChar: ratio, resolvedModel, abortSignal, heartbeat, log }: CompactRunParams): Promise<boolean> {
     const fromIndex = conversation.summarizedUpToIndex ?? 0
     const cut = chatCompactionPlan.cutIndex({ uiMessages: conversation.uiMessages, fromIndex, keepTokens, tokensPerChar: ratio })
     const start = chatContextUtils.transcriptStart({ messages: conversation.uiMessages, summarizedUpToIndex: fromIndex })
@@ -201,6 +223,7 @@ async function compact({ conversation, keepTokens, tokensPerChar: ratio, resolve
             maxInputChars: chatCompactionPlan.maxSummaryInputChars({ contextWindowTokens: resolvedModel.contextWindowTokens, tokensPerChar: ratio }),
             resolvedModel,
             abortSignal,
+            heartbeat,
         })
         : { summary: withDroppedNote(conversation.summary), toIndex: cut }
     if (toIndex <= start) {
@@ -212,17 +235,19 @@ async function compact({ conversation, keepTokens, tokensPerChar: ratio, resolve
         userId: conversation.userId,
         fromIndex,
         toIndex,
-        summary,
+        // Model output, so external data: a NUL in it would fail the write on every pass after.
+        summary: sanitizeObjectForPostgresql(summary),
     })
     log.info({ conversationId: conversation.id, fromIndex, toIndex, summarized: conversation.autoCompact, saved }, '[chatCompaction] moved the transcript start')
     return saved
 }
 
-async function summarizeInSlices({ previousSummary, uiMessages, start, cut, maxInputChars, resolvedModel, abortSignal }: SummarizeInSlicesParams): Promise<{ summary: string | null, toIndex: number }> {
+async function summarizeInSlices({ previousSummary, uiMessages, start, cut, maxInputChars, resolvedModel, abortSignal, heartbeat }: SummarizeInSlicesParams): Promise<{ summary: string | null, toIndex: number }> {
     const slices = chatCompactionPlan.summarySlices({ uiMessages, start, cut, maxInputChars }).slice(0, MAX_SUMMARY_CALLS_PER_PASS)
     const instructions = await readFile(COMPACTION_PROMPT_PATH, 'utf-8')
     return slices.reduce<Promise<{ summary: string | null, toIndex: number }>>(async (previous, slice) => {
         const { summary } = await previous
+        heartbeat?.()
         return {
             summary: await summarize({ instructions, previousSummary: summary, rendered: slice.rendered, resolvedModel, abortSignal }),
             toIndex: slice.endIndex,
@@ -248,9 +273,10 @@ async function summarize({ instructions, previousSummary, rendered, resolvedMode
 }
 
 function renderForSummary({ previousSummary, rendered }: { previousSummary: string | null, rendered: string }): string {
+    // Indented like every rendered line: an earlier pass may have written a line that begins "User:".
     const earlier = isNil(previousSummary) || previousSummary.trim().length === 0
         ? []
-        : ['## Summary so far', previousSummary, '']
+        : ['## Summary so far', indentContinuation(`  ${previousSummary}`), '']
     return [
         ...earlier,
         '## Conversation to add to the summary',
@@ -258,17 +284,21 @@ function renderForSummary({ previousSummary, rendered }: { previousSummary: stri
     ].join('\n')
 }
 
+// Continuation lines are indented, whatever part they come from, so that only a real user turn can
+// start a line with "User:" — the prompt tells the summarizer those lines, and nothing else, are the
+// user's. Text and a third-party error message are where raw line breaks arrive.
 function renderMessage(message: PersistedChatMessage): string {
-    return message.parts.flatMap((part) => renderPart({ role: message.role, part })).join('\n')
+    return message.parts
+        .flatMap((part) => renderPart({ role: message.role, part }))
+        .map(indentContinuation)
+        .join('\n')
 }
 
 function renderPart({ role, part }: { role: PersistedChatRole, part: PersistedChatPart }): string[] {
     const speaker = role === PersistedChatRole.USER ? 'User' : 'Assistant'
     switch (part.type) {
         case PersistedChatPartType.TEXT:
-            // Continuation lines are indented so that only a real user turn can start a line with
-            // "User:" — the prompt tells the summarizer those lines, and nothing else, are the user's.
-            return part.text.trim().length === 0 ? [] : [`${speaker}: ${part.text.replaceAll('\n', '\n  ')}`]
+            return part.text.trim().length === 0 ? [] : [`${speaker}: ${part.text}`]
         case PersistedChatPartType.TOOL_CALL:
             return [`Tool ${part.toolName}(${clip({ text: JSON.stringify(part.input), max: MAX_TOOL_INPUT_CHARS })}) ${part.status}: ${clip({ text: JSON.stringify(part.output ?? part.errorText ?? null), max: MAX_TOOL_OUTPUT_CHARS })}`]
         case PersistedChatPartType.TOOL_APPROVAL_REQUEST:
@@ -276,7 +306,7 @@ function renderPart({ role, part }: { role: PersistedChatRole, part: PersistedCh
         case PersistedChatPartType.TOOL_APPROVAL_RESPONSE:
             return [`User ${part.approved ? 'approved' : 'declined'} it${isNil(part.reason) ? '' : `: ${part.reason}`}`]
         case PersistedChatPartType.ACTION_RECEIPT:
-            return [`Ran ${part.actionDisplayName} (${part.qadamName}): ${part.status}${isNil(part.errorMessage) ? '' : ` — ${part.errorMessage}`}`]
+            return [`Ran ${part.actionDisplayName} (${part.qadamName}): ${part.status}${isNil(part.errorMessage) ? '' : ` — ${clip({ text: part.errorMessage, max: MAX_TOOL_OUTPUT_CHARS })}`}`]
         // Reasoning is never replayed, so it is not summarised either; status lines and progress
         // bars restate what the tool calls already say.
         case PersistedChatPartType.REASONING:
@@ -284,6 +314,10 @@ function renderPart({ role, part }: { role: PersistedChatRole, part: PersistedCh
         case PersistedChatPartType.BATCH_PROGRESS:
             return []
     }
+}
+
+function indentContinuation(line: string): string {
+    return line.replaceAll('\n', '\n  ')
 }
 
 function withDroppedNote(summary: string | null): string | null {
@@ -317,23 +351,6 @@ function lastMeasurement(uiMessages: PersistedChatMessage[]): ChatContextUsage |
     return parsed.success ? parsed.data : null
 }
 
-// Calibrates the character estimate against what the provider actually counted for the same
-// history, so the kept tail is sized in this model's tokens rather than a rule of thumb. "The same"
-// is the span the measurement was taken over: a pass that landed after the reply was admitted has
-// moved the row's start since, and dividing the old count by the new, shorter span would overstate
-// the ratio and fold far more than the kept share away. The summary's own share is taken out by its
-// estimated tokens, since the summary that was sent may have been replaced since.
-// A measurement from before the start was recorded falls back to the row's current start.
-function tokensPerChar({ usage, uiMessages, summarizedUpToIndex }: TokensPerCharParams): number {
-    const measuredFrom = usage.transcriptStartIndex ?? chatContextUtils.transcriptStart({ messages: uiMessages, summarizedUpToIndex })
-    const characters = uiMessages.slice(measuredFrom).map(messageChars).reduce(sum, 0)
-    const tokens = chatContextUtils.contextBudget(usage).conversationTokens - (usage.breakdown.summary ?? 0)
-    if (characters === 0 || tokens <= 0) {
-        return DEFAULT_TOKENS_PER_CHAR
-    }
-    return Math.min(1, Math.max(0.05, tokens / characters))
-}
-
 // What a message puts on the wire when replayed: everything but reasoning, which never is.
 function messageChars(message: PersistedChatMessage): number {
     return message.parts
@@ -359,6 +376,7 @@ type CompactParams = {
 
 type CompactForOverflowParams = CompactParams & {
     abortSignal: AbortSignal
+    heartbeat: () => void
 }
 
 type CompactionState = {
@@ -377,6 +395,7 @@ type CompactRunParams = {
     tokensPerChar: number
     resolvedModel: ResolvedChatModel
     abortSignal: AbortSignal | null
+    heartbeat: (() => void) | null
     log: FastifyBaseLogger
 }
 
@@ -394,7 +413,7 @@ type SummarySlicesParams = {
     maxInputChars: number
 }
 
-export type SummarySlice = {
+type SummarySlice = {
     // The index the transcript can start at once this slice is in the summary.
     endIndex: number
     rendered: string
@@ -408,6 +427,7 @@ type SummarizeInSlicesParams = {
     maxInputChars: number
     resolvedModel: ResolvedChatModel
     abortSignal: AbortSignal | null
+    heartbeat: (() => void) | null
 }
 
 type SummarizeParams = {

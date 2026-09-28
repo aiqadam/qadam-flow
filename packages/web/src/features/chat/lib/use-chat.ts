@@ -4,7 +4,6 @@ import {
   ActionReceiptEvent,
   apId,
   ChatAllowedMimeType,
-  chatContextUtils,
   ChatConversation,
   ChatConversationStatus,
   ChatHistoryMessage,
@@ -351,24 +350,24 @@ export function useAgentChat({
     }) => {
       compactionWatchRef.current += 1;
       const watch = compactionWatchRef.current;
-      const deadline = Date.now() + COMPACTION_WATCH_MS;
-      const isCurrent = () =>
-        compactionWatchRef.current === watch &&
-        conversationIdRef.current === convId;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, COMPACTION_WATCH_INTERVAL_MS),
-        );
-        if (!isCurrent()) return;
-        const { data: conv } = await tryCatch(() =>
-          chatApi.getConversation(convId),
-        );
-        if (!isCurrent()) return;
-        if (!isNil(conv) && (conv.summarizedUpToIndex ?? null) !== fromIndex) {
-          setCompaction(compactionStateOf(conv));
-          return;
-        }
+      const moved = await chatUtils.waitForCompaction({
+        fromIndex,
+        read: () => chatApi.getConversation(convId),
+        isCurrent: () =>
+          compactionWatchRef.current === watch &&
+          conversationIdRef.current === convId,
+        deadlineMs: COMPACTION_WATCH_MS,
+        intervalMs: COMPACTION_WATCH_INTERVAL_MS,
+      });
+      if (!isNil(moved)) {
+        setCompaction(compactionStateOf(moved));
       }
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      compactionWatchRef.current += 1;
     },
     [],
   );
@@ -404,7 +403,14 @@ export function useAgentChat({
       if (!isNil(conv)) {
         const state = compactionStateOf(conv);
         setCompaction(state);
-        if (isCompactionPending({ state, messages: mapped })) {
+        if (
+          !isNil(mapped) &&
+          chatUtils.isCompactionPending({
+            messages: mapped,
+            summarizedUpToIndex: state.summarizedUpToIndex,
+            autoCompact: state.autoCompact,
+          })
+        ) {
           void watchForCompaction({
             convId,
             fromIndex: state.summarizedUpToIndex,
@@ -968,27 +974,6 @@ function compactionStateOf(
     // Absent on a row read before the column existed; the column defaults to on.
     autoCompact: conversation.autoCompact !== false,
   };
-}
-
-// Whether the server is about to compact after the newest reply: the same test it applies
-// (`chat-compaction.ts`, `compactAfterReply`), on a measurement taken from the current start.
-function isCompactionPending({
-  state,
-  messages,
-}: {
-  state: ChatCompactionState;
-  messages: ChatUIMessage[] | null;
-}): boolean {
-  if (!state.autoCompact || isNil(messages)) return false;
-  const usage = chatUtils.latestContextUsage({ messages });
-  if (isNil(usage) || !chatContextUtils.isCompactionDue(usage)) return false;
-  const start = chatContextUtils.transcriptStart({
-    messages,
-    summarizedUpToIndex: state.summarizedUpToIndex,
-  });
-  return (
-    isNil(usage.transcriptStartIndex) || usage.transcriptStartIndex >= start
-  );
 }
 
 // A pass is one to four summariser calls of up to 90 s each on the server; two minutes covers the
