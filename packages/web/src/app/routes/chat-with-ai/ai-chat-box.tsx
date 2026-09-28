@@ -17,7 +17,7 @@ import {
   ChatStoreProvider,
   useChatStoreContext,
 } from '@/features/chat/lib/chat-store-context';
-import { ChatUIMessage } from '@/features/chat/lib/chat-types';
+import { chatUtils } from '@/features/chat/lib/chat-utils';
 import { useAgentChat } from '@/features/chat/lib/use-chat';
 import { aiProviderQueries } from '@/features/platform-admin';
 import { cn } from '@/lib/utils';
@@ -144,7 +144,7 @@ function ChatBoxContent({
   const replayStart = useMemo(
     () =>
       chatContextUtils.replayWindowStart(
-        messagesWindowedByRun({ messages, isStreaming }),
+        chatUtils.messagesWindowedByRun({ messages, isStreaming }),
       ),
     [messages, isStreaming],
   );
@@ -316,24 +316,6 @@ function ChatBoxContent({
       </div>
     </div>
   );
-}
-
-// `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
-// run resumed from an approval windows everything persisted. So a run in flight is described by the
-// list minus its reply in progress and, when one was just sent, minus that user turn.
-function messagesWindowedByRun({
-  messages,
-  isStreaming,
-}: {
-  messages: ChatUIMessage[];
-  isStreaming: boolean;
-}): ChatUIMessage[] {
-  if (!isStreaming) return messages;
-  const withoutReply =
-    messages.at(-1)?.role === 'assistant' ? messages.slice(0, -1) : messages;
-  return withoutReply.at(-1)?.role === 'user'
-    ? withoutReply.slice(0, -1)
-    : withoutReply;
 }
 
 type AIChatBoxProps = {
