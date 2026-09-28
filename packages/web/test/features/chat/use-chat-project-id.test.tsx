@@ -151,6 +151,17 @@ describe('useAgentChat — project', () => {
     ]);
   });
 
+  it('reports the default project as the pinned one once the first message has created the conversation', async () => {
+    await mountChat('default-project');
+    expect(chat?.projectId).toBeNull();
+
+    await act(async () => {
+      await chat?.sendMessage('hello');
+    });
+
+    expect(chat?.projectId).toBe('default-project');
+  });
+
   it('keeps a pick made before the first message local, then creates the conversation in it', async () => {
     await mountChat('default-project');
 

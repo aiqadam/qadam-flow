@@ -309,7 +309,6 @@ export const chatContextUtils = {
     replayWindowStart,
 }
 
-
 function isBatchItemResult(value: unknown): value is BatchItemResult {
     if (!isObject(value)) return false
     if (typeof value['index'] !== 'number' || typeof value['success'] !== 'boolean') return false

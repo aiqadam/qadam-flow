@@ -484,17 +484,15 @@ describe('Chat agent API', () => {
 
             const chunks = operatorEmits
                 .flatMap((emit) => emit.mock.calls.map((call) => call[1]))
-                .filter((payload) => isRecord(payload) && payload.type === ChatAgentEventType.CHUNK)
-                .map((payload) => (payload as Record<string, unknown>).data)
+                .flatMap((payload) => isRecord(payload) && payload.type === ChatAgentEventType.CHUNK ? [payload.data] : [])
             const streamedReasoning = chunks
-                .filter((chunk) => isRecord(chunk) && chunk.type === 'reasoning-delta')
-                .map((chunk) => (chunk as Record<string, unknown>).delta)
+                .flatMap((chunk) => isRecord(chunk) && chunk.type === 'reasoning-delta' ? [chunk.delta] : [])
                 .join('')
             expect(streamedReasoning).toBe(reasoning)
-            expect((afterFirst.uiMessages as any[])[1].parts).toEqual([
+            expect(afterFirst.uiMessages).toMatchObject([{ role: PersistedChatRole.USER }, { role: PersistedChatRole.ASSISTANT, parts: [
                 { type: PersistedChatPartType.REASONING, text: reasoning },
                 { type: PersistedChatPartType.TEXT, text: 'You have no flows yet.' },
-            ])
+            ] }])
 
             providerBodies = []
             await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'and now?', runId: apId() })

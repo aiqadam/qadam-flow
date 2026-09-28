@@ -505,6 +505,12 @@ export function useAgentChat({
       });
       conversationIdRef.current = conv.id;
       setConversationIdState(conv.id);
+      // The page does not reload after the first message creates the row, so nothing else would
+      // record the project it was pinned to — the pickers would go on reading `null`, which for a
+      // started conversation means its project was deleted.
+      const pinnedProjectId = conv.projectId ?? projectId ?? null;
+      projectIdRef.current = pinnedProjectId;
+      setProjectIdState(pinnedProjectId);
       return conv;
     },
     [],
