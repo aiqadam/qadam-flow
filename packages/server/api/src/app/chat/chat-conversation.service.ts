@@ -73,6 +73,12 @@ export const chatConversationService = {
         return paginationHelper.createPage<ChatConversation>(data, newCursor)
     },
 
+    // Whether `runId` is still the run the row is streaming: false once it was cancelled (status
+    // leaves STREAMING, `activeRunId` stays) or taken over (`activeRunId` moves on).
+    async isRunActive({ id, platformId, userId, runId }: RunScopedParams): Promise<boolean> {
+        return repo().existsBy({ id, platformId, userId, activeRunId: runId, status: ChatConversationStatus.STREAMING })
+    },
+
     async getOneOrThrow({ id, platformId, userId }: GetParams): Promise<ChatConversation> {
         const conversation = await repo().findOneBy({ id, platformId, userId })
         if (isNil(conversation)) {

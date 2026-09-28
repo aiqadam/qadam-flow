@@ -677,7 +677,8 @@ describe('Chat agent API', () => {
             // No summarisation request: refused, then the retried turn.
             expect(providerBodies).toHaveLength(2)
             expect(row.summarizedUpToIndex).toBeGreaterThan(0)
-            expect(row.summary).toBe('- An old summary.')
+            // Kept for when auto-compact is turned back on, with a note that messages after it are gone.
+            expect(row.summary).toMatch(/^- An old summary\.\n- Some later messages.*dropped without being summarised/)
             expect(systemContents(providerBodies[1]).some((content) => content.includes('An old summary'))).toBe(false)
         })
 

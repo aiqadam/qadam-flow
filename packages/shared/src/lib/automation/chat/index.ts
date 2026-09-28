@@ -3,6 +3,14 @@ import { BaseModelSchema, isObject, Nullable } from '../../core/common'
 import { formErrors } from '../../form-errors'
 import { DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS } from '../../management/ai-providers'
 
+// Not later than 60%: compaction runs after the reply, and the next run grows the prompt with every
+// tool round it makes (up to 25) before it could run again. Every step also re-sends the whole
+// transcript, so a fuller context is paid for many times over, and models degrade on long contexts.
+export const CHAT_COMPACT_AT_RATIO = 0.6
+// How much of the room the history kept verbatim may take after a pass: enough for the current
+// thread of work, and far enough under the trigger that a pass buys several turns.
+export const CHAT_COMPACTION_KEEP_RATIO = 0.25
+
 const MAX_FILE_BINARY_SIZE = 10 * 1024 * 1024
 const MAX_FILE_BASE64_CHARS = Math.ceil(MAX_FILE_BINARY_SIZE * 4 / 3)
 
@@ -357,14 +365,6 @@ function contextBudget(usage: ChatContextUsage): ChatContextBudget {
 function isCompactionDue(usage: ChatContextUsage): boolean {
     return usage.usedTokens > contextBudget(usage).compactAtTokens
 }
-
-// Not later than 60%: compaction runs after the reply, and the next run grows the prompt with every
-// tool round it makes (up to 25) before it could run again. Every step also re-sends the whole
-// transcript, so a fuller context is paid for many times over, and models degrade on long contexts.
-export const CHAT_COMPACT_AT_RATIO = 0.6
-// How much of the room the history kept verbatim may take after a pass: enough for the current
-// thread of work, and far enough under the trigger that a pass buys several turns.
-export const CHAT_COMPACTION_KEEP_RATIO = 0.25
 
 export const chatContextUtils = {
     transcriptStart,

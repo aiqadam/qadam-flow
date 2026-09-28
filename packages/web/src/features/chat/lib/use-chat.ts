@@ -4,6 +4,7 @@ import {
   ActionReceiptEvent,
   apId,
   ChatAllowedMimeType,
+  chatContextUtils,
   ChatConversation,
   ChatConversationStatus,
   ChatHistoryMessage,
@@ -335,6 +336,43 @@ export function useAgentChat({
     setSendStatus(next);
   }, []);
 
+  // The server compacts in the background once a reply is saved, which is after the reconcile that
+  // reply triggers has read the row. Without a second look the new boundary would show only after
+  // the next reply or a reload, so a reply that crossed the threshold is followed by a short poll
+  // that stops as soon as the boundary moves. A newer watch, or a conversation switch, ends it.
+  const compactionWatchRef = useRef(0);
+  const watchForCompaction = useCallback(
+    async ({
+      convId,
+      fromIndex,
+    }: {
+      convId: string;
+      fromIndex: number | null;
+    }) => {
+      compactionWatchRef.current += 1;
+      const watch = compactionWatchRef.current;
+      const deadline = Date.now() + COMPACTION_WATCH_MS;
+      const isCurrent = () =>
+        compactionWatchRef.current === watch &&
+        conversationIdRef.current === convId;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, COMPACTION_WATCH_INTERVAL_MS),
+        );
+        if (!isCurrent()) return;
+        const { data: conv } = await tryCatch(() =>
+          chatApi.getConversation(convId),
+        );
+        if (!isCurrent()) return;
+        if (!isNil(conv) && (conv.summarizedUpToIndex ?? null) !== fromIndex) {
+          setCompaction(compactionStateOf(conv));
+          return;
+        }
+      }
+    },
+    [],
+  );
+
   const reconcile = useCallback(
     async (convId: string) => {
       if (conversationIdRef.current !== convId) return;
@@ -348,8 +386,10 @@ export function useAgentChat({
         tryCatch(() => chatApi.getConversation(convId)),
       ]);
       if (conversationIdRef.current !== convId) return;
-      if (result) {
-        const mapped = chatUtils.mapHistoryToUIMessages(result.data);
+      const mapped = result
+        ? chatUtils.mapHistoryToUIMessages(result.data)
+        : null;
+      if (result && mapped) {
         setPersistedMessages(mapped);
         const restoredReplies =
           chatUtils.extractQuickRepliesFromHistory(mapped);
@@ -362,7 +402,14 @@ export function useAgentChat({
         });
       }
       if (!isNil(conv)) {
-        setCompaction(compactionStateOf(conv));
+        const state = compactionStateOf(conv);
+        setCompaction(state);
+        if (isCompactionPending({ state, messages: mapped })) {
+          void watchForCompaction({
+            convId,
+            fromIndex: state.summarizedUpToIndex,
+          });
+        }
       }
       if (isNil(projectIdRef.current) && !isNil(conv?.projectId)) {
         projectIdRef.current = conv.projectId;
@@ -370,7 +417,7 @@ export function useAgentChat({
       }
       setOptimisticUserMessage(null);
     },
-    [store],
+    [store, watchForCompaction],
   );
 
   const reconcileAndClearRef = useRef<(convId: string) => void>(() => {});
@@ -660,6 +707,7 @@ export function useAgentChat({
       setOptimisticUserMessage(null);
       setLiveGate(null);
       setCompaction(NO_COMPACTION);
+      compactionWatchRef.current += 1;
 
       setIsLoadingHistory(true);
       const [historyResult, convResult] = await Promise.all([
@@ -921,6 +969,32 @@ function compactionStateOf(
     autoCompact: conversation.autoCompact !== false,
   };
 }
+
+// Whether the server is about to compact after the newest reply: the same test it applies
+// (`chat-compaction.ts`, `compactAfterReply`), on a measurement taken from the current start.
+function isCompactionPending({
+  state,
+  messages,
+}: {
+  state: ChatCompactionState;
+  messages: ChatUIMessage[] | null;
+}): boolean {
+  if (!state.autoCompact || isNil(messages)) return false;
+  const usage = chatUtils.latestContextUsage({ messages });
+  if (isNil(usage) || !chatContextUtils.isCompactionDue(usage)) return false;
+  const start = chatContextUtils.transcriptStart({
+    messages,
+    summarizedUpToIndex: state.summarizedUpToIndex,
+  });
+  return (
+    isNil(usage.transcriptStartIndex) || usage.transcriptStartIndex >= start
+  );
+}
+
+// A pass is one to four summariser calls of up to 90 s each on the server; two minutes covers the
+// usual one-call pass with room to spare, and a slower pass still shows after the next reply.
+const COMPACTION_WATCH_MS = 120_000;
+const COMPACTION_WATCH_INTERVAL_MS = 5_000;
 
 const NO_COMPACTION: ChatCompactionState = {
   summarizedUpToIndex: null,

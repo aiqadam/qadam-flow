@@ -194,7 +194,7 @@ function ContextBreakdown({
       </dl>
       <p className="text-sm">
         {compaction.autoCompact
-          ? untilCompact > 0
+          ? !chatContextUtils.isCompactionDue(usage)
             ? t('Until auto-compact ≈ {compact} · until overflow {free}', {
                 compact: format(untilCompact),
                 free: format(fill.freeTokens),
