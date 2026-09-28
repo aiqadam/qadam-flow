@@ -270,6 +270,45 @@ export const chatPersistenceUtils = {
     unwrapToolOutput,
 }
 
+// Replaying the whole history every turn makes each message cost more than the last, without
+// bound: tool outputs are the bulk of it and a long build session accumulates a lot of them. So a
+// run sends the model only the newest messages. Twenty is roughly ten exchanges — enough that a
+// build session keeps its thread, while capping what any single turn re-sends. It lives here
+// rather than in the server because the chat UI tells the user where that window starts, and a
+// second copy of the number would let the two drift apart silently.
+export const CHAT_MAX_REPLAYED_MESSAGES = 20
+
+// The window has to start on a user turn, or the transcript can open with an assistant message
+// answering a question the model can no longer see — the one shape a provider rejects outright.
+// The whole message is the unit, so an assistant turn is never split from the tool results that
+// answer its calls. Typed structurally so the server's persisted messages and the browser's UI
+// messages both go through the same function.
+function replayWindowStart(messages: readonly ReplayableChatMessage[]): number {
+    if (messages.length <= CHAT_MAX_REPLAYED_MESSAGES) {
+        return 0
+    }
+    const offset = messages.length - CHAT_MAX_REPLAYED_MESSAGES
+    const firstReplayableTurn = messages.slice(offset).findIndex(isReplayableUserTurn)
+    return firstReplayableTurn <= 0 ? offset : offset + firstReplayableTurn
+}
+
+// The first user turn that actually produces a message, not merely the first user turn: a
+// files-only message is persisted with empty text and the transcript drops it. Mirrors the join in
+// the server's `toUserModelMessages`, so both sides agree on which turn that is.
+function isReplayableUserTurn(message: ReplayableChatMessage): boolean {
+    if (message.role !== PersistedChatRole.USER) {
+        return false
+    }
+    const text = message.parts
+        .flatMap((part) => part.type === PersistedChatPartType.TEXT ? [part.text ?? ''] : [])
+        .join('\n')
+    return text.length > 0
+}
+
+export const chatContextUtils = {
+    replayWindowStart,
+}
+
 function isBatchItemResult(value: unknown): value is BatchItemResult {
     if (!isObject(value)) return false
     if (typeof value['index'] !== 'number' || typeof value['success'] !== 'boolean') return false
@@ -320,3 +359,8 @@ export { CHAT_ALLOWED_MIME_TYPES }
 // `getConversation` keeps reporting STREAMING for a run nobody is running, and a browser copy that
 // drifted above the server's would spin on that status forever.
 export const ABANDONED_CHAT_RUN_AFTER_MS = 5 * 60 * 1000
+
+export type ReplayableChatMessage = {
+    role: string
+    parts: ReadonlyArray<{ type: string, text?: string }>
+}

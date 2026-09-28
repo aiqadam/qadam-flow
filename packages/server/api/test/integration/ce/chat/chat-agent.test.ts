@@ -179,6 +179,22 @@ function completionStream(text: string): string {
     ].join('')
 }
 
+function reasoningStream({ reasoning, text }: { reasoning: string, text: string }): string {
+    const chunk = (delta: Record<string, unknown>, finishReason: string | null = null): string => sseChunk({
+        id: 'chatcmpl-reasoning',
+        object: 'chat.completion.chunk',
+        created: 1,
+        model: MODEL_ID,
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+    })
+    return [
+        chunk({ role: 'assistant', reasoning_content: reasoning }),
+        chunk({ content: text }),
+        chunk({}, 'stop'),
+        'data: [DONE]\n\n',
+    ].join('')
+}
+
 function toolCallStream({ toolName, callId, args }: { toolName: string, callId: string, args: string }): string {
     return [
         sseChunk({
@@ -449,6 +465,42 @@ describe('Chat agent API', () => {
             const replayedToolResult = replayed.find((message: any) => message.role === 'tool')
             expect(replayedToolResult).toBeDefined()
             expect(replayed.filter((message: any) => message.role === 'user')).toHaveLength(2)
+        })
+
+        // #563. The streamed reasoning is the only copy the user ever sees of what the model
+        // weighed, so this pins the three places it can be lost: the stream to the browser, the
+        // persisted message a reload renders from, and — deliberately — the next turn's
+        // transcript, which must not carry it back to the provider. `reasoning_content` is the
+        // field vLLM, DeepSeek and Qwen stream it in, and the one `@ai-sdk/openai-compatible` maps.
+        it('streams and persists reasoning, and leaves it out of the next turn', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            const reasoning = 'Checking which flows exist before answering.'
+            scriptedResponses = [reasoningStream({ reasoning, text: 'You have no flows yet.' })]
+            const operatorEmits = captureSocketEmits()
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list my flows', runId: apId() })
+            const afterFirst = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const chunks = operatorEmits
+                .flatMap((emit) => emit.mock.calls.map((call) => call[1]))
+                .flatMap((payload) => isRecord(payload) && payload.type === ChatAgentEventType.CHUNK ? [payload.data] : [])
+            const streamedReasoning = chunks
+                .flatMap((chunk) => isRecord(chunk) && chunk.type === 'reasoning-delta' ? [chunk.delta] : [])
+                .join('')
+            expect(streamedReasoning).toBe(reasoning)
+            expect(afterFirst.uiMessages).toMatchObject([{ role: PersistedChatRole.USER }, { role: PersistedChatRole.ASSISTANT, parts: [
+                { type: PersistedChatPartType.REASONING, text: reasoning },
+                { type: PersistedChatPartType.TEXT, text: 'You have no flows yet.' },
+            ] }])
+
+            providerBodies = []
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'and now?', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const replayed = JSON.stringify(providerBodies[0].messages)
+            expect(replayed).toContain('You have no flows yet.')
+            expect(replayed).not.toContain(reasoning)
         })
 
         // #267. `llama3.1:8b` sends every argument as a string, so a strict `z.object(shape)` on

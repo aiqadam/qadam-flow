@@ -5,7 +5,11 @@ import { motion } from 'motion/react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { SimpleJsonViewer } from '@/components/custom/simple-json-viewer';
-import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { TextShimmer } from '@/components/ui/text-shimmer';
 import {
   AnyToolPart,
@@ -55,11 +59,14 @@ export function ThinkingBlock({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
     >
-      <Collapsible open={isOpen} onOpenChange={handleOpenChange}>
-        <button
-          type="button"
-          disabled={!isExpandable}
-          onClick={() => handleOpenChange(!isOpen)}
+      <Collapsible
+        open={isOpen}
+        onOpenChange={handleOpenChange}
+        disabled={!isExpandable}
+      >
+        {/* The Radix trigger rather than a bare button with its own onClick: it is what wires
+            `aria-expanded` and `aria-controls`, so the hide/show state is announced, not only drawn. */}
+        <CollapsibleTrigger
           className={cn(
             'flex items-center gap-1.5 text-sm text-muted-foreground text-left w-full',
             isExpandable &&
@@ -80,7 +87,7 @@ export function ThinkingBlock({
               isExpandable ? 'opacity-50 text-muted-foreground' : 'opacity-0',
             )}
           />
-        </button>
+        </CollapsibleTrigger>
 
         <CollapsibleContent className="data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden">
           <div className="mt-2 space-y-0.5">
