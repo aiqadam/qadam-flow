@@ -352,6 +352,19 @@ export function useAgentChat({
           setState: store.setState,
         });
       }
+      // A conversation created before the project list loaded goes out with no project, and the
+      // server pins its own default on the first run. Asked only while the project is still unknown,
+      // so a conversation that already knows its project costs no extra request per run.
+      if (isNil(projectIdRef.current)) {
+        const { data: conv } = await tryCatch(() =>
+          chatApi.getConversation(convId),
+        );
+        if (conversationIdRef.current !== convId) return;
+        if (!isNil(conv?.projectId)) {
+          projectIdRef.current = conv.projectId;
+          setProjectIdState(conv.projectId);
+        }
+      }
       setOptimisticUserMessage(null);
     },
     [store],

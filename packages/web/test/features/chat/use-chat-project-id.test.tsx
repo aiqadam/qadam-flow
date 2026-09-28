@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { ChatAgentEventType, WebsocketClientEvent } from '@aiqadam/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 import { act } from 'react';
@@ -27,15 +28,23 @@ const harness = vi.hoisted(() => {
     body: { projectId?: string | null };
   }[] = [];
   let updateConversationShouldFail = false;
+  const socketHandlers = new Map<string, Set<(payload: unknown) => void>>();
   return {
     createConversationCalls,
     updateConversationCalls,
     setUpdateConversationShouldFail: (value: boolean) => {
       updateConversationShouldFail = value;
     },
+    socketHandlers,
     socket: {
-      on: () => undefined,
-      off: () => undefined,
+      on: (event: string, listener: (payload: unknown) => void) => {
+        const listeners = socketHandlers.get(event) ?? new Set();
+        listeners.add(listener);
+        socketHandlers.set(event, listeners);
+      },
+      off: (event: string, listener: (payload: unknown) => void) => {
+        socketHandlers.get(event)?.delete(listener);
+      },
     },
     chatApi: {
       createConversation: async (body: { projectId?: string | null }) => {
@@ -87,6 +96,15 @@ vi.mock('sonner', () => ({
   toast: { error: (...args: unknown[]) => harness.toastError(...args) },
 }));
 
+function emitChatEvent(payload: Record<string, unknown>): void {
+  const listeners =
+    harness.socketHandlers.get(WebsocketClientEvent.CHAT_MESSAGE_CHUNK) ??
+    new Set();
+  for (const listener of [...listeners]) {
+    listener(payload);
+  }
+}
+
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 let chat: ReturnType<typeof useAgentChat> | undefined;
@@ -122,6 +140,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  harness.socketHandlers.clear();
   harness.createConversationCalls.length = 0;
   harness.updateConversationCalls.length = 0;
   harness.setUpdateConversationShouldFail(false);
@@ -160,6 +179,28 @@ describe('useAgentChat — project', () => {
     });
 
     expect(chat?.projectId).toBe('default-project');
+  });
+
+  it('learns the project the server pinned when the conversation was created before projects loaded', async () => {
+    await mountChat(null);
+
+    await act(async () => {
+      await chat?.sendMessage('hello');
+    });
+    expect(harness.createConversationCalls).toEqual([
+      expect.objectContaining({ projectId: null }),
+    ]);
+    expect(chat?.projectId).toBeNull();
+
+    await act(async () => {
+      emitChatEvent({
+        conversationId: 'conv-1',
+        type: ChatAgentEventType.FINISHED,
+        data: { conversationId: 'conv-1' },
+      });
+    });
+
+    await vi.waitFor(() => expect(chat?.projectId).toBe('pinned-project'));
   });
 
   it('keeps a pick made before the first message local, then creates the conversation in it', async () => {
