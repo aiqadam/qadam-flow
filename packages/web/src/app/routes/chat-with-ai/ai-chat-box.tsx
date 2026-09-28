@@ -319,7 +319,8 @@ function ChatBoxContent({
               context={{
                 usage: contextUsage,
                 hasMessages: messages.length > 0,
-                hasReply: !isNil(lastAssistantMessage),
+                // A reply still streaming has not been measured yet, so it does not count.
+                hasReply: !isStreaming && !isNil(lastAssistantMessage),
               }}
             />
           </div>

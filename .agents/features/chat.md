@@ -22,13 +22,18 @@ A platform-scoped conversation between one user and the chat agent. The agent is
 The Context button shows how full the model's context was on the last reply (`Context · 41%`). Its popover breaks that down: system prompt, tool schemas, messages, tool outputs and free space, against the model's window.
 
 - **Measured once per reply, stored on the reply.** When a run finishes, `chatContextUsage.measure` writes `contextUsage` (`ChatContextUsageSchema`) onto the persisted assistant message, so a reload shows the same figure. The web maps it onto the UI message's `metadata`, and `chatUtils.latestContextUsage` reads the newest valid one, which a reply still streaming does not replace.
-- **The total is the provider's count.** It is the last step's `usage.inputTokens`, which already includes the run's earlier steps, plus the reply's text tokens. The reply is included because the next turn sends it back. Reasoning tokens are not, because they are never replayed.
-- **The parts are an estimate.** No provider says what each part of a prompt cost, so each part is sized by the characters it put on the wire: the system prompt, each tool's name, description and input JSON schema (`asSchema(...).jsonSchema`, what the SDK sends), text and tool-call inputs, and tool results. Each part then gets its share of the real total, with largest-remainder rounding so the parts add up exactly. Reasoning and file parts are not counted.
+- **The total is the provider's count.** It is the last step's `usage.inputTokens`, which already includes the run's earlier steps, plus the reply's text tokens. The reply is included because the next turn sends it back.
+  - **Reasoning is excluded**, because it is never replayed. The reply count is `textTokens` where the provider splits it out, and otherwise `outputTokens − reasoningTokens`: Anthropic and OpenRouter report no `textTokens`.
+  - **A zero input count means "not reported".** The openai-compatible SDK turns a `usage` object without `prompt_tokens` into 0.
+  - **The result must pass `ChatContextUsageSchema`** before it is saved.
+- **The parts are an estimate.** No provider says what each part of a prompt cost, so each part is sized by the characters it put on the wire: the system prompt, each tool's name, description and input JSON schema (`asSchema(...).jsonSchema`, what the SDK sends), text and tool-call inputs, and tool results. Each part then gets its share of the real total, with largest-remainder rounding so the parts add up exactly. Reasoning is not counted.
+  - **Attachments cannot be sized.** An image or PDF is billed per image or page, not per base64 character, so file parts are left out of the split. Their tokens are still in the total, so on a turn with a large attachment the other parts read high.
 - **Window.** `chatModel.resolve` returns the model's `contextWindowTokens` from the provider's model list or the operator's catalogue (see `ai-providers.md`). When neither has it, the popover assumes `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS` (128k) and says so.
 - **No number without a measurement.**
-  - Before the first reply, the popover says the figure appears after it.
+  - While a reply streams, or before the first one, the popover says the figure appears once a reply finishes. A streaming reply is not counted as a reply.
   - When a provider streams no usage, `measure` returns null and the popover says so. It never shows a character-based guess as a total.
-  - CUSTOM and Cloudflare Gateway models are built with `includeUsage: true`, which sends `stream_options.include_usage`. Without it, OpenAI-compatible servers stream no counts.
+  - CUSTOM and Cloudflare Gateway models are built with `includeUsage`, which sends `stream_options.include_usage`. Without it, OpenAI-compatible servers stream no counts.
+    - A CUSTOM row can turn this off with `streamUsage: false` ("Request token usage" in the provider form), for a strict server that rejects the parameter. `extraBody` cannot remove it, because `stream_options` is a reserved key.
 - **Measuring never fails a run.** A throw is logged and the reply is saved without `contextUsage`.
 - **Tests.** `test/unit/app/chat/chat-context-usage.test.ts` covers the arithmetic. `chat-agent.test.ts` drives a scripted provider that streams usage, and one that streams none. The web popover and the metadata mapping have their own tests.
 

@@ -404,9 +404,6 @@ function describeSendError(error: unknown): string {
   return t('Failed to send message');
 }
 
-// `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
-// run resumed from an approval windows everything persisted. So a run in flight is described by the
-// list minus its reply in progress and, when one was just sent, minus that user turn.
 // The newest measurement, not the newest message: a reply still streaming has none yet, and neither
 // does one from a provider that reports no usage, and the popover should keep showing the last
 // real figure rather than go blank.
@@ -425,6 +422,9 @@ function latestContextUsage({
   return null;
 }
 
+// `start` windows `uiMessages.slice(0, -1)` and appends the new user turn outside the window, and a
+// run resumed from an approval windows everything persisted. So a run in flight is described by the
+// list minus its reply in progress and, when one was just sent, minus that user turn.
 function messagesWindowedByRun({
   messages,
   isStreaming,

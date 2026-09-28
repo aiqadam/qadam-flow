@@ -28,12 +28,12 @@ const history: ModelMessage[] = [
     { role: 'assistant', content: [{ type: 'text', text: 'You have one flow.' }] },
 ]
 
-function usage({ inputTokens, outputTokens, textTokens }: { inputTokens: number | undefined, outputTokens?: number, textTokens?: number }): LanguageModelUsage {
+function usage({ inputTokens, outputTokens, textTokens, reasoningTokens }: { inputTokens: number | undefined, outputTokens?: number, textTokens?: number, reasoningTokens?: number }): LanguageModelUsage {
     return {
         inputTokens,
         inputTokenDetails: { noCacheTokens: undefined, cacheReadTokens: undefined, cacheWriteTokens: undefined },
         outputTokens,
-        outputTokenDetails: { textTokens, reasoningTokens: undefined },
+        outputTokenDetails: { textTokens, reasoningTokens },
         totalTokens: undefined,
     }
 }
@@ -63,6 +63,17 @@ describe('chatContextUsage.measure', () => {
         const measured = await measure(usage({ inputTokens: 1_000, outputTokens: 200 }))
 
         expect(measured?.usedTokens).toBe(1_200)
+    })
+
+    // Anthropic and OpenRouter report the reasoning share but no `textTokens`.
+    it('subtracts reasoning when the provider reports it without a text count', async () => {
+        const measured = await measure(usage({ inputTokens: 1_000, outputTokens: 700, reasoningTokens: 500 }))
+
+        expect(measured?.usedTokens).toBe(1_200)
+    })
+
+    it('reads a zero input count as not reported, since every turn sends the system prompt', async () => {
+        expect(await measure(usage({ inputTokens: 0, outputTokens: 12 }))).toBeNull()
     })
 
     it('splits the total so the parts add up to it exactly', async () => {

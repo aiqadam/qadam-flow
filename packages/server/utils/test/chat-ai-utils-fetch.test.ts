@@ -153,3 +153,36 @@ describe('createChatModel rejects a stored config value that would move the host
         expect(captured.has('bedrock')).toBe(false)
     })
 })
+
+describe('createChatModel streamed usage', () => {
+    function customIncludeUsage(config: Record<string, unknown>): unknown {
+        captured.clear()
+        chatAiUtils.createChatModel({
+            provider: AIProviderName.CUSTOM,
+            auth: { apiKey: 'k' },
+            config: { baseUrl: 'https://llm.internal/v1', apiKeyHeader: 'Authorization', models: [], ...config },
+            modelId: 'Qwen/Qwen3.8-27B',
+        })
+        return captured.get('openai-compatible')?.['includeUsage']
+    }
+
+    // Without it an OpenAI-compatible server streams no token counts, and the chat's context fill
+    // has nothing to show.
+    it('asks a CUSTOM row for token counts unless the operator turned it off', () => {
+        expect(customIncludeUsage({})).toBe(true)
+        expect(customIncludeUsage({ streamUsage: true })).toBe(true)
+        expect(customIncludeUsage({ streamUsage: false })).toBe(false)
+    })
+
+    it('asks Cloudflare Gateway for token counts', () => {
+        captured.clear()
+        chatAiUtils.createChatModel({
+            provider: AIProviderName.CLOUDFLARE_GATEWAY,
+            auth: { apiKey: 'k' },
+            config: { accountId: 'acc', gatewayId: 'gw', models: [] },
+            modelId: 'openai/gpt-4o',
+        })
+
+        expect(captured.get('openai-compatible')?.['includeUsage']).toBe(true)
+    })
+})

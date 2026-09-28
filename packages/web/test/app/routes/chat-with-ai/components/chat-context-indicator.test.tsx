@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ChatContextIndicator } from '@/app/routes/chat-with-ai/components/chat-context-indicator';
 
-// Interpolates the arguments too, so a test can tell "81K of 200K" from the numbers swapped.
+// Interpolates the arguments too, so a test can tell "81k of 200k" from the numbers swapped.
 // i18next is not initialised in this harness, so plural arguments stay as written.
 vi.mock('i18next', async (importOriginal) => ({
   ...(await importOriginal<typeof import('i18next')>()),
@@ -79,14 +79,14 @@ describe('ChatContextIndicator', () => {
   it('shows the total against the window, what filled it, and what is left', async () => {
     const { content } = await openIndicator({ usage: measured, hasReply: true });
 
-    expect(content).toContain('claude-sonnet-4 · window 200K');
-    expect(content).toContain('81K of 200K · 41%');
-    expect(content).toContain('System prompt≈ 7K');
-    expect(content).toContain('≈ 16K');
-    expect(content).toContain('Messages≈ 13K');
-    expect(content).toContain('Tool outputs≈ 45K');
+    expect(content).toContain('claude-sonnet-4 · window 200k');
+    expect(content).toContain('81k of 200k · 41%');
+    expect(content).toContain('System prompt≈ 7k');
+    expect(content).toContain('≈ 16k');
+    expect(content).toContain('Messages≈ 13k');
+    expect(content).toContain('Tool outputs≈ 45k');
     // Free is arithmetic on two real numbers, not an estimate.
-    expect(content).toContain('Free119K');
+    expect(content).toContain('Free119k');
   });
 
   it('says when the window is assumed rather than known', async () => {
@@ -95,8 +95,8 @@ describe('ChatContextIndicator', () => {
       hasReply: true,
     });
 
-    expect(content).toContain('claude-sonnet-4 · window not set, assuming 128K');
-    expect(content).toContain('81K of 128K · 63%');
+    expect(content).toContain('claude-sonnet-4 · window not set, assuming 128k');
+    expect(content).toContain('81k of 128k · 63%');
   });
 
   it('never shows more than a full context, or negative room', async () => {
@@ -116,14 +116,14 @@ describe('ChatContextIndicator', () => {
     });
 
     expect(trigger).toBe('Context');
-    expect(content).toContain('Shows up after the first reply.');
+    expect(content).toContain('Shows up once a reply finishes.');
   });
 
   it('says the provider reported nothing rather than inventing a figure', async () => {
     const { content } = await openIndicator({ usage: null, hasReply: true });
 
     expect(content).toContain(
-      'The provider did not report token usage for this reply.',
+      'No measurement for the last reply. It appears after the next one, if the provider reports token usage.',
     );
     expect(content).not.toContain('%');
   });

@@ -126,6 +126,10 @@ export const OpenAICompatibleProviderConfig = z.object({
     models: z.array(ProviderModelConfig).max(MAX_MODELS_PER_PROVIDER, formErrors.tooManyModels),
     defaultHeaders: z.record(z.string(), z.string()).optional(),
     extraBody: OpenAICompatibleExtraBody.optional(),
+    // Whether chat asks for token counts (`stream_options.include_usage`). Absent means yes. An
+    // opt-out exists because the parameter is one the SDK owns — `extraBody` cannot remove it — and
+    // a strict server that rejects unknown body fields would otherwise fail every chat turn.
+    streamUsage: z.boolean().optional(),
 })
 export type OpenAICompatibleProviderConfig = z.infer<typeof OpenAICompatibleProviderConfig>
 

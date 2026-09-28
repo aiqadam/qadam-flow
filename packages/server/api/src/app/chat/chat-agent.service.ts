@@ -6,6 +6,7 @@ import {
     ChatAgentEvent,
     ChatAgentEventType,
     ChatContextUsage,
+    ChatContextUsageSchema,
     ChatConversation,
     ErrorCode,
     isNil,
@@ -544,7 +545,11 @@ async function measureContextUsage({ resolvedModel, systemPrompt, tools, history
         log.warn({ conversationId, runId, errorName: error.name }, '[chatAgentService#runAgentLoop] could not measure the context usage; the reply is saved without it')
         return null
     }
-    return data
+    // The counts come from the provider's stream, which the SDK only checks for being numbers; a
+    // CUSTOM endpoint can report a negative or fractional one. Saved only if it fits the schema the
+    // browser reads it back through.
+    const parsed = ChatContextUsageSchema.safeParse(data)
+    return parsed.success ? parsed.data : null
 }
 
 function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {

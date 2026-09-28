@@ -66,6 +66,13 @@ An optional JSON object merged into every chat-completions body the row sends, t
 - **Validation:** a reported value goes through `parseModelContextWindowTokens`, the same `ModelContextWindowTokens` bounds (1,024 to 10,000,000, integer) the operator is held to. Anything else reads as "not reported".
 - **When unknown:** readers assume `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS`, which is 128k. It is not smaller because the chat's own system prompt and tool schemas are about 23k tokens before the first message. The model list in the provider form states the assumption on every text model without a size.
 
+## CUSTOM `streamUsage`
+
+When this optional boolean is absent or true, chat asks the server for token counts (`includeUsage` → `stream_options.include_usage`). The chat's context fill reads those counts (see `chat.md`).
+
+- **Why the opt-out exists:** `stream_options` is a reserved key, so `extraBody` cannot remove it, and a server that rejects unknown body fields would otherwise fail every chat turn.
+- **Scope:** chat only. The qadam's own `createAIModel` does not read it.
+
 ## Model Caching
 
 Models listed per provider are cached in an in-process LRU bounded at 200 entries (`packages/server/api/src/app/ai/models-cache.ts`), keyed by the provider row's `id` and its `updated` timestamp — so editing credentials or config invalidates the entry, and two rows never share one. Providers whose config carries an explicit `models` list bypass the cache. `aiProviderService.setup()` registers a `0 0 * * *` node-cron job that clears the whole cache daily at midnight.

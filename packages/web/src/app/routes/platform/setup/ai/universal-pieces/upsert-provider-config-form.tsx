@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Tooltip,
@@ -437,6 +438,33 @@ export const UpsertProviderConfigForm = ({
                   )}
                 </FormDescription>
                 <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="config.streamUsage"
+            render={({ field }) => (
+              <FormItem className="grid space-y-2">
+                <div className="flex items-center justify-between">
+                  <FormLabel htmlFor="streamUsage">
+                    {t('Request token usage')}
+                  </FormLabel>
+                  <FormControl>
+                    <Switch
+                      id="streamUsage"
+                      checked={field.value !== false}
+                      onCheckedChange={field.onChange}
+                      disabled={isLoading}
+                    />
+                  </FormControl>
+                </div>
+                <FormDescription>
+                  {t(
+                    'Asks the server to report token counts, which the chat shows as context fill. Turn off if the server rejects stream_options.',
+                  )}
+                </FormDescription>
               </FormItem>
             )}
           />

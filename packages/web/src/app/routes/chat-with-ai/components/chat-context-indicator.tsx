@@ -43,12 +43,38 @@ export function ChatContextIndicator({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-80 p-4" align="start">
-        <p className="text-sm font-medium">{t('Model context')}</p>
+        {isNil(usage) || isNil(fill) ? (
+          <p className="text-sm font-medium">{t('Model context')}</p>
+        ) : (
+          <p className="text-sm break-words">
+            <span className="font-medium">{t('Model context')}</span>
+            <span className="text-muted-foreground">
+              {' · '}
+              {isNil(usage.contextWindowTokens)
+                ? t('{model} · window not set, assuming {tokens}', {
+                    model: usage.modelId,
+                    tokens: formatTokens({
+                      tokens: fill.windowTokens,
+                      locale: i18n.language,
+                    }),
+                  })
+                : t('{model} · window {tokens}', {
+                    model: usage.modelId,
+                    tokens: formatTokens({
+                      tokens: fill.windowTokens,
+                      locale: i18n.language,
+                    }),
+                  })}
+            </span>
+          </p>
+        )}
         {isNil(usage) || isNil(fill) ? (
           <p className="mt-2 text-sm text-muted-foreground">
             {hasReply
-              ? t('The provider did not report token usage for this reply.')
-              : t('Shows up after the first reply.')}
+              ? t(
+                  'No measurement for the last reply. It appears after the next one, if the provider reports token usage.',
+                )
+              : t('Shows up once a reply finishes.')}
           </p>
         ) : (
           <ContextBreakdown usage={usage} fill={fill} locale={i18n.language} />
@@ -82,18 +108,7 @@ function ContextBreakdown({
   const { breakdown } = usage;
   const format = (tokens: number) => formatTokens({ tokens, locale });
   return (
-    <div className="mt-1 space-y-3">
-      <p className="text-xs text-muted-foreground font-mono break-all">
-        {isNil(usage.contextWindowTokens)
-          ? t('{model} · window not set, assuming {tokens}', {
-              model: usage.modelId,
-              tokens: format(fill.windowTokens),
-            })
-          : t('{model} · window {tokens}', {
-              model: usage.modelId,
-              tokens: format(fill.windowTokens),
-            })}
-      </p>
+    <div className="mt-3 space-y-3">
       <div className="space-y-1.5">
         <Progress
           value={fill.percent}
@@ -175,6 +190,9 @@ function contextFill(usage: ChatContextUsage): ContextFill {
   };
 }
 
+// "81k", "1.2M" in every language, as agreed for this popover, rather than `Intl`'s compact
+// notation: that reads "81 тыс." in Russian and "200 м." in Kazakh, which is ambiguous. Only the
+// digits are localised.
 function formatTokens({
   tokens,
   locale,
@@ -182,10 +200,11 @@ function formatTokens({
   tokens: number;
   locale: string;
 }): string {
-  return new Intl.NumberFormat(locale, {
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).format(tokens);
+  const digits = (value: number) =>
+    new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
+  if (tokens >= 1_000_000) return `${digits(tokens / 1_000_000)}M`;
+  if (tokens >= 1_000) return `${digits(tokens / 1_000)}k`;
+  return digits(tokens);
 }
 
 type ContextFill = {

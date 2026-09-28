@@ -7,7 +7,10 @@ export const chatContextUsage = {
      *
      * The total is the provider's own count, never an estimate: the last step's input, which already
      * contains every earlier step of the run, plus the text it produced, which the next turn sends
-     * back. Reasoning is left out of that addition because `chat-transcript.ts` never replays it.
+     * back. Reasoning is left out of that addition because `chat-transcript.ts` never replays it —
+     * from `textTokens` where the provider splits it out, otherwise by subtracting `reasoningTokens`
+     * (Anthropic and OpenRouter report no `textTokens`). A provider that reports neither split
+     * counts its reasoning in, which only over-states the figure.
      *
      * Only the split is estimated. No provider says which part of a prompt cost what, so each part is
      * sized by the characters it put on the wire and given that share of the total. Scaling to the
@@ -15,15 +18,22 @@ export const chatContextUsage = {
      * provider reported, and tokenizer differences cancel out of the proportions instead of piling
      * up in the total.
      *
+     * Attachments are the one part this cannot size: an image or a PDF is billed per image or page,
+     * not per base64 character, so file parts are left out of the split. Their tokens are still in
+     * the total, so on a turn with a large attachment the other parts read high.
+     *
      * Returns null when the provider did not report input tokens, which some OpenAI-compatible
-     * servers do not: a guessed total would be presented as a measurement.
+     * servers do not: a guessed total would be presented as a measurement. Zero counts as not
+     * reported too — the openai-compatible SDK turns a `usage` object without `prompt_tokens` into
+     * 0, and a real turn always sends at least the system prompt.
      */
     async measure({ modelId, contextWindowTokens, systemPrompt, tools, history, lastStepUsage }: MeasureParams): Promise<ChatContextUsage | null> {
         const inputTokens = lastStepUsage.inputTokens
-        if (isNil(inputTokens)) {
+        if (isNil(inputTokens) || inputTokens <= 0) {
             return null
         }
-        const replyTokens = lastStepUsage.outputTokenDetails.textTokens ?? lastStepUsage.outputTokens ?? 0
+        const replyTokens = lastStepUsage.outputTokenDetails.textTokens
+            ?? Math.max(0, (lastStepUsage.outputTokens ?? 0) - (lastStepUsage.outputTokenDetails.reasoningTokens ?? 0))
         const usedTokens = inputTokens + replyTokens
 
         const toolEntries = Object.entries(tools)
@@ -58,8 +68,7 @@ async function toolDefinitionSize({ name, tool }: { name: string, tool: ToolSet[
 // Tool results are counted apart from everything else because they are what usually fills a build
 // session — a flow's JSON, a qadam's props — and the part the user most needs to see. A tool call's
 // input is the model's own writing, so it counts as a message. Reasoning is skipped: it is never
-// replayed. File parts are skipped too: an attachment is billed per image or page, not per base64
-// character, so its size here would be off by orders of magnitude.
+// replayed. File parts are skipped too, for the reason given on `measure`.
 function historySizes(history: ModelMessage[]): { messages: number, toolOutputs: number } {
     return history.reduce((totals, message) => {
         const { messages, toolOutputs } = messageSizes(message)
