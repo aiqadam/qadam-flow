@@ -202,8 +202,10 @@ function formatTokens({
 }): string {
   const digits = (value: number) =>
     new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
-  if (tokens >= 1_000_000) return `${digits(tokens / 1_000_000)}M`;
-  if (tokens >= 1_000) return `${digits(tokens / 1_000)}k`;
+  // Chosen on the rounded value, so 999,960 reads "1M" rather than "1,000k".
+  if (Math.round(tokens / 100_000) >= 10)
+    return `${digits(tokens / 1_000_000)}M`;
+  if (Math.round(tokens / 100) >= 10) return `${digits(tokens / 1_000)}k`;
   return digits(tokens);
 }
 

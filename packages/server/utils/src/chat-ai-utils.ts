@@ -89,7 +89,8 @@ function createChatModel({ provider, auth, config, modelId }: {
             return createOpenAICompatible({
                 name: 'cloudflare',
                 fetch: safeHttp.fetch,
-                // See CUSTOM below. Cloudflare's own compat endpoint accepts it, so no opt-out.
+                // See CUSTOM below. No opt-out here: the gateway's compat endpoint is OpenAI's own
+                // wire format, which defines `stream_options`. Not exercised against a live gateway.
                 includeUsage: true,
                 baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/compat`,
                 headers: { 'cf-aig-authorization': `Bearer ${apiKey}` },

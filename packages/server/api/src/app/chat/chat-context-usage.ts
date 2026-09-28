@@ -9,8 +9,8 @@ export const chatContextUsage = {
      * contains every earlier step of the run, plus the text it produced, which the next turn sends
      * back. Reasoning is left out of that addition because `chat-transcript.ts` never replays it —
      * from `textTokens` where the provider splits it out, otherwise by subtracting `reasoningTokens`
-     * (Anthropic and OpenRouter report no `textTokens`). A provider that reports neither split
-     * counts its reasoning in, which only over-states the figure.
+     * (OpenRouter reports that but no `textTokens`). A provider that reports neither split —
+     * Anthropic among them — counts its reasoning in, which only over-states the figure.
      *
      * Only the split is estimated. No provider says which part of a prompt cost what, so each part is
      * sized by the characters it put on the wire and given that share of the total. Scaling to the

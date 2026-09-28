@@ -549,7 +549,11 @@ async function measureContextUsage({ resolvedModel, systemPrompt, tools, history
     // CUSTOM endpoint can report a negative or fractional one. Saved only if it fits the schema the
     // browser reads it back through.
     const parsed = ChatContextUsageSchema.safeParse(data)
-    return parsed.success ? parsed.data : null
+    if (!parsed.success) {
+        log.warn({ conversationId, runId, modelId: resolvedModel.modelId }, '[chatAgentService#runAgentLoop] the provider reported token counts that do not fit the schema; the reply is saved without a context measurement')
+        return null
+    }
+    return parsed.data
 }
 
 function toContentParts(steps: StepResult<ToolSet>[]): ContentPartLike[] {

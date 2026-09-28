@@ -65,7 +65,7 @@ describe('chatContextUsage.measure', () => {
         expect(measured?.usedTokens).toBe(1_200)
     })
 
-    // Anthropic and OpenRouter report the reasoning share but no `textTokens`.
+    // OpenRouter reports the reasoning share but no `textTokens`.
     it('subtracts reasoning when the provider reports it without a text count', async () => {
         const measured = await measure(usage({ inputTokens: 1_000, outputTokens: 700, reasoningTokens: 500 }))
 
