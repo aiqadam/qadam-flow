@@ -78,6 +78,22 @@ describe('chatUtils.isCompactionPending', () => {
     ).toBe(false);
   });
 
+  it('is not pending when the turn was stopped before its first token and saved no reply', () => {
+    const messages = [
+      message({ id: 'u0', role: 'user' }),
+      measured({ id: 'a0', usage: due() }),
+      message({ id: 'u1', role: 'user' }),
+    ];
+
+    expect(
+      chatUtils.isCompactionPending({
+        messages,
+        summarizedUpToIndex: null,
+        autoCompact: true,
+      }),
+    ).toBe(false);
+  });
+
   it('is not pending under the threshold, or on a measurement taken before the start last moved', () => {
     const under = [
       message({ id: 'u', role: 'user' }),

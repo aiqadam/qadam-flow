@@ -439,10 +439,16 @@ function isCompactionPending({
   autoCompact: boolean;
 }): boolean {
   if (!autoCompact) return false;
-  const lastReply = messages.findLast(
-    (message) => message.role === 'assistant',
-  );
-  if (isNil(lastReply) || !isObject(lastReply.metadata)) return false;
+  // A turn stopped before its first token saves no reply, so the newest message is the user's and
+  // the server ran no pass after it — an older reply's measurement must not start a poll.
+  const lastReply = messages.at(-1);
+  if (
+    isNil(lastReply) ||
+    lastReply.role !== 'assistant' ||
+    !isObject(lastReply.metadata)
+  ) {
+    return false;
+  }
   const parsed = ChatContextUsageSchema.safeParse(
     lastReply.metadata.contextUsage,
   );

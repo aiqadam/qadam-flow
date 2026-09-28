@@ -703,6 +703,38 @@ describe('Chat agent API', () => {
             expect(JSON.stringify(row.uiMessages)).not.toContain('Must never be sent.')
         })
 
+        it('settles as cancelled, not failed, when another instance stopped the turn while a pass that shortened nothing ran', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'prompt is too long', type: 'invalid_request_error' } } }]
+            let releaseSummary: () => void = () => {}
+            providerSummaryHold = new Promise<void>((resolve) => {
+                releaseSummary = resolve
+            })
+            // A blank summary is refused, so the pass reports it shortened nothing.
+            providerSummaryReply = '   '
+            scriptedResponses = [completionStream('Must never be sent.')]
+            providerBodies = []
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitFor(() => providerSummaryRequested)
+            // What `cancelRun` writes when the Stop lands on an instance not running this loop:
+            // status only, `activeRunId` kept, and no local abort.
+            await db.update('chat_conversation', conversationId, { status: ChatConversationStatus.IDLE })
+            releaseSummary()
+            const row = await waitForCondition(async () => {
+                const candidate = await db.findOneBy<Record<string, unknown>>('chat_conversation', { id: conversationId })
+                return candidate?.status !== ChatConversationStatus.STREAMING && isNil(candidate?.activeRunId) ? candidate : null
+            })
+
+            expect(row.status).toBe(ChatConversationStatus.IDLE)
+            expect(row.summary).toBeNull()
+            expect(JSON.stringify(row.uiMessages)).not.toContain('Must never be sent.')
+        })
+
         it('drops instead of summarising when the conversation has auto-compact off', async () => {
             await enableChatProvider(ctx.platform.id)
             const conversationId = await createConversation(ctx)
