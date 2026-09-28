@@ -184,7 +184,7 @@ const CHAT_OVERFLOW_KEEP_RATIO = 0.2
 const DEFAULT_TOKENS_PER_CHAR = 0.25
 // A floor for windows too small for the ratio to leave anything useful.
 const MIN_SUMMARY_INPUT_CHARS = 4_000
-const LINE_BREAK = /\r\n|[\r\n\u0085\u2028\u2029]/g
+const LINE_BREAK = /\r\n|[\r\n\v\f\u0085\u2028\u2029]/g
 // Tool outputs are what make a build session long — a flow's JSON, a qadam's props. The summary needs
 // what a call did and what came of it, not the payload, and an unbounded input would let the pass
 // itself overflow the window it exists to protect.
@@ -317,7 +317,7 @@ function renderPart({ role, part }: { role: PersistedChatRole, part: PersistedCh
     }
 }
 
-// Every line break a model might read as one, not only `\n`: a bare CR or a Unicode separator
+// Every line break a model might read as one, not only `\n`: a bare CR, VT, FF or a Unicode separator
 // would otherwise let the text after it start a line.
 function indentContinuation(line: string): string {
     return line.replaceAll(LINE_BREAK, '\n  ')
