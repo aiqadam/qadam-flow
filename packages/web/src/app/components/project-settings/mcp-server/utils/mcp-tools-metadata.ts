@@ -107,6 +107,10 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
         description: 'Rename an existing flow',
       },
       {
+        name: 'ap_update_locale_source',
+        description: "Set or clear a flow's locale source for translations",
+      },
+      {
         name: 'ap_change_flow_status',
         description: 'Enable or disable a flow',
       },

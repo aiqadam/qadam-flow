@@ -20,7 +20,7 @@ List flows in the current project with status, trigger type, and published state
 
 ### ap_flow_structure
 
-Get the full structure of a flow: step tree, configuration status, step input values, router branch conditions, valid insert locations, and whether each step's pinned qadam version is still available on this installation. Shows the actual configured inputs for each step (URL, body, headers, etc.) so the AI can read and edit existing configurations.
+Get the full structure of a flow: step tree, configuration status, step input values, router branch conditions, valid insert locations, the flow's `localeSource`, and whether each step's pinned qadam version is still available on this installation. Shows the actual configured inputs for each step (URL, body, headers, etc.) so the AI can read and edit existing configurations.
 
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -234,6 +234,19 @@ Rename an existing flow.
 |-------|------|----------|-------------|
 | `flowId` | string | Yes | The flow ID |
 | `displayName` | string | Yes | New name |
+
+### ap_update_locale_source
+
+Set or clear a flow's `localeSource`. This is the expression evaluated once per run to pick the locale that `$t` translation references resolve in, and every flow it calls inherits that locale. The tool changes only this one field on the draft. There is no export/import round-trip, so step connections stay intact.
+
+| Input | Type | Required | Description |
+|-------|------|----------|-------------|
+| `flowId` | string | Yes | The flow ID |
+| `localeSource` | string \| null | Yes | A template that reads the locale from an earlier step's output, or a fixed locale such as `ru`. `null` or an empty string clears it, so runs fall back to the caller's locale, then to the project's default locale. |
+
+<Tip>
+The change lands on the draft. Publish with `ap_lock_and_publish` for runs to use it. `ap_flow_structure` shows the current value.
+</Tip>
 
 ### ap_change_flow_status
 

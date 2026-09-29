@@ -11,6 +11,8 @@ import {
     FlowCreatorType,
     FlowRunStatus,
     flowStructureUtil,
+    FlowVersion,
+    FlowVersionState,
     McpServerType,
     PackageType,
     ProjectScopedMcpServer,
@@ -52,6 +54,7 @@ import { apRenameFlowTool } from '../../../../src/app/mcp/tools/ap-rename-flow'
 import { apResearchPiecesTool } from '../../../../src/app/mcp/tools/ap-research-qadams'
 import { apRunActionTool } from '../../../../src/app/mcp/tools/ap-run-action'
 import { apUpdateBranchTool } from '../../../../src/app/mcp/tools/ap-update-branch'
+import { apUpdateLocaleSourceTool } from '../../../../src/app/mcp/tools/ap-update-locale-source'
 import { apUpdateStepTool } from '../../../../src/app/mcp/tools/ap-update-step'
 import { apUpdateTriggerTool } from '../../../../src/app/mcp/tools/ap-update-trigger'
 import { apUpsertVariableTool } from '../../../../src/app/mcp/tools/ap-upsert-variable'
@@ -346,6 +349,55 @@ describe('MCP Tools integration', () => {
         // Flow structure header should reflect the new name
         const structure = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         expect(text(structure)).toContain('Renamed Flow')
+    })
+
+    it('7a. ap_update_locale_source — sets, reads back and clears localeSource on the draft (#562)', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const flowId = await createFlowAndGetId(mcp, 'Locale Source Flow')
+        const localeSource = '{{trigger[\'output\'].message.from.language_code}}'
+
+        const setResult = await apUpdateLocaleSourceTool(mcp, mockLog).execute({ flowId, localeSource: `  ${localeSource}  ` })
+
+        expect(text(setResult)).toContain('✅')
+        expect(setResult.structuredContent).toEqual({ flowId, localeSource, previousLocaleSource: null })
+        const afterSet = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+        expect(afterSet.structuredContent?.localeSource).toBe(localeSource)
+        expect(text(afterSet)).toContain(localeSource)
+
+        const clearResult = await apUpdateLocaleSourceTool(mcp, mockLog).execute({ flowId, localeSource: '   ' })
+
+        expect(clearResult.structuredContent).toEqual({ flowId, localeSource: null, previousLocaleSource: localeSource })
+        const afterClear = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
+        expect(afterClear.structuredContent?.localeSource).toBeNull()
+    })
+
+    it('7a2. ap_update_locale_source — leaves a published version alone and writes a new draft (#562)', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const flowId = await createFlowAndGetId(mcp, 'Published Locale Flow')
+        const [published] = await db.find<FlowVersion>('flow_version', { flowId })
+        await db.update('flow_version', published.id, { state: FlowVersionState.LOCKED })
+
+        await apUpdateLocaleSourceTool(mcp, mockLog).execute({ flowId, localeSource: 'ru' })
+
+        const versions = await db.find<FlowVersion>('flow_version', { flowId })
+        expect(versions.find((version) => version.id === published.id)?.localeSource ?? null).toBeNull()
+        const drafts = versions.filter((version) => version.state === FlowVersionState.DRAFT)
+        expect(drafts).toHaveLength(1)
+        expect(drafts[0].localeSource).toBe('ru')
+    })
+
+    it('7b. ap_update_locale_source — does not reach a flow in another project (#562)', async () => {
+        const owner = await createTestContext(app)
+        const other = await createTestContext(app)
+        const flowId = await createFlowAndGetId(makeMcp(owner.project.id), 'Someone Else Flow')
+
+        const result = await apUpdateLocaleSourceTool(makeMcp(other.project.id), mockLog).execute({ flowId, localeSource: 'ru' })
+
+        expect(text(result)).toContain('Flow not found')
+        const structure = await apFlowStructureTool(makeMcp(owner.project.id), mockLog).execute({ flowId })
+        expect(structure.structuredContent?.localeSource).toBeNull()
     })
 
     it('8. ap_delete_step — removes a step from a flow', async () => {

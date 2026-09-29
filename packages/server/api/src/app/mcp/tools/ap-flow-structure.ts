@@ -446,11 +446,18 @@ function formatFlowStructure(
     return lines.join('\n')
 }
 
+function formatLocaleSource({ localeSource }: { localeSource: string | null }): string {
+    const value = isNil(localeSource)
+        ? 'none (runs use the caller\'s locale, then the project default locale)'
+        : mcpUtils.wrapUntrustedValue(localeSource)
+    return `## Locale\nlocaleSource: ${value}. Change it with ap_update_locale_source.`
+}
+
 export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
     return {
         title: 'ap_flow_structure',
         permission: Permission.READ_FLOW,
-        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, and whether each step\'s pinned qadam version is still available on this installation. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
+        description: 'Get the structure of a flow: step tree (parent/child), each step type, configuration status (configured/unconfigured/invalid), valid insert locations for ap_add_step, the flow\'s localeSource, and whether each step\'s pinned qadam version is still available on this installation. Pass includeInput=true to also get each step\'s full untruncated input in structuredContent; text input: lines are returned untruncated too.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
             includeInput: z.boolean().optional().describe('When true, include the full step input (untruncated) in structuredContent.steps[].input and render text input: lines untruncated'),
@@ -483,12 +490,18 @@ export const apFlowStructureTool = (mcp: ProjectScopedMcpServer, log: FastifyBas
                     : new Map<string, boolean | undefined>()
                 const { structure, stepByName } = buildFlowStructure({ trigger: flow.version.trigger, qadamResolutions })
                 const positions = flowCanvasUtils.computeStepPositions(flow.version.trigger)
-                const text = formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [], !!includeInput)
+                const localeSource = flow.version.localeSource ?? null
+                const text = [
+                    formatFlowStructure(flow.version.displayName, flow.id, structure, stepByName, positions, flow.version.notes ?? [], !!includeInput),
+                    '',
+                    formatLocaleSource({ localeSource }),
+                ].join('\n')
                 return {
                     content: [{ type: 'text', text }],
                     structuredContent: {
                         flowId: flow.id,
                         displayName: flow.version.displayName,
+                        localeSource,
                         steps: structure.map(s => ({
                             name: s.name,
                             type: s.type,
