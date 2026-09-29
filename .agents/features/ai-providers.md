@@ -63,6 +63,7 @@ An optional JSON object merged into every chat-completions body the row sends, t
   - **Model lists that report it:** OpenRouter `context_length` (nullable), Google `inputTokenLimit` and Mistral `max_context_length`.
   - **The operator:** the optional `contextWindowTokens` on a CUSTOM or Cloudflare Gateway catalogue entry (`ProviderModelConfig`), set in the model popover.
   - **Nothing else:** OpenAI, Anthropic, Azure and Bedrock do not report it through the endpoints we call, and there is no per-model editor for them.
+- **Reaching the chat:** `aiProviderService.listModels` rebuilds each model from a fixed set of fields before caching it, and `contextWindowTokens` has to be one of them. For a while it was not, and the chat assumed 128k for every listed model. `test/unit/app/chat/chat-model-context-window.test.ts` covers the whole path, from a stubbed HTTP model list through the real service and cache to `chatModel.resolve`.
 - **Validation:** a reported value goes through `parseModelContextWindowTokens`, the same `ModelContextWindowTokens` bounds (1,024 to 10,000,000, integer) the operator is held to. Anything else reads as "not reported".
 - **When unknown:** readers assume `DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS`, which is 128k. It is not smaller because the chat's own system prompt and tool schemas are about 23k tokens before the first message. The model list in the provider form states the assumption on every text model without a size.
 
