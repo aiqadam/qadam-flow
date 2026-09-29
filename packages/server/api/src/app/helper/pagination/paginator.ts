@@ -33,8 +33,6 @@ export type OrderByConfig = {
 const PAGINATION_KEY = 'created'
 
 export default class Paginator<Entity extends ObjectLiteral> {
-    public static readonly NO_LIMIT = -1
-
     private afterCursor: string | null = null
 
     private beforeCursor: string | null = null
@@ -46,6 +44,8 @@ export default class Paginator<Entity extends ObjectLiteral> {
     private alias: string
 
     private limit = 100
+
+    private unlimited = false
 
     private order: Order = Order.DESC
 
@@ -71,6 +71,10 @@ export default class Paginator<Entity extends ObjectLiteral> {
 
     public setLimit(limit: number): void {
         this.limit = limit
+    }
+
+    public setUnlimited(): void {
+        this.unlimited = true
     }
 
     public setOrder(order: Order): void {
@@ -275,7 +279,7 @@ export default class Paginator<Entity extends ObjectLiteral> {
     }
 
     private isUnlimited(): boolean {
-        return this.limit === Paginator.NO_LIMIT
+        return this.unlimited
     }
 
     private encode(entity: Entity): string {

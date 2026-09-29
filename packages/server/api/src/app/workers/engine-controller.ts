@@ -15,7 +15,7 @@ export const flowEngineWorker: FastifyPluginAsyncZod = async (app) => {
     app.get('/populated-flows', GetAllFlowsByProjectParams, async (request) => {
         return flowService(request.log).list({
             projectIds: [request.principal.projectId],
-            limit: request.query.limit ?? 1000000,
+            limit: request.query.limit,
             cursorRequest: request.query.cursor ?? null,
             folderId: request.query.folderId,
             status: request.query.status,

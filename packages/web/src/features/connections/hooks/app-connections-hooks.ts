@@ -28,6 +28,7 @@ import {
 import { internalErrorToast } from '@/components/ui/sonner';
 import { api } from '@/lib/api';
 import { authenticationSession } from '@/lib/authentication-session';
+import { seekPageUtils } from '@/lib/seek-page-utils';
 
 import { appConnectionsApi } from '../api/app-connections';
 import { globalConnectionsApi } from '../api/global-connections';
@@ -279,6 +280,8 @@ type UseConnectionsProps = {
   staleTime?: number;
   qadamAuth?: QadamAuthProperty | QadamAuthProperty[] | undefined;
   showErrorDialog?: boolean;
+  // Walk every page instead of one: a page is capped at 1000 rows server-side (#561).
+  allPages?: boolean;
 };
 
 export const appConnectionsQueries = {
@@ -289,6 +292,7 @@ export const appConnectionsQueries = {
     staleTime,
     qadamAuth,
     showErrorDialog,
+    allPages,
   }: UseConnectionsProps) => {
     return useQuery({
       queryKey: ['app-connections', ...extraKeys],
@@ -296,7 +300,11 @@ export const appConnectionsQueries = {
         ? { showErrorDialog: true, loadSubsetOptions: {} }
         : undefined,
       queryFn: async () => {
-        const connections = await appConnectionsApi.list(request);
+        const connections = allPages
+          ? await seekPageUtils.listAll((page) =>
+              appConnectionsApi.list({ ...request, ...page }),
+            )
+          : await appConnectionsApi.list(request);
         if (qadamAuth) {
           return {
             ...connections,

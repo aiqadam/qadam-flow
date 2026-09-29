@@ -45,7 +45,7 @@ import { transaction } from '../../core/db/transaction'
 import { distributedLock } from '../../database/redis-connections'
 import { buildPaginator } from '../../helper/pagination/build-paginator'
 import { paginationHelper } from '../../helper/pagination/pagination-utils'
-import Paginator, { Order } from '../../helper/pagination/paginator'
+import { Order } from '../../helper/pagination/paginator'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { SystemJobName } from '../../helper/system-jobs/common'
@@ -113,7 +113,7 @@ export const flowService = (log: FastifyBaseLogger) => ({
         projectIds,
         platformId,
         cursorRequest,
-        limit = Paginator.NO_LIMIT,
+        limit,
         folderId,
         folderIds,
         status,
@@ -129,6 +129,9 @@ export const flowService = (log: FastifyBaseLogger) => ({
         const paginator = buildPaginator({
             entity: FlowEntity,
             alias: 'ff',
+            // No limit means every flow: the server-side callers (analytics, flow validation,
+            // connection usage) read the whole set, and every HTTP route passes one.
+            unlimited: isNil(limit),
             query: {
                 limit,
                 orderBy: [

@@ -44,10 +44,11 @@ export const translationRepo = repoFactory(TranslationEntity)
 
 export const translationService = (log: FastifyBaseLogger) => ({
     async list(params: ListParams): Promise<SeekPage<Translation>> {
-        const { projectId, platformId, cursor, limit, key, missing } = params
+        const { projectId, platformId, cursor, limit, key, missing, unlimited } = params
         const decodedCursor = paginationHelper.decodeCursor(cursor ?? null)
         const paginator = buildPaginator({
             entity: TranslationEntity,
+            unlimited,
             query: {
                 limit: limit ?? 10,
                 // Not the default `created` key: that compares at one-second granularity, and a
@@ -728,6 +729,8 @@ type ListParams = {
     limit: number | undefined
     key: string | undefined
     missing?: boolean
+    // Server-side reads of the whole table only; bounded by MAX_TRANSLATION_KEYS_PER_PROJECT.
+    unlimited?: boolean
 }
 
 type GetOneParams = {

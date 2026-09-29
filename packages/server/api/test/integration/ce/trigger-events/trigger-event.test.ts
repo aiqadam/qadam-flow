@@ -1,8 +1,13 @@
 import {
+    EngineResponseStatus,
+    FlowTriggerType,
     PopulatedFlow,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
+import { triggerEventService } from '../../../../src/app/trigger/trigger-events/trigger-event.service'
+import { userInteractionWatcher } from '../../../../src/app/workers/user-interaction-watcher'
+import { createMockFlow, createMockFlowVersion } from '../../../helpers/mocks'
 import { createTestContext } from '../../../helpers/test-context'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
@@ -17,6 +22,45 @@ afterAll(async () => {
 })
 
 describe('Trigger Events API', () => {
+    describe('testing a trigger', () => {
+        afterEach(() => {
+            vi.restoreAllMocks()
+        })
+
+        it('returns an empty page when the trigger produced no sample events (#561)', async () => {
+            const ctx = await createTestContext(app!)
+            const flow = createMockFlow({ projectId: ctx.project.id })
+            const version = createMockFlowVersion({
+                flowId: flow.id,
+                trigger: {
+                    type: FlowTriggerType.PIECE,
+                    name: 'trigger',
+                    displayName: 'Trigger',
+                    valid: true,
+                    lastUpdatedDate: new Date().toISOString(),
+                    settings: {
+                        qadamName: '@aiqadam/qadam-webhook',
+                        qadamVersion: '0.0.1',
+                        triggerName: 'catch_request',
+                        input: {},
+                        propertySettings: {},
+                    },
+                },
+            })
+            vi.spyOn(userInteractionWatcher, 'submitAndWaitForResponse').mockResolvedValue({
+                status: EngineResponseStatus.OK,
+                response: { output: [] },
+            })
+
+            const page = await triggerEventService(app!.log).test({
+                projectId: ctx.project.id,
+                flow: { ...flow, version },
+            })
+
+            expect(page.data).toEqual([])
+        })
+    })
+
     describe('POST /v1/trigger-events (Save)', () => {
         it('should save a trigger event', async () => {
             const ctx = await createTestContext(app!)
