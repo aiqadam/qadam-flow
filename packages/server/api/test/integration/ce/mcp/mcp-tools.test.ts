@@ -11,6 +11,8 @@ import {
     FlowCreatorType,
     FlowRunStatus,
     flowStructureUtil,
+    FlowVersion,
+    FlowVersionState,
     McpServerType,
     PackageType,
     ProjectScopedMcpServer,
@@ -368,6 +370,22 @@ describe('MCP Tools integration', () => {
         expect(clearResult.structuredContent).toEqual({ flowId, localeSource: null, previousLocaleSource: localeSource })
         const afterClear = await apFlowStructureTool(mcp, mockLog).execute({ flowId })
         expect(afterClear.structuredContent?.localeSource).toBeNull()
+    })
+
+    it('7a2. ap_update_locale_source — leaves a published version alone and writes a new draft (#562)', async () => {
+        const ctx = await createTestContext(app)
+        const mcp = makeMcp(ctx.project.id)
+        const flowId = await createFlowAndGetId(mcp, 'Published Locale Flow')
+        const [published] = await db.find<FlowVersion>('flow_version', { flowId })
+        await db.update('flow_version', published.id, { state: FlowVersionState.LOCKED })
+
+        await apUpdateLocaleSourceTool(mcp, mockLog).execute({ flowId, localeSource: 'ru' })
+
+        const versions = await db.find<FlowVersion>('flow_version', { flowId })
+        expect(versions.find((version) => version.id === published.id)?.localeSource ?? null).toBeNull()
+        const drafts = versions.filter((version) => version.state === FlowVersionState.DRAFT)
+        expect(drafts).toHaveLength(1)
+        expect(drafts[0].localeSource).toBe('ru')
     })
 
     it('7b. ap_update_locale_source — does not reach a flow in another project (#562)', async () => {

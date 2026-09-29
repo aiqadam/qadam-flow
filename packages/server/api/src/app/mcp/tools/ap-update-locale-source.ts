@@ -15,7 +15,8 @@ import { mcpUtils } from './mcp-utils'
 
 const updateLocaleSourceInput = z.object({
     flowId: z.string(),
-    localeSource: z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong).nullable(),
+    // Trimmed before the length check, as the builder's Locale settings dialog does.
+    localeSource: z.string().transform((value) => value.trim()).pipe(z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong)).nullable(),
 })
 
 export const apUpdateLocaleSourceTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {
@@ -25,13 +26,13 @@ export const apUpdateLocaleSourceTool = (mcp: ProjectScopedMcpServer, log: Fasti
         description: 'Set or clear a flow\'s localeSource: the expression evaluated once per run to pick the locale its {{$t[...]}} references resolve in, and the locale every callFlow child inherits. Changes only this field on the draft (no export/import round-trip, step auth stays intact); publish with ap_lock_and_publish for runs to use it. ap_flow_structure shows the current value.',
         inputSchema: {
             flowId: z.string().describe('The id of the flow'),
-            localeSource: z.string().max(LOCALE_SOURCE_MAX_LENGTH, formErrors.localeSourceTooLong).nullable().describe('A template such as {{trigger[\'output\'].message.from.language_code}}, or a fixed locale such as ru. null or an empty string clears it, so runs fall back to the inherited locale, then the project default locale.'),
+            localeSource: z.string().nullable().describe(`At most ${LOCALE_SOURCE_MAX_LENGTH} characters after trimming. A template such as {{trigger[\'output\'].message.from.language_code}}, or a fixed locale such as ru. null or an empty string clears it, so runs fall back to the inherited locale, then the project default locale.`),
         },
         annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
         execute: async (args) => {
             const { flowId, localeSource } = updateLocaleSourceInput.parse(args)
-            // Same normalisation as the builder's Locale settings dialog: blank means "no override".
-            const normalized = isNil(localeSource) || localeSource.trim().length === 0 ? null : localeSource.trim()
+            // Blank means "no override", the same as in the builder's Locale settings dialog.
+            const normalized = isNil(localeSource) || localeSource.length === 0 ? null : localeSource
 
             const [flow, project] = await Promise.all([
                 flowService(log).getOnePopulated({ id: flowId, projectId: mcp.projectId }),
