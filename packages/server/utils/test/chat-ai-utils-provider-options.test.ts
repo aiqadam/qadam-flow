@@ -58,6 +58,54 @@ describe('chatAiUtils.buildProviderOptions', () => {
         })
     })
 
+    // Claude before 3.7 cannot think, and answers 400 to either shape. A Bedrock row lists every
+    // active Claude with no allow-list in front, so these are reachable ids, not hypotheticals.
+    describe('Claude models that cannot think are asked nothing', () => {
+        it.each([
+            'claude-3-5-haiku-20241022',
+            'claude-3-5-sonnet-latest',
+            'claude-3-haiku-20240307',
+            'claude-3-opus-20240229',
+            'claude-3-sonnet-20240229',
+            'claude-2.1',
+            'claude-2.0',
+            'claude-instant-1.2',
+        ])('on Anthropic: %s', (modelId) => {
+            expect(chatAiUtils.buildProviderOptions({ provider: AIProviderName.ANTHROPIC, modelId, reasoning: ON })).toBeNull()
+        })
+
+        it.each([
+            'anthropic.claude-3-haiku-20240307-v1:0',
+            'anthropic.claude-3-5-sonnet-20241022-v2:0',
+            'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+            'eu.anthropic.claude-3-sonnet-20240229-v1:0',
+            'apac.anthropic.claude-3-opus-20240229-v1:0',
+            'anthropic.claude-v2',
+            'anthropic.claude-v2:1',
+            'anthropic.claude-instant-v1',
+        ])('on Bedrock: %s', (modelId) => {
+            expect(chatAiUtils.buildProviderOptions({ provider: AIProviderName.BEDROCK, modelId, reasoning: ON })).toBeNull()
+        })
+
+        // The exclusion must not swallow the first Claude that can think, in either id form.
+        it.each([
+            [AIProviderName.ANTHROPIC, 'claude-3-7-sonnet-20250219'],
+            [AIProviderName.BEDROCK, 'us.anthropic.claude-3-7-sonnet-20250219-v1:0'],
+        ])('still asks %s %s for a budget', (provider, modelId) => {
+            expect(chatAiUtils.buildProviderOptions({ provider, modelId, reasoning: ON })).not.toBeNull()
+        })
+
+        // Linear-time check on a hostile id: a pattern with nested quantifiers would take seconds
+        // here, these take well under one.
+        it('matches a long adversarial id quickly', () => {
+            const hostile = `${'claude-3-'.repeat(20_000)}7`
+            const started = performance.now()
+            chatAiUtils.buildProviderOptions({ provider: AIProviderName.ANTHROPIC, modelId: hostile, reasoning: ON })
+            chatAiUtils.buildProviderOptions({ provider: AIProviderName.ANTHROPIC, modelId: `${'claude-sonnet-4-'.repeat(20_000)}x`, reasoning: ON })
+            expect(performance.now() - started).toBeLessThan(500)
+        })
+    })
+
     describe('Bedrock', () => {
         it('uses the bedrock key and reasoningConfig, which is what @ai-sdk/amazon-bedrock reads', () => {
             expect(chatAiUtils.buildProviderOptions({ provider: AIProviderName.BEDROCK, modelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', reasoning: ON })).toEqual({

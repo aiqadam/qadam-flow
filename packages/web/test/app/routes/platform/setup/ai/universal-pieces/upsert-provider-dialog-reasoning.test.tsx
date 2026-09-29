@@ -214,6 +214,47 @@ describe('provider dialog: reasoning in chat (#566)', () => {
     },
   );
 
+  // With the switch off the budget input — and the only message that could name its error — is
+  // unmounted, so an invalid budget left behind would make Save do nothing, silently. Before the
+  // fix the switch wrote back a stale copy of the budget, which hid this case and lost a valid
+  // budget instead (the next test); reading the current value exposes it, hence the reset.
+  it.each([
+    ['empty', ''],
+    ['out-of-range', '500'],
+  ])(
+    'saves with the default budget when an %s budget is left behind by turning the switch off',
+    async (_label, text) => {
+      await openDialog({ provider: AIProviderName.ANTHROPIC });
+      await typeInto('apiKey', 'sk-ant');
+      await toggleReasoning();
+      await typeInto('chatReasoningBudget', text);
+      await toggleReasoning();
+
+      await submit();
+
+      expect(upsert).toHaveBeenCalledTimes(1);
+      expect(upsert.mock.calls[0][0].config).toEqual({
+        reasoning: { enabled: false, budgetTokens: 8_000 },
+      });
+    },
+  );
+
+  // The switch used to write back the budget it saw on its own last render, which the budget
+  // input's keystrokes never refreshed — so the value just typed was replaced by the default.
+  it('keeps the budget the admin typed when the switch then goes off', async () => {
+    await openDialog({ provider: AIProviderName.ANTHROPIC });
+    await typeInto('apiKey', 'sk-ant');
+    await toggleReasoning();
+    await typeInto('chatReasoningBudget', '12000');
+    await toggleReasoning();
+
+    await submit();
+
+    expect(upsert.mock.calls[0]?.[0].config).toEqual({
+      reasoning: { enabled: false, budgetTokens: 12_000 },
+    });
+  });
+
   it('keeps the budget when an edit turns the switch off', async () => {
     await openDialog({
       provider: AIProviderName.BEDROCK,

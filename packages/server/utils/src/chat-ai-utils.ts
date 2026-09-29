@@ -4,7 +4,7 @@ import { createAzure } from '@ai-sdk/azure'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { SharedV3ProviderOptions } from '@ai-sdk/provider'
+import { JSONObject, SharedV3ProviderOptions } from '@ai-sdk/provider'
 import {
     AIProviderName,
     AzureProviderConfig,
@@ -157,16 +157,20 @@ function buildProviderOptions({ provider, modelId, reasoning }: BuildProviderOpt
     switch (provider) {
         // `@ai-sdk/anthropic` reads `providerOptions.anthropic.thinking` and adds the budget to the
         // `max_tokens` it sends, clamped to the model's output limit.
-        case AIProviderName.ANTHROPIC:
-            return { anthropic: { thinking: usesBudgetedThinking(modelId) ? { type: 'enabled', budgetTokens } : ADAPTIVE_THINKING } }
+        case AIProviderName.ANTHROPIC: {
+            const thinking = claudeThinking({ modelId, budgetTokens })
+            return isNil(thinking) ? null : { anthropic: { thinking } }
+        }
         // `@ai-sdk/amazon-bedrock` reads `providerOptions.bedrock.reasoningConfig` — not the
         // `anthropic` key — and only for a model id containing `anthropic`; for any other model it
         // would warn and send nothing, so nothing is asked of it here either.
-        case AIProviderName.BEDROCK:
+        case AIProviderName.BEDROCK: {
             if (!modelId.includes('anthropic')) {
                 return null
             }
-            return { bedrock: { reasoningConfig: usesBudgetedThinking(modelId) ? { type: 'enabled', budgetTokens } : ADAPTIVE_THINKING } }
+            const reasoningConfig = claudeThinking({ modelId, budgetTokens })
+            return isNil(reasoningConfig) ? null : { bedrock: { reasoningConfig } }
+        }
         // Spread into the request body verbatim by `@openrouter/ai-sdk-provider`, which is where
         // OpenRouter's own `reasoning` parameter lives.
         case AIProviderName.OPENROUTER:
@@ -181,16 +185,27 @@ function buildProviderOptions({ provider, modelId, reasoning }: BuildProviderOpt
     }
 }
 
-// Claude 4.5 and earlier accept only a fixed budget and answer 400 to `adaptive`; Claude 4.7 and
-// later answer 400 to a budget (4.6 still takes one, deprecated). So the id decides, and anything
-// not recognised as the older generation gets `adaptive`, which is the direction every newer model
-// goes. Matched anywhere in the id so a Bedrock id (`us.anthropic.claude-sonnet-4-5-...-v1:0`)
-// reads the same as the Anthropic one.
-function usesBudgetedThinking(modelId: string): boolean {
-    return BUDGETED_THINKING_MODEL.test(modelId)
+// Three generations, three answers, so the id decides. Claude 3.7 through 4.5 accept only a fixed
+// budget and answer 400 to `adaptive`; Claude 4.7 and later answer 400 to a budget (4.6 still takes
+// one, deprecated). Claude 3.0 to 3.5, Claude 2 and Claude Instant cannot think at all and would
+// refuse either, so they are asked nothing and their request stays the one the setting's absence
+// sends — a Bedrock row lists every active Claude, old ones included, with no allow-list in front.
+// Anything else gets `adaptive`, the direction every newer model goes. Matched anywhere in the id,
+// so Bedrock's forms (`anthropic.claude-3-haiku-…-v1:0`, `us.anthropic.claude-sonnet-4-5-…`) read
+// the same as Anthropic's own.
+function claudeThinking({ modelId, budgetTokens }: { modelId: string, budgetTokens: number }): JSONObject | null {
+    if (NON_THINKING_CLAUDE_MODEL.test(modelId)) {
+        return null
+    }
+    return BUDGETED_THINKING_MODEL.test(modelId) ? { type: 'enabled', budgetTokens } : ADAPTIVE_THINKING
 }
 
+// Both patterns are alternations of literals with bounded repeats — no nested or overlapping
+// quantifiers, so matching is linear in the id's length.
 const BUDGETED_THINKING_MODEL = /claude-(?:3-7-sonnet|(?:opus|sonnet|haiku)-4-5|opus-4-1|(?:opus|sonnet)-4-(?:0|\d{8}))(?!\d)/
+// `claude-3-` not followed by `7-` (3.0 and 3.5 in every family), `claude-instant`, and Claude 1/2 in
+// both spellings (`claude-2.1`, Bedrock's `claude-v2:1`).
+const NON_THINKING_CLAUDE_MODEL = /claude-(?:3-(?!7-)|instant|v?[12](?!\d))/
 
 // `summarized` because on Claude Opus 4.7 and later the default is `omitted`, which streams the
 // thinking block with its text empty — the user would be billed for reasoning they cannot read.
