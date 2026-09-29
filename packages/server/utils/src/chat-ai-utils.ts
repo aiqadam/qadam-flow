@@ -31,7 +31,7 @@ import {
     spreadIfDefined,
 } from '@aiqadam/shared'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
+import { LanguageModel, SystemModelMessage } from 'ai'
 import { safeHttp } from './safe-http'
 
 // Every provider gets `fetch: safeHttp.fetch`, not just CUSTOM. CUSTOM is the obvious SSRF case —
@@ -133,36 +133,6 @@ function createChatModel({ provider, auth, config, modelId }: {
 // exception report on every chat turn of a platform holding one row written before the constraint.
 function unusableProviderConfig(message: string): QadamFlowError {
     return new QadamFlowError({ code: ErrorCode.AI_REQUEST_NOT_SUPPORTED, params: { message } })
-}
-
-/**
- * Strips for ALL providers (not just non-thinking ones) because Anthropic rejects
- * a re-sent `thinking` block whose `signature` didn't survive our DB round-trip /
- * compaction / truncation reshaping ("Invalid `signature` in `thinking` block"),
- * and prior-turn reasoning adds nothing the text + tool results don't already carry.
- * In-flight thinking within one streamText call keeps its intact signature and is
- * untouched — this only touches the cross-turn history we assemble.
- */
-function stripThinkingBlocks(messages: ModelMessage[], _provider: AIProviderName): ModelMessage[] {
-    const hasThinking = messages.some(
-        (msg) => msg.role === 'assistant' && Array.isArray(msg.content)
-            && (msg.content as Array<Record<string, unknown>>).some(
-                (part) => part['type'] === 'reasoning' || part['type'] === 'thinking',
-            ),
-    )
-    if (!hasThinking) return messages
-
-    return messages
-        .map((msg) => {
-            if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return msg
-            const filtered = (msg.content as Array<Record<string, unknown>>).filter(
-                (part) => part['type'] !== 'reasoning' && part['type'] !== 'thinking',
-            )
-            if (filtered.length === msg.content.length) return msg
-            if (filtered.length === 0) return null
-            return { ...msg, content: filtered }
-        })
-        .filter((msg): msg is ModelMessage => msg !== null)
 }
 
 function buildProviderOptions({ provider, tier }: { provider: AIProviderName, tier: { id: string, thinkingBudget: number } }): SharedV3ProviderOptions {
@@ -336,7 +306,6 @@ function buildStepParts({ content }: {
 
 export const chatAiUtils = {
     createChatModel,
-    stripThinkingBlocks,
     buildProviderOptions,
     buildSystemPromptWithCaching,
     buildStepParts,

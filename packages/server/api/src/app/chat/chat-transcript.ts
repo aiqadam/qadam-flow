@@ -16,10 +16,13 @@ export const chatTranscript = {
     // `messages` JSON blob — the AI SDK exports no runtime schema for `ModelMessage`, so reading
     // that back would need a cast this repo does not allow. What is lost by that: prior-turn
     // reasoning, because `toAssistantModelMessages` below emits only text and tool-call parts.
-    // That is the behaviour we want — Anthropic rejects a re-sent `thinking` block whose signature
-    // did not survive the round trip — but it is a property of this function, not something a
-    // helper does for us. (`chatAiUtils.stripThinkingBlocks` exists and would do it; it has no
-    // caller anywhere, so nothing here relies on it.) Tool-call/result pairs survive intact.
+    // That is the behaviour we want, for every provider: Anthropic rejects a re-sent `thinking`
+    // block whose `signature` did not survive the DB round trip, compaction or truncation
+    // ("Invalid `signature` in `thinking` block"), and prior-turn reasoning adds nothing the text
+    // and tool results do not already carry. Nothing downstream strips reasoning, so this function
+    // is the only guard; `chat-transcript.test.ts` pins it. In-flight thinking within one
+    // `streamText` call keeps its intact signature and is not affected — this is only the
+    // cross-turn history. Tool-call/result pairs survive intact.
     // `resumingGate` is the caller stating what this transcript is for, and it must not be inferred
     // from the array. Only the run started by an approval is about to execute a settled gate; every
     // other run has to answer it. Inferring it from "is the gate the last message" was wrong,

@@ -80,6 +80,23 @@ describe('chatTranscript.toModelMessages', () => {
         expect(replayed).toEqual([])
     })
 
+    // The only guard on this: nothing downstream strips reasoning, and Anthropic rejects a re-sent
+    // `thinking` block whose signature did not survive the DB round trip.
+    it('never replays prior-turn reasoning', () => {
+        const replayed = chatTranscript.toModelMessages([
+            {
+                role: PersistedChatRole.ASSISTANT,
+                parts: [
+                    { type: PersistedChatPartType.REASONING, text: 'the user wants their flows' },
+                    { type: PersistedChatPartType.TEXT, text: 'You have no flows.' },
+                ],
+            },
+            { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.REASONING, text: 'nothing else to say' }] },
+        ])
+
+        expect(replayed).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'You have no flows.' }] }])
+    })
+
     it('joins the text parts of a user turn and skips a turn with no text', () => {
         const replayed = chatTranscript.toModelMessages([
             { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'one' }, { type: PersistedChatPartType.TEXT, text: 'two' }] },

@@ -9,7 +9,7 @@ A platform-scoped conversation between one user and the chat agent. The agent is
 - `packages/server/api/src/app/chat/chat-context-usage.ts`: measures how full the context was on each reply (#568).
 - `packages/server/api/src/app/chat/chat-compaction.ts`: moves the transcript's start forward and writes the summary (#567).
 - `packages/server/api/src/app/chat/chat-conversation-entity.ts`: the `chat_conversation` table (`projectId` nullable, `summary` / `summarizedUpToIndex` / `autoCompact`).
-- `packages/server/utils/src/chat-ai-utils.ts`: provider factories, `buildStepParts`, and `buildProviderOptions` / `stripThinkingBlocks`. Neither of the last two has a caller.
+- `packages/server/utils/src/chat-ai-utils.ts`: provider factories, `buildStepParts`, and `buildProviderOptions`. `buildProviderOptions` has no caller yet; it is the hook the reasoning opt-in (#566) wires up. Nothing here strips reasoning from replayed history — `chat-transcript.ts` never emits it.
 - `packages/shared/src/lib/automation/chat/index.ts`: persisted part schemas, plus `chatContextUtils` (`transcriptStart`, `contextBudget`, `isCompactionDue`), which the server and the browser share.
 - `packages/web/src/app/routes/chat-with-ai/`: the page. `ai-chat-box.tsx` renders the message list and the window divider. `components/chat-context-indicator.tsx` is the context popover: fill and breakdown. `components/activity-accordion.tsx` (`ThinkingBlock`) and `components/assistant-message.tsx` render reasoning.
 
