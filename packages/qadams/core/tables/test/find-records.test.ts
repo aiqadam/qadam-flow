@@ -26,13 +26,17 @@ const fields: Field[] = [field({ externalId: 'event_id' }), field({ externalId: 
 // The unit tests for `filterUtils` stay green if `find-records` stops calling it,
 // which is exactly how the reported bug shipped. This exercises the action.
 async function run(filters: unknown, columns?: unknown, recordIds?: unknown) {
+  return runWithProps({ filters, columns, record_ids: recordIds });
+}
+
+async function runWithProps(props: Record<string, unknown>) {
   const { findRecords } = await import('../src/lib/actions/find-records');
   const { tablesCommon } = await import('../src/lib/common');
   vi.spyOn(tablesCommon, 'convertTableExternalIdToId').mockResolvedValue('table_1');
   vi.spyOn(tablesCommon, 'getTableFields').mockResolvedValue(fields);
 
   return findRecords.run({
-    propsValue: { table_id: 'events', limit: undefined, filters, columns, record_ids: recordIds },
+    propsValue: { table_id: 'events', limit: undefined, filters: undefined, columns: undefined, record_ids: undefined, ...props },
     server: { apiUrl: 'https://example.invalid/api/', token: 'token', publicUrl: 'https://example.invalid/' },
     project: { id: 'project_1' },
   } as unknown as Parameters<typeof findRecords.run>[0]);
@@ -52,6 +56,23 @@ describe('tables-find-records', () => {
   ])('fails the step for %s instead of querying without a filter', async (_label, filters) => {
     await expect(run(filters)).rejects.toThrow();
     expect(sendRequest).not.toHaveBeenCalled();
+  });
+
+  // An AI agent filling Limit answered 0 for "count every letter" and got an empty page back.
+  it.each([
+    ['left empty', undefined],
+    ['zero', 0],
+    ['negative', -1],
+  ])('asks for every record when Limit is %s', async (_label, limit) => {
+    await runWithProps({ limit });
+
+    expect(sendRequest.mock.calls[0][0].url).toContain('limit=999999999');
+  });
+
+  it('sends a positive Limit as given', async () => {
+    await runWithProps({ limit: 5 });
+
+    expect(sendRequest.mock.calls[0][0].url).toMatch(/[?&]limit=5(&|$)/);
   });
 
   // Unit tests for columnUtils stay green if the action stops threading the prop

@@ -3,8 +3,10 @@ import { tablesCommon } from '../common';
 import { columnUtils } from '../common/columns';
 import { filterUtils } from '../common/filters';
 import { AuthenticationType, httpClient, HttpMethod } from '@aiqadam/qadams-common';
-import { FilterOperator, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
+import { FilterOperator, isNil, ListRecordsRequest, PopulatedRecord, SeekPage } from '@aiqadam/shared';
 import qs from 'qs';
+
+const NO_LIMIT = 999999999;
 
 // Spelled out because this step is routinely configured as raw JSON through the
 // API or MCP, where the builder's picker is not there to produce the shape.
@@ -137,7 +139,9 @@ export const findRecords = createAction({
 
     const request: ListRecordsRequest = {
       tableId,
-      limit: limit ?? 999999999,
+      // An agent filling this prop routinely answers 0 for "no limit"; the description promises
+      // no limit by default, and a zero-row page is never what anyone asked for.
+      limit: isNil(limit) || limit <= 0 ? NO_LIMIT : limit,
       cursor: undefined,
       filters: filterUtils.toWireFilters({ rawFilters: filters, fields: tableFields }),
       fieldIds: columnUtils.toWireFieldIds({ rawColumns: columns, fields: tableFields }),
