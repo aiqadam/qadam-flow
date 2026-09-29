@@ -38,6 +38,7 @@ import { chatConversationService } from './chat-conversation.service'
 import { CHAT_ERROR_CODES, classifyChatError, describeChatError } from './chat-error-classify'
 import { chatModel, ResolvedChatModel } from './chat-model'
 import { chatProjects } from './chat-projects'
+import { chatThinkingDuration } from './chat-thinking-duration'
 import { chatTools } from './chat-tools'
 import { chatTranscript } from './chat-transcript'
 
@@ -225,11 +226,16 @@ const SYSTEM_PROMPT_PATH = 'packages/server/api/src/assets/prompts/chat-system-p
 // attempt and the retry, a Stop or a takeover landing while the pass compacts would find nothing to
 // abort, and the retry would stream a reply the user had stopped — or run beside the run that took
 // the conversation over.
+//
+// The thinking clock is per run too, for the same reason: the user watches one "Thinking..." from the
+// refused attempt through the compaction pass to the retry, and the browser, which cannot see where
+// one ends and the next begins, measures all of it. A run resumed from an approval is a run of its
+// own, so its clock starts at the resume and the time the gate waited on a human is never counted.
 async function runAgentLoop(params: RunLoopParams): Promise<void> {
     const abortController = new AbortController()
     activeRuns.set(params.runId, abortController)
     try {
-        await runAttempt({ ...params, abortController, retriedAfterOverflow: false })
+        await runAttempt({ ...params, abortController, retriedAfterOverflow: false, startedAt: performance.now() })
     }
     finally {
         activeRuns.delete(params.runId)
@@ -237,10 +243,12 @@ async function runAgentLoop(params: RunLoopParams): Promise<void> {
 }
 
 async function runAttempt(params: RunAttemptParams): Promise<void> {
-    const { id, platformId, userId, runId, resolvedModel, systemPrompt, transcript, tools, abortController, retriedAfterOverflow, log } = params
+    const { id, platformId, userId, runId, resolvedModel, systemPrompt, transcript, tools, abortController, retriedAfterOverflow, startedAt, log } = params
     const { messages } = transcript
     const cachedSystemPrompt = chatAiUtils.buildSystemPromptWithCaching({ systemPrompt, provider: resolvedModel.provider })
     const streamedText: string[] = []
+    // Per attempt, not per run: the reply that gets persisted is this attempt's, so its first text is.
+    let replyStartedAt: number | null = null
     // Once a tool has run, a retry would run it again — the overflow safety net must not.
     let toolExecuted = false
     // The SDK's `tool-approval-request` UI chunk carries `{ type, approvalId, toolCallId }` and
@@ -294,6 +302,9 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
             // `result.steps` rejects along with the stream — this is the only copy of the partial
             // reply that survives a cancel.
             collectStreamedText({ chunk, into: streamedText })
+            if (isNil(replyStartedAt) && chatThinkingDuration.isReplyText(chunk)) {
+                replyStartedAt = performance.now()
+            }
             toolExecuted ||= isToolOutputChunk(chunk)
             emit({ userId, conversationId: id, runId, event: { type: ChatAgentEventType.CHUNK, data: chunk } })
             const approvalEvent = trackToolApproval({ chunk, gatedCallInputs })
@@ -302,6 +313,7 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
             }
         }
 
+        const thinkingDurationMs = chatThinkingDuration.measure({ startedAt, replyStartedAt, endedAt: performance.now() })
         const steps = await result.steps
         const response = await result.response
         const contextUsage = await measureContextUsage({ resolvedModel, systemPrompt, transcript, tools, responseMessages: response.messages, steps, conversationId: id, runId, log })
@@ -314,6 +326,7 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
             assistantMessage: {
                 role: PersistedChatRole.ASSISTANT,
                 parts: chatAiUtils.buildStepParts({ content: toContentParts(steps) }),
+                thinkingDurationMs,
                 ...spreadIfDefined('contextUsage', contextUsage ?? undefined),
             },
         })
@@ -348,7 +361,7 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
     // conversation is left in ERROR, and everything already streamed is dropped on reload because
     // `finishRun` never ran. Persist whatever the model produced before the abort and settle IDLE.
     if (abortController.signal.aborted) {
-        await finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, log })
+        await finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, startedAt, replyStartedAt, log })
         return
     }
 
@@ -367,7 +380,7 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
         // Stopped or taken over while the pass compacted: the turn settles as the cancel it is
         // rather than as the refusal it no longer is. After a takeover `finishRun` matches no row.
         if (outcome === RetryOutcome.STOPPED) {
-            await finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, log })
+            await finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, startedAt, replyStartedAt, log })
             return
         }
     }
@@ -448,7 +461,7 @@ function collectStreamedText({ chunk, into }: { chunk: unknown, into: string[] }
     }
 }
 
-async function finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, log }: CancelledRunParams): Promise<void> {
+async function finishCancelledRun({ id, platformId, userId, runId, messages, streamedText, startedAt, replyStartedAt, log }: CancelledRunParams): Promise<void> {
     const text = streamedText.join('')
     await chatConversationService.finishRun({
         id,
@@ -461,6 +474,7 @@ async function finishCancelledRun({ id, platformId, userId, runId, messages, str
         assistantMessage: text.length === 0 ? null : {
             role: PersistedChatRole.ASSISTANT,
             parts: [{ type: PersistedChatPartType.TEXT, text }],
+            thinkingDurationMs: chatThinkingDuration.measure({ startedAt, replyStartedAt, endedAt: performance.now() }),
         },
     })
     log.info({ conversationId: id, runId }, '[chatAgentService#runAgentLoop] chat run cancelled by the user')
@@ -719,6 +733,8 @@ type RunLoopParams = {
 type RunAttemptParams = RunLoopParams & {
     abortController: AbortController
     retriedAfterOverflow: boolean
+    // `performance.now()` at the run's start: monotonic, so a wall-clock step cannot skew the label.
+    startedAt: number
 }
 
 type RunTranscript = {
@@ -742,6 +758,8 @@ type CancelledRunParams = {
     runId: string
     messages: ModelMessage[]
     streamedText: string[]
+    startedAt: number
+    replyStartedAt: number | null
     log: FastifyBaseLogger
 }
 

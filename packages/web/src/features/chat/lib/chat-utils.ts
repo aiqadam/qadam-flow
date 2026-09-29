@@ -309,13 +309,19 @@ function mapPersistedToUIMessages(
     parts: msg.parts.map((p, i) =>
       persistedPartToUIPart(p, i, answeredApprovalsIn(msg)),
     ),
-    ...(msg.thinkingDurationMs !== undefined && {
-      thinkingDurationMs: msg.thinkingDurationMs,
-    }),
     // On `metadata`, the AI SDK's own slot for per-message data, so it survives every place a
-    // message is copied without a field of its own; `latestContextUsage` validates it back out.
-    ...(msg.contextUsage !== undefined && {
-      metadata: { contextUsage: msg.contextUsage },
+    // message is copied without a field of its own; `latestContextUsage` and `thinkingDurationOf`
+    // validate it back out. The live stream writes `thinkingDurationMs` to the same slot.
+    ...((msg.contextUsage !== undefined ||
+      msg.thinkingDurationMs !== undefined) && {
+      metadata: {
+        ...(msg.contextUsage !== undefined && {
+          contextUsage: msg.contextUsage,
+        }),
+        ...(msg.thinkingDurationMs !== undefined && {
+          thinkingDurationMs: msg.thinkingDurationMs,
+        }),
+      },
     }),
   }));
 }
@@ -426,6 +432,16 @@ function latestContextUsage({
   return null;
 }
 
+function thinkingDurationOf(message: ChatUIMessage): number | undefined {
+  if (!isObject(message.metadata)) return undefined;
+  const { thinkingDurationMs } = message.metadata;
+  return typeof thinkingDurationMs === 'number' &&
+    Number.isFinite(thinkingDurationMs) &&
+    thinkingDurationMs >= 0
+    ? thinkingDurationMs
+    : undefined;
+}
+
 // Whether the server is about to compact after the newest reply — the test `compactAfterReply`
 // applies: the newest reply's own measurement (not an older one, as the popover shows), over the
 // threshold, and taken from the current start rather than before a pass that has since moved it.
@@ -505,6 +521,7 @@ export const chatUtils = {
   extractQuickRepliesFromHistory,
   extractReceiptsFromHistory,
   latestContextUsage,
+  thinkingDurationOf,
   isCompactionPending,
   waitForCompaction,
 };

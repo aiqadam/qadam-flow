@@ -83,7 +83,7 @@ export function useStreamingReducer({
   const streamPhaseRef = useRef<StreamPhase>('idle');
   const streamGenerationRef = useRef(0);
   const reducerStateRef = useRef<StreamingState | null>(null);
-  const chunkBufferRef = useRef<UIMessageChunk[]>([]);
+  const chunkBufferRef = useRef<ReceivedBatch[]>([]);
   const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -117,14 +117,16 @@ export function useStreamingReducer({
 
   const flush = useCallback(() => {
     throttleTimerRef.current = null;
-    const chunks = chunkBufferRef.current;
-    if (chunks.length === 0) return;
+    const batches = chunkBufferRef.current;
+    if (batches.length === 0) return;
     chunkBufferRef.current = [];
 
     const state = reducerStateRef.current;
     if (!state) return;
 
-    chunkReducer.applyChunks({ state, chunks });
+    for (const { chunks, receivedAt } of batches) {
+      chunkReducer.applyChunks({ state, chunks, receivedAt });
+    }
     setStreamingMessage(chunkReducer.snapshotMessage({ state }));
   }, []);
 
@@ -239,9 +241,11 @@ export function useStreamingReducer({
           updatePhase('streaming');
           lastChunkTimeRef.current = Date.now();
           const chunks = Array.isArray(event.data) ? event.data : [event.data];
-          for (const chunk of chunks) {
-            chunkBufferRef.current.push(chunk as UIMessageChunk);
-          }
+          // Stamped on arrival rather than at the throttled flush, which lags by up to THROTTLE_MS.
+          chunkBufferRef.current.push({
+            chunks: chunks.map((chunk) => chunk as UIMessageChunk),
+            receivedAt: performance.now(),
+          });
           scheduleFlush();
 
           armStreamTimeout();
@@ -361,6 +365,11 @@ type SocketEvent = {
   runId?: string;
   type: string;
   data: unknown;
+};
+
+type ReceivedBatch = {
+  chunks: UIMessageChunk[];
+  receivedAt: number;
 };
 
 type StreamPhase = 'idle' | 'awaiting-stream' | 'streaming' | 'reconciling';

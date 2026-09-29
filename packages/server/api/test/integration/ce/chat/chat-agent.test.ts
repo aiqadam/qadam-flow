@@ -59,6 +59,10 @@ let providerSummaryReply = '- The user asked earlier questions about their flows
 // Holds the next non-streaming request open, so a test can act while a compaction pass is running.
 let providerSummaryHold: Promise<void> | null = null
 let providerSummaryRequested = false
+// Holds the next streaming request before a single byte is written, so a test can move the clock
+// while the run is waiting on the model's first token.
+let providerStreamHold: Promise<void> | null = null
+let providerStreamRequested = false
 
 beforeAll(async () => {
     providerServer = http.createServer((req, res) => {
@@ -85,6 +89,19 @@ beforeAll(async () => {
                     }
                     res.writeHead(StatusCodes.OK, { 'content-type': 'application/json' })
                     res.end(JSON.stringify(completionJson(providerSummaryReply)))
+                })
+                return
+            }
+            const streamHold = providerStreamHold
+            if (!isNil(streamHold)) {
+                providerStreamHold = null
+                providerStreamRequested = true
+                void streamHold.then(() => {
+                    if (req.socket.destroyed) {
+                        return
+                    }
+                    res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
+                    res.end(scriptedResponses.shift() ?? completionStream(providerReply))
                 })
                 return
             }
@@ -132,6 +149,9 @@ afterEach(() => {
     providerSummaryReply = '- The user asked earlier questions about their flows.'
     providerSummaryHold = null
     providerSummaryRequested = false
+    providerStreamHold = null
+    providerStreamRequested = false
+    vi.useRealTimers()
     vi.restoreAllMocks()
 })
 
@@ -486,7 +506,7 @@ describe('Chat agent API', () => {
             )
             expect(finished.uiMessages).toEqual([
                 { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'say hello' }] },
-                { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: 'Hello from the test model' }] },
+                { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: 'Hello from the test model' }], thinkingDurationMs: expect.any(Number) },
             ])
             // The run is bound to the caller's project, so every tool in it is too.
             expect(finished.projectId).toBe(ctx.project.id)
@@ -581,6 +601,29 @@ describe('Chat agent API', () => {
             expect(replayed).not.toContain(reasoning)
         })
 
+        // #564. Only `performance` is faked: the run's clock reads it and nothing else in the path
+        // does, so the loopback server, Postgres and the polling below keep real time while the
+        // measured interval is exactly what the test advanced it by.
+        it('persists how long the run thought before its reply began', async () => {
+            vi.useFakeTimers({ toFake: ['performance'] })
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            let releaseReply: () => void = () => {}
+            providerStreamHold = new Promise<void>((resolve) => {
+                releaseReply = resolve
+            })
+            scriptedResponses = [reasoningStream({ reasoning: 'Checking which flows exist before answering.', text: 'You have no flows yet.' })]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list my flows', runId: apId() })
+            await waitFor(() => providerStreamRequested)
+            vi.advanceTimersByTime(3_000)
+            releaseReply()
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(reply).toMatchObject({ role: PersistedChatRole.ASSISTANT, thinkingDurationMs: 3_000 })
+        })
+
         it('records how full the context was, from the usage the provider streamed', async () => {
             await enableChatProvider(ctx.platform.id, [{ modelId: MODEL_ID, modelName: 'Test chat model', modelType: AIProviderModelType.TEXT, contextWindowTokens: 32_768 }])
             const conversationId = await createConversation(ctx)
@@ -671,6 +714,33 @@ describe('Chat agent API', () => {
             expect(providerBodies).toHaveLength(3)
             expect(systemContents(providerBodies[2]).some((content) => content.includes('- The user asked earlier'))).toBe(true)
             expect(JSON.stringify(providerBodies[2].messages).length).toBeLessThan(JSON.stringify(providerBodies[0].messages).length)
+        })
+
+        // The user watched one "Thinking..." from the refused attempt through the pass to the retry,
+        // so the reply's duration covers the compaction rather than restarting at the retry.
+        it('counts the overflow compaction in the retried reply thinking time', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            vi.useFakeTimers({ toFake: ['performance'] })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'This model\'s maximum context length is 8192 tokens.', type: 'invalid_request_error' } } }]
+            let releaseSummary: () => void = () => {}
+            providerSummaryHold = new Promise<void>((resolve) => {
+                releaseSummary = resolve
+            })
+            scriptedResponses = [completionStream('Answered after compacting.')]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitFor(() => providerSummaryRequested)
+            vi.advanceTimersByTime(2_000)
+            releaseSummary()
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(JSON.stringify(reply)).toContain('Answered after compacting.')
+            expect(reply).toMatchObject({ thinkingDurationMs: 2_000 })
         })
 
         it('settles as cancelled, and does not retry, when the user stops the turn while it compacts', async () => {
@@ -1180,6 +1250,7 @@ describe('Chat agent API', () => {
             })
             expect(settled.status).toBe(ChatConversationStatus.IDLE)
             expect((settled.uiMessages as any[])[1].parts[0].text).toContain('Partial answer so far')
+            expect((settled.uiMessages as any[])[1].thinkingDurationMs).toBeGreaterThanOrEqual(0)
         })
 
         // The abort controller lives in the process that started the run. A cancel arriving at any
