@@ -100,25 +100,11 @@ beforeAll(async () => {
                     if (req.socket.destroyed) {
                         return
                     }
-                    res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
-                    res.end(scriptedResponses.shift() ?? completionStream(providerReply))
+                    streamResponse(res)
                 })
                 return
             }
-            res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
-            // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream —
-            // the only way to cancel something real rather than a conversation that is already
-            // finished.
-            const hold = providerHolds.shift()
-            if (!isNil(hold)) {
-                res.write(textChunk(providerFirstChunkOnly))
-                providerStreamedFirstChunk = true
-                void hold.then(() => res.end('data: [DONE]\n\n'))
-                return
-            }
-            // A queued script when the test set one, so a turn that calls a tool can answer
-            // differently on the model's second request; otherwise the plain reply.
-            res.end(scriptedResponses.shift() ?? completionStream(providerReply))
+            streamResponse(res)
         })
     })
     await new Promise<void>((resolve) => providerServer.listen(0, '127.0.0.1', resolve))
@@ -182,6 +168,22 @@ async function enableChatProvider(platformId: string, models: ProviderModelConfi
         },
         enabledForChat: true,
     })
+}
+
+function streamResponse(res: http.ServerResponse): void {
+    res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
+    // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream — the only way
+    // to cancel something real rather than a conversation that is already finished.
+    const hold = providerHolds.shift()
+    if (!isNil(hold)) {
+        res.write(textChunk(providerFirstChunkOnly))
+        providerStreamedFirstChunk = true
+        void hold.then(() => res.end('data: [DONE]\n\n'))
+        return
+    }
+    // A queued script when the test set one, so a turn that calls a tool can answer differently on
+    // the model's second request; otherwise the plain reply.
+    res.end(scriptedResponses.shift() ?? completionStream(providerReply))
 }
 
 function sseChunk(payload: Record<string, unknown>): string {
@@ -1221,21 +1223,38 @@ describe('Chat agent API', () => {
         // controller registered — so it proves only that the route answers. This cancels a run
         // that is genuinely mid-stream and checks the two things that actually matter: the
         // conversation settles back to IDLE rather than ERROR, and the partial reply survives.
+        //
+        // The partial reply's thinking time is also pinned here, on a faked `performance` clock: 2 s to
+        // the first token, then 5 s more before the Stop. It must read the 2 s — the thinking before
+        // the reply began — not the 7 s to the cancel.
         it('stops a live run, keeps what was already streamed, and does not report it as a failure', async () => {
+            vi.useFakeTimers({ toFake: ['performance'] })
             await enableChatProvider(ctx.platform.id)
             const conversationId = await createConversation(ctx)
+            let releaseFirst: () => void = () => {}
+            providerStreamHold = new Promise<void>((resolve) => {
+                releaseFirst = resolve
+            })
             let releaseRest: () => void = () => {}
             const restReleased = new Promise<void>((resolve) => {
                 releaseRest = resolve
             })
             providerHolds = [restReleased]
             providerFirstChunkOnly = 'Partial answer so far'
+            const operatorEmits = captureSocketEmits()
 
             await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'say something long', runId: apId() })
             await waitForStatus(conversationId, ChatConversationStatus.STREAMING)
-            // Wait until the first token has actually been streamed, otherwise the cancel races
-            // the stream opening and there would be nothing partial to preserve.
-            await waitFor(() => providerStreamedFirstChunk)
+            await waitFor(() => providerStreamRequested)
+            vi.advanceTimersByTime(2_000)
+            releaseFirst()
+            // Wait until the run has forwarded the first token, not merely until the provider wrote
+            // it: otherwise the cancel races the stream opening and there would be nothing partial to
+            // preserve, and the clock below could move before the run read the token.
+            await waitFor(() => operatorEmits
+                .flatMap((emit) => emit.mock.calls.map((call) => call[1]))
+                .some((payload) => isRecord(payload) && payload.type === ChatAgentEventType.CHUNK && isRecord(payload.data) && payload.data.type === 'text-delta'))
+            vi.advanceTimersByTime(5_000)
 
             const cancelled = await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
             expect(cancelled?.statusCode).toBe(StatusCodes.NO_CONTENT)
@@ -1250,7 +1269,7 @@ describe('Chat agent API', () => {
             })
             expect(settled.status).toBe(ChatConversationStatus.IDLE)
             expect((settled.uiMessages as any[])[1].parts[0].text).toContain('Partial answer so far')
-            expect((settled.uiMessages as any[])[1].thinkingDurationMs).toBeGreaterThanOrEqual(0)
+            expect((settled.uiMessages as any[])[1].thinkingDurationMs).toBe(2_000)
         })
 
         // The abort controller lives in the process that started the run. A cancel arriving at any

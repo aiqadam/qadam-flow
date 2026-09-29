@@ -24,6 +24,7 @@ import {
     PersistedChatMessage,
     PersistedChatPart,
     PersistedChatPartType,
+    PersistedChatRole,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
@@ -48,6 +49,10 @@ let providerOrigin: string
 let providerBaseUrl: string
 let providerBodies: Record<string, unknown>[] = []
 let scriptedResponses: string[] = []
+// Holds the next request before a byte is written, so a test can move the clock while a run waits
+// on the model.
+let providerHold: Promise<void> | null = null
+let providerHoldRequested = false
 
 function sseChunk(payload: Record<string, unknown>): string {
     return `data: ${JSON.stringify(payload)}\n\n`
@@ -138,9 +143,17 @@ beforeAll(async () => {
         req.on('data', (chunk: Buffer) => chunks.push(chunk))
         req.on('end', () => {
             providerBodies.push(JSON.parse(Buffer.concat(chunks).toString()))
-            res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
-            const scripted = scriptedResponses.shift()
-            res.end(scripted ?? completionStream('Nothing scripted.'))
+            const hold = providerHold ?? Promise.resolve()
+            providerHoldRequested ||= !isNil(providerHold)
+            providerHold = null
+            void hold.then(() => {
+                if (req.socket.destroyed) {
+                    return
+                }
+                res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
+                const scripted = scriptedResponses.shift()
+                res.end(scripted ?? completionStream('Nothing scripted.'))
+            })
         })
     })
     await new Promise<void>((resolve) => providerServer.listen(0, '127.0.0.1', resolve))
@@ -158,10 +171,16 @@ afterAll(async () => {
 beforeEach(async () => {
     providerBodies = []
     scriptedResponses = []
+    providerHold = null
+    providerHoldRequested = false
     if (isNil(app)) {
         throw new Error('test environment was not set up')
     }
     ctx = await createTestContext(app)
+})
+
+afterEach(() => {
+    vi.useRealTimers()
 })
 
 async function enableChatProvider(platformId: string): Promise<void> {
@@ -204,6 +223,16 @@ async function waitForStatus(conversationId: string, status: ChatConversationSta
  * Asserting the row is null off the conversation barrier passes only while the delete wins that
  * race, which is how #500 caught this one failing with `operationStatus: "DELETING"`.
  */
+async function waitFor(condition: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt++) {
+        if (condition()) {
+            return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error('condition never became true')
+}
+
 async function waitForFlowDeleted({ flowId, because }: { flowId: string, because: string }): Promise<void> {
     for (let attempt = 0; attempt < 200; attempt++) {
         const row = await db.findOneBy('flow', { id: flowId })
@@ -531,6 +560,34 @@ describe('Chat tool approval gates (#264)', () => {
             expect(toolMessages.length, 'the resume run sent the model no tool result for the call it just executed').toBeGreaterThan(0)
             expect(toolMessages.some((message) => message.tool_call_id === 'call_1')).toBe(true)
             expect(JSON.stringify(resumeBody), 'an approval part reached the provider').not.toContain('tool-approval-')
+        })
+
+        // #564. The resumed run is a run of its own, so its "Thought for" starts at the resume: the
+        // minute the gate waited on a human is not thinking. Only `performance` is faked, which is
+        // the clock the run reads, so the value is exactly what the resumed run was advanced by.
+        it('times the resumed reply from the resume, not from the gate it waited on', async () => {
+            vi.useFakeTimers({ toFake: ['performance'] })
+            const flow = await createFlow()
+            const { conversationId, gate } = await raiseGate({ toolName: 'ap_delete_flow', args: { flowId: flow.id }, resumeReply: 'Deleted it.' })
+            vi.advanceTimersByTime(60_000)
+            let releaseResume: () => void = () => {}
+            providerHold = new Promise<void>((resolve) => {
+                releaseResume = resolve
+            })
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/tool-approvals/${gate.gateId}`, { approved: true })
+            await waitFor(() => providerHoldRequested)
+            vi.advanceTimersByTime(1_500)
+            releaseResume()
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await waitForFlowDeleted({ flowId: flow.id, because: 'the approved delete never ran' })
+
+            const messages = row['uiMessages'] as PersistedChatMessage[]
+            expect(messages.at(-1)).toMatchObject({
+                role: PersistedChatRole.ASSISTANT,
+                parts: [{ type: PersistedChatPartType.TEXT, text: 'Deleted it.' }],
+                thinkingDurationMs: 1_500,
+            })
         })
 
         // Denying has to reach the model as a readable result, not as silence: the run resumes either
