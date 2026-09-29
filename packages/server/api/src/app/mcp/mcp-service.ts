@@ -99,7 +99,6 @@ async function getOrCreate({ where, defaults }: {
 async function listMcpFlows(projectId: string, logger: FastifyBaseLogger): Promise<PopulatedFlow[]> {
     const flows = await flowService(logger).list({
         projectIds: [projectId],
-        limit: 1000000,
         cursorRequest: null,
         versionState: FlowVersionState.DRAFT,
         includeTriggerSource: false,

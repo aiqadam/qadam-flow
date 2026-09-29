@@ -15,6 +15,7 @@ import { flowsApi } from '@/features/flows/api/flows-api';
 import { foldersApi } from '@/features/folders/api/folders-api';
 import { tablesApi } from '@/features/tables/api/tables-api';
 import { authenticationSession } from '@/lib/authentication-session';
+import { seekPageUtils } from '@/lib/seek-page-utils';
 
 import { AutomationsFilters, FolderContent } from '../lib/types';
 import {
@@ -73,20 +74,14 @@ export function useAutomationsData(
       const folders = foldersQuery.data!;
       const allFolderIds = folders.map((f) => f.id);
       const [flowsPage, tablesPage] = await Promise.all([
-        flowsApi.list({
-          projectId,
-          folderIds: allFolderIds,
-          limit: FOLDER_CONTENTS_LIMIT,
-          cursor: undefined,
-        }),
+        seekPageUtils.listAll((page) =>
+          flowsApi.list({ ...page, projectId, folderIds: allFolderIds }),
+        ),
         hideTables
           ? Promise.resolve(emptyTablePage())
-          : tablesApi.list({
-              projectId,
-              folderIds: allFolderIds,
-              limit: FOLDER_CONTENTS_LIMIT,
-              cursor: undefined,
-            }),
+          : seekPageUtils.listAll((page) =>
+              tablesApi.list({ ...page, projectId, folderIds: allFolderIds }),
+            ),
       ]);
       return buildFolderContentsMap(folders, flowsPage.data, tablesPage.data);
     },
@@ -339,4 +334,3 @@ function emptyTablePage(): SeekPage<Table> {
 }
 
 const STALE_TIME = 30_000;
-const FOLDER_CONTENTS_LIMIT = 1500;

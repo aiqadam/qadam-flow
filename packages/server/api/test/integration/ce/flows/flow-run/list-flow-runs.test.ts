@@ -1,5 +1,7 @@
 import { FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
+import { StatusCodes } from 'http-status-codes'
+import { MAX_PAGE_SIZE } from '../../../../../src/app/helper/pagination/build-paginator'
 import { db } from '../../../../helpers/db'
 import { describeWithAuth } from '../../../../helpers/describe-with-auth'
 import { createMockFlow, createMockFlowRun, createMockFlowVersion } from '../../../../helpers/mocks'
@@ -16,6 +18,41 @@ afterAll(async () => {
 })
 
 describeWithAuth('List flow runs endpoint', () => app!, (setup) => {
+    it.each(['-1', '0', '1.5'])('rejects limit=%s instead of reading every run (#561)', async (limit) => {
+        const ctx = await setup()
+
+        const response = await ctx.get('/v1/flow-runs', {
+            projectId: ctx.project.id,
+            limit,
+        })
+
+        expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+    })
+
+    it('clamps an oversized limit to MAX_PAGE_SIZE and hands back a cursor (#561)', async () => {
+        const ctx = await setup()
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+        const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })
+        await db.save('flow_version', flowVersion)
+        await db.save('flow_run', Array.from({ length: MAX_PAGE_SIZE + 1 }, () => createMockFlowRun({
+            projectId: ctx.project.id,
+            flowId: flow.id,
+            flowVersionId: flowVersion.id,
+            environment: RunEnvironment.PRODUCTION,
+        })))
+
+        const response = await ctx.get('/v1/flow-runs', {
+            projectId: ctx.project.id,
+            limit: '1000000000',
+        })
+
+        expect(response?.statusCode).toBe(StatusCodes.OK)
+        const body = response?.json()
+        expect(body.data).toHaveLength(MAX_PAGE_SIZE)
+        expect(body.next).not.toBeNull()
+    })
+
     it('should return empty list with correct structure', async () => {
         const ctx = await setup()
 

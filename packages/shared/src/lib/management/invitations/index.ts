@@ -58,7 +58,7 @@ export const AcceptUserInvitationRequest = z.object({
 export type AcceptUserInvitationRequest = z.infer<typeof AcceptUserInvitationRequest>
 
 export const ListUserInvitationsRequest = z.object({
-    limit: z.coerce.number().optional(),
+    limit: z.coerce.number().int().min(1).optional(),
     cursor: z.string().optional(),
     type: z.nativeEnum(InvitationType),
     projectId: Nullable(z.string()),
