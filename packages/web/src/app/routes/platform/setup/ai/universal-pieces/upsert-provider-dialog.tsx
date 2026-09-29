@@ -17,6 +17,7 @@ import {
   OpenAICompatibleProviderConfig,
   OpenAIProviderAuthConfig,
   OpenAIProviderConfig,
+  OpenRouterProviderConfig,
   UpdateAIProviderRequest,
 } from '@aiqadam/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -344,10 +345,22 @@ const createFormSchema = (provider: AIProviderName, editMode: boolean) => {
     displayName: z.string().min(1),
     provider: z.literal(provider),
     auth: editMode ? OptionalAuthSchema : authSchema,
-    config: z.union([
-      AnthropicProviderConfig,
-      GoogleProviderConfig,
-      OpenAIProviderConfig,
-    ]),
+    config: apiKeyOnlyConfigSchema(provider),
   });
+};
+
+// The provider's own schema rather than a union of them: under a union an out-of-range reasoning
+// budget fails every member and surfaces as one untranslated error on `config`, never on the
+// budget field the admin has to fix.
+const apiKeyOnlyConfigSchema = (provider: AIProviderName) => {
+  switch (provider) {
+    case AIProviderName.ANTHROPIC:
+      return AnthropicProviderConfig;
+    case AIProviderName.GOOGLE:
+      return GoogleProviderConfig;
+    case AIProviderName.OPENROUTER:
+      return OpenRouterProviderConfig;
+    default:
+      return OpenAIProviderConfig;
+  }
 };

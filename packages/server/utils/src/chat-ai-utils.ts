@@ -4,7 +4,7 @@ import { createAzure } from '@ai-sdk/azure'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { SharedV3ProviderOptions } from '@ai-sdk/provider'
+import { JSONObject, SharedV3ProviderOptions } from '@ai-sdk/provider'
 import {
     AIProviderName,
     AzureProviderConfig,
@@ -12,7 +12,9 @@ import {
     BatchProgressData,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
+    CHAT_REASONING_PROVIDERS,
     chatPersistenceUtils,
+    ChatReasoningConfig,
     CloudflareGatewayProviderConfig,
     ErrorCode,
     INVALID_AWS_REGION_MESSAGE,
@@ -31,7 +33,7 @@ import {
     spreadIfDefined,
 } from '@aiqadam/shared'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
+import { LanguageModel, SystemModelMessage } from 'ai'
 import { safeHttp } from './safe-http'
 
 // Every provider gets `fetch: safeHttp.fetch`, not just CUSTOM. CUSTOM is the obvious SSRF case —
@@ -136,46 +138,78 @@ function unusableProviderConfig(message: string): QadamFlowError {
 }
 
 /**
- * Strips for ALL providers (not just non-thinking ones) because Anthropic rejects
- * a re-sent `thinking` block whose `signature` didn't survive our DB round-trip /
- * compaction / truncation reshaping ("Invalid `signature` in `thinking` block"),
- * and prior-turn reasoning adds nothing the text + tool results don't already carry.
- * In-flight thinking within one streamText call keeps its intact signature and is
- * untouched — this only touches the cross-turn history we assemble.
+ * The provider options that ask a chat model to reason (#566), or null when the row has not opted
+ * in. Null is load-bearing: the caller then passes no `providerOptions` at all, so a row with the
+ * setting absent or off sends exactly the request it sent before the setting existed.
+ *
+ * `reasoning` is read off a stored config that is never re-parsed on the way out of the database,
+ * so it is checked here and anything that does not fit the schema counts as off.
+ *
+ * Only for the chat's own `streamText`. The compaction summariser's `generateText` must never get
+ * these: it is a background job and has to stay cheap.
  */
-function stripThinkingBlocks(messages: ModelMessage[], _provider: AIProviderName): ModelMessage[] {
-    const hasThinking = messages.some(
-        (msg) => msg.role === 'assistant' && Array.isArray(msg.content)
-            && (msg.content as Array<Record<string, unknown>>).some(
-                (part) => part['type'] === 'reasoning' || part['type'] === 'thinking',
-            ),
-    )
-    if (!hasThinking) return messages
-
-    return messages
-        .map((msg) => {
-            if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return msg
-            const filtered = (msg.content as Array<Record<string, unknown>>).filter(
-                (part) => part['type'] !== 'reasoning' && part['type'] !== 'thinking',
-            )
-            if (filtered.length === msg.content.length) return msg
-            if (filtered.length === 0) return null
-            return { ...msg, content: filtered }
-        })
-        .filter((msg): msg is ModelMessage => msg !== null)
-}
-
-function buildProviderOptions({ provider, tier }: { provider: AIProviderName, tier: { id: string, thinkingBudget: number } }): SharedV3ProviderOptions {
+function buildProviderOptions({ provider, modelId, reasoning }: BuildProviderOptionsParams): SharedV3ProviderOptions | null {
+    const parsed = ChatReasoningConfig.safeParse(reasoning)
+    if (!parsed.success || !parsed.data.enabled || !CHAT_REASONING_PROVIDERS.includes(provider)) {
+        return null
+    }
+    const { budgetTokens } = parsed.data
     switch (provider) {
-        case AIProviderName.ANTHROPIC:
-        case AIProviderName.BEDROCK:
-            return { anthropic: { thinking: { type: 'enabled', budgetTokens: tier.thinkingBudget } } }
+        // `@ai-sdk/anthropic` reads `providerOptions.anthropic.thinking` and adds the budget to the
+        // `max_tokens` it sends, clamped to the model's output limit.
+        case AIProviderName.ANTHROPIC: {
+            const thinking = claudeThinking({ modelId, budgetTokens })
+            return isNil(thinking) ? null : { anthropic: { thinking } }
+        }
+        // `@ai-sdk/amazon-bedrock` reads `providerOptions.bedrock.reasoningConfig` — not the
+        // `anthropic` key — and only for a model id containing `anthropic`; for any other model it
+        // would warn and send nothing, so nothing is asked of it here either.
+        case AIProviderName.BEDROCK: {
+            if (!modelId.includes('anthropic')) {
+                return null
+            }
+            const reasoningConfig = claudeThinking({ modelId, budgetTokens })
+            return isNil(reasoningConfig) ? null : { bedrock: { reasoningConfig } }
+        }
+        // Spread into the request body verbatim by `@openrouter/ai-sdk-provider`, which is where
+        // OpenRouter's own `reasoning` parameter lives.
         case AIProviderName.OPENROUTER:
-            return { openrouter: { cache_control: { type: 'ephemeral' }, reasoning: { max_tokens: tier.thinkingBudget } } }
+            return { openrouter: { reasoning: { max_tokens: budgetTokens } } }
+        // Gemini 2.5 and later already think by default; what they do not do unasked is return it.
+        // No budget is sent: Gemini 3 takes a thinking level instead, and a budget there is only
+        // tolerated for compatibility.
+        case AIProviderName.GOOGLE:
+            return { google: { thinkingConfig: { includeThoughts: true } } }
         default:
-            return {}
+            return null
     }
 }
+
+// Three generations, three answers, so the id decides. Claude 3.7 through 4.5 accept only a fixed
+// budget and answer 400 to `adaptive`; Claude 4.7 and later answer 400 to a budget (4.6 still takes
+// one, deprecated). Claude 3.0 to 3.5, Claude 2 and Claude Instant cannot think at all and would
+// refuse either, so they are asked nothing and their request stays the one the setting's absence
+// sends — a Bedrock row lists every active Claude, old ones included, with no allow-list in front.
+// Anything else gets `adaptive`, the direction every newer model goes. Matched anywhere in the id,
+// so Bedrock's forms (`anthropic.claude-3-haiku-…-v1:0`, `us.anthropic.claude-sonnet-4-5-…`) read
+// the same as Anthropic's own.
+function claudeThinking({ modelId, budgetTokens }: { modelId: string, budgetTokens: number }): JSONObject | null {
+    if (NON_THINKING_CLAUDE_MODEL.test(modelId)) {
+        return null
+    }
+    return BUDGETED_THINKING_MODEL.test(modelId) ? { type: 'enabled', budgetTokens } : ADAPTIVE_THINKING
+}
+
+// Both patterns are alternations of literals with bounded repeats — no nested or overlapping
+// quantifiers, so matching is linear in the id's length.
+const BUDGETED_THINKING_MODEL = /claude-(?:3-7-sonnet|(?:opus|sonnet|haiku)-4-5|opus-4-1|(?:opus|sonnet)-4-(?:0|\d{8}))(?!\d)/
+// `claude-3-` not followed by `7-` (3.0 and 3.5 in every family), `claude-instant`, and Claude 1/2 in
+// both spellings (`claude-2.1`, Bedrock's `claude-v2:1`).
+const NON_THINKING_CLAUDE_MODEL = /claude-(?:3-(?!7-)|instant|v?[12](?!\d))/
+
+// `summarized` because on Claude Opus 4.7 and later the default is `omitted`, which streams the
+// thinking block with its text empty — the user would be billed for reasoning they cannot read.
+const ADAPTIVE_THINKING = { type: 'adaptive', display: 'summarized' }
 
 function buildSystemPromptWithCaching({ systemPrompt, provider }: { systemPrompt: string, provider: AIProviderName }): string | SystemModelMessage {
     switch (provider) {
@@ -336,10 +370,16 @@ function buildStepParts({ content }: {
 
 export const chatAiUtils = {
     createChatModel,
-    stripThinkingBlocks,
     buildProviderOptions,
     buildSystemPromptWithCaching,
     buildStepParts,
+}
+
+type BuildProviderOptionsParams = {
+    provider: AIProviderName
+    modelId: string
+    // The row's stored `config.reasoning`, unchecked.
+    reasoning: unknown
 }
 
 export type { ContentPartLike }

@@ -17,6 +17,7 @@ import {
   ThinkingStep,
   chatPartUtils,
 } from '@/features/chat/lib/chat-types';
+import { chatUtils } from '@/features/chat/lib/chat-utils';
 import { useTts } from '@/features/chat/lib/use-tts';
 import { cn } from '@/lib/utils';
 
@@ -280,6 +281,15 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   const isFromHistory = message.id.startsWith('hist-');
   const lastThinkingIdx = blocks.findLastIndex((b) => b.kind === 'thinking');
+  // The message carries one duration, measured from the run's start to its first reply text (or
+  // to the end, when it wrote none). It belongs on the block where that interval ends: the last
+  // thinking before the first text. A block after the text is later work the figure does not
+  // cover, and one earlier than that ends before the interval does; both keep the fallback label.
+  const firstTextIdx = blocks.findIndex((b) => b.kind === 'text');
+  const measuredThinkingIdx = (
+    firstTextIdx === -1 ? blocks : blocks.slice(0, firstTextIdx)
+  ).findLastIndex((b) => b.kind === 'thinking');
+  const thinkingDurationMs = chatUtils.thinkingDurationOf(message);
   const hasActiveDisplayCard = blocks.some(
     (b) => b.kind === 'display-tool' && b.part.state === 'input-available',
   );
@@ -326,12 +336,8 @@ export const AssistantMessage = memo(function AssistantMessage({
                       reasoningText={block.reasoningText}
                       isStreaming={isMessageStreaming}
                       thinkingDurationMs={
-                        i === lastThinkingIdx
-                          ? (
-                              message as ChatUIMessage & {
-                                thinkingDurationMs?: number;
-                              }
-                            ).thinkingDurationMs
+                        i === measuredThinkingIdx
+                          ? thinkingDurationMs
                           : undefined
                       }
                       onOpenChange={setIsAccordionOpen}

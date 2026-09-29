@@ -1,7 +1,10 @@
 import {
   AIProviderName,
   AIProviderModelType,
+  CHAT_REASONING_PROVIDERS,
+  ChatReasoningBudgetTokens,
   CreateAIProviderRequest,
+  DEFAULT_CHAT_REASONING_BUDGET_TOKENS,
   DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
   ProviderModelConfig,
   tryCatchSync,
@@ -471,6 +474,10 @@ export const UpsertProviderConfigForm = ({
         </>
       )}
 
+      {CHAT_REASONING_PROVIDERS.includes(provider) && (
+        <ChatReasoningFields form={form} isLoading={isLoading} />
+      )}
+
       {[AIProviderName.CUSTOM, AIProviderName.CLOUDFLARE_GATEWAY].includes(
         provider,
       ) && (
@@ -515,6 +522,95 @@ export const UpsertProviderConfigForm = ({
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+};
+
+// Off unless an admin turns it on (#566): reasoning costs tokens and time on every chat turn. The
+// budget is kept when the switch goes off, so turning it back on restores the admin's value — unless
+// it is one the schema would refuse, which is reset to the default (see `budgetToKeep`).
+const ChatReasoningFields = ({
+  form,
+  isLoading,
+}: {
+  form: UseFormReturn<CreateAIProviderRequest>;
+  isLoading?: boolean;
+}) => {
+  const enabled = isReasoningEnabled(form.watch('config.reasoning'));
+  return (
+    <div className="grid space-y-4">
+      {/* Bound to the whole `config.reasoning`, never to `.enabled`: registering the nested path
+          would create `reasoning: {}` on a row that never had the setting, which the schema refuses
+          and which would change what an untouched row saves. */}
+      <FormField
+        control={form.control}
+        name="config.reasoning"
+        render={({ field }) => (
+          <FormItem className="grid space-y-2">
+            <div className="flex items-center justify-between">
+              <FormLabel htmlFor="chatReasoning">
+                {t('Reasoning in chat')}
+              </FormLabel>
+              <FormControl>
+                <Switch
+                  id="chatReasoning"
+                  checked={isReasoningEnabled(field.value)}
+                  // The whole object is written, from the form's values at the moment of the click:
+                  // a render-time copy is stale once the budget input has been typed into, and the
+                  // switch would then save the budget it saw on its last render.
+                  onCheckedChange={(checked) =>
+                    field.onChange({
+                      enabled: checked,
+                      budgetTokens: budgetToKeep(
+                        form.getValues('config.reasoning.budgetTokens'),
+                      ),
+                    })
+                  }
+                  disabled={isLoading}
+                />
+              </FormControl>
+            </div>
+            <FormDescription>
+              {t(
+                'Asks the model to think before it answers in chat, and shows its reasoning. Every turn then costs more tokens and takes longer.',
+              )}
+            </FormDescription>
+          </FormItem>
+        )}
+      />
+      {enabled && (
+        <FormField
+          control={form.control}
+          name="config.reasoning.budgetTokens"
+          render={({ field: budgetField }) => (
+            <FormItem className="grid space-y-3">
+              <FormLabel htmlFor="chatReasoningBudget">
+                {t('Reasoning budget (tokens)')}
+              </FormLabel>
+              <FormControl>
+                {/* No `min`/`max`/`step`: the browser would block the submit with its own
+                    untranslated tooltip before the schema's translated message could show. */}
+                <Input
+                  id="chatReasoningBudget"
+                  type="number"
+                  inputMode="numeric"
+                  value={budgetField.value ?? ''}
+                  onChange={(event) =>
+                    budgetField.onChange(budgetFromText(event.target.value))
+                  }
+                  disabled={isLoading}
+                />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'How many tokens the model may spend thinking on each step. Claude 4.6 and later, and Gemini, choose their own amount.',
+                )}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
       )}
     </div>
   );
@@ -657,6 +753,31 @@ function extraBodyToText(value: unknown): string {
     return value;
   }
   return JSON.stringify(value, null, 2);
+}
+
+function isReasoningEnabled(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'enabled' in value &&
+    value.enabled === true
+  );
+}
+
+// The budget input and its message unmount with the switch off, but the schema still checks the
+// budget, so an invalid one left behind would fail the save with nothing on screen to say why. Reset
+// rather than keep the input mounted and disabled: a disabled field showing an error it will not let
+// you fix is worse, and hiding what does not apply is the form's pattern everywhere else. Applied on
+// the way on as well, so a missing or refused stored budget reappears as the default.
+function budgetToKeep(budget: unknown): number {
+  const parsed = ChatReasoningBudgetTokens.safeParse(budget);
+  return parsed.success ? parsed.data : DEFAULT_CHAT_REASONING_BUDGET_TOKENS;
+}
+
+// An empty field is handed on as `undefined` rather than 0, so the schema answers it with the
+// range message instead of the form quietly saving a budget nobody typed.
+function budgetFromText(text: string): number | undefined {
+  return text.trim().length === 0 ? undefined : Number(text);
 }
 
 // Unparseable text is handed to the form as the raw string rather than dropped, so the schema

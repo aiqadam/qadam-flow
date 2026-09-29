@@ -1,6 +1,8 @@
+import { isObject } from '@aiqadam/shared';
 import { UIMessageChunk } from 'ai';
 import { describe, expect, it } from 'vitest';
 
+import { chatUtils } from '@/features/chat/lib/chat-utils';
 import { chunkReducer, StreamingState } from '@/features/chat/lib/chunk-reducer';
 
 function makeChunk(override: UIMessageChunk): UIMessageChunk {
@@ -337,6 +339,148 @@ describe('chunkReducer', () => {
         makeChunk({ type: 'start', messageId: 'server-id-123' }),
       ]);
       expect(state.message.id).toBe('server-id-123');
+    });
+  });
+
+  // #564: the live label has to read what the reload will, so this mirrors the server's clock —
+  // the run's first `start` to its first non-empty text, or to the stream's end without text.
+  describe('thinking duration', () => {
+    const durationOf = (state: StreamingState): unknown =>
+      isObject(state.message.metadata)
+        ? state.message.metadata.thinkingDurationMs
+        : undefined;
+
+    it('measures from the start chunk to the first text that carries a character', () => {
+      const state = chunkReducer.createStreamingState({ messageId: 'test' });
+
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'start' })],
+        receivedAt: 1_000,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [
+          makeChunk({ type: 'reasoning-start', id: 'r1' }),
+          makeChunk({ type: 'reasoning-delta', id: 'r1', delta: 'Hmm.' }),
+          makeChunk({ type: 'text-start', id: 't1' }),
+          makeChunk({ type: 'text-delta', id: 't1', delta: '' }),
+        ],
+        receivedAt: 2_500,
+      });
+      expect(durationOf(state)).toBeUndefined();
+
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'text-delta', id: 't1', delta: 'Hi' })],
+        receivedAt: 4_000,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [
+          makeChunk({ type: 'text-delta', id: 't1', delta: ' there' }),
+          makeChunk({ type: 'finish' }),
+        ],
+        receivedAt: 9_000,
+      });
+
+      expect(durationOf(state)).toBe(3_000);
+    });
+
+    it('measures to the end of the stream when the run wrote no text', () => {
+      const state = chunkReducer.createStreamingState({ messageId: 'test' });
+
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'start' })],
+        receivedAt: 1_000,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [
+          makeChunk({
+            type: 'tool-input-available',
+            toolCallId: 'tc1',
+            toolName: 'ap_list_flows',
+            input: {},
+          }),
+          makeChunk({ type: 'finish' }),
+        ],
+        receivedAt: 6_000,
+      });
+
+      expect(durationOf(state)).toBe(5_000);
+    });
+
+    it('keeps the first start and lets the retried reply replace a refused attempt end', () => {
+      const state = chunkReducer.createStreamingState({ messageId: 'test' });
+
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'start' })],
+        receivedAt: 1_000,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'finish' })],
+        receivedAt: 1_200,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [
+          makeChunk({ type: 'start' }),
+          makeChunk({ type: 'text-start', id: 't1' }),
+        ],
+        receivedAt: 5_000,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'text-delta', id: 't1', delta: 'Done.' })],
+        receivedAt: 7_000,
+      });
+
+      expect(durationOf(state)).toBe(6_000);
+    });
+
+    it('does not measure a stream joined after its start, nor chunks without a receipt time', () => {
+      const joined = chunkReducer.createStreamingState({ messageId: 'test' });
+      chunkReducer.applyChunks({
+        state: joined,
+        chunks: [
+          makeChunk({ type: 'text-start', id: 't1' }),
+          makeChunk({ type: 'text-delta', id: 't1', delta: 'Hi' }),
+        ],
+        receivedAt: 4_000,
+      });
+      expect(durationOf(joined)).toBeUndefined();
+
+      const untimed = createAndApply([
+        makeChunk({ type: 'start' }),
+        makeChunk({ type: 'text-start', id: 't1' }),
+        makeChunk({ type: 'text-delta', id: 't1', delta: 'Hi' }),
+      ]);
+      expect(durationOf(untimed)).toBeUndefined();
+    });
+
+    it('carries the duration into the snapshot the view renders', () => {
+      const state = chunkReducer.createStreamingState({ messageId: 'test' });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [makeChunk({ type: 'start' })],
+        receivedAt: 0,
+      });
+      chunkReducer.applyChunks({
+        state,
+        chunks: [
+          makeChunk({ type: 'text-start', id: 't1' }),
+          makeChunk({ type: 'text-delta', id: 't1', delta: 'Hi' }),
+        ],
+        receivedAt: 3_000,
+      });
+
+      expect(
+        chatUtils.thinkingDurationOf(chunkReducer.snapshotMessage({ state })),
+      ).toBe(3_000);
     });
   });
 

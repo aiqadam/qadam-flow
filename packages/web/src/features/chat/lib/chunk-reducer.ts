@@ -1,3 +1,4 @@
+import { isObject } from '@aiqadam/shared';
 import { DynamicToolUIPart, UIMessageChunk } from 'ai';
 
 import { ChatUIMessage } from './chat-types';
@@ -19,6 +20,8 @@ function createStreamingState({
     activeReasoningParts: {},
     partialToolCalls: {},
     seenToolCallIds: new Set(),
+    thinkingStartedAt: null,
+    replyStarted: false,
   };
 }
 
@@ -59,17 +62,26 @@ function updateToolPartFields({
   if ('approval' in fields) part.approval = fields.approval;
 }
 
+// `receivedAt` is a `performance.now()` reading from the chunk's arrival. Without it the chunk is
+// applied but not timed.
 function applyChunk({
   state,
   chunk,
+  receivedAt,
 }: {
   state: StreamingState;
   chunk: UIMessageChunk;
+  receivedAt?: number;
 }): void {
   switch (chunk.type) {
     case 'start': {
       if (chunk.messageId) {
         state.message.id = chunk.messageId;
+      }
+      // The first `start` only: an overflow retry streams a second one, and the server's clock,
+      // which this mirrors, keeps running across the refused attempt and the compaction pass.
+      if (state.thinkingStartedAt === null && receivedAt !== undefined) {
+        state.thinkingStartedAt = receivedAt;
       }
       break;
     }
@@ -87,6 +99,10 @@ function applyChunk({
       const part = state.message.parts[idx];
       if (part?.type === 'text') {
         part.text += chunk.delta;
+      }
+      if (!state.replyStarted && chunk.delta.length > 0) {
+        state.replyStarted = true;
+        recordThinkingDuration({ state, endedAt: receivedAt });
       }
       break;
     }
@@ -285,7 +301,15 @@ function applyChunk({
       break;
     }
 
-    case 'finish':
+    // A run that never wrote text thought until its stream ended. Overwritten by a later `finish`
+    // rather than kept, because a refused attempt's stream ends before the retry's reply begins.
+    case 'finish': {
+      if (!state.replyStarted) {
+        recordThinkingDuration({ state, endedAt: receivedAt });
+      }
+      break;
+    }
+
     case 'error':
     case 'abort':
     case 'message-metadata':
@@ -296,15 +320,37 @@ function applyChunk({
   }
 }
 
+// Mirrors `chatThinkingDuration.measure` on the server, so the live label reads what a reload will.
+// Unmeasured when the stream was joined after its `start` — a tab reattaching mid-run cannot know
+// when the run began, and the reload's persisted figure fills it in.
+function recordThinkingDuration({
+  state,
+  endedAt,
+}: {
+  state: StreamingState;
+  endedAt: number | undefined;
+}): void {
+  if (state.thinkingStartedAt === null || endedAt === undefined) return;
+  state.message.metadata = {
+    ...(isObject(state.message.metadata) ? state.message.metadata : {}),
+    thinkingDurationMs: Math.max(
+      0,
+      Math.round(endedAt - state.thinkingStartedAt),
+    ),
+  };
+}
+
 function applyChunks({
   state,
   chunks,
+  receivedAt,
 }: {
   state: StreamingState;
   chunks: UIMessageChunk[];
+  receivedAt?: number;
 }): void {
   for (const chunk of chunks) {
-    applyChunk({ state, chunk });
+    applyChunk({ state, chunk, receivedAt });
   }
 }
 
@@ -339,6 +385,8 @@ type StreamingState = {
   activeReasoningParts: Record<string, number>;
   partialToolCalls: Record<string, { toolName: string; inputText: string }>;
   seenToolCallIds: Set<string>;
+  thinkingStartedAt: number | null;
+  replyStarted: boolean;
 };
 
 export type { StreamingState };

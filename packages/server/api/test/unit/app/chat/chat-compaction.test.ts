@@ -23,7 +23,7 @@ const resolvedModel = model({ contextWindowTokens: 10_000 })
 
 // The model object itself is never called here — `generateText` is mocked — so a string stands in.
 function model({ contextWindowTokens }: { contextWindowTokens: number | null }): ResolvedChatModel {
-    return { model: 'language-model', modelId: 'm', contextWindowTokens, provider: AIProviderName.CUSTOM }
+    return { model: 'language-model', modelId: 'm', contextWindowTokens, provider: AIProviderName.CUSTOM, reasoningProviderOptions: null }
 }
 
 function user(text: string): PersistedChatMessage {
@@ -157,6 +157,20 @@ describe('chatCompaction.compactAfterReply', () => {
         expect(saved).toMatchObject({ id: 'c', platformId: 'p', userId: 'u', fromIndex: 4, summary: '- Earlier facts.\n- New facts.' })
         expect(saved.toIndex).toBeGreaterThan(4)
         expect(uiMessages[saved.toIndex].role).toBe(PersistedChatRole.USER)
+    })
+
+    // #566. The summariser runs on the conversation's own model after every long enough reply, in the
+    // background. A row that opted the chat into reasoning must not make that call think too.
+    it('never asks the summariser to reason, even on a row that opted the chat into it', async () => {
+        const reasoningModel: ResolvedChatModel = { ...resolvedModel, provider: AIProviderName.ANTHROPIC, reasoningProviderOptions: { anthropic: { thinking: { type: 'enabled', budgetTokens: 4_096 } } } }
+        getOneOrThrow.mockResolvedValue({ id: 'c', platformId: 'p', userId: 'u', uiMessages: [...exchanges(19), user('latest'), assistant('reply', usage({ usedTokens: 9_000 }))], summary: null, summarizedUpToIndex: null, autoCompact: true })
+        generateText.mockResolvedValue({ text: '- Facts.' })
+        saveCompaction.mockResolvedValue(true)
+
+        await chatCompaction(log).compactAfterReply({ id: 'c', platformId: 'p', userId: 'u', resolvedModel: reasoningModel })
+
+        expect(generateText).toHaveBeenCalled()
+        expect(generateText.mock.calls[0][0]).not.toHaveProperty('providerOptions')
     })
 
     it('does nothing while the last reply is under the threshold', async () => {

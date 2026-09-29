@@ -57,7 +57,51 @@ export type BedrockProviderAuthConfig = z.infer<typeof BedrockProviderAuthConfig
 export const MistralProviderAuthConfig = BaseAIProviderAuthConfig
 export type MistralProviderAuthConfig = z.infer<typeof MistralProviderAuthConfig>
 
-export const AnthropicProviderConfig = z.object({})
+// The providers whose chat can be asked to reason (#566). OpenAI and Azure are not among them: chat
+// reaches them through Chat Completions, which returns no reasoning text, and moving them to the
+// Responses API would change the wire for every row. CUSTOM and Cloudflare Gateway already carry
+// `extraBody`, which is how an OpenAI-compatible server is told to think.
+export const CHAT_REASONING_PROVIDERS: readonly AIProviderName[] = [
+    AIProviderName.ANTHROPIC,
+    AIProviderName.BEDROCK,
+    AIProviderName.OPENROUTER,
+    AIProviderName.GOOGLE,
+]
+
+// 1,024 is Anthropic's own floor for `budget_tokens`. The ceiling is set by the smallest output
+// limit a budget can meet, because a budget must stay below `max_tokens` and chat sets no
+// `maxOutputTokens`: `@ai-sdk/anthropic` then sends the model's own maximum and clamps budget plus
+// that to it, which on Claude Opus 4 and 4.1 is 32,000; `@ai-sdk/amazon-bedrock` sends the budget
+// plus 4,096, which must fit the same 32,000. 24,000 leaves at least 3,904 tokens for the reply on
+// both, and more than 8,000 on direct Anthropic.
+export const MIN_CHAT_REASONING_BUDGET_TOKENS = 1_024
+export const MAX_CHAT_REASONING_BUDGET_TOKENS = 24_000
+export const DEFAULT_CHAT_REASONING_BUDGET_TOKENS = 8_000
+
+export const ChatReasoningBudgetTokens = z.int(formErrors.reasoningBudgetTokensOutOfRange)
+    .min(MIN_CHAT_REASONING_BUDGET_TOKENS, formErrors.reasoningBudgetTokensOutOfRange)
+    .max(MAX_CHAT_REASONING_BUDGET_TOKENS, formErrors.reasoningBudgetTokensOutOfRange)
+
+// Whether the chat asks this row's models to reason, and how much they may spend on it. Off unless
+// an admin turns it on, because it costs tokens and time on every turn. Chat only: flow steps and
+// the AI qadams never read it, and neither does the chat's own compaction summariser.
+export const ChatReasoningConfig = z.object({
+    enabled: z.boolean(),
+    budgetTokens: ChatReasoningBudgetTokens,
+})
+export type ChatReasoningConfig = z.infer<typeof ChatReasoningConfig>
+
+// `AIProviderConfig` is an untagged union whose tail is empty objects, and an empty object strips
+// what it does not know. Without this, an update carrying an out-of-range budget fails every member
+// that knows `reasoning`, then parses to `{}` against the OpenAI member — and the row's setting is
+// silently wiped by a request that should have been refused.
+const NoChatReasoning = {
+    reasoning: z.undefined({ error: formErrors.reasoningNotSupportedByProvider }).optional(),
+}
+
+export const AnthropicProviderConfig = z.object({
+    reasoning: ChatReasoningConfig.optional(),
+})
 export type AnthropicProviderConfig = z.infer<typeof AnthropicProviderConfig>
 
 // A provider's model catalogue is operator-supplied and stored verbatim on the row, served back
@@ -193,13 +237,17 @@ export const AzureProviderConfig = z.object({
 })
 export type AzureProviderConfig = z.infer<typeof AzureProviderConfig>
 
-export const GoogleProviderConfig = z.object({})
+export const GoogleProviderConfig = z.object({
+    reasoning: ChatReasoningConfig.optional(),
+})
 export type GoogleProviderConfig = z.infer<typeof GoogleProviderConfig>
 
-export const OpenAIProviderConfig = z.object({})
+export const OpenAIProviderConfig = z.object(NoChatReasoning)
 export type OpenAIProviderConfig = z.infer<typeof OpenAIProviderConfig>
 
-export const OpenRouterProviderConfig = z.object({})
+export const OpenRouterProviderConfig = z.object({
+    reasoning: ChatReasoningConfig.optional(),
+})
 export type OpenRouterProviderConfig = z.infer<typeof OpenRouterProviderConfig>
 
 // The same defect as `resourceName`, verified against the installed SDK rather than inferred:
@@ -217,10 +265,11 @@ export function isValidAwsRegion(region: unknown): region is string {
 
 export const BedrockProviderConfig = z.object({
     region: z.string().regex(AWS_REGION_PATTERN, formErrors.invalidAwsRegion),
+    reasoning: ChatReasoningConfig.optional(),
 })
 export type BedrockProviderConfig = z.infer<typeof BedrockProviderConfig>
 
-export const MistralProviderConfig = z.object({})
+export const MistralProviderConfig = z.object(NoChatReasoning)
 export type MistralProviderConfig = z.infer<typeof MistralProviderConfig>
 
 export const AIProviderAuthConfig = z.union([

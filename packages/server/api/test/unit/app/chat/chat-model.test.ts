@@ -15,9 +15,12 @@ const createChatModel = vi.fn((_args: unknown) => 'language-model')
 vi.mock('../../../../src/app/ai/ai-provider-service', () => ({
     aiProviderService: () => ({ getChatProvider, listModels }),
 }))
-vi.mock('@aiqadam/server-utils', () => ({
-    chatAiUtils: { createChatModel: (args: unknown) => createChatModel(args) },
-}))
+vi.mock('@aiqadam/server-utils', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@aiqadam/server-utils')>()
+    return {
+        chatAiUtils: { createChatModel: (args: unknown) => createChatModel(args), buildProviderOptions: actual.chatAiUtils.buildProviderOptions },
+    }
+})
 
 import { chatModel } from '../../../../src/app/chat/chat-model'
 
@@ -135,6 +138,27 @@ describe('chatModel.resolve', () => {
         // The row it already holds, not the provider name — with two rows of one name the name
         // does not identify a provider, and re-resolving by it can reach a different one.
         expect(listModels).toHaveBeenCalledWith({ platformId: 'plat', ref: 'provider-row-id' })
+    })
+
+    // #566. The options are built for the model this run resolved, because the Anthropic shape
+    // depends on the model id, and they stay off the `model` object the summariser also uses.
+    it('builds the reasoning options from the row\'s setting and the model it resolved', async () => {
+        getChatProvider.mockResolvedValue(provider({ reasoning: { enabled: true, budgetTokens: 2_048 } }, AIProviderName.ANTHROPIC))
+        listModels.mockResolvedValue([{ id: 'claude-sonnet-4-5', type: AIProviderModelType.TEXT }])
+
+        const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
+
+        expect(resolved.reasoningProviderOptions).toEqual({ anthropic: { thinking: { type: 'enabled', budgetTokens: 2_048 } } })
+        expect(resolved.model).toBe('language-model')
+    })
+
+    it('has no reasoning options for a row that did not opt in', async () => {
+        getChatProvider.mockResolvedValue(provider({}, AIProviderName.ANTHROPIC))
+        listModels.mockResolvedValue([{ id: 'claude-sonnet-4-5', type: AIProviderModelType.TEXT }])
+
+        const resolved = await chatModel.resolve({ platformId: 'plat', modelName: null, log })
+
+        expect(resolved.reasoningProviderOptions).toBeNull()
     })
 
     it('names the missing model when the provider reports no text model at all', async () => {

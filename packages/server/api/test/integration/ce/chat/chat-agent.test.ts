@@ -59,6 +59,10 @@ let providerSummaryReply = '- The user asked earlier questions about their flows
 // Holds the next non-streaming request open, so a test can act while a compaction pass is running.
 let providerSummaryHold: Promise<void> | null = null
 let providerSummaryRequested = false
+// Holds the next streaming request before a single byte is written, so a test can move the clock
+// while the run is waiting on the model's first token.
+let providerStreamHold: Promise<void> | null = null
+let providerStreamRequested = false
 
 beforeAll(async () => {
     providerServer = http.createServer((req, res) => {
@@ -88,20 +92,19 @@ beforeAll(async () => {
                 })
                 return
             }
-            res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
-            // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream —
-            // the only way to cancel something real rather than a conversation that is already
-            // finished.
-            const hold = providerHolds.shift()
-            if (!isNil(hold)) {
-                res.write(textChunk(providerFirstChunkOnly))
-                providerStreamedFirstChunk = true
-                void hold.then(() => res.end('data: [DONE]\n\n'))
+            const streamHold = providerStreamHold
+            if (!isNil(streamHold)) {
+                providerStreamHold = null
+                providerStreamRequested = true
+                void streamHold.then(() => {
+                    if (req.socket.destroyed) {
+                        return
+                    }
+                    streamResponse(res)
+                })
                 return
             }
-            // A queued script when the test set one, so a turn that calls a tool can answer
-            // differently on the model's second request; otherwise the plain reply.
-            res.end(scriptedResponses.shift() ?? completionStream(providerReply))
+            streamResponse(res)
         })
     })
     await new Promise<void>((resolve) => providerServer.listen(0, '127.0.0.1', resolve))
@@ -132,6 +135,9 @@ afterEach(() => {
     providerSummaryReply = '- The user asked earlier questions about their flows.'
     providerSummaryHold = null
     providerSummaryRequested = false
+    providerStreamHold = null
+    providerStreamRequested = false
+    vi.useRealTimers()
     vi.restoreAllMocks()
 })
 
@@ -162,6 +168,22 @@ async function enableChatProvider(platformId: string, models: ProviderModelConfi
         },
         enabledForChat: true,
     })
+}
+
+function streamResponse(res: http.ServerResponse): void {
+    res.writeHead(StatusCodes.OK, { 'content-type': 'text/event-stream' })
+    // Held open, one chunk sent, when a test needs a run that is genuinely mid-stream — the only way
+    // to cancel something real rather than a conversation that is already finished.
+    const hold = providerHolds.shift()
+    if (!isNil(hold)) {
+        res.write(textChunk(providerFirstChunkOnly))
+        providerStreamedFirstChunk = true
+        void hold.then(() => res.end('data: [DONE]\n\n'))
+        return
+    }
+    // A queued script when the test set one, so a turn that calls a tool can answer differently on
+    // the model's second request; otherwise the plain reply.
+    res.end(scriptedResponses.shift() ?? completionStream(providerReply))
 }
 
 function sseChunk(payload: Record<string, unknown>): string {
@@ -486,7 +508,7 @@ describe('Chat agent API', () => {
             )
             expect(finished.uiMessages).toEqual([
                 { role: PersistedChatRole.USER, parts: [{ type: PersistedChatPartType.TEXT, text: 'say hello' }] },
-                { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: 'Hello from the test model' }] },
+                { role: PersistedChatRole.ASSISTANT, parts: [{ type: PersistedChatPartType.TEXT, text: 'Hello from the test model' }], thinkingDurationMs: expect.any(Number) },
             ])
             // The run is bound to the caller's project, so every tool in it is too.
             expect(finished.projectId).toBe(ctx.project.id)
@@ -581,6 +603,29 @@ describe('Chat agent API', () => {
             expect(replayed).not.toContain(reasoning)
         })
 
+        // #564. Only `performance` is faked: the run's clock reads it and nothing else in the path
+        // does, so the loopback server, Postgres and the polling below keep real time while the
+        // measured interval is exactly what the test advanced it by.
+        it('persists how long the run thought before its reply began', async () => {
+            vi.useFakeTimers({ toFake: ['performance'] })
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            let releaseReply: () => void = () => {}
+            providerStreamHold = new Promise<void>((resolve) => {
+                releaseReply = resolve
+            })
+            scriptedResponses = [reasoningStream({ reasoning: 'Checking which flows exist before answering.', text: 'You have no flows yet.' })]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'list my flows', runId: apId() })
+            await waitFor(() => providerStreamRequested)
+            vi.advanceTimersByTime(3_000)
+            releaseReply()
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(reply).toMatchObject({ role: PersistedChatRole.ASSISTANT, thinkingDurationMs: 3_000 })
+        })
+
         it('records how full the context was, from the usage the provider streamed', async () => {
             await enableChatProvider(ctx.platform.id, [{ modelId: MODEL_ID, modelName: 'Test chat model', modelType: AIProviderModelType.TEXT, contextWindowTokens: 32_768 }])
             const conversationId = await createConversation(ctx)
@@ -671,6 +716,33 @@ describe('Chat agent API', () => {
             expect(providerBodies).toHaveLength(3)
             expect(systemContents(providerBodies[2]).some((content) => content.includes('- The user asked earlier'))).toBe(true)
             expect(JSON.stringify(providerBodies[2].messages).length).toBeLessThan(JSON.stringify(providerBodies[0].messages).length)
+        })
+
+        // The user watched one "Thinking..." from the refused attempt through the pass to the retry,
+        // so the reply's duration covers the compaction rather than restarting at the retry.
+        it('counts the overflow compaction in the retried reply thinking time', async () => {
+            await enableChatProvider(ctx.platform.id)
+            const conversationId = await createConversation(ctx)
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'hello', runId: apId() })
+            await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+            await db.update('chat_conversation', conversationId, { uiMessages: longHistory() })
+            vi.useFakeTimers({ toFake: ['performance'] })
+            providerFailuresOnce = [{ status: 400, body: { error: { message: 'This model\'s maximum context length is 8192 tokens.', type: 'invalid_request_error' } } }]
+            let releaseSummary: () => void = () => {}
+            providerSummaryHold = new Promise<void>((resolve) => {
+                releaseSummary = resolve
+            })
+            scriptedResponses = [completionStream('Answered after compacting.')]
+
+            await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'what next?', runId: apId() })
+            await waitFor(() => providerSummaryRequested)
+            vi.advanceTimersByTime(2_000)
+            releaseSummary()
+            const row = await waitForStatus(conversationId, ChatConversationStatus.IDLE)
+
+            const reply = Array.isArray(row.uiMessages) ? row.uiMessages.at(-1) : undefined
+            expect(JSON.stringify(reply)).toContain('Answered after compacting.')
+            expect(reply).toMatchObject({ thinkingDurationMs: 2_000 })
         })
 
         it('settles as cancelled, and does not retry, when the user stops the turn while it compacts', async () => {
@@ -1151,21 +1223,38 @@ describe('Chat agent API', () => {
         // controller registered — so it proves only that the route answers. This cancels a run
         // that is genuinely mid-stream and checks the two things that actually matter: the
         // conversation settles back to IDLE rather than ERROR, and the partial reply survives.
+        //
+        // The partial reply's thinking time is also pinned here, on a faked `performance` clock: 2 s to
+        // the first token, then 5 s more before the Stop. It must read the 2 s — the thinking before
+        // the reply began — not the 7 s to the cancel.
         it('stops a live run, keeps what was already streamed, and does not report it as a failure', async () => {
+            vi.useFakeTimers({ toFake: ['performance'] })
             await enableChatProvider(ctx.platform.id)
             const conversationId = await createConversation(ctx)
+            let releaseFirst: () => void = () => {}
+            providerStreamHold = new Promise<void>((resolve) => {
+                releaseFirst = resolve
+            })
             let releaseRest: () => void = () => {}
             const restReleased = new Promise<void>((resolve) => {
                 releaseRest = resolve
             })
             providerHolds = [restReleased]
             providerFirstChunkOnly = 'Partial answer so far'
+            const operatorEmits = captureSocketEmits()
 
             await ctx.post(`/v1/chat/conversations/${conversationId}/messages`, { content: 'say something long', runId: apId() })
             await waitForStatus(conversationId, ChatConversationStatus.STREAMING)
-            // Wait until the first token has actually been streamed, otherwise the cancel races
-            // the stream opening and there would be nothing partial to preserve.
-            await waitFor(() => providerStreamedFirstChunk)
+            await waitFor(() => providerStreamRequested)
+            vi.advanceTimersByTime(2_000)
+            releaseFirst()
+            // Wait until the run has forwarded the first token, not merely until the provider wrote
+            // it: otherwise the cancel races the stream opening and there would be nothing partial to
+            // preserve, and the clock below could move before the run read the token.
+            await waitFor(() => operatorEmits
+                .flatMap((emit) => emit.mock.calls.map((call) => call[1]))
+                .some((payload) => isRecord(payload) && payload.type === ChatAgentEventType.CHUNK && isRecord(payload.data) && payload.data.type === 'text-delta'))
+            vi.advanceTimersByTime(5_000)
 
             const cancelled = await ctx.post(`/v1/chat/conversations/${conversationId}/cancel`)
             expect(cancelled?.statusCode).toBe(StatusCodes.NO_CONTENT)
@@ -1180,6 +1269,7 @@ describe('Chat agent API', () => {
             })
             expect(settled.status).toBe(ChatConversationStatus.IDLE)
             expect((settled.uiMessages as any[])[1].parts[0].text).toContain('Partial answer so far')
+            expect((settled.uiMessages as any[])[1].thinkingDurationMs).toBe(2_000)
         })
 
         // The abort controller lives in the process that started the run. A cancel arriving at any

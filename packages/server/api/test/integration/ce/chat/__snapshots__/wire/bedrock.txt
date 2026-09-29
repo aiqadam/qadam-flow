@@ -1,0 +1,4 @@
+POST https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+content-type: application/json
+
+{"system":[{"text":"<SYSTEM_PROMPT>"}],"messages":[{"role":"user","content":[{"text":"list my flows"}]}],"additionalModelResponseFieldPaths":["/delta/stop_sequence"],"toolConfig":{"tools":[{"toolSpec":{"name":"ap_list_flows","description":"List the flows in the project.","inputSchema":{"json":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"limit":{"type":"number"}},"additionalProperties":false}}}},{"toolSpec":{"name":"ap_delete_flow","description":"Delete a flow.","inputSchema":{"json":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"flowId":{"type":"string"}},"required":["flowId"],"additionalProperties":false}}}}],"toolChoice":{"auto":{}}}}
