@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { platformUserApi } from '@/api/platform-user-api';
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { userHooks } from '@/hooks/user-hooks';
+import { seekPageUtils } from '@/lib/seek-page-utils';
 
 export const platformUserHooks = {
   useUsers: () => {
@@ -25,10 +26,7 @@ export const platformUserHooks = {
     return useQuery<SeekPage<UserWithMetaInformation>, Error>({
       queryKey: platformUserKeys.users,
       queryFn: async () => {
-        const results = await platformUserApi.list({
-          limit: 2000,
-        });
-        return results;
+        return seekPageUtils.listAll((page) => platformUserApi.list(page));
       },
       enabled: canListUsers,
     });

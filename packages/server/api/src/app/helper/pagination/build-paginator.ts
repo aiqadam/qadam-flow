@@ -1,19 +1,11 @@
+import { ErrorCode, isNil, QadamFlowError } from '@aiqadam/shared'
 import { EntitySchema, ObjectLiteral } from 'typeorm'
 import Paginator, { Order, OrderByConfig } from './paginator'
 
-export type PagingQuery = {
-    afterCursor?: string
-    beforeCursor?: string
-    limit?: number
-    order?: Order | 'ASC' | 'DESC'
-    orderBy?: string | OrderByConfig[]
-}
-
-export type PaginationOptions<Entity> = {
-    entity: EntitySchema<Entity>
-    alias?: string
-    query?: PagingQuery
-}
+// The ceiling on one page for every cursor-paginated list. A larger request is clamped
+// rather than rejected, so an old client asking for 10000 gets a cursor instead of a 400
+// (#561). Reading a whole set is `unlimited: true`, which only server code can pass.
+export const MAX_PAGE_SIZE = 1000
 
 export function buildPaginator<Entity extends ObjectLiteral>(
     options: PaginationOptions<Entity>,
@@ -22,6 +14,7 @@ export function buildPaginator<Entity extends ObjectLiteral>(
         entity,
         query = {},
         alias = entity.options.name.toLowerCase(),
+        unlimited = false,
     } = options
 
     const paginator = new Paginator<Entity>(entity)
@@ -36,8 +29,11 @@ export function buildPaginator<Entity extends ObjectLiteral>(
         paginator.setBeforeCursor(query.beforeCursor)
     }
 
-    if (query.limit) {
-        paginator.setLimit(query.limit)
+    if (unlimited) {
+        paginator.setUnlimited()
+    }
+    else if (!isNil(query.limit)) {
+        paginator.setLimit(clampLimit(query.limit))
     }
 
     if (query.orderBy) {
@@ -56,4 +52,30 @@ export function buildPaginator<Entity extends ObjectLiteral>(
     }
 
     return paginator
+}
+
+// `-1` used to mean "every row" here, and 17 list DTOs passed it straight through (#561).
+function clampLimit(limit: number): number {
+    if (!Number.isInteger(limit) || limit < 1) {
+        throw new QadamFlowError({
+            code: ErrorCode.VALIDATION,
+            params: { message: `limit must be an integer between 1 and ${MAX_PAGE_SIZE}` },
+        })
+    }
+    return Math.min(limit, MAX_PAGE_SIZE)
+}
+
+export type PagingQuery = {
+    afterCursor?: string
+    beforeCursor?: string
+    limit?: number
+    order?: Order | 'ASC' | 'DESC'
+    orderBy?: string | OrderByConfig[]
+}
+
+export type PaginationOptions<Entity> = {
+    entity: EntitySchema<Entity>
+    alias?: string
+    query?: PagingQuery
+    unlimited?: boolean
 }

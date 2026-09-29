@@ -19,7 +19,7 @@ export const QadamTag = z.object({
 export type QadamTag = z.infer<typeof QadamTag>
 
 export const ListTagsRequest = z.object({
-    limit: z.coerce.number().optional(),
+    limit: z.coerce.number().int().min(1).optional(),
     cursor: z.string().optional(),
 })
 

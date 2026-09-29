@@ -127,8 +127,9 @@ const AutomationsPageContent = ({ projectId }: { projectId: string }) => {
   const dialogs = useAutomationsDialogs({ mutations, selectedItems });
 
   const { data: connections } = appConnectionsQueries.useAppConnections({
-    request: { projectId, limit: 10000 },
+    request: { projectId },
     extraKeys: [projectId],
+    allPages: true,
   });
 
   const { qadams } = qadamsHooks.useQadams({});

@@ -159,6 +159,31 @@ describe('Record API', () => {
             expect(body.data.length).toBe(2)
         })
 
+        it.each(['-1', '0', '1.5'])('rejects limit=%s instead of returning the whole table (#561)', async (limit) => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            await db.save('record', Array.from({ length: 3 }, () =>
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+            ))
+
+            const response = await ctx.get('/v1/records', { tableId: table.id, limit })
+
+            expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('bounds an oversized limit by the table itself (#561)', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            await db.save('record', Array.from({ length: 3 }, () =>
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+            ))
+
+            const response = await ctx.get('/v1/records', { tableId: table.id, limit: '99999999' })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data).toHaveLength(3)
+        })
+
         it('returns every column when no projection is asked for', async () => {
             const ctx = await setup()
             const { table, field: name } = await createTableWithTypedField({ ctx, type: FieldType.TEXT })

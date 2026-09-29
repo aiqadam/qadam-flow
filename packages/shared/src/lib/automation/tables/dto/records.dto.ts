@@ -213,7 +213,7 @@ const idListFromQuery = z.preprocess(
 
 export const ListRecordsRequest = z.object({
     tableId: z.string(),
-    limit: z.coerce.number().optional(),
+    limit: z.coerce.number().int().min(1).optional(),
     cursor: z.string().optional(),
     filters: OptionalArrayFromQuery(Filter),
     fieldIds: idListFromQuery,

@@ -12,7 +12,7 @@ const listRunsInput = z.object({
     flowId: z.string().optional().describe('Filter by flow ID. Use ap_list_flows to find it.'),
     status: z.enum(runStatusValues).optional().describe('Filter by status: SUCCEEDED, FAILED, RUNNING, QUEUED, PAUSED, TIMEOUT, etc.'),
     environment: z.enum(runEnvironmentValues).optional().describe('Filter by environment: PRODUCTION (live runs) or TESTING (manual test runs). Defaults to PRODUCTION when no flowId is given, since cross-environment scans on the runs table are slow.'),
-    limit: z.number().min(1).max(50).optional().describe('Max runs to return (default 10, max 50)'),
+    limit: z.number().int().min(1).max(50).optional().describe('Max runs to return (default 10, max 50)'),
 })
 
 export const apListRunsTool = (mcp: ProjectScopedMcpServer, log: FastifyBaseLogger): McpToolDefinition => {

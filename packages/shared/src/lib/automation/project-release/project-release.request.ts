@@ -63,7 +63,7 @@ export type DiffReleaseRequest = z.infer<typeof DiffReleaseRequest>
 export const ListProjectReleasesRequest = z.object({
     projectId: z.string(),
     cursor: z.string().optional(),
-    limit: z.coerce.number().default(10).optional(),
+    limit: z.coerce.number().int().min(1).default(10).optional(),
 })
 
 export type ListProjectReleasesRequest = z.infer<typeof ListProjectReleasesRequest>

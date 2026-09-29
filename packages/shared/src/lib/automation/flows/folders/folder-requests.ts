@@ -22,7 +22,7 @@ export const DeleteFolderRequest = z.object({
 export type DeleteFlowRequest = z.infer<typeof DeleteFolderRequest>
 
 export const ListFolderRequest = z.object({
-    limit: z.coerce.number().optional(),
+    limit: z.coerce.number().int().min(1).optional(),
     cursor: z.string().optional(),
     projectId: z.string(),
 })
