@@ -1,0 +1,4 @@
+POST https://openrouter.ai/api/v1/chat/completions
+content-type: application/json
+
+{"model":"anthropic/claude-sonnet-4.5","messages":[{"role":"system","content":"<SYSTEM_PROMPT>"},{"role":"user","content":"list my flows"}],"tools":[{"type":"function","function":{"name":"ap_list_flows","description":"List the flows in the project.","parameters":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"limit":{"type":"number"}},"additionalProperties":false}}},{"type":"function","function":{"name":"ap_delete_flow","description":"Delete a flow.","parameters":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"flowId":{"type":"string"}},"required":["flowId"],"additionalProperties":false}}}],"tool_choice":"auto","stream":true}

@@ -10,6 +10,8 @@ export const formErrors = {
     tooManyModels: 'tooManyModels',
     modelIdentifierTooLong: 'modelIdentifierTooLong',
     contextWindowTokensOutOfRange: 'contextWindowTokensOutOfRange',
+    reasoningBudgetTokensOutOfRange: 'reasoningBudgetTokensOutOfRange',
+    reasoningNotSupportedByProvider: 'reasoningNotSupportedByProvider',
     extraBodyMustBeObject: 'extraBodyMustBeObject',
     extraBodyReservedKey: 'extraBodyReservedKey',
     extraBodyTooLarge: 'extraBodyTooLarge',

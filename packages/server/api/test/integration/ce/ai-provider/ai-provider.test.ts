@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
 import { AIProviderSchema } from '../../../../src/app/ai/ai-provider-entity'
 import { CUSTOM_PROVIDER_LIMIT_MESSAGE } from '../../../../src/app/ai/ai-provider-service'
+import { anthropicProvider } from '../../../../src/app/ai/providers/anthropic-provider'
 import { AppSystemProp } from '../../../../src/app/helper/system/system-props'
 import { generateMockToken } from '../../../helpers/auth'
 import { db } from '../../../helpers/db'
@@ -43,6 +44,7 @@ beforeEach(async () => {
 
 afterEach(() => {
     setMaxCustomProvidersOverride(originalMaxCustomProviders)
+    vi.restoreAllMocks()
 })
 
 const customProviderBody = (overrides?: Record<string, unknown>) => ({
@@ -401,6 +403,50 @@ describe('AI Providers API', () => {
             const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
             expect((saved as any).config.baseUrl).toBe('https://api.example.com/v1')
             expect((saved as any).config.models).toHaveLength(1)
+        })
+
+        // #566. Anthropic's `validateConnection` lists models over the network, so it is stubbed;
+        // what is under test is the config the route and the service let through to the row.
+        describe('the chat reasoning setting', () => {
+            const reasoning = { enabled: true, budgetTokens: 4_096 }
+
+            it('should save it on a provider that supports it and hand it back to an admin', async () => {
+                vi.spyOn(anthropicProvider, 'validateConnection').mockResolvedValue()
+                const provider = await mockAndSaveAIProvider({ platformId: ctx.platform.id, provider: AIProviderName.ANTHROPIC, displayName: 'Anthropic', config: {} })
+
+                const response = await ctx.post(`/v1/ai-providers/${provider.id}`, { config: { reasoning } })
+
+                expect(response?.statusCode).toBe(StatusCodes.OK)
+                const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+                expect((saved as any).config).toEqual({ reasoning })
+                const listed = await ctx.get('/v1/ai-providers')
+                expect(listed?.json().find((row: { id: string }) => row.id === provider.id).config).toEqual({ reasoning })
+            })
+
+            // The update body's `config` is an untagged union ending in empty objects; without the
+            // guard on those, this request parsed to `{}` and wiped the stored setting with a 200.
+            it('should reject an out-of-range budget and keep the stored setting', async () => {
+                vi.spyOn(anthropicProvider, 'validateConnection').mockResolvedValue()
+                const provider = await mockAndSaveAIProvider({ platformId: ctx.platform.id, provider: AIProviderName.ANTHROPIC, displayName: 'Anthropic', config: { reasoning } })
+
+                const response = await ctx.post(`/v1/ai-providers/${provider.id}`, { config: { reasoning: { enabled: true, budgetTokens: 100 } } })
+
+                // Refused by the route's own body schema, before the service runs.
+                expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+                const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+                expect((saved as any).config).toEqual({ reasoning })
+            })
+
+            it('should refuse it on a provider chat cannot ask to reason', async () => {
+                const provider = await mockAndSaveAIProvider({ platformId: ctx.platform.id, provider: AIProviderName.OPENAI, displayName: 'OpenAI', config: {} })
+
+                const response = await ctx.post(`/v1/ai-providers/${provider.id}`, { config: { reasoning } })
+
+                expect(response?.statusCode).not.toBe(StatusCodes.OK)
+                expect(response?.json().code).toBe(ErrorCode.VALIDATION)
+                const saved = await db.findOneByOrFail('ai_provider', { id: provider.id })
+                expect((saved as any).config).toEqual({})
+            })
         })
 
         it('should move the updated timestamp, which is what expires the cached model list', async () => {

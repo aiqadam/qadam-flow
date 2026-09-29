@@ -20,6 +20,22 @@ Go to **Admin Console** → **AI** page. Add your provider's base URL and API ke
 
 ![Manage AI Providers](/resources/screenshots/configure-ai-provider.png)
 
+## Reasoning in chat
+
+Chat can ask the model to think before it answers and show that reasoning in a collapsible block. It is off by default, because every turn then costs more tokens and takes longer.
+
+To turn it on, edit an **Anthropic**, **Amazon Bedrock**, **OpenRouter** or **Google** provider and switch on **Reasoning in chat**. The setting applies only to the provider enabled for chat. Flow steps and AI qadams ignore it.
+
+**Reasoning budget** is the most tokens the model may spend thinking on each step, from 1,024 to 24,000:
+
+- **Claude 4.5 and earlier**, on Anthropic or Bedrock, and **OpenRouter** models use the budget.
+- **Claude 4.6 and later** decide how much to think on their own, and ignore the budget.
+- **Gemini** thinks by default and ignores the budget. The setting only makes Gemini return its reasoning.
+
+<Note>
+For OpenAI, Azure, custom and Cloudflare Gateway providers the switch does not appear. For a custom OpenAI-compatible server, send the server's own thinking parameter in **Extra request parameters** instead, for example `{ "chat_template_kwargs": { "enable_thinking": true } }` on vLLM.
+</Note>
+
 ## Cost Control & Logging
 
 Use an AI gateway like **Vercel AI Gateway** or **Cloudflare AI Gateway** to:

@@ -12,7 +12,9 @@ import {
     BatchProgressData,
     BedrockProviderAuthConfig,
     BedrockProviderConfig,
+    CHAT_REASONING_PROVIDERS,
     chatPersistenceUtils,
+    ChatReasoningConfig,
     CloudflareGatewayProviderConfig,
     ErrorCode,
     INVALID_AWS_REGION_MESSAGE,
@@ -135,17 +137,64 @@ function unusableProviderConfig(message: string): QadamFlowError {
     return new QadamFlowError({ code: ErrorCode.AI_REQUEST_NOT_SUPPORTED, params: { message } })
 }
 
-function buildProviderOptions({ provider, tier }: { provider: AIProviderName, tier: { id: string, thinkingBudget: number } }): SharedV3ProviderOptions {
+/**
+ * The provider options that ask a chat model to reason (#566), or null when the row has not opted
+ * in. Null is load-bearing: the caller then passes no `providerOptions` at all, so a row with the
+ * setting absent or off sends exactly the request it sent before the setting existed.
+ *
+ * `reasoning` is read off a stored config that is never re-parsed on the way out of the database,
+ * so it is checked here and anything that does not fit the schema counts as off.
+ *
+ * Only for the chat's own `streamText`. The compaction summariser's `generateText` must never get
+ * these: it is a background job and has to stay cheap.
+ */
+function buildProviderOptions({ provider, modelId, reasoning }: BuildProviderOptionsParams): SharedV3ProviderOptions | null {
+    const parsed = ChatReasoningConfig.safeParse(reasoning)
+    if (!parsed.success || !parsed.data.enabled || !CHAT_REASONING_PROVIDERS.includes(provider)) {
+        return null
+    }
+    const { budgetTokens } = parsed.data
     switch (provider) {
+        // `@ai-sdk/anthropic` reads `providerOptions.anthropic.thinking` and adds the budget to the
+        // `max_tokens` it sends, clamped to the model's output limit.
         case AIProviderName.ANTHROPIC:
+            return { anthropic: { thinking: usesBudgetedThinking(modelId) ? { type: 'enabled', budgetTokens } : ADAPTIVE_THINKING } }
+        // `@ai-sdk/amazon-bedrock` reads `providerOptions.bedrock.reasoningConfig` — not the
+        // `anthropic` key — and only for a model id containing `anthropic`; for any other model it
+        // would warn and send nothing, so nothing is asked of it here either.
         case AIProviderName.BEDROCK:
-            return { anthropic: { thinking: { type: 'enabled', budgetTokens: tier.thinkingBudget } } }
+            if (!modelId.includes('anthropic')) {
+                return null
+            }
+            return { bedrock: { reasoningConfig: usesBudgetedThinking(modelId) ? { type: 'enabled', budgetTokens } : ADAPTIVE_THINKING } }
+        // Spread into the request body verbatim by `@openrouter/ai-sdk-provider`, which is where
+        // OpenRouter's own `reasoning` parameter lives.
         case AIProviderName.OPENROUTER:
-            return { openrouter: { cache_control: { type: 'ephemeral' }, reasoning: { max_tokens: tier.thinkingBudget } } }
+            return { openrouter: { reasoning: { max_tokens: budgetTokens } } }
+        // Gemini 2.5 and later already think by default; what they do not do unasked is return it.
+        // No budget is sent: Gemini 3 takes a thinking level instead, and a budget there is only
+        // tolerated for compatibility.
+        case AIProviderName.GOOGLE:
+            return { google: { thinkingConfig: { includeThoughts: true } } }
         default:
-            return {}
+            return null
     }
 }
+
+// Claude 4.5 and earlier accept only a fixed budget and answer 400 to `adaptive`; Claude 4.7 and
+// later answer 400 to a budget (4.6 still takes one, deprecated). So the id decides, and anything
+// not recognised as the older generation gets `adaptive`, which is the direction every newer model
+// goes. Matched anywhere in the id so a Bedrock id (`us.anthropic.claude-sonnet-4-5-...-v1:0`)
+// reads the same as the Anthropic one.
+function usesBudgetedThinking(modelId: string): boolean {
+    return BUDGETED_THINKING_MODEL.test(modelId)
+}
+
+const BUDGETED_THINKING_MODEL = /claude-(?:3-7-sonnet|(?:opus|sonnet|haiku)-4-5|opus-4-1|(?:opus|sonnet)-4-(?:0|\d{8}))(?!\d)/
+
+// `summarized` because on Claude Opus 4.7 and later the default is `omitted`, which streams the
+// thinking block with its text empty — the user would be billed for reasoning they cannot read.
+const ADAPTIVE_THINKING = { type: 'adaptive', display: 'summarized' }
 
 function buildSystemPromptWithCaching({ systemPrompt, provider }: { systemPrompt: string, provider: AIProviderName }): string | SystemModelMessage {
     switch (provider) {
@@ -309,6 +358,13 @@ export const chatAiUtils = {
     buildProviderOptions,
     buildSystemPromptWithCaching,
     buildStepParts,
+}
+
+type BuildProviderOptionsParams = {
+    provider: AIProviderName
+    modelId: string
+    // The row's stored `config.reasoning`, unchecked.
+    reasoning: unknown
 }
 
 export type { ContentPartLike }

@@ -1,3 +1,4 @@
+import { SharedV3ProviderOptions } from '@ai-sdk/provider'
 import { chatAiUtils } from '@aiqadam/server-utils'
 import {
     AIProviderConfig,
@@ -52,6 +53,11 @@ export const chatModel = {
             modelId: chosen.modelId,
             contextWindowTokens: chosen.contextWindowTokens,
             provider: chatProvider.provider,
+            reasoningProviderOptions: chatAiUtils.buildProviderOptions({
+                provider: chatProvider.provider,
+                modelId: chosen.modelId,
+                reasoning: 'reasoning' in chatProvider.config ? chatProvider.config.reasoning : undefined,
+            }),
         }
     },
 }
@@ -144,4 +150,8 @@ export type ResolvedChatModel = {
     // Null when neither the provider's model list nor the operator's catalogue says.
     contextWindowTokens: number | null
     provider: AIProviderName
+    // Kept apart from `model` on purpose: the compaction summariser uses the same model and must
+    // never reason, so the options travel only to the one call that is allowed them (#566). Null
+    // when the row has not opted in.
+    reasoningProviderOptions: SharedV3ProviderOptions | null
 }

@@ -1,0 +1,7 @@
+POST https://api.anthropic.com/v1/messages
+anthropic-beta: structured-outputs-2025-11-13
+anthropic-version: 2023-06-01
+content-type: application/json
+x-api-key: sk-ant-test
+
+{"model":"claude-sonnet-4-5-20250929","max_tokens":64000,"system":[{"type":"text","text":"<SYSTEM_PROMPT>","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"list my flows"}]}],"tools":[{"name":"ap_list_flows","description":"List the flows in the project.","input_schema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"limit":{"type":"number"}},"additionalProperties":false},"eager_input_streaming":true},{"name":"ap_delete_flow","description":"Delete a flow.","input_schema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"flowId":{"type":"string"}},"required":["flowId"],"additionalProperties":false},"eager_input_streaming":true}],"tool_choice":{"type":"auto"},"stream":true}

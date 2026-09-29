@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { SharedV3ProviderOptions } from '@ai-sdk/provider'
 import { chatAiUtils, ContentPartLike } from '@aiqadam/server-utils'
 import {
     AnswerChatToolApprovalRequest,
@@ -92,6 +93,7 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             // user turn is still the row's last message — the run that appends the reply is this one.
             rebuildTranscript: (fresh) => buildRunTranscript({ conversation: fresh, uiMessages: (fresh.uiMessages ?? []).slice(0, -1), request, resumingGate: false }),
             tools,
+            providerOptions: resolvedModel.reasoningProviderOptions,
             log,
         }), log)
 
@@ -166,6 +168,14 @@ export const chatAgentService = (log: FastifyBaseLogger) => ({
             transcript: buildRunTranscript({ conversation, uiMessages, request: null, resumingGate: true }),
             rebuildTranscript: (fresh) => buildRunTranscript({ conversation: fresh, uiMessages: fresh.uiMessages ?? [], request: null, resumingGate: true }),
             tools,
+            // Never asked to reason, even on a row that opted in (#566). A resumed run continues the
+            // turn the gate interrupted, and the transcript replays that turn's `tool_use` without
+            // the thinking block it began with — reasoning is never persisted with a signature. In
+            // Anthropic's budgeted mode the final assistant turn of a thinking request must begin
+            // with that block, and a thinking setting that changes mid-turn is at best silently
+            // switched off by the provider. Sent without it, the request is the one this path has
+            // always sent. Not verified against a live provider.
+            providerOptions: null,
             log,
         }), log)
 
@@ -275,6 +285,9 @@ async function runAttempt(params: RunAttemptParams): Promise<void> {
             system: isNil(transcript.summaryMessage) ? cachedSystemPrompt : [toSystemMessage(cachedSystemPrompt), transcript.summaryMessage],
             messages,
             tools,
+            // Spread rather than passed as `undefined` so a run that does not reason builds the
+            // same call it built before the setting existed (#566).
+            ...spreadIfDefined('providerOptions', params.providerOptions ?? undefined),
             stopWhen: stepCountIs(MAX_AGENT_STEPS),
             abortSignal: abortController.signal,
             onError: ({ error: streamError }) => {
@@ -727,6 +740,8 @@ type RunLoopParams = {
     transcript: RunTranscript
     rebuildTranscript: (fresh: ChatConversation) => RunTranscript
     tools: ToolSet
+    // Reasoning is asked for through these alone; null when the run must not reason.
+    providerOptions: SharedV3ProviderOptions | null
     log: FastifyBaseLogger
 }
 

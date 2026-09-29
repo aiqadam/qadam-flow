@@ -1,0 +1,5 @@
+POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse
+content-type: application/json
+x-goog-api-key: google-test-key
+
+{"generationConfig":{},"contents":[{"role":"user","parts":[{"text":"list my flows"}]}],"systemInstruction":{"parts":[{"text":"<SYSTEM_PROMPT>"}]},"tools":[{"functionDeclarations":[{"name":"ap_list_flows","description":"List the flows in the project.","parameters":{"type":"object","properties":{"limit":{"type":"number"}}}},{"name":"ap_delete_flow","description":"Delete a flow.","parameters":{"required":["flowId"],"type":"object","properties":{"flowId":{"type":"string"}}}}]}],"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}}}
