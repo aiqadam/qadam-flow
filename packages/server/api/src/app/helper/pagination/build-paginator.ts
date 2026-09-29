@@ -54,12 +54,12 @@ export function buildPaginator<Entity extends ObjectLiteral>(
     return paginator
 }
 
-// `-1` used to mean "every row" here, and 17 list DTOs passed it straight through (#561).
+// `-1` used to mean "every row" here, and 16 list DTOs passed it straight through (#561).
 function clampLimit(limit: number): number {
     if (!Number.isInteger(limit) || limit < 1) {
         throw new QadamFlowError({
             code: ErrorCode.VALIDATION,
-            params: { message: `limit must be an integer between 1 and ${MAX_PAGE_SIZE}` },
+            params: { message: 'limit must be a positive integer' },
         })
     }
     return Math.min(limit, MAX_PAGE_SIZE)
