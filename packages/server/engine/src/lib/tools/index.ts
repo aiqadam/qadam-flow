@@ -45,14 +45,15 @@ export const agentTools = {
 }
 
 const MAX_REJECTED_TEXT_LENGTH = 4000
+const REASONING_CLOSING_TAG = '</think>'
 
-async function resolveProperties(
-    depthToPropertyMap: Record<number, string[]>,
-    instruction: string,
-    action: Action,
-    model: LanguageModel,
-    operation: ExecuteToolOperation,
-): Promise<Record<string, unknown>> {
+async function resolveProperties({
+    depthToPropertyMap,
+    instruction,
+    action,
+    model,
+    operation,
+}: ResolvePropertiesParams): Promise<Record<string, unknown>> {
     const auth = operation.predefinedInput?.auth
     const predefinedInputsFields = operation.predefinedInput?.fields || {}
 
@@ -141,7 +142,13 @@ async function execute(operation: ExecuteToolOperationWithModel): Promise<Execut
             devQadams: EngineConstants.DEV_QADAMS,
         })
         const depthToPropertyMap = tsort.sortPropertiesByDependencies(qadamAction.props)
-        const resolvedInput = await resolveProperties(depthToPropertyMap, operation.instruction, qadamAction, operation.model, operation)
+        const resolvedInput = await resolveProperties({
+            depthToPropertyMap,
+            instruction: operation.instruction,
+            action: qadamAction,
+            model: operation.model,
+            operation,
+        })
         
         const step: QadamAction = {
             name: operation.actionName,
@@ -377,14 +384,21 @@ async function attemptExtraction({ model, prompt, schemas }: ExtractPropertiesPa
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
-    const withoutReasoning = text.replace(/<think>[\s\S]*?<\/think>/g, '')
-    const start = withoutReasoning.indexOf('{')
-    const end = withoutReasoning.lastIndexOf('}')
+    const answer = stripReasoning(text)
+    const start = answer.indexOf('{')
+    const end = answer.lastIndexOf('}')
     if (start === -1 || end < start) {
         return null
     }
-    const parsed = tryCatchSync((): unknown => JSON.parse(withoutReasoning.slice(start, end + 1)))
+    // The AI SDK's own parser rejects `__proto__`; a nested one surviving here would be copied onto
+    // a `.loose()` object by assignment and swap its prototype, hiding the value from the run log.
+    const parsed = tryCatchSync((): unknown => JSON.parse(answer.slice(start, end + 1), (key, value) => key === '__proto__' ? undefined : value))
     return isJsonObject(parsed.data) ? parsed.data : null
+}
+
+function stripReasoning(text: string): string {
+    const reasoningEnd = text.lastIndexOf(REASONING_CLOSING_TAG)
+    return reasoningEnd === -1 ? text : text.slice(reasoningEnd + REASONING_CLOSING_TAG.length)
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
@@ -482,6 +496,14 @@ type ConstructToolParams = {
     engineConstants: EngineConstants
     tools: AgentQadamTool[]
     model: LanguageModel
+}
+
+type ResolvePropertiesParams = {
+    depthToPropertyMap: Record<number, string[]>
+    instruction: string
+    action: Action
+    model: LanguageModel
+    operation: ExecuteToolOperation
 }
 
 type PropertySchemas = {

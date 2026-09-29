@@ -26,26 +26,17 @@ const fields: Field[] = [field({ externalId: 'event_id' }), field({ externalId: 
 // The unit tests for `filterUtils` stay green if `find-records` stops calling it,
 // which is exactly how the reported bug shipped. This exercises the action.
 async function run(filters: unknown, columns?: unknown, recordIds?: unknown) {
-  const { findRecords } = await import('../src/lib/actions/find-records');
-  const { tablesCommon } = await import('../src/lib/common');
-  vi.spyOn(tablesCommon, 'convertTableExternalIdToId').mockResolvedValue('table_1');
-  vi.spyOn(tablesCommon, 'getTableFields').mockResolvedValue(fields);
-
-  return findRecords.run({
-    propsValue: { table_id: 'events', limit: undefined, filters, columns, record_ids: recordIds },
-    server: { apiUrl: 'https://example.invalid/api/', token: 'token', publicUrl: 'https://example.invalid/' },
-    project: { id: 'project_1' },
-  } as unknown as Parameters<typeof findRecords.run>[0]);
+  return runWithProps({ filters, columns, record_ids: recordIds });
 }
 
-async function runWithLimit({ limit }: { limit: number | undefined }) {
+async function runWithProps(props: Record<string, unknown>) {
   const { findRecords } = await import('../src/lib/actions/find-records');
   const { tablesCommon } = await import('../src/lib/common');
   vi.spyOn(tablesCommon, 'convertTableExternalIdToId').mockResolvedValue('table_1');
   vi.spyOn(tablesCommon, 'getTableFields').mockResolvedValue(fields);
 
   return findRecords.run({
-    propsValue: { table_id: 'events', limit, filters: undefined, columns: undefined, record_ids: undefined },
+    propsValue: { table_id: 'events', limit: undefined, filters: undefined, columns: undefined, record_ids: undefined, ...props },
     server: { apiUrl: 'https://example.invalid/api/', token: 'token', publicUrl: 'https://example.invalid/' },
     project: { id: 'project_1' },
   } as unknown as Parameters<typeof findRecords.run>[0]);
@@ -67,26 +58,26 @@ describe('tables-find-records', () => {
     expect(sendRequest).not.toHaveBeenCalled();
   });
 
-  // Unit tests for columnUtils stay green if the action stops threading the prop
-  // into the request, which would silently return every column to the run log —
-  // the very thing #385 is about. This exercises the action.
   // An AI agent filling Limit answered 0 for "count every letter" and got an empty page back.
   it.each([
     ['left empty', undefined],
     ['zero', 0],
     ['negative', -1],
   ])('asks for every record when Limit is %s', async (_label, limit) => {
-    await runWithLimit({ limit });
+    await runWithProps({ limit });
 
     expect(sendRequest.mock.calls[0][0].url).toContain('limit=999999999');
   });
 
   it('sends a positive Limit as given', async () => {
-    await runWithLimit({ limit: 5 });
+    await runWithProps({ limit: 5 });
 
     expect(sendRequest.mock.calls[0][0].url).toMatch(/[?&]limit=5(&|$)/);
   });
 
+  // Unit tests for columnUtils stay green if the action stops threading the prop
+  // into the request, which would silently return every column to the run log —
+  // the very thing #385 is about. This exercises the action.
   it('sends the resolved projection when Columns is set', async () => {
     await run(undefined, ['phone']);
 

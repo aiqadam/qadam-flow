@@ -137,7 +137,7 @@ function sequenceModel(responses: ReturnType<typeof textResult>[]): MockLanguage
     return model
 }
 
-function promptText(model: MockLanguageModelV3, callIndex: number): string {
+function promptText({ model, callIndex }: { model: MockLanguageModelV3, callIndex: number }): string {
     return JSON.stringify(model.doGenerateCalls[callIndex].prompt)
 }
 
@@ -151,6 +151,29 @@ describe('agentTools.tools — property extraction', () => {
         expect(result.resolvedInput).toMatchObject({ table_id: 'letters' })
         expect(mockHandle.mock.calls[0][0].action.settings.input).toEqual({ table_id: 'letters' })
         expect(model.doGenerateCalls).toHaveLength(1)
+    })
+
+    it('never lets a nested __proto__ key replace the prototype of a value passed to the action', async () => {
+        const action = {
+            description: 'send payload',
+            props: { payload: { type: PropertyType.OBJECT, displayName: 'Payload', required: true } },
+        }
+        mockGetQadamAndActionOrThrow.mockReset()
+        mockGetQadamAndActionOrThrow.mockResolvedValue({ qadamAction: action })
+        mockHandle.mockReset()
+        mockHandle.mockResolvedValue({ steps: { send_payload: { output: {}, status: 'SUCCEEDED' } } })
+        const tools = await agentTools.tools({
+            engineConstants: generateMockEngineConstants(),
+            tools: [buildTool('send_payload')],
+            model: sequenceModel([textResult('```json\n{"payload":{"name":"a","__proto__":{"isAdmin":true}}}\n```')]),
+        })
+
+        await tools.tool_1.execute!({ instruction: 'send it' }, {} as never)
+
+        const payload = mockHandle.mock.calls[0][0].action.settings.input.payload
+        expect(payload).toEqual({ name: 'a' })
+        expect(Object.getPrototypeOf(payload)).toBe(Object.prototype)
+        expect(payload.isAdmin).toBeUndefined()
     })
 
     it('drops keys outside the requested properties and reads JSON wrapped in reasoning and a code fence', async () => {
@@ -170,11 +193,24 @@ describe('agentTools.tools — property extraction', () => {
         expect(result.status).toBe(ExecutionToolStatus.SUCCESS)
         expect(mockHandle.mock.calls[0][0].action.settings.input).toEqual({ table_id: 'letters', limit: 10 })
         expect(model.doGenerateCalls).toHaveLength(2)
-        expect(promptText(model, 1)).toContain('YOUR PREVIOUS RESPONSE WAS REJECTED')
-        expect(promptText(model, 1)).toContain('table_id')
+        const retryPrompt = promptText({ model, callIndex: 1 })
+        expect(retryPrompt).toContain('YOUR PREVIOUS RESPONSE WAS REJECTED')
+        expect(retryPrompt).toContain('VALIDATION ERRORS')
+        expect(retryPrompt).toContain('→ at table_id')
     })
 
-    it('fails with the validation errors, not a bare schema mismatch, when the retry is rejected too', async () => {
+    it('fails with the validation errors when the retry is valid JSON that still breaks the schema', async () => {
+        const model = sequenceModel([textResult('{"limit":10}'), textResult('{"limit":"ten"}')])
+
+        const result = await runFindRecordsTool(model)
+
+        expect(result.status).toBe(ExecutionToolStatus.FAILED)
+        expect(result.errorMessage).toContain('→ at table_id')
+        expect(result.errorMessage).toContain('→ at limit')
+        expect(mockHandle).not.toHaveBeenCalled()
+    })
+
+    it('fails with a readable reason when the retry is not JSON at all', async () => {
         const model = sequenceModel([textResult('{"limit":"ten"}'), textResult('not json at all')])
 
         const result = await runFindRecordsTool(model)
@@ -189,7 +225,7 @@ describe('agentTools.tools — property extraction', () => {
 
         await runFindRecordsTool(model)
 
-        const prompt = promptText(model, 0)
+        const prompt = promptText({ model, callIndex: 0 })
         expect(prompt).toContain('JSON SCHEMA')
         expect(prompt).toContain('\\"required\\":[\\"table_id\\",\\"limit\\",\\"record_ids\\"]')
         expect(prompt).not.toContain('Skip if no information is available')
