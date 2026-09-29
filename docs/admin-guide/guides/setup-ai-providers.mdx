@@ -32,6 +32,8 @@ To turn it on, edit an **Anthropic**, **Amazon Bedrock**, **OpenRouter** or **Go
 - **Claude 4.6 and later** decide how much to think on their own, and ignore the budget.
 - **Gemini** thinks by default and ignores the budget. The setting only makes Gemini return its reasoning.
 
+On Claude 4.5 and earlier, directly or through Bedrock, a reply that follows a reply in which the assistant used a tool may come back without reasoning. Anthropic turns thinking off for that request instead of failing it, so the reply itself is unaffected. This has not been tested against a live provider.
+
 <Note>
 For OpenAI, Azure, custom and Cloudflare Gateway providers the switch does not appear. For a custom OpenAI-compatible server, send the server's own thinking parameter in **Extra request parameters** instead, for example `{ "chat_template_kwargs": { "enable_thinking": true } }` on vLLM.
 </Note>

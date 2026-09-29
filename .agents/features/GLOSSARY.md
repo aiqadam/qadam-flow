@@ -1,6 +1,6 @@
 # Domain Glossary — Qadam Flow
 
-> Last updated: 2026-07-26
+> Last updated: 2026-09-29
 
 ## Automation Core
 
@@ -93,6 +93,7 @@
 |---|---|---|---|
 | AI Credits | An upstream metered-usage currency for AI calls — **not implemented in this repo** (no credit metering, no billing code); operators supply their own provider keys. | tokens, AI quota | AI Provider |
 | AI Provider | A configured LLM backend (OpenAI, Anthropic, Google, Azure, OpenRouter, Cloudflare Gateway, Bedrock, Mistral, or a custom OpenAI-compatible endpoint) with encrypted credentials. | model provider, LLM config | Agent |
+| Chat reasoning | A per-AI-Provider opt-in, off by default (`config.reasoning`, #566), that makes the chat ask an Anthropic, Bedrock, OpenRouter or Google model to think before it answers — the request setting, as distinct from the REASONING part that persists whatever thinking text a reply streamed (with or without the opt-in), the `ThinkingBlock` that renders that part, and `thinkingDurationMs`, the time a run took before its reply text began. | thinking mode, extended thinking (Anthropic's name for one of its two modes), reasoning effort | AI Provider, Chat with AI |
 | Platform Copilot | A RAG-powered assistant that helps build flows by searching indexed code chunks and streaming AI responses. | AI assistant, flow builder AI | AI Provider |
 
 ## Eventing & Webhooks
