@@ -131,6 +131,7 @@ const DRAFT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
     'ap_duplicate_flow',
     'ap_rename_flow',
     'ap_update_branch',
+    'ap_update_locale_source',
     'ap_update_step',
     'ap_update_trigger',
 ])

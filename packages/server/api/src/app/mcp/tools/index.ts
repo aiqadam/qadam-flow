@@ -44,6 +44,7 @@ import { apSetupGuideTool } from './ap-setup-guide'
 import { apTestFlowTool } from './ap-test-flow'
 import { apTestStepTool } from './ap-test-step'
 import { apUpdateBranchTool } from './ap-update-branch'
+import { apUpdateLocaleSourceTool } from './ap-update-locale-source'
 import { apUpdateRecordTool } from './ap-update-record'
 import { apUpdateStepTool } from './ap-update-step'
 import { apUpdateTriggerTool } from './ap-update-trigger'
@@ -85,6 +86,7 @@ export const ALL_CONTROLLABLE_TOOL_NAMES: string[] = [
     'ap_create_flow',
     'ap_duplicate_flow',
     'ap_rename_flow',
+    'ap_update_locale_source',
     'ap_update_trigger',
     'ap_add_step',
     'ap_update_step',
@@ -123,6 +125,7 @@ export const qadamFlowTools = (mcp: ProjectScopedMcpServer, userId: string | und
     apCreateFlowTool({ mcp, userId }, log),
     apDuplicateFlowTool({ mcp, userId }, log),
     apRenameFlowTool(mcp, log),
+    apUpdateLocaleSourceTool(mcp, log),
     apListFlowsTool(mcp, log),
     apFlowStructureTool(mcp, log),
     apReadStepCodeTool(mcp, log),

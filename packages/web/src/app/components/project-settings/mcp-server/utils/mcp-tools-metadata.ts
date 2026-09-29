@@ -132,6 +132,10 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
         description: 'Set or update the trigger for a flow',
       },
       {
+        name: 'ap_update_locale_source',
+        description: "Set or clear a flow's locale source for translations",
+      },
+      {
         name: 'ap_add_step',
         description: 'Add a new step to a flow',
       },

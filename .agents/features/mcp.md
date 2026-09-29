@@ -67,6 +67,11 @@ Exposes a Qadam Flow project as a Model Context Protocol (MCP) server so that AI
 
 **Controllable tools** (can be toggled per-project):
 - `ap_create_flow`, `ap_rename_flow`, `ap_build_flow`, `ap_delete_flow`, `ap_duplicate_flow` — flow management; `ap_build_flow` returns `flowUrl` (via `domainHelper.getPublicUrl`) in both text and structured output
+- `ap_update_locale_source` (#562) — sets or clears the draft's `FlowVersion.localeSource` by emitting `UPDATE_LOCALE_SOURCE`.
+  - One field, one call: no `ap_import_flow` round-trip, which would strip step `auth`.
+  - A blank value becomes `null`, as the builder's Locale settings dialog does.
+  - It is in chat gating's draft-only group, beside `ap_rename_flow`: it changes nothing a published flow does until `ap_lock_and_publish`.
+  - `ap_flow_structure` reports the current value in its text (`## Locale`) and as `structuredContent.localeSource`.
 - `ap_update_trigger` — change flow trigger; optional `logOutput` redacts the trigger payload in
   the run log (#505). The trigger has no `logInput`: what the log records as its input is
   configuration, the payload that carries user data is the output.

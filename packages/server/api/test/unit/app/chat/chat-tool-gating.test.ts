@@ -20,7 +20,7 @@ import { qadamFlowTools } from '../../../../src/app/mcp/tools'
 const fakeMcp = { projectId: 'test-project', platformId: 'test-platform' } as unknown as ProjectScopedMcpServer
 const fakeLog = { info: () => undefined, error: () => undefined, warn: () => undefined, debug: () => undefined } as unknown as FastifyBaseLogger
 
-const TOTAL_REGISTERED_TOOLS = 51
+const TOTAL_REGISTERED_TOOLS = 52
 
 // Matches the verb an `operation`-style enum would use to spell a destructive action — this is the
 // shape #302 slipped through: `ap_manage_notes` sat in "Additive only" with a plain-looking
@@ -69,7 +69,7 @@ describe('chatToolGating (#264)', () => {
 
         expect(unexpected, 'a tool is reachable without approval but is not on the ungated list').toEqual([])
         // Counted, so a new tool silently joining the ungated set cannot hide.
-        expect(ungated.length, 'the ungated set changed size — was that decision deliberate?').toBe(32)
+        expect(ungated.length, 'the ungated set changed size — was that decision deliberate?').toBe(33)
     })
 
     it('has no ungated name that does not resolve to a registered tool', () => {
