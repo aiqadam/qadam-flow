@@ -38,8 +38,9 @@ see [`.agents/rules/agent-delegation.md`](../../.agents/rules/agent-delegation.m
 
 - **Reuse existing endpoints before adding new ones** — Before adding a new endpoint, scan the controller you're working in (and any sibling controllers that handle the same resource) for an existing route that already returns the data you need. Prefer re-using or extending an existing endpoint over introducing a new one. New endpoints duplicate validation, caching, security configuration, docs, and test surface — and parallel endpoints tend to drift (different filters, different cache policies, different response shapes) and cause bugs. Only add a new endpoint when no existing route satisfies the use case.
 - **List limits are bounded** — `buildPaginator` rejects a negative or non-integer `limit` and clamps anything above `MAX_PAGE_SIZE` (1000).
-  - `0` means "not set", which gives the default page. That keeps the pre-#561 behaviour published clients still rely on.
-  - A list DTO's `limit` is `z.coerce.number().int().min(0)`.
+  - `0` skips the limit, so the paginator returns its own default page of 100. A controller's `?? DEFAULT_PAGE_SIZE` does not apply to it. This keeps the pre-#561 behaviour published clients still rely on.
+  - A list DTO's `limit` is `z.coerce.number().int().min(0)`, or tighter where a DTO already rejected 0 before #561 (translations, alerts, chat conversations, API keys).
+  - A computed limit that can reach 0 is a bug: it gets 100 rows, not zero.
   - On `GET /v1/records`, `0` reads the whole table, as `qadam-tables` means it (#573).
   - Server code that needs every row passes `unlimited: true`. Never pass a huge number or the old `-1` magic value to mean "all" (#561).
 - **Controllers**: Use `FastifyPluginAsyncTypebox` pattern for route definitions with TypeBox schema validation

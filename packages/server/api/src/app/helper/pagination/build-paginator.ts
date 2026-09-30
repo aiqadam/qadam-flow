@@ -54,8 +54,8 @@ export function buildPaginator<Entity extends ObjectLiteral>(
     return paginator
 }
 
-// Before #561 a falsy limit fell through to the default page, and published qadams still send
-// `limit=0` (qadam-tables <= 0.4.6), so 0 keeps meaning "not set" rather than a 400.
+// Before #561 a falsy limit fell through to the paginator's default page, and published qadams
+// still send `limit=0` (qadam-tables <= 0.4.6), so 0 keeps skipping the limit rather than a 400.
 const ZERO_MEANS_DEFAULT = 0
 
 // `-1` used to mean "every row" here, and 16 list DTOs passed it straight through (#561).
