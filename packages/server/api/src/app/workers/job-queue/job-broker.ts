@@ -46,9 +46,6 @@ async function createBullMQWorker(queueName: string, log: FastifyBaseLogger): Pr
             stalledInterval: 30_000,
             maxStalledCount: 3,
             drainDelay: DRAIN_DELAY_SECONDS,
-            // `moveToFailed` looks the strategy up on the object the job was loaded through, and
-            // every job this broker fails is loaded through this worker (#584).
-            settings: { backoffStrategy: jobRetry.createBackoffStrategy({ log }) },
         },
     )
     await worker.waitUntilReady()
@@ -266,10 +263,8 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
 
         const { error } = await tryCatch(async () => {
             if (input.status === EngineResponseStatus.INTERNAL_ERROR) {
-                if (input.retryable === false) {
-                    log.warn({ jobId: input.jobId, jobType: jobData.jobType, failedAttempt: job.attemptsMade + 1 }, '[jobBroker#completeJob] Attempt failed after the engine received it, or with a final outcome; not retrying')
-                }
                 await job.moveToFailed(jobRetry.toFailure({ message: buildFailedReason(input.errorMessage ?? 'Internal error', input.logs), retryable: input.retryable }), input.token)
+                jobRetry.logFailedAttempt({ log, job, jobType: jobData.jobType, retryable: input.retryable })
                 if (userJobData) {
                     await engineResponseWatcher(log).publish(userJobData.webserverId, userJobData.requestId, {
                         status: EngineResponseStatus.INTERNAL_ERROR,

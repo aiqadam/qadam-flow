@@ -9,6 +9,7 @@ import { AppSystemProp } from '../../helper/system/system-props'
 import { QueueName } from '../job'
 import { jobRetry } from './job-retry'
 
+const EIGHT_MINUTES_IN_MILLISECONDS = apDayjsDuration(8, 'minute').asMilliseconds()
 const REDIS_FAILED_JOB_RETENTION_DAYS = apDayjsDuration(system.getNumberOrThrow(AppSystemProp.REDIS_FAILED_JOB_RETENTION_DAYS), 'day').asSeconds()
 const REDIS_FAILED_JOB_RETRY_COUNT = system.getNumberOrThrow(AppSystemProp.REDIS_FAILED_JOB_RETENTION_MAX_COUNT)
 
@@ -45,6 +46,7 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
                     priority: JOB_PRIORITY[getDefaultJobPriority(data)],
                     delay: params.delay,
                     jobId: params.id,
+                    ...data.jobType === WorkerJobType.EXECUTE_FLOW ? jobRetry.executeFlowJobOptions : {},
                     ...isUserInteractionJob(data.jobType) ? {
                         attempts: 1,
                         removeOnComplete: { age: 300 },
@@ -127,7 +129,11 @@ async function ensureQueueExists({ log, queueName }: { log: FastifyBaseLogger, q
                 telemetry: isOtpEnabled ? new BullMQOtel(queueName) : undefined,
                 connection: await redisConnections.create(),
                 defaultJobOptions: {
-                    ...jobRetry.defaultJobOptions,
+                    attempts: 2,
+                    backoff: {
+                        type: 'exponential',
+                        delay: EIGHT_MINUTES_IN_MILLISECONDS,
+                    },
                     removeOnComplete: true,
                     removeOnFail: {
                         age: REDIS_FAILED_JOB_RETENTION_DAYS,

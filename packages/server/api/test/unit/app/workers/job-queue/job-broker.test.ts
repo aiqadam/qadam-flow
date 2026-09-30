@@ -338,7 +338,7 @@ describe('tryDequeue', () => {
 
     describe('canRetryBeforeExecution (#584)', () => {
         it('tells the worker a quick retry is coming while attempts remain', async () => {
-            const job = createMockJob({ id: 'job-1', attemptsMade: 0, opts: jobRetry.defaultJobOptions })
+            const job = createMockJob({ id: 'job-1', attemptsMade: 0, opts: jobRetry.executeFlowJobOptions })
             vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
             mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
 

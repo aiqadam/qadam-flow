@@ -18,6 +18,7 @@ import {
     tryCatch,
     WorkerJobType,
 } from '@aiqadam/shared'
+import { UnresolvableDependencyError } from '../../cache/code/unresolvable-dependency-error'
 import { flowCache } from '../../cache/flow/flow-cache'
 import { system, WorkerSystemProp } from '../../config/configs'
 import { workerSettings } from '../../config/worker-settings'
@@ -85,6 +86,10 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
         }
 
         const { data: provisioned, error: provisionError } = await tryCatch(() => ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) }))
+        if (provisionError instanceof UnresolvableDependencyError) {
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
+            throw new ClassifiedJobFailure({ original: provisionError, retryable: false })
+        }
         if (provisionError) {
             throw await failBeforeExecution({ ctx, data, error: provisionError })
         }
@@ -134,12 +139,12 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             )
 
             if (result.status === EngineResponseStatus.LOG_SIZE_EXCEEDED) {
-                await reportFlowStatus({ ctx, data, status: FlowRunStatus.LOG_SIZE_EXCEEDED, logsFileId: data.logsFileId })
+                await reportBestEffort({ ctx, data, status: FlowRunStatus.LOG_SIZE_EXCEEDED, logsFileId: data.logsFileId })
                 return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED, logs: result.logs }
             }
 
             if (result.status === EngineResponseStatus.INTERNAL_ERROR) {
-                await reportFlowStatus({
+                await reportBestEffort({
                     ctx,
                     data,
                     status: FlowRunStatus.INTERNAL_ERROR,
@@ -159,22 +164,22 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             await ctx.sandboxManager.invalidate(ctx.log)
             if (e instanceof QadamFlowError) {
                 if (e.error.code === ErrorCode.SANDBOX_EXECUTION_TIMEOUT) {
-                    await reportFlowStatus({ ctx, data, status: FlowRunStatus.TIMEOUT, logsFileId: data.logsFileId })
+                    await reportBestEffort({ ctx, data, status: FlowRunStatus.TIMEOUT, logsFileId: data.logsFileId })
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.TIMEOUT }
                 }
                 if (e.error.code === ErrorCode.SANDBOX_MEMORY_ISSUE) {
-                    await reportFlowStatus({ ctx, data, status: FlowRunStatus.MEMORY_LIMIT_EXCEEDED, logsFileId: data.logsFileId })
+                    await reportBestEffort({ ctx, data, status: FlowRunStatus.MEMORY_LIMIT_EXCEEDED, logsFileId: data.logsFileId })
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.MEMORY_ISSUE }
                 }
                 if (e.error.code === ErrorCode.SANDBOX_LOG_SIZE_EXCEEDED) {
-                    await reportFlowStatus({ ctx, data, status: FlowRunStatus.LOG_SIZE_EXCEEDED, logsFileId: data.logsFileId })
+                    await reportBestEffort({ ctx, data, status: FlowRunStatus.LOG_SIZE_EXCEEDED, logsFileId: data.logsFileId })
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED }
                 }
             }
             if (!operationSent) {
                 throw await failBeforeExecution({ ctx, data, error: e })
             }
-            await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, e), logsFileId: data.logsFileId })
+            await reportBestEffort({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, e), logsFileId: data.logsFileId })
             throw new ClassifiedJobFailure({ original: e, retryable: false })
         }
         finally {
@@ -230,7 +235,7 @@ function buildFlowOperation(
  * broker retries within seconds the run stays QUEUED and its sync caller keeps waiting, because
  * the next attempt answers both — reporting INTERNAL_ERROR here would tell a sync caller the run
  * failed and then run it anyway. Otherwise no quick retry is coming, because this is the job's last
- * attempt or it was enqueued before the failure-aware backoff existed, and the handler reports the
+ * attempt or it does not carry the quick backoff, and the handler reports the
  * failure itself as before (#584).
  */
 async function failBeforeExecution({ ctx, data, error }: FailBeforeExecutionParams): Promise<ClassifiedJobFailure> {
@@ -238,9 +243,21 @@ async function failBeforeExecution({ ctx, data, error }: FailBeforeExecutionPara
         ctx.log.warn({ runId: data.runId, attemptsStarted: ctx.attemptsStarted, error: inspect(error) }, 'Run failed before the engine received it; the broker retries it within seconds')
     }
     else {
-        await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, error), logsFileId: data.logsFileId })
+        await reportBestEffort({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, error), logsFileId: data.logsFileId })
     }
     return new ClassifiedJobFailure({ original: error, retryable: true })
+}
+
+/**
+ * A report that throws must not replace the verdict on the attempt. Once the engine may have run
+ * steps, an unclassified failure is one an `EXECUTE_FLOW` job retries from the trigger, and a throw
+ * inside the `try` would reach its `catch` and report the run a second time as INTERNAL_ERROR (#584).
+ */
+async function reportBestEffort(params: ReportFlowStatusParams): Promise<void> {
+    const { error } = await tryCatch(() => reportFlowStatus(params))
+    if (!isNil(error)) {
+        params.ctx.log.error({ runId: params.data.runId, status: params.status, error: inspect(error) }, 'Failed to report the run status; the verdict on the attempt stands')
+    }
 }
 
 function toInternalError(source: RunInternalErrorSource, error: unknown): RunInternalError {

@@ -1,8 +1,11 @@
 import {
     apId,
     EngineResponseStatus,
+    ExecuteFlowJobData,
+    ExecutionType,
     LATEST_JOB_DATA_SCHEMA_VERSION,
     RunEnvironment,
+    StreamStepProgress,
     WebhookJobData,
     WorkerJobType,
 } from '@aiqadam/shared'
@@ -36,8 +39,8 @@ beforeEach(async () => {
 })
 
 describe('Job broker retry by failure class (#584)', () => {
-    it('retries a failure before execution within seconds, and says so on the redelivery', async () => {
-        const jobId = await enqueueWebhookJob()
+    it('retries a run that failed before execution within seconds, and says so on the redelivery', async () => {
+        const jobId = await enqueueExecuteFlowJob()
         const first = await jobBroker(app.log).poll()
         expect(first).toMatchObject({ jobId, attempsStarted: 0, canRetryBeforeExecution: true })
 
@@ -54,30 +57,55 @@ describe('Job broker retry by failure class (#584)', () => {
         await jobBroker(app.log).completeJob({ jobId, token: second!.token, queueName: second!.queueName, status: EngineResponseStatus.OK })
     }, 30_000)
 
-    it('never retries a failure after the engine received the run', async () => {
-        const jobId = await enqueueWebhookJob()
+    it('never retries a run that failed after the engine received it', async () => {
+        const jobId = await enqueueExecuteFlowJob()
         const polled = await jobBroker(app.log).poll()
 
-        await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 137', retryable: false })
+        await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
 
         const failed = await queue.getJob(jobId)
         expect(await failed!.getState()).toBe('failed')
-        expect(failed!.failedReason).toBe('Worker exited with code 137')
+        expect(failed!.attemptsMade).toBe(1)
+        expect(failed!.failedReason).toBe('Worker exited with code 1')
         await failed!.remove()
     })
 
-    it('keeps the one retry after 8 minutes for a failure the worker did not classify', async () => {
+    it('keeps the one retry after 8 minutes for every other job type', async () => {
         const jobId = await enqueueWebhookJob()
         const polled = await jobBroker(app.log).poll()
+        expect(polled).toMatchObject({ jobId, canRetryBeforeExecution: false })
 
         await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'boom' })
 
         const retried = await queue.getJob(jobId)
         expect(await retried!.getState()).toBe('delayed')
+        expect(retried!.opts.backoff).toEqual({ type: 'exponential', delay: 8 * 60 * 1000 })
         expect(retried!.delay).toBe(8 * 60 * 1000)
         await retried!.remove()
     })
 })
+
+async function enqueueExecuteFlowJob(): Promise<string> {
+    const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+    const id = apId()
+    const data: ExecuteFlowJobData = {
+        jobType: WorkerJobType.EXECUTE_FLOW,
+        executionType: ExecutionType.BEGIN,
+        platformId: mockPlatform.id,
+        projectId: mockProject.id,
+        schemaVersion: LATEST_JOB_DATA_SCHEMA_VERSION,
+        // TESTING skips the project rate limiter, which is not what this file is about.
+        environment: RunEnvironment.TESTING,
+        flowId: apId(),
+        flowVersionId: apId(),
+        runId: id,
+        payload: { type: 'inline', value: {} },
+        streamStepProgress: StreamStepProgress.NONE,
+        logsFileId: apId(),
+    }
+    await jobQueue(app.log).add({ type: JobType.ONE_TIME, id, data })
+    return id
+}
 
 async function enqueueWebhookJob(): Promise<string> {
     const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()

@@ -1,36 +1,43 @@
+import { WorkerJobType } from '@aiqadam/shared'
 import { UnrecoverableError } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
+import pino from 'pino'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { jobRetry } from '../../../../../src/app/workers/job-queue/job-retry'
 
-const mockLog = {
-    warn: vi.fn(),
-} as unknown as FastifyBaseLogger
+const log: FastifyBaseLogger = pino({ level: 'silent' })
 
 const EIGHT_MINUTES_MS = 8 * 60 * 1000
+const LEGACY_OPTIONS = { attempts: 2, backoff: { type: 'exponential', delay: EIGHT_MINUTES_MS } }
 
 describe('jobRetry (#584)', () => {
     afterEach(() => {
         vi.restoreAllMocks()
     })
 
+    describe('executeFlowJobOptions', () => {
+        it('persists only a built-in BullMQ backoff, so an older app still retries the job', () => {
+            expect(jobRetry.executeFlowJobOptions).toEqual({ attempts: 4, backoff: { type: 'exponential', delay: 2_000, jitter: 0.5 } })
+        })
+    })
+
     describe('canRetryBeforeExecution', () => {
-        it('is true while attempts remain on a job with the failure-aware backoff', () => {
-            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 0, opts: jobRetry.defaultJobOptions })).toBe(true)
-            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 2, opts: jobRetry.defaultJobOptions })).toBe(true)
+        it('is true while attempts remain on a job with the quick backoff', () => {
+            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 0, opts: jobRetry.executeFlowJobOptions })).toBe(true)
+            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 2, opts: jobRetry.executeFlowJobOptions })).toBe(true)
         })
 
         it('is false on the last attempt, exactly where BullMQ stops retrying', () => {
-            const attempts = jobRetry.defaultJobOptions.attempts
-            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: attempts - 1, opts: jobRetry.defaultJobOptions })).toBe(false)
+            const attempts = jobRetry.executeFlowJobOptions.attempts
+            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: attempts - 1, opts: jobRetry.executeFlowJobOptions })).toBe(false)
         })
 
-        it('is false on a job enqueued before #584, whose backoff is the fixed 8 minutes', () => {
-            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 0, opts: { attempts: 2, backoff: { type: 'exponential', delay: EIGHT_MINUTES_MS } } })).toBe(false)
+        it('is false on a job with the queue default, e.g. one enqueued before #584', () => {
+            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 0, opts: LEGACY_OPTIONS })).toBe(false)
         })
 
         it('is false on a user-interaction job, which is never retried', () => {
-            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 0, opts: { ...jobRetry.defaultJobOptions, attempts: 1 } })).toBe(false)
+            expect(jobRetry.canRetryBeforeExecution({ attemptsMade: 0, opts: { ...jobRetry.executeFlowJobOptions, attempts: 1 } })).toBe(false)
         })
     })
 
@@ -42,48 +49,41 @@ describe('jobRetry (#584)', () => {
             expect(failure.message).toBe('engine gone')
         })
 
-        it('marks a failure before execution for the quick backoff', () => {
-            const failure = jobRetry.toFailure({ message: 'ENOENT', retryable: true })
-
-            expect(failure).not.toBeInstanceOf(UnrecoverableError)
-            expect(failure.name).toBe('FailedBeforeExecution')
-        })
-
-        it('leaves an unclassified failure a plain error', () => {
-            const failure = jobRetry.toFailure({ message: 'boom', retryable: undefined })
-
-            expect(failure).not.toBeInstanceOf(UnrecoverableError)
-            expect(failure.name).toBe('Error')
+        it('leaves any other failure to the job\'s own backoff', () => {
+            expect(jobRetry.toFailure({ message: 'ENOENT', retryable: true })).not.toBeInstanceOf(UnrecoverableError)
+            expect(jobRetry.toFailure({ message: 'boom', retryable: undefined })).not.toBeInstanceOf(UnrecoverableError)
         })
     })
 
-    describe('backoff strategy', () => {
-        const strategy = jobRetry.createBackoffStrategy({ log: mockLog })
-        const beforeExecution = jobRetry.toFailure({ message: 'Sandbox did not connect\nstdout:\nsecret-ish run output', retryable: true })
+    describe('logFailedAttempt', () => {
+        const failedJob = {
+            id: 'job-1',
+            attemptsMade: 1,
+            failedReason: 'Sandbox did not connect\nstdout:\nrun output',
+        }
 
-        it('retries a failure before execution within seconds, doubling per attempt', async () => {
-            vi.spyOn(Math, 'random').mockReturnValue(1)
+        it('logs the retry with its delay, and only the first line of the failed reason', () => {
+            const warn = vi.spyOn(log, 'warn')
 
-            expect(await Promise.all([1, 2, 3].map((attempt) => strategy(attempt, 'qadamFailureAware', beforeExecution)))).toEqual([2_000, 4_000, 8_000])
+            jobRetry.logFailedAttempt({ log, job: { ...failedJob, delay: 1_500, finishedOn: undefined }, jobType: WorkerJobType.EXECUTE_FLOW, retryable: true })
+
+            expect(warn).toHaveBeenCalledWith(expect.objectContaining({ retryInMs: 1_500, failedAttempt: 1, previousError: 'Sandbox did not connect' }), '[jobRetry] Attempt failed, retrying')
         })
 
-        it('jitters the delay down to half, so a batch that failed together does not retry together', async () => {
-            vi.spyOn(Math, 'random').mockReturnValue(0)
+        it('says a failure after execution is not retried, even with attempts left', () => {
+            const warn = vi.spyOn(log, 'warn')
 
-            expect(await strategy(1, 'qadamFailureAware', beforeExecution)).toBe(1_000)
+            jobRetry.logFailedAttempt({ log, job: { ...failedJob, delay: 0, finishedOn: Date.now() }, jobType: WorkerJobType.EXECUTE_FLOW, retryable: false })
+
+            expect(warn).toHaveBeenCalledWith(expect.objectContaining({ retryable: false }), expect.stringContaining('not retrying'))
         })
 
-        it('logs only the first line of the failed reason, never the run output after it', async () => {
-            await strategy(1, 'qadamFailureAware', beforeExecution)
+        it('says when the attempts ran out', () => {
+            const warn = vi.spyOn(log, 'warn')
 
-            expect(mockLog.warn).toHaveBeenCalledWith(expect.objectContaining({ previousError: 'Sandbox did not connect' }), expect.any(String))
-        })
+            jobRetry.logFailedAttempt({ log, job: { ...failedJob, delay: 0, finishedOn: Date.now() }, jobType: WorkerJobType.EXECUTE_FLOW, retryable: true })
 
-        it('keeps the one legacy retry after 8 minutes for an unclassified failure, and no second one', async () => {
-            const unclassified = jobRetry.toFailure({ message: 'boom', retryable: undefined })
-
-            expect(await strategy(1, 'qadamFailureAware', unclassified)).toBe(EIGHT_MINUTES_MS)
-            expect(await strategy(2, 'qadamFailureAware', unclassified)).toBe(-1)
+            expect(warn).toHaveBeenCalledWith(expect.anything(), '[jobRetry] Attempt failed, no attempts left')
         })
     })
 })

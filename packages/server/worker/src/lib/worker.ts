@@ -639,10 +639,10 @@ function buildErrorMessage(execError: Error | undefined, result: JobResult | und
 function extractLogs(execError: Error | undefined, result: JobResult | undefined): string | undefined {
     const thrown = execError instanceof ClassifiedJobFailure ? execError.original : execError
     if (thrown instanceof QadamFlowError) {
-        const params = thrown.error.params as Record<string, unknown>
+        const { params } = thrown.error
         const parts: string[] = []
-        if (params?.['standardOutput']) parts.push(`stdout:\n${params['standardOutput']}`)
-        if (params?.['standardError']) parts.push(`stderr:\n${params['standardError']}`)
+        if (!isNil(params) && 'standardOutput' in params && params.standardOutput) parts.push(`stdout:\n${params.standardOutput}`)
+        if (!isNil(params) && 'standardError' in params && params.standardError) parts.push(`stderr:\n${params.standardError}`)
         return parts.length > 0 ? parts.join('\n') : undefined
     }
     if (result && 'logs' in result) {
@@ -651,12 +651,15 @@ function extractLogs(execError: Error | undefined, result: JobResult | undefined
     return undefined
 }
 
-// Absent unless the handler classified the failure; the broker then keeps its legacy retry (#584).
+// Absent unless the handler classified the failure; the broker then applies the job's own backoff (#584).
 function readRetryable({ execError, result }: ReadRetryableParams): boolean | undefined {
     if (execError instanceof ClassifiedJobFailure) {
         return execError.retryable
     }
-    return isNil(execError) ? result?.retryable : undefined
+    if (!isNil(execError) || result?.kind !== JobResultKind.FIRE_AND_FORGET) {
+        return undefined
+    }
+    return result.retryable
 }
 
 function sleep(ms: number): Promise<void> {

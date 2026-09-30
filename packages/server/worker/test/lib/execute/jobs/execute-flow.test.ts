@@ -33,6 +33,7 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
     provisionFlowPieces: vi.fn().mockResolvedValue({ provisioned: true }),
 }))
 
+import { UnresolvableDependencyError } from '../../../../src/lib/cache/code/unresolvable-dependency-error'
 import { ClassifiedJobFailure } from '../../../../src/lib/execute/job-failure'
 import { jobTimings } from '../../../../src/lib/execute/job-timings'
 import { executeFlowJob } from '../../../../src/lib/execute/jobs/execute-flow'
@@ -137,6 +138,14 @@ function makeMockContext(apiOverrides?: Record<string, Mock>, attemptsStarted = 
     } as any
 }
 
+async function executeExpectingFailure({ ctx, data }: { ctx: ReturnType<typeof makeMockContext>, data: ExecuteFlowJobData }): Promise<ClassifiedJobFailure> {
+    const error: unknown = await executeFlowJob.execute(ctx, data).then(() => undefined, (e: unknown) => e)
+    if (!(error instanceof ClassifiedJobFailure)) {
+        return expect.fail(`expected a ClassifiedJobFailure, got ${String(error)}`)
+    }
+    return error
+}
+
 describe('executeFlowJob', () => {
     beforeEach(() => {
         mockGetVersion.mockResolvedValue(makeFlowVersion())
@@ -190,17 +199,12 @@ describe('executeFlowJob', () => {
             const ctx = makeMockContext()
             const data = makeResumeJobData({ logsFileId: undefined as unknown as string })
 
-            try {
-                await executeFlowJob.execute(ctx, data)
-                expect.fail('should have thrown')
+            const { original, retryable } = await executeExpectingFailure({ ctx, data })
+            if (!(original instanceof QadamFlowError)) {
+                return expect.fail(`expected a QadamFlowError, got ${String(original)}`)
             }
-            catch (e) {
-                expect(e).toBeInstanceOf(ClassifiedJobFailure)
-                const { original, retryable } = e as ClassifiedJobFailure
-                expect(original).toBeInstanceOf(QadamFlowError)
-                expect((original as QadamFlowError).error.code).toBe(ErrorCode.RESUME_LOGS_FILE_MISSING)
-                expect(retryable).toBe(false)
-            }
+            expect(original.error.code).toBe(ErrorCode.RESUME_LOGS_FILE_MISSING)
+            expect(retryable).toBe(false)
 
             expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(
                 expect.objectContaining({ status: FlowRunStatus.INTERNAL_ERROR }),
@@ -309,12 +313,6 @@ describe('executeFlowJob', () => {
     describe('retry verdict (#584)', () => {
         const syncCaller = { workerHandlerId: 'handler-1', httpRequestId: 'req-1' }
 
-        async function executeExpectingFailure({ ctx, data }: { ctx: ReturnType<typeof makeMockContext>, data: ExecuteFlowJobData }): Promise<ClassifiedJobFailure> {
-            const error = await executeFlowJob.execute(ctx, data).then(() => expect.fail('should have thrown'), (e: unknown) => e)
-            expect(error).toBeInstanceOf(ClassifiedJobFailure)
-            return error as ClassifiedJobFailure
-        }
-
         it('leaves the run QUEUED and the sync caller waiting when provisioning throws and the broker retries quickly', async () => {
             mockProvisionFlowPieces.mockRejectedValueOnce(new Error('ENOENT cache.json.123'))
             const ctx = makeMockContext()
@@ -398,6 +396,50 @@ describe('executeFlowJob', () => {
 
             expect(missingVersion.retryable).toBe(false)
             expect(unavailablePin.retryable).toBe(false)
+        })
+
+        it('never retries a code step whose dependency cannot be resolved, and fails the run', async () => {
+            mockProvisionFlowPieces.mockRejectedValueOnce(new UnresolvableDependencyError({ original: new Error('Exit 1\nstderr: error: No version matching "99.0.0" found for specifier "lodash"') }))
+            const ctx = makeMockContext()
+            ctx.canRetryBeforeExecution = true
+
+            const failure = await executeExpectingFailure({ ctx, data: makeResumeJobData({ executionType: ExecutionType.BEGIN }) })
+
+            expect(failure.retryable).toBe(false)
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(expect.objectContaining({ status: FlowRunStatus.FAILED, internalError: expect.objectContaining({ message: expect.stringContaining('No version matching') }) }))
+            expect(ctx.sandboxManager.acquire).not.toHaveBeenCalled()
+        })
+
+        it('keeps the verdict when reporting a failure after execution fails too', async () => {
+            const ctx = makeMockContext({ uploadRunLog: vi.fn().mockRejectedValue(new Error('API unreachable')) })
+            ctx.canRetryBeforeExecution = true
+            ctx.mockSandbox.execute.mockRejectedValueOnce(new Error('Worker exited with code 1'))
+
+            const failure = await executeExpectingFailure({ ctx, data: makeResumeJobData({ executionType: ExecutionType.BEGIN }) })
+
+            expect(failure.retryable).toBe(false)
+            expect(failure.message).toBe('Worker exited with code 1')
+            expect(ctx.log.error).toHaveBeenCalledWith(expect.objectContaining({ status: FlowRunStatus.INTERNAL_ERROR }), expect.stringContaining('Failed to report the run status'))
+        })
+
+        it('reports an engine internal error once, even when the report fails', async () => {
+            const ctx = makeMockContext({ uploadRunLog: vi.fn().mockRejectedValue(new Error('API unreachable')) })
+            ctx.mockSandbox.execute.mockResolvedValueOnce({ status: EngineResponseStatus.INTERNAL_ERROR, error: 'boom' })
+
+            const result = await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
+
+            expect(result).toMatchObject({ status: EngineResponseStatus.INTERNAL_ERROR, retryable: false })
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledTimes(1)
+        })
+
+        it('keeps a timeout a timeout when reporting it fails', async () => {
+            const ctx = makeMockContext({ uploadRunLog: vi.fn().mockRejectedValue(new Error('API unreachable')) })
+            ctx.mockSandbox.execute.mockRejectedValueOnce(new QadamFlowError({ code: ErrorCode.SANDBOX_EXECUTION_TIMEOUT, params: { standardOutput: '', standardError: '' } }))
+
+            const result = await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
+
+            expect(result).toMatchObject({ status: EngineResponseStatus.TIMEOUT })
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledTimes(1)
         })
     })
 

@@ -48,7 +48,6 @@ export type SynchronousJobResult = {
     response: unknown
     errorMessage?: string
     logs?: string
-    retryable?: boolean
 }
 
 export type JobResult = FireAndForgetJobResult | SynchronousJobResult
