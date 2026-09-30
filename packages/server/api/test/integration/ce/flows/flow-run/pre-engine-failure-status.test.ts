@@ -70,7 +70,7 @@ describe('Pre-engine failure status (#434)', () => {
         const logsFileId = apId()
         const finishTime = new Date().toISOString()
 
-        const handlers = createHandlers(app.log)
+        const handlers = createHandlers({ log: app.log, disconnected: new AbortController().signal })
         await handlers.uploadRunLog({
             runId,
             projectId: ctx.project.id,
@@ -132,7 +132,7 @@ describe('Pre-engine failure status (#434)', () => {
     it('lands FAILED with no file created when no logsFileId is reported', async () => {
         const { runId } = await createQueuedRun()
 
-        const handlers = createHandlers(app.log)
+        const handlers = createHandlers({ log: app.log, disconnected: new AbortController().signal })
         await handlers.uploadRunLog({
             runId,
             projectId: ctx.project.id,

@@ -499,7 +499,7 @@ describe('Webhook Service', () => {
             }
 
             const workerHandlerId = engineResponseWatcher(app!.log).getServerId()
-            await createHandlers(app!.log).sendFlowResponse({
+            await createHandlers({ log: app!.log, disconnected: new AbortController().signal }).sendFlowResponse({
                 workerHandlerId,
                 httpRequestId: capturedHttpRequestId,
                 runResponse: { status: 200, body: { ok: true }, headers: {} },

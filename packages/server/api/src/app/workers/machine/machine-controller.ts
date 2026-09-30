@@ -1,6 +1,7 @@
 import { createRpcServer, isNil, PrincipalType, WebsocketServerEvent, WorkerMachineHealthcheckRequest, WorkerToApiContract } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
+import { Socket } from 'socket.io'
 import { z } from 'zod'
 import { securityAccess } from '../../core/security/authorization/fastify-security'
 import { websocketService } from '../../core/websockets.service'
@@ -25,7 +26,7 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
                 ? await machineService(app.log).settingsOnly()
                 : await machineService(app.log).onConnection(information, workerGroupId)
             callback?.(response)
-            createRpcServer<WorkerToApiContract>(socket, createHandlers(app.log, workerGroupId))
+            createRpcServer<WorkerToApiContract>(socket, createHandlers({ log: app.log, workerGroupId, disconnected: disconnectSignal(socket) }))
         }
     })
 
@@ -81,6 +82,17 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
 // this, and dropping it silently would be a regression in the diff that exists to tighten this.
 function readWorkerGroupId(principal: { workerGroupId?: unknown }): string | undefined {
     return typeof principal.workerGroupId === 'string' ? principal.workerGroupId : undefined
+}
+
+// Pending long-polls would otherwise outlive their socket: the dispatcher would hand the next
+// jobs to a worker that is gone, and they would only run after the stalled check (#589).
+function disconnectSignal(socket: Socket): AbortSignal {
+    const controller = new AbortController()
+    socket.on('disconnect', () => controller.abort())
+    if (socket.disconnected) {
+        controller.abort()
+    }
+    return controller.signal
 }
 
 function parseHealthcheck(request: unknown, log: FastifyBaseLogger): WorkerMachineHealthcheckRequest | null {

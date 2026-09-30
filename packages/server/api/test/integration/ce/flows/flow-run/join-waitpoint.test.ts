@@ -128,7 +128,7 @@ describe('Join waitpoint', () => {
         expect(completed?.resumePayload.body.data.results.map((result) => result.data.index)).toEqual(Array.from({ length: 20 }, (_, index) => index))
         expect(completed?.resumePayload.body.data).toMatchObject({ succeeded: 16, failed: 4 })
 
-        await createHandlers(app.log).uploadRunLog({ runId: run.id, projectId, status: FlowRunStatus.PAUSED })
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({ runId: run.id, projectId, status: FlowRunStatus.PAUSED })
 
         await waitForCondition({ fn: async () => (await db.findOneBy('waitpoint', { id: join.id })) === null })
     })
@@ -170,8 +170,8 @@ describe('Join waitpoint', () => {
         const failedChild = await saveChild({ projectId, parentRunId: run.id, parentWaitpointId: join.id, parentSlotId: slotIds[0] })
         const silentChild = await saveChild({ projectId, parentRunId: run.id, parentWaitpointId: join.id, parentSlotId: slotIds[1] })
 
-        await createHandlers(app.log).uploadRunLog({ runId: failedChild.id, projectId, status: FlowRunStatus.FAILED, finishTime: new Date().toISOString() })
-        await createHandlers(app.log).uploadRunLog({ runId: silentChild.id, projectId, status: FlowRunStatus.SUCCEEDED, finishTime: new Date().toISOString() })
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({ runId: failedChild.id, projectId, status: FlowRunStatus.FAILED, finishTime: new Date().toISOString() })
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({ runId: silentChild.id, projectId, status: FlowRunStatus.SUCCEEDED, finishTime: new Date().toISOString() })
 
         await waitForCondition({ fn: async () => (await db.findOneBy<{ status: string }>('waitpoint', { id: join.id }))?.status === WaitpointStatus.COMPLETED })
         const completed = await db.findOneBy<{ resumePayload: { body: { data: { results: { status: string, data: unknown }[] } } } }>('waitpoint', { id: join.id })

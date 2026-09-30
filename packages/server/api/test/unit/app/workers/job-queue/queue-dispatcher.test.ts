@@ -286,4 +286,73 @@ describe('QueueDispatcher', () => {
         const result2 = await poll2
         expect(result2).toEqual(job)
     })
+
+    // #589: a worker restart left its slots' polls queued, and the next jobs went to them.
+    describe('polls tied to a disconnected socket', () => {
+        it('drops the poll of a disconnected socket and hands the job to the next live one', async () => {
+            const gone = new AbortController()
+            const deadPoll = dispatcher.poll({ signal: gone.signal })
+            const livePoll = dispatcher.poll({ signal: new AbortController().signal })
+            await vi.advanceTimersByTimeAsync(0)
+
+            gone.abort()
+            expect(dispatcher.waiterCount()).toBe(1)
+            expect(await deadPoll).toBeNull()
+
+            const job = createFakeJob('job-after-restart')
+            pendingDequeues[0].resolve(job)
+            await vi.advanceTimersByTimeAsync(0)
+
+            expect(await livePoll).toEqual(job)
+            expect(onOrphanedJobMock).not.toHaveBeenCalled()
+        })
+
+        it('returns null at once for a socket that is already gone, without queueing a waiter', async () => {
+            const gone = new AbortController()
+            gone.abort()
+
+            const result = dispatcher.poll({ signal: gone.signal })
+            await vi.advanceTimersByTimeAsync(0)
+
+            expect(dispatcher.waiterCount()).toBe(0)
+            expect(dequeueCallCount).toBe(0)
+            expect(await result).toBeNull()
+        })
+
+        it('returns a job to the queue when every waiting socket disconnected mid-dequeue', async () => {
+            const gone = new AbortController()
+            const deadPoll = dispatcher.poll({ signal: gone.signal })
+            await vi.advanceTimersByTimeAsync(0)
+
+            gone.abort()
+            expect(dispatcher.waiterCount()).toBe(0)
+            expect(await deadPoll).toBeNull()
+
+            pendingDequeues[0].resolve(createFakeJob('job-nobody-waits-for'))
+            await vi.advanceTimersByTimeAsync(0)
+
+            expect(onOrphanedJobMock).toHaveBeenCalledWith('job-nobody-waits-for', 'token-job-nobody-waits-for', 'test-queue', mockLog)
+        })
+
+        it('stops listening to the socket once the poll settles', async () => {
+            const socket = new AbortController()
+            const addListener = vi.spyOn(socket.signal, 'addEventListener')
+            const removeListener = vi.spyOn(socket.signal, 'removeEventListener')
+
+            const timedOut = dispatcher.poll({ signal: socket.signal })
+            await vi.advanceTimersByTimeAsync(WAITER_TIMEOUT_MS + 100)
+            expect(await timedOut).toBeNull()
+
+            const served = dispatcher.poll({ signal: socket.signal })
+            await vi.advanceTimersByTimeAsync(0)
+            pendingDequeues[0].resolve(createFakeJob('job-served'))
+            await vi.advanceTimersByTimeAsync(0)
+            expect(await served).toEqual(createFakeJob('job-served'))
+
+            const added = addListener.mock.calls.map(([, listener]) => listener)
+            const removed = removeListener.mock.calls.map(([, listener]) => listener)
+            expect(added).toHaveLength(2)
+            expect(removed).toEqual(added)
+        })
+    })
 })

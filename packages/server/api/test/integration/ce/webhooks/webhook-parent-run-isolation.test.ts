@@ -544,7 +544,7 @@ describe('Webhook ingress: parentRunId / failParentOnFailure verification (#521)
             const persistedChild = await db.findOneByOrFail<{ parentWaitpointId: string | null }>('flow_run', { id: createdRun!.id })
             expect(persistedChild.parentWaitpointId).toBe(waitpoint.id)
 
-            await createHandlers(app!.log).uploadRunLog({
+            await createHandlers({ log: app!.log, disconnected: new AbortController().signal }).uploadRunLog({
                 runId: createdRun!.id,
                 projectId: mockProject.id,
                 status: FlowRunStatus.FAILED,

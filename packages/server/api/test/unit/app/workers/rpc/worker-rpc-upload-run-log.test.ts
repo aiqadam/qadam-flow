@@ -56,7 +56,7 @@ describe('workerRpc#uploadRunLog logs file check', () => {
     it('checks the logs file row without downloading the log on the happy path', async () => {
         exists.mockResolvedValue(true)
 
-        await createHandlers(log).uploadRunLog(snapshot)
+        await createHandlers({ log, disconnected: new AbortController().signal }).uploadRunLog(snapshot)
 
         expect(exists).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-1', fileId: 'logs-1' }))
         expect(getDataOrUndefined).not.toHaveBeenCalled()
@@ -66,7 +66,7 @@ describe('workerRpc#uploadRunLog logs file check', () => {
     it('still creates an empty logs file when the row is missing', async () => {
         exists.mockResolvedValue(false)
 
-        await createHandlers(log).uploadRunLog(snapshot)
+        await createHandlers({ log, disconnected: new AbortController().signal }).uploadRunLog(snapshot)
 
         expect(getDataOrUndefined).not.toHaveBeenCalled()
         expect(save).toHaveBeenCalledWith(expect.objectContaining({ fileId: 'logs-1', projectId: 'project-1' }))
@@ -77,7 +77,7 @@ describe('workerRpc#uploadRunLog logs file check', () => {
             data: Buffer.from(JSON.stringify({ executionState: { steps: { trigger: {} }, tags: [] } })),
         })
 
-        await createHandlers(log).uploadRunLog({
+        await createHandlers({ log, disconnected: new AbortController().signal }).uploadRunLog({
             ...snapshot,
             status: FlowRunStatus.INTERNAL_ERROR,
             internalError: { source: RunInternalErrorSource.WORKER, message: 'boom', occurredAt: new Date().toISOString() },

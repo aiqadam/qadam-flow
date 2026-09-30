@@ -240,10 +240,14 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         log.info('[jobBroker] Job broker initialized')
     },
 
-    async poll(queueName: string = QueueName.WORKER_JOBS): Promise<ConsumeJobRequest | null> {
+    async poll({ queueName = QueueName.WORKER_JOBS, signal }: PollParams = {}): Promise<ConsumeJobRequest | null> {
         const worker = await ensureBullMQWorker(queueName, log)
         const dispatcher = ensureDispatcher(queueName, worker, log)
-        return dispatcher.poll()
+        return dispatcher.poll({ signal })
+    },
+
+    async returnToQueue(job: ConsumeJobRequest): Promise<void> {
+        await returnJobToQueue(job.jobId, job.token, job.queueName, log)
     },
 
     async completeJob(input: ConsumeJobResponse & { jobId: string, token: string, queueName: string }): Promise<void> {
@@ -323,3 +327,10 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         workerPromises.clear()
     },
 })
+
+type PollParams = {
+    queueName?: string
+    // Aborted when the socket that asked goes away; its pending poll is then dropped rather than
+    // handed a job nobody will receive (#589).
+    signal?: AbortSignal
+}
