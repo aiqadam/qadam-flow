@@ -105,15 +105,19 @@ async function tryDequeue(worker: BullMQWorker, queueName: string, log: FastifyB
         return tryDequeue(worker, queueName, log)
     }
 
-    // `sinceEnqueuedMs` is measured here, on the clock that wrote `job.timestamp`, so worker clock
-    // skew cannot enter it. On a retry it spans every earlier attempt and its backoff, which is the
-    // delay the run's caller actually saw (#584); the worker's `Job finished` line for the same
-    // jobId has the rest (#587).
+    // `queueWaitMs` counts from when the job first became runnable: `job.timestamp` is when it was
+    // added, and a scheduled or cron iteration is added a whole interval early with `opts.delay`.
+    // BullMQ zeroes the `delay` field on promotion, so the original lives only in `opts`. Earlier
+    // attempts and their retry backoff stay in, since that is the wait the run's caller saw (#584).
+    // Measured on the API so worker clock skew cannot enter it; API replicas must still agree.
+    // The worker's `Job finished` line for the same jobId has the rest (#587).
+    const plannedDelayMs = job.opts.delay ?? 0
     log.info({
         queueName,
         jobId: job.id,
         jobName: job.name,
-        sinceEnqueuedMs: Date.now() - job.timestamp,
+        queueWaitMs: Date.now() - job.timestamp - plannedDelayMs,
+        plannedDelayMs,
         attemptsMade: job.attemptsMade,
         stalledCounter: job.stalledCounter,
     }, '[jobBroker#tryDequeue] Dequeued job')

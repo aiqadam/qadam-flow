@@ -468,6 +468,13 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
     })
 }
 
+export function ensurePublicApiUrl(publicUrl: string): string {
+    if (publicUrl.endsWith('/api/')) return publicUrl
+    if (publicUrl.endsWith('/api')) return publicUrl + '/'
+    if (publicUrl.endsWith('/')) return publicUrl + 'api/'
+    return publicUrl + '/api/'
+}
+
 /**
  * The ids that join the `Job finished` line to a `flow_run` row. Read from the raw payload, not
  * the parsed one: the line is written for jobs that failed to parse too, and must not throw on one.
@@ -487,13 +494,6 @@ function readJobRef(jobData: unknown): JobRef {
 function readStringField({ value, key }: { value: object, key: string }): string | undefined {
     const field: unknown = Reflect.get(value, key)
     return typeof field === 'string' ? field : undefined
-}
-
-export function ensurePublicApiUrl(publicUrl: string): string {
-    if (publicUrl.endsWith('/api/')) return publicUrl
-    if (publicUrl.endsWith('/api')) return publicUrl + '/'
-    if (publicUrl.endsWith('/')) return publicUrl + 'api/'
-    return publicUrl + '/api/'
 }
 
 async function fetchAndStoreSettings(sock: Socket): Promise<void> {

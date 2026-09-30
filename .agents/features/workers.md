@@ -85,7 +85,11 @@ Three log lines answer "where did a slow job's time go" without OTEL. All of the
 
   The sandbox phases come from `jobTimings.instrumentSandboxManager`. It wraps the slot's manager for the job's lifetime, so no handler records them itself. Inline `callFlow` children provision inside the parent's `execute` and count toward `executeMs`.
 
-**`[jobBroker#tryDequeue] Dequeued job`** (API, info) carries `sinceEnqueuedMs` (`Date.now() - job.timestamp`), `attemptsMade` and `stalledCounter`. It is measured on the API because that clock wrote the timestamp. On a retry it spans every earlier attempt and its backoff, which is the 8-minute gap of #584. Join it to the worker line on `jobId`.
+**`[jobBroker#tryDequeue] Dequeued job`** (API, info) carries `queueWaitMs`, `plannedDelayMs`, `attemptsMade` and `stalledCounter`. Join it to the worker line on `jobId`.
+- `queueWaitMs` is `Date.now() - job.timestamp - job.opts.delay`: the time since the job first became runnable.
+- `plannedDelayMs` is taken from `opts` because BullMQ zeroes the job's `delay` field when it promotes it. A scheduler or cron iteration is added with a delay of a whole interval, so without this subtraction every cron job would look like a backlog.
+- On a retry the wait still spans every earlier attempt and its backoff. That is the 8-minute gap of #584.
+- Measured on the API, so worker clock skew cannot enter it. The API replicas' clocks must still agree.
 
 **`[eventLoopMonitor] Event loop was blocked`** (app and worker, warn). This is `eventLoopMonitor` from `@aiqadam/server-utils`, started in `setupApp` and in the worker's `main`.
 - It samples `perf_hooks.monitorEventLoopDelay` every 10 s and writes only when the window's `maxLagMs` is ≥ 500 ms. It also reports `p99LagMs` and `meanLagMs`.
