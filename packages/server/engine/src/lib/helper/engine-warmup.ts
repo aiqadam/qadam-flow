@@ -11,18 +11,18 @@ import { qadamDistIndex } from './qadam-dist-index'
 export const engineWarmup = {
     isEnabled: (): boolean => process.env.AP_ENGINE_WARMUP === 'true',
 
-    run: async (): Promise<void> => {
+    run: async ({ write }: RunParams): Promise<void> => {
         const indexStart = performance.now()
         const { data: distIndex, error } = await tryCatch(() => qadamDistIndex.get({ refresh: false }))
         const distIndexMs = performance.now() - indexStart
         if (error) {
-            console.warn(`[engineWarmup] skipped ${JSON.stringify({ reason: 'dist index unavailable' })}`)
+            write(`[engineWarmup] skipped ${JSON.stringify({ reason: 'dist index unavailable', error: error.message })}`)
             return
         }
         const anchor = distIndex.values().next().value?.indexPath
         const depsStart = performance.now()
         const loadedDeps = isNil(anchor) ? [] : SHARED_QADAM_DEPS.filter((dependency) => requireFrom({ anchor, dependency }))
-        console.log(`[engineWarmup] done ${JSON.stringify({
+        write(`[engineWarmup] done ${JSON.stringify({
             distIndexMs: roundMs(distIndexMs),
             qadams: distIndex.size,
             sharedDepsMs: roundMs(performance.now() - depsStart),
@@ -46,6 +46,12 @@ function requireFrom({ anchor, dependency }: RequireFromParams): boolean {
 
 function roundMs(value: number): number {
     return Math.round(value * 10) / 10
+}
+
+type RunParams = {
+    // Where the warmup's one line goes. Not the engine's patched console: that also feeds the
+    // notify channel, so a line written while the first job runs would land in its logs.
+    write: (line: string) => void
 }
 
 type RequireFromParams = {

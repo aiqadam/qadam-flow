@@ -11,8 +11,11 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
     let currentJobContext: SandboxJobContext | null = null
 
     // Only reusable sandboxes: a single-use one would be thrown away by the first job's release.
+    // And only forked engines, which ignore mounts: an isolate sandbox that is reused (dev, or
+    // AP_REUSE_SANDBOX) mounts its first job's platform's custom qadams at start, and a prewarmed
+    // one, started with no platform, would never get them.
     async function startPrewarmedSandbox({ log, apiClient }: PrewarmParams): Promise<void> {
-        if (!canReuseSandbox() || !isNil(currentSandbox)) {
+        if (!canReuseSandbox() || runsInIsolate() || !isNil(currentSandbox)) {
             return
         }
         const startedAt = performance.now()
@@ -32,9 +35,12 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
             if (currentSandbox === sandbox) {
                 currentSandbox = null
             }
-            await sandbox.shutdown()
+            const { error: shutdownError } = await tryCatch(() => sandbox.shutdown())
             if (startError) {
                 throw startError
+            }
+            if (shutdownError) {
+                throw shutdownError
             }
             return
         }
@@ -121,6 +127,11 @@ function canReuseSandbox(): boolean {
         return true
     }
     return false
+}
+
+function runsInIsolate(): boolean {
+    const isolateModes: string[] = [ExecutionMode.SANDBOX_PROCESS, ExecutionMode.SANDBOX_CODE_AND_PROCESS]
+    return isolateModes.includes(workerSettings.getSettings().EXECUTION_MODE)
 }
 
 export type ActiveSandboxInfo = {

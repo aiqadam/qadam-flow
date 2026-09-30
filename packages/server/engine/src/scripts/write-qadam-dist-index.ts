@@ -1,4 +1,5 @@
 import path from 'path'
+import { tryCatch } from '@aiqadam/shared'
 import { qadamDistIndex } from '../lib/helper/qadam-dist-index'
 
 // #419: run once by the Dockerfile after the qadams are built, from the repo root, so the image
@@ -6,14 +7,17 @@ import { qadamDistIndex } from '../lib/helper/qadam-dist-index'
 // Never run it in a dev tree: a manifest there would go stale on the next qadam build.
 async function main(): Promise<void> {
     const qadamsRoot = path.resolve('packages/qadams')
-    const count = await qadamDistIndex.writeManifest({ qadamsRoot })
+    const { data: count, error } = await tryCatch(() => qadamDistIndex.writeManifest({ qadamsRoot }))
+    if (error) {
+        console.error(error)
+        process.exit(1)
+    }
+    // An empty index means the qadam build did not run; fail the image build rather than ship it.
     if (count === 0) {
-        throw new Error(`No built qadams found under ${qadamsRoot}`)
+        console.error(`[qadamDistIndex] no built qadams under ${qadamsRoot}`)
+        process.exit(1)
     }
     console.log(`[qadamDistIndex] wrote ${count} entries to the manifest`)
 }
 
-main().catch((error: unknown) => {
-    console.error(error)
-    process.exit(1)
-})
+void main()

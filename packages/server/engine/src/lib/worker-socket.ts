@@ -64,9 +64,6 @@ export const workerSocket = {
 
         socket.on('connect', () => {
             clearInitialConnectWatchdog()
-            if (engineWarmup.isEnabled()) {
-                void tryCatch(() => engineWarmup.run())
-            }
         })
 
         // Same rationale as the watchdog: once the control channel is gone, this engine
@@ -100,6 +97,15 @@ export const workerSocket = {
             const sanitizedArgs = sanitizeConsoleErrorArgs(args)
             notifyClient?.stderr({ message: sanitizedArgs.join(' ') + '\n' })
             originalError.apply(console, sanitizedArgs)
+        }
+
+        // #419: warm up while idle, writing to the process's own stdout (the worker's log) rather than
+        // the patched console: that one also feeds the notify channel, so a line written while the
+        // first job runs would land in that job's logs.
+        if (engineWarmup.isEnabled()) {
+            socket.once('connect', () => {
+                void tryCatch(() => engineWarmup.run({ write: (line) => originalLog.call(console, line) }))
+            })
         }
 
         createRpcServer<EngineContract>(socket, {

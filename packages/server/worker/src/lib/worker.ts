@@ -328,13 +328,26 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
     activePollLoops++
 
     try {
-        // Before the first poll, so a job can never race the prewarm for this slot (#419).
-        await sbManager.prewarm({ log: workerLog, apiClient })
+        await prewarmSlot({ apiClient, sbManager, generation, workerLog })
         await runPollLoop({ apiClient, sbManager, generation, workerLog })
     }
     finally {
         activePollLoops--
     }
+}
+
+/**
+ * Starts this slot's sandbox before its first poll, so a job can never race the prewarm for the
+ * slot (#419). Skipped for a loop that is not going to poll — stopped, already superseded by a
+ * reconnect, or about to pause on a version mismatch — and abandoned on `stop()` like a poll is;
+ * the manager shuts down a sandbox that finishes starting after its slot was shut down.
+ */
+async function prewarmSlot({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
+    const willPoll = polling && connectionGeneration === generation && workerSettings.getSettings().APP_VERSION === AP_VERSION
+    if (!willPoll) {
+        return
+    }
+    await raceStopRequest({ promise: sbManager.prewarm({ log: workerLog, apiClient }), whenStopped: undefined })
 }
 
 async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {

@@ -1,6 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
-import { isNil, tryCatch } from '@aiqadam/shared'
+import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { z } from 'zod'
 
 // Bundled qadams are baked into the image, so the index cannot change while the process lives.
@@ -27,28 +27,30 @@ export const qadamDistIndex = {
     },
 
     load: async ({ qadamsRoot, useManifest }: LoadParams): Promise<Map<string, DistPackageEntry>> => {
+        const root = path.resolve(qadamsRoot)
         if (useManifest) {
-            const fromManifest = await readManifest(qadamsRoot)
+            const fromManifest = await readManifest(root)
             if (!isNil(fromManifest)) {
                 return fromManifest
             }
         }
-        return scanDistTree(qadamsRoot)
+        return scanDistTree(root)
     },
 
     // #419: run at image-build time (Dockerfile), so a fresh engine process reads one file instead
-    // of walking ~240 qadam directories — 250–540 ms of the first `resolveMs` on QA.
+    // of walking ~240 qadam directories — 270–540 ms of the first `resolveMs` on QA.
     writeManifest: async ({ qadamsRoot }: WriteManifestParams): Promise<number> => {
-        const index = await scanDistTree(qadamsRoot)
+        const root = path.resolve(qadamsRoot)
+        const index = await scanDistTree(root)
         const manifest: DistIndexManifest = {
             version: MANIFEST_VERSION,
             entries: [...index.values()].map((entry) => ({
                 name: entry.name,
                 version: entry.version,
-                indexPath: path.relative(qadamsRoot, entry.indexPath),
+                indexPath: path.relative(root, entry.indexPath),
             })),
         }
-        await fs.writeFile(path.join(qadamsRoot, QADAM_DIST_MANIFEST_FILE), JSON.stringify(manifest))
+        await fs.writeFile(path.join(root, QADAM_DIST_MANIFEST_FILE), JSON.stringify(manifest))
         return manifest.entries.length
     },
 }
@@ -68,21 +70,47 @@ function defaultQadamsRoot(): string {
     return path.resolve('packages/qadams')
 }
 
-// Any problem with the manifest means "scan instead": a missing file is the dev tree, and an
-// unreadable or foreign one must never make a bundled qadam unresolvable.
+// Any problem with the manifest means "scan instead": it must never make a bundled qadam
+// unresolvable. A missing file is the normal dev-tree case and stays quiet; anything else is an
+// image built wrong, or a stale copy in a dev tree, and says why.
 async function readManifest(qadamsRoot: string): Promise<Map<string, DistPackageEntry> | null> {
-    const { data, error } = await tryCatch(async () => {
-        const content = await fs.readFile(path.join(qadamsRoot, QADAM_DIST_MANIFEST_FILE), 'utf-8')
-        return manifestSchema.parse(JSON.parse(content))
-    })
-    if (error) {
+    const { data: content, error: readError } = await tryCatch(() => fs.readFile(path.join(qadamsRoot, QADAM_DIST_MANIFEST_FILE), 'utf-8'))
+    if (readError) {
+        if (!isFileNotFound(readError)) {
+            warnManifestRejected('unreadable')
+        }
         return null
     }
-    const entries = data.entries.map((entry) => ({ ...entry, indexPath: path.resolve(qadamsRoot, entry.indexPath) }))
+    const { data: parsed } = tryCatchSync(() => manifestSchema.safeParse(JSON.parse(content)))
+    if (isNil(parsed) || !parsed.success) {
+        warnManifestRejected('not a version-1 manifest')
+        return null
+    }
+    // Trusted as the whole bundled tree, so an empty one would make every bundled qadam unresolvable.
+    if (parsed.data.entries.length === 0) {
+        warnManifestRejected('no entries')
+        return null
+    }
+    const entries = parsed.data.entries.map((entry) => ({ ...entry, indexPath: path.resolve(qadamsRoot, entry.indexPath) }))
     if (entries.some((entry) => !entry.indexPath.startsWith(qadamsRoot + path.sep))) {
+        warnManifestRejected('an entry points outside the qadams root')
+        return null
+    }
+    const present = await Promise.all(entries.map((entry) => pathExists(entry.indexPath)))
+    if (present.includes(false)) {
+        warnManifestRejected('an entry has no built dist')
         return null
     }
     return toIndex(entries)
+}
+
+function isFileNotFound(error: unknown): boolean {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
+// The reason only: never a path, which for a custom qadam install can carry a tenant segment.
+function warnManifestRejected(reason: string): void {
+    console.warn(`[qadamDistIndex] manifest rejected, scanning instead ${JSON.stringify({ reason })}`)
 }
 
 async function scanDistTree(qadamsRoot: string): Promise<Map<string, DistPackageEntry>> {

@@ -31,6 +31,21 @@ const { currentAppVersion } = vi.hoisted(() => {
     return { currentAppVersion: packageJson.version }
 })
 
+// #419: every slot prewarms its sandbox before its first poll. Observed through the manager's
+// `prewarm`, the only part replaced here; the real manager is otherwise untouched.
+const { prewarmMock, callOrder } = vi.hoisted(() => {
+    const order: string[] = []
+    return { prewarmMock: vi.fn(), callOrder: order }
+})
+
+vi.mock('../../src/lib/execute/sandbox-manager', async (importOriginal) => {
+    const real = await importOriginal<typeof import('../../src/lib/execute/sandbox-manager')>()
+    return {
+        ...real,
+        createSandboxManager: (params: Parameters<typeof real.createSandboxManager>[0]) => ({ ...real.createSandboxManager(params), prewarm: prewarmMock }),
+    }
+})
+
 vi.mock('../../src/lib/execute/job-registry', () => ({
     getHandler: (...args: unknown[]) => mockGetHandler(...args),
 }))
@@ -117,6 +132,8 @@ describe('worker integration', () => {
     afterEach(async () => {
         await worker.stop()
         mockGetHandler.mockReset()
+        prewarmMock.mockReset()
+        callOrder.length = 0
         delete process.env['AP_WORKER_CONCURRENCY']
         await new Promise<void>((resolve) => {
             ioServer.close(() => resolve())
@@ -161,6 +178,7 @@ describe('worker integration', () => {
 
                 const handlers: WorkerToApiContract = {
                     poll: vi.fn(async () => {
+                        callOrder.push('poll')
                         const response = pollIndex < pollResponses.length ? pollResponses[pollIndex] : null
                         pollIndex++
                         if (pollIndex >= pollResponses.length) {
@@ -200,6 +218,20 @@ describe('worker integration', () => {
             })
         })
     }
+
+    it('prewarms the slot\'s sandbox before its first poll (#419)', async () => {
+        prewarmMock.mockImplementation(async () => {
+            callOrder.push('prewarm:start')
+            await new Promise<void>((resolve) => setTimeout(resolve, 100))
+            callOrder.push('prewarm:end')
+        })
+
+        await connectWorkerWithPoll([null])
+
+        expect(prewarmMock).toHaveBeenCalledTimes(1)
+        expect(prewarmMock).toHaveBeenCalledWith(expect.objectContaining({ apiClient: expect.anything() }))
+        expect(callOrder.slice(0, 3)).toEqual(['prewarm:start', 'prewarm:end', 'poll'])
+    })
 
     it('polls for a job, executes it, and reports completion', async () => {
         const expectedResult = { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK }

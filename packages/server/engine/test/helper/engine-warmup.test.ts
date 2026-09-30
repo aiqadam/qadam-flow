@@ -58,36 +58,55 @@ describe('engineWarmup (#419)', () => {
     it('builds the dist index and loads the framework through a bundled qadam, so the first import finds it cached', async () => {
         const { indexPath, frameworkEntry } = await buildQadamWithFramework(root)
         getDistIndexMock.mockResolvedValue(new Map([['@aiqadam/qadam-alpha', { name: '@aiqadam/qadam-alpha', version: '1.0.0', indexPath }]]))
-        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+        const write = vi.fn()
         const requireFromQadam = createRequire(indexPath)
         expect(requireFromQadam.cache[frameworkEntry]).toBeUndefined()
 
-        await engineWarmup.run()
+        await engineWarmup.run({ write })
 
         expect(getDistIndexMock).toHaveBeenCalledWith({ refresh: false })
         expect(requireFromQadam.cache[frameworkEntry]).toBeDefined()
-        const line = logSpy.mock.calls.map((call) => String(call[0])).find((message) => message.startsWith('[engineWarmup] done '))
-        expect(line).toBeDefined()
-        const payload: unknown = JSON.parse(String(line).slice('[engineWarmup] done '.length))
+        expect(write).toHaveBeenCalledTimes(1)
+        const line = String(write.mock.calls[0][0])
+        expect(line.startsWith('[engineWarmup] done ')).toBe(true)
+        const payload: unknown = JSON.parse(line.slice('[engineWarmup] done '.length))
         // qadams-common is absent from the fixture, and a dependency that does not resolve is skipped.
         expect(payload).toMatchObject({ qadams: 1, sharedDeps: ['@aiqadam/qadams-framework'] })
     })
 
+    // The engine's console is patched to also feed the notify channel, which is captured into the
+    // running job's logs; the warmup can overlap the first job, so its line must bypass it.
+    it('writes only to the sink it is given, never to the console', async () => {
+        getDistIndexMock.mockResolvedValue(new Map())
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const write = vi.fn()
+
+        await engineWarmup.run({ write })
+        getDistIndexMock.mockRejectedValue(new Error('EACCES'))
+        await engineWarmup.run({ write })
+
+        expect(write).toHaveBeenCalledTimes(2)
+        expect(logSpy).not.toHaveBeenCalled()
+        expect(warnSpy).not.toHaveBeenCalled()
+    })
+
     it('never throws when the dist index cannot be built — the first job just pays the cost', async () => {
         getDistIndexMock.mockRejectedValue(new Error('EACCES'))
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const write = vi.fn()
 
-        await expect(engineWarmup.run()).resolves.toBeUndefined()
+        await expect(engineWarmup.run({ write })).resolves.toBeUndefined()
 
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[engineWarmup] skipped'))
+        expect(write).toHaveBeenCalledWith(expect.stringContaining('[engineWarmup] skipped'))
+        expect(write).toHaveBeenCalledWith(expect.stringContaining('EACCES'))
     })
 
     it('loads nothing when there is no bundled qadam to resolve through', async () => {
         getDistIndexMock.mockResolvedValue(new Map())
-        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+        const write = vi.fn()
 
-        await engineWarmup.run()
+        await engineWarmup.run({ write })
 
-        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"sharedDeps":[]'))
+        expect(write).toHaveBeenCalledWith(expect.stringContaining('"sharedDeps":[]'))
     })
 })

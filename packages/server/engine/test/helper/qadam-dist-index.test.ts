@@ -16,6 +16,7 @@ async function writeDistPackageJson({ root, dir, name, version }: { root: string
     const distDir = path.join(root, dir, 'dist')
     await fs.mkdir(path.join(distDir, 'src'), { recursive: true })
     await fs.writeFile(path.join(distDir, 'package.json'), JSON.stringify(version === null ? { name } : { name, version }))
+    await fs.writeFile(path.join(distDir, 'src', 'index.js'), 'module.exports = {}\n')
 }
 
 async function writeManifest({ root, content }: { root: string, content: string }): Promise<void> {
@@ -67,12 +68,14 @@ describe('qadamDistIndex (#419)', () => {
         expect(JSON.stringify(manifest)).toContain(JSON.stringify(path.join('core', 'alpha', 'dist', 'src', 'index.js')))
     })
 
-    it('scans when there is no manifest', async () => {
+    it('scans quietly when there is no manifest, as in a dev tree', async () => {
         const readdirSpy = vi.spyOn(fs, 'readdir')
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         const index = await qadamDistIndex.load({ qadamsRoot: root, useManifest: true })
 
         expect(readdirSpy).toHaveBeenCalled()
         expect(index.size).toBe(2)
+        expect(warnSpy).not.toHaveBeenCalled()
     })
 
     it('ignores the manifest when told to scan, as a dev-qadam refresh is', async () => {
@@ -87,17 +90,23 @@ describe('qadamDistIndex (#419)', () => {
     it.each([
         ['is not JSON', '{not json'],
         ['has an unknown format version', JSON.stringify({ version: 2, entries: [] })],
+        ['is empty', JSON.stringify({ version: 1, entries: [] })],
         ['has a malformed entry', JSON.stringify({ version: 1, entries: [{ name: '@aiqadam/qadam-alpha' }] })],
         ['points outside the qadams root', JSON.stringify({ version: 1, entries: [{ name: '@aiqadam/qadam-evil', version: '1.0.0', indexPath: '../../etc/index.js' }] })],
-    ])('falls back to the scan when the manifest %s', async (_case, content) => {
+        ['names a qadam whose dist is not there (a stale copy)', JSON.stringify({ version: 1, entries: [{ name: '@aiqadam/qadam-gone', version: '1.0.0', indexPath: 'core/gone/dist/src/index.js' }] })],
+    ])('falls back to the scan, and says why, when the manifest %s', async (_case, content) => {
         await writeManifest({ root, content })
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
         const index = await qadamDistIndex.load({ qadamsRoot: root, useManifest: true })
 
         expect([...index.keys()].sort()).toEqual(['@aiqadam/qadam-alpha', '@aiqadam/qadam-beta'])
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[qadamDistIndex] manifest rejected'))
+        expect(String(warnSpy.mock.calls[0][0])).not.toContain(root)
     })
 
     it('keeps the first of two builds with the same name, as the scan always did', async () => {
+        await writeDistPackageJson({ root, dir: 'custom/alpha', name: '@aiqadam/qadam-alpha', version: '0.0.1' })
         await writeManifest({
             root,
             content: JSON.stringify({ version: 1, entries: [

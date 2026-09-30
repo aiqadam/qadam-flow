@@ -227,6 +227,30 @@ describe('sandbox-manager prewarm', () => {
         expect(createSandboxForJob).not.toHaveBeenCalled()
     })
 
+    // A reused isolate sandbox mounts its first job's platform's custom qadams at start; one
+    // prewarmed with no platform would never get them.
+    it('does nothing for a reused isolate sandbox (dev under SANDBOX_PROCESS)', async () => {
+        mockGetSettings.mockReturnValue(buildSettings({ executionMode: ExecutionMode.SANDBOX_PROCESS, environment: ApEnvironment.DEVELOPMENT }))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(provisionMock).not.toHaveBeenCalled()
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+    })
+
+    it('reports the start failure, not a failure of the cleanup after it', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const failed = fakeSandbox({ start: async () => { throw new Error('did not connect') } })
+        vi.mocked(failed.shutdown).mockRejectedValueOnce(new Error('kill failed'))
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(failed)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ message: 'did not connect' }) }), expect.any(String))
+    })
+
     it('does nothing when the slot already has a sandbox', async () => {
         useMode(ExecutionMode.UNSANDBOXED)
         const manager = createSandboxManager({ boxId: 1, proxyPort: null })
