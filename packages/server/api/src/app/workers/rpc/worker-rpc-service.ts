@@ -59,7 +59,7 @@ function readWorkerVersion(input: unknown): string | undefined {
     return typeof version === 'string' ? version : undefined
 }
 
-export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): WorkerToApiContract {
+export function createHandlers({ log, workerGroupId, disconnected }: CreateHandlersParams): WorkerToApiContract {
     return {
         async poll(input) {
             // Third writer of the worker registry, alongside the two websocket listeners in
@@ -91,7 +91,17 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
                 return null
             }
             const pollQueueName = getPollQueueName(workerGroupId)
-            const job = await jobBroker(log).poll(pollQueueName)
+            const job = await jobBroker(log).poll({ queueName: pollQueueName, signal: disconnected })
+            if (disconnected.aborted) {
+                // The dispatcher already drops the pending polls of a closed socket. This covers
+                // a job handed out in the same turn the socket closed: acking it would leave it
+                // active and unowned until the stalled check, ~139 s later (#589).
+                if (job) {
+                    await jobBroker(log).returnToQueue(job)
+                }
+                log.info({ workerId, jobId: job?.jobId }, '[workerRpc#poll] Worker disconnected while its poll was pending')
+                return null
+            }
             if (job) {
                 log.info({ workerId, jobId: job.jobId, jobType: job.jobData.jobType }, '[workerRpc#poll] Returning job to worker')
             }
@@ -347,6 +357,13 @@ async function ensureLogsFileExists({ log, projectId, logsFileId, internalError 
     if (error) {
         log.error({ error, logsFileId, projectId }, '[workerRpc#uploadRunLog] Failed to ensure logs file exists')
     }
+}
+
+type CreateHandlersParams = {
+    log: FastifyBaseLogger
+    workerGroupId?: string
+    // Aborted when this worker's socket disconnects.
+    disconnected: AbortSignal
 }
 
 type EnsureLogsFileParams = {

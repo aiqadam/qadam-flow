@@ -307,7 +307,7 @@ describe('Resume flow run', () => {
             },
         })
 
-        const handlers = createHandlers(app.log)
+        const handlers = createHandlers({ log: app.log, disconnected: new AbortController().signal })
         await handlers.uploadRunLog({
             runId,
             projectId: ctx.project.id,
@@ -427,7 +427,7 @@ describe('Resume flow run', () => {
             workerHandlerId: null,
         })
 
-        const handlers = createHandlers(app.log)
+        const handlers = createHandlers({ log: app.log, disconnected: new AbortController().signal })
         await handlers.uploadRunLog({
             runId,
             projectId: ctx.project.id,
@@ -489,7 +489,7 @@ describe('Resume flow run', () => {
             workerHandlerId: null,
         })
 
-        const handlers = createHandlers(app.log)
+        const handlers = createHandlers({ log: app.log, disconnected: new AbortController().signal })
         await handlers.uploadRunLog({
             runId,
             projectId: ctx.project.id,
@@ -613,7 +613,7 @@ describe('Resume flow run', () => {
         })
         await db.save('flow_run', childRun)
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId: childRun.id,
             projectId: ctx.project.id,
             status: FlowRunStatus.FAILED,
@@ -663,7 +663,7 @@ describe('Resume flow run', () => {
         })
         await db.save('flow_run', childRun)
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId: childRun.id,
             projectId: ctx.project.id,
             status: FlowRunStatus.FAILED,
@@ -710,7 +710,7 @@ describe('Resume flow run', () => {
         })
         await db.save('flow_run', childRun)
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId: childRun.id,
             projectId: ctx.project.id,
             status: FlowRunStatus.FAILED,
@@ -756,7 +756,7 @@ describe('Resume flow run', () => {
         })
         await db.save('flow_run', child1)
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId: child1.id,
             projectId: ctx.project.id,
             status: FlowRunStatus.FAILED,
@@ -801,7 +801,7 @@ describe('Resume flow run', () => {
         })
         await db.save('flow_run', child2)
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId: child2.id,
             projectId: ctx.project.id,
             status: FlowRunStatus.FAILED,
@@ -1375,12 +1375,12 @@ describe('Resume flow run', () => {
 
         // Deliver B's answer first, then A's — the order responses arrive in must not affect
         // which caller receives which body.
-        await createHandlers(app.log).sendFlowResponse({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).sendFlowResponse({
             workerHandlerId,
             httpRequestId: httpRequestIdB,
             runResponse: { status: 200, body: { owner: 'B' }, headers: {} },
         })
-        await createHandlers(app.log).sendFlowResponse({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).sendFlowResponse({
             workerHandlerId,
             httpRequestId: httpRequestIdA,
             runResponse: { status: 200, body: { owner: 'A' }, headers: {} },
@@ -1445,7 +1445,7 @@ describe('Resume flow run', () => {
             },
         })
 
-        const handlers = createHandlers(app.log)
+        const handlers = createHandlers({ log: app.log, disconnected: new AbortController().signal })
         await handlers.uploadRunLog({ runId, projectId: ctx.project.id, status: FlowRunStatus.PAUSED })
 
         // #519: complete() must persist the caller's httpRequestId next to workerHandlerId so the
@@ -1532,7 +1532,7 @@ describe('Resume flow run', () => {
 
             const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
             const workerHandlerId = engineResponseWatcher(app.log).getServerId()
-            await createHandlers(app.log).sendFlowResponse({
+            await createHandlers({ log: app.log, disconnected: new AbortController().signal }).sendFlowResponse({
                 workerHandlerId,
                 httpRequestId,
                 runResponse: { status: 200, body: { ok: true }, headers: {} },
@@ -1606,7 +1606,7 @@ describe('Resume flow run', () => {
 
             const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
             const workerHandlerId = engineResponseWatcher(app.log).getServerId()
-            await createHandlers(app.log).sendFlowResponse({
+            await createHandlers({ log: app.log, disconnected: new AbortController().signal }).sendFlowResponse({
                 workerHandlerId,
                 httpRequestId,
                 runResponse: { status: 200, body: { ok: true }, headers: {} },
@@ -1764,7 +1764,7 @@ describe('Resume flow run', () => {
             // 410 without enqueueing anything, so exactly one job is ever queued for this run.
             const httpRequestId = await waitForResumeJobHttpRequestId({ flowRunId: flowRun.id })
             const workerHandlerId = engineResponseWatcher(app.log).getServerId()
-            await createHandlers(app.log).sendFlowResponse({
+            await createHandlers({ log: app.log, disconnected: new AbortController().signal }).sendFlowResponse({
                 workerHandlerId,
                 httpRequestId,
                 runResponse: { status: 200, body: { winner: true }, headers: {} },

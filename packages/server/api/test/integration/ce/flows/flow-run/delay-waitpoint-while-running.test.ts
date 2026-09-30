@@ -47,7 +47,7 @@ describe('DELAY waitpoint due while its run is still RUNNING', () => {
         const completed = await db.findOneBy<{ status: string }>('waitpoint', { id: waitpoint.id })
         expect(completed?.status).toBe(WaitpointStatus.COMPLETED)
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId: flowRun.id,
             projectId: ctx.project.id,
             status: FlowRunStatus.PAUSED,

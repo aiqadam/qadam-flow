@@ -19,17 +19,32 @@ function createQueueDispatcher(params: {
     const waiters: Waiter[] = []
     let loopRunning = false
 
-    async function poll(): Promise<ConsumeJobRequest | null> {
+    async function poll({ signal }: PollParams = {}): Promise<ConsumeJobRequest | null> {
+        if (signal?.aborted) {
+            return null
+        }
         return new Promise<ConsumeJobRequest | null>((resolve) => {
-            const timer = setTimeout(() => {
-                const idx = waiters.findIndex(w => w.resolve === resolve)
+            const waiter: Waiter = {
+                resolve: (job) => {
+                    clearTimeout(waiter.timer)
+                    signal?.removeEventListener('abort', dropWaiter)
+                    resolve(job)
+                },
+                timer: setTimeout(() => dropWaiter(), WAITER_TIMEOUT_MS),
+            }
+            // The socket that asked is gone: a job handed to this waiter would be acked into a
+            // closed socket and sit active until its lock expires and the stalled check moves
+            // it back, ~139 s later, while every live worker idles (#589).
+            function dropWaiter(): void {
+                const idx = waiters.indexOf(waiter)
                 if (idx !== -1) {
                     waiters.splice(idx, 1)
                 }
-                resolve(null)
-            }, WAITER_TIMEOUT_MS)
+                waiter.resolve(null)
+            }
+            signal?.addEventListener('abort', dropWaiter, { once: true })
 
-            waiters.push({ resolve, timer })
+            waiters.push(waiter)
             startLoop()
         })
     }
@@ -65,18 +80,16 @@ function createQueueDispatcher(params: {
                 continue
             }
 
-            clearTimeout(waiter.timer)
             waiter.resolve(job)
         }
         loopRunning = false
     }
 
     function close(): void {
-        for (const waiter of waiters) {
-            clearTimeout(waiter.timer)
+        const pending = waiters.splice(0)
+        for (const waiter of pending) {
             waiter.resolve(null)
         }
-        waiters.length = 0
         // Do not reset loopRunning here — the in-flight runLoop will exit
         // naturally when it sees waiters.length === 0 after dequeue returns.
     }
@@ -92,13 +105,17 @@ function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+type PollParams = {
+    signal?: AbortSignal
+}
+
 type Waiter = {
     resolve: (value: ConsumeJobRequest | null) => void
     timer: ReturnType<typeof setTimeout>
 }
 
 export type QueueDispatcher = {
-    poll(): Promise<ConsumeJobRequest | null>
+    poll(params?: PollParams): Promise<ConsumeJobRequest | null>
     close(): void
     waiterCount(): number
 }

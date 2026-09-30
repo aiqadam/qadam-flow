@@ -25,6 +25,12 @@ Workers are separate Node processes that poll the app for jobs and execute flows
 4. On job: worker executes in a sandbox, periodically `extendLock`, then `completeJob`.
 5. On disconnect, `connectionGeneration++` stops the loops; Socket.IO auto-reconnects and the cycle repeats.
 
+**A poll belongs to its socket (#589).** The app's `poll` is a long-poll: `queue-dispatcher.ts` parks it as a waiter for up to `WAITER_TIMEOUT_MS` (50 s) and hands the next dequeued job to the oldest waiter. `machine-controller.ts` gives each socket's handlers an `AbortSignal` (`disconnected`) that aborts on the socket's `disconnect`, and `jobBroker.poll({ queueName, signal })` passes it to the dispatcher.
+- On abort, the dispatcher drops that socket's waiters (they resolve `null`), so the next job goes to a live worker. A poll that arrives on an already-closed socket returns `null` without waiting.
+- If a job was handed out in the same turn the socket closed, the `poll` handler returns it with `jobBroker.returnToQueue` (`moveToDelayed(now + 100 ms)`) instead of acking it. It logs `[workerRpc#poll] Worker disconnected while its poll was pending`.
+- Before this, a worker restart left one waiter per slot behind. The next jobs went to them and were acked into the closed socket. They then sat active until the 120 s lock expired and the stalled check re-queued them, so they ran ~139 s late with `stalledCounter: 1`. A sync caller had already had its 504, and `syncDeadline` (#533) does not apply to a redelivery.
+- Not covered: a half-open TCP connection that Socket.IO has not noticed yet (up to its ping timeout). Its jobs still go through the stalled path.
+
 > **Payload resolution is engine-side, not worker-side.** Jobs carry a `JobPayload` (`inline` value or `ref` `fileId`). The worker forwards it unchanged into the engine operation; the engine hydrates a `ref` via the file-download path (direct bytes or an S3 signed-link redirect). There is no worker→API payload-fetch RPC — the contract exposes no `getPayloadFile`.
 
 ## Engine RPC Run Scope (#512)

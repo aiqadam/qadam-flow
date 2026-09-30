@@ -114,7 +114,7 @@ describe('Runs metadata project scope (#512)', () => {
     it('does not move or rewrite a run when the update names another project', async () => {
         const { runId } = await createOwnerRun()
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId,
             projectId: other.project.id,
             status: FlowRunStatus.SUCCEEDED,
@@ -130,7 +130,7 @@ describe('Runs metadata project scope (#512)', () => {
     it('still applies an update that names the run\'s own project', async () => {
         const { runId } = await createOwnerRun()
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId,
             projectId: owner.project.id,
             status: FlowRunStatus.SUCCEEDED,
@@ -151,7 +151,7 @@ describe('Runs metadata project scope (#512)', () => {
         const { runId } = await createOwnerRun()
         const recorded = recordRunProgressEvents({ runId })
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId,
             projectId: owner.project.id,
             status: FlowRunStatus.SUCCEEDED,
@@ -181,7 +181,7 @@ describe('Runs metadata project scope (#512)', () => {
             throw new TypeError('Cannot read properties of undefined (reading \'to\')')
         })
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId,
             projectId: owner.project.id,
             status: FlowRunStatus.SUCCEEDED,
@@ -197,7 +197,7 @@ describe('Runs metadata project scope (#512)', () => {
         const { runId } = await createOwnerRun()
         const recorded = recordRunProgressEvents({ runId })
 
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId,
             projectId: other.project.id,
             status: FlowRunStatus.SUCCEEDED,
@@ -208,7 +208,7 @@ describe('Runs metadata project scope (#512)', () => {
         // Updates for one run drain one at a time under its lock: once this one has emitted, the
         // foreign one is done. Only this one moves the row to SUCCEEDED, so an emit made for the
         // foreign one, whatever room it names, shows up as a second entry.
-        await createHandlers(app.log).uploadRunLog({
+        await createHandlers({ log: app.log, disconnected: new AbortController().signal }).uploadRunLog({
             runId,
             projectId: owner.project.id,
             status: FlowRunStatus.SUCCEEDED,

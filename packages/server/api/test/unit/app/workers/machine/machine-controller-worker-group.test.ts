@@ -96,7 +96,7 @@ describe('worker group comes from the verified token, never the handshake', () =
         await handler(validPayload, workerPrincipal(), null)
 
         expect(onConnection).toHaveBeenCalledWith(expect.objectContaining({ workerId: 'worker-1' }), undefined)
-        expect(createHandlers).toHaveBeenCalledWith(log, undefined)
+        expect(createHandlers).toHaveBeenCalledWith(expect.objectContaining({ log, workerGroupId: undefined }))
     })
 
     it('ignores a workerGroupId the worker asserts in handshake.auth on WORKER_HEALTHCHECK', async () => {
@@ -115,7 +115,7 @@ describe('worker group comes from the verified token, never the handshake', () =
         await handler(validPayload, workerPrincipal('token-group'), null)
 
         expect(onConnection).toHaveBeenCalledWith(expect.objectContaining({ workerId: 'worker-1' }), 'token-group')
-        expect(createHandlers).toHaveBeenCalledWith(log, 'token-group')
+        expect(createHandlers).toHaveBeenCalledWith(expect.objectContaining({ log, workerGroupId: 'token-group' }))
     })
 
     it('resolves a legacy token with no claim to no group, so the worker stays shared', async () => {
@@ -125,7 +125,42 @@ describe('worker group comes from the verified token, never the handshake', () =
         await handler(validPayload, workerPrincipal(), null)
 
         expect(onConnection).toHaveBeenCalledWith(expect.objectContaining({ workerId: 'worker-1' }), undefined)
-        expect(createHandlers).toHaveBeenCalledWith(log, undefined)
+        expect(createHandlers).toHaveBeenCalledWith(expect.objectContaining({ log, workerGroupId: undefined }))
+    })
+})
+
+// #589: without this, a restarted worker's pending polls stayed queued and took the next jobs.
+describe('the RPC handlers learn when their socket disconnects', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
+
+    function disconnectedSignal(): AbortSignal {
+        const [params] = createHandlers.mock.calls[0]
+        return params.disconnected
+    }
+
+    it('aborts the handlers\' signal when the socket disconnects', async () => {
+        const on = vi.fn()
+        const socket = { handshake: { auth: { workerId: 'worker-1' } }, on, disconnected: false } as unknown as Socket
+        const handler = await handlerFor(WebsocketServerEvent.FETCH_WORKER_SETTINGS, socket)
+
+        await handler(validPayload, workerPrincipal(), null)
+        expect(disconnectedSignal().aborted).toBe(false)
+
+        const disconnectListener = on.mock.calls.find(call => call[0] === 'disconnect')?.[1]
+        disconnectListener()
+
+        expect(disconnectedSignal().aborted).toBe(true)
+    })
+
+    it('starts aborted when the socket closed before its settings were answered', async () => {
+        const socket = { handshake: { auth: { workerId: 'worker-1' } }, on: vi.fn(), disconnected: true } as unknown as Socket
+        const handler = await handlerFor(WebsocketServerEvent.FETCH_WORKER_SETTINGS, socket)
+
+        await handler(validPayload, workerPrincipal(), null)
+
+        expect(disconnectedSignal().aborted).toBe(true)
     })
 })
 
