@@ -8,11 +8,20 @@ describe('buildPaginator limit guard (#561)', () => {
         vi.restoreAllMocks()
     })
 
-    it.each([-1, 0, 1.5, Number.NaN])('rejects limit=%s with a VALIDATION error', (limit) => {
+    it.each([-1, 1.5, Number.NaN])('rejects limit=%s with a VALIDATION error', (limit) => {
         const { error } = tryCatchSync(() => buildPaginator({ entity: FlowRunEntity, query: { limit } }))
 
         expect(error).toBeInstanceOf(QadamFlowError)
         expect(error instanceof QadamFlowError && error.error.code).toBe(ErrorCode.VALIDATION)
+    })
+
+    it('treats limit=0 as not set, as it did before #561', () => {
+        const setLimit = vi.spyOn(Paginator.prototype, 'setLimit')
+
+        const { error } = tryCatchSync(() => buildPaginator({ entity: FlowRunEntity, query: { limit: 0 } }))
+
+        expect(error).toBeNull()
+        expect(setLimit).not.toHaveBeenCalled()
     })
 
     it('clamps a limit above MAX_PAGE_SIZE', () => {

@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const ListVariablesRequestQuery = z.object({
     projectId: z.string(),
     cursor: z.string().optional(),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     name: z.string().optional(),
 })
 export type ListVariablesRequestQuery = z.infer<typeof ListVariablesRequestQuery>

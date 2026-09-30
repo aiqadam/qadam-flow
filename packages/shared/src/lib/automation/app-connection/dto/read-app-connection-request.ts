@@ -10,7 +10,7 @@ export const ListAppConnectionsRequestQuery = z.object({
     qadamName: z.string().optional(),
     displayName: z.string().optional(),
     status: OptionalArrayFromQuery(z.nativeEnum(AppConnectionStatus)),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
 })
 
 export type ListAppConnectionsRequestQuery = z.infer<
@@ -34,7 +34,7 @@ export type ListAppConnectionOwnersRequestQuery = z.infer<typeof ListAppConnecti
 
 export const ListPlatformAppConnectionsRequestQuery = z.object({
     cursor: z.string().optional(),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     displayName: z.string().optional(),
     qadamName: z.string().optional(),
     scope: z.nativeEnum(AppConnectionScope).optional(),

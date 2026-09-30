@@ -7,7 +7,7 @@ export const ListFlowRunsRequestQuery = z.object({
     flowId: OptionalArrayFromQuery(ApId),
     tags: OptionalArrayFromQuery(z.string()),
     status: OptionalArrayFromQuery(z.nativeEnum(FlowRunStatus)),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     cursor: z.string().optional(),
     createdAfter: z.string().optional(),
     createdBefore: z.string().optional(),

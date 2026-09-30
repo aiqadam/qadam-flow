@@ -18,7 +18,7 @@ export type UpdateProjectRoleRequestBody = z.infer<typeof UpdateProjectRoleReque
 
 export const ListProjectMembersForProjectRoleRequestQuery = z.object({
     cursor: z.string().optional(),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
 })
 
 export type ListProjectMembersForProjectRoleRequestQuery = z.infer<typeof ListProjectMembersForProjectRoleRequestQuery>

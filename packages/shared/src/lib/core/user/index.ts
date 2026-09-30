@@ -15,7 +15,7 @@ export type UpdateUserRequestBody = z.infer<typeof UpdateUserRequestBody>
 
 export const ListUsersRequestBody = z.object({
     cursor: z.string().optional(),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     externalId: z.string().optional(),
 })
 

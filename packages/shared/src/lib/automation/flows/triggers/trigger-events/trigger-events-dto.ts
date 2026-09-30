@@ -6,7 +6,7 @@ import { FlowId } from '../../flow'
 export const ListTriggerEventsRequest = z.object({
     projectId: ApId,
     flowId: z.string(),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     cursor: z.string().optional(),
 })
 
