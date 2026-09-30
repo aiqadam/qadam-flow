@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileLock } from '@aiqadam/server-utils'
+import pino from 'pino'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CACHE_STATE_LOCK_SUFFIX, cacheState } from '../../../src/lib/cache/cache-state'
 
 const folders: string[] = []
+const log = pino({ level: 'silent' })
 
 function uniqueFolder(): string {
     const folder = join(tmpdir(), `cache-state-test-${randomUUID()}`)
@@ -167,6 +169,7 @@ describe('cacheState across replicas (#586)', () => {
         const firstReplica = fileLock.runExclusive({
             path: `${folder}${CACHE_STATE_LOCK_SUFFIX}`,
             createPath: false,
+            log,
             fn: async () => {
                 firstReplicaHoldsLock()
                 await firstReplicaMayFinish
@@ -184,12 +187,46 @@ describe('cacheState across replicas (#586)', () => {
                 return 'from-second-replica'
             },
             skipSave: () => false,
+            crossProcess: { log },
         })
         releaseFirstReplica()
 
         await firstReplica
         expect(await secondReplica).toEqual({ cacheHit: true, state: 'from-first-replica' })
         expect(installCalls).toBe(0)
+    })
+
+    it('takes no cross-container lock unless the caller opts in', async () => {
+        const folder = uniqueFolder()
+        let releaseOtherReplica: () => void = () => undefined
+        const otherReplicaMayFinish = new Promise<void>((resolve) => {
+            releaseOtherReplica = resolve
+        })
+        let otherReplicaHoldsLock: () => void = () => undefined
+        const otherReplicaLocked = new Promise<void>((resolve) => {
+            otherReplicaHoldsLock = resolve
+        })
+        const otherReplica = fileLock.runExclusive({
+            path: `${folder}${CACHE_STATE_LOCK_SUFFIX}`,
+            createPath: false,
+            log,
+            fn: async () => {
+                otherReplicaHoldsLock()
+                await otherReplicaMayFinish
+            },
+        })
+        await otherReplicaLocked
+
+        const result = await cacheState(folder).getOrSetCache({
+            key: 'draftKey',
+            cacheMiss: () => false,
+            installFn: async () => 'fetched',
+            skipSave: () => true,
+        })
+        releaseOtherReplica()
+        await otherReplica
+
+        expect(result).toEqual({ cacheHit: false, state: 'fetched' })
     })
 
     it('leaves nothing but cache.json behind: no temp file, no lock', async () => {
@@ -200,10 +237,34 @@ describe('cacheState across replicas (#586)', () => {
             cacheMiss: () => false,
             installFn: async () => 'v',
             skipSave: () => false,
+            crossProcess: { log },
         })
 
         expect(await readdir(folder)).toEqual(['cache.json'])
         const siblings = await readdir(dirname(folder))
         expect(siblings.filter((entry) => entry.startsWith(`${basename(folder)}${CACHE_STATE_LOCK_SUFFIX}`))).toEqual([])
+    })
+})
+
+describe('cacheState with an unreadable cache.json (#586)', () => {
+    it.each([
+        ['an empty file', ''],
+        ['truncated JSON', '{"k":'],
+        ['a non-object', '["v"]'],
+        ['a non-string value', '{"k":1}'],
+    ])('treats %s as an empty cache and rebuilds', async (_name, content) => {
+        const folder = uniqueFolder()
+        await mkdir(folder, { recursive: true })
+        await writeFile(join(folder, 'cache.json'), content)
+
+        const result = await cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn: async () => 'rebuilt',
+            skipSave: () => false,
+        })
+
+        expect(result).toEqual({ cacheHit: false, state: 'rebuilt' })
+        expect(JSON.parse(await readFile(join(folder, 'cache.json'), 'utf8'))).toEqual({ k: 'rebuilt' })
     })
 })

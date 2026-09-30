@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs, { rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { cryptoUtils, fileSystemUtils } from '@aiqadam/server-utils'
-import { ExecutionMode, FlowVersionState, SourceCode, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { ExecutionMode, FlowVersionState, isNil, SourceCode, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { trace } from '@opentelemetry/api'
 import { Logger } from 'pino'
 import { workerSettings } from '../../config/worker-settings'
@@ -10,6 +10,12 @@ import { cacheState, NO_SAVE_GUARD } from '../cache-state'
 import { bunRunner } from './bun-runner'
 
 const tracer = trace.getTracer('code-builder')
+
+const BUILD_DIR_MARKER = '.build-'
+const RETIRED_DIR_MARKER = '.retired-'
+// Above the longest a build can legitimately run: bunRunner's timeouts are 10 min for
+// `bun install` and 5 min for esbuild.
+const ORPHANED_BUILD_MIN_AGE_MS = 20 * 60 * 1000
 
 const TS_CONFIG_CONTENT = `
 {
@@ -71,20 +77,22 @@ export const codeBuilder = (log: Logger) => ({
                 return value !== currentHash
             },
             installFn: async () => {
+                await removeOrphanedBuilds({ codePath, log })
                 // Built beside the live directory and swapped in only once complete, instead of
                 // `rm -rf` + an in-place rebuild: a reader must never find a half-built step (#586).
-                const buildPath = `${codePath}.build-${randomUUID()}`
+                const buildPath = `${codePath}${BUILD_DIR_MARKER}${randomUUID()}`
                 const { error } = await tryCatch(async () => {
                     await buildCodeStep({ buildPath, codePath, sourceCode, log })
-                    await replaceDirectory({ from: buildPath, to: codePath })
+                    await replaceDirectory({ from: buildPath, to: codePath, log })
                 })
                 if (error) {
-                    await rm(buildPath, { recursive: true, force: true })
+                    await removeBestEffort({ target: buildPath, log })
                     throw error
                 }
                 return currentHash
             },
             skipSave: NO_SAVE_GUARD,
+            crossProcess: { log },
         })
     },
 })
@@ -132,21 +140,73 @@ async function buildCodeStep({ buildPath, codePath, sourceCode, log }: BuildCode
     await tryCatch(() => rm(path.join(buildPath, 'node_modules'), { recursive: true }))
 }
 
-// rename(2) cannot replace a non-empty directory, so the old build is moved aside first. The
-// directory is missing only between the two renames, not for the length of a build. Callers
-// hold the cache fileLock, so no second builder is swapping the same step at the same time.
-async function replaceDirectory({ from, to }: ReplaceDirectoryParams): Promise<void> {
-    const retiredPath = `${to}.retired-${randomUUID()}`
-    const { error } = await tryCatch(() => rename(to, retiredPath))
-    if (error && !isMissingPathError(error)) {
-        throw error
+// rename(2) cannot replace a non-empty directory, so the live build is moved aside first. The
+// step path is missing only between the two renames, not for the length of a build.
+async function replaceDirectory({ from, to, log }: ReplaceDirectoryParams): Promise<void> {
+    const retiredPath = `${to}${RETIRED_DIR_MARKER}${randomUUID()}`
+    const { error: retireError } = await tryCatch(() => rename(to, retiredPath))
+    if (!isNil(retireError) && !fileSystemUtils.hasErrorCode({ error: retireError, code: 'ENOENT' })) {
+        throw retireError
     }
-    await rename(from, to)
-    await rm(retiredPath, { recursive: true, force: true })
+    const retiredLiveBuild = isNil(retireError)
+    const { error: swapError } = await tryCatch(() => rename(from, to))
+    if (isNil(swapError)) {
+        if (retiredLiveBuild) {
+            await removeBestEffort({ target: retiredPath, log })
+        }
+        return
+    }
+    if (isTargetTaken(swapError)) {
+        // Reachable only after the cross-container lock timed out (see cacheState): another replica
+        // swapped its own complete build of this step in between our two renames. Keep theirs.
+        await removeBestEffort({ target: from, log })
+        if (retiredLiveBuild) {
+            await removeBestEffort({ target: retiredPath, log })
+        }
+        return
+    }
+    if (retiredLiveBuild) {
+        const { error: restoreError } = await tryCatch(() => rename(retiredPath, to))
+        if (!isNil(restoreError)) {
+            log.error({ codePath: to, retiredPath, error: restoreError }, '[codeBuilder] Could not restore the previous build after a failed swap')
+        }
+    }
+    throw swapError
 }
 
-function isMissingPathError(error: unknown): boolean {
-    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+function isTargetTaken(error: unknown): boolean {
+    return fileSystemUtils.hasErrorCode({ error, code: 'ENOTEMPTY' }) || fileSystemUtils.hasErrorCode({ error, code: 'EEXIST' })
+}
+
+// A worker killed mid-build or mid-swap leaves its build or retired directory behind on the
+// shared volume. Only ones older than any build can run are removed: a younger one may be
+// another replica's build in progress, which the lock cannot rule out once it has timed out.
+async function removeOrphanedBuilds({ codePath, log }: RemoveOrphanedBuildsParams): Promise<void> {
+    const parentPath = path.dirname(codePath)
+    const stepName = path.basename(codePath)
+    const { data: entries } = await tryCatch(() => fs.readdir(parentPath))
+    if (isNil(entries)) {
+        return
+    }
+    const candidates = entries.filter((entry) =>
+        entry.startsWith(`${stepName}${BUILD_DIR_MARKER}`) || entry.startsWith(`${stepName}${RETIRED_DIR_MARKER}`))
+    await Promise.all(candidates.map(async (entry) => {
+        const target = path.join(parentPath, entry)
+        const { data: stats } = await tryCatch(() => fs.stat(target))
+        if (isNil(stats) || Date.now() - stats.mtimeMs < ORPHANED_BUILD_MIN_AGE_MS) {
+            return
+        }
+        await removeBestEffort({ target, log })
+    }))
+}
+
+// The build is already in place by the time a leftover is removed; failing the job over a
+// directory that could not be deleted would throw away a good build.
+async function removeBestEffort({ target, log }: RemoveBestEffortParams): Promise<void> {
+    const { error } = await tryCatch(() => rm(target, { recursive: true, force: true }))
+    if (!isNil(error)) {
+        log.warn({ target, error }, '[codeBuilder] Could not remove a leftover build directory')
+    }
 }
 
 function isPackagesAllowed(): boolean {
@@ -237,6 +297,17 @@ type BuildCodeStepParams = {
 type ReplaceDirectoryParams = {
     from: string
     to: string
+    log: Logger
+}
+
+type RemoveOrphanedBuildsParams = {
+    codePath: string
+    log: Logger
+}
+
+type RemoveBestEffortParams = {
+    target: string
+    log: Logger
 }
 
 type InstallDependenciesParams = {

@@ -121,6 +121,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
     // every replica sharing that mount observes.
     await fileLock.runExclusive({
         path: rootWorkspace,
+        log,
         fn: async () => {
             const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, installableQadams)
             if (isEmpty(qadamsToInstall)) {

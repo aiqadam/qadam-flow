@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { copyFile, readFile, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileSystemUtils } from '@aiqadam/server-utils'
-import { ApEnvironment, isNil } from '@aiqadam/shared'
+import { ApEnvironment, tryCatch } from '@aiqadam/shared'
 import { nanoid } from 'nanoid'
 import { Logger } from 'pino'
 import { workerSettings } from '../../config/worker-settings'
@@ -13,7 +13,7 @@ const engineExecutablePath = 'dist/packages/engine/main.js'
 const ENGINE_INSTALLED = 'ENGINE_INSTALLED'
 let engineCacheIdPromise: Promise<string> | null = null
 
-export const engineInstaller = (_log: Logger) => ({
+export const engineInstaller = (log: Logger) => ({
     async install({ path }: InstallParams): Promise<EngineInstallResult> {
         const isDev = workerSettings.getSettings().ENVIRONMENT === ApEnvironment.DEVELOPMENT
         const engineCacheId = await readEngineCacheId()
@@ -30,6 +30,7 @@ export const engineInstaller = (_log: Logger) => ({
                 return engineCacheId
             },
             skipSave: NO_SAVE_GUARD,
+            crossProcess: { log },
         })
         return { cacheHit }
     },
@@ -40,13 +41,15 @@ export const engineInstaller = (_log: Logger) => ({
 // and rewrote `common/cache.json` on its first job, all of them in the same second after a deploy.
 // A same-image restart is now a hit, and a different bundle still misses because its bytes differ.
 async function readEngineCacheId(): Promise<string> {
-    if (isNil(engineCacheIdPromise)) {
-        engineCacheIdPromise = hashEngineBundle().catch((error: unknown) => {
-            engineCacheIdPromise = null
-            throw error
-        })
+    const pending = engineCacheIdPromise ?? hashEngineBundle()
+    engineCacheIdPromise = pending
+    const result = await tryCatch(() => pending)
+    if (result.error !== null) {
+        // Not memoised: a read that failed once (e.g. the bundle not built yet in dev) is retried.
+        engineCacheIdPromise = null
+        throw result.error
     }
-    return engineCacheIdPromise
+    return result.data
 }
 
 async function hashEngineBundle(): Promise<string> {

@@ -46,6 +46,10 @@ export const fileSystemUtils = {
         throw error
     },
 
+    hasErrorCode: ({ error, code }: { error: unknown, code: string }): boolean => {
+        return error instanceof Error && 'code' in error && error.code === code
+    },
+
     deleteFile: async (path: string): Promise<void> => {
         if (await fileSystemUtils.fileExists(path)) {
             await unlink(path)
