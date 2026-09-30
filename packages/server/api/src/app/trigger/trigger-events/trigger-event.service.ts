@@ -108,8 +108,8 @@ export const triggerEventService = (log: FastifyBaseLogger) => ({
                     })
                 }
 
-                // The flow's earlier events were deleted above, so no output means an empty page —
-                // and `limit: 0` is a VALIDATION error for the paginator (#561).
+                // The flow's earlier events were deleted above, so no output means an empty page;
+                // `limit: 0` would instead ask the paginator for its default page.
                 if (engineResponse.response.output.length === 0) {
                     return emptyPage
                 }

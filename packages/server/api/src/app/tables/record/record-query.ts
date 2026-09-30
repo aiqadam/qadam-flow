@@ -42,7 +42,7 @@ export const recordQuery = {
         // negative, so the JS pass can still reject rows out of a SQL result carrying it, and a
         // LIMIT taken before that would silently return a short page.
         const everyFilterIsExact = compiledFilters.every((filter) => !isNil(filter.sql) && filter.sql.kind !== 'jsonPathEq')
-        if (everyFilterIsExact) {
+        if (everyFilterIsExact && !isNil(limit)) {
             query.take(limit)
         }
 
@@ -127,5 +127,6 @@ type BuildParams = {
     tableId: string
     recordIds: string[] | undefined
     compiledFilters: CompiledFilter[]
-    limit: number
+    // undefined reads the whole table, which MAX_RECORDS_PER_TABLE bounds.
+    limit: number | undefined
 }

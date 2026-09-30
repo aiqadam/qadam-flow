@@ -159,7 +159,7 @@ describe('Record API', () => {
             expect(body.data.length).toBe(2)
         })
 
-        it.each(['-1', '0', '1.5'])('rejects limit=%s instead of returning the whole table (#561)', async (limit) => {
+        it.each(['-1', '1.5'])('rejects limit=%s instead of returning the whole table (#561)', async (limit) => {
             const ctx = await setup()
             const { table } = await createTableWithField(ctx)
             await db.save('record', Array.from({ length: 3 }, () =>
@@ -169,6 +169,19 @@ describe('Record API', () => {
             const response = await ctx.get('/v1/records', { tableId: table.id, limit })
 
             expect(response?.statusCode).toBe(StatusCodes.BAD_REQUEST)
+        })
+
+        it('reads the whole table for limit=0, which qadam-tables <= 0.4.6 still sends (#573)', async () => {
+            const ctx = await setup()
+            const { table } = await createTableWithField(ctx)
+            await db.save('record', Array.from({ length: 12 }, () =>
+                createMockRecord({ tableId: table.id, projectId: ctx.project.id }),
+            ))
+
+            const response = await ctx.get('/v1/records', { tableId: table.id, limit: '0' })
+
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            expect(response?.json().data).toHaveLength(12)
         })
 
         it('bounds an oversized limit by the table itself (#561)', async () => {

@@ -133,7 +133,7 @@ export const recordController: FastifyPluginAsyncZod = async (fastify) => {
             tableId: request.query.tableId,
             projectId: request.projectId,
             cursorRequest: request.query.cursor ?? null,
-            limit: request.query.limit ?? request.query.recordIds?.length ?? DEFAULT_PAGE_SIZE,
+            limit: resolveListLimit({ limit: request.query.limit, recordIds: request.query.recordIds }),
             filters: request.query.filters ?? null,
             fieldIds: request.query.fieldIds,
             recordIds: request.query.recordIds,
@@ -283,6 +283,15 @@ const DeleteRecordRequest = {
             [StatusCodes.OK]: z.array(PopulatedRecord),
         },
     },
+}
+
+// Find Records in qadam-tables <= 0.4.6 sends `limit=0`, and 0.5.0 treats 0 as "no limit" (#573),
+// so 0 reads the whole table. That read is bounded by the table itself either way.
+function resolveListLimit({ limit, recordIds }: { limit: number | undefined, recordIds: string[] | undefined }): number | undefined {
+    if (limit === 0) {
+        return undefined
+    }
+    return limit ?? recordIds?.length ?? DEFAULT_PAGE_SIZE
 }
 
 const ListRequest = {

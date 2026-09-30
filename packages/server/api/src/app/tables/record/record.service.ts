@@ -733,7 +733,8 @@ type ListParams = {
     tableId: string
     projectId: string
     cursorRequest: Cursor | null
-    limit: number
+    // undefined reads the whole table, which MAX_RECORDS_PER_TABLE bounds.
+    limit: number | undefined
     filters: Filter[] | null
     fieldIds?: string[]
     recordIds?: string[]

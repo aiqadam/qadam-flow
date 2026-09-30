@@ -7,7 +7,7 @@ import { FlowVersionState } from '../flow-version'
 export const ListFlowsRequest = z.object({
     folderId: z.string().optional(),
     folderIds: OptionalArrayFromQuery(z.string()),
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     cursor: z.string().optional(),
     status: OptionalArrayFromQuery(z.nativeEnum(FlowStatus)),
     projectId: z.string(),
@@ -27,7 +27,7 @@ export const GetFlowQueryParamsRequest = z.object({
 export type GetFlowQueryParamsRequest = z.infer<typeof GetFlowQueryParamsRequest>
 
 export const ListFlowVersionRequest = z.object({
-    limit: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(0).optional(),
     cursor: z.string().optional(),
 })
 

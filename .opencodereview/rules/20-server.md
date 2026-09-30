@@ -88,10 +88,14 @@ the language rules OCR already merges from its system layer.
   finding.
 - External/untrusted data written to PostgreSQL goes through
   `sanitizeObjectForPostgresql()`. No custom PostgreSQL extensions.
-- List limits are bounded (#561). A list DTO's `limit` without
-  `.int().min(1)` is a finding. So is server code that asks for "every row"
-  with a huge number or `-1` instead of `buildPaginator({ unlimited: true })`.
-  So is a computed limit that can reach 0: the paginator rejects it.
+- List limits are bounded (#561). These are findings:
+  - A list DTO's `limit` without `.int().min(0)` or tighter.
+  - Server code that asks for "every row" with a huge number or `-1`
+    instead of `buildPaginator({ unlimited: true })`.
+  - A computed limit that can reach 0. The paginator reads 0 as "skip the
+    limit" and returns its default page of 100, not zero rows.
+- `0` stays accepted where it was before #561. Rejecting it breaks
+  published clients that still send it, e.g. `qadam-tables` <= 0.4.6.
 - Environment: `AP_ENVIRONMENT` is `prod` / `dev` / `test`. Using `TESTING`
   where `ApEnvironment` is meant is a finding (it silently disables every
   `environment === ApEnvironment.TESTING` branch).
