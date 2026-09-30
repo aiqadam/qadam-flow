@@ -19,13 +19,13 @@ export const executeTriggerHookJob: JobHandler<ExecuteTriggerHookJobData, Synchr
     async execute(ctx: JobContext, data: ExecuteTriggerHookJobData): Promise<SynchronousJobResult> {
         const timeoutInSeconds = workerSettings.getSettings().TRIGGER_HOOKS_TIMEOUT_SECONDS
 
-        const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })
+        const flowVersion = await ctx.timings.measure({ phase: 'flowVersion', fn: () => flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId }) })
         if (!flowVersion) {
             ctx.log.info({ flowVersionId: data.flowVersionId }, 'Flow version not found for trigger hook, skipping')
             return { kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: undefined }
         }
 
-        const provision = await provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient })
+        const provision = await ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) })
         if (!provision.provisioned) {
             ctx.log.info({ flowId: data.flowId, hookType: data.hookType, unavailableQadam: provision.unavailableQadam }, 'Failed to provision qadams for trigger hook')
             // ON_DISABLE must still succeed: refusing to disable a flow whose pin is gone would make

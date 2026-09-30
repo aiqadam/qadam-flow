@@ -27,6 +27,7 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
 }))
 
 import { executeTriggerHookJob } from '../../../../src/lib/execute/jobs/execute-trigger-hook'
+import { jobTimings } from '../../../../src/lib/execute/job-timings'
 import type { JobContext } from '../../../../src/lib/execute/types'
 import { provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
 
@@ -77,6 +78,7 @@ function makeContext(): JobContext {
         internalApiUrl: 'http://127.0.0.1:3000/',
         engineToken: 'engineToken',
         jobId: 'job-1',
+        timings: jobTimings.create(),
     } as unknown as JobContext
 }
 

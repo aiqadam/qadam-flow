@@ -1,5 +1,6 @@
 import { createServer } from 'http'
 import { setMaxListeners } from 'node:events'
+import { performance } from 'node:perf_hooks'
 import os from 'os'
 import { apVersionUtil, systemUsage } from '@aiqadam/server-utils'
 import {
@@ -14,6 +15,7 @@ import {
     tryCatch,
     tryCatchSync,
     WebsocketServerEvent,
+    WorkerJobType,
     WorkerMachineHealthcheckRequest,
     WorkerProps,
     WorkerSettingsResponse,
@@ -29,6 +31,7 @@ import { logger } from './config/logger'
 import { workerSettings } from './config/worker-settings'
 import { EgressStack, startEgressStack } from './egress/lifecycle'
 import { getHandler } from './execute/job-registry'
+import { JobTimings, jobTimings } from './execute/job-timings'
 import { ActiveSandboxInfo, createSandboxManager, SandboxManager } from './execute/sandbox-manager'
 import { JobContext, JobResult, JobResultKind } from './execute/types'
 
@@ -380,34 +383,50 @@ async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunP
             })
         }, 30_000)
 
+        const timings = jobTimings.create()
+        const jobStartedAt = performance.now()
         const { data: result, error: execError } = await tryCatch(() =>
-            executeJob(apiClient, job, sbManager),
+            executeJob({ apiClient, job, sbManager, timings }),
         )
+        const status = execError ? EngineResponseStatus.INTERNAL_ERROR : result.status
 
-
+        const completeStartedAt = performance.now()
         const { error: completeError } = await tryCatch(() =>
             apiClient.completeJob({
                 jobId: job.jobId,
                 token: job.token,
                 queueName: job.queueName,
-                status: execError
-                    ? EngineResponseStatus.INTERNAL_ERROR
-                    : result.status,
+                status,
                 errorMessage: buildErrorMessage(execError ?? undefined, result ?? undefined),
                 logs: extractLogs(execError ?? undefined, result ?? undefined),
                 response: result?.kind === JobResultKind.SYNCHRONOUS ? result.response : undefined,
             }),
         )
+        const jobFinishedAt = performance.now()
 
         clearInterval(lockExtensionInterval)
 
         if (completeError) {
             workerLog.error({ error: completeError, jobId: job.jobId }, 'Failed to complete job')
         }
+
+        // One line per job, whatever its outcome, so a slow run can be split into queue, provision,
+        // cold start and engine time from the logs alone (#587). Queue age is on the API's
+        // `Dequeued job` line for the same jobId, measured on the clock that wrote the timestamp.
+        workerLog.info({
+            jobId: job.jobId,
+            ...readJobRef(job.jobData),
+            attemptsStarted: job.attempsStarted,
+            status,
+            completed: isNil(completeError),
+            durationMs: Math.round(jobFinishedAt - jobStartedAt),
+            completeMs: Math.round(jobFinishedAt - completeStartedAt),
+            ...timings.summary(),
+        }, '[worker] Job finished')
     }
 }
 
-async function executeJob(apiClient: WorkerToApiContract, job: ConsumeJobRequest, sbManager: SandboxManager): Promise<JobResult> {
+async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobParams): Promise<JobResult> {
     const rawData = job.jobData
     const jobData = JobData.parse(rawData)
     return tracer.startActiveSpan('worker.executeJob', {
@@ -422,13 +441,14 @@ async function executeJob(apiClient: WorkerToApiContract, job: ConsumeJobRequest
         log.debug({ apiUrl, publicUrl }, 'Worker settings resolved')
         const ctx: JobContext = {
             apiClient,
-            sandboxManager: sbManager,
+            sandboxManager: jobTimings.instrumentSandboxManager({ sandboxManager: sbManager, timings }),
             jobId: job.jobId,
             attemptsStarted: job.attempsStarted,
             engineToken: job.engineToken,
             internalApiUrl: apiUrl,
             publicApiUrl: ensurePublicApiUrl(publicUrl),
             log,
+            timings,
         }
         try {
             const handler = getHandler(jobData.jobType)
@@ -446,6 +466,27 @@ async function executeJob(apiClient: WorkerToApiContract, job: ConsumeJobRequest
             span.end()
         }
     })
+}
+
+/**
+ * The ids that join the `Job finished` line to a `flow_run` row. Read from the raw payload, not
+ * the parsed one: the line is written for jobs that failed to parse too, and must not throw on one.
+ */
+function readJobRef(jobData: unknown): JobRef {
+    if (typeof jobData !== 'object' || jobData === null) {
+        return {}
+    }
+    const jobType = readStringField({ value: jobData, key: 'jobType' })
+    return {
+        jobType,
+        flowId: readStringField({ value: jobData, key: 'flowId' }),
+        runId: jobType === WorkerJobType.EXECUTE_FLOW ? readStringField({ value: jobData, key: 'runId' }) : undefined,
+    }
+}
+
+function readStringField({ value, key }: { value: object, key: string }): string | undefined {
+    const field: unknown = Reflect.get(value, key)
+    return typeof field === 'string' ? field : undefined
 }
 
 export function ensurePublicApiUrl(publicUrl: string): string {
@@ -619,6 +660,19 @@ type WorkerStartParams = {
 type RaceStopRequestParams<T> = {
     promise: Promise<T>
     whenStopped: T
+}
+
+type JobRef = {
+    jobType?: string
+    flowId?: string
+    runId?: string
+}
+
+type ExecuteJobParams = {
+    apiClient: WorkerToApiContract
+    job: ConsumeJobRequest
+    sbManager: SandboxManager
+    timings: JobTimings
 }
 
 type RunPollLoopParams = {

@@ -17,13 +17,13 @@ export const renewWebhookJob: JobHandler<RenewWebhookJobData, FireAndForgetJobRe
     async execute(ctx: JobContext, data: RenewWebhookJobData): Promise<FireAndForgetJobResult> {
         const timeoutInSeconds = workerSettings.getSettings().TRIGGER_HOOKS_TIMEOUT_SECONDS
 
-        const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })
+        const flowVersion = await ctx.timings.measure({ phase: 'flowVersion', fn: () => flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId }) })
         if (isNil(flowVersion)) {
             ctx.log.info({ flowVersionId: data.flowVersionId }, 'Flow version not found for renew webhook, skipping')
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK }
         }
 
-        const provision = await provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient })
+        const provision = await ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) })
         if (!provision.provisioned) {
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK }
         }

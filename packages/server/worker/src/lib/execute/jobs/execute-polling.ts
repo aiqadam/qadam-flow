@@ -20,10 +20,10 @@ export const executePollingJob: JobHandler<PollingJobData, FireAndForgetJobResul
     async execute(ctx: JobContext, data: PollingJobData): Promise<FireAndForgetJobResult> {
         const timeoutInSeconds = workerSettings.getSettings().TRIGGER_TIMEOUT_SECONDS
 
-        const flowVersion = await flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId })
+        const flowVersion = await ctx.timings.measure({ phase: 'flowVersion', fn: () => flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId }) })
         assertNotNullOrUndefined(flowVersion, 'flowVersion')
 
-        const provision = await provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient })
+        const provision = await ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) })
         if (!provision.provisioned) {
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK }
         }

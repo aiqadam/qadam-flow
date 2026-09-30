@@ -71,6 +71,28 @@ for the prefix to find these. JSON fields on the line:
   context (`app-connection-service.ts:680-684`), and the worker already logs its execution mode at
   startup (`worker.ts:482`).
 
+## Job Timing and Event-Loop Lines (#587)
+Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.
+
+**`[worker] Job finished`** (worker, info) — written by `runPollLoop` (`worker.ts`) once per job after `completeJob`, whatever the outcome. Jobs that failed to parse are included.
+- **Identity:** `jobId`, `jobType`, `flowId` (every job type that has one), `runId` (EXECUTE_FLOW only). These are read defensively from the raw payload.
+- **Outcome:** `attemptsStarted` (0 on a genuine first delivery; see `ConsumeJobRequest`), `status` (the value sent to `completeJob`), and `completed` (whether `completeJob` itself succeeded).
+- **Totals:** `durationMs` runs from dequeue to the `completeJob` reply; `completeMs` is that RPC alone.
+- **Phases,** from `execute/job-timings.ts`, absent when the job never reached them:
+  - `flowVersionMs` and `provisionMs`: the handlers wrap `flowCache.getVersion` and `provisionFlowPieces` in `ctx.timings.measure`. Provisioning covers qadam install and code build.
+  - `sandbox` (`cold` | `warm`) and `sandboxStartMs`: a job counts as cold if any sandbox it started had no live process.
+  - `executeMs` and `executeCount`: summed over every `sandbox.execute`.
+
+  The sandbox phases come from `jobTimings.instrumentSandboxManager`. It wraps the slot's manager for the job's lifetime, so no handler records them itself. Inline `callFlow` children provision inside the parent's `execute` and count toward `executeMs`.
+
+**`[jobBroker#tryDequeue] Dequeued job`** (API, info) carries `sinceEnqueuedMs` (`Date.now() - job.timestamp`), `attemptsMade` and `stalledCounter`. It is measured on the API because that clock wrote the timestamp. On a retry it spans every earlier attempt and its backoff, which is the 8-minute gap of #584. Join it to the worker line on `jobId`.
+
+**`[eventLoopMonitor] Event loop was blocked`** (app and worker, warn). This is `eventLoopMonitor` from `@aiqadam/server-utils`, started in `setupApp` and in the worker's `main`.
+- It samples `perf_hooks.monitorEventLoopDelay` every 10 s and writes only when the window's `maxLagMs` is ≥ 500 ms. It also reports `p99LagMs` and `meanLagMs`.
+- Every value is net of the 20 ms sampling resolution, because the histogram records whole sample intervals.
+
+`[workerRpc#poll] Poll request received` is **debug** since #587. Every slot long-polls continuously, so at info it was most of the app's log. A hand-out is still logged at info (`Returning job to worker`).
+
 ## Version Gating (rolling-deploy safety)
 During a rolling upgrade the app and worker fleets briefly run different builds. Mixing them risks flow-schema/contract skew and silent run corruption, so dispatch is gated on an exact release match — both sides enforce it, whichever runs the newer build:
 - **App side** (`worker-rpc-service.ts#poll`): if `input.workerProps.version !== apVersionUtil.getCurrentRelease()`, it logs a warning and returns `null` (withholds the job). An old worker can never receive jobs from a new app.

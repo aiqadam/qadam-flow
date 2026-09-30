@@ -1,4 +1,5 @@
 import { QadamMetadata } from '@aiqadam/qadams-framework'
+import { eventLoopMonitor } from '@aiqadam/server-utils'
 import { AddAllowedEmbedOriginsRequestBody, ApEnvironment, AppConnectionWithoutSensitiveData, ApplicationEventName, ConnectionDeletedEvent, ConnectionUpsertedEvent, Flow, FlowActivatedEvent, FlowCreatedEvent, FlowDeactivatedEvent, FlowDeletedEvent, FlowPublishedEvent, FlowRun, FlowRunFinishedEvent, FlowRunRetriedEvent, FlowRunStartedEvent, FlowUpdatedEvent, Folder, FolderCreatedEvent, FolderDeletedEvent, FolderUpdatedEvent, isNil, ProjectRelease, ProjectWithLimits, SignUpEvent, Template, UserEmailVerifiedEvent, UserInvitation, UserPasswordResetEvent, UserSignedInEvent, UserWithMetaInformation } from '@aiqadam/shared'
 import replyFrom from '@fastify/reply-from'
 import swagger from '@fastify/swagger'
@@ -232,8 +233,11 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
         await systemJobsSchedule(app.log).startWorker()
     }
 
+    const loopMonitor = eventLoopMonitor.start({ log: app.log })
+
     app.addHook('onClose', async () => {
         app.log.info('Shutting down')
+        loopMonitor.stop()
         await systemJobsSchedule(app.log).close()
         await longPollingHost(app.log).stop()
         await redisConnections.destroy()

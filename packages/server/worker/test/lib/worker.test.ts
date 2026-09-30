@@ -58,6 +58,7 @@ vi.mock('../../src/lib/config/logger', () => ({
     },
 }))
 
+import { logger } from '../../src/lib/config/logger'
 import { worker } from '../../src/lib/worker'
 
 function buildExtractPieceJob(): ExecuteExtractQadamMetadataJobData {
@@ -231,6 +232,29 @@ describe('worker integration', () => {
         expect(completeJobCalls[0].jobId).toBe('job-fail')
         expect(completeJobCalls[0].status).toBe(EngineResponseStatus.INTERNAL_ERROR)
         expect(completeJobCalls[0].errorMessage).toBe('boom')
+    }, 15_000)
+
+    it('logs one Job finished line per job, with its outcome and duration (#587)', async () => {
+        mockGetHandler.mockReturnValue({
+            jobType: WorkerJobType.EXECUTE_EXTRACT_PIECE_INFORMATION,
+            execute: vi.fn().mockRejectedValue(new Error('boom')),
+        })
+        const workerLog = vi.mocked(logger.child({}))
+        workerLog.info.mockClear()
+
+        await connectWorkerWithPoll([buildConsumeJobRequest({ jobId: 'job-timed', attempsStarted: 1 }), null])
+
+        const finished = workerLog.info.mock.calls.filter(([, msg]) => msg === '[worker] Job finished')
+        expect(finished).toHaveLength(1)
+        expect(finished[0][0]).toMatchObject({
+            jobId: 'job-timed',
+            jobType: WorkerJobType.EXECUTE_EXTRACT_PIECE_INFORMATION,
+            attemptsStarted: 1,
+            status: EngineResponseStatus.INTERNAL_ERROR,
+            completed: true,
+            durationMs: expect.any(Number),
+            completeMs: expect.any(Number),
+        })
     }, 15_000)
 
     it('forwards response from job handler to completeJob', async () => {

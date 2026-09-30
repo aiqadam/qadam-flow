@@ -34,6 +34,7 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
 }))
 
 import { executeFlowJob } from '../../../../src/lib/execute/jobs/execute-flow'
+import { jobTimings } from '../../../../src/lib/execute/job-timings'
 import { JobResultKind } from '../../../../src/lib/execute/types'
 import { provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
 
@@ -127,6 +128,7 @@ function makeMockContext(apiOverrides?: Record<string, Mock>, attemptsStarted = 
             invalidate: vi.fn(),
         },
         attemptsStarted,
+        timings: jobTimings.create(),
         engineToken: 'test-token',
         internalApiUrl: 'http://localhost:3000',
         publicApiUrl: 'http://localhost:4200',
