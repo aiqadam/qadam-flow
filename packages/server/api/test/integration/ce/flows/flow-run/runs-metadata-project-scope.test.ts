@@ -62,7 +62,9 @@ function recordRunProgressEvents({ runId }: { runId: string }): RecordedEmit[] {
     vi.spyOn(websocketService, 'to').mockImplementation(((room: string) => ({
         emit: (event: string, payload: { runId?: string }): boolean => {
             if (event === WebsocketClientEvent.FLOW_RUN_PROGRESS && payload.runId === runId) {
-                recorded.push({ room, payload })
+                // Read at emit time, so an emit sent before the row write would see the old status.
+                const statusAtEmit = db.findOneBy<{ status: string }>('flow_run', { id: runId }).then((run) => run?.status)
+                recorded.push({ room, payload, statusAtEmit })
             }
             return true
         },
@@ -157,9 +159,38 @@ describe('Runs metadata project scope (#512)', () => {
         })
         await waitForCondition({ fn: async () => recorded.length > 0 })
 
-        expect(recorded).toEqual([{ room: owner.project.id, payload: { runId } }])
-        const run = await db.findOneBy<{ status: string }>('flow_run', { id: runId })
-        expect(run?.status).toBe(FlowRunStatus.SUCCEEDED)
+        expect(recorded.map(({ room, payload }) => ({ room, payload }))).toEqual([{ room: owner.project.id, payload: { runId } }])
+        expect(await recorded[0].statusAtEmit).toBe(FlowRunStatus.SUCCEEDED)
+    })
+
+    // The metadata worker starts before socket.io is registered, so the emit throws during boot. The
+    // snapshot is already consumed by then: a throw ahead of the finish side effects drops them.
+    it('still runs the finish side effects when the progress notification throws', async () => {
+        const { runId } = await createOwnerRun()
+        await db.save('waitpoint', {
+            id: apId(),
+            flowRunId: runId,
+            projectId: owner.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+        vi.spyOn(websocketService, 'to').mockImplementation(() => {
+            throw new TypeError('Cannot read properties of undefined (reading \'to\')')
+        })
+
+        await createHandlers(app.log).uploadRunLog({
+            runId,
+            projectId: owner.project.id,
+            status: FlowRunStatus.SUCCEEDED,
+            finishTime: new Date().toISOString(),
+        })
+
+        await waitForCondition({
+            fn: async () => (await db.findOneBy('waitpoint', { flowRunId: runId })) === null,
+        })
     })
 
     it('tells no project room about an update that names another project', async () => {
@@ -221,6 +252,7 @@ describe('Runs metadata project scope (#512)', () => {
 type RecordedEmit = {
     room: string
     payload: unknown
+    statusAtEmit: Promise<string | undefined>
 }
 
 type WaitForConditionParams = {

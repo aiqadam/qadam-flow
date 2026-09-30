@@ -1,4 +1,4 @@
-import { FileType, FlowRun, FlowRunProgressEvent, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch, WebsocketClientEvent } from '@aiqadam/shared'
+import { FileType, FlowRun, FlowRunProgressEvent, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch, tryCatchSync, WebsocketClientEvent } from '@aiqadam/shared'
 import { Job, Queue, Worker } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
@@ -222,13 +222,6 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     }
 
     await consumeProcessedMetadata({ key, runMetadata })
-    // Sent from here, after the row write, not from uploadRunLog: the run view refetches on it, and
-    // before this write the row still has the old status and, on a fresh run, no logsFileId to read
-    // steps from (#580). Coalesced snapshots also emit once per write. Only the id goes to the room,
-    // and the room is the row's own project, not the one the engine named.
-    websocketService.to(savedFlowRun.projectId).emit(WebsocketClientEvent.FLOW_RUN_PROGRESS, {
-        runId: savedFlowRun.id,
-    } satisfies FlowRunProgressEvent)
     if (!isNil(runMetadata.finishTime)) {
         await flowRunSideEffects(log).onFinish(savedFlowRun)
     }
@@ -245,7 +238,27 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
             })
         }
     }
+    notifyRunProgress({ log, flowRun: savedFlowRun })
     return true
+}
+
+/**
+ * Sent after the row write, not from uploadRunLog: the run view refetches on it, and before this
+ * write the row still has the old status and, on a fresh run, no logsFileId to read steps from
+ * (#580). Coalesced snapshots emit once per write. Only the id goes out, to the row's own project.
+ *
+ * Last, and unable to throw, because the metadata is already consumed: this worker starts inside
+ * setupApp, before socket.io is registered, so `websocketService.to` throws during boot. A throw
+ * above the finish side effects or the pre-completed resume would drop them for good — the retry
+ * finds an empty hash.
+ */
+function notifyRunProgress({ log, flowRun }: NotifyRunProgressParams): void {
+    const { error } = tryCatchSync(() => websocketService.to(flowRun.projectId).emit(WebsocketClientEvent.FLOW_RUN_PROGRESS, {
+        runId: flowRun.id,
+    } satisfies FlowRunProgressEvent))
+    if (error) {
+        log.warn({ error, runId: flowRun.id }, '[runsMetadataQueue#worker] Failed to notify run progress')
+    }
 }
 
 /**
@@ -466,4 +479,9 @@ type UpdateFlowRunParams = {
 type BuildFlowRunUpdateParams = {
     runMetadata: RunsMetadataUpsertData
     logsFileId: string | undefined
+}
+
+type NotifyRunProgressParams = {
+    log: FastifyBaseLogger
+    flowRun: FlowRun
 }
