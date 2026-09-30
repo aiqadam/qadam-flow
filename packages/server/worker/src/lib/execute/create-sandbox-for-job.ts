@@ -67,7 +67,7 @@ export function createSandboxForJob(params: {
         log,
         sandboxId,
         {
-            env: buildSandboxEnv({ settings, proxyPort }),
+            env: buildSandboxEnv({ settings, proxyPort, reusable }),
             memoryLimitMb,
             cpuMsPerSec: 1000,
             timeLimitSeconds: settings.FLOW_TIMEOUT_SECONDS,
@@ -180,9 +180,10 @@ function parseMemoryLimit(memoryLimitKb: string): number {
     return Math.floor(kb / 1024)
 }
 
-function buildSandboxEnv({ settings, proxyPort }: {
+function buildSandboxEnv({ settings, proxyPort, reusable }: {
     settings: WorkerSettings
     proxyPort: number | null
+    reusable: boolean
 }): Record<string, string> {
     // `proxyPort` reflects what the egress stack actually started at worker boot:
     // non-null means the proxy is listening AND the iptables UID-owner REJECT chain is
@@ -199,7 +200,14 @@ function buildSandboxEnv({ settings, proxyPort }: {
         ...ssrfEnv(settings),
         ...propagatedEnv({ settings, networkMode }),
         ...proxyEnv({ proxyPort }),
+        ...warmupEnv({ reusable }),
     }
+}
+
+// #419: a reusable engine outlives its first job, so it can load what every job needs while it is
+// idle. A single-use engine would only move that cost into the one job it runs.
+function warmupEnv({ reusable }: { reusable: boolean }): Record<string, string> {
+    return reusable ? { AP_ENGINE_WARMUP: 'true' } : {}
 }
 
 function baseEnv({ settings, networkMode }: { settings: WorkerSettings, networkMode: NetworkMode }): Record<string, string> {

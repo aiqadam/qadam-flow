@@ -328,6 +328,8 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
     activePollLoops++
 
     try {
+        // Before the first poll, so a job can never race the prewarm for this slot (#419).
+        await sbManager.prewarm({ log: workerLog, apiClient })
         await runPollLoop({ apiClient, sbManager, generation, workerLog })
     }
     finally {

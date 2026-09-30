@@ -1,5 +1,6 @@
-import { ApEnvironment, ExecutionMode, isNil, RunEnvironment, WorkerToApiContract } from '@aiqadam/shared'
+import { ApEnvironment, ExecutionMode, isNil, RunEnvironment, tryCatch, WorkerToApiContract } from '@aiqadam/shared'
 import { Logger } from 'pino'
+import { provisioner } from '../cache/provisioner'
 import { system, WorkerSystemProp } from '../config/configs'
 import { workerSettings } from '../config/worker-settings'
 import { Sandbox } from '../sandbox/types'
@@ -8,6 +9,37 @@ import { createSandboxForJob } from './create-sandbox-for-job'
 export function createSandboxManager({ boxId, proxyPort }: { boxId: number, proxyPort: number | null }): SandboxManager {
     let currentSandbox: Sandbox | null = null
     let currentJobContext: SandboxJobContext | null = null
+
+    // Only reusable sandboxes: a single-use one would be thrown away by the first job's release.
+    async function startPrewarmedSandbox({ log, apiClient }: PrewarmParams): Promise<void> {
+        if (!canReuseSandbox() || !isNil(currentSandbox)) {
+            return
+        }
+        const startedAt = performance.now()
+        await provisioner(log, apiClient).provision({ pieces: [], codeSteps: [] })
+        const sandbox = createSandboxForJob({
+            log,
+            apiClient,
+            boxId,
+            reusable: true,
+            proxyPort,
+            getCurrentJobContext: () => currentJobContext,
+        })
+        currentSandbox = sandbox
+        const { error: startError } = await tryCatch(() => sandbox.start({ flowVersionId: undefined, platformId: '', mounts: [] }))
+        // Invalidated while it was starting (a stop or a reconnect): nothing references it any more.
+        if (startError || currentSandbox !== sandbox) {
+            if (currentSandbox === sandbox) {
+                currentSandbox = null
+            }
+            await sandbox.shutdown()
+            if (startError) {
+                throw startError
+            }
+            return
+        }
+        log.info({ boxId, sandboxId: sandbox.id, prewarmMs: Math.round(performance.now() - startedAt) }, '[sandboxManager#prewarm] Sandbox started before its first job')
+    }
 
     return {
         acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: SandboxJobContext }): Sandbox {
@@ -30,6 +62,16 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
                 getCurrentJobContext: () => currentJobContext,
             })
             return currentSandbox
+        },
+        // #419: spawn this slot's engine before its first job, so the job does not pay the process
+        // start and the engine's own cold loads (see engine-warmup.ts). Called by the slot's poll loop
+        // before it polls, so no job can be acquiring this manager at the same time. Best effort: on
+        // any failure the slot still polls, and its first job starts a sandbox as it always did.
+        async prewarm(params: PrewarmParams): Promise<void> {
+            const { error } = await tryCatch(() => startPrewarmedSandbox(params))
+            if (error) {
+                params.log.warn({ boxId, error }, '[sandboxManager#prewarm] Prewarm failed, the first job will start the sandbox')
+            }
         },
         async invalidate(log: Logger): Promise<void> {
             if (currentSandbox) {
@@ -90,6 +132,7 @@ export type ActiveSandboxInfo = {
 
 export type SandboxManager = {
     acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: SandboxJobContext }): Sandbox
+    prewarm(params: PrewarmParams): Promise<void>
     invalidate(log: Logger): Promise<void>
     release(log: Logger): Promise<void>
     shutdown(log: Logger): Promise<void>
@@ -111,4 +154,9 @@ export type SandboxJobContext = {
     environment: RunEnvironment
     workerHandlerId: string | null
     httpRequestId: string | null
+}
+
+type PrewarmParams = {
+    log: Logger
+    apiClient: WorkerToApiContract
 }

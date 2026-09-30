@@ -8,11 +8,13 @@ import {
     EngineResponse,
     ERROR_MESSAGES_TO_REDACT,
     NetworkMode,
+    tryCatch,
     WorkerContract,
     WorkerNotifyContract,
 } from '@aiqadam/shared'
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client'
 import { shutdownCodeSandbox } from './core/code/code-sandbox'
+import { engineWarmup } from './helper/engine-warmup'
 import { flowRunProgressReporter } from './helper/flow-run-progress-reporter'
 import { execute } from './operations'
 
@@ -62,6 +64,9 @@ export const workerSocket = {
 
         socket.on('connect', () => {
             clearInitialConnectWatchdog()
+            if (engineWarmup.isEnabled()) {
+                void tryCatch(() => engineWarmup.run())
+            }
         })
 
         // Same rationale as the watchdog: once the control channel is gone, this engine

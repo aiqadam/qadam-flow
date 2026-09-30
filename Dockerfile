@@ -109,6 +109,10 @@ ENV TURBO_API=$TURBO_API \
 # in standalone mode (no cloud registry).
 RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
 
+# Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
+# fresh engine process walks the whole qadam tree before its first step can load (#419).
+RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts
+
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\
   const {getMigrations} = require('./packages/server/api/dist/src/app/database/postgres-connection');\

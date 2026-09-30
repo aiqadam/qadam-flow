@@ -77,6 +77,30 @@ for the prefix to find these. JSON fields on the line:
   context (`app-connection-service.ts:680-684`), and the worker already logs its execution mode at
   startup (the `Worker settings loaded` line in `worker.ts`).
 
+## Cold Engine Slots (#419 Phase 1)
+Engine processes are spawned lazily, so after every worker start (each deploy) the first job on
+each of the `AP_WORKER_CONCURRENCY` slots used to pay the process start, the dist-index build (the
+first `resolveMs`) and the framework's module graph (most of the first `importMs`). Three pieces
+move that off the first job:
+- **Dist-index manifest.** The Dockerfile runs `packages/server/engine/src/scripts/write-qadam-dist-index.ts`
+  after the qadam build, writing `packages/qadams/dist-index.json` (name, version, `dist/src/index.js`
+  path relative to `packages/qadams`, in scan order). `qadamDistIndex.get({ refresh: false })`
+  (`engine/src/lib/helper/qadam-dist-index.ts`) reads it instead of walking the tree. A missing,
+  unparsable or out-of-tree manifest falls back to the scan, and a `refresh` (dev-qadam lookup)
+  always scans. The file is gitignored: never generate it in a dev tree, where it would go stale.
+- **Prewarm.** Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
+  (`pollAndExecute` in `worker.ts`), so no job can race it. For a reusable sandbox (`canReuseSandbox()`:
+  `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, dev) it installs the engine and starts the sandbox with no
+  platform and no flow version, logging `[sandboxManager#prewarm] Sandbox started before its first job`
+  with `prewarmMs`. Best effort: any failure is logged as a warning, the sandbox is dropped and the slot
+  polls as before. Isolate modes are single-use and skip it.
+- **Engine warmup.** Reusable sandboxes get `AP_ENGINE_WARMUP=true` (`create-sandbox-for-job.ts`). On
+  its first connect, the engine (`engine/src/lib/helper/engine-warmup.ts`) builds the dist index and
+  `require`s `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` through a bundled qadam's
+  directory, then logs `[engineWarmup] done {distIndexMs, qadams, sharedDepsMs, sharedDeps}` on worker
+  stdout. The first real qadam import then reports `sharedDepsAlreadyLoaded: true`. It never throws: a
+  failure only means the first job pays the cost itself.
+
 ## Job Timing and Event-Loop Lines (#587)
 Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.
 
