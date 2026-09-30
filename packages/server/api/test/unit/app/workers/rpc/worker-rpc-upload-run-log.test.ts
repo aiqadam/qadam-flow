@@ -1,18 +1,14 @@
-import { FlowRunStatus, RunInternalErrorSource, WebsocketClientEvent } from '@aiqadam/shared'
+import { FlowRunStatus, RunInternalErrorSource } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { emit, to, addRunsMetadata, exists, getDataOrUndefined, save } = vi.hoisted(() => {
-    const emit = vi.fn()
-    return {
-        emit,
-        to: vi.fn(() => ({ emit })),
-        addRunsMetadata: vi.fn().mockResolvedValue(undefined),
-        exists: vi.fn(),
-        getDataOrUndefined: vi.fn(),
-        save: vi.fn().mockResolvedValue(undefined),
-    }
-})
+const { to, addRunsMetadata, exists, getDataOrUndefined, save } = vi.hoisted(() => ({
+    to: vi.fn(() => ({ emit: vi.fn() })),
+    addRunsMetadata: vi.fn().mockResolvedValue(undefined),
+    exists: vi.fn(),
+    getDataOrUndefined: vi.fn(),
+    save: vi.fn().mockResolvedValue(undefined),
+}))
 
 vi.mock('../../../../../src/app/core/websockets.service', () => ({
     websocketService: { to },
@@ -51,21 +47,10 @@ const snapshot = {
     logsFileId: 'logs-1',
 }
 
-describe('workerRpc#uploadRunLog', () => {
+// #580: this runs on every engine snapshot, now every 2 s for a small log.
+describe('workerRpc#uploadRunLog logs file check', () => {
     beforeEach(() => {
         vi.clearAllMocks()
-    })
-
-    // #580: the run view refetches on this instead of waiting for its next poll.
-    it('tells the run\'s own project room that the run has a new snapshot, and nothing else', async () => {
-        exists.mockResolvedValue(true)
-
-        await createHandlers(log).uploadRunLog(snapshot)
-
-        expect(to).toHaveBeenCalledTimes(1)
-        expect(to).toHaveBeenCalledWith('project-1')
-        expect(emit).toHaveBeenCalledTimes(1)
-        expect(emit).toHaveBeenCalledWith(WebsocketClientEvent.FLOW_RUN_PROGRESS, { runId: 'run-1' })
     })
 
     it('checks the logs file row without downloading the log on the happy path', async () => {

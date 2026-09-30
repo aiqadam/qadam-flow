@@ -76,8 +76,8 @@ export const PresenceUpdatedEvent = z.object({
     users: z.array(PresenceUser),
 })
 
-// A new run-log snapshot was uploaded. Carries the id only: it goes to the whole project room, and
-// the listener refetches the run through the authenticated API.
+// A run's row was updated from a new engine snapshot. Carries the id only: it goes to the whole
+// project room, and the listener refetches the run through the authenticated API.
 export const FlowRunProgressEvent = z.object({
     runId: z.string(),
 })

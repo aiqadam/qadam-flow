@@ -77,7 +77,7 @@ Flow Runs records every execution of a flow, tracking its full lifecycle from qu
 - Compressed with zstd before upload
 - Worker uploads via JWT-signed URLs (7-day expiry)
 - State backed up during execution for crash recovery (#580): `flowRunProgressReporter`'s loop uploads only when a `sendUpdate` has marked the snapshot dirty since the last successful upload, every 2 s while the serialized log is ≤ 1 MB and every 15 s above that. Explicit `backup()` calls (BEGIN, final state) always upload. A production run's live view sees steps only through these snapshots
-- `workerRpc.uploadRunLog` checks the log file's row (`fileService.exists`, `existsBy` — no `data` read) unless it has an `internalError` to merge, then emits `WebsocketClientEvent.FLOW_RUN_PROGRESS` `{ runId }` to the project room
+- `workerRpc.uploadRunLog` checks the log file's row (`fileService.exists`, `existsBy` — no `data` read) unless it has an `internalError` to merge. The runs-metadata worker (`flow-runs-queue.ts#processRunsMetadataUpdate`) emits `WebsocketClientEvent.FLOW_RUN_PROGRESS` `{ runId }` to the row's own project room after it writes the row — not from `uploadRunLog`, where the row still has the old status and, on a fresh run, no `logsFileId` for the refetch to read steps from
 - **Per-step redaction (#389 / #451 / #505):** an action's `logInput` / `logOutput: false` and a
   trigger's `logOutput: false` replace that step's persisted input/output with `**REDACTED**`
   (`packages/server/engine/src/lib/helper/log-redaction.ts`); the live value still flows to the

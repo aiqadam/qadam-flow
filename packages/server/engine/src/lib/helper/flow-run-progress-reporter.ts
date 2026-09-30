@@ -127,11 +127,9 @@ export const flowRunProgressReporter = {
         return lastSerializedBytes > LARGE_LOG_THRESHOLD_BYTES ? LARGE_LOG_FLUSH_INTERVAL_MS : SMALL_LOG_FLUSH_INTERVAL_MS
     },
     shutdown: async () => {
-        if (!flushController) {
-            return
+        if (flushController) {
+            flushController.abort()
         }
-
-        flushController.abort()
 
         if (flushLoopPromise) {
             await flushLoopPromise

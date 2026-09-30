@@ -4,7 +4,6 @@ import {
     ExecutioOutputFile,
     FileCompression,
     FileType,
-    FlowRunProgressEvent,
     isFlowRunStateTerminal,
     isNil,
     logSerializer,
@@ -131,11 +130,6 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
                 stepNameToTest: input.stepNameToTest,
             }
             await runsMetadataQueue(log).add(logData)
-            // Only the run id: the room is the whole project, and the run view refetches through
-            // the authenticated flow-runs API anyway. The view's poll stays as the fallback (#580).
-            websocketService.to(input.projectId).emit(WebsocketClientEvent.FLOW_RUN_PROGRESS, {
-                runId: input.runId,
-            } satisfies FlowRunProgressEvent)
 
             if (input.stepResponse && input.streamStepProgress === StreamStepProgress.WEBSOCKET) {
                 const stepData = { ...input.stepResponse, projectId: input.projectId }

@@ -1,8 +1,9 @@
-import { FileType, FlowRun, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch } from '@aiqadam/shared'
+import { FileType, FlowRun, FlowRunProgressEvent, FlowRunStatus, isFlowRunStateTerminal, isNil, spreadIfDefined, tryCatch, WebsocketClientEvent } from '@aiqadam/shared'
 import { Job, Queue, Worker } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
 import { QueryFailedError } from 'typeorm'
+import { websocketService } from '../../core/websockets.service'
 import { distributedLock, distributedStore, redisConnections } from '../../database/redis-connections'
 import { fileService } from '../../file/file.service'
 import { domainHelper } from '../../helper/domain-helper'
@@ -221,6 +222,13 @@ async function processRunsMetadataUpdate({ log, job, key }: DrainRunsMetadataPar
     }
 
     await consumeProcessedMetadata({ key, runMetadata })
+    // Sent from here, after the row write, not from uploadRunLog: the run view refetches on it, and
+    // before this write the row still has the old status and, on a fresh run, no logsFileId to read
+    // steps from (#580). Coalesced snapshots also emit once per write. Only the id goes to the room,
+    // and the room is the row's own project, not the one the engine named.
+    websocketService.to(savedFlowRun.projectId).emit(WebsocketClientEvent.FLOW_RUN_PROGRESS, {
+        runId: savedFlowRun.id,
+    } satisfies FlowRunProgressEvent)
     if (!isNil(runMetadata.finishTime)) {
         await flowRunSideEffects(log).onFinish(savedFlowRun)
     }

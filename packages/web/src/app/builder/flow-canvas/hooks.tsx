@@ -65,7 +65,7 @@ const useListenToExistingRun = () => {
       setRun(flowRun, flowVersion);
     },
     enabled: isFollowingRun,
-    // Fallback only: the server pushes FLOW_RUN_PROGRESS on every snapshot of the run's log.
+    // Fallback only: the server pushes FLOW_RUN_PROGRESS each time it stores a snapshot of the run.
     refetchInterval: 5000,
   });
   const runId = run?.id;
@@ -75,7 +75,7 @@ const useListenToExistingRun = () => {
     }
     const handleFlowRunProgress = (event: FlowRunProgressEvent) => {
       if (event.runId === runId) {
-        // Snapshots arrive every ~2 s: join a request already in flight rather than cancel it.
+        // Snapshots can arrive every ~2 s: join a request already in flight rather than cancel it.
         void refetch({ cancelRefetch: false });
       }
     };
