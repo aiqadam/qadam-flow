@@ -69,7 +69,7 @@ for the prefix to find these. JSON fields on the line:
   Not exposed as a step-output field; log-only.
 - No `executionMode` on the line by design (app-sec): engine stdout can reach a user-facing error
   context (`app-connection-service.ts:680-684`), and the worker already logs its execution mode at
-  startup (`worker.ts:482`).
+  startup (the `Worker settings loaded` line in `worker.ts`).
 
 ## Job Timing and Event-Loop Lines (#587)
 Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.

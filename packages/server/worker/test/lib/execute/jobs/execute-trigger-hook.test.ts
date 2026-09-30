@@ -26,8 +26,8 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
     provisionFlowPieces: vi.fn(),
 }))
 
-import { executeTriggerHookJob } from '../../../../src/lib/execute/jobs/execute-trigger-hook'
 import { jobTimings } from '../../../../src/lib/execute/job-timings'
+import { executeTriggerHookJob } from '../../../../src/lib/execute/jobs/execute-trigger-hook'
 import type { JobContext } from '../../../../src/lib/execute/types'
 import { provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
 
