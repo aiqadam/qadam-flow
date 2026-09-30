@@ -1,5 +1,6 @@
 import { EngineResponseStatus, JobData, WorkerJobType, WorkerToApiContract } from '@aiqadam/shared'
 import { Logger } from 'pino'
+import { JobTimings } from './job-timings'
 import { SandboxManager } from './sandbox-manager'
 
 export enum JobResultKind {
@@ -23,6 +24,9 @@ export type JobContext = {
     internalApiUrl: string
     publicApiUrl: string
     log: Logger
+    // Phases the handler wants on the job's `Job finished` line (#587); sandbox start and execute
+    // are recorded by the poll loop's wrapped `sandboxManager`, not by the handler.
+    timings: JobTimings
 }
 
 export type FireAndForgetJobResult = {

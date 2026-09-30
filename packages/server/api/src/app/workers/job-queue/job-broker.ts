@@ -105,7 +105,22 @@ async function tryDequeue(worker: BullMQWorker, queueName: string, log: FastifyB
         return tryDequeue(worker, queueName, log)
     }
 
-    log.info({ queueName, jobId: job.id, jobName: job.name }, '[jobBroker#tryDequeue] Dequeued job')
+    // `queueWaitMs` counts from when the job first became runnable: `job.timestamp` is when it was
+    // added, and a scheduled or cron iteration is added a whole interval early with `opts.delay`.
+    // BullMQ zeroes the `delay` field on promotion, so the original lives only in `opts`. Earlier
+    // attempts and their retry backoff stay in, since that is the wait the run's caller saw (#584).
+    // Measured on the API so worker clock skew cannot enter it; API replicas must still agree.
+    // The worker's `Job finished` line for the same jobId has the rest (#587).
+    const plannedDelayMs = job.opts.delay ?? 0
+    log.info({
+        queueName,
+        jobId: job.id,
+        jobName: job.name,
+        queueWaitMs: Date.now() - job.timestamp - plannedDelayMs,
+        plannedDelayMs,
+        attemptsMade: job.attemptsMade,
+        stalledCounter: job.stalledCounter,
+    }, '[jobBroker#tryDequeue] Dequeued job')
 
     const originalSchemaVersion = (job.data as Record<string, unknown>).schemaVersion
     const migratedData = await jobMigrations(log).apply(job.data)

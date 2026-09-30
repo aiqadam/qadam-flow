@@ -1,19 +1,19 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import {
-    QadamFlowError,
-    ErrorCode,
     EngineResponseStatus,
+    ErrorCode,
     ExecutionType,
     FlowActionType,
     FlowRunStatus,
     FlowTriggerType,
     FlowVersionState,
-    StreamStepProgress,
+    QadamFlowError,
     ResumeReason,
     RunEnvironment,
+    StreamStepProgress,
     WorkerJobType,
 } from '@aiqadam/shared'
 import type { ExecuteFlowJobData, FlowVersion } from '@aiqadam/shared'
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 const mockGetVersion = vi.fn()
 
@@ -33,6 +33,7 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
     provisionFlowPieces: vi.fn().mockResolvedValue({ provisioned: true }),
 }))
 
+import { jobTimings } from '../../../../src/lib/execute/job-timings'
 import { executeFlowJob } from '../../../../src/lib/execute/jobs/execute-flow'
 import { JobResultKind } from '../../../../src/lib/execute/types'
 import { provisionFlowPieces } from '../../../../src/lib/execute/utils/flow-helpers'
@@ -127,6 +128,7 @@ function makeMockContext(apiOverrides?: Record<string, Mock>, attemptsStarted = 
             invalidate: vi.fn(),
         },
         attemptsStarted,
+        timings: jobTimings.create(),
         engineToken: 'test-token',
         internalApiUrl: 'http://localhost:3000',
         publicApiUrl: 'http://localhost:4200',
@@ -137,6 +139,16 @@ function makeMockContext(apiOverrides?: Record<string, Mock>, attemptsStarted = 
 describe('executeFlowJob', () => {
     beforeEach(() => {
         mockGetVersion.mockResolvedValue(makeFlowVersion())
+    })
+
+    it('records the flow-version fetch and provisioning on the job\'s timings (#587)', async () => {
+        const ctx = makeMockContext()
+
+        await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
+
+        const summary = ctx.timings.summary()
+        expect(summary.flowVersionMs).toEqual(expect.any(Number))
+        expect(summary.provisionMs).toEqual(expect.any(Number))
     })
 
     describe('payload pass-through (no worker-side fetch)', () => {

@@ -52,12 +52,14 @@ const mockLog: FastifyBaseLogger = {
     level: 'info',
 } as unknown as FastifyBaseLogger
 
-function createMockJob({ id, data, deferredFailure, attemptsMade, stalledCounter }: {
+function createMockJob({ id, data, deferredFailure, attemptsMade, stalledCounter, timestamp, opts }: {
     id: string
     data?: Record<string, unknown>
     deferredFailure?: string
     attemptsMade?: number
     stalledCounter?: number
+    timestamp?: number
+    opts?: Record<string, unknown>
 }): Job {
     return {
         id,
@@ -78,6 +80,9 @@ function createMockJob({ id, data, deferredFailure, attemptsMade, stalledCounter
         },
         attemptsMade: attemptsMade ?? 0,
         stalledCounter: stalledCounter ?? 0,
+        // BullMQ's Job always carries both: the constructor and fromJSON default `opts` to {}.
+        timestamp: timestamp ?? Date.now(),
+        opts: opts ?? {},
         deferredFailure,
         moveToDelayed: vi.fn().mockResolvedValue(undefined),
         moveToFailed: vi.fn().mockResolvedValue(undefined),
@@ -251,6 +256,47 @@ describe('tryDequeue', () => {
 
         expect(result).toBeNull()
         expect(mockWorker.getNextJob).toHaveBeenCalledTimes(1)
+    })
+
+    describe('Dequeued job line (#587)', () => {
+        function dequeuedFields(): unknown {
+            const call = vi.mocked(mockLog.info).mock.calls.find(([, msg]) => msg === '[jobBroker#tryDequeue] Dequeued job')
+            expect(call).toBeDefined()
+            return call?.[0]
+        }
+
+        it('reports the queue wait of an undelayed job as the time since it was added', async () => {
+            vi.useFakeTimers({ now: 100_000 })
+            try {
+                vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(createMockJob({ id: 'job-1', timestamp: 97_500, attemptsMade: 1, stalledCounter: 2 }))
+                mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+                await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+                expect(dequeuedFields()).toMatchObject({ queueWaitMs: 2_500, plannedDelayMs: 0, attemptsMade: 1, stalledCounter: 2 })
+            }
+            finally {
+                vi.useRealTimers()
+            }
+        })
+
+        // A scheduler/cron iteration is added a whole interval early with `opts.delay`, and BullMQ
+        // zeroes the hash `delay` field when it promotes the job, so only `opts.delay` remembers it.
+        // Counting it would make every cron job look like a five-minute backlog.
+        it('does not count a scheduled job\'s planned delay as queue wait', async () => {
+            vi.useFakeTimers({ now: 400_000 })
+            try {
+                vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(createMockJob({ id: 'job-1', timestamp: 100_000, opts: { delay: 299_000 } }))
+                mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+                await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+                expect(dequeuedFields()).toMatchObject({ queueWaitMs: 1_000, plannedDelayMs: 299_000 })
+            }
+            finally {
+                vi.useRealTimers()
+            }
+        })
     })
 
     describe('attempsStarted (#510)', () => {

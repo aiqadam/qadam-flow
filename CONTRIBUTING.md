@@ -92,9 +92,10 @@ instead of hanging. The review never runs as part of the `[Y]es` gate.
 Each run writes its findings to `.git/qadam-review/last.json` in the current
 worktree (never committed), so you can inspect or diff the artifact later. When review
 agents are used, the orchestrating agent runs this pass before spawning them and hands
-the artifact to each reviewer alongside its charter — see
-[`.agents/rules/agent-delegation.md`](./.agents/rules/agent-delegation.md) for the
-no-backend case (`--emit-prompts`).
+the artifact to each reviewer alongside its charter. An agent always runs the pass with
+`--emit-prompts` and answers the prompts with its own subagents, never through `auto` or
+`delegate`, even when a backend is available. See
+[`.agents/rules/agent-delegation.md`](./.agents/rules/agent-delegation.md).
 
 ## Issue & PR labels
 

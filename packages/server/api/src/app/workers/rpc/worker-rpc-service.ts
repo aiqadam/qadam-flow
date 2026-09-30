@@ -73,7 +73,9 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
                 log.warn({ issues: parsed.error.issues }, '[workerRpc#poll] Skipping registry update — malformed worker healthcheck payload')
             }
             const workerId = readWorkerId(input)
-            log.info({ workerId, workerGroupId }, '[workerRpc#poll] Poll request received')
+            // Every slot of every worker long-polls without pause, so at info this line was most of the
+            // app's log; a hand-out is logged below at info already (#587).
+            log.debug({ workerId, workerGroupId }, '[workerRpc#poll] Poll request received')
             if (parsed.success) {
                 await machineService(log).onConnection(parsed.data, workerGroupId)
             }
