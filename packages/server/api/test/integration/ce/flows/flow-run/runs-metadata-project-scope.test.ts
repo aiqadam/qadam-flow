@@ -206,13 +206,17 @@ describe('Runs metadata project scope (#512)', () => {
         await waitForMetadataConsumed({ runId })
         // The hash is consumed before the drain emits, so an empty list here alone could be a race.
         // Updates for one run drain one at a time under its lock: once this one has emitted, the
-        // foreign one is done.
+        // foreign one is done. Only this one moves the row to SUCCEEDED, so an emit made for the
+        // foreign one, whatever room it names, shows up as a second entry.
         await createHandlers(app.log).uploadRunLog({
             runId,
             projectId: owner.project.id,
-            status: FlowRunStatus.RUNNING,
+            status: FlowRunStatus.SUCCEEDED,
+            finishTime: new Date().toISOString(),
         })
-        await waitForCondition({ fn: async () => recorded.length > 0 })
+        await waitForCondition({
+            fn: async () => (await Promise.all(recorded.map(({ statusAtEmit }) => statusAtEmit))).includes(FlowRunStatus.SUCCEEDED),
+        })
 
         expect(recorded.map(({ room, payload }) => ({ room, payload }))).toEqual([{ room: owner.project.id, payload: { runId } }])
     })
