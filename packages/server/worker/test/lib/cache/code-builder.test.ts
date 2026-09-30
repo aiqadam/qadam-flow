@@ -71,7 +71,9 @@ afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true })
 })
 
-describe('codeBuilder.processCodeStep (#586)', () => {
+// Each test re-imports the builder's whole module graph after vi.resetModules, which under a
+// loaded machine (the pre-push gate runs every package's suite at once) can outlast the 5 s default.
+describe('codeBuilder.processCodeStep (#586)', { timeout: 30_000 }, () => {
     it('keeps the previous build readable at the step path while a changed step rebuilds', async () => {
         await processStep({ code: 'version-1' })
 

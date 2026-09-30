@@ -24,7 +24,9 @@ afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true })
 })
 
-describe('engineInstaller.install (#586)', () => {
+// Each simulated restart re-imports the installer's whole module graph, which under a loaded
+// machine (the pre-push gate runs every package's suite at once) outlasts the 5 s default.
+describe('engineInstaller.install (#586)', { timeout: 30_000 }, () => {
     it('is a cache hit after a restart of the same image', async () => {
         expect(await installInFreshProcess()).toEqual({ cacheHit: false })
         expect(await installInFreshProcess()).toEqual({ cacheHit: true })
