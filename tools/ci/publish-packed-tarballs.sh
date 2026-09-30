@@ -60,16 +60,18 @@ NPM_DIST_TAG="${NPM_DIST_TAG:-latest}"
 # was refused, built on the ordinary assumption that E429 here meant what it means almost
 # everywhere: too many requests too fast.
 #
-# #476 then measured what it actually is: a CUMULATIVE DAILY CAP on first-time publishes to the
-# scope, not a request rate. Across four dispatches — one completely unpaced at ~4s between
-# publishes, one that retried a single package through backoff for minutes — every run hit the
-# wall at the same package count regardless of pacing, and the very first PUT of the next
-# dispatch, hours later, was refused before anything about THAT run could have tripped a rate.
-# Retrying the package that got refused, or slowing down the ones behind it, cannot clear a cap
-# that is not about speed — it only spends the job's timeout finding that out one backoff at a
-# time. So a 429 now fails the run immediately, with no retry and no throttle: re-dispatching
-# (tomorrow, or once npm support lifts the cap) is the only thing that resumes it, and the pack
-# step already skips whatever the registry has, so a re-run picks up exactly where this stopped.
+# What it actually is: a CAP ON THE NUMBER OF PUBLISHES TO THE SCOPE PER ROLLING ~24 H, not a
+# request rate. Across fourteen dispatches (2026-09-21 to 09-30) each 24 h window let through
+# about 26–38 publishes — a new version of an already-published package counts too — and a
+# dispatch that started less than 24 h after the previous batch got 0–2 through. #582 then ran
+# the one experiment the earlier runs could not settle, pacing from the FIRST package at 60 s
+# rather than only after a 429: it got 27 publishes into its window before the 429, inside the
+# range unpaced windows reached. Retrying the package that got refused, or slowing down the ones behind it, cannot clear
+# a cap that is not about speed — it only spends the job's timeout finding that out one backoff at
+# a time. So a 429 fails the run immediately, with no retry and no throttle: re-dispatching more
+# than 24 h after the previous batch ended (or once npm support lifts the cap) is the only thing
+# that resumes it, and the pack step already skips whatever the registry has, so a re-run picks up
+# exactly where this stopped.
 #
 # The knobs below still exist, but only for the OTHER retryable class: a lost response (a 5xx or
 # a dropped connection), where the registry genuinely may not have seen the request at all and a
@@ -78,17 +80,10 @@ NPM_PUBLISH_MAX_ATTEMPTS="${NPM_PUBLISH_MAX_ATTEMPTS:-6}"
 NPM_PUBLISH_RETRY_BASE_SECONDS="${NPM_PUBLISH_RETRY_BASE_SECONDS:-30}"
 NPM_PUBLISH_RETRY_MAX_SECONDS="${NPM_PUBLISH_RETRY_MAX_SECONDS:-600}"
 
-# A fixed pause between two packages' PUTs, from the FIRST package on — not a reaction to a 429.
-# #508's throttle only ever switched on after the registry had already refused, so "pacing does
-# not move the wall" was measured for a run that was already at the wall, never for one that was
-# slow from the start. This is the experiment that tells the two apart: if the scope's cap is a
-# count over a rolling ~24 h, a paced run still stops at about the same package; if it is a burst
-# limit, a paced run gets further. That reading only holds for a run that starts more than 24 h
-# after the previous publish: a paced run lasts about two hours, so under a rolling window an
-# earlier run's publishes can age out while it is still going. Otherwise count the publishes in
-# the 24 h before the 429 (the packuments' `time` fields) rather than how far the run got.
-# 0 (the default) keeps the unpaced behaviour for local runs and the test suite; the workflows
-# set it explicitly.
+# A fixed pause between two packages' PUTs, from the first package on. #582 added it at 60 s to
+# test whether pacing moves the cap (above); it does not. The workflows keep a few seconds of it
+# only as ordinary courtesy to the registry, not as a way around the cap — raising it buys
+# nothing but a longer job. 0 (the default) keeps local runs and the test suite unpaced.
 NPM_PUBLISH_INTERVAL_SECONDS="${NPM_PUBLISH_INTERVAL_SECONDS:-0}"
 case "$NPM_PUBLISH_INTERVAL_SECONDS" in
   ''|*[!0-9]*) echo "::error::publish-packed-tarballs: NPM_PUBLISH_INTERVAL_SECONDS must be a whole number of seconds, got '${NPM_PUBLISH_INTERVAL_SECONDS}'" >&2; exit 1 ;;
@@ -315,12 +310,12 @@ while IFS= read -r filename || [ -n "$filename" ]; do
         break
         ;;
       rate-limited)
-        # #476 measured this to be a cumulative daily cap on the scope, not a rate — so no
-        # retry, backoff or pace applied to THIS package or the rest of the manifest can clear
-        # it within this run. Dying here immediately, rather than working through
+        # #476 and #582 measured this to be a cap on publishes per rolling ~24 h, not a rate —
+        # so no retry, backoff or pace applied to THIS package or the rest of the manifest can
+        # clear it within this run. Dying here immediately, rather than working through
         # NPM_PUBLISH_MAX_ATTEMPTS first, is what stops the job spending its timeout finding
         # that out one backoff at a time.
-        echo "::error::publish-packed-tarballs: the registry answered 429 on ${filename} — a cumulative daily publish cap on the scope (see #476), not a transient rate limit, so retrying within this run cannot clear it. Stopping immediately. Re-dispatch (tomorrow, or once npm support lifts the cap) to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
+        echo "::error::publish-packed-tarballs: the registry answered 429 on ${filename} — the scope's cap of roughly 26–38 publishes per rolling 24 h (see #476), not a transient rate limit, so retrying or pacing within this run cannot clear it. Stopping immediately. Re-dispatch more than 24 h after the last batch of publishes to the scope (or once npm support lifts the cap) to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
         exit 1
         ;;
       lost-response)
