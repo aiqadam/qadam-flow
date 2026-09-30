@@ -1,9 +1,10 @@
-import { readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { describe, it, expect, afterEach } from 'vitest'
-import { cacheState } from '../../../src/lib/cache/cache-state'
+import { readdir, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { fileLock } from '@aiqadam/server-utils'
+import { afterEach, describe, expect, it } from 'vitest'
+import { CACHE_STATE_LOCK_SUFFIX, cacheState } from '../../../src/lib/cache/cache-state'
 
 const folders: string[] = []
 
@@ -146,5 +147,63 @@ describe('cacheState', () => {
             const raw = await readFile(join(folder, 'cache.json'), 'utf8')
             expect(JSON.parse(raw)).toEqual({ onlyKey: 'onlyVal' })
         })
+    })
+})
+
+describe('cacheState across replicas (#586)', () => {
+    it('makes a second replica wait for the first one and take its result instead of installing again', async () => {
+        const folder = uniqueFolder()
+        let releaseFirstReplica: () => void = () => undefined
+        const firstReplicaMayFinish = new Promise<void>((resolve) => {
+            releaseFirstReplica = resolve
+        })
+        let firstReplicaHoldsLock: () => void = () => undefined
+        const firstReplicaLocked = new Promise<void>((resolve) => {
+            firstReplicaHoldsLock = resolve
+        })
+
+        // Another container shares only the filesystem, so it takes the same on-disk lock
+        // directly rather than through this process's memoryLock.
+        const firstReplica = fileLock.runExclusive({
+            path: `${folder}${CACHE_STATE_LOCK_SUFFIX}`,
+            createPath: false,
+            fn: async () => {
+                firstReplicaHoldsLock()
+                await firstReplicaMayFinish
+                await cacheState(folder).saveCache('sharedKey', 'from-first-replica')
+            },
+        })
+        await firstReplicaLocked
+
+        let installCalls = 0
+        const secondReplica = cacheState(folder).getOrSetCache({
+            key: 'sharedKey',
+            cacheMiss: () => false,
+            installFn: async () => {
+                installCalls++
+                return 'from-second-replica'
+            },
+            skipSave: () => false,
+        })
+        releaseFirstReplica()
+
+        await firstReplica
+        expect(await secondReplica).toEqual({ cacheHit: true, state: 'from-first-replica' })
+        expect(installCalls).toBe(0)
+    })
+
+    it('leaves nothing but cache.json behind: no temp file, no lock', async () => {
+        const folder = uniqueFolder()
+
+        await cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn: async () => 'v',
+            skipSave: () => false,
+        })
+
+        expect(await readdir(folder)).toEqual(['cache.json'])
+        const siblings = await readdir(dirname(folder))
+        expect(siblings.filter((entry) => entry.startsWith(`${basename(folder)}${CACHE_STATE_LOCK_SUFFIX}`))).toEqual([])
     })
 })

@@ -1,4 +1,5 @@
-import fs, { rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import fs, { rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { cryptoUtils, fileSystemUtils } from '@aiqadam/server-utils'
 import { ExecutionMode, FlowVersionState, SourceCode, tryCatch, tryCatchSync } from '@aiqadam/shared'
@@ -70,58 +71,83 @@ export const codeBuilder = (log: Logger) => ({
                 return value !== currentHash
             },
             installFn: async () => {
-                const { code, packageJson } = sourceCode
-
-                const codeNeedCleanUp = await fileSystemUtils.fileExists(codePath)
-                if (codeNeedCleanUp) {
-                    await rm(codePath, { recursive: true })
+                // Built beside the live directory and swapped in only once complete, instead of
+                // `rm -rf` + an in-place rebuild: a reader must never find a half-built step (#586).
+                const buildPath = `${codePath}.build-${randomUUID()}`
+                const { error } = await tryCatch(async () => {
+                    await buildCodeStep({ buildPath, codePath, sourceCode, log })
+                    await replaceDirectory({ from: buildPath, to: codePath })
+                })
+                if (error) {
+                    await rm(buildPath, { recursive: true, force: true })
+                    throw error
                 }
-
-                await fileSystemUtils.threadSafeMkdir(codePath)
-
-                await tracer.startActiveSpan('codeBuilder.installDependencies', async (depSpan) => {
-                    try {
-                        depSpan.setAttribute('code.path', codePath)
-                        await installDependencies({
-                            path: codePath,
-                            packageJson: getPackageJson(packageJson),
-                        }, log)
-                        log.info({ path: codePath }, 'Installed dependencies')
-                    }
-                    finally {
-                        depSpan.end()
-                    }
-                })
-
-                await tracer.startActiveSpan('codeBuilder.compileCode', async (compileSpan) => {
-                    try {
-                        compileSpan.setAttribute('code.path', codePath)
-                        const { error } = await tryCatch(() => compileCode({
-                            path: codePath,
-                            code,
-                        }, log))
-                        if (error) {
-                            log.info({ codePath, error }, 'Compilation error')
-                            compileSpan.recordException(error instanceof Error ? error : new Error(String(error)))
-                            await handleCompilationError({ codePath, error })
-                        }
-                        else {
-                            log.info({ codePath }, 'Compilation success')
-                        }
-                    }
-                    finally {
-                        compileSpan.end()
-                    }
-                })
-
-                // node_modules is no longer needed after esbuild bundles everything into index.js
-                await tryCatch(() => rm(path.join(codePath, 'node_modules'), { recursive: true }))
                 return currentHash
             },
             skipSave: NO_SAVE_GUARD,
         })
     },
 })
+
+async function buildCodeStep({ buildPath, codePath, sourceCode, log }: BuildCodeStepParams): Promise<void> {
+    const { code, packageJson } = sourceCode
+    await fileSystemUtils.threadSafeMkdir(buildPath)
+
+    await tracer.startActiveSpan('codeBuilder.installDependencies', async (depSpan) => {
+        try {
+            depSpan.setAttribute('code.path', codePath)
+            await installDependencies({
+                path: buildPath,
+                packageJson: getPackageJson(packageJson),
+            }, log)
+            log.info({ path: codePath }, 'Installed dependencies')
+        }
+        finally {
+            depSpan.end()
+        }
+    })
+
+    await tracer.startActiveSpan('codeBuilder.compileCode', async (compileSpan) => {
+        try {
+            compileSpan.setAttribute('code.path', codePath)
+            const { error } = await tryCatch(() => compileCode({
+                path: buildPath,
+                code,
+            }, log))
+            if (error) {
+                log.info({ codePath, error }, 'Compilation error')
+                compileSpan.recordException(error instanceof Error ? error : new Error(String(error)))
+                await handleCompilationError({ codePath: buildPath, error })
+            }
+            else {
+                log.info({ codePath }, 'Compilation success')
+            }
+        }
+        finally {
+            compileSpan.end()
+        }
+    })
+
+    // node_modules is no longer needed after esbuild bundles everything into index.js
+    await tryCatch(() => rm(path.join(buildPath, 'node_modules'), { recursive: true }))
+}
+
+// rename(2) cannot replace a non-empty directory, so the old build is moved aside first. The
+// directory is missing only between the two renames, not for the length of a build. Callers
+// hold the cache fileLock, so no second builder is swapping the same step at the same time.
+async function replaceDirectory({ from, to }: ReplaceDirectoryParams): Promise<void> {
+    const retiredPath = `${to}.retired-${randomUUID()}`
+    const { error } = await tryCatch(() => rename(to, retiredPath))
+    if (error && !isMissingPathError(error)) {
+        throw error
+    }
+    await rename(from, to)
+    await rm(retiredPath, { recursive: true, force: true })
+}
+
+function isMissingPathError(error: unknown): boolean {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
 
 function isPackagesAllowed(): boolean {
     switch (workerSettings.getSettings().EXECUTION_MODE) {
@@ -199,6 +225,18 @@ export type CodeArtifact = {
     sourceCode: SourceCode
     flowVersionId: string
     flowVersionState: FlowVersionState
+}
+
+type BuildCodeStepParams = {
+    buildPath: string
+    codePath: string
+    sourceCode: SourceCode
+    log: Logger
+}
+
+type ReplaceDirectoryParams = {
+    from: string
+    to: string
 }
 
 type InstallDependenciesParams = {
