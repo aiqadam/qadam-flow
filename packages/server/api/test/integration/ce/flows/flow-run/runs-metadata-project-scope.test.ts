@@ -204,8 +204,17 @@ describe('Runs metadata project scope (#512)', () => {
             finishTime: new Date().toISOString(),
         })
         await waitForMetadataConsumed({ runId })
+        // The hash is consumed before the drain emits, so an empty list here alone could be a race.
+        // Updates for one run drain one at a time under its lock: once this one has emitted, the
+        // foreign one is done.
+        await createHandlers(app.log).uploadRunLog({
+            runId,
+            projectId: owner.project.id,
+            status: FlowRunStatus.RUNNING,
+        })
+        await waitForCondition({ fn: async () => recorded.length > 0 })
 
-        expect(recorded).toEqual([])
+        expect(recorded.map(({ room, payload }) => ({ room, payload }))).toEqual([{ room: owner.project.id, payload: { runId } }])
     })
 
     it('does not take over another project\'s run through a pending-run upsert', async () => {

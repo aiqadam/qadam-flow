@@ -63,6 +63,8 @@ const useListenToExistingRun = () => {
       }
       const flowRun = await flowRunsApi.getPopulated(run.id);
       setRun(flowRun, flowVersion);
+      // React Query v5 turns an undefined result into a failed query.
+      return flowRun;
     },
     enabled: isFollowingRun,
     // Fallback only: the server pushes FLOW_RUN_PROGRESS each time it stores a snapshot of the run.
