@@ -21,6 +21,7 @@ import {
 import { flowCache } from '../../cache/flow/flow-cache'
 import { system, WorkerSystemProp } from '../../config/configs'
 import { workerSettings } from '../../config/worker-settings'
+import { ClassifiedJobFailure } from '../job-failure'
 import { FireAndForgetJobResult, JobContext, JobHandler, JobResultKind } from '../types'
 import { provisionFlowPieces } from '../utils/flow-helpers'
 
@@ -71,21 +72,25 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
 
         const timeoutInSeconds = workerSettings.getSettings().FLOW_TIMEOUT_SECONDS
 
-        const flowVersion = await ctx.timings.measure({ phase: 'flowVersion', fn: () => flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId }) })
+        const { data: flowVersion, error: flowVersionError } = await tryCatch(() => ctx.timings.measure({ phase: 'flowVersion', fn: () => flowCache(ctx.log, ctx.apiClient).getVersion({ flowVersionId: data.flowVersionId }) }))
+        if (flowVersionError) {
+            throw await failBeforeExecution({ ctx, data, error: flowVersionError })
+        }
+        // The two FAILED outcomes below are final: a retry would fail the same way and report the
+        // same status again, so neither is retried (#584).
         if (isNil(flowVersion)) {
             ctx.log.info({ flowVersionId: data.flowVersionId }, 'Flow version not found, skipping')
             await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED })
-            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
+            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, retryable: false }
         }
 
         const { data: provisioned, error: provisionError } = await tryCatch(() => ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) }))
         if (provisionError) {
-            await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
-            throw provisionError
+            throw await failBeforeExecution({ ctx, data, error: provisionError })
         }
         if (!provisioned.provisioned) {
             await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED })
-            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR }
+            return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, retryable: false }
         }
 
         if (data.executionType === ExecutionType.RESUME && isNil(data.logsFileId)) {
@@ -94,7 +99,7 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                 params: { runId: data.runId },
             }, 'logsFileId is missing for RESUME operation')
             await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, resumeLogsFileMissingError) })
-            throw resumeLogsFileMissingError
+            throw new ClassifiedJobFailure({ original: resumeLogsFileMissingError, retryable: false })
         }
 
         const sandbox = ctx.sandboxManager.acquire({
@@ -109,6 +114,10 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                 httpRequestId: data.httpRequestId ?? null,
             },
         })
+        // The line between a failure that is safe to retry and one that is not. Once the operation is
+        // sent, the engine may have run steps, and their side effects, before anything failed; a
+        // retry would start again from the trigger and repeat them (#584).
+        let operationSent = false
         try {
             await sandbox.start({
                 flowVersionId: flowVersion.id,
@@ -117,6 +126,7 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             })
 
             const operation = buildFlowOperation(ctx, data, flowVersion, timeoutInSeconds)
+            operationSent = true
             const result = await sandbox.execute(
                 EngineOperationType.EXECUTE_FLOW,
                 operation,
@@ -140,7 +150,7 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                     },
                     logsFileId: data.logsFileId,
                 })
-                return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, logs: result.logs }
+                return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, logs: result.logs, retryable: false }
             }
 
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK, logs: result.logs }
@@ -161,8 +171,11 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
                     return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.LOG_SIZE_EXCEEDED }
                 }
             }
+            if (!operationSent) {
+                throw await failBeforeExecution({ ctx, data, error: e })
+            }
             await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, e), logsFileId: data.logsFileId })
-            throw e
+            throw new ClassifiedJobFailure({ original: e, retryable: false })
         }
         finally {
             await ctx.sandboxManager.release(ctx.log)
@@ -210,6 +223,24 @@ function buildFlowOperation(
         executeTrigger: data.executeTrigger ?? false,
         sampleData: data.sampleData,
     }
+}
+
+/**
+ * A failure before the engine received the operation: nothing ran, so a retry is safe. When the
+ * broker retries within seconds the run stays QUEUED and its sync caller keeps waiting, because
+ * the next attempt answers both — reporting INTERNAL_ERROR here would tell a sync caller the run
+ * failed and then run it anyway. Otherwise no quick retry is coming, because this is the job's last
+ * attempt or it was enqueued before the failure-aware backoff existed, and the handler reports the
+ * failure itself as before (#584).
+ */
+async function failBeforeExecution({ ctx, data, error }: FailBeforeExecutionParams): Promise<ClassifiedJobFailure> {
+    if (ctx.canRetryBeforeExecution) {
+        ctx.log.warn({ runId: data.runId, attemptsStarted: ctx.attemptsStarted, error: inspect(error) }, 'Run failed before the engine received it; the broker retries it within seconds')
+    }
+    else {
+        await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, error), logsFileId: data.logsFileId })
+    }
+    return new ClassifiedJobFailure({ original: error, retryable: true })
 }
 
 function toInternalError(source: RunInternalErrorSource, error: unknown): RunInternalError {
@@ -297,6 +328,12 @@ async function reportFlowStatus({ ctx, data, status, internalError, logsFileId }
 
 function isDedicatedWorker(): boolean {
     return !isNil(system.get(WorkerSystemProp.WORKER_GROUP_ID))
+}
+
+type FailBeforeExecutionParams = {
+    ctx: JobContext
+    data: ExecuteFlowJobData
+    error: unknown
 }
 
 type RespondToSyncCallerParams = {

@@ -81,6 +81,10 @@ export const ConsumeJobRequest = z.object({
     // Consumers (e.g. execute-flow.ts's dispatch-deadline gate) use `=== 0` to distinguish a true
     // first delivery from either a failed-and-retried job or a stalled-job re-delivery.
     attempsStarted: z.number(),
+    // True when the broker will retry this job within seconds if the attempt fails before the
+    // engine receives it (#584). The worker then leaves the run QUEUED and does not answer a sync
+    // caller, because the next attempt will. Read as false when absent.
+    canRetryBeforeExecution: z.boolean().optional(),
     engineToken: z.string(),
     token: z.string(),
     queueName: z.string(),
@@ -93,6 +97,11 @@ export const ConsumeJobResponse = z.object({
     errorMessage: z.string().optional(),
     logs: z.string().optional(),
     response: z.unknown().optional(),
+    // The worker's verdict on a failed attempt (#584). `true`: it failed before the engine received
+    // the operation, so nothing ran and a retry is safe. `false`: never retry, because the engine
+    // may already have executed steps, or the outcome is final and already reported. Absent: the
+    // handler does not classify its failures, and the broker keeps its one delayed retry.
+    retryable: z.boolean().optional(),
 })
 
 

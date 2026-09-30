@@ -3,12 +3,15 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { Server as IOServer } from 'socket.io'
 import {
     createRpcServer,
+    ErrorCode,
     PackageType,
+    QadamFlowError,
     QadamType,
     WorkerJobType,
     EngineResponseStatus,
     WebsocketServerEvent,
 } from '@aiqadam/shared'
+import { ClassifiedJobFailure } from '../../src/lib/execute/job-failure'
 import { JobResultKind } from '../../src/lib/execute/types'
 import type {
     WorkerToApiContract,
@@ -302,6 +305,60 @@ describe('worker integration', () => {
             completeMs: expect.any(Number),
         })
     }, 15_000)
+
+    describe('retry verdict on completeJob (#584)', () => {
+        it('reports a classified throw\'s verdict, with the original error\'s message and logs', async () => {
+            const original = new QadamFlowError({
+                code: ErrorCode.SANDBOX_INTERNAL_ERROR,
+                params: { standardOutput: 'out', standardError: 'err', reason: 'exited' },
+            }, 'engine gone')
+            mockGetHandler.mockReturnValue({
+                jobType: WorkerJobType.EXECUTE_FLOW,
+                execute: vi.fn().mockRejectedValue(new ClassifiedJobFailure({ original, retryable: false })),
+            })
+
+            const { completeJobCalls } = await connectWorkerWithPoll([buildConsumeJobRequest({ jobId: 'job-classified' }), null])
+
+            expect(completeJobCalls[0]).toMatchObject({
+                status: EngineResponseStatus.INTERNAL_ERROR,
+                retryable: false,
+                errorMessage: original.message,
+                logs: 'stdout:\nout\nstderr:\nerr',
+            })
+        }, 15_000)
+
+        it('reports a returned result\'s verdict', async () => {
+            mockGetHandler.mockReturnValue({
+                jobType: WorkerJobType.EXECUTE_FLOW,
+                execute: vi.fn().mockResolvedValue({ kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.INTERNAL_ERROR, retryable: false }),
+            })
+
+            const { completeJobCalls } = await connectWorkerWithPoll([buildConsumeJobRequest(), null])
+
+            expect(completeJobCalls[0].retryable).toBe(false)
+        }, 15_000)
+
+        it('leaves an unclassified throw without a verdict, so the broker keeps its legacy retry', async () => {
+            mockGetHandler.mockReturnValue({
+                jobType: WorkerJobType.EXECUTE_EXTRACT_PIECE_INFORMATION,
+                execute: vi.fn().mockRejectedValue(new Error('boom')),
+            })
+
+            const { completeJobCalls } = await connectWorkerWithPoll([buildConsumeJobRequest(), null])
+
+            expect(completeJobCalls[0].retryable).toBeUndefined()
+        }, 15_000)
+
+        it('hands the broker\'s quick-retry promise to the handler', async () => {
+            const execute = vi.fn().mockResolvedValue({ kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK })
+            mockGetHandler.mockReturnValue({ jobType: WorkerJobType.EXECUTE_FLOW, execute })
+
+            await connectWorkerWithPoll([buildConsumeJobRequest({ canRetryBeforeExecution: true }), buildConsumeJobRequest({ jobId: 'job-old-api' }), null])
+
+            expect(execute.mock.calls[0][0].canRetryBeforeExecution).toBe(true)
+            expect(execute.mock.calls[1][0].canRetryBeforeExecution).toBe(false)
+        }, 15_000)
+    })
 
     it('forwards response from job handler to completeJob', async () => {
         const handlerPayload = { foo: 'bar' }
@@ -643,4 +700,5 @@ type CompleteJobCall = {
     errorMessage?: string
     logs?: string
     response?: unknown
+    retryable?: boolean
 }

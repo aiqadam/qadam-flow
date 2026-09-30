@@ -20,6 +20,10 @@ export type JobContext = {
     // reasoning). Handlers use it to gate a check that must only ever run once per job, not once
     // per delivery (#510).
     attemptsStarted: number
+    // Whether the broker retries this job within seconds if it fails before the engine receives it
+    // (#584). When true, such a failure leaves the run QUEUED and the sync caller waiting, because
+    // the next attempt answers both; when false, the handler reports the failure itself.
+    canRetryBeforeExecution: boolean
     engineToken: string
     internalApiUrl: string
     publicApiUrl: string
@@ -33,6 +37,9 @@ export type FireAndForgetJobResult = {
     kind: JobResultKind.FIRE_AND_FORGET
     status: EngineResponseStatus
     logs?: string
+    // The retry verdict on a failed result, sent to the broker as `ConsumeJobResponse.retryable`.
+    // A thrown failure carries it on `ClassifiedJobFailure` instead (#584).
+    retryable?: boolean
 }
 
 export type SynchronousJobResult = {
@@ -41,6 +48,7 @@ export type SynchronousJobResult = {
     response: unknown
     errorMessage?: string
     logs?: string
+    retryable?: boolean
 }
 
 export type JobResult = FireAndForgetJobResult | SynchronousJobResult
