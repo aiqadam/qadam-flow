@@ -14,8 +14,9 @@ export const fileLock = {
         // proper-lockfile's default throws from its mtime-refresh timer, i.e. as an uncaught
         // exception that takes the whole worker down with every job it is running. Throwing
         // cannot stop `fn` either, which is already past the point the lock protected. So the
-        // compromise is logged and `fn` runs to completion: every writer under these locks
-        // publishes by temp file + rename, so a second holder can lose work but not corrupt it.
+        // compromise is logged and `fn` is told through `isCompromised()`: a writer that publishes
+        // by temp file + rename can finish regardless, while one that writes in place must check
+        // it before each step that is unsafe to share, and stop.
         const onCompromised = (error: Error): void => {
             compromised = true
             log.error({ path, error: error.message }, '[fileLock] Lock was compromised while held; the protected work is no longer exclusive')
@@ -24,7 +25,7 @@ export const fileLock = {
         if (acquired.error !== null) {
             throw fileSystemUtils.hasErrorCode({ error: acquired.error, code: 'ELOCKED' }) ? new FileLockTimeoutError({ path }) : acquired.error
         }
-        const result = await tryCatch(() => fn())
+        const result = await tryCatch(() => fn({ isCompromised: () => compromised }))
         const released = await tryCatch(() => releaseLock({ release: acquired.data, wasCompromised: () => compromised }))
         if (result.error !== null) {
             // The work's own failure is what the caller has to act on; a lock left behind goes
@@ -39,9 +40,10 @@ export const fileLock = {
         }
         return result.data
     },
-    // True only when the lock itself could not be taken in time, never for an error `fn` threw:
-    // a caller that falls back on a timeout must not run `fn` a second time because `fn` failed.
-    isAcquireTimeout: (error: unknown): boolean => error instanceof FileLockTimeoutError,
+    // True only when the lock on `path` itself could not be taken in time. Never for an error
+    // `fn` threw, a timeout on some other lock `fn` took included: a caller that falls back on a
+    // timeout must not run `fn` a second time because `fn` failed.
+    isAcquireTimeout: ({ error, path }: IsAcquireTimeoutParams): boolean => error instanceof FileLockTimeoutError && error.path === path,
 }
 
 // A container killed mid-install leaves its lock behind forever otherwise —
@@ -57,9 +59,12 @@ const RETRIES = {
 }
 
 class FileLockTimeoutError extends Error {
+    readonly path: string
+
     constructor({ path }: { path: string }) {
         super(`Timed out waiting for the file lock on ${path}`)
         this.name = 'FileLockTimeoutError'
+        this.path = path
     }
 }
 
@@ -93,12 +98,21 @@ type FileLockLogger = {
 
 type RunExclusiveParams<T> = {
     path: string
-    fn: () => Promise<T>
+    fn: (lock: HeldLock) => Promise<T>
     log: FileLockLogger
     createPath?: boolean
     // How long a lock whose holder stopped refreshing it is honoured before a waiter takes it
     // over. Below the ~177 s wait, a waiter reclaims a killed holder's lock instead of timing out.
     staleMs?: number
+}
+
+type HeldLock = {
+    isCompromised: () => boolean
+}
+
+type IsAcquireTimeoutParams = {
+    error: unknown
+    path: string
 }
 
 type ReleaseLockParams = {

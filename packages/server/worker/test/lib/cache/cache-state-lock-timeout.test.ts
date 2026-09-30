@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // Waiting out proper-lockfile's real retry budget takes minutes, so the lock is stubbed to
 // report the timeout it ends in.
 const lockStub = vi.hoisted(() => ({
-    acquireTimeout: new Error('Timed out waiting for the file lock'),
+    timeoutOn: (path: string): Error => Object.assign(new Error(`Timed out waiting for the file lock on ${path}`), { lockPath: path }),
     timesOut: true,
 }))
 
@@ -17,13 +17,14 @@ vi.mock('@aiqadam/server-utils', async (importOriginal) => {
     return {
         ...actual,
         fileLock: {
-            runExclusive: async <T>({ fn }: { fn: () => Promise<T> }): Promise<T> => {
+            runExclusive: async <T>({ path, fn }: { path: string, fn: (lock: { isCompromised: () => boolean }) => Promise<T> }): Promise<T> => {
                 if (lockStub.timesOut) {
-                    throw lockStub.acquireTimeout
+                    throw lockStub.timeoutOn(path)
                 }
-                return fn()
+                return fn({ isCompromised: () => false })
             },
-            isAcquireTimeout: (error: unknown): boolean => error === lockStub.acquireTimeout,
+            isAcquireTimeout: ({ error, path }: { error: unknown, path: string }): boolean =>
+                error instanceof Error && 'lockPath' in error && error.lockPath === path,
         },
     }
 })
@@ -100,6 +101,25 @@ describe('cacheState when the cross-container lock times out (#586)', () => {
             skipSave: () => false,
             crossProcess: { log: pino({ level: 'silent' }) },
         })).rejects.toThrow('a nested lock was held')
+        expect(installFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('fails, without installing a second time unlocked, when the install times out on a lock of its own', async () => {
+        const { cacheState } = await import('../../../src/lib/cache/cache-state')
+        const folder = join(tmpdir(), `cache-state-timeout-${randomUUID()}`)
+        folders.push(folder)
+        lockStub.timesOut = false
+        const installFn = vi.fn(async (): Promise<string> => {
+            throw lockStub.timeoutOn(join(folder, 'workspace'))
+        })
+
+        await expect(cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn,
+            skipSave: () => false,
+            crossProcess: { log: pino({ level: 'silent' }) },
+        })).rejects.toThrow('Timed out waiting for the file lock on')
         expect(installFn).toHaveBeenCalledTimes(1)
     })
 })

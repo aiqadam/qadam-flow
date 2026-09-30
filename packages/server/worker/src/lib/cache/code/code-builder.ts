@@ -84,10 +84,16 @@ export const codeBuilder = (log: Logger) => ({
                 }
                 // cache.json lives inside the step directory, and after a lock-timeout fallback a
                 // replica that lost the swap can still save its own hash into the winner's build,
-                // so the hash the build itself carries is the authority (#586). A build from
-                // before it carries none, and for that one cache.json is all there is.
+                // so the hash the build itself carries is the authority (#586).
                 const builtFrom = await readSourceHash(codePath)
-                return !isNil(builtFrom) && builtFrom !== currentHash
+                if (!isNil(builtFrom)) {
+                    return builtFrom !== currentHash
+                }
+                // No hash and no directory: the build is gone, e.g. another replica is between its
+                // two renames, so this is a miss that waits on the lock and reads again. No hash in
+                // a directory that exists: a build from before #586, and for it cache.json is all
+                // there is.
+                return !(await fileSystemUtils.fileExists(codePath))
             },
             installFn: async () => {
                 await removeOrphanedBuilds({ codePath, log })

@@ -20,6 +20,7 @@ beforeEach(async () => {
 afterEach(async () => {
     process.chdir(originalCwd)
     vi.doUnmock('../../../src/lib/config/worker-settings')
+    vi.doUnmock('@aiqadam/server-utils')
     await rm(tempDir, { recursive: true, force: true })
 })
 
@@ -27,6 +28,27 @@ describe('engineInstaller.install (#586)', () => {
     it('is a cache hit after a restart of the same image', async () => {
         expect(await installInFreshProcess()).toEqual({ cacheHit: false })
         expect(await installInFreshProcess()).toEqual({ cacheHit: true })
+    })
+
+    it('copies the engine under the cross-container lock', async () => {
+        const lockedPaths: string[] = []
+        vi.doMock('@aiqadam/server-utils', async () => {
+            const actual = await vi.importActual<typeof import('@aiqadam/server-utils')>('@aiqadam/server-utils')
+            return {
+                ...actual,
+                fileLock: {
+                    ...actual.fileLock,
+                    runExclusive: <T>(params: Parameters<typeof actual.fileLock.runExclusive<T>>[0]): Promise<T> => {
+                        lockedPaths.push(params.path)
+                        return actual.fileLock.runExclusive(params)
+                    },
+                },
+            }
+        })
+
+        await installInFreshProcess()
+
+        expect(lockedPaths).toEqual([`${commonPath()}.cache-state`])
     })
 
     it('misses and copies the new engine when the image ships a different bundle', async () => {

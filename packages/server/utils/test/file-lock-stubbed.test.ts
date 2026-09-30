@@ -23,8 +23,41 @@ describe('fileLock.runExclusive acquisition timeout', () => {
         const error = await fileLock.runExclusive({ path: '/tmp/file-lock-timeout-test', createPath: false, log: { error: vi.fn() }, fn })
             .catch((e: unknown) => e)
 
-        expect(fileLock.isAcquireTimeout(error)).toBe(true)
+        expect(fileLock.isAcquireTimeout({ error, path: '/tmp/file-lock-timeout-test' })).toBe(true)
         expect(fn).not.toHaveBeenCalled()
+    })
+
+    it('does not report a timeout on another lock as a timeout on this one', async () => {
+        const { fileLock } = await import('../src/file-lock')
+        lockfileStub.lock.mockRejectedValue(Object.assign(new Error('Lock file is already being held'), { code: 'ELOCKED' }))
+
+        const error = await fileLock.runExclusive({ path: '/tmp/file-lock-inner-lock', createPath: false, log: { error: vi.fn() }, fn: async () => undefined })
+            .catch((e: unknown) => e)
+
+        expect(fileLock.isAcquireTimeout({ error, path: '/tmp/file-lock-inner-lock' })).toBe(true)
+        expect(fileLock.isAcquireTimeout({ error, path: '/tmp/file-lock-timeout-test' })).toBe(false)
+    })
+
+    it('tells the protected work when the lock has been compromised', async () => {
+        const { fileLock } = await import('../src/file-lock')
+        let reportCompromise: (error: Error) => void = () => undefined
+        lockfileStub.lock.mockImplementation(async (_path: string, options: { onCompromised: (error: Error) => void }) => {
+            reportCompromise = options.onCompromised
+            return async () => undefined
+        })
+
+        const seen = await fileLock.runExclusive({
+            path: '/tmp/file-lock-timeout-test',
+            createPath: false,
+            log: { error: vi.fn() },
+            fn: async ({ isCompromised }) => {
+                const before = isCompromised()
+                reportCompromise(new Error('Unable to update lock within the stale threshold'))
+                return { before, after: isCompromised() }
+            },
+        })
+
+        expect(seen).toEqual({ before: false, after: true })
     })
 
     it('does not report an ELOCKED the protected work threw as an acquisition timeout', async () => {
@@ -42,7 +75,7 @@ describe('fileLock.runExclusive acquisition timeout', () => {
         }).catch((e: unknown) => e)
 
         expect(error).toBe(workError)
-        expect(fileLock.isAcquireTimeout(error)).toBe(false)
+        expect(fileLock.isAcquireTimeout({ error, path: '/tmp/file-lock-timeout-test' })).toBe(false)
     })
 
     it('passes the caller\'s stale threshold to the lock', async () => {

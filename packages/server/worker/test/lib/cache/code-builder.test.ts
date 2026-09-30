@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ExecutionMode, FlowVersionState } from '@aiqadam/shared'
@@ -187,6 +187,26 @@ describe('codeBuilder.processCodeStep (#586)', () => {
         await processStep({ code: 'version-1' })
 
         expect(await readFile(stepIndexPath(), 'utf8')).toBe('built-before-586')
+    })
+
+    it('rebuilds a step whose directory is gone, although memory still records it as built', async () => {
+        await processStep({ code: 'version-1' })
+        await rm(stepPath(), { recursive: true, force: true })
+
+        await processStep({ code: 'version-1' })
+
+        expect(await readFile(stepIndexPath(), 'utf8')).toBe('version-1')
+    })
+
+    it('builds under the cross-container lock', async () => {
+        const lockHeldDuringBuild: boolean[] = []
+        buildHook = async () => {
+            lockHeldDuringBuild.push(await access(`${stepPath()}.cache-state.lock`).then(() => true, () => false))
+        }
+
+        await processStep({ code: 'version-1' })
+
+        expect(lockHeldDuringBuild).toEqual([true])
     })
 
     it('reports a compilation error against the step path, not the build directory', async () => {

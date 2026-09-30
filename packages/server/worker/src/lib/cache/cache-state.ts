@@ -45,8 +45,9 @@ export const cacheState = (folderPath: string) => {
                     // the memoryLock only keeps this process's own jobs apart. The fileLock stops two
                     // replicas from building the same entry at once (#586); the one that loses the
                     // race re-reads the disk under the lock and takes the winner's result.
+                    const lockPath = `${folderPath}${CACHE_STATE_LOCK_SUFFIX}`
                     const locked = await tryCatch(() => fileLock.runExclusive({
-                        path: `${folderPath}${CACHE_STATE_LOCK_SUFFIX}`,
+                        path: lockPath,
                         createPath: false,
                         staleMs: CACHE_STATE_LOCK_STALE_MS,
                         log: crossProcess.log,
@@ -55,7 +56,7 @@ export const cacheState = (folderPath: string) => {
                     if (locked.error === null) {
                         return locked.data
                     }
-                    if (!fileLock.isAcquireTimeout(locked.error)) {
+                    if (!fileLock.isAcquireTimeout({ error: locked.error, path: lockPath })) {
                         throw locked.error
                     }
                     // A legitimate holder can outlast the wait (a cold code build is bun install +

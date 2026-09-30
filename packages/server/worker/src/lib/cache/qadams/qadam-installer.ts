@@ -122,7 +122,8 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
     await fileLock.runExclusive({
         path: rootWorkspace,
         log,
-        fn: async () => {
+        fn: async ({ isCompromised }) => {
+            const assertLockHeld = (): void => assertWorkspaceLockHeld({ isCompromised, rootWorkspace })
             const { qadamsToInstall } = await partitionQadamsToInstall(rootWorkspace, installableQadams)
             if (isEmpty(qadamsToInstall)) {
                 log.info({ rootWorkspace }, '[qadamInstaller] No new qadams to install in lock (already installed)')
@@ -156,12 +157,14 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     span.setAttribute('qadams.count', qadamsToInstall.length)
                     span.setAttribute('qadams.rootWorkspace', rootWorkspace)
 
+                    assertLockHeld()
                     const { error: batchError } = await tryCatch(async () => bunRunner(log).install({
                         path: rootWorkspace,
                         filtersPath: includeFilters ? qadamsToInstall.map(relativeQadamPath) : [],
                     }))
 
                     if (isNil(batchError)) {
+                        assertLockHeld()
                         await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, officialQadamsInstallEnabled, span, log })
                         log.info({
                             rootWorkspace,
@@ -184,6 +187,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                         error: batchError,
                     }, '[qadamInstaller] Batch install failed, retrying qadams individually')
 
+                    assertLockHeld()
                     const failedQadams = await tryInstallQadamsIndividually(rootWorkspace, qadamsToInstall, log)
 
                     // Verification happens here rather than per iteration, and the survivors are
@@ -197,6 +201,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     // offender, and does it once.
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
+                        assertLockHeld()
                         await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log })
                     }
                     else {
@@ -226,6 +231,15 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
             })
         },
     })
+}
+
+// Unlike the cache.json and code-build writers, bun installs in place into the shared workspace,
+// so a second holder would corrupt it rather than just lose work. Once the lock is lost, the
+// install stops before the next step that writes to the workspace or vouches for it.
+function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspaceLockHeldParams): void {
+    if (isCompromised()) {
+        throw new Error(`[qadamInstaller] Lost the lock on ${rootWorkspace} mid-install; another replica may be installing into it`)
+    }
 }
 
 // Official qadams are compiled into the image (`Dockerfile`: "Qadams must be pre-compiled because
@@ -656,4 +670,9 @@ type InstallParams = {
 
 type QadamInstallationResult = {
     qadamsToInstall: QadamPackage[]
+}
+
+type AssertWorkspaceLockHeldParams = {
+    isCompromised: () => boolean
+    rootWorkspace: string
 }
