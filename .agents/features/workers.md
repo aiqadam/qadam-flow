@@ -77,15 +77,15 @@ Three log lines answer "where did a slow job's time go" without OTEL. All of the
 **`[worker] Job finished`** (worker, info) — written by `runPollLoop` (`worker.ts`) once per job after `completeJob`, whatever the outcome. Jobs that failed to parse are included.
 - **Identity:** `jobId`, `jobType`, `flowId` (every job type that has one), `runId` (EXECUTE_FLOW only). These are read defensively from the raw payload.
 - **Outcome:** `attemptsStarted` (0 on a genuine first delivery; see `ConsumeJobRequest`), `status` (the value sent to `completeJob`), and `completed` (whether `completeJob` itself succeeded).
-- **Totals:** `durationMs` runs from dequeue to the `completeJob` reply; `completeMs` is that RPC alone.
+- **Totals:** `durationMs` runs from the worker receiving the job to the `completeJob` reply; the API-to-worker hand-off is not in it. `completeMs` is the `completeJob` RPC alone.
 - **Phases,** from `execute/job-timings.ts`, absent when the job never reached them:
-  - `flowVersionMs` and `provisionMs`: the handlers wrap `flowCache.getVersion` and `provisionFlowPieces` in `ctx.timings.measure`. Provisioning covers qadam install and code build.
+  - `flowVersionMs` and `provisionMs`: each handler wraps its `flowCache.getVersion` call and its provisioning in `ctx.timings.measure`. The provisioning is `provisionFlowPieces`, or `provisioner().provision` for property, validation and extract jobs. It covers qadam install and code build.
   - `sandbox` (`cold` | `warm`) and `sandboxStartMs`: a job counts as cold if any sandbox it started had no live process.
   - `executeMs` and `executeCount`: summed over every `sandbox.execute`.
 
   The sandbox phases come from `jobTimings.instrumentSandboxManager`. It wraps the slot's manager for the job's lifetime, so no handler records them itself. Inline `callFlow` children provision inside the parent's `execute` and count toward `executeMs`.
 
-**`[jobBroker#tryDequeue] Dequeued job`** (API, info) carries `queueWaitMs`, `plannedDelayMs`, `attemptsMade` and `stalledCounter`. Join it to the worker line on `jobId`.
+**`[jobBroker#tryDequeue] Dequeued job`** (API, info) carries `queueWaitMs`, `plannedDelayMs`, `attemptsMade` and `stalledCounter`. Join it to the worker line on `jobId`. A job an interceptor sends back to delayed (e.g. the rate limiter) is dequeued, and logged, again on each pass, and each line's `queueWaitMs` includes the delays so far.
 - `queueWaitMs` is `Date.now() - job.timestamp - job.opts.delay`: the time since the job first became runnable.
 - `plannedDelayMs` is taken from `opts` because BullMQ zeroes the job's `delay` field when it promotes it. A scheduler or cron iteration is added with a delay of a whole interval, so without this subtraction every cron job would look like a backlog.
 - On a retry the wait still spans every earlier attempt and its backoff. That is the 8-minute gap of #584.

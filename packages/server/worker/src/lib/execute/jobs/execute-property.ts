@@ -15,9 +15,12 @@ export const executePropertyJob: JobHandler<ExecutePropertyJobData, SynchronousJ
     async execute(ctx: JobContext, data: ExecutePropertyJobData): Promise<SynchronousJobResult> {
         const timeoutInSeconds = workerSettings.getSettings().TRIGGER_TIMEOUT_SECONDS
 
-        await provisioner(ctx.log, ctx.apiClient).provision({
-            pieces: [data.qadam],
-            codeSteps: [],
+        await ctx.timings.measure({
+            phase: 'provision',
+            fn: () => provisioner(ctx.log, ctx.apiClient).provision({
+                pieces: [data.qadam],
+                codeSteps: [],
+            }),
         })
 
         const sandbox = ctx.sandboxManager.acquire({ log: ctx.log, apiClient: ctx.apiClient })

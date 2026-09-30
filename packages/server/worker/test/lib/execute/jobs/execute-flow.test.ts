@@ -141,6 +141,16 @@ describe('executeFlowJob', () => {
         mockGetVersion.mockResolvedValue(makeFlowVersion())
     })
 
+    it('records the flow-version fetch and provisioning on the job\'s timings (#587)', async () => {
+        const ctx = makeMockContext()
+
+        await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
+
+        const summary = ctx.timings.summary()
+        expect(summary.flowVersionMs).toEqual(expect.any(Number))
+        expect(summary.provisionMs).toEqual(expect.any(Number))
+    })
+
     describe('payload pass-through (no worker-side fetch)', () => {
         it('forwards the JobPayload ref unchanged to the engine for BEGIN', async () => {
             const ctx = makeMockContext()
