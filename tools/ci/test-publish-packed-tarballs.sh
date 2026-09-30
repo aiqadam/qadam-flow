@@ -268,9 +268,11 @@ check "and pauses once between each pair of packages, not before the first or af
 check "and the first package is published before any pause" "no" \
     "$(grep -qF 'waiting 1s before publishing aiqadam-shared-0.135.0.tgz' "$WORK_ROOT/out.log" && echo yes || echo no)"
 
-# A lost-response retry has its own backoff; the interval is per package, not per attempt.
+# A lost-response retry has its own backoff; the interval is per package, not per attempt. The
+# lost response is on the SECOND package on purpose: on the first, `processed` is still 0, so a
+# pause moved inside the attempt loop would be skipped there anyway and this case would pass.
 dir="$(new_case paced-retry aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
-FAKE_PUBLISH_SEQUENCE=$'5xx' NPM_PUBLISH_INTERVAL_SECONDS=1 run_case "$dir"
+FAKE_PUBLISH_SEQUENCE=$'\n5xx' NPM_PUBLISH_INTERVAL_SECONDS=1 run_case "$dir"
 check "a paced run survives a lost response" 0 $?
 check "and the retry does not add an interval pause of its own" "1" \
     "$(grep -c '^publish-packed-tarballs: waiting 1s before publishing ' "$WORK_ROOT/out.log")"

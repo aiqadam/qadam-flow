@@ -83,8 +83,12 @@ NPM_PUBLISH_RETRY_MAX_SECONDS="${NPM_PUBLISH_RETRY_MAX_SECONDS:-600}"
 # not move the wall" was measured for a run that was already at the wall, never for one that was
 # slow from the start. This is the experiment that tells the two apart: if the scope's cap is a
 # count over a rolling ~24 h, a paced run still stops at about the same package; if it is a burst
-# limit, a paced run gets further. 0 (the default) keeps the unpaced behaviour for local runs and
-# the test suite; the workflows set it explicitly.
+# limit, a paced run gets further. That reading only holds for a run that starts more than 24 h
+# after the previous publish: a paced run lasts about two hours, so under a rolling window an
+# earlier run's publishes can age out while it is still going. Otherwise count the publishes in
+# the 24 h before the 429 (the packuments' `time` fields) rather than how far the run got.
+# 0 (the default) keeps the unpaced behaviour for local runs and the test suite; the workflows
+# set it explicitly.
 NPM_PUBLISH_INTERVAL_SECONDS="${NPM_PUBLISH_INTERVAL_SECONDS:-0}"
 case "$NPM_PUBLISH_INTERVAL_SECONDS" in
   ''|*[!0-9]*) echo "::error::publish-packed-tarballs: NPM_PUBLISH_INTERVAL_SECONDS must be a whole number of seconds, got '${NPM_PUBLISH_INTERVAL_SECONDS}'" >&2; exit 1 ;;
