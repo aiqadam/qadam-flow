@@ -65,8 +65,8 @@ NPM_DIST_TAG="${NPM_DIST_TAG:-latest}"
 # about 26–38 publishes — a new version of an already-published package counts too — and a
 # dispatch that started less than 24 h after the previous batch got 0–2 through. #582 then ran
 # the one experiment the earlier runs could not settle, pacing from the FIRST package at 60 s
-# rather than only after a 429: it stopped on the 27th publish of its window exactly as unpaced
-# runs do. Retrying the package that got refused, or slowing down the ones behind it, cannot clear
+# rather than only after a 429: it got 27 publishes into its window before the 429, inside the
+# range unpaced windows reached. Retrying the package that got refused, or slowing down the ones behind it, cannot clear
 # a cap that is not about speed — it only spends the job's timeout finding that out one backoff at
 # a time. So a 429 fails the run immediately, with no retry and no throttle: re-dispatching more
 # than 24 h after the previous batch ended (or once npm support lifts the cap) is the only thing
@@ -315,7 +315,7 @@ while IFS= read -r filename || [ -n "$filename" ]; do
         # clear it within this run. Dying here immediately, rather than working through
         # NPM_PUBLISH_MAX_ATTEMPTS first, is what stops the job spending its timeout finding
         # that out one backoff at a time.
-        echo "::error::publish-packed-tarballs: the registry answered 429 on ${filename} — the scope's cap of roughly 26–38 publishes per rolling 24 h (see #476), not a transient rate limit, so retrying or pacing within this run cannot clear it. Stopping immediately. Re-dispatch more than 24 h after this run's last successful publish (or once npm support lifts the cap) to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
+        echo "::error::publish-packed-tarballs: the registry answered 429 on ${filename} — the scope's cap of roughly 26–38 publishes per rolling 24 h (see #476), not a transient rate limit, so retrying or pacing within this run cannot clear it. Stopping immediately. Re-dispatch more than 24 h after the last batch of publishes to the scope (or once npm support lifts the cap) to resume — the pack step skips versions already published, so a re-run picks up where this stopped." >&2
         exit 1
         ;;
       lost-response)

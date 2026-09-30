@@ -243,9 +243,10 @@ check "and does not continue to the next package" "1" "$(wc -l < "$WORK_ROOT/pub
 # request-rate limit. #476 then measured it directly and found a CAP ON PUBLISHES PER ROLLING
 # ~24 H instead — a fresh dispatch hours later was refused on its very first PUT, before anything
 # in that run could have tripped a rate, and #582's run paced at 60 s from the first package
-# stopped at the same count as unpaced ones. So a 429 now fails the run immediately: these cases pin that it is not retried, that
-# nothing behind it in the manifest is touched, and that the run says why (re-dispatch, not wait)
-# rather than working through NPM_PUBLISH_MAX_ATTEMPTS on a wall a backoff cannot move.
+# stopped within the range unpaced ones reach. So a 429 now fails the run immediately: these
+# cases pin that it is not retried, that nothing behind it in the manifest is touched, and that
+# the run says why (re-dispatch, not wait) rather than working through NPM_PUBLISH_MAX_ATTEMPTS on
+# a wall a backoff cannot move.
 dir="$(new_case rate-limited-fails-immediately aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
 FAKE_PUBLISH_SEQUENCE='429' run_case "$dir"
 check "a rate-limited publish fails the run rather than being retried" 1 $?
@@ -258,8 +259,8 @@ check "and it says why retrying would not help" "yes" \
     "$(grep -qF 'publishes per rolling 24 h' "$WORK_ROOT/out.log" && echo yes || echo no)"
 
 # --- NPM_PUBLISH_INTERVAL_SECONDS: a pause between packages, never before the first -------
-# The experiment this knob exists for is "slow from the first PUT", so a pause before the first
-# package would only waste time and one after the last would delay a green run for nothing.
+# A pause separates two PUTs, so one before the first package would only waste time and one
+# after the last would delay a green run for nothing.
 dir="$(new_case paced aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz aiqadam-qadams-common-0.14.1.tgz)"
 NPM_PUBLISH_INTERVAL_SECONDS=1 run_case "$dir"
 check "a paced run still publishes the whole manifest" 0 $?
