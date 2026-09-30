@@ -3,7 +3,7 @@ import dns from 'node:dns/promises'
 import { readFile } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
-import { ErrorCode, ExecutionMode, NetworkMode, QadamFlowError, tryCatch, WorkerSettingsResponse } from '@aiqadam/shared'
+import { ErrorCode, NetworkMode, QadamFlowError, tryCatch, WorkerSettingsResponse } from '@aiqadam/shared'
 import { Logger } from 'pino'
 import { workerSettings } from '../config/worker-settings'
 import { isIsolateMode } from '../execute/create-sandbox-for-job'
@@ -48,7 +48,7 @@ async function maybeStartProxyAllowingApiHost({ log, apiUrl, settings }: StartPr
 
 async function maybeApplyIptablesLockdown({ log, proxy, settings }: ApplyLockdownParams): Promise<IptablesLockdown | null> {
     if (settings.NETWORK_MODE !== NetworkMode.STRICT) return null
-    if (!isIsolateMode(settings.EXECUTION_MODE as ExecutionMode)) return null
+    if (!isIsolateMode(settings.EXECUTION_MODE)) return null
     if (!proxy) {
         throw new QadamFlowError({
             code: ErrorCode.ENGINE_OPERATION_FAILURE,

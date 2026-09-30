@@ -63,7 +63,6 @@ export function createSandboxForJob(params: {
         { hostPath: getGlobalCacheCommonPath(), sandboxPath: '/root/common' },
     ]
 
-    const executionMode = settings.EXECUTION_MODE as ExecutionMode
 
     return createSandbox(
         log,
@@ -76,7 +75,7 @@ export function createSandboxForJob(params: {
             reusable,
             maxHttpBufferSizeBytes: maxSocketHttpBufferSizeBytes(settings.MAX_FILE_SIZE_MB),
             baseMounts,
-            wsRpcPort: isIsolateMode(executionMode) ? sandboxCapacity.wsRpcPortForBox(boxId) : undefined,
+            wsRpcPort: isIsolateMode(settings.EXECUTION_MODE) ? sandboxCapacity.wsRpcPortForBox(boxId) : undefined,
         },
         processMaker,
         workerHandlers,

@@ -3,9 +3,9 @@ import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { qadamDistIndex } from './qadam-dist-index'
 
 // #419: what the first job in a fresh engine process pays before its first step can run, done
-// while the engine sits idle instead. The worker turns this on only for reusable sandboxes, where
-// the process outlives the job and every flow loads at least its trigger's qadam, so none of it is
-// wasted work. Both halves were measured on QA: the dist index is the first `resolveMs`
+// while the engine sits idle instead. The worker turns this on only for the sandbox a prewarm starts
+// before its slot polls: that process outlives its first job and every flow loads at least its
+// trigger's qadam, so none of it is wasted work. Both halves were measured on QA: the dist index is the first `resolveMs`
 // (270–540 ms without the image manifest), and the framework's own module graph (framework, shared,
 // zod) is most of the first `importMs` (0.6–0.9 s, `sharedDepsAlreadyLoaded: false`).
 export const engineWarmup = {
@@ -21,12 +21,13 @@ export const engineWarmup = {
         }
         const anchor = distIndex.values().next().value?.indexPath
         const depsStart = performance.now()
-        const loadedDeps = isNil(anchor) ? [] : SHARED_QADAM_DEPS.filter((dependency) => requireFrom({ anchor, dependency }))
+        const loads = isNil(anchor) ? [] : SHARED_QADAM_DEPS.map((dependency) => requireFrom({ anchor, dependency }))
         write(`[engineWarmup] done ${JSON.stringify({
             distIndexMs: roundMs(distIndexMs),
             qadams: distIndex.size,
             sharedDepsMs: roundMs(performance.now() - depsStart),
-            sharedDeps: loadedDeps,
+            sharedDeps: loads.filter((load) => isNil(load.failure)).map((load) => load.dependency),
+            failedDeps: loads.flatMap((load) => isNil(load.failure) ? [] : [{ name: load.dependency, reason: load.failure }]),
         })}`)
     },
 }
@@ -39,9 +40,10 @@ const SHARED_QADAM_DEPS = ['@aiqadam/qadams-framework', '@aiqadam/qadams-common'
 // Resolved from a bundled qadam's directory: the engine runs as one bundled file from a cache copy
 // with no `node_modules` beside it, so a bare name does not resolve from the engine's own location
 // (the same reason the #419 Phase 0 `sharedDepsAlreadyLoaded` probe anchors on the qadam).
-function requireFrom({ anchor, dependency }: RequireFromParams): boolean {
+function requireFrom({ anchor, dependency }: RequireFromParams): DependencyLoad {
     const { error } = tryCatchSync(() => createRequire(anchor)(dependency))
-    return isNil(error)
+    // The first line only: Node appends the whole require stack after it.
+    return { dependency, failure: isNil(error) ? null : error.message.split('\n')[0] }
 }
 
 function roundMs(value: number): number {
@@ -57,4 +59,9 @@ type RunParams = {
 type RequireFromParams = {
     anchor: string
     dependency: string
+}
+
+type DependencyLoad = {
+    dependency: string
+    failure: string | null
 }

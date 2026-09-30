@@ -70,8 +70,13 @@ describe('engineWarmup (#419)', () => {
         const line = String(write.mock.calls[0][0])
         expect(line.startsWith('[engineWarmup] done ')).toBe(true)
         const payload: unknown = JSON.parse(line.slice('[engineWarmup] done '.length))
-        // qadams-common is absent from the fixture, and a dependency that does not resolve is skipped.
-        expect(payload).toMatchObject({ qadams: 1, sharedDeps: ['@aiqadam/qadams-framework'] })
+        // qadams-common is absent from the fixture: a dependency that does not resolve is left out of
+        // sharedDeps and named, with the first line of its error, in failedDeps.
+        expect(payload).toMatchObject({
+            qadams: 1,
+            sharedDeps: ['@aiqadam/qadams-framework'],
+            failedDeps: [{ name: '@aiqadam/qadams-common', reason: "Cannot find module '@aiqadam/qadams-common'" }],
+        })
     })
 
     // The engine's console is patched to also feed the notify channel, which is captured into the

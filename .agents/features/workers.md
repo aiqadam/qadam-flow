@@ -94,7 +94,9 @@ move that off the first job:
   the index) and the scan runs; a missing one scans quietly. A `refresh` (dev-qadam lookup) always scans. The file is gitignored:
   never generate it in a dev tree, where it would go stale.
 - **Prewarm.** On by default; `AP_WORKER_PREWARM_ENGINES=false` turns it off (each engine holds about
-  100 MiB from boot). Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
+  100 MiB from boot). Only `true`/`false` parse (`asBoolStrict`): any other value throws inside the
+  prewarm, which logs `Prewarm failed` and leaves the slot lazy. It runs on every (re)connect, since
+  each connect starts a new set of poll loops. Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
   (`prewarmSlot` in `worker.ts`), so no job can race it. It is skipped when the loop would not poll
   (`loopWillPoll`, the same check the poll loop uses, or an API version mismatch) and raced against a
   stop request.
