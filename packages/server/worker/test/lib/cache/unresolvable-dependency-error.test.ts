@@ -36,6 +36,6 @@ describe('UnresolvableDependencyError (#584)', () => {
         const error = new UnresolvableDependencyError({ original })
 
         expect(error.message).toBe(original.message)
-        expect(error.original).toBe(original)
+        expect(error.cause).toBe(original)
     })
 })

@@ -67,7 +67,7 @@ describe('jobRetry (#584)', () => {
 
             jobRetry.logFailedAttempt({ log, job: { ...failedJob, delay: 1_500, finishedOn: undefined }, jobType: WorkerJobType.EXECUTE_FLOW, retryable: true })
 
-            expect(warn).toHaveBeenCalledWith(expect.objectContaining({ retryInMs: 1_500, failedAttempt: 1, previousError: 'Sandbox did not connect' }), '[jobRetry] Attempt failed, retrying')
+            expect(warn).toHaveBeenCalledWith(expect.objectContaining({ retryInMs: 1_500, failedAttempt: 1, failedReason: 'Sandbox did not connect' }), '[jobRetry] Attempt failed, retrying')
         })
 
         it('says a failure after execution is not retried, even with attempts left', () => {

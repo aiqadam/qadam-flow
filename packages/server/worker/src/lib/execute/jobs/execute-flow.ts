@@ -87,7 +87,12 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
 
         const { data: provisioned, error: provisionError } = await tryCatch(() => ctx.timings.measure({ phase: 'provision', fn: () => provisionFlowPieces({ flowVersion, platformId: data.platformId, flowId: data.flowId, projectId: data.projectId, log: ctx.log, apiClient: ctx.apiClient }) }))
         if (provisionError instanceof UnresolvableDependencyError) {
-            await reportFlowStatus({ ctx, data, status: FlowRunStatus.FAILED, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
+            // INTERNAL_ERROR, because that is the status the run view shows `internalError` for, and
+            // the install output is what tells the user which dependency to fix. Reported with a plain
+            // reportFlowStatus, not best-effort: nothing has run yet, so if the report throws, the
+            // quick retry that follows costs only a wasted install, while a swallowed report would
+            // leave the run QUEUED for good.
+            await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
             throw new ClassifiedJobFailure({ original: provisionError, retryable: false })
         }
         if (provisionError) {
@@ -161,7 +166,7 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             return { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK, logs: result.logs }
         }
         catch (e) {
-            await ctx.sandboxManager.invalidate(ctx.log)
+            await tearDownSandbox({ ctx, teardown: 'invalidate' })
             if (e instanceof QadamFlowError) {
                 if (e.error.code === ErrorCode.SANDBOX_EXECUTION_TIMEOUT) {
                     await reportBestEffort({ ctx, data, status: FlowRunStatus.TIMEOUT, logsFileId: data.logsFileId })
@@ -183,7 +188,7 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             throw new ClassifiedJobFailure({ original: e, retryable: false })
         }
         finally {
-            await ctx.sandboxManager.release(ctx.log)
+            await tearDownSandbox({ ctx, teardown: 'release' })
         }
     },
 }
@@ -253,6 +258,15 @@ async function failBeforeExecution({ ctx, data, error }: FailBeforeExecutionPara
  * steps, an unclassified failure is one an `EXECUTE_FLOW` job retries from the trigger, and a throw
  * inside the `try` would reach its `catch` and report the run a second time as INTERNAL_ERROR (#584).
  */
+// A throw while tearing the sandbox down must not replace the verdict on the attempt: from a
+// `finally`, it would even turn a run that succeeded into a failure retried from the trigger (#584).
+async function tearDownSandbox({ ctx, teardown }: TearDownSandboxParams): Promise<void> {
+    const { error } = await tryCatch(() => ctx.sandboxManager[teardown](ctx.log))
+    if (!isNil(error)) {
+        ctx.log.error({ teardown, error: inspect(error) }, 'Failed to tear down the sandbox; the verdict on the attempt stands')
+    }
+}
+
 async function reportBestEffort(params: ReportFlowStatusParams): Promise<void> {
     const { error } = await tryCatch(() => reportFlowStatus(params))
     if (!isNil(error)) {
@@ -351,6 +365,11 @@ type FailBeforeExecutionParams = {
     ctx: JobContext
     data: ExecuteFlowJobData
     error: unknown
+}
+
+type TearDownSandboxParams = {
+    ctx: JobContext
+    teardown: 'invalidate' | 'release'
 }
 
 type RespondToSyncCallerParams = {

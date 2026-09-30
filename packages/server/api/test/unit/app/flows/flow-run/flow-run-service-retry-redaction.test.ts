@@ -88,6 +88,7 @@ vi.mock('../../../../../src/app/workers/job-queue/job-queue', () => ({
     jobQueue: vi.fn(() => ({
         add: mockJobQueueAdd,
         removeOneTimeJob: vi.fn(),
+        removeFinishedOneTimeJob: vi.fn(),
     })),
     JobType: { ONE_TIME: 'ONE_TIME' },
 }))

@@ -398,7 +398,7 @@ describe('executeFlowJob', () => {
             expect(unavailablePin.retryable).toBe(false)
         })
 
-        it('never retries a code step whose dependency cannot be resolved, and fails the run', async () => {
+        it('never retries a code step whose dependency cannot be resolved, and shows the install output', async () => {
             mockProvisionFlowPieces.mockRejectedValueOnce(new UnresolvableDependencyError({ original: new Error('Exit 1\nstderr: error: No version matching "99.0.0" found for specifier "lodash"') }))
             const ctx = makeMockContext()
             ctx.canRetryBeforeExecution = true
@@ -406,7 +406,7 @@ describe('executeFlowJob', () => {
             const failure = await executeExpectingFailure({ ctx, data: makeResumeJobData({ executionType: ExecutionType.BEGIN }) })
 
             expect(failure.retryable).toBe(false)
-            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(expect.objectContaining({ status: FlowRunStatus.FAILED, internalError: expect.objectContaining({ message: expect.stringContaining('No version matching') }) }))
+            expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledWith(expect.objectContaining({ status: FlowRunStatus.INTERNAL_ERROR, internalError: expect.objectContaining({ message: expect.stringContaining('No version matching') }) }))
             expect(ctx.sandboxManager.acquire).not.toHaveBeenCalled()
         })
 
@@ -430,6 +430,26 @@ describe('executeFlowJob', () => {
 
             expect(result).toMatchObject({ status: EngineResponseStatus.INTERNAL_ERROR, retryable: false })
             expect(ctx.apiClient.uploadRunLog).toHaveBeenCalledTimes(1)
+        })
+
+        it('keeps a run that succeeded a success when releasing the sandbox throws', async () => {
+            const ctx = makeMockContext()
+            ctx.sandboxManager.release.mockRejectedValueOnce(new Error('No PID found for child process'))
+
+            const result = await executeFlowJob.execute(ctx, makeResumeJobData({ executionType: ExecutionType.BEGIN }))
+
+            expect(result).toMatchObject({ status: EngineResponseStatus.OK })
+        })
+
+        it('keeps the verdict after execution when dropping the sandbox throws', async () => {
+            const ctx = makeMockContext()
+            ctx.mockSandbox.execute.mockRejectedValueOnce(new Error('Worker exited with code 1'))
+            ctx.sandboxManager.invalidate.mockRejectedValueOnce(new Error('No PID found for child process'))
+
+            const failure = await executeExpectingFailure({ ctx, data: makeResumeJobData({ executionType: ExecutionType.BEGIN }) })
+
+            expect(failure.retryable).toBe(false)
+            expect(failure.message).toBe('Worker exited with code 1')
         })
 
         it('keeps a timeout a timeout when reporting it fails', async () => {

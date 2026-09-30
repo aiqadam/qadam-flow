@@ -86,6 +86,21 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
         }, '[jobQueue#removeOneTimeJob] job not found in queue')
     },
 
+    async removeFinishedOneTimeJob({ jobId, platformId }: { jobId: ApId, platformId: string | null }): Promise<void> {
+        const queueName = await getQueueName(platformId, log)
+        const queue = await ensureQueueExists({ log, queueName })
+        const job = await queue.getJob(jobId)
+        if (isNil(job)) {
+            return
+        }
+        const state = await job.getState()
+        if (state !== 'failed' && state !== 'completed') {
+            return
+        }
+        await job.remove()
+        log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] removed a finished job so its id can be enqueued again')
+    },
+
     async getOrCreateQueue({ queueName }: { queueName: string }): Promise<Queue> {
         return ensureQueueExists({ log, queueName })
     },

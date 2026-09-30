@@ -245,6 +245,10 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const triggerFailed = triggerStep?.status === StepOutputStatus.FAILED
                 assertTriggerPayloadRetryable({ oldFlowRun, ranOnVersion: flowVersion, triggerStep })
 
+                const platformId = await projectService(log).getPlatformId(oldFlowRun.projectId)
+                // The retry is enqueued under the run's id, and BullMQ ignores an add under an id it
+                // still holds: a run whose job it kept after failing it would sit QUEUED forever (#584).
+                await jobQueue(log).removeFinishedOneTimeJob({ jobId: oldFlowRun.id, platformId })
                 await flowRunRepo().update({
                     id: oldFlowRun.id,
                     projectId: oldFlowRun.projectId,
@@ -254,7 +258,6 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     finishTime: null,
                 })
                 const updatedFlowRun = await findFlowRunOrThrow(oldFlowRun.id)
-                const platformId = await projectService(log).getPlatformId(updatedFlowRun.projectId)
                 await flowRunSideEffects(log).onRetry(updatedFlowRun)
                 if (triggerFailed) {
                     return addToQueue({

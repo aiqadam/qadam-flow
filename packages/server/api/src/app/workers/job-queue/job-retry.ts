@@ -3,9 +3,11 @@ import { BackoffOptions, Job, JobsOptions, UnrecoverableError } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
 
 const EXECUTE_FLOW_ATTEMPTS = 4
+// Also the fingerprint `hasQuickBackoff` reads off a persisted job, so changing it makes every
+// job still queued with the old value look like one without the quick backoff.
 const EXECUTE_FLOW_BASE_DELAY_MS = 2_000
 const EXECUTE_FLOW_JITTER = 0.5
-const PREVIOUS_ERROR_MAX_LENGTH = 300
+const FAILED_REASON_MAX_LENGTH = 300
 
 /**
  * How a failed attempt is retried (#584). Only built-in BullMQ backoffs are persisted on a job, so
@@ -48,7 +50,7 @@ export const jobRetry = {
             jobType,
             failedAttempt: job.attemptsMade,
             retryable,
-            previousError: firstLine(job.failedReason),
+            failedReason: firstLine(job.failedReason),
         }
         if (retryable === false) {
             log.warn(context, '[jobRetry] Attempt failed after the engine received it, or with a final outcome; not retrying')
@@ -71,7 +73,7 @@ function firstLine(message: string | undefined): string | undefined {
     if (isNil(message)) {
         return undefined
     }
-    return message.split('\n', 1)[0].slice(0, PREVIOUS_ERROR_MAX_LENGTH)
+    return message.split('\n', 1)[0].slice(0, FAILED_REASON_MAX_LENGTH)
 }
 
 type ToFailureParams = {

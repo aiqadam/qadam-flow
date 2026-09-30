@@ -100,7 +100,7 @@ export const ConsumeJobResponse = z.object({
     // The worker's verdict on a failed attempt (#584). `true`: it failed before the engine received
     // the operation, so nothing ran and a retry is safe. `false`: never retry, because the engine
     // may already have executed steps, or the outcome is final and already reported. Absent: the
-    // handler does not classify its failures, and the broker keeps its one delayed retry.
+    // failure was not classified, and the job's own backoff applies.
     retryable: z.boolean().optional(),
 })
 
