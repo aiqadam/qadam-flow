@@ -170,12 +170,12 @@ export const fileService = (log: FastifyBaseLogger) => ({
         }
     },
     async exists(params: GetOneParams): Promise<boolean> {
-        const file = await fileRepo().findOneBy({
+        // existsBy, not findOneBy: the row carries a DB-stored file's whole `data` column.
+        return fileRepo().existsBy({
             projectId: params.projectId,
             id: params.fileId,
             type: normalizeTypeFilter(params.type),
         })
-        return !isNil(file)
     },
     async getFile({ projectId, fileId, type }: GetOneParams): Promise<File | null> {
         const file = await fileRepo().findOneBy({

@@ -1,4 +1,5 @@
 import {
+  FlowRunProgressEvent,
   FlowRunStatus,
   Permission,
   isNil,
@@ -43,9 +44,18 @@ const useListenToExistingRun = () => {
     state.setRun,
     state.flowVersion,
   ]);
+  const socket = useSocket();
   const location = useLocation();
   const inRunsPage = location.pathname?.includes('/runs');
-  useQuery({
+  const isFollowingRun =
+    !isNil(run) &&
+    run.environment === RunEnvironment.PRODUCTION &&
+    !isFlowRunStateTerminal({
+      status: run.status,
+      ignoreInternalError: false,
+    }) &&
+    inRunsPage;
+  const { refetch } = useQuery({
     queryKey: ['refetched-run', run?.id],
     queryFn: async () => {
       if (isNil(run)) {
@@ -54,16 +64,26 @@ const useListenToExistingRun = () => {
       const flowRun = await flowRunsApi.getPopulated(run.id);
       setRun(flowRun, flowVersion);
     },
-    enabled:
-      !isNil(run) &&
-      run.environment === RunEnvironment.PRODUCTION &&
-      !isFlowRunStateTerminal({
-        status: run.status,
-        ignoreInternalError: false,
-      }) &&
-      inRunsPage,
+    enabled: isFollowingRun,
+    // Fallback only: the server pushes FLOW_RUN_PROGRESS on every snapshot of the run's log.
     refetchInterval: 5000,
   });
+  const runId = run?.id;
+  useEffect(() => {
+    if (!isFollowingRun || isNil(runId)) {
+      return;
+    }
+    const handleFlowRunProgress = (event: FlowRunProgressEvent) => {
+      if (event.runId === runId) {
+        // Snapshots arrive every ~2 s: join a request already in flight rather than cancel it.
+        void refetch({ cancelRefetch: false });
+      }
+    };
+    socket.on(WebsocketClientEvent.FLOW_RUN_PROGRESS, handleFlowRunProgress);
+    return () => {
+      socket.off(WebsocketClientEvent.FLOW_RUN_PROGRESS, handleFlowRunProgress);
+    };
+  }, [socket, runId, isFollowingRun, refetch]);
 };
 
 const useShowBuilderIsSavingWarningBeforeLeaving = () => {

@@ -4,6 +4,7 @@ import {
     ExecutioOutputFile,
     FileCompression,
     FileType,
+    FlowRunProgressEvent,
     isFlowRunStateTerminal,
     isNil,
     logSerializer,
@@ -130,6 +131,11 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
                 stepNameToTest: input.stepNameToTest,
             }
             await runsMetadataQueue(log).add(logData)
+            // Only the run id: the room is the whole project, and the run view refetches through
+            // the authenticated flow-runs API anyway. The view's poll stays as the fallback (#580).
+            websocketService.to(input.projectId).emit(WebsocketClientEvent.FLOW_RUN_PROGRESS, {
+                runId: input.runId,
+            } satisfies FlowRunProgressEvent)
 
             if (input.stepResponse && input.streamStepProgress === StreamStepProgress.WEBSOCKET) {
                 const stepData = { ...input.stepResponse, projectId: input.projectId }
@@ -299,14 +305,25 @@ export function createHandlers(log: FastifyBaseLogger, workerGroupId?: string): 
 
 async function ensureLogsFileExists({ log, projectId, logsFileId, internalError }: EnsureLogsFileParams): Promise<void> {
     const { error } = await tryCatch(async () => {
-        const existing = await fileService(log).getDataOrUndefined({
-            projectId,
-            fileId: logsFileId,
-            type: FileType.FLOW_RUN_LOG,
-        })
-        if (!isNil(existing) && isNil(internalError)) {
-            return
+        // Runs on every engine snapshot: with nothing to merge, the row alone answers the question,
+        // without downloading and decompressing the log the engine has just uploaded (#580).
+        if (isNil(internalError)) {
+            const exists = await fileService(log).exists({
+                projectId,
+                fileId: logsFileId,
+                type: FileType.FLOW_RUN_LOG,
+            })
+            if (exists) {
+                return
+            }
         }
+        const existing = isNil(internalError)
+            ? undefined
+            : await fileService(log).getDataOrUndefined({
+                projectId,
+                fileId: logsFileId,
+                type: FileType.FLOW_RUN_LOG,
+            })
         const outputFile: ExecutioOutputFile = !isNil(existing)
             ? JSON.parse(existing.data.toString('utf-8'))
             : { executionState: { steps: {}, tags: [] } }

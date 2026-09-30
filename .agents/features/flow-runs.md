@@ -76,7 +76,8 @@ Flow Runs records every execution of a flow, tracking its full lifecycle from qu
 - Stored as File entities with type FLOW_RUN_LOG
 - Compressed with zstd before upload
 - Worker uploads via JWT-signed URLs (7-day expiry)
-- State backed up every 15s during execution for crash recovery
+- State backed up during execution for crash recovery (#580): `flowRunProgressReporter`'s loop uploads only when a `sendUpdate` has marked the snapshot dirty since the last successful upload, every 2 s while the serialized log is ≤ 1 MB and every 15 s above that. Explicit `backup()` calls (BEGIN, final state) always upload. A production run's live view sees steps only through these snapshots
+- `workerRpc.uploadRunLog` checks the log file's row (`fileService.exists`, `existsBy` — no `data` read) unless it has an `internalError` to merge, then emits `WebsocketClientEvent.FLOW_RUN_PROGRESS` `{ runId }` to the project room
 - **Per-step redaction (#389 / #451 / #505):** an action's `logInput` / `logOutput: false` and a
   trigger's `logOutput: false` replace that step's persisted input/output with `**REDACTED**`
   (`packages/server/engine/src/lib/helper/log-redaction.ts`); the live value still flows to the
@@ -109,7 +110,7 @@ Flow Runs records every execution of a flow, tracking its full lifecycle from qu
 
 ## Frontend Integration
 
-`flowRunsApi.subscribeToTestFlowOrManualRun()` uses Socket.IO to start a test run and stream progress updates via `WebsocketClientEvent.UPDATE_RUN_PROGRESS`. The builder's run-list sidebar polls for recent runs (infinite query, auto-refetching every 15s while runs are still executing) and deduplicates entries by `id` when flattening pages — a safeguard against page overlap during live refetch. The run-details panel renders step-by-step input/output from the populated run's execution logs. `flowRunMutations.useRetryRun` handles the `FLOW_RUN_RETRY_OUTSIDE_RETENTION` error code with a user-facing toast showing the retention window.
+`flowRunsApi.subscribeToTestFlowOrManualRun()` uses Socket.IO to start a test run and stream progress updates via `WebsocketClientEvent.UPDATE_RUN_PROGRESS`. The builder's run-list sidebar polls for recent runs (infinite query, auto-refetching every 15s while runs are still executing) and deduplicates entries by `id` when flattening pages — a safeguard against page overlap during live refetch. The run-details panel renders step-by-step input/output from the populated run's execution logs. While a PRODUCTION run is open from the Runs page and not terminal, `useListenToExistingRun` refetches it on `FLOW_RUN_PROGRESS` for that run id, with a 5 s poll as the fallback. `flowRunMutations.useRetryRun` handles the `FLOW_RUN_RETRY_OUTSIDE_RETENTION` error code with a user-facing toast showing the retention window.
 
 ### Runs Table Filters
 

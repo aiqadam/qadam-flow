@@ -117,6 +117,95 @@ describe('flow-run-progress-reporter backup ordering', () => {
     })
 })
 
+// #580: a production run reaches the live run view only through these snapshots.
+describe('flow-run-progress-reporter periodic flush', () => {
+    beforeEach(() => {
+        uploadRunLogMock.mockClear()
+        updateRunProgressMock.mockClear()
+    })
+
+    afterEach(async () => {
+        await flowRunProgressReporter.shutdown()
+    })
+
+    it('uploads a periodic snapshot only after something changed', async () => {
+        flowRunProgressReporter.init()
+
+        await flowRunProgressReporter.flushIfDirty()
+        expect(uploadRunLogMock).not.toHaveBeenCalled()
+
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        await flowRunProgressReporter.flushIfDirty()
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(1)
+
+        // A long-waiting step sends no updates: the loop must not re-upload the same log.
+        await flowRunProgressReporter.flushIfDirty()
+        await flowRunProgressReporter.flushIfDirty()
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(1)
+
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        await flowRunProgressReporter.flushIfDirty()
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('an explicit backup uploads even when nothing changed since the last flush', async () => {
+        flowRunProgressReporter.init()
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.SUCCEEDED }))
+        await flowRunProgressReporter.flushIfDirty()
+        await flowRunProgressReporter.backup()
+
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('an explicit backup clears the dirty flag, so the loop does not upload the same state again', async () => {
+        flowRunProgressReporter.init()
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        await flowRunProgressReporter.backup()
+        await flowRunProgressReporter.flushIfDirty()
+
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the snapshot dirty when the upload fails, so the next tick retries it', async () => {
+        flowRunProgressReporter.init()
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        uploadRunLogMock.mockRejectedValueOnce(new Error('api down'))
+
+        await expect(flowRunProgressReporter.flushIfDirty()).rejects.toThrow()
+        await flowRunProgressReporter.flushIfDirty()
+
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('flushes a small log every 2 s', async () => {
+        flowRunProgressReporter.init()
+        expect(flowRunProgressReporter.nextFlushDelayMs()).toBe(2000)
+
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        await flowRunProgressReporter.flushIfDirty()
+
+        expect(flowRunProgressReporter.nextFlushDelayMs()).toBe(2000)
+    })
+
+    it('keeps the 15 s cadence once the serialized log is above 1 MB, and resets on shutdown', async () => {
+        const { engineConstants } = buildUpdateParams({ status: FlowRunStatus.RUNNING })
+        const flowExecutorContext = await FlowExecutorContext.empty({ slicingEnabled: false }).upsertStep('big_step', GenericStepOutput.create({
+            type: FlowActionType.CODE,
+            status: StepOutputStatus.SUCCEEDED,
+            input: {},
+            output: { big: 'x'.repeat(1_100_000) },
+        }))
+
+        flowRunProgressReporter.init()
+        await flowRunProgressReporter.sendUpdate({ engineConstants, flowExecutorContext })
+        await flowRunProgressReporter.flushIfDirty()
+        expect(flowRunProgressReporter.nextFlushDelayMs()).toBe(15000)
+
+        await flowRunProgressReporter.shutdown()
+        expect(flowRunProgressReporter.nextFlushDelayMs()).toBe(2000)
+    })
+})
+
 describe('flow-run-progress-reporter slicing in single-step test mode', () => {
     beforeEach(() => {
         uploadRunLogMock.mockClear()
