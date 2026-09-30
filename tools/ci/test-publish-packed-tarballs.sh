@@ -257,6 +257,36 @@ check "and it says how to resume, since the pack step skips what is already publ
 check "and it says why retrying would not help" "yes" \
     "$(grep -qF 'cumulative daily publish cap' "$WORK_ROOT/out.log" && echo yes || echo no)"
 
+# --- NPM_PUBLISH_INTERVAL_SECONDS: a pause between packages, never before the first -------
+# The experiment this knob exists for is "slow from the first PUT", so a pause before the first
+# package would only waste time and one after the last would delay a green run for nothing.
+dir="$(new_case paced aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz aiqadam-qadams-common-0.14.1.tgz)"
+NPM_PUBLISH_INTERVAL_SECONDS=1 run_case "$dir"
+check "a paced run still publishes the whole manifest" 0 $?
+check "and pauses once between each pair of packages, not before the first or after the last" "2" \
+    "$(grep -c '^publish-packed-tarballs: waiting 1s before publishing ' "$WORK_ROOT/out.log")"
+check "and the first package is published before any pause" "no" \
+    "$(grep -qF 'waiting 1s before publishing aiqadam-shared-0.135.0.tgz' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+# A lost-response retry has its own backoff; the interval is per package, not per attempt. The
+# lost response is on the SECOND package on purpose: on the first, `processed` is still 0, so a
+# pause moved inside the attempt loop would be skipped there anyway and this case would pass.
+dir="$(new_case paced-retry aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+FAKE_PUBLISH_SEQUENCE=$'\n5xx' NPM_PUBLISH_INTERVAL_SECONDS=1 run_case "$dir"
+check "a paced run survives a lost response" 0 $?
+check "and the retry does not add an interval pause of its own" "1" \
+    "$(grep -c '^publish-packed-tarballs: waiting 1s before publishing ' "$WORK_ROOT/out.log")"
+
+dir="$(new_case unpaced-by-default aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
+run_case "$dir"
+check "with the interval unset nothing pauses" "no" \
+    "$(grep -qF 'before publishing' "$WORK_ROOT/out.log" && echo yes || echo no)"
+
+dir="$(new_case bad-interval aiqadam-shared-0.135.0.tgz)"
+NPM_PUBLISH_INTERVAL_SECONDS=1m run_case "$dir"
+check "an interval that is not a whole number of seconds is refused" 1 $?
+check "and nothing is published" "0" "$(wc -l < "$WORK_ROOT/publish.log" | tr -d ' ')"
+
 # The other retryable class is a genuinely different failure: the registry may never have seen
 # the request at all, which is not a cap on anything, so NPM_PUBLISH_MAX_ATTEMPTS and the backoff
 # still apply here — and still eventually give up. This is the case rate-limited-forever covered
