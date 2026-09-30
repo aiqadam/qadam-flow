@@ -19,11 +19,13 @@ import {
     FlowStatus,
     FlowTriggerType,
     FlowVersionState,
+    isNil,
     PackageType,
     QadamType,
     RunEnvironment,
     StepOutputType,
     StreamStepProgress,
+    tryCatch,
 } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { worker } from '../../../../../../worker/src/lib/worker'
@@ -411,6 +413,18 @@ async function pollFlowRunToCompletion(flowRunId: string, projectId: string) {
     }
 
     return result
+}
+
+async function pollStatusWhenStepAppears({ flowRunId, projectId, stepName }: PollStatusWhenStepAppearsParams): Promise<FlowRunStatus | undefined> {
+    const start = Date.now()
+    while (Date.now() - start < 30_000) {
+        const { data: run } = await tryCatch(() => flowRunService(app.log).getOnePopulatedOrThrow({ id: flowRunId, projectId }))
+        if (!isNil(run?.steps?.[stepName])) {
+            return run.status
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    return undefined
 }
 
 describe('Execute Flow E2E', () => {
@@ -1202,4 +1216,106 @@ describe('Execute Flow E2E', () => {
         expect(response.statusCode).toBe(200)
         expect(response.json()).toEqual(expect.objectContaining({ echo: 'hello world' }))
     }, 180_000)
+
+    // #580: a production run reaches the server only through the engine's snapshots. They used to
+    // come every 15 s, so a run shorter than that showed no step at all until it ended.
+    it('shows a finished step of a production run while a later step is still running', async () => {
+        const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+        const webhookPiece = createMockQadamMetadata({
+            name: '@aiqadam/qadam-webhook',
+            version: '0.1.34',
+            platformId: undefined,
+            packageType: PackageType.REGISTRY,
+            qadamType: QadamType.OFFICIAL,
+        })
+        await databaseConnection().getRepository('qadam_metadata').save([webhookPiece])
+
+        const slowAction = {
+            type: FlowActionType.CODE as const,
+            name: 'step_2',
+            displayName: 'Slow',
+            valid: true,
+            settings: {
+                sourceCode: {
+                    code: `export const code = async () => {
+                        await new Promise((resolve) => setTimeout(resolve, 8000));
+                        return { slow: true };
+                    }`,
+                    packageJson: '{}',
+                },
+                input: {},
+                errorHandlingOptions: {},
+            },
+        }
+        const fastAction = {
+            type: FlowActionType.CODE as const,
+            name: 'step_1',
+            displayName: 'Fast',
+            valid: true,
+            settings: {
+                sourceCode: {
+                    code: `export const code = async () => {
+                        return { fast: true };
+                    }`,
+                    packageJson: '{}',
+                },
+                input: {},
+                errorHandlingOptions: {},
+            },
+            nextAction: slowAction,
+        }
+        const mockFlow = createMockFlow({ projectId: mockProject.id })
+        await db.save('flow', mockFlow)
+        const mockFlowVersion = createMockFlowVersion({
+            flowId: mockFlow.id,
+            state: FlowVersionState.LOCKED,
+            trigger: {
+                type: FlowTriggerType.PIECE,
+                name: 'trigger',
+                displayName: 'Catch Webhook',
+                valid: true,
+                lastUpdatedDate: new Date().toISOString(),
+                settings: {
+                    qadamName: '@aiqadam/qadam-webhook',
+                    qadamVersion: '0.1.34',
+                    triggerName: 'catch_webhook',
+                    input: { authType: 'none' },
+                    propertySettings: {},
+                },
+                nextAction: fastAction,
+            },
+        })
+        await db.save('flow_version', mockFlowVersion)
+
+        const flowRun = await flowRunService(app.log).start({
+            flowId: mockFlow.id,
+            payload: { body: {} },
+            platformId: mockPlatform.id,
+            executionType: ExecutionType.BEGIN,
+            environment: RunEnvironment.PRODUCTION,
+            streamStepProgress: StreamStepProgress.NONE,
+            executeTrigger: false,
+            flowVersionId: mockFlowVersion.id,
+            projectId: mockProject.id,
+            workerHandlerId: undefined,
+            httpRequestId: undefined,
+            failParentOnFailure: undefined,
+        })
+
+        const statusWhenFastStepSeen = await pollStatusWhenStepAppears({
+            flowRunId: flowRun.id,
+            projectId: mockProject.id,
+            stepName: 'step_1',
+        })
+        expect(statusWhenFastStepSeen).toBe(FlowRunStatus.RUNNING)
+
+        const result = await pollFlowRunToCompletion(flowRun.id, mockProject.id)
+        expect(result.status).toBe(FlowRunStatus.SUCCEEDED)
+    }, 60_000)
 })
+
+type PollStatusWhenStepAppearsParams = {
+    flowRunId: string
+    projectId: string
+    stepName: string
+}

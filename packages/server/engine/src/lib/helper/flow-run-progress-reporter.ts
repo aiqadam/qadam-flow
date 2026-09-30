@@ -15,8 +15,17 @@ import { workerSocket } from '../worker-socket'
 const zstdCompress = promisify(zstdCompressCallback)
 const stateLock = new Mutex()
 
-const SNAPSHOT_FLUSH_INTERVAL_MS = 15000
+// A production run reaches the server only through these snapshots, so the interval is how far the
+// live run view trails the engine (#580). Each flush re-uploads the whole log and enqueues a
+// runs-metadata job, so a log past the threshold keeps the old 15 s cadence.
+const SMALL_LOG_FLUSH_INTERVAL_MS = 2000
+const LARGE_LOG_FLUSH_INTERVAL_MS = 15000
+const LARGE_LOG_THRESHOLD_BYTES = 1024 * 1024
 let latestUpdateParams: UpdateStepProgressParams | null = null
+// Set by every accepted sendUpdate, cleared by a successful upload. The periodic loop uploads only
+// while it is set, so a step that waits for minutes costs nothing until something changes.
+let snapshotDirty = false
+let lastSerializedBytes = 0
 let savedStartTime: string | null = null
 let flushController: AbortController | null = null
 let flushLoopPromise: Promise<void> | null = null
@@ -53,6 +62,7 @@ export const flowRunProgressReporter = {
                 ? flowExecutorContext.setVerdict({ status: FlowRunStatus.RUNNING })
                 : flowExecutorContext
             latestUpdateParams = { ...params, flowExecutorContext: reportedContext }
+            snapshotDirty = true
             if (!stepNameToUpdate || !engineConstants.isTestFlow) { // live runs are updated by backup job
                 return
             }
@@ -108,68 +118,18 @@ export const flowRunProgressReporter = {
         }
     },
     backup: async (): Promise<void> => {
-        await stateLock.runExclusive(async () => {
-            const params = latestUpdateParams
-            if (isNil(params)) {
-                return
-            }
-            const { flowExecutorContext, engineConstants } = params
-            if (engineConstants.flowRunId === DEFAULT_MCP_DATA.flowRunId) {
-                return
-            }
-            const status = flowExecutorContext.verdict.status
-            const isTerminal = isFlowRunStateTerminal({ status, ignoreInternalError: false })
-
-            const serialized = await logSerializer.serialize({
-                executionState: {
-                    steps: flowExecutorContext.stepsForLog(),
-                    tags: Array.from(flowExecutorContext.tags),
-                },
-            })
-            const executionState = await zstdCompress(serialized)
-
-            const logsFileId = engineConstants.logsFileId
-            if (isNil(logsFileId)) {
-                throw new EngineGenericError('LogsFileIdNotSetError', 'Logs file id is not set')
-            }
-            await engineFileApi.upload({
-                engineToken: engineConstants.engineToken,
-                apiUrl: engineConstants.internalApiUrl,
-                fileId: logsFileId,
-                type: FileType.FLOW_RUN_LOG,
-                compression: FileCompression.ZSTD,
-                data: executionState,
-            })
-
-            const stepResponse = extractStepResponse({
-                flowExecutorContext,
-                runId: engineConstants.flowRunId,
-                stepName: engineConstants.stepNameToTest,
-            })
-
-            const request: UploadRunLogsRequest = {
-                runId: engineConstants.flowRunId,
-                projectId: engineConstants.projectId,
-                status,
-                streamStepProgress: engineConstants.streamStepProgress,
-                logsFileId: engineConstants.logsFileId,
-                failedStep: 'failedStep' in flowExecutorContext.verdict ? flowExecutorContext.verdict.failedStep : undefined,
-                stepNameToTest: engineConstants.stepNameToTest,
-                stepResponse,
-                startTime: savedStartTime ?? undefined,
-                finishTime: isTerminal ? dayjs().toISOString() : undefined,
-                tags: Array.from(flowExecutorContext.tags),
-                stepsCount: flowExecutorContext.stepsCount,
-            }
-            await sendLogsUpdate(request)
-        })
+        await flushSnapshot({ onlyIfDirty: false })
+    },
+    flushIfDirty: async (): Promise<void> => {
+        await flushSnapshot({ onlyIfDirty: true })
+    },
+    nextFlushDelayMs: (): number => {
+        return lastSerializedBytes > LARGE_LOG_THRESHOLD_BYTES ? LARGE_LOG_FLUSH_INTERVAL_MS : SMALL_LOG_FLUSH_INTERVAL_MS
     },
     shutdown: async () => {
-        if (!flushController) {
-            return
+        if (flushController) {
+            flushController.abort()
         }
-
-        flushController.abort()
 
         if (flushLoopPromise) {
             await flushLoopPromise
@@ -179,21 +139,86 @@ export const flowRunProgressReporter = {
         flushLoopPromise = null
         latestUpdateParams = null
         savedStartTime = null
+        snapshotDirty = false
+        lastSerializedBytes = 0
     },
 }
 
 process.on('SIGTERM', () => void flowRunProgressReporter.shutdown())
 process.on('SIGINT', () => void flowRunProgressReporter.shutdown())
 
+async function flushSnapshot({ onlyIfDirty }: FlushSnapshotParams): Promise<void> {
+    await stateLock.runExclusive(async () => {
+        const params = latestUpdateParams
+        if (isNil(params)) {
+            return
+        }
+        if (onlyIfDirty && !snapshotDirty) {
+            return
+        }
+        const { flowExecutorContext, engineConstants } = params
+        if (engineConstants.flowRunId === DEFAULT_MCP_DATA.flowRunId) {
+            return
+        }
+        const status = flowExecutorContext.verdict.status
+        const isTerminal = isFlowRunStateTerminal({ status, ignoreInternalError: false })
+
+        const serialized = await logSerializer.serialize({
+            executionState: {
+                steps: flowExecutorContext.stepsForLog(),
+                tags: Array.from(flowExecutorContext.tags),
+            },
+        })
+        const executionState = await zstdCompress(serialized)
+
+        const logsFileId = engineConstants.logsFileId
+        if (isNil(logsFileId)) {
+            throw new EngineGenericError('LogsFileIdNotSetError', 'Logs file id is not set')
+        }
+        await engineFileApi.upload({
+            engineToken: engineConstants.engineToken,
+            apiUrl: engineConstants.internalApiUrl,
+            fileId: logsFileId,
+            type: FileType.FLOW_RUN_LOG,
+            compression: FileCompression.ZSTD,
+            data: executionState,
+        })
+
+        const stepResponse = extractStepResponse({
+            flowExecutorContext,
+            runId: engineConstants.flowRunId,
+            stepName: engineConstants.stepNameToTest,
+        })
+
+        const request: UploadRunLogsRequest = {
+            runId: engineConstants.flowRunId,
+            projectId: engineConstants.projectId,
+            status,
+            streamStepProgress: engineConstants.streamStepProgress,
+            logsFileId: engineConstants.logsFileId,
+            failedStep: 'failedStep' in flowExecutorContext.verdict ? flowExecutorContext.verdict.failedStep : undefined,
+            stepNameToTest: engineConstants.stepNameToTest,
+            stepResponse,
+            startTime: savedStartTime ?? undefined,
+            finishTime: isTerminal ? dayjs().toISOString() : undefined,
+            tags: Array.from(flowExecutorContext.tags),
+            stepsCount: flowExecutorContext.stepsCount,
+        }
+        await sendLogsUpdate(request)
+        snapshotDirty = false
+        lastSerializedBytes = serialized.length
+    })
+}
+
 async function runFlushLoop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
-        const { error: flushError } = await tryCatch(() => flowRunProgressReporter.backup())
+        const { error: flushError } = await tryCatch(() => flowRunProgressReporter.flushIfDirty())
         if (flushError) {
             console.error('[Progress] Snapshot flush failed', flushError)
         }
 
         // sleep aborted → loop will exit naturally on the next signal check
-        await tryCatch(() => setTimeout(SNAPSHOT_FLUSH_INTERVAL_MS, undefined, { signal }))
+        await tryCatch(() => setTimeout(flowRunProgressReporter.nextFlushDelayMs(), undefined, { signal }))
     }
 }
 
@@ -247,6 +272,10 @@ type CreateOutputContextParams = {
     flowExecutorContext: FlowExecutorContext
     stepName: string
     stepOutput: GenericStepOutput<FlowActionType.PIECE, unknown>
+}
+
+type FlushSnapshotParams = {
+    onlyIfDirty: boolean
 }
 
 type ExtractStepResponse = {

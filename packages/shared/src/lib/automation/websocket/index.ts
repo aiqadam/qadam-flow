@@ -76,6 +76,12 @@ export const PresenceUpdatedEvent = z.object({
     users: z.array(PresenceUser),
 })
 
+// A run's row was updated from a new engine snapshot. Carries the id only: it goes to the whole
+// project room, and the listener refetches the run through the authenticated API.
+export const FlowRunProgressEvent = z.object({
+    runId: z.string(),
+})
+
 export type BadgeAwarded = z.infer<typeof BadgeAwarded>
 export type LockResourceRequest = z.infer<typeof LockResourceRequest>
 export type LockResourceResponse = z.infer<typeof LockResourceResponse>
@@ -85,3 +91,4 @@ export type EmitTestStepProgressRequest = StepRunResponse & { projectId: string 
 export type PresenceRequest = z.infer<typeof PresenceRequest>
 export type PresenceUser = z.infer<typeof PresenceUser>
 export type PresenceUpdatedEvent = z.infer<typeof PresenceUpdatedEvent>
+export type FlowRunProgressEvent = z.infer<typeof FlowRunProgressEvent>

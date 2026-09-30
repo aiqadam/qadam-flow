@@ -3,8 +3,9 @@
  * update naming another project must neither rewrite an existing run (its projectId included) nor
  * create a row pointing at a flow that project does not own.
  */
-import { apId, FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
+import { apId, FlowRunStatus, FlowVersionState, RunEnvironment, WebsocketClientEvent } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
+import { websocketService } from '../../../../../src/app/core/websockets.service'
 import { distributedStore } from '../../../../../src/app/database/redis-connections'
 import { runsMetadataQueue } from '../../../../../src/app/flows/flow-run/flow-runs-queue'
 import { redisMetadataKey, RunsMetadataUpsertData } from '../../../../../src/app/workers/job'
@@ -50,6 +51,26 @@ beforeEach(async () => {
     owner = await createTestContext(app)
     other = await createTestContext(app)
 })
+
+afterEach(() => {
+    vi.restoreAllMocks()
+})
+
+// Filtered by run id: a job left over from an earlier test can still emit for its own run.
+function recordRunProgressEvents({ runId }: { runId: string }): RecordedEmit[] {
+    const recorded: RecordedEmit[] = []
+    vi.spyOn(websocketService, 'to').mockImplementation(((room: string) => ({
+        emit: (event: string, payload: { runId?: string }): boolean => {
+            if (event === WebsocketClientEvent.FLOW_RUN_PROGRESS && payload.runId === runId) {
+                // Read at emit time, so an emit sent before the row write would see the old status.
+                const statusAtEmit = db.findOneBy<{ status: string }>('flow_run', { id: runId }).then((run) => run?.status)
+                recorded.push({ room, payload, statusAtEmit })
+            }
+            return true
+        },
+    })) as any)
+    return recorded
+}
 
 async function createOwnerFlow(): Promise<{ flowId: string, flowVersionId: string }> {
     const flow = createMockFlow({ projectId: owner.project.id })
@@ -124,6 +145,82 @@ describe('Runs metadata project scope (#512)', () => {
         })
     })
 
+    // #580: the run view refetches on FLOW_RUN_PROGRESS, so it must name only the run's own project,
+    // and only once the row it will read has been written.
+    it('tells the run\'s own project room once the update is stored', async () => {
+        const { runId } = await createOwnerRun()
+        const recorded = recordRunProgressEvents({ runId })
+
+        await createHandlers(app.log).uploadRunLog({
+            runId,
+            projectId: owner.project.id,
+            status: FlowRunStatus.SUCCEEDED,
+            finishTime: new Date().toISOString(),
+        })
+        await waitForCondition({ fn: async () => recorded.length > 0 })
+
+        expect(recorded.map(({ room, payload }) => ({ room, payload }))).toEqual([{ room: owner.project.id, payload: { runId } }])
+        expect(await recorded[0].statusAtEmit).toBe(FlowRunStatus.SUCCEEDED)
+    })
+
+    // The metadata worker starts before socket.io is registered, so the emit throws during boot. The
+    // snapshot is already consumed by then: a throw ahead of the finish side effects drops them.
+    it('still runs the finish side effects when the progress notification throws', async () => {
+        const { runId } = await createOwnerRun()
+        await db.save('waitpoint', {
+            id: apId(),
+            flowRunId: runId,
+            projectId: owner.project.id,
+            stepName: 'approval',
+            type: 'WEBHOOK',
+            status: 'PENDING',
+            httpRequestId: null,
+            workerHandlerId: null,
+        })
+        vi.spyOn(websocketService, 'to').mockImplementation(() => {
+            throw new TypeError('Cannot read properties of undefined (reading \'to\')')
+        })
+
+        await createHandlers(app.log).uploadRunLog({
+            runId,
+            projectId: owner.project.id,
+            status: FlowRunStatus.SUCCEEDED,
+            finishTime: new Date().toISOString(),
+        })
+
+        await waitForCondition({
+            fn: async () => (await db.findOneBy('waitpoint', { flowRunId: runId })) === null,
+        })
+    })
+
+    it('tells no project room about an update that names another project', async () => {
+        const { runId } = await createOwnerRun()
+        const recorded = recordRunProgressEvents({ runId })
+
+        await createHandlers(app.log).uploadRunLog({
+            runId,
+            projectId: other.project.id,
+            status: FlowRunStatus.SUCCEEDED,
+            finishTime: new Date().toISOString(),
+        })
+        await waitForMetadataConsumed({ runId })
+        // The hash is consumed before the drain emits, so an empty list here alone could be a race.
+        // Updates for one run drain one at a time under its lock: once this one has emitted, the
+        // foreign one is done. Only this one moves the row to SUCCEEDED, so an emit made for the
+        // foreign one, whatever room it names, shows up as a second entry.
+        await createHandlers(app.log).uploadRunLog({
+            runId,
+            projectId: owner.project.id,
+            status: FlowRunStatus.SUCCEEDED,
+            finishTime: new Date().toISOString(),
+        })
+        await waitForCondition({
+            fn: async () => (await Promise.all(recorded.map(({ statusAtEmit }) => statusAtEmit))).includes(FlowRunStatus.SUCCEEDED),
+        })
+
+        expect(recorded.map(({ room, payload }) => ({ room, payload }))).toEqual([{ room: owner.project.id, payload: { runId } }])
+    })
+
     it('does not take over another project\'s run through a pending-run upsert', async () => {
         const { runId } = await createOwnerRun()
         const otherFlow = createMockFlow({ projectId: other.project.id })
@@ -164,6 +261,12 @@ describe('Runs metadata project scope (#512)', () => {
         })
     })
 })
+
+type RecordedEmit = {
+    room: string
+    payload: unknown
+    statusAtEmit: Promise<string | undefined>
+}
 
 type WaitForConditionParams = {
     fn: () => Promise<boolean>

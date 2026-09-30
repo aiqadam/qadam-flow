@@ -18,7 +18,7 @@ What is in it:
 When it is written:
 
 - Once at the start of the run, before the first step executes.
-- Every 15 seconds during execution, from a background loop that snapshots whatever has completed since the last write.
+- During execution, from a background loop, but only when something has changed since the last write. It checks every 2 seconds while the log is under 1 MB and every 15 seconds above that, so a large log is not re-uploaded more often than before.
 - Once on the final state (success, failure, or pause).
 
 Each write overwrites the previous copy. Only the latest checkpoint is retained, and the file is compressed before upload.
