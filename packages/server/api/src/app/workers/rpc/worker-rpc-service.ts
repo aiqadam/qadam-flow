@@ -62,6 +62,11 @@ function readWorkerVersion(input: unknown): string | undefined {
 export function createHandlers({ log, workerGroupId, disconnected }: CreateHandlersParams): WorkerToApiContract {
     return {
         async poll(input) {
+            // Checked before the registry upsert below, which would otherwise re-register a worker
+            // that the disconnect listener has just removed (#589).
+            if (disconnected.aborted) {
+                return null
+            }
             // Third writer of the worker registry, alongside the two websocket listeners in
             // machine-controller — the entry it upserts is rendered in the platform admin
             // workers table, so the payload is parsed before it is stored here too (#207).
@@ -97,7 +102,10 @@ export function createHandlers({ log, workerGroupId, disconnected }: CreateHandl
                 // a job handed out in the same turn the socket closed: acking it would leave it
                 // active and unowned until the stalled check, ~139 s later (#589).
                 if (job) {
-                    await jobBroker(log).returnToQueue(job)
+                    const { error } = await tryCatch(() => jobBroker(log).returnToQueue(job))
+                    if (error) {
+                        log.error({ workerId, jobId: job.jobId, error: String(error) }, '[workerRpc#poll] Failed to return the job of a disconnected worker to the queue')
+                    }
                 }
                 log.info({ workerId, jobId: job?.jobId }, '[workerRpc#poll] Worker disconnected while its poll was pending')
                 return null
@@ -362,7 +370,6 @@ async function ensureLogsFileExists({ log, projectId, logsFileId, internalError 
 type CreateHandlersParams = {
     log: FastifyBaseLogger
     workerGroupId?: string
-    // Aborted when this worker's socket disconnects.
     disconnected: AbortSignal
 }
 

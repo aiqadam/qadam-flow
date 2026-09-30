@@ -336,6 +336,7 @@ describe('QueueDispatcher', () => {
 
         it('stops listening to the socket once the poll settles', async () => {
             const socket = new AbortController()
+            const addListener = vi.spyOn(socket.signal, 'addEventListener')
             const removeListener = vi.spyOn(socket.signal, 'removeEventListener')
 
             const timedOut = dispatcher.poll({ signal: socket.signal })
@@ -348,9 +349,10 @@ describe('QueueDispatcher', () => {
             await vi.advanceTimersByTimeAsync(0)
             expect(await served).toEqual(createFakeJob('job-served'))
 
-            expect(removeListener).toHaveBeenCalledTimes(2)
-            socket.abort()
-            expect(dispatcher.waiterCount()).toBe(0)
+            const added = addListener.mock.calls.map(([, listener]) => listener)
+            const removed = removeListener.mock.calls.map(([, listener]) => listener)
+            expect(added).toHaveLength(2)
+            expect(removed).toEqual(added)
         })
     })
 })

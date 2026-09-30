@@ -126,6 +126,34 @@ describe('workerRpc#poll on a socket that disconnected (#589)', () => {
         expect(returnToQueue).toHaveBeenCalledWith(job)
     })
 
+    it('still answers null and logs when returning the job fails', async () => {
+        const socket = new AbortController()
+        poll.mockImplementationOnce(async () => {
+            socket.abort()
+            return job
+        })
+        returnToQueue.mockRejectedValueOnce(new Error('redis down'))
+
+        const result = await createHandlers({ log, disconnected: socket.signal }).poll(livePayload)
+
+        expect(result).toBeNull()
+        expect(log.error).toHaveBeenCalledWith(
+            expect.objectContaining({ jobId: 'job-1', error: 'Error: redis down' }),
+            '[workerRpc#poll] Failed to return the job of a disconnected worker to the queue',
+        )
+    })
+
+    it('neither re-registers the worker nor polls once the socket is gone', async () => {
+        const socket = new AbortController()
+        socket.abort()
+
+        const result = await createHandlers({ log, disconnected: socket.signal }).poll(livePayload)
+
+        expect(result).toBeNull()
+        expect(onConnection).not.toHaveBeenCalled()
+        expect(poll).not.toHaveBeenCalled()
+    })
+
     it('returns nothing to the queue when the dropped poll had no job', async () => {
         const socket = new AbortController()
         poll.mockImplementationOnce(async () => {
