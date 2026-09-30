@@ -84,22 +84,30 @@ first `resolveMs`) and the framework's module graph (most of the first `importMs
 move that off the first job:
 - **Dist-index manifest.** The Dockerfile runs `packages/server/engine/src/scripts/write-qadam-dist-index.ts`
   after the qadam build, writing `packages/qadams/dist-index.json` (name, version, `dist/src/index.js`
-  path relative to `packages/qadams`, in scan order). `qadamDistIndex.get({ refresh: false })`
-  (`engine/src/lib/helper/qadam-dist-index.ts`) reads it instead of walking the tree. A missing,
-  unparsable or out-of-tree manifest falls back to the scan, and a `refresh` (dev-qadam lookup)
-  always scans. The file is gitignored: never generate it in a dev tree, where it would go stale.
+  path relative to `packages/qadams`, in scan order); the build fails if it finds no built qadam.
+  `qadamDistIndex.get({ refresh: false })` (`engine/src/lib/helper/qadam-dist-index.ts`) reads it
+  instead of walking the tree. A manifest that is unreadable, not version 1, empty, points outside
+  `packages/qadams` or names a dist that is not on disk is rejected with a
+  `[qadamDistIndex] manifest rejected, scanning instead {"reason":...}` warning and the scan runs; a
+  missing one scans quietly. A `refresh` (dev-qadam lookup) always scans. The file is gitignored:
+  never generate it in a dev tree, where it would go stale.
 - **Prewarm.** Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
-  (`pollAndExecute` in `worker.ts`), so no job can race it. For a reusable sandbox (`canReuseSandbox()`:
-  `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, dev) it installs the engine and starts the sandbox with no
-  platform and no flow version, logging `[sandboxManager#prewarm] Sandbox started before its first job`
-  with `prewarmMs`. Best effort: any failure is logged as a warning, the sandbox is dropped and the slot
-  polls as before. Isolate modes are single-use and skip it.
+  (`prewarmSlot` in `worker.ts`), so no job can race it. It is skipped when the loop would not poll
+  (stopped, stale connection generation, API version mismatch) and raced against a stop request.
+  Forked engines only: a reusable sandbox (`canReuseSandbox()`) that does not run in an isolate —
+  `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, and dev with either. It provisions the engine with no qadams
+  and starts the sandbox with no platform and no flow version, logging
+  `[sandboxManager#prewarm] Sandbox started before its first job` with `prewarmMs`. Best effort: any
+  failure is a warning, the sandbox is dropped and the slot polls as before. Isolate modes
+  (`SANDBOX_PROCESS`, `SANDBOX_CODE_AND_PROCESS`) skip it even when reused, because their mounts are
+  fixed at start and a prewarmed box would have none.
 - **Engine warmup.** Reusable sandboxes get `AP_ENGINE_WARMUP=true` (`create-sandbox-for-job.ts`). On
   its first connect, the engine (`engine/src/lib/helper/engine-warmup.ts`) builds the dist index and
   `require`s `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` through a bundled qadam's
-  directory, then logs `[engineWarmup] done {distIndexMs, qadams, sharedDepsMs, sharedDeps}` on worker
-  stdout. The first real qadam import then reports `sharedDepsAlreadyLoaded: true`. It never throws: a
-  failure only means the first job pays the cost itself.
+  directory, then writes `[engineWarmup] done {distIndexMs, qadams, sharedDepsMs, sharedDeps}` through
+  the unpatched console: worker stdout, never a job's log. The first real qadam import then reports
+  `sharedDepsAlreadyLoaded: true`. It never throws: a failure only means the first job pays the cost
+  itself.
 
 ## Job Timing and Event-Loop Lines (#587)
 Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.
