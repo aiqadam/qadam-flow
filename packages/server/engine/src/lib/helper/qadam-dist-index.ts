@@ -8,13 +8,13 @@ import { z } from 'zod'
 let distIndexCache: Promise<Map<string, DistPackageEntry>> | null = null
 
 export const qadamDistIndex = {
-    get: async ({ refresh }: GetParams): Promise<Map<string, DistPackageEntry>> => {
+    get: async ({ refresh, warn }: GetParams): Promise<Map<string, DistPackageEntry>> => {
         if (!refresh && !isNil(distIndexCache)) {
             return distIndexCache
         }
         // A refresh is a dev-qadam lookup: its dist is rebuilt while the process lives, so only a
         // scan can see it. The image-build manifest is for the bundled tree, which cannot change.
-        const building = qadamDistIndex.load({ qadamsRoot: defaultQadamsRoot(), useManifest: !refresh })
+        const building = qadamDistIndex.load({ qadamsRoot: defaultQadamsRoot(), useManifest: !refresh, warn })
         distIndexCache = building
         void building.catch(() => {
             if (distIndexCache === building) {
@@ -24,10 +24,10 @@ export const qadamDistIndex = {
         return building
     },
 
-    load: async ({ qadamsRoot, useManifest }: LoadParams): Promise<Map<string, DistPackageEntry>> => {
+    load: async ({ qadamsRoot, useManifest, warn }: LoadParams): Promise<Map<string, DistPackageEntry>> => {
         const root = path.resolve(qadamsRoot)
         if (useManifest) {
-            const fromManifest = await readManifest(root)
+            const fromManifest = await readManifest({ qadamsRoot: root, warn })
             if (!isNil(fromManifest)) {
                 return fromManifest
             }
@@ -75,44 +75,39 @@ function defaultQadamsRoot(): string {
 // image built wrong, and says why. This is no staleness check: a qadam built after the manifest was
 // written is simply not in it, which is why only the image build writes one (the file is
 // gitignored) and a dev-qadam refresh never reads it.
-async function readManifest(qadamsRoot: string): Promise<Map<string, DistPackageEntry> | null> {
+async function readManifest({ qadamsRoot, warn }: ReadManifestParams): Promise<Map<string, DistPackageEntry> | null> {
+    const rejectedBecause = (reason: string): null => rejectManifest({ warn, reason })
     const { data: content, error: readError } = await tryCatch(() => fs.readFile(path.join(qadamsRoot, MANIFEST_FILE), 'utf-8'))
     if (readError) {
-        if (!isFileNotFound(readError)) {
-            warnManifestRejected('unreadable')
-        }
-        return null
+        return isFileNotFound(readError) ? null : rejectedBecause('unreadable')
     }
     const { data: parsed } = tryCatchSync(() => manifestSchema.safeParse(JSON.parse(content)))
     if (isNil(parsed) || !parsed.success) {
-        warnManifestRejected('not a version-1 manifest')
-        return null
+        return rejectedBecause('not a version-1 manifest')
     }
     // Trusted as the whole bundled tree, so an empty one would make every bundled qadam unresolvable.
     if (parsed.data.entries.length === 0) {
-        warnManifestRejected('no entries')
-        return null
+        return rejectedBecause('no entries')
     }
     const entries = parsed.data.entries.map((entry) => ({ ...entry, indexPath: path.resolve(qadamsRoot, entry.indexPath) }))
     if (entries.some((entry) => !entry.indexPath.startsWith(qadamsRoot + path.sep))) {
-        warnManifestRejected('an entry points outside the qadams root')
-        return null
+        return rejectedBecause('an entry points outside the qadams root')
     }
     const present = await Promise.all(entries.map((entry) => pathExists(entry.indexPath)))
     if (present.includes(false)) {
-        warnManifestRejected('an entry has no built dist')
-        return null
+        return rejectedBecause('an entry has no built dist')
     }
     return toIndex(entries)
 }
 
-function isFileNotFound(error: unknown): boolean {
-    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+// The reason only: never a path, which for a custom qadam install can carry a tenant segment.
+function rejectManifest({ warn, reason }: RejectManifestParams): null {
+    warn(`[qadamDistIndex] manifest rejected, scanning instead ${JSON.stringify({ reason })}`)
+    return null
 }
 
-// The reason only: never a path, which for a custom qadam install can carry a tenant segment.
-function warnManifestRejected(reason: string): void {
-    console.warn(`[qadamDistIndex] manifest rejected, scanning instead ${JSON.stringify({ reason })}`)
+function isFileNotFound(error: unknown): boolean {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
 async function scanDistTree(qadamsRoot: string): Promise<Map<string, DistPackageEntry>> {
@@ -192,15 +187,32 @@ export type DistPackageEntry = {
 
 type DistIndexManifest = z.infer<typeof manifestSchema>
 
+// Where a rejected manifest says why. The warmup passes the unpatched console, so its line stays out
+// of any job's log; a job that is the first to build the index passes its own console, and the line
+// lands in that job's log, beside the scan it paid for.
+export type WarnSink = (line: string) => void
+
 type GetParams = {
     refresh: boolean
+    warn: WarnSink
 }
 
 type LoadParams = {
     qadamsRoot: string
     useManifest: boolean
+    warn: WarnSink
+}
+
+type ReadManifestParams = {
+    qadamsRoot: string
+    warn: WarnSink
 }
 
 type WriteManifestParams = {
     qadamsRoot: string
+}
+
+type RejectManifestParams = {
+    warn: WarnSink
+    reason: string
 }

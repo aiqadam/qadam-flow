@@ -189,7 +189,7 @@ function buildSocketOptions(sandboxId: string): Partial<ManagerOptions & SocketO
 async function warmUpEngine({ write, writeError }: WarmUpEngineParams): Promise<void> {
     const { error } = await tryCatch(() => engineWarmup.run({ write }))
     if (error) {
-        writeError(`[engineWarmup] failed ${JSON.stringify({ error: error.message })}`)
+        writeError(`[engineWarmup] failed ${JSON.stringify({ error: error.message, stack: error.stack })}`)
     }
 }
 

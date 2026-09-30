@@ -25,6 +25,8 @@ See [Hardware Requirements](../configuration/hardware) for per-replica memory an
 In `UNSANDBOXED` and `SANDBOX_CODE_ONLY` modes, sandboxes stay warm across jobs, so steady-state execution is fast. `SANDBOX_PROCESS` spins up a fresh sandbox per run, which trades latency for kernel-level isolation.
 </Tip>
 
+In those two modes, each worker also starts one engine per concurrency slot as soon as it boots, so the first job on each slot after a restart doesn't pay the engine's start-up. An engine holds about 100 MB. A busy worker reaches the same number of engines anyway, so the peak doesn't change, but it is reached at boot rather than under load. The default Docker Compose setup (5 replicas × concurrency 5) holds about 2.5 GB of engines right after it starts. On a host that can't hold that at boot, set `AP_WORKER_PREWARM_ENGINES=false` to start engines on first use instead.
+
 ## Failure Behaviour
 
 If a worker crashes, is evicted, or loses its Redis lease mid-run, BullMQ requeues the job and another worker picks it up. The engine's durable-execution layer replays already-completed steps from persisted state rather than re-running them, so side effects are not duplicated. This means a worker restart or OOM kill during a flow is survivable — you do not need to drain traffic before rolling workers.

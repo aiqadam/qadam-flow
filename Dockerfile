@@ -143,6 +143,9 @@ COPY --from=build /usr/src/app/LICENSE .
 
 # Copy workspace package.json files (needed for bun workspace resolution)
 COPY --from=build /usr/src/app/packages ./packages
+# The engine falls back to a tree walk without it, so a manifest lost on the way here would slow
+# every fresh engine without failing anything (#419).
+RUN test -s packages/qadams/dist-index.json
 
 # Copy built engine
 COPY --from=build /usr/src/app/dist/packages/engine/ ./dist/packages/engine/

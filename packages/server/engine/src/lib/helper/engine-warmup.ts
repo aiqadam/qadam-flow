@@ -13,7 +13,7 @@ export const engineWarmup = {
 
     run: async ({ write }: RunParams): Promise<void> => {
         const indexStart = performance.now()
-        const { data: distIndex, error } = await tryCatch(() => qadamDistIndex.get({ refresh: false }))
+        const { data: distIndex, error } = await tryCatch(() => qadamDistIndex.get({ refresh: false, warn: write }))
         const distIndexMs = performance.now() - indexStart
         if (error) {
             write(`[engineWarmup] skipped ${JSON.stringify({ reason: 'dist index unavailable', error: error.message })}`)

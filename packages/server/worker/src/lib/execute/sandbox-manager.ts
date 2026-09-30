@@ -4,13 +4,16 @@ import { provisioner } from '../cache/provisioner'
 import { system, WorkerSystemProp } from '../config/configs'
 import { workerSettings } from '../config/worker-settings'
 import { Sandbox } from '../sandbox/types'
-import { createSandboxForJob } from './create-sandbox-for-job'
+import { createSandboxForJob, isIsolateMode } from './create-sandbox-for-job'
 
 export function createSandboxManager({ boxId, proxyPort }: { boxId: number, proxyPort: number | null }): SandboxManager {
     let currentSandbox: Sandbox | null = null
     let currentJobContext: SandboxJobContext | null = null
     // Bumped by every invalidate, and so every shutdown: a prewarm still provisioning or starting
     // can then tell that its slot was let go, and must not leave an engine running for nobody.
+    // This relies on the worker shutting down every manager it stops using. If managers ever outlive
+    // a reconnect (#585), a prewarm abandoned by the old poll loop sees no bump and keeps its engine,
+    // so re-check that it is still the manager's only live prewarm.
     let generation = 0
 
     // Only reusable sandboxes: a single-use one would be thrown away by the first job's release.
@@ -18,7 +21,8 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
     // AP_REUSE_SANDBOX) mounts its first job's platform's custom qadams at start, and a prewarmed
     // one, started with no platform, would never get them.
     async function startPrewarmedSandbox({ log, apiClient }: PrewarmParams): Promise<void> {
-        if (!canReuseSandbox() || runsInIsolate() || !isNil(currentSandbox)) {
+        const { EXECUTION_MODE } = workerSettings.getSettings()
+        if (!prewarmEnabled() || !canReuseSandbox() || isIsolateMode(EXECUTION_MODE) || !isNil(currentSandbox)) {
             return
         }
         const startedAt = performance.now()
@@ -33,6 +37,7 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
             apiClient,
             boxId,
             reusable: true,
+            warmup: true,
             proxyPort,
             getCurrentJobContext: () => currentJobContext,
         })
@@ -50,7 +55,8 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
                 throw startError
             }
             if (shutdownError) {
-                throw shutdownError
+                log.warn({ boxId, error: shutdownError }, '[sandboxManager#prewarm] Could not shut down the sandbox of a slot let go while it started')
+                return
             }
             log.debug({ boxId }, '[sandboxManager#prewarm] Slot let go while its sandbox started, sandbox shut down')
             return
@@ -141,9 +147,10 @@ function canReuseSandbox(): boolean {
     return false
 }
 
-function runsInIsolate(): boolean {
-    const isolateModes: string[] = [ExecutionMode.SANDBOX_PROCESS, ExecutionMode.SANDBOX_CODE_AND_PROCESS]
-    return isolateModes.includes(workerSettings.getSettings().EXECUTION_MODE)
+// On by default; AP_WORKER_PREWARM_ENGINES=false keeps engines lazy, for a host that cannot hold
+// every slot's engine from boot (about 100 MiB each).
+function prewarmEnabled(): boolean {
+    return system.getBoolean(WorkerSystemProp.PREWARM_ENGINES) !== false
 }
 
 export type ActiveSandboxInfo = {

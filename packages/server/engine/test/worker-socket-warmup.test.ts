@@ -74,7 +74,7 @@ describe('workerSocket.init — engine warmup output (#419)', () => {
         warmupRunMock.mockRejectedValueOnce(new Error('sink broke'))
 
         workerSocket.init('sandbox-warmup-failed-test')
-        await vi.waitFor(() => expect(unpatchedError).toHaveBeenCalledWith('[engineWarmup] failed {"error":"sink broke"}'))
+        await vi.waitFor(() => expect(unpatchedError).toHaveBeenCalledWith(expect.stringMatching(/^\[engineWarmup\] failed {"error":"sink broke","stack":"Error: sink broke/)))
         console.log('[probe] after the failure')
         await vi.waitFor(() => expect(notified.join('')).toContain('[probe] after the failure'))
 

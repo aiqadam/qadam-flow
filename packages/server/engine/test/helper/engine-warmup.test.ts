@@ -64,7 +64,7 @@ describe('engineWarmup (#419)', () => {
 
         await engineWarmup.run({ write })
 
-        expect(getDistIndexMock).toHaveBeenCalledWith({ refresh: false })
+        expect(getDistIndexMock).toHaveBeenCalledWith({ refresh: false, warn: write })
         expect(requireFromQadam.cache[frameworkEntry]).toBeDefined()
         expect(write).toHaveBeenCalledTimes(1)
         const line = String(write.mock.calls[0][0])

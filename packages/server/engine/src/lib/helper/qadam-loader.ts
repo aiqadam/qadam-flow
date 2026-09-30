@@ -237,6 +237,12 @@ function logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, resolveMs,
     })}`)
 }
 
+// A job that is first to build the dist index is the one that paid for a rejected manifest's scan,
+// so its own log is the right place to say why.
+function warnOnConsole(line: string): void {
+    console.warn(line)
+}
+
 function roundMs(value: number): number {
     return Math.round(value * 10) / 10
 }
@@ -275,7 +281,7 @@ async function findBundledBuildAtAliasVersion(packageName: string): Promise<stri
     if (!EXACT_VERSION_PATTERN.test(version)) {
         return null
     }
-    const distIndex = await qadamDistIndex.get({ refresh: false })
+    const distIndex = await qadamDistIndex.get({ refresh: false, warn: warnOnConsole })
     const bundled = distIndex.get(name)
     if (isNil(bundled) || bundled.version !== version) {
         return null
@@ -284,7 +290,7 @@ async function findBundledBuildAtAliasVersion(packageName: string): Promise<stri
 }
 
 async function findInDistFolder({ packageName, refreshIndex }: FindInDistFolderParams): Promise<string | null> {
-    const distIndex = await qadamDistIndex.get({ refresh: refreshIndex })
+    const distIndex = await qadamDistIndex.get({ refresh: refreshIndex, warn: warnOnConsole })
     const target = trimVersionFromAlias(packageName)
     return (distIndex.get(packageName) ?? distIndex.get(target))?.indexPath ?? null
 }

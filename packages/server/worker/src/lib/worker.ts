@@ -344,15 +344,20 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
  * manager starts no sandbox after the install and shuts down one that was already starting.
  */
 async function prewarmSlot({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
-    const willPoll = polling && connectionGeneration === generation && workerSettings.getSettings().APP_VERSION === AP_VERSION
-    if (!willPoll) {
+    if (!loopWillPoll(generation) || workerSettings.getSettings().APP_VERSION !== AP_VERSION) {
         return
     }
     await raceStopRequest({ promise: sbManager.prewarm({ log: workerLog, apiClient }), whenStopped: undefined })
 }
 
+// A loop polls while the worker does and no reconnect has started a newer set of loops. The one
+// place both the poll loop and its prewarm read that, so they cannot drift apart.
+function loopWillPoll(generation: number): boolean {
+    return polling && connectionGeneration === generation
+}
+
 async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
-    while (polling && connectionGeneration === generation) {
+    while (loopWillPoll(generation)) {
         const { data: machineInfo, error: machineError } = await tryCatch(buildMachineInfo)
         if (machineError) {
             workerLog.error({ error: machineError }, 'Failed to build machine info')

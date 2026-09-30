@@ -84,16 +84,20 @@ first `resolveMs`) and the framework's module graph (most of the first `importMs
 move that off the first job:
 - **Dist-index manifest.** The Dockerfile runs `packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams`
   (the root is a required argument) after the qadam build, writing `packages/qadams/dist-index.json` (name, version, `dist/src/index.js`
-  path relative to `packages/qadams`, in scan order); the build fails if it finds no built qadam.
+  path relative to `packages/qadams`, in scan order); the build fails if it finds no built qadam,
+  and the run stage checks the file survived the copy (`test -s`).
   `qadamDistIndex.get({ refresh: false })` (`engine/src/lib/helper/qadam-dist-index.ts`) reads it
   instead of walking the tree. A manifest that is unreadable, not version 1, empty, points outside
   `packages/qadams` or names a dist that is not on disk is rejected with a
-  `[qadamDistIndex] manifest rejected, scanning instead {"reason":...}` warning and the scan runs; a
-  missing one scans quietly. A `refresh` (dev-qadam lookup) always scans. The file is gitignored:
+  `[qadamDistIndex] manifest rejected, scanning instead {"reason":...}` line through the caller's
+  `warn` sink (the warmup's unpatched console, or a job's own console when the job is first to build
+  the index) and the scan runs; a missing one scans quietly. A `refresh` (dev-qadam lookup) always scans. The file is gitignored:
   never generate it in a dev tree, where it would go stale.
-- **Prewarm.** Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
+- **Prewarm.** On by default; `AP_WORKER_PREWARM_ENGINES=false` turns it off (each engine holds about
+  100 MiB from boot). Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
   (`prewarmSlot` in `worker.ts`), so no job can race it. It is skipped when the loop would not poll
-  (stopped, stale connection generation, API version mismatch) and raced against a stop request.
+  (`loopWillPoll`, the same check the poll loop uses, or an API version mismatch) and raced against a
+  stop request.
   Forked engines only: a reusable sandbox (`canReuseSandbox()`) that does not run in an isolate —
   `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, and dev with either. It provisions the engine with no qadams
   and starts the sandbox with no platform and no flow version, logging
@@ -101,15 +105,18 @@ move that off the first job:
   failure is a warning, the sandbox is dropped and the slot polls as before. A prewarm abandoned by a
   stop cannot leak an engine: every `invalidate`/`shutdown` bumps the manager's generation, so a
   prewarm that sees it changed starts no sandbox after the install, and shuts down (quietly, at
-  debug) one that was already starting. Isolate modes
-  (`SANDBOX_PROCESS`, `SANDBOX_CODE_AND_PROCESS`) skip it even when reused, because their mounts are
+  debug) one that was already starting. That relies on the worker shutting down every manager it
+  stops using; if managers ever outlive a reconnect (#585), re-check it. Isolate modes (`isIsolateMode`
+  — `SANDBOX_PROCESS`, `SANDBOX_CODE_AND_PROCESS`) skip it even when reused, because their mounts are
   fixed at start and a prewarmed box would have none.
-- **Engine warmup.** Reusable sandboxes get `AP_ENGINE_WARMUP=true` (`create-sandbox-for-job.ts`). On
+- **Engine warmup.** Only the sandbox a prewarm starts gets `AP_ENGINE_WARMUP=true` (`warmup: true` on
+  `createSandboxForJob`). One a job starts, reusable or not, never does: its warmup would race that
+  job and make the job's #548 `cold load` line report `sharedDepsAlreadyLoaded: true`. On
   its first connect, the engine (`engine/src/lib/helper/engine-warmup.ts`) builds the dist index and
   `require`s `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` through a bundled qadam's
   directory, then writes `[engineWarmup] done {distIndexMs, qadams, sharedDepsMs, sharedDeps}` through
   the unpatched console: worker stdout, never a job's log. The first real qadam import then reports
-  `sharedDepsAlreadyLoaded: true`. It never throws: a failure writes `[engineWarmup] failed {error}`
+  `sharedDepsAlreadyLoaded: true`. It never throws: a failure writes `[engineWarmup] failed {error, stack}`
   through the unpatched console's stderr, and only means the first job pays the cost itself.
 
 ## Job Timing and Event-Loop Lines (#587)

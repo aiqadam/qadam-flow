@@ -233,6 +233,20 @@ describe('worker integration', () => {
         expect(callOrder.slice(0, 3)).toEqual(['prewarm:start', 'prewarm:end', 'poll'])
     })
 
+    // The prewarm is raced against stop like a poll is: an engine install that hangs must not hold
+    // shutdown for the whole poll-loop grace, let alone forever.
+    it('stops promptly while a prewarm hangs, and never polls (#419)', async () => {
+        prewarmMock.mockImplementation(() => new Promise<void>(() => undefined))
+        void connectWorkerWithPoll([null])
+        await vi.waitFor(() => expect(prewarmMock).toHaveBeenCalledTimes(1), { timeout: 5_000 })
+
+        const stopStartedAt = performance.now()
+        await worker.stop()
+
+        expect(performance.now() - stopStartedAt).toBeLessThan(1_000)
+        expect(callOrder).not.toContain('poll')
+    })
+
     it('polls for a job, executes it, and reports completion', async () => {
         const expectedResult = { kind: JobResultKind.FIRE_AND_FORGET, status: EngineResponseStatus.OK }
         mockGetHandler.mockReturnValue({
