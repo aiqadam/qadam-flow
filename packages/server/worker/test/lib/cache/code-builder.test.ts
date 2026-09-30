@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const FLOW_VERSION_ID = 'flow-version-1'
 const STEP_NAME = 'step_1'
+const SOURCE_HASH_FILE = '.source-hash'
 
 let tempDir: string
 let buildHook: () => Promise<void>
@@ -124,39 +125,61 @@ describe('codeBuilder.processCodeStep (#586)', () => {
         expect(await readFile(stepIndexPath(), 'utf8')).toBe('version-2')
     })
 
-    it('keeps another replica\'s build that was swapped in between its two renames', async () => {
+    it('keeps another replica\'s build of the same source that was swapped in between its two renames', async () => {
         await processStep({ code: 'version-1' })
 
-        renameHook = async ({ from, to }) => {
-            if (from.includes('.build-') && to === stepPath()) {
-                await mkdir(stepPath(), { recursive: true })
-                await writeFile(stepIndexPath(), 'other-replica')
-            }
-        }
+        renameHook = onceBeforeSwap(async ({ from }) => {
+            await writeOtherReplicaBuild({ code: 'other-replica', sourceHash: await readFile(join(from, SOURCE_HASH_FILE), 'utf8') })
+        })
         await processStep({ code: 'version-2' })
 
         expect(await readFile(stepIndexPath(), 'utf8')).toBe('other-replica')
         expect(await readdir(flowVersionPath())).toEqual([STEP_NAME])
     })
 
-    it('removes build directories older than any build can run, and keeps younger ones', async () => {
-        const stale = join(flowVersionPath(), `${STEP_NAME}.build-stale`)
-        const inProgress = join(flowVersionPath(), `${STEP_NAME}.build-in-progress`)
-        const otherStep = join(flowVersionPath(), `${STEP_NAME}0.build-stale`)
-        await mkdir(stale, { recursive: true })
-        await mkdir(inProgress, { recursive: true })
-        await mkdir(otherStep, { recursive: true })
-        const anHourAgo = new Date(Date.now() - 60 * 60 * 1000)
-        await utimes(stale, anHourAgo, anHourAgo)
-        await utimes(otherStep, anHourAgo, anHourAgo)
+    it('replaces another replica\'s build of a different source that was swapped in between its two renames', async () => {
+        await processStep({ code: 'version-1' })
+
+        renameHook = onceBeforeSwap(async () => {
+            await writeOtherReplicaBuild({ code: 'other-replica', sourceHash: 'hash-of-an-older-source' })
+        })
+        await processStep({ code: 'version-2' })
+
+        expect(await readFile(stepIndexPath(), 'utf8')).toBe('version-2')
+        expect(await readdir(flowVersionPath())).toEqual([STEP_NAME])
+    })
+
+    it('gives up, and cleans up, when other replicas keep replacing the step with a different source', async () => {
+        await processStep({ code: 'version-1' })
+
+        renameHook = async ({ from, to }) => {
+            if (from.includes('.build-') && to === stepPath()) {
+                await writeOtherReplicaBuild({ code: 'other-replica', sourceHash: 'hash-of-an-older-source' })
+            }
+        }
+        await expect(processStep({ code: 'version-2' })).rejects.toThrow('other replicas kept replacing it')
+
+        expect(await readFile(stepIndexPath(), 'utf8')).toBe('other-replica')
+        expect(await readdir(flowVersionPath())).toEqual([STEP_NAME])
+    })
+
+    it('ages build directories by the time in their name, not their mtime, which a rename does not update', async () => {
+        const anHourAgo = Date.now() - 60 * 60 * 1000
+        const stale = `${STEP_NAME}.build-${anHourAgo}-a`
+        const staleRetired = `${STEP_NAME}.retired-${anHourAgo}-b`
+        const inProgress = `${STEP_NAME}.build-${Date.now()}-c`
+        const justRetired = `${STEP_NAME}.retired-${Date.now()}-d`
+        const withoutTime = `${STEP_NAME}.build-no-time`
+        const otherStep = `${STEP_NAME}0.build-${anHourAgo}-e`
+        const oldMtime = new Date(anHourAgo)
+        for (const entry of [stale, staleRetired, inProgress, justRetired, withoutTime, otherStep]) {
+            await mkdir(join(flowVersionPath(), entry), { recursive: true })
+            await utimes(join(flowVersionPath(), entry), oldMtime, oldMtime)
+        }
 
         await processStep({ code: 'version-1' })
 
-        expect((await readdir(flowVersionPath())).sort()).toEqual([
-            STEP_NAME,
-            `${STEP_NAME}.build-in-progress`,
-            `${STEP_NAME}0.build-stale`,
-        ])
+        expect((await readdir(flowVersionPath())).sort()).toEqual([STEP_NAME, otherStep, inProgress, justRetired, withoutTime].sort())
     })
 })
 
@@ -179,6 +202,23 @@ async function processStep({ code }: { code: string }): Promise<void> {
             sourceCode: { code, packageJson: '{}' },
         },
     })
+}
+
+// Stands in for another replica that swaps its own build in while this one is between renames.
+function onceBeforeSwap(hook: (params: { from: string }) => Promise<void>): (params: { from: string, to: string }) => Promise<void> {
+    let fired = false
+    return async ({ from, to }) => {
+        if (!fired && from.includes('.build-') && to === stepPath()) {
+            fired = true
+            await hook({ from })
+        }
+    }
+}
+
+async function writeOtherReplicaBuild({ code, sourceHash }: { code: string, sourceHash: string }): Promise<void> {
+    await mkdir(stepPath(), { recursive: true })
+    await writeFile(stepIndexPath(), code)
+    await writeFile(join(stepPath(), SOURCE_HASH_FILE), sourceHash)
 }
 
 function stepIndexPath(): string {

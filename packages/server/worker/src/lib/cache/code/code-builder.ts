@@ -16,6 +16,11 @@ const RETIRED_DIR_MARKER = '.retired-'
 // Above the longest a build can legitimately run: bunRunner's timeouts are 10 min for
 // `bun install` and 5 min for esbuild.
 const ORPHANED_BUILD_MIN_AGE_MS = 20 * 60 * 1000
+// Records which source a step directory was built from, so a replica that finds another
+// replica's build in place can tell a build of the same source from a stale one.
+const SOURCE_HASH_FILE = '.source-hash'
+const MAX_SWAP_ATTEMPTS = 3
+const CREATED_AT_PATTERN = new RegExp(`(?:\\${BUILD_DIR_MARKER}|\\${RETIRED_DIR_MARKER})(\\d+)-`)
 
 const TS_CONFIG_CONTENT = `
 {
@@ -80,10 +85,11 @@ export const codeBuilder = (log: Logger) => ({
                 await removeOrphanedBuilds({ codePath, log })
                 // Built beside the live directory and swapped in only once complete, instead of
                 // `rm -rf` + an in-place rebuild: a reader must never find a half-built step (#586).
-                const buildPath = `${codePath}${BUILD_DIR_MARKER}${randomUUID()}`
+                const buildPath = siblingPath({ target: codePath, marker: BUILD_DIR_MARKER })
                 const { error } = await tryCatch(async () => {
                     await buildCodeStep({ buildPath, codePath, sourceCode, log })
-                    await replaceDirectory({ from: buildPath, to: codePath, log })
+                    await fs.writeFile(path.join(buildPath, SOURCE_HASH_FILE), currentHash)
+                    await replaceDirectory({ from: buildPath, to: codePath, sourceHash: currentHash, log })
                 })
                 if (error) {
                     await removeBestEffort({ target: buildPath, log })
@@ -142,28 +148,38 @@ async function buildCodeStep({ buildPath, codePath, sourceCode, log }: BuildCode
 
 // rename(2) cannot replace a non-empty directory, so the live build is moved aside first. The
 // step path is missing only between the two renames, not for the length of a build.
-async function replaceDirectory({ from, to, log }: ReplaceDirectoryParams): Promise<void> {
-    const retiredPath = `${to}${RETIRED_DIR_MARKER}${randomUUID()}`
+async function replaceDirectory({ from, to, sourceHash, log }: ReplaceDirectoryParams): Promise<void> {
+    for (let attempt = 1; attempt <= MAX_SWAP_ATTEMPTS; attempt++) {
+        const swapped = await swapDirectory({ from, to, log })
+        if (swapped) {
+            return
+        }
+        // Reachable only after the cross-container lock timed out (see cacheState): another replica
+        // swapped its own build of this step in between our two renames. Theirs is kept only if it
+        // was built from the same source; otherwise the next attempt retires it for ours.
+        if (await readSourceHash(to) === sourceHash) {
+            await removeBestEffort({ target: from, log })
+            return
+        }
+    }
+    throw new Error(`Could not swap the build of ${to} in: other replicas kept replacing it`)
+}
+
+// Resolves false, with the live build left as another replica put it, when the target was taken
+// between the two renames.
+async function swapDirectory({ from, to, log }: SwapDirectoryParams): Promise<boolean> {
+    const retiredPath = siblingPath({ target: to, marker: RETIRED_DIR_MARKER })
     const { error: retireError } = await tryCatch(() => rename(to, retiredPath))
     if (!isNil(retireError) && !fileSystemUtils.hasErrorCode({ error: retireError, code: 'ENOENT' })) {
         throw retireError
     }
     const retiredLiveBuild = isNil(retireError)
     const { error: swapError } = await tryCatch(() => rename(from, to))
-    if (isNil(swapError)) {
+    if (isNil(swapError) || isTargetTaken(swapError)) {
         if (retiredLiveBuild) {
             await removeBestEffort({ target: retiredPath, log })
         }
-        return
-    }
-    if (isTargetTaken(swapError)) {
-        // Reachable only after the cross-container lock timed out (see cacheState): another replica
-        // swapped its own complete build of this step in between our two renames. Keep theirs.
-        await removeBestEffort({ target: from, log })
-        if (retiredLiveBuild) {
-            await removeBestEffort({ target: retiredPath, log })
-        }
-        return
+        return isNil(swapError)
     }
     if (retiredLiveBuild) {
         const { error: restoreError } = await tryCatch(() => rename(retiredPath, to))
@@ -192,12 +208,33 @@ async function removeOrphanedBuilds({ codePath, log }: RemoveOrphanedBuildsParam
         entry.startsWith(`${stepName}${BUILD_DIR_MARKER}`) || entry.startsWith(`${stepName}${RETIRED_DIR_MARKER}`))
     await Promise.all(candidates.map(async (entry) => {
         const target = path.join(parentPath, entry)
-        const { data: stats } = await tryCatch(() => fs.stat(target))
-        if (isNil(stats) || Date.now() - stats.mtimeMs < ORPHANED_BUILD_MIN_AGE_MS) {
+        const createdAt = await readCreatedAt({ target, entry })
+        if (isNil(createdAt) || Date.now() - createdAt < ORPHANED_BUILD_MIN_AGE_MS) {
             return
         }
         await removeBestEffort({ target, log })
     }))
+}
+
+// The creation time is carried in the name because a directory's own mtime cannot age it:
+// rename(2) leaves the moved directory's mtime alone, so a live build retired a moment ago
+// would still carry the time it was built.
+function siblingPath({ target, marker }: SiblingPathParams): string {
+    return `${target}${marker}${Date.now()}-${randomUUID()}`
+}
+
+async function readCreatedAt({ target, entry }: ReadCreatedAtParams): Promise<number | null> {
+    const match = CREATED_AT_PATTERN.exec(entry)
+    if (!isNil(match)) {
+        return Number(match[1])
+    }
+    const { data: stats } = await tryCatch(() => fs.stat(target))
+    return isNil(stats) ? null : stats.ctimeMs
+}
+
+async function readSourceHash(codePath: string): Promise<string | null> {
+    const { data } = await tryCatch(() => fs.readFile(path.join(codePath, SOURCE_HASH_FILE), 'utf8'))
+    return data ?? null
 }
 
 // The build is already in place by the time a leftover is removed; failing the job over a
@@ -297,7 +334,24 @@ type BuildCodeStepParams = {
 type ReplaceDirectoryParams = {
     from: string
     to: string
+    sourceHash: string
     log: Logger
+}
+
+type SwapDirectoryParams = {
+    from: string
+    to: string
+    log: Logger
+}
+
+type SiblingPathParams = {
+    target: string
+    marker: string
+}
+
+type ReadCreatedAtParams = {
+    target: string
+    entry: string
 }
 
 type RemoveOrphanedBuildsParams = {

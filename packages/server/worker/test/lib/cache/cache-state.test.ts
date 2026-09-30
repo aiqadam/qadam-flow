@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileLock } from '@aiqadam/server-utils'
 import pino from 'pino'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_STATE_LOCK_SUFFIX, cacheState } from '../../../src/lib/cache/cache-state'
 
 const folders: string[] = []
@@ -266,5 +266,19 @@ describe('cacheState with an unreadable cache.json (#586)', () => {
 
         expect(result).toEqual({ cacheHit: false, state: 'rebuilt' })
         expect(JSON.parse(await readFile(join(folder, 'cache.json'), 'utf8'))).toEqual({ k: 'rebuilt' })
+    })
+
+    it('fails on a read error other than a missing file rather than rebuilding over it', async () => {
+        const folder = uniqueFolder()
+        await mkdir(join(folder, 'cache.json'), { recursive: true })
+        const installFn = vi.fn(async () => 'rebuilt')
+
+        await expect(cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn,
+            skipSave: () => false,
+        })).rejects.toMatchObject({ code: 'EISDIR' })
+        expect(installFn).not.toHaveBeenCalled()
     })
 })

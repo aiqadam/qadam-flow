@@ -18,6 +18,11 @@ export const NO_SAVE_GUARD = (_: string): boolean => false
 // behind another replica's `bun install`.
 export const CACHE_STATE_LOCK_SUFFIX = '.cache-state'
 
+// Far below the installer's 5 min: the holder refreshes its lock every stale/2, so this only
+// shortens how long a replica killed mid-build blocks the others, and it stays below the ~3 min
+// wait so a waiter reclaims that lock instead of timing out.
+const CACHE_STATE_LOCK_STALE_MS = 60 * 1000
+
 export const cacheState = (folderPath: string) => {
     return {
         async getOrSetCache(params: CacheStateParams): Promise<CacheResult> {
@@ -43,13 +48,14 @@ export const cacheState = (folderPath: string) => {
                     const locked = await tryCatch(() => fileLock.runExclusive({
                         path: `${folderPath}${CACHE_STATE_LOCK_SUFFIX}`,
                         createPath: false,
+                        staleMs: CACHE_STATE_LOCK_STALE_MS,
                         log: crossProcess.log,
                         fn: () => readOrInstall({ folderPath, ...params }),
                     }))
                     if (locked.error === null) {
                         return locked.data
                     }
-                    if (!fileSystemUtils.hasErrorCode({ error: locked.error, code: 'ELOCKED' })) {
+                    if (!fileLock.isAcquireTimeout(locked.error)) {
                         throw locked.error
                     }
                     // A legitimate holder can outlast the wait (a cold code build is bun install +
@@ -119,15 +125,19 @@ async function writeFileAtomically({ filePath, content }: WriteFileAtomicallyPar
     }
 }
 
-// An unreadable cache.json is treated as empty: the worst that does is one rebuild, while a
-// throw here would fail every job that touches the folder until someone deletes the file.
+// A missing or unparsable cache.json is treated as empty: the worst that does is one rebuild,
+// while a throw here would fail every job that touches the folder until someone deletes the file.
 async function readCacheFromFile(folderPath: string): Promise<CacheMap> {
-    const filePath = cachePath(folderPath)
-    const fileExists = await fileSystemUtils.fileExists(filePath)
-    if (!fileExists) {
-        return {}
+    // No exists-then-read: a code build swaps its whole directory, cache.json included, so the
+    // file can vanish between the two calls while another replica rebuilds the step.
+    const read = await tryCatch(() => readFile(cachePath(folderPath), 'utf8'))
+    if (read.error !== null) {
+        if (fileSystemUtils.hasErrorCode({ error: read.error, code: 'ENOENT' })) {
+            return {}
+        }
+        throw read.error
     }
-    const fileContent = await readFile(filePath, 'utf8')
+    const fileContent = read.data
     const { data, error } = tryCatchSync((): unknown => JSON.parse(fileContent))
     if (!isNil(error) || !isCacheMap(data)) {
         return {}

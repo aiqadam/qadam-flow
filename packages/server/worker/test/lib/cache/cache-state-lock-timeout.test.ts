@@ -7,14 +7,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Waiting out proper-lockfile's real retry budget takes minutes, so the lock is stubbed to
 // report the timeout it ends in.
+const lockStub = vi.hoisted(() => ({
+    acquireTimeout: new Error('Timed out waiting for the file lock'),
+    timesOut: true,
+}))
+
 vi.mock('@aiqadam/server-utils', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@aiqadam/server-utils')>()
     return {
         ...actual,
         fileLock: {
-            runExclusive: async () => {
-                throw Object.assign(new Error('Lock file is already being held'), { code: 'ELOCKED' })
+            runExclusive: async <T>({ fn }: { fn: () => Promise<T> }): Promise<T> => {
+                if (lockStub.timesOut) {
+                    throw lockStub.acquireTimeout
+                }
+                return fn()
             },
+            isAcquireTimeout: (error: unknown): boolean => error === lockStub.acquireTimeout,
         },
     }
 })
@@ -22,6 +31,7 @@ vi.mock('@aiqadam/server-utils', async (importOriginal) => {
 const folders: string[] = []
 
 afterEach(async () => {
+    lockStub.timesOut = true
     await Promise.all(folders.map((folder) => rm(folder, { recursive: true, force: true })))
     folders.length = 0
 })
@@ -72,5 +82,24 @@ describe('cacheState when the cross-container lock times out (#586)', () => {
 
         expect(result).toEqual({ cacheHit: true, state: 'from-other-replica' })
         expect(installFn).not.toHaveBeenCalled()
+    })
+
+    it('fails, without installing a second time unlocked, when the install itself fails under the lock', async () => {
+        const { cacheState } = await import('../../../src/lib/cache/cache-state')
+        const folder = join(tmpdir(), `cache-state-timeout-${randomUUID()}`)
+        folders.push(folder)
+        lockStub.timesOut = false
+        const installFn = vi.fn(async (): Promise<string> => {
+            throw Object.assign(new Error('a nested lock was held'), { code: 'ELOCKED' })
+        })
+
+        await expect(cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn,
+            skipSave: () => false,
+            crossProcess: { log: pino({ level: 'silent' }) },
+        })).rejects.toThrow('a nested lock was held')
+        expect(installFn).toHaveBeenCalledTimes(1)
     })
 })
