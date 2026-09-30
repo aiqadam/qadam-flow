@@ -144,7 +144,9 @@ jobs:
     # each entry costs a registry round trip plus a Sigstore signing exchange. Keep this and the
     # copy in the other caller identical — tools/ci/test-publish-packed-tarballs.sh compares the
     # two jobs line for line with comments stripped, and a timeout that differs is drift.
-    timeout-minutes: 90
+    # 180 rather than 90 because of NPM_PUBLISH_INTERVAL_SECONDS below: ~104 remaining entries at
+    # 60 s plus ~5 s of publish each is ~115 min if the pace lets the whole manifest through.
+    timeout-minutes: 180
     # Requires a GitHub Environment named `npm-publish` (Settings → Environments) with
     # required reviewers configured and `NPM_TOKEN` stored as an ENVIRONMENT secret on it.
     #
@@ -227,4 +229,7 @@ jobs:
       - name: Publish the packed tarballs to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # One publish a minute from the first package on — the experiment described above the
+          # variable in publish-packed-tarballs.sh. Set to '0' to go back to unpaced.
+          NPM_PUBLISH_INTERVAL_SECONDS: '60'
         run: tools/ci/publish-packed-tarballs.sh "${{ runner.temp }}/npm-packages"

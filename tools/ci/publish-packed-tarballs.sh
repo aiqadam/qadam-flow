@@ -78,6 +78,18 @@ NPM_PUBLISH_MAX_ATTEMPTS="${NPM_PUBLISH_MAX_ATTEMPTS:-6}"
 NPM_PUBLISH_RETRY_BASE_SECONDS="${NPM_PUBLISH_RETRY_BASE_SECONDS:-30}"
 NPM_PUBLISH_RETRY_MAX_SECONDS="${NPM_PUBLISH_RETRY_MAX_SECONDS:-600}"
 
+# A fixed pause between two packages' PUTs, from the FIRST package on — not a reaction to a 429.
+# #508's throttle only ever switched on after the registry had already refused, so "pacing does
+# not move the wall" was measured for a run that was already at the wall, never for one that was
+# slow from the start. This is the experiment that tells the two apart: if the scope's cap is a
+# count over a rolling ~24 h, a paced run still stops at about the same package; if it is a burst
+# limit, a paced run gets further. 0 (the default) keeps the unpaced behaviour for local runs and
+# the test suite; the workflows set it explicitly.
+NPM_PUBLISH_INTERVAL_SECONDS="${NPM_PUBLISH_INTERVAL_SECONDS:-0}"
+case "$NPM_PUBLISH_INTERVAL_SECONDS" in
+  ''|*[!0-9]*) echo "::error::publish-packed-tarballs: NPM_PUBLISH_INTERVAL_SECONDS must be a whole number of seconds, got '${NPM_PUBLISH_INTERVAL_SECONDS}'" >&2; exit 1 ;;
+esac
+
 # Same pattern publish-npm-package.ts enforced before the split moved the publish off that
 # path. Not exploitable here — the value reaches `npm publish --tag` as a quoted argv element,
 # never through a shell string — but losing a check in a refactor is how it stops being one.
@@ -226,6 +238,13 @@ processed=0
 preexisting=""
 while IFS= read -r filename || [ -n "$filename" ]; do
   [ -n "$filename" ] || continue
+
+  # `processed` counts packages whose PUT already got an answer, so this pauses between two
+  # packages and never before the first one of the run.
+  if [ "$processed" -gt 0 ] && [ "$NPM_PUBLISH_INTERVAL_SECONDS" -gt 0 ]; then
+    echo "publish-packed-tarballs: waiting ${NPM_PUBLISH_INTERVAL_SECONDS}s before publishing ${filename}."
+    sleep "$NPM_PUBLISH_INTERVAL_SECONDS"
+  fi
 
   attempt=1
   # Reset per package: only a failure on THIS name@version can make a conflict on it ours.
