@@ -240,10 +240,10 @@ check "and does not continue to the next package" "1" "$(wc -l < "$WORK_ROOT/pub
 # #476's first real run died 23 packages into a 239-entry manifest on `429 Too Many Requests`,
 # with 216 left and no way to resume but another approved dispatch. #508's first answer retried
 # the package and paced the rest of the manifest, on the ordinary assumption that a 429 is a
-# request-rate limit. #476 then measured it directly across four dispatches and found a
-# CUMULATIVE DAILY CAP instead — pacing never moved where the wall landed, and a fresh dispatch
-# hours later was refused on its very first PUT, before anything in that run could have tripped
-# a rate. So a 429 now fails the run immediately: these cases pin that it is not retried, that
+# request-rate limit. #476 then measured it directly and found a CAP ON PUBLISHES PER ROLLING
+# ~24 H instead — a fresh dispatch hours later was refused on its very first PUT, before anything
+# in that run could have tripped a rate, and #582's run paced at 60 s from the first package
+# stopped at the same count as unpaced ones. So a 429 now fails the run immediately: these cases pin that it is not retried, that
 # nothing behind it in the manifest is touched, and that the run says why (re-dispatch, not wait)
 # rather than working through NPM_PUBLISH_MAX_ATTEMPTS on a wall a backoff cannot move.
 dir="$(new_case rate-limited-fails-immediately aiqadam-shared-0.135.0.tgz aiqadam-qadams-framework-0.32.1.tgz)"
@@ -255,7 +255,7 @@ check "and the next package in the manifest is never touched" "no" \
 check "and it says how to resume, since the pack step skips what is already published" "yes" \
     "$(grep -qF 'Re-dispatch' "$WORK_ROOT/out.log" && echo yes || echo no)"
 check "and it says why retrying would not help" "yes" \
-    "$(grep -qF 'cumulative daily publish cap' "$WORK_ROOT/out.log" && echo yes || echo no)"
+    "$(grep -qF 'publishes per rolling 24 h' "$WORK_ROOT/out.log" && echo yes || echo no)"
 
 # --- NPM_PUBLISH_INTERVAL_SECONDS: a pause between packages, never before the first -------
 # The experiment this knob exists for is "slow from the first PUT", so a pause before the first
@@ -374,7 +374,7 @@ FAKE_ERROR_PADDING_LINES=20000 FAKE_PUBLISH_SEQUENCE='429' run_case "$dir"
 check "a 429 buried under a very long error log is still read as rate-limited, not fatal" 1 $?
 check "and it fails on the first attempt, not retried" "1" "$(grep -c . < "$WORK_ROOT/publish.log")"
 check "and the message names the cap, which only prints for the rate-limited class" "yes" \
-    "$(grep -qF 'cumulative daily publish cap' "$WORK_ROOT/out.log" && echo yes || echo no)"
+    "$(grep -qF 'publishes per rolling 24 h' "$WORK_ROOT/out.log" && echo yes || echo no)"
 
 # The same planted paths must not fake a rate limit either: a genuine fatal failure (a bad token,
 # a forbidden scope) must still be reported and stopped as fatal, not read as a 429 it never was.
