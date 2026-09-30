@@ -24,13 +24,20 @@ export const fileLock = {
         if (acquired.error !== null) {
             throw fileSystemUtils.hasErrorCode({ error: acquired.error, code: 'ELOCKED' }) ? new FileLockTimeoutError({ path }) : acquired.error
         }
-        const release = acquired.data
-        try {
-            return await fn()
+        const result = await tryCatch(() => fn())
+        const released = await tryCatch(() => releaseLock({ release: acquired.data, wasCompromised: () => compromised }))
+        if (result.error !== null) {
+            // The work's own failure is what the caller has to act on; a lock left behind goes
+            // stale on its own.
+            if (released.error !== null) {
+                log.error({ path, error: released.error.message }, '[fileLock] Could not release the lock after the protected work failed')
+            }
+            throw result.error
         }
-        finally {
-            await releaseLock({ release, wasCompromised: () => compromised })
+        if (released.error !== null) {
+            throw released.error
         }
+        return result.data
     },
     // True only when the lock itself could not be taken in time, never for an error `fn` threw:
     // a caller that falls back on a timeout must not run `fn` a second time because `fn` failed.

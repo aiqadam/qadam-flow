@@ -78,8 +78,16 @@ export const codeBuilder = (log: Logger) => ({
         const cache = cacheState(codePath)
         await cache.getOrSetCache({
             key: codePath,
-            cacheMiss: (value: string) => {
-                return value !== currentHash
+            cacheMiss: async (value: string) => {
+                if (value !== currentHash) {
+                    return true
+                }
+                // cache.json lives inside the step directory, and after a lock-timeout fallback a
+                // replica that lost the swap can still save its own hash into the winner's build,
+                // so the hash the build itself carries is the authority (#586). A build from
+                // before it carries none, and for that one cache.json is all there is.
+                const builtFrom = await readSourceHash(codePath)
+                return !isNil(builtFrom) && builtFrom !== currentHash
             },
             installFn: async () => {
                 await removeOrphanedBuilds({ codePath, log })
@@ -131,7 +139,7 @@ async function buildCodeStep({ buildPath, codePath, sourceCode, log }: BuildCode
             if (error) {
                 log.info({ codePath, error }, 'Compilation error')
                 compileSpan.recordException(error instanceof Error ? error : new Error(String(error)))
-                await handleCompilationError({ codePath: buildPath, error })
+                await handleCompilationError({ buildPath, codePath, error })
             }
             else {
                 log.info({ codePath }, 'Compilation success')
@@ -297,19 +305,20 @@ async function compileCode({ path, code }: CompileCodeParams, log: Logger): Prom
     })
 }
 
-async function handleCompilationError({ codePath, error }: HandleCompilationErrorParams): Promise<void> {
+async function handleCompilationError({ buildPath, codePath, error }: HandleCompilationErrorParams): Promise<void> {
     const errorHasStdout =
         typeof error === 'object' && error && 'stdout' in error
     const stdoutError = errorHasStdout ? error.stdout : undefined
     const genericError = `${error ?? 'error compiling'}`
-    const errorMessage = `Compilation Error ${stdoutError ?? genericError}`
+    // The step's user sees this message; the build directory's name is an internal detail.
+    const errorMessage = `Compilation Error ${stdoutError ?? genericError}`.replaceAll(buildPath, codePath)
 
     const invalidArtifactContent = INVALID_ARTIFACT_TEMPLATE.replace(
         INVALID_ARTIFACT_ERROR_PLACEHOLDER,
         errorMessage,
     )
 
-    await fs.writeFile(`${codePath}/index.js`, invalidArtifactContent, 'utf8')
+    await fs.writeFile(`${buildPath}/index.js`, invalidArtifactContent, 'utf8')
 }
 
 type ProcessCodeStepParams = {
@@ -375,6 +384,7 @@ type CompileCodeParams = {
 }
 
 type HandleCompilationErrorParams = {
+    buildPath: string
     codePath: string
     error: unknown
 }

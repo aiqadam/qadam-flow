@@ -12,6 +12,7 @@ const SOURCE_HASH_FILE = '.source-hash'
 let tempDir: string
 let buildHook: () => Promise<void>
 let installShouldFail: boolean
+let compileShouldFail: boolean
 let renameHook: (params: { from: string, to: string }) => Promise<void>
 let rmHook: (target: string) => Promise<void>
 
@@ -19,6 +20,7 @@ beforeEach(async () => {
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'code-builder-test-')))
     buildHook = async () => undefined
     installShouldFail = false
+    compileShouldFail = false
     renameHook = async () => undefined
     rmHook = async () => undefined
     vi.resetModules()
@@ -52,6 +54,9 @@ beforeEach(async () => {
             },
             build: async ({ entryFile, outputFile }: { entryFile: string, outputFile: string }) => {
                 await buildHook()
+                if (compileShouldFail) {
+                    throw Object.assign(new Error('esbuild failed'), { stdout: `${entryFile}:1:0: ERROR: Unexpected end of file` })
+                }
                 await copyFile(entryFile, outputFile)
                 return { stdout: '', stderr: '' }
             },
@@ -161,6 +166,37 @@ describe('codeBuilder.processCodeStep (#586)', () => {
 
         expect(await readFile(stepIndexPath(), 'utf8')).toBe('other-replica')
         expect(await readdir(flowVersionPath())).toEqual([STEP_NAME])
+    })
+
+    it('rebuilds when the step directory holds a build of another source than cache.json and memory record', async () => {
+        await processStep({ code: 'version-1' })
+        // What a lock-timeout fallback can leave: another replica swapped its build in after this
+        // replica's, and this replica's hash was saved into the other build's cache.json.
+        await writeOtherReplicaBuild({ code: 'other-replica', sourceHash: 'hash-of-another-source' })
+
+        await processStep({ code: 'version-1' })
+
+        expect(await readFile(stepIndexPath(), 'utf8')).toBe('version-1')
+    })
+
+    it('trusts cache.json for a build from before source hashes, instead of rebuilding every step once', async () => {
+        await processStep({ code: 'version-1' })
+        await rm(join(stepPath(), SOURCE_HASH_FILE))
+        await writeFile(stepIndexPath(), 'built-before-586')
+
+        await processStep({ code: 'version-1' })
+
+        expect(await readFile(stepIndexPath(), 'utf8')).toBe('built-before-586')
+    })
+
+    it('reports a compilation error against the step path, not the build directory', async () => {
+        compileShouldFail = true
+
+        await processStep({ code: 'broken(' })
+
+        const artifact = await readFile(stepIndexPath(), 'utf8')
+        expect(artifact).toContain(`${stepPath()}/index.ts:1:0`)
+        expect(artifact).not.toContain('.build-')
     })
 
     it('ages build directories by the time in their name, not their mtime, which a rename does not update', async () => {

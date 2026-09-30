@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Running proper-lockfile's real retry budget out takes about three minutes, so the library is
-// stubbed to end in the ELOCKED it gives up with.
+// Running proper-lockfile's real retry budget out takes about three minutes, and a release that
+// fails cannot be provoked on a real lock, so the library is stubbed.
 const lockfileStub = vi.hoisted(() => ({
     lock: vi.fn(),
 }))
@@ -52,5 +52,36 @@ describe('fileLock.runExclusive acquisition timeout', () => {
         await fileLock.runExclusive({ path: '/tmp/file-lock-timeout-test', createPath: false, staleMs: 60_000, log: { error: vi.fn() }, fn: async () => undefined })
 
         expect(lockfileStub.lock).toHaveBeenCalledWith('/tmp/file-lock-timeout-test', expect.objectContaining({ stale: 60_000 }))
+    })
+})
+
+describe('fileLock.runExclusive when the release fails', () => {
+    it('fails with the protected work\'s own error, and logs the release failure', async () => {
+        const { fileLock } = await import('../src/file-lock')
+        lockfileStub.lock.mockResolvedValue(async () => {
+            throw new Error('release failed')
+        })
+        const log = { error: vi.fn() }
+
+        await expect(fileLock.runExclusive({
+            path: '/tmp/file-lock-timeout-test',
+            createPath: false,
+            log,
+            fn: async () => {
+                throw new Error('work failed')
+            },
+        })).rejects.toThrow('work failed')
+        expect(log.error).toHaveBeenCalledTimes(1)
+        expect(log.error.mock.calls[0][1]).toContain('Could not release')
+    })
+
+    it('fails with the release error when the protected work succeeded', async () => {
+        const { fileLock } = await import('../src/file-lock')
+        lockfileStub.lock.mockResolvedValue(async () => {
+            throw new Error('release failed')
+        })
+
+        await expect(fileLock.runExclusive({ path: '/tmp/file-lock-timeout-test', createPath: false, log: { error: vi.fn() }, fn: async () => 'done' }))
+            .rejects.toThrow('release failed')
     })
 })

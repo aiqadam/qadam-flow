@@ -29,7 +29,7 @@ export const cacheState = (folderPath: string) => {
             const { key, cacheMiss, crossProcess } = params
             const cache = await readCacheFromMemory(folderPath)
             const value = cache[key] as string | null
-            if (!isNil(value) && !cacheMiss(value)) {
+            if (!isNil(value) && !(await cacheMiss(value))) {
                 return {
                     cacheHit: true,
                     state: value,
@@ -82,7 +82,7 @@ export const cacheState = (folderPath: string) => {
 async function readOrInstall({ folderPath, key, cacheMiss, installFn, skipSave }: ReadOrInstallParams): Promise<CacheResult> {
     const cacheFromDisk = await readCacheFromFile(folderPath)
     const valueFromDisk = cacheFromDisk[key]
-    if (!isNil(valueFromDisk) && !cacheMiss(valueFromDisk)) {
+    if (!isNil(valueFromDisk) && !(await cacheMiss(valueFromDisk))) {
         cached[folderPath] = cacheFromDisk
         return { cacheHit: true, state: valueFromDisk }
     }
@@ -105,6 +105,9 @@ async function readOrInstall({ folderPath, key, cacheMiss, installFn, skipSave }
 // worker container runs as pid 7, so two replicas' n-th writes shared one temp path on the
 // shared volume and one of them failed with `ENOENT ... chown cache.json.<n>` (#586). The fsync
 // before the rename is kept from it: without one, a host crash can leave a renamed but empty file.
+// A replica killed between the open and the rename leaves its temp file behind. That is left
+// alone: it is a few bytes under a unique name nothing reads, and a code build's copy goes with
+// the step directory the next time the step is rebuilt.
 async function writeFileAtomically({ filePath, content }: WriteFileAtomicallyParams): Promise<void> {
     const tempPath = `${filePath}.${hostname()}.${randomUUID()}.tmp`
     const { error } = await tryCatch(async () => {
@@ -113,14 +116,15 @@ async function writeFileAtomically({ filePath, content }: WriteFileAtomicallyPar
             await handle.writeFile(content, 'utf8')
             await handle.sync()
         })
-        await handle.close()
-        if (!isNil(writeError)) {
-            throw writeError
+        const { error: closeError } = await tryCatch(() => handle.close())
+        const firstError = writeError ?? closeError
+        if (!isNil(firstError)) {
+            throw firstError
         }
         await rename(tempPath, filePath)
     })
     if (!isNil(error)) {
-        await rm(tempPath, { force: true })
+        await tryCatch(() => rm(tempPath, { force: true }))
         throw error
     }
 }
@@ -164,7 +168,7 @@ type CacheResult = {
 
 type CacheStateParams = {
     key: string
-    cacheMiss: (value: string) => boolean
+    cacheMiss: (value: string) => boolean | Promise<boolean>
     installFn: () => Promise<string>
     skipSave: (value: string) => boolean
     // Opt-in, for an installFn that writes shared on-disk state (code builds, the engine copy).
