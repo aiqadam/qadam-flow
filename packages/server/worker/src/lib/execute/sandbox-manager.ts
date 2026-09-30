@@ -9,6 +9,9 @@ import { createSandboxForJob } from './create-sandbox-for-job'
 export function createSandboxManager({ boxId, proxyPort }: { boxId: number, proxyPort: number | null }): SandboxManager {
     let currentSandbox: Sandbox | null = null
     let currentJobContext: SandboxJobContext | null = null
+    // Bumped by every invalidate, and so every shutdown: a prewarm still provisioning or starting
+    // can then tell that its slot was let go, and must not leave an engine running for nobody.
+    let generation = 0
 
     // Only reusable sandboxes: a single-use one would be thrown away by the first job's release.
     // And only forked engines, which ignore mounts: an isolate sandbox that is reused (dev, or
@@ -19,7 +22,12 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
             return
         }
         const startedAt = performance.now()
+        const startGeneration = generation
         await provisioner(log, apiClient).provision({ pieces: [], codeSteps: [] })
+        if (generation !== startGeneration) {
+            log.debug({ boxId }, '[sandboxManager#prewarm] Slot let go while provisioning, no sandbox started')
+            return
+        }
         const sandbox = createSandboxForJob({
             log,
             apiClient,
@@ -30,18 +38,21 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
         })
         currentSandbox = sandbox
         const { error: startError } = await tryCatch(() => sandbox.start({ flowVersionId: undefined, platformId: '', mounts: [] }))
-        // Invalidated while it was starting (a stop or a reconnect): nothing references it any more.
-        if (startError || currentSandbox !== sandbox) {
+        // Let go while it was starting (a stop or a reconnect): nothing references it any more, and a
+        // start error then is the shutdown's doing, not a failed prewarm.
+        const superseded = generation !== startGeneration || currentSandbox !== sandbox
+        if (startError || superseded) {
             if (currentSandbox === sandbox) {
                 currentSandbox = null
             }
             const { error: shutdownError } = await tryCatch(() => sandbox.shutdown())
-            if (startError) {
+            if (startError && !superseded) {
                 throw startError
             }
             if (shutdownError) {
                 throw shutdownError
             }
+            log.debug({ boxId }, '[sandboxManager#prewarm] Slot let go while its sandbox started, sandbox shut down')
             return
         }
         log.info({ boxId, sandboxId: sandbox.id, prewarmMs: Math.round(performance.now() - startedAt) }, '[sandboxManager#prewarm] Sandbox started before its first job')
@@ -80,6 +91,7 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
             }
         },
         async invalidate(log: Logger): Promise<void> {
+            generation++
             if (currentSandbox) {
                 log.info('Invalidating sandbox')
                 const sb = currentSandbox

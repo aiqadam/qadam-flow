@@ -82,8 +82,8 @@ Engine processes are spawned lazily, so after every worker start (each deploy) t
 each of the `AP_WORKER_CONCURRENCY` slots used to pay the process start, the dist-index build (the
 first `resolveMs`) and the framework's module graph (most of the first `importMs`). Three pieces
 move that off the first job:
-- **Dist-index manifest.** The Dockerfile runs `packages/server/engine/src/scripts/write-qadam-dist-index.ts`
-  after the qadam build, writing `packages/qadams/dist-index.json` (name, version, `dist/src/index.js`
+- **Dist-index manifest.** The Dockerfile runs `packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams`
+  (the root is a required argument) after the qadam build, writing `packages/qadams/dist-index.json` (name, version, `dist/src/index.js`
   path relative to `packages/qadams`, in scan order); the build fails if it finds no built qadam.
   `qadamDistIndex.get({ refresh: false })` (`engine/src/lib/helper/qadam-dist-index.ts`) reads it
   instead of walking the tree. A manifest that is unreadable, not version 1, empty, points outside
@@ -98,7 +98,10 @@ move that off the first job:
   `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, and dev with either. It provisions the engine with no qadams
   and starts the sandbox with no platform and no flow version, logging
   `[sandboxManager#prewarm] Sandbox started before its first job` with `prewarmMs`. Best effort: any
-  failure is a warning, the sandbox is dropped and the slot polls as before. Isolate modes
+  failure is a warning, the sandbox is dropped and the slot polls as before. A prewarm abandoned by a
+  stop cannot leak an engine: every `invalidate`/`shutdown` bumps the manager's generation, so a
+  prewarm that sees it changed starts no sandbox after the install, and shuts down (quietly, at
+  debug) one that was already starting. Isolate modes
   (`SANDBOX_PROCESS`, `SANDBOX_CODE_AND_PROCESS`) skip it even when reused, because their mounts are
   fixed at start and a prewarmed box would have none.
 - **Engine warmup.** Reusable sandboxes get `AP_ENGINE_WARMUP=true` (`create-sandbox-for-job.ts`). On
@@ -106,8 +109,8 @@ move that off the first job:
   `require`s `@aiqadam/qadams-framework` and `@aiqadam/qadams-common` through a bundled qadam's
   directory, then writes `[engineWarmup] done {distIndexMs, qadams, sharedDepsMs, sharedDeps}` through
   the unpatched console: worker stdout, never a job's log. The first real qadam import then reports
-  `sharedDepsAlreadyLoaded: true`. It never throws: a failure only means the first job pays the cost
-  itself.
+  `sharedDepsAlreadyLoaded: true`. It never throws: a failure writes `[engineWarmup] failed {error}`
+  through the unpatched console's stderr, and only means the first job pays the cost itself.
 
 ## Job Timing and Event-Loop Lines (#587)
 Three log lines answer "where did a slow job's time go" without OTEL. All of them are info or warn, so they reach journald on QA.

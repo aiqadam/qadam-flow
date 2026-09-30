@@ -1,7 +1,10 @@
 import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { QADAM_DIST_MANIFEST_FILE, qadamDistIndex } from '../../src/lib/helper/qadam-dist-index'
+import { qadamDistIndex } from '../../src/lib/helper/qadam-dist-index'
+
+// Spelled out rather than imported: .gitignore names it too, so a rename has to be deliberate.
+const MANIFEST_FILE = 'dist-index.json'
 
 // #419: a fixture tree shaped like `packages/qadams` — two built qadams, a duplicate name that the
 // scan must drop (first match wins), and the directories the scan must never descend into.
@@ -20,7 +23,7 @@ async function writeDistPackageJson({ root, dir, name, version }: { root: string
 }
 
 async function writeManifest({ root, content }: { root: string, content: string }): Promise<void> {
-    await fs.writeFile(path.join(root, QADAM_DIST_MANIFEST_FILE), content)
+    await fs.writeFile(path.join(root, MANIFEST_FILE), content)
 }
 
 describe('qadamDistIndex (#419)', () => {
@@ -62,7 +65,7 @@ describe('qadamDistIndex (#419)', () => {
 
     it('stores index paths relative to the qadams root, so the manifest survives a moved tree', async () => {
         await qadamDistIndex.writeManifest({ qadamsRoot: root })
-        const manifest: unknown = JSON.parse(await fs.readFile(path.join(root, QADAM_DIST_MANIFEST_FILE), 'utf-8'))
+        const manifest: unknown = JSON.parse(await fs.readFile(path.join(root, MANIFEST_FILE), 'utf-8'))
 
         expect(JSON.stringify(manifest)).not.toContain(root)
         expect(JSON.stringify(manifest)).toContain(JSON.stringify(path.join('core', 'alpha', 'dist', 'src', 'index.js')))
@@ -103,6 +106,20 @@ describe('qadamDistIndex (#419)', () => {
         expect([...index.keys()].sort()).toEqual(['@aiqadam/qadam-alpha', '@aiqadam/qadam-beta'])
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[qadamDistIndex] manifest rejected'))
         expect(String(warnSpy.mock.calls[0][0])).not.toContain(root)
+    })
+
+    it('rejects an entry outside the qadams root even when the file it names exists', async () => {
+        const outside = await fs.mkdtemp(path.join(path.dirname(root), 'qadam-outside-'))
+        await fs.writeFile(path.join(outside, 'index.js'), 'module.exports = {}\n')
+        const indexPath = path.relative(root, path.join(outside, 'index.js'))
+        await writeManifest({ root, content: JSON.stringify({ version: 1, entries: [{ name: '@aiqadam/qadam-evil', version: '1.0.0', indexPath }] }) })
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+        const index = await qadamDistIndex.load({ qadamsRoot: root, useManifest: true })
+        await fs.rm(outside, { recursive: true, force: true })
+
+        expect(index.has('@aiqadam/qadam-evil')).toBe(false)
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('an entry points outside the qadams root'))
     })
 
     it('keeps the first of two builds with the same name, as the scan always did', async () => {

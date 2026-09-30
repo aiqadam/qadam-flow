@@ -111,7 +111,7 @@ RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --f
 
 # Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
 # fresh engine process walks the whole qadam tree before its first step can load (#419).
-RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts
+RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams
 
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\

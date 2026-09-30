@@ -339,8 +339,9 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
 /**
  * Starts this slot's sandbox before its first poll, so a job can never race the prewarm for the
  * slot (#419). Skipped for a loop that is not going to poll — stopped, already superseded by a
- * reconnect, or about to pause on a version mismatch — and abandoned on `stop()` like a poll is;
- * the manager shuts down a sandbox that finishes starting after its slot was shut down.
+ * reconnect, or about to pause on a version mismatch — and abandoned on `stop()` like a poll is.
+ * An abandoned prewarm cannot leak an engine: once its slot's manager has been shut down, the
+ * manager starts no sandbox after the install and shuts down one that was already starting.
  */
 async function prewarmSlot({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
     const willPoll = polling && connectionGeneration === generation && workerSettings.getSettings().APP_VERSION === AP_VERSION

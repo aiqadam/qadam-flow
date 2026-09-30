@@ -69,6 +69,18 @@ describe('workerSocket.init — engine warmup output (#419)', () => {
         expect(notified.join('')).not.toContain('[engineWarmup]')
     })
 
+    it('reports a failed warmup through the unpatched console, never on the notify channel', async () => {
+        const unpatchedError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        warmupRunMock.mockRejectedValueOnce(new Error('sink broke'))
+
+        workerSocket.init('sandbox-warmup-failed-test')
+        await vi.waitFor(() => expect(unpatchedError).toHaveBeenCalledWith('[engineWarmup] failed {"error":"sink broke"}'))
+        console.log('[probe] after the failure')
+        await vi.waitFor(() => expect(notified.join('')).toContain('[probe] after the failure'))
+
+        expect(notified.join('')).not.toContain('[engineWarmup]')
+    })
+
     it('does not run the warmup unless the worker asked for it', async () => {
         process.env.AP_ENGINE_WARMUP = 'false'
 

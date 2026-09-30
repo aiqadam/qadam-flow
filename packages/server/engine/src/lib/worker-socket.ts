@@ -104,7 +104,10 @@ export const workerSocket = {
         // first job runs would land in that job's logs.
         if (engineWarmup.isEnabled()) {
             socket.once('connect', () => {
-                void tryCatch(() => engineWarmup.run({ write: (line) => originalLog.call(console, line) }))
+                void warmUpEngine({
+                    write: (line) => originalLog.call(console, line),
+                    writeError: (line) => originalError.call(console, line),
+                })
             })
         }
 
@@ -179,4 +182,18 @@ function buildSocketOptions(sandboxId: string): Partial<ManagerOptions & SocketO
         Object.assign(base, { agent: new http.Agent() })
     }
     return base
+}
+
+// The warmup is best effort, but a failed one still has to leave a trace: without it the only sign
+// is a first job that came in slow.
+async function warmUpEngine({ write, writeError }: WarmUpEngineParams): Promise<void> {
+    const { error } = await tryCatch(() => engineWarmup.run({ write }))
+    if (error) {
+        writeError(`[engineWarmup] failed ${JSON.stringify({ error: error.message })}`)
+    }
+}
+
+type WarmUpEngineParams = {
+    write: (line: string) => void
+    writeError: (line: string) => void
 }

@@ -7,8 +7,6 @@ import { z } from 'zod'
 // The cache holds the in-flight promise so concurrent steps share one build.
 let distIndexCache: Promise<Map<string, DistPackageEntry>> | null = null
 
-export const QADAM_DIST_MANIFEST_FILE = 'dist-index.json'
-
 export const qadamDistIndex = {
     get: async ({ refresh }: GetParams): Promise<Map<string, DistPackageEntry>> => {
         if (!refresh && !isNil(distIndexCache)) {
@@ -50,11 +48,13 @@ export const qadamDistIndex = {
                 indexPath: path.relative(root, entry.indexPath),
             })),
         }
-        await fs.writeFile(path.join(root, QADAM_DIST_MANIFEST_FILE), JSON.stringify(manifest))
+        await fs.writeFile(path.join(root, MANIFEST_FILE), JSON.stringify(manifest))
         return manifest.entries.length
     },
 }
 
+// The .gitignore entry names this file too.
+const MANIFEST_FILE = 'dist-index.json'
 const MANIFEST_VERSION = 1
 const IGNORED_DIRS = ['node_modules', '.turbo', 'framework', 'common']
 
@@ -72,9 +72,11 @@ function defaultQadamsRoot(): string {
 
 // Any problem with the manifest means "scan instead": it must never make a bundled qadam
 // unresolvable. A missing file is the normal dev-tree case and stays quiet; anything else is an
-// image built wrong, or a stale copy in a dev tree, and says why.
+// image built wrong, and says why. This is no staleness check: a qadam built after the manifest was
+// written is simply not in it, which is why only the image build writes one (the file is
+// gitignored) and a dev-qadam refresh never reads it.
 async function readManifest(qadamsRoot: string): Promise<Map<string, DistPackageEntry> | null> {
-    const { data: content, error: readError } = await tryCatch(() => fs.readFile(path.join(qadamsRoot, QADAM_DIST_MANIFEST_FILE), 'utf-8'))
+    const { data: content, error: readError } = await tryCatch(() => fs.readFile(path.join(qadamsRoot, MANIFEST_FILE), 'utf-8'))
     if (readError) {
         if (!isFileNotFound(readError)) {
             warnManifestRejected('unreadable')

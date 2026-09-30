@@ -303,5 +303,40 @@ describe('sandbox-manager prewarm', () => {
 
         expect(sandbox.shutdown).toHaveBeenCalledTimes(1)
         expect(manager.getActiveSandbox()).toBeNull()
+        expect(log.warn).not.toHaveBeenCalled()
+    })
+
+    it('starts no sandbox when the slot is shut down while the engine is still installing', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const installed: { resolve: () => void } = { resolve: () => undefined }
+        provisionMock.mockReturnValueOnce(new Promise<void>((resolve) => { installed.resolve = resolve }))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        const prewarming = manager.prewarm({ log, apiClient })
+        await vi.waitFor(() => expect(provisionMock).toHaveBeenCalled())
+        await manager.shutdown(log)
+        installed.resolve()
+        await prewarming
+
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+        expect(manager.getActiveSandbox()).toBeNull()
+        expect(log.warn).not.toHaveBeenCalled()
+    })
+
+    it('stays quiet about a start error caused by its slot being shut down mid-start', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const started: { reject: (error: Error) => void } = { reject: () => undefined }
+        const sandbox = fakeSandbox({ start: () => new Promise<void>((_resolve, reject) => { started.reject = reject }) })
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(sandbox)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        const prewarming = manager.prewarm({ log, apiClient })
+        await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalled())
+        await manager.shutdown(log)
+        started.reject(new Error('socket closed'))
+        await prewarming
+
+        expect(log.warn).not.toHaveBeenCalled()
+        expect(manager.getActiveSandbox()).toBeNull()
     })
 })
