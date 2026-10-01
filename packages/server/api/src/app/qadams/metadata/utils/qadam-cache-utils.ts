@@ -1,3 +1,4 @@
+import { QadamMetadata } from '@aiqadam/qadams-framework'
 import { apId, isEmpty, isNil, PackageType, QadamType } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import semVer from 'semver'
@@ -5,6 +6,7 @@ import { system } from '../../../helper/system/system'
 import { AppSystemProp } from '../../../helper/system/system-props'
 import { QadamRegistryEntry } from '../qadam-cache'
 import { QadamMetadataSchema } from '../qadam-metadata-entity'
+import { bundledQadamsManifest } from './bundled-qadams-manifest'
 import { fileQadamsUtils } from './file-qadams-utils'
 
 export function isNewerVersion(a: string, b: string): boolean {
@@ -47,27 +49,11 @@ export async function loadBundledQadams(log: FastifyBaseLogger): Promise<QadamMe
     const filterNames = !isNil(devQadamsConfig) && !isEmpty(devQadamsConfig)
         ? devQadamsConfig.split(',').map((n) => n.trim()).filter((n) => !isEmpty(n))
         : null
-    bundledQadamsCachePromise = loadFromDisk(log, filterNames)
+    bundledQadamsCachePromise = loadFromDisk({ log, filterNames })
     bundledQadamsCachePromise.catch(() => {
         bundledQadamsCachePromise = null
     })
     return bundledQadamsCachePromise
-}
-
-async function loadFromDisk(log: FastifyBaseLogger, filterNames: string[] | null): Promise<QadamMetadataSchema[]> {
-    const pieces = filterNames !== null
-        ? await fileQadamsUtils(log).loadDistQadamsMetadata(filterNames)
-        : await fileQadamsUtils(log).loadAllDistQadamsMetadata()
-
-    return pieces.map((p): QadamMetadataSchema => ({
-        id: apId(),
-        ...p,
-        projectUsage: 0,
-        qadamType: QadamType.OFFICIAL,
-        packageType: PackageType.REGISTRY,
-        created: new Date().toISOString(),
-        updated: new Date().toISOString(),
-    }))
 }
 
 export function filterQadamBasedOnType(platformId: string | undefined, qadam: QadamMetadataSchema | QadamRegistryEntry): boolean {
@@ -96,4 +82,47 @@ export function isSupportedRelease(release: string | undefined, qadam: { minimum
         return false
     }
     return true
+}
+
+async function loadFromDisk({ log, filterNames }: LoadFromDiskParams): Promise<QadamMetadataSchema[]> {
+    const startedAt = performance.now()
+    const { source, pieces } = await loadBundledMetadata({ log, filterNames })
+    // One line per process (the result is cached), so QA can tell which path a cold start took.
+    log.info({ source, qadams: pieces.length, durationMs: Math.round(performance.now() - startedAt) }, '[loadBundledQadams] Bundled qadam metadata loaded')
+
+    return pieces.map((p): QadamMetadataSchema => ({
+        id: apId(),
+        ...p,
+        projectUsage: 0,
+        qadamType: QadamType.OFFICIAL,
+        packageType: PackageType.REGISTRY,
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+    }))
+}
+
+// `AP_DEV_QADAMS` keeps scanning its filtered set: those dists are rebuilt while the process
+// lives (`dev-qadam-watcher.ts`), so only a scan can see them, and the set is small.
+async function loadBundledMetadata({ log, filterNames }: LoadFromDiskParams): Promise<BundledMetadata> {
+    const utils = fileQadamsUtils(log)
+    if (filterNames !== null) {
+        return { source: 'dev-qadams-scan', pieces: await utils.loadDistQadamsMetadata(filterNames) }
+    }
+    const qadamsRoot = utils.bundledQadamsRoot()
+    const loadTranslations = utils.isTranslationLoadingEnabled()
+    const fromManifest = await bundledQadamsManifest.read({ qadamsRoot, loadTranslations, log })
+    if (!isNil(fromManifest)) {
+        return { source: 'manifest', pieces: fromManifest }
+    }
+    return { source: 'scan', pieces: await utils.loadAllDistQadamsMetadata({ qadamsRoot, loadTranslations }) }
+}
+
+type LoadFromDiskParams = {
+    log: FastifyBaseLogger
+    filterNames: string[] | null
+}
+
+type BundledMetadata = {
+    source: 'manifest' | 'scan' | 'dev-qadams-scan'
+    pieces: QadamMetadata[]
 }

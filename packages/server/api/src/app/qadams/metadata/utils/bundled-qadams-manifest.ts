@@ -1,0 +1,197 @@
+import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { QadamMetadata } from '@aiqadam/qadams-framework'
+import { isNil, tryCatch, tryCatchSync } from '@aiqadam/shared'
+import { FastifyBaseLogger } from 'fastify'
+import { z } from 'zod'
+import { fileQadamsUtils } from './file-qadams-utils'
+
+// #598: the image build writes the serialized metadata of every bundled qadam here, so the app's
+// first catalogue read is one `readFile` + `JSON.parse` instead of a synchronous `require` of all
+// 238 qadams on the event loop (30–63 s on QA, with every request, socket and queue consumer in
+// the process waiting behind it). The .gitignore and the Dockerfile name this file too.
+export const BUNDLED_QADAMS_MANIFEST_FILE = 'bundled-qadams-metadata.json'
+
+export const bundledQadamsManifest = {
+    // `null` means "scan instead". A missing file is the dev-tree case and stays quiet; anything
+    // else is an image built wrong, and the warning says why. The result is what the scan would
+    // return for the same tree: the writer serialized the scan's own output, and the checks below
+    // reject a manifest that no longer describes the dists on disk.
+    read: async ({ qadamsRoot, loadTranslations, log }: ReadParams): Promise<QadamMetadata[] | null> => {
+        const root = path.resolve(qadamsRoot)
+        const { data: content, error: readError } = await tryCatch(() => readFile(path.join(root, BUNDLED_QADAMS_MANIFEST_FILE), 'utf-8'))
+        if (readError) {
+            return isFileNotFound(readError) ? null : rejectManifest({ log, reason: 'unreadable' })
+        }
+        const { data: parsed } = tryCatchSync(() => manifestSchema.safeParse(JSON.parse(content)))
+        if (isNil(parsed) || !parsed.success) {
+            return rejectManifest({ log, reason: `not a version-${MANIFEST_VERSION} manifest` })
+        }
+        // Trusted as the whole bundled catalogue, so an empty one would hide every bundled qadam.
+        if (parsed.data.qadams.length === 0) {
+            return rejectManifest({ log, reason: 'no entries' })
+        }
+        const qadams = parsed.data.qadams.map((qadam) => ({
+            ...qadam,
+            directoryPath: path.resolve(root, qadam.directoryPath),
+            // The writer always keeps `i18n`, so the flag can change without a rebuild; the scan
+            // reads it only when the flag is on, and this has to return what the scan would.
+            i18n: loadTranslations ? qadam.i18n : undefined,
+        }))
+        if (qadams.some((qadam) => !qadam.directoryPath.startsWith(root + path.sep))) {
+            return rejectManifest({ log, reason: 'an entry points outside the qadams root' })
+        }
+        // The walk is the scan's own, without the `require`s: a few hundred ms sequentially, a few
+        // dozen concurrently. It must never throw out of here, or the catalogue read fails instead
+        // of falling back.
+        const [distChecks, distWalk] = await Promise.all([
+            Promise.all(qadams.map((qadam) => checkBuiltDist({ qadam }))),
+            tryCatch(() => fileQadamsUtils(log).findDistQadamFolders({ qadamsRoot: root })),
+        ])
+        if (distWalk.error) {
+            return rejectManifest({ log, reason: 'the qadams tree could not be listed' })
+        }
+        if (distChecks.includes('missing')) {
+            return rejectManifest({ log, reason: 'an entry has no built dist' })
+        }
+        // The staleness check, both ways. The scan takes a qadam's name and version from its
+        // `dist/package.json`, and every qadam change carries a version bump, so a dist rebuilt
+        // after the manifest was written fails the first check. A dist added after it (a derived
+        // image layering in another qadam) fails the second, rather than going silently missing.
+        if (distChecks.includes('mismatch')) {
+            return rejectManifest({ log, reason: 'an entry does not match its built dist' })
+        }
+        if (!isSameSet({ left: qadams.map((qadam) => qadam.directoryPath), right: distWalk.data })) {
+            return rejectManifest({ log, reason: 'a built dist has no entry' })
+        }
+        return qadams
+    },
+
+    // Run once by the Dockerfile (`scripts/write-bundled-qadams-manifest.ts`). It writes the scan's
+    // own output, so the manifest and the scan cannot disagree about what a qadam's metadata is, and
+    // it refuses a partial catalogue: a qadam the scan skipped would be missing from the manifest
+    // for the life of the image, where the runtime scan would at least retry it on every start.
+    writeFromScan: async ({ qadamsRoot, log }: WriteFromScanParams): Promise<WriteFromScanResult> => {
+        const root = path.resolve(qadamsRoot)
+        const utils = fileQadamsUtils(log)
+        // One walk for both the load and the partial check, so they cannot disagree about the tree.
+        const distFolders = await utils.findDistQadamFolders({ qadamsRoot: root })
+        // No dist at all means the qadam build did not run. Dists that all failed to load are a
+        // partial catalogue like any other, and get named.
+        if (distFolders.length === 0) {
+            return { status: 'empty' }
+        }
+        // Translations are always kept, whatever the flag says now: `read` drops them when it is
+        // off, so turning it on later needs no rebuild.
+        const qadams = await utils.loadDistFoldersMetadata({ distFolders, loadTranslations: true })
+        const loaded = new Set(qadams.map((qadam) => directoryPathOrThrow({ qadam })))
+        const skipped = distFolders.filter((distFolder) => !loaded.has(distFolder)).map((distFolder) => path.relative(root, distFolder))
+        if (skipped.length > 0) {
+            return { status: 'partial', skipped }
+        }
+        const manifest: BundledQadamsManifest = {
+            version: MANIFEST_VERSION,
+            qadams: qadams.map((qadam) => ({
+                ...qadam,
+                // Relative, so the manifest does not depend on where the tree sits when it is read.
+                directoryPath: path.relative(root, directoryPathOrThrow({ qadam })),
+            })),
+        }
+        await writeFile(path.join(root, BUNDLED_QADAMS_MANIFEST_FILE), JSON.stringify(manifest))
+        return { status: 'written', count: manifest.qadams.length }
+    },
+}
+
+const MANIFEST_VERSION = 1
+
+const distPackageJsonSchema = z.object({ name: z.string(), version: z.string() })
+
+// Only the fields this file and its callers rely on are checked; the rest is the scan's own
+// serialized output, the same shape a CUSTOM qadam's row already stores in `qadam_metadata`.
+// `z.custom` rather than `z.object`, because an object schema strips every key it does not list.
+const manifestEntrySchema = z.custom<QadamMetadata & { directoryPath: string }>(hasManifestEntryShape)
+const manifestSchema = z.object({
+    version: z.literal(MANIFEST_VERSION),
+    qadams: z.array(manifestEntrySchema),
+})
+
+// The reason only, never a path: which entry failed is for whoever rebuilds the image, not the log.
+function rejectManifest({ log, reason }: RejectManifestParams): null {
+    log.warn({ reason }, '[bundledQadamsManifest] manifest rejected, scanning instead')
+    return null
+}
+
+// The scan always sets it; a qadam without one cannot be checked against its dist on read.
+function directoryPathOrThrow({ qadam }: { qadam: QadamMetadata }): string {
+    if (isNil(qadam.directoryPath)) {
+        throw new Error(`[bundledQadamsManifest] ${qadam.name} has no directoryPath`)
+    }
+    return qadam.directoryPath
+}
+
+function hasManifestEntryShape(value: unknown): boolean {
+    if (typeof value !== 'object' || isNil(value)) {
+        return false
+    }
+    const fields: Record<string, unknown> = { ...value }
+    return typeof fields.name === 'string'
+        && typeof fields.version === 'string'
+        && typeof fields.displayName === 'string'
+        && typeof fields.directoryPath === 'string'
+        && isPlainObject(fields.actions)
+        && isPlainObject(fields.triggers)
+}
+
+function isPlainObject(value: unknown): boolean {
+    return typeof value === 'object' && !isNil(value) && !Array.isArray(value)
+}
+
+async function checkBuiltDist({ qadam }: CheckBuiltDistParams): Promise<DistCheck> {
+    const { data: content, error } = await tryCatch(() => readFile(path.join(qadam.directoryPath, 'package.json'), 'utf-8'))
+    if (error) {
+        return 'missing'
+    }
+    const { data: parsed } = tryCatchSync(() => distPackageJsonSchema.safeParse(JSON.parse(content)))
+    if (isNil(parsed) || !parsed.success) {
+        return 'mismatch'
+    }
+    return parsed.data.name === qadam.name && parsed.data.version === qadam.version ? 'ok' : 'mismatch'
+}
+
+function isSameSet({ left, right }: { left: string[], right: string[] }): boolean {
+    const rightSet = new Set(right)
+    return left.length === rightSet.size && new Set(left).size === rightSet.size && left.every((item) => rightSet.has(item))
+}
+
+function isFileNotFound(error: unknown): boolean {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
+type BundledQadamsManifest = z.infer<typeof manifestSchema>
+
+type DistCheck = 'ok' | 'missing' | 'mismatch'
+
+type ReadParams = {
+    qadamsRoot: string
+    loadTranslations: boolean
+    log: FastifyBaseLogger
+}
+
+type WriteFromScanParams = {
+    qadamsRoot: string
+    log: FastifyBaseLogger
+}
+
+export type WriteFromScanResult =
+    | { status: 'written', count: number }
+    | { status: 'empty' }
+    | { status: 'partial', skipped: string[] }
+
+type RejectManifestParams = {
+    log: FastifyBaseLogger
+    reason: string
+}
+
+type CheckBuiltDistParams = {
+    qadam: { name: string, version: string, directoryPath: string }
+}

@@ -10,7 +10,8 @@ The qadams feature manages the metadata catalog of automation integrations (call
 - `packages/server/api/src/app/qadams/metadata/qadam-metadata-entity.ts` — `qadam_metadata` TypeORM entity
 - `packages/server/api/src/app/qadams/metadata/qadam-cache.ts` — Redis/memory cache with pub/sub invalidation
 - `packages/server/api/src/app/qadams/community-qadam-module.ts` — POST `/v1/qadams` for installing custom qadams (`qadamInstallService`, always persisted as `CUSTOM`)
-- `packages/server/api/src/app/qadams/qadam-install-service.ts` — saves archive, calls engine to extract metadata, stores result. The only writer to `qadam_metadata` — nothing syncs bundled/official qadams into the DB; those are read live off disk every call by `loadBundledQadams()` (`qadams/metadata/utils/qadam-cache-utils.ts`) and never persisted
+- `packages/server/api/src/app/qadams/qadam-install-service.ts` — saves archive, calls engine to extract metadata, stores result. The only writer to `qadam_metadata` — nothing syncs bundled/official qadams into the DB; those are read off disk once per process by `loadBundledQadams()` (`qadams/metadata/utils/qadam-cache-utils.ts`), cached in memory, and never persisted
+- `packages/server/api/src/app/qadams/metadata/utils/bundled-qadams-manifest.ts` — the bundled-qadam metadata manifest (#598), see "Bundled Qadam Metadata Manifest" below
 - `packages/server/api/src/app/qadams/tags/` — tag entity, tag service, tag-module for organizing pieces into groups
 - `packages/web/src/features/qadams/api/pieces-api.ts` — frontend HTTP client
 - `packages/web/src/features/qadams/hooks/pieces-hooks.ts` — React Query hooks for piece listing, piece model, piece options
@@ -80,3 +81,63 @@ Unique index on `(name, version, platformId)`.
 
 ### `pieceInstallService`
 - `installPiece(platformId, params)` — saves archive file if needed, dispatches `EXECUTE_METADATA` engine job to extract piece metadata from the package, then stores via `pieceMetadataService.create` (always as `CUSTOM` — there is no service that persists an `OFFICIAL` row; see `qadamCache`/`loadBundledQadams` below)
+
+## Bundled Qadam Metadata Manifest (#598)
+`loadBundledQadams()` used to `require()` every bundled qadam's `dist` on the first call
+(`fileQadamsUtils.loadAllDistQadamsMetadata`). `require` never yields, so the first `GET /v1/qadams`
+after a start blocked the app's event loop for 30–63 s on QA, and every request, socket and queue
+consumer in the process waited behind it. The result is cached, so only the first caller paid, but
+every caller of `loadBundledQadams` (the catalogue, `qadamCache.loadRegistry`, the pinned-version
+fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first caller.
+- **Written in the image.** The Dockerfile's run stage, after `bun install --production`, runs
+  `node packages/server/api/dist/src/scripts/write-bundled-qadams-manifest.js packages/qadams`. It
+  runs the same scan against the exact tree and `node_modules` the app would scan, and writes
+  `packages/qadams/bundled-qadams-metadata.json`: `{ version: 1, qadams: QadamMetadata[] }` in scan
+  order, `directoryPath` relative to `packages/qadams`, `i18n` always included
+  (`bundledQadamsManifest.writeFromScan`, one walk shared by the load and the check). It writes
+  nothing and exits 1, failing the build, if the walk finds no built dist, or if any built dist it
+  finds failed to load, all of them included. A partial manifest would hide that qadam for the
+  image's whole life, so the writer names the skipped dists and refuses. A `test -s` follows it. The file is gitignored. Never generate it in a dev tree.
+- **Read at run time.** `bundledQadamsManifest.read` does an async `readFile` and one `JSON.parse`.
+  That, plus the checks below, is ~80–100 ms for the 5.8 MB file, with a ~25 ms longest event-loop
+  stall, against ~2.6–3.3 s for the scan on the same box. It returns what the scan would: `directoryPath` resolved back to
+  absolute, and `i18n` dropped unless `AP_LOAD_TRANSLATIONS_FOR_DEV_QADAMS` is on. Per-locale
+  translation still happens after loading, in `fetchLatestQadams` / `getOrThrow`.
+- **Rejected → scan**, with `[bundledQadamsManifest] manifest rejected, scanning instead {reason}`
+  at warn (the reason only, never a path). The reasons:
+  - `unreadable`;
+  - `not a version-1 manifest`: not JSON, another format version, or an entry missing
+    `name` / `version` / `displayName` / `directoryPath` / `actions` / `triggers`;
+  - `no entries`;
+  - `an entry points outside the qadams root`;
+  - `an entry has no built dist`: its `dist/package.json` is gone;
+  - `an entry does not match its built dist`: that `package.json`'s name or version differs;
+  - `the qadams tree could not be listed`: the walk below threw;
+  - `a built dist has no entry`: the set of entries' `directoryPath`s is not the set of `dist`
+    folders on disk.
+
+  `the qadams tree could not be listed` is a walk failure, not staleness. The other two are the
+  staleness check, in both directions:
+  - **A rebuilt dist.** The scan takes a qadam's name and version from its `dist/package.json`, and
+    every qadam change bumps its version, so a dist rebuilt at a new version after the manifest was
+    written is caught.
+  - **An added dist**, for example a derived image layering in another qadam. It is caught by
+    walking the tree with the scan's own walk (`fileQadamsUtils.findDistQadamFolders`, no
+    `require`). The walk is concurrent and order-preserving, ~20–45 ms over the real tree, against
+    ~280–420 ms for the old sequential one.
+
+  A rebuild at the **same** version is not caught. That is why only the image writes the file, as
+  the last thing built in the run stage.
+  A missing manifest (the dev tree) scans quietly. `AP_DEV_QADAMS` always scans its filtered set,
+  manifest or not, because those dists are rebuilt while the process lives.
+- **Which path ran.** One line per process:
+  `[loadBundledQadams] Bundled qadam metadata loaded {source: manifest|scan|dev-qadams-scan, qadams, durationMs}`.
+- **Values computed from the clock at module load.** A few qadams compute a prop default or sample
+  data from the clock when their module loads:
+  - `qadam-messagebird` `listMessages` `startAt` / `endAt`;
+  - `qadam-microsoft-power-bi` `push_rows_to_dataset_table` `rows` example;
+  - `qadam-okta` `new_event` sample data.
+
+  The scan froze those values at app start. The manifest freezes them at image build. They are the
+  only leaves where the manifest and a fresh scan of the same tree differ; two scans in two
+  processes differ in exactly the same four leaves.
