@@ -199,6 +199,12 @@ export type SandboxJobContext = {
     httpRequestId: string | null
     /** Set by the worker on every job's context (`givenUpGuard`): true once the job is no longer this worker's. */
     isGivenUp?: () => boolean
+    /**
+     * Set with `isGivenUp`: the job's own client, which drops a call at send time once the job is
+     * given up. The engine's calls go through it rather than through the client the sandbox was
+     * created with, which belongs to whichever job or prewarm started the sandbox.
+     */
+    apiClient?: WorkerToApiContract
 }
 
 type PrewarmParams = {

@@ -7,9 +7,12 @@ import { SandboxManager } from './sandbox-manager'
  * a terminal INTERNAL_ERROR, a run log, a sync response, a child run (#585). These wrap what a job
  * handler is given, so the cut-off holds for every handler without each of them checking.
  *
- * The engine's own calls are cut off separately, by `engineRunScope`, through the `isGivenUp` this
- * puts on the job context: a reused or prewarmed sandbox forwards with the client it was created
- * with, not this job's.
+ * The engine's own calls are cut off through the job context this puts on every acquire: a reused or
+ * prewarmed sandbox was created with another client, so it forwards through the context's
+ * `apiClient`, and `engineRunScope` refuses a call outright once `isGivenUp` is true.
+ *
+ * `apiClient` checks when a call is made; whoever composes it under a client that waits or resends
+ * gets the check at send time too.
  */
 export const givenUpGuard = {
     apiClient({ apiClient, isGivenUp }: ApiClientParams): WorkerToApiContract {
@@ -28,7 +31,7 @@ export const givenUpGuard = {
             },
         })
     },
-    sandboxManager({ sandboxManager, isGivenUp }: SandboxManagerParams): SandboxManager {
+    sandboxManager({ sandboxManager, isGivenUp, apiClient }: SandboxManagerParams): SandboxManager {
         return {
             ...sandboxManager,
             // A job given up while it was still provisioning (installing qadams, waiting on the
@@ -40,7 +43,7 @@ export const givenUpGuard = {
                 const { jobContext } = params
                 return sandboxManager.acquire({
                     ...params,
-                    jobContext: isNil(jobContext) ? undefined : { ...jobContext, isGivenUp },
+                    jobContext: isNil(jobContext) ? undefined : { ...jobContext, isGivenUp, apiClient },
                 })
             },
         }
@@ -62,4 +65,6 @@ type ApiClientParams = {
 type SandboxManagerParams = {
     sandboxManager: SandboxManager
     isGivenUp: () => boolean
+    /** The job's own client, which the engine's calls are forwarded through. */
+    apiClient: WorkerToApiContract
 }

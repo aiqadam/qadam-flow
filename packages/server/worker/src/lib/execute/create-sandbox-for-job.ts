@@ -28,27 +28,30 @@ export function createSandboxForJob(params: {
     const sandboxId = nanoid()
 
     const runScope = engineRunScope.create({ log, getCurrentJobContext })
+    // The current job's own client when it has one (#585), so a call that waits for a reconnect is
+    // still dropped if the job is given up meanwhile.
+    const forwardingClient = (): WorkerToApiContract => getCurrentJobContext()?.apiClient ?? apiClient
 
     const workerHandlers: WorkerContract = {
         updateRunProgress: async (input) => {
             runScope.assertOwnsRun({ rpc: 'updateRunProgress', runId: input.flowRun.id, projectId: input.flowRun.projectId })
-            return apiClient.updateRunProgress(input)
+            return forwardingClient().updateRunProgress(input)
         },
         uploadRunLog: async (input) => {
             runScope.assertOwnsRun({ rpc: 'uploadRunLog', runId: input.runId, projectId: input.projectId })
-            return apiClient.uploadRunLog(input)
+            return forwardingClient().uploadRunLog(input)
         },
         sendFlowResponse: async (input) => {
             runScope.assertOwnsSyncRequest({ workerHandlerId: input.workerHandlerId, httpRequestId: input.httpRequestId })
-            return apiClient.sendFlowResponse(input)
+            return forwardingClient().sendFlowResponse(input)
         },
         updateStepProgress: async (input) => {
             runScope.assertOwnsRun({ rpc: 'updateStepProgress', runId: input.stepResponse.runId, projectId: input.projectId })
-            return apiClient.updateStepProgress(input)
+            return forwardingClient().updateStepProgress(input)
         },
         resolveInlineFlow: async (input) => {
             const jobContext = getCurrentJobContext()
-            const result = await resolveInlineFlow({ input, log, apiClient, jobContext, runScope })
+            const result = await resolveInlineFlow({ input, log, apiClient: jobContext?.apiClient ?? apiClient, jobContext, runScope })
             if (result.ok && !isNil(jobContext)) {
                 runScope.recordInlineChild({ jobContext, childRunId: result.childRunId })
             }

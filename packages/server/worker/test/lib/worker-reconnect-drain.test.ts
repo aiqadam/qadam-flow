@@ -20,6 +20,7 @@ import { Server as IOServer } from 'socket.io'
 import type { Socket } from 'socket.io-client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { logger } from '../../src/lib/config/logger'
+import { JobGivenUpError } from '../../src/lib/execute/given-up-guard'
 import { JobResultKind } from '../../src/lib/execute/types'
 import type { JobContext, JobResult } from '../../src/lib/execute/types'
 
@@ -55,6 +56,8 @@ const { currentAppVersion, engine, managers, settingsState, clientSockets, child
             survivesShutdown: false,
             provisioned: Promise.resolve(),
             failureReports: 0,
+            // A progress report the running job sends whenever the test asks, through its own client.
+            report: (): Promise<unknown> => Promise.resolve(),
         },
         managers: createdManagers,
         settingsState: settings,
@@ -84,6 +87,7 @@ vi.mock('../../src/lib/execute/job-registry', () => ({
             ctx.sandboxManager.acquire({ log: ctx.log, apiClient: ctx.apiClient })
             const { data, error } = await tryCatch(() => new Promise<JobResult>((resolve, reject) => {
                 engine.running = true
+                engine.report = () => ctx.apiClient.uploadRunLog({ runId: 'run-1', projectId: 'proj-1', status: FlowRunStatus.RUNNING })
                 engine.finish = () => {
                     engine.running = false
                     resolve({ kind: JobResultKind.SYNCHRONOUS, status: EngineResponseStatus.OK, response: { ok: true } })
@@ -208,6 +212,7 @@ describe('worker reconnect and drain — #585', () => {
     let extendLockAnswer: (connection: number) => ExtendLockResponse
     let settingsFor: (connection: number) => Partial<WorkerSettingsResponse>
     let dropBeforeAcking: (connection: number) => boolean
+    let settingsAnswered: (connection: number) => Promise<void>
 
     beforeEach(async () => {
         vi.clearAllMocks()
@@ -221,6 +226,7 @@ describe('worker reconnect and drain — #585', () => {
         extendLockAnswer = () => ({ leaseLost: false })
         settingsFor = () => baseSettings()
         dropBeforeAcking = () => false
+        settingsAnswered = async () => undefined
         engine.running = false
         engine.managerShutdowns = 0
         engine.survivesShutdown = false
@@ -253,7 +259,7 @@ describe('worker reconnect and drain — #585', () => {
             serverSocket.on(WebsocketServerEvent.FETCH_WORKER_SETTINGS, (...args: unknown[]) => {
                 const callback = args[args.length - 1]
                 if (typeof callback === 'function') {
-                    callback(settingsFor(connection))
+                    void settingsAnswered(connection).then(() => callback(settingsFor(connection)))
                 }
             })
             const handlers: Pick<WorkerToApiContract, 'poll' | 'completeJob' | 'extendLock' | 'uploadRunLog' | 'getUsedQadams' | 'markQadamAsUsed'> = {
@@ -434,6 +440,31 @@ describe('worker reconnect and drain — #585', () => {
             expect(extendLockCalls, 'a given-up lease was renewed anyway').not.toContain(1)
             expect(completeJobCalls).toHaveLength(0)
             expect(runLogUploads).toEqual([])
+        }, 20_000)
+
+        // The report waits for the connection with the job still this worker's, and the API comes back
+        // only after the give-up: sending it then would write over the redelivered copy's run.
+        it('drops a report that was waiting for the reconnect when its job was given up', async () => {
+            let answerSettings = (): void => undefined
+            settingsAnswered = async (connection) => {
+                if (connection > 0) {
+                    await new Promise<void>((resolve) => {
+                        answerSettings = resolve
+                    })
+                }
+            }
+            await waitUntil(() => engine.running, 'the job never started')
+
+            ioServer.disconnectSockets(true)
+            await waitUntil(() => connections > 1, 'the worker never reconnected')
+            const report = engine.report()
+            leaseDeadline.expire({ token: 'token-1', leaseAgeMs: leaseTracker.trustMs })
+            await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
+            answerSettings()
+
+            await expect(report).rejects.toBeInstanceOf(JobGivenUpError)
+            expect(runLogUploads, 'a held report of a given-up job reached the API').toEqual([])
+            expect(completeJobCalls).toHaveLength(0)
         }, 20_000)
 
         // Provisioning (installing qadams, waiting on the shared cache lock) can take minutes, all of

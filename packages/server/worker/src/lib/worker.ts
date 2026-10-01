@@ -37,7 +37,7 @@ import { JobTimings, jobTimings } from './execute/job-timings'
 import { ActiveSandboxInfo, createSandboxManager, SandboxManager } from './execute/sandbox-manager'
 import { JobContext, JobResult, JobResultKind } from './execute/types'
 import { leaseTracker } from './lease-tracker'
-import { reconnectSafeApiClient } from './reconnect-safe-api-client'
+import { ConnectionState, reconnectSafeApiClient } from './reconnect-safe-api-client'
 
 
 const tracer = trace.getTracer('worker')
@@ -121,6 +121,16 @@ let sandboxSettings: WorkerSettingsResponse | null = null
  */
 const connectionGate = createConnectionGate()
 
+/** What the reconnect-safe clients read the connection's state from. */
+const apiConnection: ConnectionState = {
+    generation: () => connectionGeneration,
+    isReady: () => connectionGate.isOpen(),
+    whenReady: ({ signal }) => connectionGate.whenOpen({ signal }),
+}
+
+/** The socket's RPC client before any wrapping, so each job can put its own given-up check under the reconnect handling. */
+let rpcClient: WorkerToApiContract | null = null
+
 /**
  * Aborted by `stop()`. The poll loops park inside a long-poll whose server-side budget is
  * WAITER_TIMEOUT_MS (50s) and whose client-side RPC timeout is 60s, and they only re-read
@@ -151,14 +161,8 @@ export const worker = {
             reconnection: true,
         })
 
-        const apiClient = reconnectSafeApiClient.wrap({
-            apiClient: createRpcClient<WorkerToApiContract>(socket, 60_000),
-            connection: {
-                generation: () => connectionGeneration,
-                isReady: () => connectionGate.isOpen(),
-                whenReady: ({ signal }) => connectionGate.whenOpen({ signal }),
-            },
-        })
+        rpcClient = createRpcClient<WorkerToApiContract>(socket, 60_000)
+        const apiClient = reconnectSafeApiClient.wrap({ apiClient: rpcClient, connection: apiConnection })
 
         socket.on('connect', async () => {
             // The reconnect this flag described is done; a later `connect_error` belongs to
@@ -656,12 +660,19 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
         const apiUrl = getApiUrl()
         const { PUBLIC_URL: publicUrl } = await workerSettings.waitForSettings()
         log.debug({ apiUrl, publicUrl }, 'Worker settings resolved')
-        const isGivenUp = (): boolean => !isNil(inFlightJobs.get(job.token)?.givenUp)
+        // A job that is over counts as given up too: its entry is gone once it finishes, given up or
+        // not, and a call it still has waiting for a reconnect is no longer this worker's to send.
+        const isGivenUp = (): boolean => {
+            const inFlight = inFlightJobs.get(job.token)
+            return isNil(inFlight) || !isNil(inFlight.givenUp)
+        }
+        const jobApiClient = buildJobApiClient({ apiClient, isGivenUp })
         const ctx: JobContext = {
-            apiClient: givenUpGuard.apiClient({ apiClient, isGivenUp }),
+            apiClient: jobApiClient,
             sandboxManager: givenUpGuard.sandboxManager({
                 sandboxManager: jobTimings.instrumentSandboxManager({ sandboxManager: sbManager, timings }),
                 isGivenUp,
+                apiClient: jobApiClient,
             }),
             jobId: job.jobId,
             attemptsStarted: job.attempsStarted,
@@ -688,6 +699,25 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             span.end()
         }
     })
+}
+
+/**
+ * The given-up check runs on both sides of the reconnect handling (#585). Over it, a call made after
+ * the give-up fails at once instead of waiting for a connection a stopping worker may never get
+ * back. Under it, the check runs again when the call is actually sent, after any wait for the
+ * connection and before each resend, so a report that started waiting before its job was given up
+ * is dropped rather than sent once the API is back. Without a socket (a test that drives
+ * `executeJob` directly) the shared client is the only one there is.
+ */
+function buildJobApiClient({ apiClient, isGivenUp }: BuildJobApiClientParams): WorkerToApiContract {
+    if (isNil(rpcClient)) {
+        return givenUpGuard.apiClient({ apiClient, isGivenUp })
+    }
+    const checkedWhenSent = reconnectSafeApiClient.wrap({
+        apiClient: givenUpGuard.apiClient({ apiClient: rpcClient, isGivenUp }),
+        connection: apiConnection,
+    })
+    return givenUpGuard.apiClient({ apiClient: checkedWhenSent, isGivenUp })
 }
 
 export function ensurePublicApiUrl(publicUrl: string): string {
@@ -962,6 +992,11 @@ type RunJobParams = {
     sbManager: SandboxManager
     job: ConsumeJobRequest
     workerLog: Logger
+}
+
+type BuildJobApiClientParams = {
+    apiClient: WorkerToApiContract
+    isGivenUp: () => boolean
 }
 
 type ReadRetryableParams = {
