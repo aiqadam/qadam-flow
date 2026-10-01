@@ -299,19 +299,21 @@ export const workerInternals = {
  * hold up the stop.
  */
 async function endParkedPolls({ graceMs }: { graceMs: number }): Promise<void> {
-    if (isNil(rpcClient) || !connectionGate.isOpen()) {
+    const client = rpcClient
+    if (isNil(client) || !connectionGate.isOpen()) {
         return
     }
-    const asked = rpcClient.stopPolling({})
+    const timeoutMs = Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)
     const { error } = await tryCatch(() => Promise.race([
-        asked,
-        unrefSleep(Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)).then(() => {
-            throw new Error(`no answer within ${Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)}ms`)
+        client.stopPolling({}),
+        unrefSleep(timeoutMs).then(() => {
+            throw new Error(`stopPolling got no answer within ${timeoutMs}ms`)
         }),
     ]))
     if (error) {
-        asked.catch(() => undefined)
-        logger.info({ error: String(error) }, 'The API did not end this worker\'s parked polls; they end within its poll budget, and a job one of them brings is run before the worker stops')
+        // An API from before #585 (no `stopPolling` handler), a timeout and a transport failure all
+        // land here, and the error says which.
+        logger.info({ err: error }, 'Could not ask the API to end this worker\'s parked polls; they end within their poll budget, and a job one of them brings is run before the worker stops')
     }
 }
 
@@ -644,7 +646,8 @@ async function runJob({ apiClient, sbManager, job, workerLog }: RunJobParams): P
     const { data: result, error: execError } = await tryCatch(() =>
         executeJob({ apiClient, job, sbManager, timings }),
     )
-    const status = execError ? EngineResponseStatus.INTERNAL_ERROR : result.status
+    // Read off the result, not the error: a throw of `null` or `undefined` arrives with neither.
+    const status = isNil(execError) && !isNil(result) ? result.status : EngineResponseStatus.INTERNAL_ERROR
 
     const completeStartedAt = performance.now()
     // Decided once, here, not again when the call is sent. The handler has returned, so the result
@@ -727,8 +730,10 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             log.debug({ handlerType: handler.jobType }, 'Executing job with handler')
             const { data: result, error } = await tryCatch(() => handler.execute(ctx, jobData))
             // Expected, not an error: a give-up kills the job's engine or refuses its next call, and
-            // either surfaces here. The give-up itself is logged where it happened.
-            if (givenUpGuard.isGivenUpError(error) || isGivenUp()) {
+            // either surfaces here. The give-up itself is logged where it happened. Only a failure:
+            // a handler that succeeded after the give-up returns its result, and `runJob` decides
+            // that it is not sent.
+            if (!isNil(error) && (givenUpGuard.isGivenUpError(error) || isGivenUp())) {
                 log.info({ error: String(error) }, 'Job stopped: this worker gave it up')
                 throw error
             }

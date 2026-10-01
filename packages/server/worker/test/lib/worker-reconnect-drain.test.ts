@@ -54,6 +54,8 @@ const { currentAppVersion, engine, managers, settingsState, clientSockets, child
             kill: (): void => undefined,
             managerShutdowns: 0,
             survivesShutdown: false,
+            // An engine that finishes its run before the kill reaches it.
+            survivesInvalidate: false,
             provisioned: Promise.resolve(),
             failureReports: 0,
             // A progress report the running job sends whenever the test asks, through its own client.
@@ -118,7 +120,7 @@ vi.mock('../../src/lib/execute/sandbox-manager', () => ({
             acquire: vi.fn(() => ({ id: 'sandbox-1' })),
             prewarm: vi.fn(async () => prewarmControl.next()),
             invalidate: vi.fn(async () => {
-                if (engine.running) {
+                if (engine.running && !engine.survivesInvalidate) {
                     engine.kill()
                 }
             }),
@@ -230,6 +232,7 @@ describe('worker reconnect and drain — #585', () => {
         engine.running = false
         engine.managerShutdowns = 0
         engine.survivesShutdown = false
+        engine.survivesInvalidate = false
         engine.provisioned = Promise.resolve()
         engine.failureReports = 0
         managers.length = 0
@@ -399,6 +402,21 @@ describe('worker reconnect and drain — #585', () => {
         expect(completeJobCalls).toHaveLength(0)
     }, 20_000)
 
+    // The result is real, but the redelivered copy owns the job now: it is logged, and not sent.
+    it('lets a job that succeeds after the grace expired finish quietly, without completing it', async () => {
+        process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS'] = '0.3'
+        engine.survivesShutdown = true
+        await waitUntil(() => engine.running, 'the job never started')
+
+        await worker.stop()
+        engine.finish()
+        await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
+
+        expect(jobFinishedLines()[0]).toMatchObject({ jobId: 'job-1', status: EngineResponseStatus.OK, givenUp: 'shutdown', completed: false })
+        expect(completeJobCalls).toHaveLength(0)
+        expect(childLog.error).not.toHaveBeenCalledWith(expect.anything(), 'Polling worker crashed, restarting it')
+    }, 20_000)
+
     // `stopped` is reset by the next start(), so a loop that read it would come back to life on
     // the dead socket of the start it belonged to, beside the new start's own loop for the slot.
     it('does not let a loop that outlived stop() resume polling after the next start()', async () => {
@@ -479,6 +497,21 @@ describe('worker reconnect and drain — #585', () => {
             await expect(report).rejects.toBeInstanceOf(JobGivenUpError)
             expect(runLogUploads, 'a held report of a given-up job reached the API').toEqual([])
             expect(completeJobCalls).toHaveLength(0)
+        }, 20_000)
+
+        it('lets a job that succeeds after its lease was given up finish quietly, without completing it', async () => {
+            engine.survivesInvalidate = true
+            await waitUntil(() => engine.running, 'the job never started')
+
+            leaseDeadline.expire({ token: 'token-1', leaseAgeMs: leaseTracker.trustMs })
+            expect(managers[0].invalidate).toHaveBeenCalled()
+            engine.finish()
+            await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
+
+            expect(jobFinishedLines()[0]).toMatchObject({ jobId: 'job-1', status: EngineResponseStatus.OK, givenUp: 'lease-lost', completed: false })
+            expect(completeJobCalls).toHaveLength(0)
+            expect(childLog.error).not.toHaveBeenCalledWith(expect.anything(), 'Polling worker crashed, restarting it')
+            await waitUntil(() => pollsByConnection[0] > 1, 'the slot never polled again')
         }, 20_000)
 
         // The same for a renewal: sent after the give-up, it would hold the lock of a job nobody runs,

@@ -274,7 +274,11 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         // flight, and a worker whose lease lapsed may report a job that was redelivered since
         // (#585). Neither owns the job any more: failing the move below would publish an
         // INTERNAL_ERROR to a sync caller and release the concurrency slot of whoever does.
-        // A lock that cannot be read is not a lock that is not held: that is a failed move.
+        // A lock that cannot be read is not a lock that is not held: that is a failed move, and it
+        // takes the failed move's path. Accepted as is, with what that path does: INTERNAL_ERROR
+        // to a sync caller, the slot released, and the job left active for the stalled scan to
+        // redeliver. Retrying the read, here or by failing the RPC so the worker sends it again,
+        // could complete the job a second time beside the copy the stalled scan redelivers.
         const { data: held, error: leaseError } = await tryCatch(() => holdsLease({ queueName: input.queueName, jobId: input.jobId, token: input.token, log }))
         if (isNil(leaseError) && !held) {
             log.info({ jobId: input.jobId, status: input.status }, '[jobBroker] Ignoring completeJob from a worker that no longer holds the job')

@@ -59,7 +59,7 @@ function readWorkerVersion(input: unknown): string | undefined {
     return typeof version === 'string' ? version : undefined
 }
 
-export function createHandlers({ log, workerGroupId, disconnected }: CreateHandlersParams): WorkerToApiContract {
+export function createHandlers({ log, workerGroupId, workerId: connectedWorkerId, disconnected }: CreateHandlersParams): WorkerToApiContract {
     // A stopping worker keeps its socket up while it drains, so its parked polls would stay live
     // waiters for up to WAITER_TIMEOUT_MS, and a job handed to one would be acked to a loop that has
     // stopped taking work (#585). `stopPolling` ends them the way a disconnect does (#589).
@@ -109,7 +109,7 @@ export function createHandlers({ log, workerGroupId, disconnected }: CreateHandl
                 if (job) {
                     const { error } = await tryCatch(() => jobBroker(log).returnToQueue(job))
                     if (error) {
-                        log.error({ workerId, jobId: job.jobId, error: String(error) }, '[workerRpc#poll] Failed to return the job of a disconnected worker to the queue')
+                        log.error({ workerId, jobId: job.jobId, disconnected: disconnected.aborted, error: String(error) }, '[workerRpc#poll] Failed to return a job to the queue after its worker disconnected or stopped polling')
                     }
                 }
                 log.info({ workerId, jobId: job?.jobId, disconnected: disconnected.aborted }, '[workerRpc#poll] Worker disconnected or stopped polling while its poll was pending')
@@ -126,7 +126,7 @@ export function createHandlers({ log, workerGroupId, disconnected }: CreateHandl
 
         async stopPolling() {
             pollingStopped.abort()
-            log.info('[workerRpc#stopPolling] Worker stopped polling: its pending polls end now')
+            log.info({ workerId: connectedWorkerId, workerGroupId }, '[workerRpc#stopPolling] Worker stopped polling: its pending polls end now')
         },
 
         async completeJob(input) {
@@ -380,6 +380,8 @@ async function ensureLogsFileExists({ log, projectId, logsFileId, internalError 
 type CreateHandlersParams = {
     log: FastifyBaseLogger
     workerGroupId?: string
+    /** From the socket handshake, for the logs only: a poll carries its own in its payload. */
+    workerId?: string
     disconnected: AbortSignal
 }
 

@@ -141,8 +141,8 @@ describe('workerRpc#poll on a socket that disconnected (#589)', () => {
 
         expect(result).toBeNull()
         expect(log.error).toHaveBeenCalledWith(
-            expect.objectContaining({ jobId: 'job-1', error: 'Error: redis down' }),
-            '[workerRpc#poll] Failed to return the job of a disconnected worker to the queue',
+            expect.objectContaining({ jobId: 'job-1', disconnected: true, error: 'Error: redis down' }),
+            '[workerRpc#poll] Failed to return a job to the queue after its worker disconnected or stopped polling',
         )
     })
 
@@ -216,14 +216,15 @@ describe('workerRpc#stopPolling', () => {
         expect(returnToQueue).toHaveBeenCalledWith(job)
     })
 
-    it('answers any later poll with null without asking the dispatcher', async () => {
-        const handlers = createHandlers({ log, disconnected: new AbortController().signal })
+    it('answers any later poll with null without asking the dispatcher, and says which worker stopped', async () => {
+        const handlers = createHandlers({ log, workerGroupId: 'group-1', workerId: 'worker-1', disconnected: new AbortController().signal })
         await handlers.stopPolling({})
 
         const result = await handlers.poll(livePayload)
 
         expect(result).toBeNull()
         expect(poll).not.toHaveBeenCalled()
+        expect(log.info).toHaveBeenCalledWith({ workerId: 'worker-1', workerGroupId: 'group-1' }, '[workerRpc#stopPolling] Worker stopped polling: its pending polls end now')
     })
 
     it('is scoped to the connection that asked', async () => {
