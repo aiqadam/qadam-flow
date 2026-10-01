@@ -1,6 +1,6 @@
 import { apDayjsDuration, memoryLock } from '@aiqadam/server-utils'
 import { ApId, ExecuteChatAgentJobData, ExecuteFlowJobData, getDefaultJobPriority, isNil, JOB_PRIORITY, JobData, PollingJobData, RenewWebhookJobData, ScheduleOptions, tryCatch, UserInteractionJobData, WebhookJobData, WorkerJobType } from '@aiqadam/shared'
-import { Job, Queue } from 'bullmq'
+import { Job, JobState, Queue } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
 import { redisConnections } from '../../database/redis-connections'
@@ -15,7 +15,7 @@ const REDIS_FAILED_JOB_RETRY_COUNT = system.getNumberOrThrow(AppSystemProp.REDIS
 
 const dedicatedWorkersQueues = new Map<string, Queue>()
 // A job in one of these states will run, so an add under its id would be ignored.
-const IN_FLIGHT_JOB_STATES: ReadonlySet<string> = new Set(['waiting', 'prioritized', 'active', 'waiting-children'])
+const IN_FLIGHT_JOB_STATES: ReadonlySet<JobState> = new Set<JobState>(['waiting', 'prioritized', 'active', 'waiting-children'])
 
 export const jobQueue = (log: FastifyBaseLogger) => ({
     async init(): Promise<void> {
@@ -96,12 +96,13 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
             return { alreadyInFlight: false }
         }
         const state = await job.getState()
-        if (IN_FLIGHT_JOB_STATES.has(state) || (state === 'delayed' && !replaceDelayed)) {
+        if ((state !== 'unknown' && IN_FLIGHT_JOB_STATES.has(state)) || (state === 'delayed' && !replaceDelayed)) {
             log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] the run already has a job in flight; leaving it')
             return { alreadyInFlight: true }
         }
-        if (state !== 'failed' && state !== 'completed' && state !== 'delayed') {
-            // 'unknown': the job went away between the two reads, so the id is free already.
+        // 'unknown' is a job that went away between the two reads, or a hash no state list holds any
+        // more. Only the first frees the id; the second still makes BullMQ ignore an add, so remove it.
+        if (state === 'unknown' && isNil(await queue.getJob(jobId))) {
             return { alreadyInFlight: false }
         }
         const { error: removeError } = await tryCatch(() => job.remove())

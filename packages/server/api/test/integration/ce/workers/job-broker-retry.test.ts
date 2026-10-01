@@ -208,16 +208,24 @@ describe('Job broker retry by failure class (#584)', () => {
     })
 
     it('lets the retry through when the job went away between the two reads', async () => {
-        const jobId = await enqueueExecuteFlowJob()
-        const polled = await jobBroker(app.log).poll()
-        await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
-        vi.spyOn(Job.prototype, 'getState').mockResolvedValueOnce('unknown')
-        try {
-            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: true })).resolves.toEqual({ alreadyInFlight: false })
-        }
-        finally {
-            await (await queue.getJob(jobId))?.remove()
-        }
+        const jobId = await enqueueFailedExecuteFlowJob()
+        vi.spyOn(Job.prototype, 'getState').mockImplementationOnce(async () => {
+            await (await queue.getJob(jobId))!.remove()
+            return 'unknown'
+        })
+
+        await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: true })).resolves.toEqual({ alreadyInFlight: false })
+        expect(await queue.getJob(jobId)).toBeUndefined()
+    })
+
+    it('removes a job hash that no state list holds any more, so the retry can enqueue the id again', async () => {
+        const jobId = await enqueueFailedExecuteFlowJob()
+        const client = await queue.client
+        await client.zrem(queue.toKey('failed'), jobId)
+        expect(await (await queue.getJob(jobId))!.getState()).toBe('unknown')
+
+        await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: true })).resolves.toEqual({ alreadyInFlight: false })
+        expect(await queue.getJob(jobId)).toBeUndefined()
     })
 
     it('keeps the one retry after 8 minutes for every other job type', async () => {
@@ -255,6 +263,13 @@ async function enqueueExecuteFlowJob({ run, delay }: EnqueueExecuteFlowJobParams
     }
     await jobQueue(app.log).add({ type: JobType.ONE_TIME, id, data, delay })
     return id
+}
+
+async function enqueueFailedExecuteFlowJob(): Promise<string> {
+    const jobId = await enqueueExecuteFlowJob()
+    const polled = await jobBroker(app.log).poll()
+    await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
+    return jobId
 }
 
 async function saveNewProject(): Promise<{ platformId: string, projectId: string }> {

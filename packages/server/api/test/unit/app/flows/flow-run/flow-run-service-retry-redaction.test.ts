@@ -321,4 +321,20 @@ describe('flowRunService().retry — a run that already has a job in flight (#58
         expect(mockMaybeOffloadPayload).not.toHaveBeenCalled()
         expect(mockJobQueueAdd).not.toHaveBeenCalled()
     })
+
+    it.each([FlowRunStatus.PAUSED, FlowRunStatus.QUEUED])('FROM_FAILED_STEP on a %s run leaves a delayed job in place', async (status) => {
+        runRowHolder.current = flowRun({ status, triggerOutput: { real: 'payload' } })
+        mockFileGetDataOrUndefined.mockResolvedValue({
+            data: Buffer.from(JSON.stringify({ executionState: { steps: runRowHolder.current.steps } })),
+        })
+        mockGetOneOrThrow.mockResolvedValue(flowVersion({ logOutput: true }))
+
+        await flowRunService(log).retry({
+            flowRunId: 'run-1',
+            projectId: 'project-1',
+            strategy: FlowRetryStrategy.FROM_FAILED_STEP,
+        })
+
+        expect(mockRemoveFinishedOneTimeJob).toHaveBeenCalledWith({ jobId: 'run-1', platformId: 'platform-1', replaceDelayed: false })
+    })
 })
