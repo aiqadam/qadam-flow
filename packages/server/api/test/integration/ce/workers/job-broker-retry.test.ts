@@ -13,7 +13,7 @@ import {
     WebhookJobData,
     WorkerJobType,
 } from '@aiqadam/shared'
-import { Queue } from 'bullmq'
+import { Job, Queue } from 'bullmq'
 import { FastifyInstance } from 'fastify'
 import { redisConnections } from '../../../../src/app/database/redis-connections'
 import { QueueName } from '../../../../src/app/workers/job'
@@ -118,6 +118,19 @@ describe('Job broker retry by failure class (#584)', () => {
         expect(redelivered).toMatchObject({ jobId: flowRun.id, attempsStarted: 0, canRetryBeforeExecution: true })
         await jobBroker(app.log).completeJob({ jobId: flowRun.id, token: redelivered!.token, queueName: redelivered!.queueName, status: EngineResponseStatus.OK })
     }, 30_000)
+
+    it('leaves a run alone that a concurrent retry already re-enqueued and a worker picked up', async () => {
+        const jobId = await enqueueExecuteFlowJob()
+        const polled = await jobBroker(app.log).poll()
+        // This retry read the state while the job was still failed; the other one has re-enqueued it since.
+        vi.spyOn(Job.prototype, 'getState').mockResolvedValueOnce('failed')
+
+        await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null })).resolves.toBeUndefined()
+
+        vi.restoreAllMocks()
+        expect(await (await queue.getJob(jobId))!.getState()).toBe('active')
+        await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.OK })
+    })
 
     it('keeps the one retry after 8 minutes for every other job type', async () => {
         const jobId = await enqueueWebhookJob()

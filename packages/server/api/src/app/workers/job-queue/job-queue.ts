@@ -1,5 +1,5 @@
 import { apDayjsDuration, memoryLock } from '@aiqadam/server-utils'
-import { ApId, ExecuteChatAgentJobData, ExecuteFlowJobData, getDefaultJobPriority, isNil, JOB_PRIORITY, JobData, PollingJobData, RenewWebhookJobData, ScheduleOptions, UserInteractionJobData, WebhookJobData, WorkerJobType } from '@aiqadam/shared'
+import { ApId, ExecuteChatAgentJobData, ExecuteFlowJobData, getDefaultJobPriority, isNil, JOB_PRIORITY, JobData, PollingJobData, RenewWebhookJobData, ScheduleOptions, tryCatch, UserInteractionJobData, WebhookJobData, WorkerJobType } from '@aiqadam/shared'
 import { Job, Queue } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
@@ -97,7 +97,16 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
         if (state !== 'failed' && state !== 'completed') {
             return
         }
-        await job.remove()
+        const { error } = await tryCatch(() => job.remove())
+        if (!isNil(error)) {
+            // A concurrent retry already re-enqueued the run and a worker holds it: that retry is the
+            // one in flight, and the add after this call is a no-op under the same id.
+            if (await queue.getJob(jobId).then((current) => current?.getState()) === 'active') {
+                log.info({ jobId, queueName }, '[jobQueue#removeFinishedOneTimeJob] the run was re-enqueued and picked up meanwhile; leaving it')
+                return
+            }
+            throw error
+        }
         log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] removed a finished job so its id can be enqueued again')
     },
 

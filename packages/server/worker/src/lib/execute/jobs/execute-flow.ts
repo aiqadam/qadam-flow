@@ -91,7 +91,8 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             // the install output is what tells the user which dependency to fix. Reported with a plain
             // reportFlowStatus, not best-effort: nothing has run yet, so if the report throws, the
             // quick retry that follows costs only a wasted install, while a swallowed report would
-            // leave the run QUEUED for good.
+            // leave the run QUEUED for good. On the last attempt, or on a job without the quick
+            // backoff, a throw leaves the run QUEUED either way, so the plain report is still right.
             await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
             throw new ClassifiedJobFailure({ original: provisionError, retryable: false })
         }
@@ -253,11 +254,6 @@ async function failBeforeExecution({ ctx, data, error }: FailBeforeExecutionPara
     return new ClassifiedJobFailure({ original: error, retryable: true })
 }
 
-/**
- * A report that throws must not replace the verdict on the attempt. Once the engine may have run
- * steps, an unclassified failure is one an `EXECUTE_FLOW` job retries from the trigger, and a throw
- * inside the `try` would reach its `catch` and report the run a second time as INTERNAL_ERROR (#584).
- */
 // A throw while tearing the sandbox down must not replace the verdict on the attempt: from a
 // `finally`, it would even turn a run that succeeded into a failure retried from the trigger (#584).
 async function tearDownSandbox({ ctx, teardown }: TearDownSandboxParams): Promise<void> {
@@ -267,6 +263,11 @@ async function tearDownSandbox({ ctx, teardown }: TearDownSandboxParams): Promis
     }
 }
 
+/**
+ * A report that throws must not replace the verdict on the attempt. Once the engine may have run
+ * steps, an unclassified failure is one an `EXECUTE_FLOW` job retries from the trigger, and a throw
+ * inside the `try` would reach its `catch` and report the run a second time as INTERNAL_ERROR (#584).
+ */
 async function reportBestEffort(params: ReportFlowStatusParams): Promise<void> {
     const { error } = await tryCatch(() => reportFlowStatus(params))
     if (!isNil(error)) {
