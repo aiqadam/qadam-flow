@@ -39,6 +39,7 @@ vi.mock('../../../../../src/app/workers/job-queue/interceptors/zombie-polling-in
 
 import { tryDequeue } from '../../../../../src/app/workers/job-queue/job-broker'
 import { InterceptorVerdict } from '../../../../../src/app/workers/job-queue/job-interceptor'
+import { jobRetry } from '../../../../../src/app/workers/job-queue/job-retry'
 
 const mockLog: FastifyBaseLogger = {
     debug: vi.fn(),
@@ -332,6 +333,28 @@ describe('tryDequeue', () => {
             const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
 
             expect(result!.attempsStarted).toBe(1)
+        })
+    })
+
+    describe('canRetryBeforeExecution (#584)', () => {
+        it('tells the worker a quick retry is coming while attempts remain', async () => {
+            const job = createMockJob({ id: 'job-1', attemptsMade: 0, opts: jobRetry.executeFlowJobOptions })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.canRetryBeforeExecution).toBe(true)
+        })
+
+        it('tells the worker no quick retry is coming on a job enqueued before #584', async () => {
+            const job = createMockJob({ id: 'job-1', attemptsMade: 0, opts: { attempts: 2, backoff: { type: 'exponential', delay: 480_000 } } })
+            vi.mocked(mockWorker.getNextJob).mockResolvedValueOnce(job)
+            mockPreDispatch.mockResolvedValueOnce({ verdict: InterceptorVerdict.ALLOW })
+
+            const result = await tryDequeue(mockWorker, 'test-queue', mockLog)
+
+            expect(result!.canRetryBeforeExecution).toBe(false)
         })
     })
 })

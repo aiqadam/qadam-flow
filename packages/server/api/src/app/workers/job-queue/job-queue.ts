@@ -1,18 +1,21 @@
 import { apDayjsDuration, memoryLock } from '@aiqadam/server-utils'
-import { ApId, ExecuteChatAgentJobData, ExecuteFlowJobData, getDefaultJobPriority, isNil, JOB_PRIORITY, JobData, PollingJobData, RenewWebhookJobData, ScheduleOptions, UserInteractionJobData, WebhookJobData, WorkerJobType } from '@aiqadam/shared'
-import { Job, Queue } from 'bullmq'
+import { ApId, ExecuteChatAgentJobData, ExecuteFlowJobData, getDefaultJobPriority, isNil, JOB_PRIORITY, JobData, PollingJobData, RenewWebhookJobData, ScheduleOptions, tryCatch, UserInteractionJobData, WebhookJobData, WorkerJobType } from '@aiqadam/shared'
+import { Job, JobState, Queue } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
 import { redisConnections } from '../../database/redis-connections'
 import { system } from '../../helper/system/system'
 import { AppSystemProp } from '../../helper/system/system-props'
 import { QueueName } from '../job'
+import { jobRetry } from './job-retry'
 
 const EIGHT_MINUTES_IN_MILLISECONDS = apDayjsDuration(8, 'minute').asMilliseconds()
 const REDIS_FAILED_JOB_RETENTION_DAYS = apDayjsDuration(system.getNumberOrThrow(AppSystemProp.REDIS_FAILED_JOB_RETENTION_DAYS), 'day').asSeconds()
 const REDIS_FAILED_JOB_RETRY_COUNT = system.getNumberOrThrow(AppSystemProp.REDIS_FAILED_JOB_RETENTION_MAX_COUNT)
 
 const dedicatedWorkersQueues = new Map<string, Queue>()
+// A job in one of these states will run, so an add under its id would be ignored.
+const IN_FLIGHT_JOB_STATES: ReadonlySet<JobState> = new Set<JobState>(['waiting', 'prioritized', 'active', 'waiting-children'])
 
 export const jobQueue = (log: FastifyBaseLogger) => ({
     async init(): Promise<void> {
@@ -45,6 +48,7 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
                     priority: JOB_PRIORITY[getDefaultJobPriority(data)],
                     delay: params.delay,
                     jobId: params.id,
+                    ...data.jobType === WorkerJobType.EXECUTE_FLOW ? jobRetry.executeFlowJobOptions : {},
                     ...isUserInteractionJob(data.jobType) ? {
                         attempts: 1,
                         removeOnComplete: { age: 300 },
@@ -82,6 +86,38 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
             jobId,
             queueName,
         }, '[jobQueue#removeOneTimeJob] job not found in queue')
+    },
+
+    async removeFinishedOneTimeJob({ jobId, platformId, replaceDelayed }: RemoveFinishedOneTimeJobParams): Promise<RemoveFinishedOneTimeJobResult> {
+        const queueName = await getQueueName(platformId, log)
+        const queue = await ensureQueueExists({ log, queueName })
+        const job = await queue.getJob(jobId)
+        if (isNil(job)) {
+            return { alreadyInFlight: false }
+        }
+        const state = await job.getState()
+        if ((state !== 'unknown' && IN_FLIGHT_JOB_STATES.has(state)) || (state === 'delayed' && !replaceDelayed)) {
+            log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] the run already has a job in flight; leaving it')
+            return { alreadyInFlight: true }
+        }
+        // 'unknown' is a job that went away between the two reads, or a hash no state list holds any
+        // more. Only the first frees the id; the second still makes BullMQ ignore an add, so remove it.
+        if (state === 'unknown' && isNil(await queue.getJob(jobId))) {
+            return { alreadyInFlight: false }
+        }
+        const { error: removeError } = await tryCatch(() => job.remove())
+        if (!isNil(removeError)) {
+            // BullMQ gives a locked job and a missing one the same error, so the job's own add time
+            // tells them apart: a different one means a concurrent retry re-enqueued the run since.
+            const { data: current } = await tryCatch(() => queue.getJob(jobId))
+            if (isNil(current) || current.timestamp === job.timestamp) {
+                throw removeError
+            }
+            log.info({ jobId, queueName }, '[jobQueue#removeFinishedOneTimeJob] a concurrent retry re-enqueued the run meanwhile; leaving it')
+            return { alreadyInFlight: true }
+        }
+        log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] removed a finished job so its id can be enqueued again')
+        return { alreadyInFlight: false }
     },
 
     async getOrCreateQueue({ queueName }: { queueName: string }): Promise<Queue> {
@@ -188,5 +224,16 @@ type RepeatingJobAddParams = BaseAddParams<PollingJobData | RenewWebhookJobData,
     scheduleOptions: ScheduleOptions
 }
 type OneTimeJobAddParams = BaseAddParams<ExecuteFlowJobData | WebhookJobData | UserInteractionJobData | ExecuteChatAgentJobData, JobType.ONE_TIME>
+
+type RemoveFinishedOneTimeJobParams = {
+    jobId: ApId
+    platformId: string | null
+    // Remove a `delayed` job too, so it is replaced rather than left to run instead.
+    replaceDelayed: boolean
+}
+
+type RemoveFinishedOneTimeJobResult = {
+    alreadyInFlight: boolean
+}
 
 export type AddJobParams<type extends JobType> = type extends JobType.REPEATING ? RepeatingJobAddParams : OneTimeJobAddParams

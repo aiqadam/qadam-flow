@@ -12,6 +12,7 @@ const {
     mockJobQueueAdd,
     mockOffloadPayload,
     mockMaybeOffloadPayload,
+    mockRemoveFinishedOneTimeJob,
     runRowHolder,
 } = vi.hoisted(() => ({
     mockRepoUpdate: vi.fn(),
@@ -23,6 +24,7 @@ const {
     mockJobQueueAdd: vi.fn(),
     mockOffloadPayload: vi.fn(),
     mockMaybeOffloadPayload: vi.fn(),
+    mockRemoveFinishedOneTimeJob: vi.fn(),
     // `retry()` reads the old run through the real `flowRunRepo()` query-builder chain
     // (`queryBuilderForFlowRun(...).where(...).getOne()`), used both by `getOnePopulatedOrThrow`
     // (initial read) and by `findFlowRunOrThrow` (post-update re-read). One fake builder that
@@ -88,6 +90,7 @@ vi.mock('../../../../../src/app/workers/job-queue/job-queue', () => ({
     jobQueue: vi.fn(() => ({
         add: mockJobQueueAdd,
         removeOneTimeJob: vi.fn(),
+        removeFinishedOneTimeJob: mockRemoveFinishedOneTimeJob,
     })),
     JobType: { ONE_TIME: 'ONE_TIME' },
 }))
@@ -151,6 +154,7 @@ describe('flowRunService().retry — refuses to replay a redacted trigger payloa
         mockMaybeOffloadPayload.mockResolvedValue({ type: 'inline', value: null })
         mockJobQueueAdd.mockResolvedValue(undefined)
         mockRepoUpdate.mockResolvedValue(undefined)
+        mockRemoveFinishedOneTimeJob.mockResolvedValue({ alreadyInFlight: false })
     })
 
     describe('FROM_FAILED_STEP', () => {
@@ -248,6 +252,7 @@ describe('flowRunService().retry — forwards inheritedRunLocale into the re-dis
         mockMaybeOffloadPayload.mockResolvedValue({ type: 'inline', value: null })
         mockJobQueueAdd.mockResolvedValue(undefined)
         mockRepoUpdate.mockResolvedValue(undefined)
+        mockRemoveFinishedOneTimeJob.mockResolvedValue({ alreadyInFlight: false })
     })
 
     it('FROM_FAILED_STEP, trigger failed: re-sends the run\'s own inheritedRunLocale', async () => {
@@ -285,5 +290,51 @@ describe('flowRunService().retry — forwards inheritedRunLocale into the re-dis
         expect(mockJobQueueAdd).toHaveBeenCalledTimes(1)
         const jobData = mockJobQueueAdd.mock.calls[0][0].data
         expect(jobData.inheritedRunLocale).toBe('ru')
+    })
+})
+
+describe('flowRunService().retry — a run that already has a job in flight (#584)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mockGetPlatformId.mockResolvedValue('platform-1')
+        mockRemoveFinishedOneTimeJob.mockResolvedValue({ alreadyInFlight: true })
+    })
+
+    it('FROM_FAILED_STEP writes nothing and returns the run as it is', async () => {
+        runRowHolder.current = flowRun({ status: FlowRunStatus.FAILED, triggerOutput: { real: 'payload' } })
+        mockFileGetDataOrUndefined.mockResolvedValue({
+            data: Buffer.from(JSON.stringify({ executionState: { steps: runRowHolder.current.steps } })),
+        })
+        mockGetOneOrThrow.mockResolvedValue(flowVersion({ logOutput: true }))
+
+        const result = await flowRunService(log).retry({
+            flowRunId: 'run-1',
+            projectId: 'project-1',
+            strategy: FlowRetryStrategy.FROM_FAILED_STEP,
+        })
+
+        expect(result).toMatchObject({ id: 'run-1', status: FlowRunStatus.FAILED })
+        expect(mockRemoveFinishedOneTimeJob).toHaveBeenCalledWith({ jobId: 'run-1', platformId: 'platform-1', replaceDelayed: true })
+        expect(mockRepoUpdate).not.toHaveBeenCalled()
+        expect(mockOnRetry).not.toHaveBeenCalled()
+        expect(mockOffloadPayload).not.toHaveBeenCalled()
+        expect(mockMaybeOffloadPayload).not.toHaveBeenCalled()
+        expect(mockJobQueueAdd).not.toHaveBeenCalled()
+    })
+
+    it.each([FlowRunStatus.PAUSED, FlowRunStatus.QUEUED])('FROM_FAILED_STEP on a %s run leaves a delayed job in place', async (status) => {
+        runRowHolder.current = flowRun({ status, triggerOutput: { real: 'payload' } })
+        mockFileGetDataOrUndefined.mockResolvedValue({
+            data: Buffer.from(JSON.stringify({ executionState: { steps: runRowHolder.current.steps } })),
+        })
+        mockGetOneOrThrow.mockResolvedValue(flowVersion({ logOutput: true }))
+
+        await flowRunService(log).retry({
+            flowRunId: 'run-1',
+            projectId: 'project-1',
+            strategy: FlowRetryStrategy.FROM_FAILED_STEP,
+        })
+
+        expect(mockRemoveFinishedOneTimeJob).toHaveBeenCalledWith({ jobId: 'run-1', platformId: 'platform-1', replaceDelayed: false })
     })
 })

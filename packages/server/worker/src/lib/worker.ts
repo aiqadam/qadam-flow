@@ -30,6 +30,7 @@ import { getApiUrl, system, WorkerSystemProp } from './config/configs'
 import { logger } from './config/logger'
 import { workerSettings } from './config/worker-settings'
 import { EgressStack, startEgressStack } from './egress/lifecycle'
+import { ClassifiedJobFailure } from './execute/job-failure'
 import { getHandler } from './execute/job-registry'
 import { JobTimings, jobTimings } from './execute/job-timings'
 import { ActiveSandboxInfo, createSandboxManager, SandboxManager } from './execute/sandbox-manager'
@@ -420,6 +421,7 @@ async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunP
                 status,
                 errorMessage: buildErrorMessage(execError ?? undefined, result ?? undefined),
                 logs: extractLogs(execError ?? undefined, result ?? undefined),
+                retryable: readRetryable({ execError: execError ?? undefined, result: result ?? undefined }),
                 response: result?.kind === JobResultKind.SYNCHRONOUS ? result.response : undefined,
             }),
         )
@@ -465,6 +467,7 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             sandboxManager: jobTimings.instrumentSandboxManager({ sandboxManager: sbManager, timings }),
             jobId: job.jobId,
             attemptsStarted: job.attempsStarted,
+            canRetryBeforeExecution: job.canRetryBeforeExecution ?? false,
             engineToken: job.engineToken,
             internalApiUrl: apiUrl,
             publicApiUrl: ensurePublicApiUrl(publicUrl),
@@ -634,17 +637,29 @@ function buildErrorMessage(execError: Error | undefined, result: JobResult | und
 }
 
 function extractLogs(execError: Error | undefined, result: JobResult | undefined): string | undefined {
-    if (execError instanceof QadamFlowError) {
-        const params = execError.error.params as Record<string, unknown>
+    const thrown = execError instanceof ClassifiedJobFailure ? execError.original : execError
+    if (thrown instanceof QadamFlowError) {
+        const { params } = thrown.error
         const parts: string[] = []
-        if (params?.['standardOutput']) parts.push(`stdout:\n${params['standardOutput']}`)
-        if (params?.['standardError']) parts.push(`stderr:\n${params['standardError']}`)
+        if (!isNil(params) && 'standardOutput' in params && params.standardOutput) parts.push(`stdout:\n${params.standardOutput}`)
+        if (!isNil(params) && 'standardError' in params && params.standardError) parts.push(`stderr:\n${params.standardError}`)
         return parts.length > 0 ? parts.join('\n') : undefined
     }
     if (result && 'logs' in result) {
         return result.logs
     }
     return undefined
+}
+
+// Absent unless the handler classified the failure; the broker then applies the job's own backoff (#584).
+function readRetryable({ execError, result }: ReadRetryableParams): boolean | undefined {
+    if (execError instanceof ClassifiedJobFailure) {
+        return execError.retryable
+    }
+    if (!isNil(execError) || result?.kind !== JobResultKind.FIRE_AND_FORGET) {
+        return undefined
+    }
+    return result.retryable
 }
 
 function sleep(ms: number): Promise<void> {
@@ -701,4 +716,9 @@ type RunPollLoopParams = {
     sbManager: SandboxManager
     generation: number
     workerLog: Logger
+}
+
+type ReadRetryableParams = {
+    execError: Error | undefined
+    result: JobResult | undefined
 }

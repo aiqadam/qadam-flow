@@ -8,6 +8,7 @@ import { Logger } from 'pino'
 import { workerSettings } from '../../config/worker-settings'
 import { cacheState, NO_SAVE_GUARD } from '../cache-state'
 import { bunRunner } from './bun-runner'
+import { UnresolvableDependencyError } from './unresolvable-dependency-error'
 
 const tracer = trace.getTracer('code-builder')
 
@@ -298,8 +299,12 @@ function getPackageJson(packageJson: string): string {
 async function installDependencies({ path, packageJson }: InstallDependenciesParams, log: Logger): Promise<void> {
     await fs.writeFile(`${path}/package.json`, packageJson, 'utf8')
     const deps = Object.entries(JSON.parse(packageJson).dependencies ?? {})
-    if (deps.length > 0) {
-        await bunRunner(log).install({ path, filtersPath: [] })
+    if (deps.length === 0) {
+        return
+    }
+    const { error } = await tryCatch(() => bunRunner(log).install({ path, filtersPath: [] }))
+    if (error) {
+        throw UnresolvableDependencyError.isUnresolvable(error) ? new UnresolvableDependencyError({ original: error }) : error
     }
 }
 

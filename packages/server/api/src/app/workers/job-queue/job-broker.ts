@@ -13,6 +13,7 @@ import { rateLimiterInterceptor } from './interceptors/rate-limiter-interceptor'
 import { zombiePollingInterceptor } from './interceptors/zombie-polling-interceptor'
 import { InterceptorVerdict, JobInterceptor } from './job-interceptor'
 import { isUserInteractionJobData } from './job-queue'
+import { jobRetry } from './job-retry'
 import { createQueueDispatcher, QueueDispatcher } from './queue-dispatcher'
 
 const DRAIN_DELAY_SECONDS = 15
@@ -178,6 +179,7 @@ async function tryDequeue(worker: BullMQWorker, queueName: string, log: FastifyB
         // (rate-limiter-interceptor.ts), which would wrongly mark a still-fresh first delivery as
         // "not first" the moment it is rate-limited once (#510).
         attempsStarted: job.attemptsMade + job.stalledCounter,
+        canRetryBeforeExecution: jobRetry.canRetryBeforeExecution(job),
         engineToken,
         token,
         queueName,
@@ -261,7 +263,8 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
 
         const { error } = await tryCatch(async () => {
             if (input.status === EngineResponseStatus.INTERNAL_ERROR) {
-                await job.moveToFailed(new Error(buildFailedReason(input.errorMessage ?? 'Internal error', input.logs)), input.token)
+                await job.moveToFailed(jobRetry.toFailure({ message: buildFailedReason(input.errorMessage ?? 'Internal error', input.logs), retryable: input.retryable }), input.token)
+                jobRetry.logFailedAttempt({ log, job, jobType: jobData.jobType, retryable: input.retryable })
                 if (userJobData) {
                     await engineResponseWatcher(log).publish(userJobData.webserverId, userJobData.requestId, {
                         status: EngineResponseStatus.INTERNAL_ERROR,
