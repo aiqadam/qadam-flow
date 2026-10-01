@@ -114,7 +114,8 @@ export const retryingFetch = {
     },
 }
 
-// Below this much budget left, no further attempt is started.
+// Below this much budget left, no backoff is scheduled. The sleep ends this far before the deadline,
+// so a late timer still makes the final attempt.
 const MIN_ATTEMPT_WINDOW_MS = 50
 
 // The last real failure is the answer: the response as it came, or the error as it was thrown.
