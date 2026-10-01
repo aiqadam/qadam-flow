@@ -2,6 +2,7 @@ import { ContextVersion } from '@aiqadam/qadams-framework'
 import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType, tryCatch } from '@aiqadam/shared'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { createTranslationResolver } from '../../qadam-context/translation-resolver'
+import { retryingFetch } from '../../retrying-fetch'
 import { createPropsResolver, PropsResolver, resolveInputAsync } from '../../variables/props-resolver'
 import type { FlowExecutorContext } from './flow-execution-context'
 
@@ -283,10 +284,14 @@ export class EngineConstants {
         try {
             const getWorkerProjectEndpoint = `${this.internalApiUrl}v1/worker/project`
 
-            const response = await fetch(getWorkerProjectEndpoint, {
-                headers: {
-                    Authorization: `Bearer ${this.engineToken}`,
+            const response = await retryingFetch.fetch({
+                url: getWorkerProjectEndpoint,
+                init: {
+                    headers: {
+                        Authorization: `Bearer ${this.engineToken}`,
+                    },
                 },
+                idempotent: true,
             })
 
             this.project = await response.json() as Project

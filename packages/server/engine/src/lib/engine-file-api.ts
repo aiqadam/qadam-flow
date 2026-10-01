@@ -1,31 +1,32 @@
 import { promisify } from 'node:util'
 import { zstdDecompress as zstdDecompressCallback } from 'node:zlib'
 import { EngineGenericError, FileCompression, FileType, isZstdCompressed } from '@aiqadam/shared'
-import fetchRetry from 'fetch-retry'
+import { retryingFetch, RetryPolicy } from './retrying-fetch'
 
 const zstdDecompress = promisify(zstdDecompressCallback)
-
-const RETRY_CONFIG = {
-    retries: 3,
-    retryDelay: 3000,
-} as const
 
 const READ_URL_HEADER = 'x-ap-file-read-url'
 const FILE_TYPE_HEADER = 'x-ap-file-type'
 const FILE_NAME_HEADER = 'x-ap-file-name'
 
 export const engineFileApi = {
-    async upload({ engineToken, apiUrl, fileId, type, fileName, compression, data }: UploadParams): Promise<UploadResult> {
-        const fetchWithRetry = fetchRetry(global.fetch)
+    // Both PUTs are replayed on a failure that may have landed: the app's upload writes the same bytes
+    // to the same file id of the engine's own project (#517 refuses another project's row), and a
+    // signed S3 PUT is idempotent by definition.
+    async upload({ engineToken, apiUrl, fileId, type, fileName, compression, data, retryPolicy }: UploadParams): Promise<UploadResult> {
         const headers = buildPutHeaders({ type, fileName, compression, contentLength: data.length })
         const putUrl = `${apiUrl}v1/files/${fileId}?token=${encodeURIComponent(engineToken)}`
 
-        const initial = await fetchWithRetry(putUrl, {
-            method: 'PUT',
-            body: data,
-            headers,
-            redirect: 'manual',
-            ...RETRY_CONFIG,
+        const initial = await retryingFetch.fetch({
+            url: putUrl,
+            init: {
+                method: 'PUT',
+                body: data,
+                headers,
+                redirect: 'manual',
+            },
+            idempotent: true,
+            policy: retryPolicy,
         })
 
         const readUrlFromHeader = initial.headers.get(READ_URL_HEADER) ?? undefined
@@ -35,12 +36,16 @@ export const engineFileApi = {
             if (!location) {
                 throw new EngineGenericError('EngineFileUploadError', 'Server returned a redirect without a Location header')
             }
-            const s3Response = await fetchWithRetry(location, {
-                method: 'PUT',
-                body: data,
-                headers: stripApHeaders(headers),
-                redirect: 'follow',
-                ...RETRY_CONFIG,
+            const s3Response = await retryingFetch.fetch({
+                url: location,
+                init: {
+                    method: 'PUT',
+                    body: data,
+                    headers: stripApHeaders(headers),
+                    redirect: 'follow',
+                },
+                idempotent: true,
+                policy: retryPolicy,
             })
             if (!s3Response.ok) {
                 throw new EngineGenericError(
@@ -70,12 +75,15 @@ export const engineFileApi = {
         }
         return { fileId, readUrl: body.readUrl }
     },
-    async download({ engineToken, apiUrl, fileId }: DownloadFileParams): Promise<Uint8Array> {
-        const fetchWithRetry = fetchRetry(global.fetch)
-        const response = await fetchWithRetry(`${apiUrl}v1/files/${fileId}?token=${encodeURIComponent(engineToken)}`, {
-            method: 'GET',
-            redirect: 'follow',
-            ...RETRY_CONFIG,
+    async download({ engineToken, apiUrl, fileId, retryPolicy }: DownloadFileParams): Promise<Uint8Array> {
+        const response = await retryingFetch.fetch({
+            url: `${apiUrl}v1/files/${fileId}?token=${encodeURIComponent(engineToken)}`,
+            init: {
+                method: 'GET',
+                redirect: 'follow',
+            },
+            idempotent: true,
+            policy: retryPolicy,
         })
         if (!response.ok) {
             throw new EngineGenericError(
@@ -134,6 +142,7 @@ type UploadParams = {
     fileName?: string
     compression?: FileCompression
     data: Uint8Array | Buffer
+    retryPolicy?: RetryPolicy
 }
 
 type UploadResult = {
@@ -145,6 +154,7 @@ type DownloadFileParams = {
     engineToken: string
     apiUrl: string
     fileId: string
+    retryPolicy?: RetryPolicy
 }
 
 type BuildHeadersParams = {

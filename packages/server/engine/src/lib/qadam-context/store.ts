@@ -1,6 +1,7 @@
 import { URL } from 'node:url'
 import { Store, StorePutIfAbsentResult, StorePutOptions, StoreScope } from '@aiqadam/qadams-framework'
 import { DeleteStoreEntryRequest, ExecutionError, FetchError, FlowId, isNil, PutStoreEntryRequest, StorageError, StorageInvalidKeyError, StorageLimitError, STORE_KEY_MAX_LENGTH, STORE_VALUE_MAX_SIZE, StoreEntry } from '@aiqadam/shared'
+import { retryingFetch } from '../retrying-fetch'
 import { utils } from '../utils'
 
 export function createContextStore({ apiUrl, prefix, flowId, engineToken }: { apiUrl: string, prefix: string, flowId: FlowId, engineToken: string }): Store {
@@ -52,10 +53,14 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
             const url = buildUrl(apiUrl, key)
 
             const { data: storeEntry, error: storeEntryError } = await utils.tryCatchAndThrowOnEngineError((async () => {
-                const response = await fetch(url, {
-                    headers: {
-                        Authorization: `Bearer ${engineToken}`,
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        headers: {
+                            Authorization: `Bearer ${engineToken}`,
+                        },
                     },
+                    idempotent: true,
                 })
                 if (!response.ok) {
                     return handleResponseError({
@@ -84,13 +89,19 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                 if (sizeOfValue > STORE_VALUE_MAX_SIZE) {
                     throw new StorageLimitError(request.key, STORE_VALUE_MAX_SIZE)
                 }
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${engineToken}`,
+                // Not idempotent: a replay of a put that landed finds its own value and answers
+                // `stored: false`, so it is retried only when the request never reached the app.
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${engineToken}`,
+                        },
+                        body: JSON.stringify(request),
                     },
-                    body: JSON.stringify(request),
+                    idempotent: false,
                 })
                 if (!response.ok) {
                     return handleResponseError({ key: request.key, response })
@@ -112,13 +123,17 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                 if (sizeOfValue > STORE_VALUE_MAX_SIZE) {
                     throw new StorageLimitError(request.key, STORE_VALUE_MAX_SIZE)
                 }
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${engineToken}`,
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${engineToken}`,
+                        },
+                        body: JSON.stringify(request),
                     },
-                    body: JSON.stringify(request),
+                    idempotent: true,
                 })
 
                 if (!response.ok) {
@@ -147,11 +162,15 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
             const url = buildUrl(apiUrl, request.key)
 
             const { data: storeEntry, error: storeEntryError } = await utils.tryCatchAndThrowOnEngineError((async () => {
-                const response = await fetch(url, {
-                    method: 'DELETE',
-                    headers: {
-                        Authorization: `Bearer ${engineToken}`,
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        method: 'DELETE',
+                        headers: {
+                            Authorization: `Bearer ${engineToken}`,
+                        },
                     },
+                    idempotent: true,
                 })
 
                 if (!response.ok) {
