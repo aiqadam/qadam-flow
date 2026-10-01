@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+// Imported statically rather than inside each test so that loading the module, which drags in
+// the whole @aiqadam/shared source barrel, happens at collection: inside a test it took over 5s on
+// a loaded CI runner and timed out whichever test paid for it first (same cause as #183). vi.mock
+// is hoisted above this import, so the stub still applies.
+import { fileLock } from '../src/file-lock'
 
 // Running proper-lockfile's real retry budget out takes about three minutes, and a release that
 // fails cannot be provoked on a real lock, so the library is stubbed.
@@ -16,7 +21,6 @@ beforeEach(() => {
 
 describe('fileLock.runExclusive acquisition timeout', () => {
     it('reports a lock it could not take in time as an acquisition timeout, without running the work', async () => {
-        const { fileLock } = await import('../src/file-lock')
         lockfileStub.lock.mockRejectedValue(Object.assign(new Error('Lock file is already being held'), { code: 'ELOCKED' }))
         const fn = vi.fn(async () => 'never')
 
@@ -28,7 +32,6 @@ describe('fileLock.runExclusive acquisition timeout', () => {
     })
 
     it('does not report a timeout on another lock as a timeout on this one', async () => {
-        const { fileLock } = await import('../src/file-lock')
         lockfileStub.lock.mockRejectedValue(Object.assign(new Error('Lock file is already being held'), { code: 'ELOCKED' }))
 
         const error = await fileLock.runExclusive({ path: '/tmp/file-lock-inner-lock', createPath: false, log: { error: vi.fn() }, fn: async () => undefined })
@@ -39,7 +42,6 @@ describe('fileLock.runExclusive acquisition timeout', () => {
     })
 
     it('tells the protected work when the lock has been compromised', async () => {
-        const { fileLock } = await import('../src/file-lock')
         let reportCompromise: (error: Error) => void = () => undefined
         lockfileStub.lock.mockImplementation(async (_path: string, options: { onCompromised: (error: Error) => void }) => {
             reportCompromise = options.onCompromised
@@ -61,7 +63,6 @@ describe('fileLock.runExclusive acquisition timeout', () => {
     })
 
     it('does not report an ELOCKED the protected work threw as an acquisition timeout', async () => {
-        const { fileLock } = await import('../src/file-lock')
         lockfileStub.lock.mockResolvedValue(async () => undefined)
         const workError = Object.assign(new Error('a nested lock was held'), { code: 'ELOCKED' })
 
@@ -79,7 +80,6 @@ describe('fileLock.runExclusive acquisition timeout', () => {
     })
 
     it('passes the caller\'s stale threshold to the lock', async () => {
-        const { fileLock } = await import('../src/file-lock')
         lockfileStub.lock.mockResolvedValue(async () => undefined)
 
         await fileLock.runExclusive({ path: '/tmp/file-lock-timeout-test', createPath: false, staleMs: 60_000, log: { error: vi.fn() }, fn: async () => undefined })
@@ -90,7 +90,6 @@ describe('fileLock.runExclusive acquisition timeout', () => {
 
 describe('fileLock.runExclusive when the release fails', () => {
     it('fails with the protected work\'s own error, and logs the release failure', async () => {
-        const { fileLock } = await import('../src/file-lock')
         lockfileStub.lock.mockResolvedValue(async () => {
             throw new Error('release failed')
         })
@@ -109,7 +108,6 @@ describe('fileLock.runExclusive when the release fails', () => {
     })
 
     it('fails with the release error when the protected work succeeded', async () => {
-        const { fileLock } = await import('../src/file-lock')
         lockfileStub.lock.mockResolvedValue(async () => {
             throw new Error('release failed')
         })
