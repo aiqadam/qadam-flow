@@ -39,6 +39,9 @@ const exitProcess = writeFixture({
 // the test goes red on a correct runner (#596). `globalThis` survives between executions only
 // when they share a process, so the flag reaches a stray exactly when a later step was served
 // by the runner the leaky step left behind — the defect these tests exist to catch.
+// The flag lives as long as the runner process, so these tests rely on each test starting on
+// a fresh runner (`afterEach` → `shutdown()`): a future test must not run a flag-setting
+// fixture before a stray fixture in the same runner, or the stray fires inside its own step.
 const LATER_STEP_STARTED = 'globalThis.__laterStepStarted'
 
 // Succeeds, but leaves a timer that throws once a later step runs in the same process.
@@ -50,7 +53,7 @@ const strayThrowLater = writeFixture({
 // Succeeds, but leaves a timer that writes to stdout once a later step runs in the same process.
 const strayLogLater = writeFixture({
     name: 'stray_log_later',
-    source: `module.exports = { code: async () => { setInterval(() => { if (${LATER_STEP_STARTED}) console.log("STDOUT FROM EARLIER STEP") }, 5); return { ok: true } } }`,
+    source: `module.exports = { code: async () => { setInterval(() => { if (${LATER_STEP_STARTED}) console.log("STDOUT FROM EARLIER STEP") }, 5); return { pid: process.pid } } }`,
 })
 
 // An unref'd timer keeps nothing alive, so `process.getActiveResourcesInfo()` cannot see
@@ -78,7 +81,7 @@ const opensAndClosesServer = writeFixture({
 // first however late it runs.
 const slowThenFail = writeFixture({
     name: 'slow_then_fail',
-    source: `module.exports = { code: async () => { ${LATER_STEP_STARTED} = true; await new Promise(r => setTimeout(r, 200)); throw new Error("own failure") } }`,
+    source: `module.exports = { code: async () => { ${LATER_STEP_STARTED} = true; await new Promise(r => setTimeout(r, 200)); throw new Error("own failure PID=" + process.pid) } }`,
 })
 
 const slowAndClean = writeFixture({
@@ -209,13 +212,20 @@ describe('noOpCodeSandbox', () => {
     })
 
     it('should not let stdout from an earlier execution leak into a later failure message', async () => {
-        await noOpCodeSandbox.runCodeModule({ codeFilePath: strayLogLater, inputs: {} })
+        const leakyPid = await runPid(strayLogLater)
 
         const error = await noOpCodeSandbox.runCodeModule({ codeFilePath: slowThenFail, inputs: {} })
             .then(() => null, (reason: Error) => reason)
 
         expect(error?.message).toContain('own failure')
         expect(error?.message).not.toContain('STDOUT FROM EARLIER STEP')
+
+        // The stray only logs when a later step shares its process, so without this a runner
+        // that reset `globalThis` between executions would pass the assertion above vacuously.
+        const laterPid = Number(/PID=(\d+)/.exec(error?.message ?? '')?.[1])
+        expect(Number.isInteger(leakyPid)).toBe(true)
+        expect(Number.isInteger(laterPid)).toBe(true)
+        expect(laterPid).not.toBe(leakyPid)
     })
 
     it('should not let user code forge a terminal reply and orphan a live runner', async () => {
