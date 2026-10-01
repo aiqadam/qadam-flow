@@ -93,12 +93,14 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   `node packages/server/api/dist/src/scripts/write-bundled-qadams-manifest.js packages/qadams`. It
   runs the same scan against the exact tree and `node_modules` the app would scan, and writes
   `packages/qadams/bundled-qadams-metadata.json`: `{ version: 1, qadams: QadamMetadata[] }` in scan
-  order, `directoryPath` relative to `packages/qadams`, `i18n` always included. If it loads no qadam,
-  it writes nothing and fails the build, and a `test -s` follows it. The file is gitignored. Never
-  generate it in a dev tree.
+  order, `directoryPath` relative to `packages/qadams`, `i18n` always included
+  (`bundledQadamsManifest.writeFromScan`). It writes nothing and exits 1, failing the build, if it
+  loads no qadam, or if any built dist the walk finds failed to load. A partial manifest would hide
+  that qadam for the image's whole life, so the writer names the skipped dists and refuses. A
+  `test -s` follows it. The file is gitignored. Never generate it in a dev tree.
 - **Read at run time.** `bundledQadamsManifest.read` does an async `readFile` and one `JSON.parse`.
-  That is ~60–90 ms for the 5.8 MB file, with a ~25 ms longest event-loop stall, against ~3 s for
-  the scan on the same box. It returns what the scan would: `directoryPath` resolved back to
+  That, plus the checks below, is ~80–100 ms for the 5.8 MB file, with a ~25 ms longest event-loop
+  stall, against ~2.6–3.3 s for the scan on the same box. It returns what the scan would: `directoryPath` resolved back to
   absolute, and `i18n` dropped unless `AP_LOAD_TRANSLATIONS_FOR_DEV_QADAMS` is on. Per-locale
   translation still happens after loading, in `fetchLatestQadams` / `getOrThrow`.
 - **Rejected → scan**, with `[bundledQadamsManifest] manifest rejected, scanning instead {reason}`
@@ -109,11 +111,22 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   - `no entries`;
   - `an entry points outside the qadams root`;
   - `an entry has no built dist`: its `dist/package.json` is gone;
-  - `an entry does not match its built dist`: that `package.json`'s name or version differs. This
-    is the staleness check. The scan takes both from that file, and every qadam change bumps its
-    version, so a dist rebuilt at a new version after the manifest was written is caught. A rebuild
-    at the **same** version is not, which is why only the image writes the file, as the last thing
-    built in the run stage.
+  - `an entry does not match its built dist`: that `package.json`'s name or version differs;
+  - `the qadams tree could not be listed`: the walk below threw;
+  - `a built dist has no entry`: the set of entries' `directoryPath`s is not the set of `dist`
+    folders on disk.
+
+  The last three are the staleness check, in both directions:
+  - **A rebuilt dist.** The scan takes a qadam's name and version from its `dist/package.json`, and
+    every qadam change bumps its version, so a dist rebuilt at a new version after the manifest was
+    written is caught.
+  - **An added dist**, for example a derived image layering in another qadam. It is caught by
+    walking the tree with the scan's own walk (`fileQadamsUtils.findDistQadamFolders`, no
+    `require`). The walk is concurrent and order-preserving, ~20–45 ms over the real tree, against
+    ~280–420 ms for the old sequential one.
+
+  A rebuild at the **same** version is not caught. That is why only the image writes the file, as
+  the last thing built in the run stage.
   A missing manifest (the dev tree) scans quietly. `AP_DEV_QADAMS` always scans its filtered set,
   manifest or not, because those dists are rebuilt while the process lives.
 - **Which path ran.** One line per process:

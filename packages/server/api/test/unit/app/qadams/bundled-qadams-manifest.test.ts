@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { LocalesEnum } from '@aiqadam/shared'
+import { LocalesEnum, tryCatch } from '@aiqadam/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { qadamMetadataService } from '../../../../src/app/qadams/metadata/qadam-metadata-service'
@@ -121,16 +121,20 @@ describe('bundled qadam metadata manifest (#598)', () => {
         expect(loadCount()).toBe(1)
     })
 
-    it.each([true, false])('returns i18n only when the scan would (translations flag %s)', async (enabled) => {
+    it.each(['true', 'false'])('returns i18n only when the scan would (AP_LOAD_TRANSLATIONS_FOR_DEV_QADAMS=%s)', async (flag) => {
         await writeManifestFromScan()
-        process.env[TRANSLATIONS_ENV] = String(enabled)
+        process.env[TRANSLATIONS_ENV] = flag
 
-        const fromManifest = await bundledQadamsManifest.read({ qadamsRoot, loadTranslations: enabled, log: logger })
-        const fromScan = await fileQadamsUtils(logger).loadAllDistQadamsMetadata({ qadamsRoot, loadTranslations: enabled })
+        const fromManifest = withoutPerLoadFields(await loadBundledQadams(logger))
+        expect(loadedSource()).toBe('manifest')
+        await rm(manifestPath())
+        invalidateBundledQadamCache()
+        const fromScan = withoutPerLoadFields(await loadBundledQadams(logger))
+        expect(loadedSource()).toBe('scan')
 
-        const alpha = fromManifest?.find((qadam) => qadam.name === '@fixture/alpha')
-        expect(alpha?.i18n).toEqual(enabled ? { ru: ALPHA_RU } : undefined)
-        expect(fromManifest).toEqual(JSON.parse(JSON.stringify(fromScan)))
+        const alpha = fromManifest.find((qadam) => qadam.name === '@fixture/alpha')
+        expect(alpha?.i18n).toEqual(flag === 'true' ? { ru: ALPHA_RU } : undefined)
+        expect(fromManifest).toEqual(fromScan)
     })
 
     it('writes paths relative to the qadams root and reads them back absolute', async () => {
@@ -194,6 +198,11 @@ describe('bundled qadam metadata manifest (#598)', () => {
                 breakManifest: async (): Promise<unknown> => rm(path.join(qadamsRoot, 'community', 'gamma', 'dist', 'package.json')),
             },
             {
+                reason: 'a built dist has no entry',
+                label: 'a dist added after the manifest was written',
+                breakManifest: async (): Promise<void> => writeFixtureQadam({ group: 'custom', name: 'delta', version: '0.0.1' }),
+            },
+            {
                 reason: 'an entry does not match its built dist',
                 label: 'a dist rebuilt at a new version after the manifest was written',
                 breakManifest: async (): Promise<void> => {
@@ -212,6 +221,22 @@ describe('bundled qadam metadata manifest (#598)', () => {
             expect(logger.warn).toHaveBeenCalledWith({ reason }, '[bundledQadamsManifest] manifest rejected, scanning instead')
             expect(loadedSource()).toBe('scan')
             expect(qadams.map(nameAndVersion)).toEqual(expected.map(nameAndVersion))
+        })
+
+        // Root reads a 000 directory anyway, so there is nothing to provoke when the suite runs as root.
+        it.skipIf(process.getuid?.() === 0)('the qadams tree could not be listed', async () => {
+            await writeManifestFromScan()
+            const locked = path.join(qadamsRoot, 'community', 'beta', 'src')
+            await mkdir(locked)
+            await chmod(locked, 0o000)
+            const { data: qadams, error } = await tryCatch(() => loadBundledQadams(logger))
+            await chmod(locked, 0o755)
+
+            expect(error).toBeNull()
+            expect(logger.warn).toHaveBeenCalledWith({ reason: 'the qadams tree could not be listed' }, '[bundledQadamsManifest] manifest rejected, scanning instead')
+            expect(loadedSource()).toBe('scan')
+            // The scan cannot list the tree either; it logs that and serves no bundled qadam.
+            expect(qadams).toEqual([])
         })
     })
 })
@@ -269,12 +294,14 @@ exports.qadam = new Qadam()
 }
 
 async function writeManifestFromScan(): Promise<void> {
-    const utils = fileQadamsUtils(logger)
-    const qadams = await utils.loadAllDistQadamsMetadata({ qadamsRoot, loadTranslations: true })
-    await bundledQadamsManifest.write({ qadamsRoot, qadams })
+    const result = await bundledQadamsManifest.writeFromScan({ qadamsRoot, log: logger })
+    expect(result).toEqual({ status: 'written', count: 3 })
     // The writer runs in its own process in the image; dropping its modules here keeps the load
     // counter honest about what the path under test required.
-    qadams.forEach((qadam) => utils.clearQadamModuleCache(qadam.directoryPath ?? ''))
+    const utils = fileQadamsUtils(logger)
+    const distFolders = await utils.findDistQadamFolders({ qadamsRoot })
+    expect(distFolders).toHaveLength(3)
+    distFolders.forEach((distFolder) => utils.clearQadamModuleCache(distFolder))
 }
 
 async function rewriteManifest(change: (manifest: ManifestFile) => unknown): Promise<void> {
@@ -286,12 +313,14 @@ function manifestPath(): string {
     return path.join(qadamsRoot, BUNDLED_QADAMS_MANIFEST_FILE)
 }
 
+function withoutPerLoadFields(qadams: object[]): Record<string, unknown>[] {
+    return JSON.parse(JSON.stringify(qadams.map((qadam) => Object.fromEntries(Object.entries(qadam).filter(([key]) => !PER_LOAD_FIELDS.includes(key))))))
+}
+
 // What the HTTP layer would send: ids and timestamps are minted per load on both paths, and the
 // response is JSON, so a function on a live action is not part of it on either path.
 async function listCatalogue({ locale }: { locale: LocalesEnum }): Promise<Record<string, unknown>[]> {
-    const qadams = await qadamMetadataService(logger).list({ includeHidden: false, locale })
-    const withoutPerLoadFields = qadams.map((qadam) => Object.fromEntries(Object.entries(qadam).filter(([key]) => !PER_LOAD_FIELDS.includes(key))))
-    return JSON.parse(JSON.stringify(withoutPerLoadFields))
+    return withoutPerLoadFields(await qadamMetadataService(logger).list({ includeHidden: false, locale }))
 }
 
 function nameAndVersion(qadam: { name?: unknown, version?: unknown }): string {
