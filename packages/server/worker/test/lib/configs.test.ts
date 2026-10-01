@@ -114,3 +114,36 @@ describe('system.getContainerType', () => {
         expect(system.getContainerType()).toBe('WORKER')
     })
 })
+
+describe('system.getShutdownGraceMs (#585)', () => {
+    const savedGrace = process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS']
+    afterEach(() => {
+        if (savedGrace !== undefined) process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS'] = savedGrace
+        else delete process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS']
+    })
+
+    it('defaults to 60 s, well above a typical run', () => {
+        delete process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS']
+        expect(system.getShutdownGraceMs()).toBe(60_000)
+    })
+
+    it.each([['0', 0], ['5', 5_000], ['1.5', 1_500], ['300', 300_000]])('reads %s seconds', (value, expected) => {
+        process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS'] = value
+        expect(system.getShutdownGraceMs()).toBe(expected)
+    })
+
+    it.each(['-1', 'abc', 'Infinity', '', '   '])('falls back to the default on %j rather than to no grace', (value) => {
+        process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS'] = value
+        expect(system.getShutdownGraceMs()).toBe(60_000)
+    })
+
+    it('ignores surrounding whitespace', () => {
+        process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS'] = ' 30 '
+        expect(system.getShutdownGraceMs()).toBe(30_000)
+    })
+
+    it('caps the grace at an hour', () => {
+        process.env['AP_WORKER_SHUTDOWN_GRACE_SECONDS'] = '60000'
+        expect(system.getShutdownGraceMs()).toBe(3_600_000)
+    })
+})

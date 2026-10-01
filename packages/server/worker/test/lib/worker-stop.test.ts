@@ -79,14 +79,24 @@ describe('worker.stop() — #500', () => {
                 }
             })
 
+            const parked: ((job: ConsumeJobRequest | null) => void)[] = []
+            let pollingStopped = false
             const handlers: Partial<WorkerToApiContract> = {
                 // Parks, exactly as the real long-poll does. The API answers within
-                // WAITER_TIMEOUT_MS; nothing here answers until the test says so.
+                // WAITER_TIMEOUT_MS; nothing here answers until the worker stops polling.
                 poll: vi.fn(() => {
                     pollCalls++
-                    return new Promise<ConsumeJobRequest | null>(() => {
-                        // Never resolves. Parking is the steady state this test is about.
+                    if (pollingStopped) {
+                        return Promise.resolve(null)
+                    }
+                    return new Promise<ConsumeJobRequest | null>((resolve) => {
+                        parked.push(resolve)
                     })
+                }),
+                // What the API does on `stopPolling` (#585): parked polls answer null, and so does every later one.
+                stopPolling: vi.fn(async () => {
+                    pollingStopped = true
+                    parked.splice(0).forEach((resolve) => resolve(null))
                 }),
                 getUsedQadams: vi.fn().mockResolvedValue([]),
                 markQadamAsUsed: vi.fn(),

@@ -1,5 +1,6 @@
 import { ErrorCode, isNil, QadamFlowError } from '@aiqadam/shared'
 import { Logger } from 'pino'
+import { JobGivenUpError } from './given-up-guard'
 import { SandboxJobContext } from './sandbox-manager'
 
 /**
@@ -31,6 +32,7 @@ export const engineRunScope = {
             },
             assertOwnsRun({ rpc, runId, projectId }) {
                 const jobContext = getCurrentJobContext()
+                rejectIfGivenUp({ log, rpc, jobContext })
                 const owned = !isNil(jobContext)
                     && projectId === jobContext.projectId
                     && (runId === jobContext.runId || (inlineChildRunIds.get(jobContext)?.has(runId) ?? false))
@@ -40,6 +42,7 @@ export const engineRunScope = {
             },
             assertOwnsSyncRequest({ workerHandlerId, httpRequestId }) {
                 const jobContext = getCurrentJobContext()
+                rejectIfGivenUp({ log, rpc: 'sendFlowResponse', jobContext })
                 const owned = !isNil(jobContext)
                     && !isNil(jobContext.workerHandlerId)
                     && !isNil(jobContext.httpRequestId)
@@ -51,6 +54,15 @@ export const engineRunScope = {
             },
         }
     },
+}
+
+// A job this worker gave up owns its run no longer: the run may be another worker's by now (#585).
+function rejectIfGivenUp({ log, rpc, jobContext }: RejectIfGivenUpParams): void {
+    if (jobContext?.isGivenUp?.() !== true) {
+        return
+    }
+    log.info({ rpc, jobRunId: jobContext.runId }, '[engineRunScope] Dropped an engine RPC for a job this worker gave up')
+    throw new JobGivenUpError(`${rpc} not sent`)
 }
 
 function rejectOutOfScope({ log, rpc, jobContext, requested }: RejectOutOfScopeParams): never {
@@ -71,6 +83,12 @@ function rejectOutOfScope({ log, rpc, jobContext, requested }: RejectOutOfScopeP
 type CreateEngineRunScopeParams = {
     log: Logger
     getCurrentJobContext: () => SandboxJobContext | null
+}
+
+type RejectIfGivenUpParams = {
+    log: Logger
+    rpc: string
+    jobContext: SandboxJobContext | null
 }
 
 type RejectOutOfScopeParams = {

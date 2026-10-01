@@ -108,7 +108,10 @@ describe('workerRpc#poll on a socket that disconnected (#589)', () => {
 
         const result = await createHandlers({ log, disconnected: socket.signal }).poll(livePayload)
 
-        expect(poll).toHaveBeenCalledWith(expect.objectContaining({ signal: socket.signal }))
+        const { signal } = poll.mock.calls[0][0]
+        expect(signal.aborted).toBe(false)
+        socket.abort()
+        expect(signal.aborted, 'the dispatcher poll outlives the socket').toBe(true)
         expect(result).toEqual(job)
         expect(returnToQueue).not.toHaveBeenCalled()
     })
@@ -138,8 +141,8 @@ describe('workerRpc#poll on a socket that disconnected (#589)', () => {
 
         expect(result).toBeNull()
         expect(log.error).toHaveBeenCalledWith(
-            expect.objectContaining({ jobId: 'job-1', error: 'Error: redis down' }),
-            '[workerRpc#poll] Failed to return the job of a disconnected worker to the queue',
+            expect.objectContaining({ jobId: 'job-1', disconnected: true, error: 'Error: redis down' }),
+            '[workerRpc#poll] Failed to return a job to the queue after its worker disconnected or stopped polling',
         )
     })
 
@@ -165,5 +168,71 @@ describe('workerRpc#poll on a socket that disconnected (#589)', () => {
 
         expect(result).toBeNull()
         expect(returnToQueue).not.toHaveBeenCalled()
+    })
+})
+
+// A draining worker keeps its socket up, so its parked polls would stay waiters in the dispatcher
+// until WAITER_TIMEOUT_MS, and any job handed to one would go to a loop that has stopped (#585).
+describe('workerRpc#stopPolling', () => {
+    const job = {
+        jobId: 'job-1',
+        jobData: { jobType: 'EXECUTE_FLOW' },
+        attempsStarted: 0,
+        engineToken: 'engine-token',
+        token: 'lock-token',
+        queueName: 'workerJobs',
+    }
+    const livePayload = { ...machineInfo, workerProps: { version: currentVersion() } }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+    })
+
+    it('ends a parked poll at once, as a disconnect does', async () => {
+        // What the dispatcher does with an aborted waiter: it answers null.
+        poll.mockImplementationOnce(({ signal }: { signal: AbortSignal }) => new Promise((resolve) => {
+            signal.addEventListener('abort', () => resolve(null), { once: true })
+        }))
+        const handlers = createHandlers({ log, disconnected: new AbortController().signal })
+
+        const parked = handlers.poll(livePayload)
+        await vi.waitFor(() => expect(poll).toHaveBeenCalledTimes(1))
+        await handlers.stopPolling({})
+
+        await expect(parked).resolves.toBeNull()
+        expect(returnToQueue).not.toHaveBeenCalled()
+    })
+
+    it('returns a job handed out in the same turn to the queue instead of acking it', async () => {
+        const handlers = createHandlers({ log, disconnected: new AbortController().signal })
+        poll.mockImplementationOnce(async () => {
+            await handlers.stopPolling({})
+            return job
+        })
+
+        const result = await handlers.poll(livePayload)
+
+        expect(result).toBeNull()
+        expect(returnToQueue).toHaveBeenCalledWith(job)
+    })
+
+    it('answers any later poll with null without asking the dispatcher, and says which worker stopped', async () => {
+        const handlers = createHandlers({ log, workerGroupId: 'group-1', workerId: 'worker-1', disconnected: new AbortController().signal })
+        await handlers.stopPolling({})
+
+        const result = await handlers.poll(livePayload)
+
+        expect(result).toBeNull()
+        expect(poll).not.toHaveBeenCalled()
+        expect(log.info).toHaveBeenCalledWith({ workerId: 'worker-1', workerGroupId: 'group-1' }, '[workerRpc#stopPolling] Worker stopped polling: its pending polls end now')
+    })
+
+    it('is scoped to the connection that asked', async () => {
+        const stopping = createHandlers({ log, disconnected: new AbortController().signal })
+        const other = createHandlers({ log, disconnected: new AbortController().signal })
+        poll.mockResolvedValueOnce(job)
+        await stopping.stopPolling({})
+
+        await expect(other.poll(livePayload)).resolves.toEqual(job)
     })
 })

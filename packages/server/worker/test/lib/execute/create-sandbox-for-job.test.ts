@@ -383,6 +383,22 @@ describe('engine RPC run scope', () => {
         expect(client.uploadRunLog).toHaveBeenCalledWith(input)
     })
 
+    // #585: a reused or prewarmed sandbox was created with another job's client, or the shared one;
+    // only the current job's own client drops a call once that job is given up.
+    it('forwards through the current job\'s own client when its context carries one', async () => {
+        const jobClient = buildApiClient()
+        const { client, handlers } = setup({ jobContext: () => ({ ...JOB, apiClient: jobClient as never }) })
+        const input = uploadFor({ runId: 'run-own', projectId: 'project-own' })
+
+        await handlers.uploadRunLog(input)
+        await handlers.sendFlowResponse({ workerHandlerId: 'handler-own', httpRequestId: 'request-own', runResponse: { status: 200, body: {}, headers: {} } })
+
+        expect(jobClient.uploadRunLog).toHaveBeenCalledWith(input)
+        expect(jobClient.sendFlowResponse).toHaveBeenCalled()
+        expect(client.uploadRunLog).not.toHaveBeenCalled()
+        expect(client.sendFlowResponse).not.toHaveBeenCalled()
+    })
+
     it.each([
         ['another run in the same project', { runId: 'run-foreign', projectId: 'project-own' }],
         ['its own run moved into another project', { runId: 'run-own', projectId: 'project-foreign' }],

@@ -30,11 +30,14 @@ import { getApiUrl, system, WorkerSystemProp } from './config/configs'
 import { logger } from './config/logger'
 import { workerSettings } from './config/worker-settings'
 import { EgressStack, startEgressStack } from './egress/lifecycle'
+import { givenUpGuard } from './execute/given-up-guard'
 import { ClassifiedJobFailure } from './execute/job-failure'
 import { getHandler } from './execute/job-registry'
 import { JobTimings, jobTimings } from './execute/job-timings'
 import { ActiveSandboxInfo, createSandboxManager, SandboxManager } from './execute/sandbox-manager'
 import { JobContext, JobResult, JobResultKind } from './execute/types'
+import { leaseTracker } from './lease-tracker'
+import { ConnectionState, reconnectSafeApiClient } from './reconnect-safe-api-client'
 
 
 const tracer = trace.getTracer('worker')
@@ -47,6 +50,11 @@ export const VERSION_MISMATCH_POLL_PAUSE_MS = 10_000
 
 /** The server hangs up before it finishes restarting, so the first retry has to arrive after it. */
 const MANUAL_RECONNECT_DELAY_MS = 2_000
+
+/** A poll loop that crashed is started again after this, so a persistent fault does not spin. */
+const POLL_LOOP_RESTART_DELAY_MS = 1_000
+
+const DRAIN_CHECK_INTERVAL_MS = 100
 
 /**
  * socket.io reconnects by itself after a transport-level drop, but **not** when the server closed
@@ -65,9 +73,15 @@ export function needsManualReconnect(reason: string): boolean {
 }
 
 let socket: Socket | null = null
-let polling = false
+/** Incremented on every disconnect, so a caller can tell whether its call spanned one. */
 let connectionGeneration = 0
 let stopped = false
+/**
+ * Set once `stop()` has drained and is about to close the socket. Distinct from `stopped`: a
+ * worker that is draining still reconnects after an API restart, because its jobs can only report
+ * completion over a live socket.
+ */
+let closing = false
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 /** Whether the last disconnect was one socket.io will not retry on its own. */
 let reconnectIsOurs = false
@@ -85,23 +99,51 @@ let sandboxManagers: SandboxManager[] = []
 let activePollLoops = 0
 
 /**
- * Aborted by `stop()`. The poll loops park inside a long-poll whose server-side budget is
- * WAITER_TIMEOUT_MS (50s) and whose client-side RPC timeout is 60s, and they only re-read
- * `polling` at the head of the `while` — so without something to interrupt the await, "stop
- * polling" means "stop polling in up to a minute".
+ * Jobs between being handed out by a poll and their `completeJob`, keyed by lease token: what a stop
+ * has to drain, and whose leases a reconnect re-checks.
+ */
+const inFlightJobs = new Map<string, InFlightJob>()
+
+/** Each in-flight job's lease, and the deadline that gives it up once it is not renewed in time. */
+const leases = leaseTracker.create({
+    onExpired: ({ token, leaseAgeMs }) => {
+        void abandonLostLease({ token, reason: 'not renewed in time', leaseAgeMs })
+    },
+})
+
+/** The settings the current sandboxes were built with, so any later connect can tell they are out of date. */
+let sandboxSettings: WorkerSettingsResponse | null = null
+
+/**
+ * Open while the socket is connected and this connection's settings are loaded. The poll loops wait
+ * on it instead of exiting on a disconnect: they, their sandbox managers and any job they are
+ * running outlive a reconnect (#585).
+ */
+const connectionGate = createConnectionGate()
+
+/** What the reconnect-safe clients read the connection's state from. */
+const apiConnection: ConnectionState = {
+    generation: () => connectionGeneration,
+    isReady: () => connectionGate.isOpen(),
+    whenReady: ({ signal }) => connectionGate.whenOpen({ signal }),
+}
+
+/** The socket's RPC client before any wrapping, so each job can put its own given-up check under the reconnect handling. */
+let rpcClient: WorkerToApiContract | null = null
+
+/**
+ * Aborted by `stop()`. The poll loops re-read it at the head of the `while`, and race every other
+ * wait against it: a back-off, the connection gate, the prewarm. Not the poll itself: a poll walked
+ * away from stays a waiter on the API that can still be handed a job, so `stop()` asks the API to
+ * end it instead (`stopPolling`, #585).
  */
 let stopController = new AbortController()
 
 /** The loops `startPollingWorkers` launched, so `stop()` has something to wait for. */
 let pollingWorkers: Promise<void> | null = null
 
-/**
- * How long `stop()` waits for its loops before giving up on them. A loop parked in a poll unwinds
- * at once; one that is mid-`executeJob` can take as long as the job, and a shutdown that blocks on
- * a running flow is worse than one that abandons it. Same bound, for the same reason, as
- * `longPollingHost.stop()` in the API.
- */
-const POLL_LOOP_SHUTDOWN_GRACE_MS = 5_000
+/** How long `stop()` waits for the API to end its parked polls before draining without it. */
+const STOP_POLLING_TIMEOUT_MS = 5_000
 
 /** Node's own default; kept as headroom so a genuine listener leak still trips the warning. */
 const DEFAULT_MAX_LISTENERS = 10
@@ -110,6 +152,7 @@ export const worker = {
     async start({ apiUrl, socketUrl, workerToken, withHealthServer = false }: WorkerStartParams): Promise<void> {
         // Reset, so a worker started again after `stop()` can still reconnect.
         stopped = false
+        closing = false
         stopController = new AbortController()
         // The worker group is not sent in the handshake any more: the API reads it from the
         // verified token principal, so a value asserted here would be ignored. AP_WORKER_GROUP_ID
@@ -121,12 +164,14 @@ export const worker = {
             reconnection: true,
         })
 
-        const apiClient = createRpcClient<WorkerToApiContract>(socket, 60_000)
+        rpcClient = createRpcClient<WorkerToApiContract>(socket, 60_000)
+        const apiClient = reconnectSafeApiClient.wrap({ apiClient: rpcClient, connection: apiConnection })
 
         socket.on('connect', async () => {
             // The reconnect this flag described is done; a later `connect_error` belongs to
             // whatever disconnect comes after it, not to this one.
             reconnectIsOurs = false
+            const generation = connectionGeneration
             logger.info('Connected to API server via Socket.IO')
             await fetchAndStoreSettings(socket!)
             if (!egressStack) {
@@ -140,16 +185,36 @@ export const worker = {
                 }
                 egressStack = data
             }
+            // Disconnected again while the settings were in flight: the gate is the next connect's.
+            if (generation !== connectionGeneration || socket?.connected !== true) {
+                return
+            }
+            if (sandboxManagers.length > 0) {
+                recycleSandboxesIfSettingsChanged()
+                reconfirmLeases({ apiClient })
+                logger.info({ inFlightJobs: inFlightJobs.size }, 'Reconnected: in-flight jobs keep running, polling resumes')
+            }
+            // A connection the stop never reached: `stop()` skips `stopPolling` while disconnected, and
+            // a poll that was already waiting for the gate goes out the moment it opens. Asked first,
+            // so the API has stopped this connection's polling before that poll arrives. Synchronous
+            // up to the emit, and one connection's RPCs reach the API in order.
+            if (stopped && !isNil(rpcClient)) {
+                void askApiToStopPolling({ client: rpcClient, graceMs: system.getShutdownGraceMs() })
+            }
+            connectionGate.open()
+            // A draining worker reconnects only so its jobs can finish; it takes no new work.
+            if (stopped) {
+                return
+            }
             void warmupPiecesOnStartup(apiClient)
-            pollingWorkers = startPollingWorkers(apiClient)
-            void pollingWorkers.catch((err) => {
-                logger.error({ error: err }, 'Polling workers crashed unexpectedly')
-            })
+            if (isNil(pollingWorkers)) {
+                pollingWorkers = launchPollingWorkers(apiClient)
+            }
         })
 
         socket.on('disconnect', (reason) => {
             connectionGeneration++
-            polling = false
+            connectionGate.close()
             reconnectIsOurs = needsManualReconnect(reason)
             logger.warn({ reason }, 'Disconnected from API server')
             if (reconnectIsOurs) {
@@ -172,23 +237,44 @@ export const worker = {
         if (withHealthServer) {
             healthServerInstance = startHealthServer()
         }
-        logger.info({ apiUrl, socketUrl }, 'Worker started, polling for jobs...')
+        logger.info({ apiUrl, socketUrl, shutdownGraceMs: system.getShutdownGraceMs() }, 'Worker started, polling for jobs...')
     },
 
     async stop(): Promise<void> {
         stopped = true
+        stopController.abort()
+        pollingWorkers = null
+        const inFlightJobsAtStop = inFlightJobs.size
+        const graceMs = system.getShutdownGraceMs()
+        if (inFlightJobsAtStop > 0) {
+            logger.info({ inFlightJobs: inFlightJobsAtStop, graceMs }, 'Stopping: no new jobs taken, waiting for in-flight jobs to finish')
+        }
+        await endParkedPolls({ graceMs })
+        // Before the sandbox managers go: a loop still running is a loop that can still be handed
+        // a job, and it would run it against managers this call has already shut down and dropped.
+        // The socket stays up meanwhile, so a draining job can still report progress and complete.
+        await awaitDrain({ graceMs })
+        const abandonedJobs = inFlightJobs.size
+        if (abandonedJobs > 0) {
+            logger.warn({ abandonedJobs, graceMs }, 'Shutdown grace expired, abandoning in-flight jobs')
+            // They cannot report back over the socket that closes below. Marked before their engines
+            // are killed, so none of them sends anything more (no completeJob, no terminal status,
+            // no log) and each loop unwinds once its engine is gone. A call already in flight fails
+            // when the socket closes. The API redelivers each job when its lock expires.
+            inFlightJobs.forEach((inFlight, token) => {
+                inFlightJobs.set(token, { ...inFlight, givenUp: 'shutdown' })
+            })
+        }
+        closing = true
         reconnectIsOurs = false
         if (reconnectTimer !== null) {
             clearTimeout(reconnectTimer)
             reconnectTimer = null
         }
-        polling = false
-        stopController.abort()
-        // Before the sandbox managers go: a loop still running is a loop that can still be handed
-        // a job, and it would run it against managers this call has already shut down and dropped.
-        await awaitPollLoops()
         await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
         sandboxManagers = []
+        sandboxSettings = null
+        connectionGate.close()
         socket?.disconnect()
         socket = null
         healthServerInstance?.close()
@@ -197,7 +283,7 @@ export const worker = {
             await egressStack.shutdown()
             egressStack = null
         }
-        logger.info('Worker stopped')
+        logger.info({ inFlightJobsAtStop, abandonedJobs }, 'Worker stopped')
     },
 }
 
@@ -211,41 +297,64 @@ export const workerInternals = {
 }
 
 /**
- * Waits for the poll loops to unwind, but never longer than the grace: `stop()` must not hang on a
- * loop that is mid-job. The loops are cleared afterwards either way, so a second `stop()` does not
- * wait on a promise that already had its chance.
+ * Asks the API to end this connection's parked polls (#585). Without it each idle slot's poll
+ * stays a waiter on the API for up to its 50 s budget while the worker drains, and a job dequeued
+ * for it would go to a loop that is about to stop. Disconnected, there is nothing to ask: the API
+ * drops a closed socket's polls by itself (#589), and the reconnect asks the new connection
+ * before it lets any poll through. An API from before #585 has no `stopPolling` and answers with
+ * an error; the parked polls then end within their budget. A job one of them brings is not lost:
+ * it is run if the grace allows, and otherwise given up (`shutdown`) and redelivered by the
+ * stalled scan. Bounded, so a slow API cannot hold up the stop.
  */
-async function awaitPollLoops(): Promise<void> {
-    if (isNil(pollingWorkers)) {
+async function endParkedPolls({ graceMs }: { graceMs: number }): Promise<void> {
+    const client = rpcClient
+    if (isNil(client) || !connectionGate.isOpen()) {
         return
     }
-    const loops = pollingWorkers
-    pollingWorkers = null
-    let graceTimer: ReturnType<typeof setTimeout> | undefined
-    try {
-        await Promise.race([
-            loops.catch(() => undefined),
-            // Cleared below and unref'd meanwhile: a grace that loses the race must not keep the
-            // event loop alive for its remaining 5s, which in the CE suites outlives the hook.
-            new Promise<void>((resolve) => {
-                graceTimer = setTimeout(resolve, POLL_LOOP_SHUTDOWN_GRACE_MS)
-                graceTimer.unref()
-            }),
-        ])
-    }
-    finally {
-        clearTimeout(graceTimer)
+    await askApiToStopPolling({ client, graceMs })
+}
+
+async function askApiToStopPolling({ client, graceMs }: { client: WorkerToApiContract, graceMs: number }): Promise<void> {
+    const timeoutMs = Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)
+    const { error } = await tryCatch(() => Promise.race([
+        client.stopPolling({}),
+        unrefSleep(timeoutMs).then(() => {
+            throw new Error(`stopPolling got no answer within ${timeoutMs}ms`)
+        }),
+    ]))
+    if (error) {
+        // An API from before #585 (no `stopPolling` handler), a timeout and a transport failure all
+        // land here, and the error says which.
+        logger.info({ err: error }, 'Could not ask the API to end this worker\'s parked polls; they end within their poll budget, and a job one of them brings is run if the grace allows, or given up and redelivered')
     }
 }
 
 /**
- * Resolves with `whenStopped` as soon as `stop()` is requested, so a parked long-poll does not keep
- * the loop alive for the rest of its 60s RPC timeout. The losing promise is not abandoned silently
- * — an unobserved rejection from the poll we walked away from would surface as an unhandled
- * rejection and, in the API's own test harness, fail an unrelated suite.
+ * Waits until no job is in flight and no poll loop is running, but never longer than the grace:
+ * `stop()` must not hang on a job that never ends. Read off the counters rather than the loops'
+ * promise, so a job whose loop is gone is still waited for.
  */
-async function raceStopRequest<T>({ promise, whenStopped }: RaceStopRequestParams<T>): Promise<T> {
-    const { signal } = stopController
+async function awaitDrain({ graceMs }: { graceMs: number }): Promise<void> {
+    const deadline = Date.now() + graceMs
+    while ((inFlightJobs.size > 0 || activePollLoops > 0) && Date.now() < deadline) {
+        await unrefSleep(Math.min(DRAIN_CHECK_INTERVAL_MS, deadline - Date.now()))
+    }
+}
+
+/** A grace that is still counting down must not keep the event loop alive, which in the CE suites outlives the hook. */
+function unrefSleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms).unref()
+    })
+}
+
+/**
+ * Resolves with `whenStopped` as soon as `stop()` is requested, so a back-off or a slow prewarm is
+ * not a shutdown delay. Never a poll: see `runPollLoop`. The losing promise is not abandoned
+ * silently — an unobserved rejection from it would surface as an unhandled rejection and, in the
+ * API's own test harness, fail an unrelated suite.
+ */
+async function raceStopRequest<T>({ promise, whenStopped, signal }: RaceStopRequestParams<T>): Promise<T> {
     if (signal.aborted) {
         promise.catch(() => undefined)
         return whenStopped
@@ -271,17 +380,17 @@ async function raceStopRequest<T>({ promise, whenStopped }: RaceStopRequestParam
 }
 
 /** A `sleep` that gives up when `stop()` is requested, so a back-off is not a shutdown delay. */
-function sleepUnlessStopped(ms: number): Promise<void> {
-    return raceStopRequest({ promise: sleep(ms), whenStopped: undefined })
+function sleepUnlessStopped({ ms, signal }: { ms: number, signal: AbortSignal }): Promise<void> {
+    return raceStopRequest({ promise: sleep(ms), whenStopped: undefined, signal })
 }
 
 function scheduleReconnect(): void {
-    if (stopped || reconnectTimer !== null || socket?.connected === true) {
+    if (closing || reconnectTimer !== null || socket?.connected === true) {
         return
     }
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null
-        if (stopped || socket?.connected === true) {
+        if (closing || socket?.connected === true) {
             return
         }
         logger.info('Reconnecting to the API server after a server-side disconnect')
@@ -289,48 +398,169 @@ function scheduleReconnect(): void {
     }, MANUAL_RECONNECT_DELAY_MS)
 }
 
+/**
+ * The loops, started once per `start()`; a reconnect does not restart them. Shutting the managers
+ * down on every connect to start fresh ones killed every engine that was mid-job, and each of those
+ * runs failed as an internal error and waited out the retry backoff (#585). If the loops ever all
+ * exit anyway, the next connect starts them again rather than leaving a worker that is connected
+ * and polls nothing.
+ */
+function launchPollingWorkers(apiClient: WorkerToApiContract): Promise<void> {
+    const loops = startPollingWorkers(apiClient)
+    void loops
+        .catch((err) => {
+            logger.error({ error: err }, 'Polling workers crashed unexpectedly')
+        })
+        .finally(() => {
+            if (pollingWorkers === loops) {
+                pollingWorkers = null
+            }
+        })
+    return loops
+}
+
 async function startPollingWorkers(apiClient: WorkerToApiContract): Promise<void> {
     // A `connect` that lands after `stop()` would otherwise start loops against an aborted
     // controller, where every poll returns instantly and the loop spins on the CPU.
-    if (stopped || polling) return
-    polling = true
+    if (stopped) return
 
-    const generation = connectionGeneration
-
-    if (sandboxManagers.length > 0) {
-        logger.info({ count: sandboxManagers.length }, 'Shutting down old sandbox managers before creating new ones')
-        await Promise.all(sandboxManagers.map((sm) => sm.shutdown(logger)))
-        sandboxManagers = []
+    if (sandboxManagers.length === 0) {
+        sandboxManagers = createSandboxManagers()
+        const { data: settings } = tryCatchSync(() => workerSettings.getSettings())
+        sandboxSettings = settings
     }
 
+    // Captured per start: a loop still finishing a job that a previous `stop()` abandoned must see
+    // that stop, not the `stopped = false` of the `start()` after it.
+    const { signal } = stopController
+
+    // One `abort` listener per loop lives on the shared signal at a time. Node warns past 10, so
+    // size the budget to the loops actually running rather than disabling the leak check outright.
+    setMaxListeners(sandboxManagers.length + DEFAULT_MAX_LISTENERS, signal)
+
+    logger.info({ concurrency: sandboxManagers.length }, 'Starting polling workers')
+
+    // Settled rather than all: one loop failing must not end the promise while its siblings still
+    // run, or the next connect would start a second set of loops beside them.
+    await Promise.allSettled(sandboxManagers.map((sbManager, workerIndex) =>
+        pollAndExecute({ apiClient, sbManager, workerIndex, signal }),
+    ))
+}
+
+function createSandboxManagers(): SandboxManager[] {
     const rawConcurrency = Number(system.get(WorkerSystemProp.WORKER_CONCURRENCY) ?? '1')
     const concurrency = Number.isInteger(rawConcurrency) && rawConcurrency > 0 ? rawConcurrency : 1
     if (!Number.isInteger(rawConcurrency) || rawConcurrency < 1) {
         logger.warn({ rawConcurrency }, 'Invalid AP_WORKER_CONCURRENCY value, falling back to 1')
     }
     const proxyPort = egressStack?.proxyPort ?? null
-    sandboxManagers = Array.from({ length: concurrency }, (_, i) => createSandboxManager({ boxId: i + 1, proxyPort }))
-
-    // One `abort` listener per loop lives on the shared signal at a time. Node warns past 10, so
-    // size the budget to the loops actually running rather than disabling the leak check outright.
-    setMaxListeners(concurrency + DEFAULT_MAX_LISTENERS, stopController.signal)
-
-    logger.info({ concurrency }, 'Starting polling workers')
-
-    const workers = sandboxManagers.map((sbManager, index) =>
-        pollAndExecute(apiClient, sbManager, index, generation),
-    )
-    await Promise.all(workers)
+    return Array.from({ length: concurrency }, (_, i) => createSandboxManager({ boxId: i + 1, proxyPort }))
 }
 
-async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: SandboxManager, workerIndex: number, generation: number): Promise<void> {
+/**
+ * Sandboxes are kept across a reconnect so that they stay warm, but each one bakes in the settings
+ * it was created with, the SSRF allow list among them. Compared against the settings the sandboxes
+ * were built with, not the previous connection's: a connect that stored new settings and dropped
+ * before reaching this point must not make the next one look unchanged. An idle sandbox is replaced
+ * at once; a busy one finishes its job first, since killing it would fail that run.
+ */
+function recycleSandboxesIfSettingsChanged(): void {
+    const { data: currentSettings } = tryCatchSync(() => workerSettings.getSettings())
+    if (isNil(currentSettings) || JSON.stringify(currentSettings) === JSON.stringify(sandboxSettings)) {
+        return
+    }
+    sandboxSettings = currentSettings
+    const busyManagers = new Set([...inFlightJobs.values()].map(({ sbManager }) => sbManager))
+    const idleManagers = sandboxManagers.filter((sm) => !busyManagers.has(sm))
+    logger.info({ idle: idleManagers.length, busy: busyManagers.size }, 'Worker settings changed: idle sandboxes are replaced now, busy ones after their job')
+    sandboxManagers.forEach((sm) => sm.markStale())
+    idleManagers.forEach((sm) => {
+        void tryCatch(() => sm.invalidate(logger))
+    })
+}
+
+/**
+ * Renews every in-flight lease as soon as the connection is back, rather than at its next tick, so a
+ * job whose lock the API has already given away learns it now. A lease the outage outlived needs no
+ * asking: its deadline in `leases` has already given it up.
+ */
+function reconfirmLeases({ apiClient }: { apiClient: WorkerToApiContract }): void {
+    for (const token of inFlightJobs.keys()) {
+        void renewLease({ apiClient, token })
+    }
+}
+
+/** One tick of a job's lease. Not sent while disconnected: the reconnect renews every lease itself. */
+function tickLease({ apiClient, token }: { apiClient: WorkerToApiContract, token: string }): void {
+    if (socket?.connected === true) {
+        void renewLease({ apiClient, token })
+    }
+}
+
+async function renewLease({ apiClient, token }: { apiClient: WorkerToApiContract, token: string }): Promise<void> {
+    const inFlight = inFlightJobs.get(token)
+    if (isNil(inFlight) || !isNil(inFlight.givenUp)) {
+        return
+    }
+    const { jobId, queueName } = inFlight.job
+    const sentAt = leases.now()
+    // Through the job's own client: a renewal that waited for a reconnect and lands after the
+    // give-up would hold the lock of a job nobody runs, and delay its redelivery by a full lock.
+    const jobApiClient = buildJobApiClient({ apiClient, isGivenUp: isGivenUpFor({ token }) })
+    const { data, error } = await tryCatch(() => jobApiClient.extendLock({ jobId, token, queueName }))
+    if (givenUpGuard.isGivenUpError(error)) {
+        return
+    }
+    if (error) {
+        inFlight.log.warn({ error, jobId }, 'Failed to extend lock')
+        return
+    }
+    if (data?.leaseLost === true) {
+        await abandonLostLease({ token, reason: 'refused by the API', leaseAgeMs: leases.ageMs({ token }) })
+        return
+    }
+    // An API from before #585 answers nothing: that confirms nothing, and the deadline stands.
+    if (isNil(data)) {
+        return
+    }
+    leases.confirm({ token, sentAt })
+}
+
+/**
+ * The job is no longer this worker's: its lock expired or went to a redelivered copy. From here on
+ * nothing it does reaches the API (`givenUpGuard`, `engineRunScope`), its sandbox is stopped, and it
+ * reports no completion that could overwrite the copy's.
+ */
+async function abandonLostLease({ token, reason, leaseAgeMs }: AbandonLostLeaseParams): Promise<void> {
+    const inFlight = inFlightJobs.get(token)
+    if (isNil(inFlight) || !isNil(inFlight.givenUp)) {
+        return
+    }
+    inFlightJobs.set(token, { ...inFlight, givenUp: 'lease-lost' })
+    leases.forget({ token })
+    inFlight.log.warn({ jobId: inFlight.job.jobId, reason, leaseAgeMs }, 'Lease lost: stopping the job, the API may already have handed it to another worker')
+    const { error } = await tryCatch(() => inFlight.sbManager.invalidate(inFlight.log))
+    if (error) {
+        inFlight.log.error({ error, jobId: inFlight.job.jobId }, 'Failed to stop the sandbox of a job whose lease was lost')
+    }
+}
+
+/** Restarts its loop if it throws: a slot whose loop died would otherwise sit idle until the process restarts. */
+async function pollAndExecute({ apiClient, sbManager, workerIndex, signal }: PollAndExecuteParams): Promise<void> {
     const workerLog = logger.child({ workerIndex })
     workerLog.info('Polling worker started')
     activePollLoops++
 
     try {
-        await prewarmSlot({ apiClient, sbManager, generation, workerLog })
-        await runPollLoop({ apiClient, sbManager, generation, workerLog })
+        await prewarmSlot({ apiClient, sbManager, workerLog, signal })
+        while (!signal.aborted) {
+            const { error } = await tryCatch(() => runPollLoop({ apiClient, sbManager, workerLog, signal }))
+            if (isNil(error)) {
+                return
+            }
+            workerLog.error({ error }, 'Polling worker crashed, restarting it')
+            await sleepUnlessStopped({ ms: POLL_LOOP_RESTART_DELAY_MS, signal })
+        }
     }
     finally {
         activePollLoops--
@@ -339,30 +569,33 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
 
 /**
  * Starts this slot's sandbox before its first poll, so a job can never race the prewarm for the
- * slot (#419). Skipped for a loop that is not going to poll — stopped, already superseded by a
- * reconnect, or about to pause on a version mismatch — and abandoned on `stop()` like a poll is.
- * An abandoned prewarm cannot leak an engine: once its slot's manager has been shut down, the
- * manager starts no sandbox after the install and shuts down one that was already starting.
+ * slot (#419). Once per loop and outside its crash restart: a reconnect starts no new loop, so this
+ * is the only prewarm the slot's manager ever sees while it is in use. Skipped for a loop that is not
+ * going to poll (stopped, disconnected again, or about to pause on a version mismatch), and abandoned
+ * on `stop()` like a poll is. An abandoned prewarm cannot leak an engine: `stop()` shuts the
+ * manager down, and the manager then starts no sandbox after the install and shuts down one that
+ * was already starting. Its provisioning RPCs go through the gated client, so a prewarm caught by a
+ * disconnect waits for the reconnect and fails after the RPC budget, and the slot polls anyway.
  */
-async function prewarmSlot({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
-    if (!loopWillPoll(generation) || workerSettings.getSettings().APP_VERSION !== AP_VERSION) {
+async function prewarmSlot({ apiClient, sbManager, workerLog, signal }: RunPollLoopParams): Promise<void> {
+    if (signal.aborted || !connectionGate.isOpen() || workerSettings.getSettings().APP_VERSION !== AP_VERSION) {
         return
     }
-    await raceStopRequest({ promise: sbManager.prewarm({ log: workerLog, apiClient }), whenStopped: undefined })
+    await raceStopRequest({ promise: sbManager.prewarm({ log: workerLog, apiClient }), whenStopped: undefined, signal })
 }
 
-// A loop polls while the worker does and no reconnect has started a newer set of loops. The one
-// place both the poll loop and its prewarm read that, so they cannot drift apart.
-function loopWillPoll(generation: number): boolean {
-    return polling && connectionGeneration === generation
-}
+async function runPollLoop({ apiClient, sbManager, workerLog, signal }: RunPollLoopParams): Promise<void> {
+    while (!signal.aborted) {
+        if (!connectionGate.isOpen()) {
+            await connectionGate.whenOpen({ signal })
+            continue
+        }
+        const generation = connectionGeneration
 
-async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
-    while (loopWillPoll(generation)) {
         const { data: machineInfo, error: machineError } = await tryCatch(buildMachineInfo)
         if (machineError) {
             workerLog.error({ error: machineError }, 'Failed to build machine info')
-            await sleepUnlessStopped(20000)
+            await sleepUnlessStopped({ ms: 20000, signal })
             continue
         }
 
@@ -373,20 +606,29 @@ async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunP
             // it is never called — so without a heartbeat the API expires the entry of a worker
             // that is still connected, and loses its version with it (#222).
             socket?.emit(WebsocketServerEvent.WORKER_HEALTHCHECK, machineInfo)
-            await sleepUnlessStopped(VERSION_MISMATCH_POLL_PAUSE_MS)
+            await sleepUnlessStopped({ ms: VERSION_MISMATCH_POLL_PAUSE_MS, signal })
             continue
         }
 
-        const { data: job, error: pollError } = await tryCatch(() => raceStopRequest({
-            promise: apiClient.poll(machineInfo),
-            // `null` and not a dedicated sentinel: the loop already treats an empty poll as
-            // "nothing to do, go round again", and going round again re-reads `polling`, which
-            // `stop()` has just cleared. One exit path, not two.
-            whenStopped: null,
-        }))
+        // Stopped while the machine info was built: this poll would reach the API after `stopPolling`.
+        if (signal.aborted) {
+            return
+        }
+        // Not raced against `stop()`. A poll the loop walked away from would stay a live waiter on the
+        // API, and a job handed to it would be acked to nobody (#585). `stop()` asks the API to end
+        // the parked polls instead (`stopPolling`): they come back `null`, and the head of the loop
+        // sees the signal. A job that was already on its way is run if the grace allows, and otherwise
+        // given up (`shutdown`) and redelivered by the stalled scan.
+        const { data: job, error: pollError } = await tryCatch(() => apiClient.poll(machineInfo))
+        if (pollError && connectionGeneration !== generation) {
+            // socket.io fails a pending poll the moment the connection drops. That is not the API
+            // failing, so no back-off: the head of the loop waits for the reconnect instead.
+            workerLog.debug('Poll interrupted by a disconnect, waiting for the reconnect')
+            continue
+        }
         if (pollError) {
             workerLog.error({ error: pollError }, 'Poll failed')
-            await sleepUnlessStopped(25000)
+            await sleepUnlessStopped({ ms: 25000, signal })
             continue
         }
 
@@ -395,58 +637,74 @@ async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunP
             continue
         }
 
-        workerLog.debug({ jobId: job.jobId, jobType: job.jobData.jobType }, 'Job received from poll')
-
-        const lockExtensionInterval = setInterval(() => {
-            void tryCatch(() => apiClient.extendLock({ jobId: job.jobId, token: job.token, queueName: job.queueName })).then(({ error }) => {
-                if (error) {
-                    workerLog.warn({ error, jobId: job.jobId }, 'Failed to extend lock')
-                }
-            })
-        }, 30_000)
-
-        const timings = jobTimings.create()
-        const jobStartedAt = performance.now()
-        const { data: result, error: execError } = await tryCatch(() =>
-            executeJob({ apiClient, job, sbManager, timings }),
-        )
-        const status = execError ? EngineResponseStatus.INTERNAL_ERROR : result.status
-
-        const completeStartedAt = performance.now()
-        const { error: completeError } = await tryCatch(() =>
-            apiClient.completeJob({
-                jobId: job.jobId,
-                token: job.token,
-                queueName: job.queueName,
-                status,
-                errorMessage: buildErrorMessage(execError ?? undefined, result ?? undefined),
-                logs: extractLogs(execError ?? undefined, result ?? undefined),
-                retryable: readRetryable({ execError: execError ?? undefined, result: result ?? undefined }),
-                response: result?.kind === JobResultKind.SYNCHRONOUS ? result.response : undefined,
-            }),
-        )
-        const jobFinishedAt = performance.now()
-
-        clearInterval(lockExtensionInterval)
-
-        if (completeError) {
-            workerLog.error({ error: completeError, jobId: job.jobId }, 'Failed to complete job')
+        // Registered before anything else can throw, so the job is always drained and unregistered.
+        inFlightJobs.set(job.token, { job, sbManager, log: workerLog, givenUp: null })
+        leases.track({ token: job.token })
+        try {
+            workerLog.debug({ jobId: job.jobId, jobType: job.jobData.jobType }, 'Job received from poll')
+            await runJob({ apiClient, sbManager, job, workerLog })
         }
-
-        // One line per job, whatever its outcome, so a slow run can be split into queue, provision,
-        // cold start and engine time from the logs alone (#587). Queue age is on the API's
-        // `Dequeued job` line for the same jobId, measured on the clock that wrote the timestamp.
-        workerLog.info({
-            jobId: job.jobId,
-            ...readJobRef(job.jobData),
-            attemptsStarted: job.attempsStarted,
-            status,
-            completed: isNil(completeError),
-            durationMs: Math.round(jobFinishedAt - jobStartedAt),
-            completeMs: Math.round(jobFinishedAt - completeStartedAt),
-            ...timings.summary(),
-        }, '[worker] Job finished')
+        finally {
+            inFlightJobs.delete(job.token)
+            leases.forget({ token: job.token })
+        }
     }
+}
+
+async function runJob({ apiClient, sbManager, job, workerLog }: RunJobParams): Promise<void> {
+    const leaseRenewal = setInterval(() => tickLease({ apiClient, token: job.token }), leaseTracker.renewalIntervalMs)
+
+    const timings = jobTimings.create()
+    const jobStartedAt = performance.now()
+    const { data: result, error: execError } = await tryCatch(() =>
+        executeJob({ apiClient, job, sbManager, timings }),
+    )
+    // Read off the result, not the error: a throw of `null` or `undefined` arrives with neither.
+    const status = isNil(execError) && !isNil(result) ? result.status : EngineResponseStatus.INTERNAL_ERROR
+
+    const completeStartedAt = performance.now()
+    // Decided once, here, not again when the call is sent. The handler has returned, so the result
+    // is real; a give-up while the completion waits for a reconnect cannot make it wrong, only late.
+    // The API takes it only from the token that still holds the job's lock (`holdsLease` in
+    // job-broker.ts), so a completion that lands after the job went to a redelivered copy is
+    // ignored there, and one that lands while the lock still holds finishes the job it describes.
+    const givenUpBeforeCompletion = inFlightJobs.get(job.token)?.givenUp ?? null
+    const { error: completeError } = !isNil(givenUpBeforeCompletion) ? { error: null } : await tryCatch(() =>
+        apiClient.completeJob({
+            jobId: job.jobId,
+            token: job.token,
+            queueName: job.queueName,
+            status,
+            errorMessage: buildErrorMessage(execError ?? undefined, result ?? undefined),
+            logs: extractLogs(execError ?? undefined, result ?? undefined),
+            retryable: readRetryable({ execError: execError ?? undefined, result: result ?? undefined }),
+            response: result?.kind === JobResultKind.SYNCHRONOUS ? result.response : undefined,
+        }),
+    )
+    const jobFinishedAt = performance.now()
+
+    clearInterval(leaseRenewal)
+
+    if (completeError) {
+        workerLog.error({ error: completeError, jobId: job.jobId }, 'Failed to complete job')
+    }
+
+    // One line per job, whatever its outcome, so a slow run can be split into queue, provision,
+    // cold start and engine time from the logs alone (#587). Queue age is on the API's
+    // `Dequeued job` line for the same jobId, measured on the clock that wrote the timestamp.
+    workerLog.info({
+        jobId: job.jobId,
+        ...readJobRef(job.jobData),
+        attemptsStarted: job.attempsStarted,
+        status,
+        // Sent and answered; the API may still have ignored it, if the lock had moved on by then.
+        completed: isNil(givenUpBeforeCompletion) && isNil(completeError),
+        // Read after the completion: a give-up while it waited for a reconnect counts.
+        givenUp: inFlightJobs.get(job.token)?.givenUp ?? null,
+        durationMs: Math.round(jobFinishedAt - jobStartedAt),
+        completeMs: Math.round(jobFinishedAt - completeStartedAt),
+        ...timings.summary(),
+    }, '[worker] Job finished')
 }
 
 async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobParams): Promise<JobResult> {
@@ -462,9 +720,15 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
         const apiUrl = getApiUrl()
         const { PUBLIC_URL: publicUrl } = await workerSettings.waitForSettings()
         log.debug({ apiUrl, publicUrl }, 'Worker settings resolved')
+        const isGivenUp = isGivenUpFor({ token: job.token })
+        const jobApiClient = buildJobApiClient({ apiClient, isGivenUp })
         const ctx: JobContext = {
-            apiClient,
-            sandboxManager: jobTimings.instrumentSandboxManager({ sandboxManager: sbManager, timings }),
+            apiClient: jobApiClient,
+            sandboxManager: givenUpGuard.sandboxManager({
+                sandboxManager: jobTimings.instrumentSandboxManager({ sandboxManager: sbManager, timings }),
+                isGivenUp,
+                apiClient: jobApiClient,
+            }),
             jobId: job.jobId,
             attemptsStarted: job.attempsStarted,
             canRetryBeforeExecution: job.canRetryBeforeExecution ?? false,
@@ -478,6 +742,14 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             const handler = getHandler(jobData.jobType)
             log.debug({ handlerType: handler.jobType }, 'Executing job with handler')
             const { data: result, error } = await tryCatch(() => handler.execute(ctx, jobData))
+            // Expected, not an error: a give-up kills the job's engine or refuses its next call, and
+            // either surfaces here. The give-up itself is logged where it happened. Only a failure:
+            // a handler that succeeded after the give-up returns its result, and `runJob` decides
+            // that it is not sent.
+            if (!isNil(error) && (givenUpGuard.isGivenUpError(error) || isGivenUp())) {
+                log.info({ error: String(error) }, 'Job stopped: this worker gave it up')
+                throw error
+            }
             if (error) {
                 log.error({ err: error }, 'Job execution failed')
                 span.recordException(error)
@@ -490,6 +762,36 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             span.end()
         }
     })
+}
+
+/**
+ * A job that is over counts as given up too: its entry is gone once it finishes, given up or not,
+ * and a call it still has waiting for a reconnect is no longer this worker's to send.
+ */
+function isGivenUpFor({ token }: { token: string }): () => boolean {
+    return () => {
+        const inFlight = inFlightJobs.get(token)
+        return isNil(inFlight) || !isNil(inFlight.givenUp)
+    }
+}
+
+/**
+ * The given-up check runs on both sides of the reconnect handling (#585). Over it, a call made after
+ * the give-up fails at once instead of waiting for a connection a stopping worker may never get
+ * back. Under it, the check runs again when the call is actually sent, after any wait for the
+ * connection and before each resend, so a report that started waiting before its job was given up
+ * is dropped rather than sent once the API is back. Without a socket (a test that drives
+ * `executeJob` directly) the shared client is the only one there is.
+ */
+function buildJobApiClient({ apiClient, isGivenUp }: BuildJobApiClientParams): WorkerToApiContract {
+    if (isNil(rpcClient)) {
+        return givenUpGuard.apiClient({ apiClient, isGivenUp })
+    }
+    const checkedWhenSent = reconnectSafeApiClient.wrap({
+        apiClient: givenUpGuard.apiClient({ apiClient: rpcClient, isGivenUp }),
+        connection: apiConnection,
+    })
+    return givenUpGuard.apiClient({ apiClient: checkedWhenSent, isGivenUp })
 }
 
 export function ensurePublicApiUrl(publicUrl: string): string {
@@ -666,6 +968,39 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function createConnectionGate(): ConnectionGate {
+    let open = false
+    let waiters: (() => void)[] = []
+    return {
+        open(): void {
+            open = true
+            const released = waiters
+            waiters = []
+            released.forEach((release) => release())
+        },
+        close(): void {
+            open = false
+        },
+        isOpen: (): boolean => open,
+        // Also settles once `signal` aborts, and then takes its waiter out: a caller that stopped
+        // waiting must not leave one behind for every call made during a long outage.
+        whenOpen({ signal }: { signal?: AbortSignal } = {}): Promise<void> {
+            if (open || signal?.aborted === true) {
+                return Promise.resolve()
+            }
+            return new Promise<void>((resolve) => {
+                const release = (): void => {
+                    waiters = waiters.filter((waiter) => waiter !== release)
+                    signal?.removeEventListener('abort', release)
+                    resolve()
+                }
+                waiters = [...waiters, release]
+                signal?.addEventListener('abort', release, { once: true })
+            })
+        },
+    }
+}
+
 
 function startHealthServer(): ReturnType<typeof createServer> {
     const port = Number(process.env[WorkerSystemProp.PORT] ?? system.get(WorkerSystemProp.PORT))
@@ -696,6 +1031,7 @@ type WorkerStartParams = {
 type RaceStopRequestParams<T> = {
     promise: Promise<T>
     whenStopped: T
+    signal: AbortSignal
 }
 
 type JobRef = {
@@ -711,14 +1047,56 @@ type ExecuteJobParams = {
     timings: JobTimings
 }
 
+type PollAndExecuteParams = {
+    apiClient: WorkerToApiContract
+    sbManager: SandboxManager
+    workerIndex: number
+    signal: AbortSignal
+}
+
 type RunPollLoopParams = {
     apiClient: WorkerToApiContract
     sbManager: SandboxManager
-    generation: number
     workerLog: Logger
+    signal: AbortSignal
+}
+
+type RunJobParams = {
+    apiClient: WorkerToApiContract
+    sbManager: SandboxManager
+    job: ConsumeJobRequest
+    workerLog: Logger
+}
+
+type BuildJobApiClientParams = {
+    apiClient: WorkerToApiContract
+    isGivenUp: () => boolean
 }
 
 type ReadRetryableParams = {
     execError: Error | undefined
     result: JobResult | undefined
+}
+
+type InFlightJob = {
+    job: ConsumeJobRequest
+    sbManager: SandboxManager
+    log: Logger
+    /** Set once the job may no longer report completion: its lease went elsewhere, or a stop abandoned it. */
+    givenUp: GivenUpReason | null
+}
+
+type GivenUpReason = 'lease-lost' | 'shutdown'
+
+type AbandonLostLeaseParams = {
+    token: string
+    reason: string
+    leaseAgeMs: number | null
+}
+
+type ConnectionGate = {
+    open(): void
+    close(): void
+    isOpen(): boolean
+    whenOpen(params?: { signal?: AbortSignal }): Promise<void>
 }

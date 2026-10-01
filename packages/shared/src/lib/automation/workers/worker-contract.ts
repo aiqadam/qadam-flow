@@ -5,6 +5,12 @@ import { FlowVersion } from '../flows/flow-version'
 import { QadamPackage } from '../qadams/qadam'
 import { ConsumeJobRequest, ConsumeJobResponse, WorkerMachineHealthcheckRequest } from './index'
 
+/**
+ * How long the API's lock on a job lasts from each `extendLock`. Past it, the API's stalled scan
+ * may hand the job to another worker, so a worker gives a lease up before then (#585).
+ */
+export const WORKER_JOB_LOCK_DURATION_MS = 120_000
+
 export type StartInlineFlowRunRequest = {
     // The CALLER's own trusted project/platform — always the worker's own current-job
     // context, never anything supplied by the engine/sandbox. The API handler compares
@@ -42,6 +48,14 @@ export type SavePayloadRequest = {
     payloads: unknown[]
 }
 
+/**
+ * `leaseLost` means the worker no longer owns the job: its lock expired or passed to a redelivered
+ * copy. The worker must stop running it and must not report its completion (#585).
+ */
+export type ExtendLockResponse = {
+    leaseLost: boolean
+}
+
 export type GetQadamRequest = {
     name: string
     version?: string
@@ -61,7 +75,13 @@ export type WorkerToApiContract = {
     getFlowVersion(input: GetFlowVersionForWorkerRequest): Promise<FlowVersion | null>
     getQadam(input: GetQadamRequest): Promise<unknown>
     getQadamArchive(input: { archiveId: string }): Promise<Buffer>
-    extendLock(input: { jobId: string, token: string, queueName: string }): Promise<void>
+    extendLock(input: { jobId: string, token: string, queueName: string }): Promise<ExtendLockResponse>
+    /**
+     * Ends this connection's pending polls with `null`, and refuses any later one, so a stopping
+     * worker is handed no job it will not run. A job dequeued for one of them in the same turn goes
+     * back to the queue (#585).
+     */
+    stopPolling(input: Record<string, never>): Promise<void>
     getUsedQadams(input: Record<string, never>): Promise<QadamPackage[]>
     markQadamAsUsed(input: { pieces: QadamPackage[] }): Promise<void>
     sendChatEvent(input: SendChatEventRequest): Promise<void>

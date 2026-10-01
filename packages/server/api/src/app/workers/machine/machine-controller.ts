@@ -26,7 +26,7 @@ export const workerMachineController: FastifyPluginAsyncZod = async (app) => {
                 ? await machineService(app.log).settingsOnly()
                 : await machineService(app.log).onConnection(information, workerGroupId)
             callback?.(response)
-            createRpcServer<WorkerToApiContract>(socket, createHandlers({ log: app.log, workerGroupId, disconnected: disconnectSignal(socket) }))
+            createRpcServer<WorkerToApiContract>(socket, createHandlers({ log: app.log, workerGroupId, workerId: readHandshakeWorkerId(socket), disconnected: disconnectSignal(socket) }))
         }
     })
 
@@ -93,6 +93,11 @@ function disconnectSignal(socket: Socket): AbortSignal {
         controller.abort()
     }
     return controller.signal
+}
+
+function readHandshakeWorkerId(socket: Socket): string | undefined {
+    const workerId: unknown = socket.handshake.auth.workerId
+    return typeof workerId === 'string' ? workerId : undefined
 }
 
 function parseHealthcheck(request: unknown, log: FastifyBaseLogger): WorkerMachineHealthcheckRequest | null {

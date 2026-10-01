@@ -82,6 +82,7 @@ function buildMinimalHandlers(): WorkerToApiContract {
         getQadam: vi.fn(),
         getQadamArchive: vi.fn(),
         extendLock: vi.fn(),
+        stopPolling: vi.fn(),
         getUsedQadams: vi.fn().mockResolvedValue([]),
         markQadamAsUsed: vi.fn(),
         sendChatEvent: vi.fn(),

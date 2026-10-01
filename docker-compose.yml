@@ -26,6 +26,10 @@ services:
       - AP_WORKER_API_URL=http://app:80
     deploy:
       replicas: 5
+    # A stopping worker drains its running jobs for AP_WORKER_SHUTDOWN_GRACE_SECONDS (default 60),
+    # then exits by itself at most 15s later; Docker's default of 10s would kill them mid-run (#585).
+    # Keep this strictly above grace + 15s, and raise the two together.
+    stop_grace_period: 90s
     volumes:
       - ./cache:/usr/src/app/cache
     networks:

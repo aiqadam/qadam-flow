@@ -36,7 +36,19 @@ export enum WorkerSystemProp {
     EXECUTION_MODE = 'AP_EXECUTION_MODE',
     REUSE_SANDBOX = 'AP_REUSE_SANDBOX',
     PREWARM_ENGINES = 'AP_WORKER_PREWARM_ENGINES',
+    WORKER_SHUTDOWN_GRACE_SECONDS = 'AP_WORKER_SHUTDOWN_GRACE_SECONDS',
 }
+
+/**
+ * How long a stopping worker waits for its in-flight jobs before abandoning them. Every deploy
+ * stops every worker, and a run abandoned 1–3 s before it would have finished fails and is retried
+ * from the trigger minutes later (#584, #585), so the bound sits well above a typical run. It must
+ * still stay below the orchestrator's kill: the shipped docker-compose.yml gives the worker a
+ * longer `stop_grace_period`, and `main.ts` forces the exit only once this bound has passed.
+ */
+const DEFAULT_SHUTDOWN_GRACE_SECONDS = 60
+/** A typo such as a value in milliseconds must not turn a stop into a day-long hang. */
+const MAX_SHUTDOWN_GRACE_SECONDS = 3600
 
 const defaultValues: Partial<Record<WorkerSystemProp, string>> = {
     [WorkerSystemProp.PORT]: '3000',
@@ -44,6 +56,7 @@ const defaultValues: Partial<Record<WorkerSystemProp, string>> = {
     [WorkerSystemProp.LOG_PRETTY]: 'false',
     [WorkerSystemProp.OTEL_ENABLED]: 'false',
     [WorkerSystemProp.WORKER_CONCURRENCY]: '5',
+    [WorkerSystemProp.WORKER_SHUTDOWN_GRACE_SECONDS]: String(DEFAULT_SHUTDOWN_GRACE_SECONDS),
 }
 
 export const system = {
@@ -68,6 +81,14 @@ export const system = {
     },
     getOrThrow(prop: WorkerSystemProp): string {
         return env().get(prop).required().asString()
+    },
+    /** An unparseable or negative value falls back to the default rather than to "no grace". */
+    getShutdownGraceMs(): number {
+        const raw = system.get(WorkerSystemProp.WORKER_SHUTDOWN_GRACE_SECONDS)?.trim()
+        // `Number('')` is 0, so a blank value would otherwise mean "abandon every job at once".
+        const seconds = raw ? Number(raw) : DEFAULT_SHUTDOWN_GRACE_SECONDS
+        const validSeconds = Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_SHUTDOWN_GRACE_SECONDS
+        return Math.min(validSeconds, MAX_SHUTDOWN_GRACE_SECONDS) * 1000
     },
     getBoolean(prop: WorkerSystemProp): boolean | undefined {
         return env().get(prop).asBoolStrict()
