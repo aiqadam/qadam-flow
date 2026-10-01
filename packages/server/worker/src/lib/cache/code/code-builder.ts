@@ -93,7 +93,13 @@ export const codeBuilder = (log: Logger) => ({
                 // two renames, so this is a miss that waits on the lock and reads again. No hash in
                 // a directory that exists: a build from before #586, and for it cache.json is all
                 // there is.
-                return !(await fileSystemUtils.fileExists(codePath))
+                if (!(await fileSystemUtils.fileExists(codePath))) {
+                    return true
+                }
+                // The directory can have been swapped in between the two reads, so it is read once
+                // more before being taken for one without a hash.
+                const builtFromOnRecheck = await readSourceHash(codePath)
+                return !isNil(builtFromOnRecheck) && builtFromOnRecheck !== currentHash
             },
             installFn: async () => {
                 await removeOrphanedBuilds({ codePath, log })

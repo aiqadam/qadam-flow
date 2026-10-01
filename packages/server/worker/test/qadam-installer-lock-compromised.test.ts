@@ -96,6 +96,20 @@ describe('qadamInstaller when the workspace lock is compromised', () => {
         await expect(install([makeQadam('@aiqadam/qadam-a'), makeQadam('@aiqadam/qadam-b')])).rejects.toThrow('Lost the lock')
         expect(mockInstall).toHaveBeenCalledTimes(1)
     })
+
+    it('stops the one-by-one retry at the next qadam once the lock is lost mid-retry', async () => {
+        mockInstall
+            .mockImplementationOnce(async () => {
+                throw new Error('batch install failed')
+            })
+            .mockImplementationOnce(async () => {
+                lockStub.compromised = true
+                return { output: '' }
+            })
+
+        await expect(install([makeQadam('@aiqadam/qadam-a'), makeQadam('@aiqadam/qadam-b')])).rejects.toThrow('Lost the lock')
+        expect(mockInstall).toHaveBeenCalledTimes(2)
+    })
 })
 
 async function install(pieces: QadamPackage[]): Promise<void> {

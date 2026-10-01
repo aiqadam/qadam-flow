@@ -187,8 +187,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                         error: batchError,
                     }, '[qadamInstaller] Batch install failed, retrying qadams individually')
 
-                    assertLockHeld()
-                    const failedQadams = await tryInstallQadamsIndividually(rootWorkspace, qadamsToInstall, log)
+                    const failedQadams = await tryInstallQadamsIndividually({ rootWorkspace, pieces: qadamsToInstall, log, assertLockHeld })
 
                     // Verification happens here rather than per iteration, and the survivors are
                     // marked usable only once it has passed. Per iteration was wrong twice over:
@@ -235,7 +234,9 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
 // Unlike the cache.json and code-build writers, bun installs in place into the shared workspace,
 // so a second holder would corrupt it rather than just lose work. Once the lock is lost, the
-// install stops before the next step that writes to the workspace or vouches for it.
+// install stops before the next `bun install` (the batch, or any one of the one-by-one retries)
+// and before verification, which is what vouches for the workspace. It does not restore the
+// lockfile on the way out: the workspace is no longer this replica's to write.
 function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspaceLockHeldParams): void {
     if (isCompromised()) {
         throw new Error(`[qadamInstaller] Lost the lock on ${rootWorkspace} mid-install; another replica may be installing into it`)
@@ -326,13 +327,10 @@ async function rollbackInstallation({ rootWorkspace, pieces, before }: {
     }
 }
 
-async function tryInstallQadamsIndividually(
-    rootWorkspace: string,
-    pieces: QadamPackage[],
-    log: Logger,
-): Promise<QadamPackage[]> {
+async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assertLockHeld }: TryInstallQadamsIndividuallyParams): Promise<QadamPackage[]> {
     const failures: QadamPackage[] = []
     for (const piece of pieces) {
+        assertLockHeld()
         const { error } = await tryCatch(async () =>
             bunRunner(log).install({
                 path: rootWorkspace,
@@ -670,6 +668,13 @@ type InstallParams = {
 
 type QadamInstallationResult = {
     qadamsToInstall: QadamPackage[]
+}
+
+type TryInstallQadamsIndividuallyParams = {
+    rootWorkspace: string
+    pieces: QadamPackage[]
+    log: Logger
+    assertLockHeld: () => void
 }
 
 type AssertWorkspaceLockHeldParams = {
