@@ -194,6 +194,13 @@ export const worker = {
                 reconfirmLeases({ apiClient })
                 logger.info({ inFlightJobs: inFlightJobs.size }, 'Reconnected: in-flight jobs keep running, polling resumes')
             }
+            // A connection the stop never reached: `stop()` skips `stopPolling` while disconnected, and
+            // a poll that was already waiting for the gate goes out the moment it opens. Asked first,
+            // so the API has stopped this connection's polling before that poll arrives. Synchronous
+            // up to the emit, and one connection's RPCs reach the API in order.
+            if (stopped && !isNil(rpcClient)) {
+                void askApiToStopPolling({ client: rpcClient, graceMs: system.getShutdownGraceMs() })
+            }
             connectionGate.open()
             // A draining worker reconnects only so its jobs can finish; it takes no new work.
             if (stopped) {
@@ -293,16 +300,21 @@ export const workerInternals = {
  * Asks the API to end this connection's parked polls (#585). Without it each idle slot's poll
  * stays a waiter on the API for up to its 50 s budget while the worker drains, and a job dequeued
  * for it would go to a loop that is about to stop. Disconnected, there is nothing to ask: the API
- * drops a closed socket's polls by itself (#589). An API from before #585 has no `stopPolling`
- * and answers with an error; the parked polls then end within their budget, and any job one of
- * them brings is run inside the drain, so it is late but not lost. Bounded, so a slow API cannot
- * hold up the stop.
+ * drops a closed socket's polls by itself (#589), and the reconnect asks the new connection
+ * before it lets any poll through. An API from before #585 has no `stopPolling` and answers with
+ * an error; the parked polls then end within their budget. A job one of them brings is not lost:
+ * it is run if the grace allows, and otherwise given up (`shutdown`) and redelivered by the
+ * stalled scan. Bounded, so a slow API cannot hold up the stop.
  */
 async function endParkedPolls({ graceMs }: { graceMs: number }): Promise<void> {
     const client = rpcClient
     if (isNil(client) || !connectionGate.isOpen()) {
         return
     }
+    await askApiToStopPolling({ client, graceMs })
+}
+
+async function askApiToStopPolling({ client, graceMs }: { client: WorkerToApiContract, graceMs: number }): Promise<void> {
     const timeoutMs = Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)
     const { error } = await tryCatch(() => Promise.race([
         client.stopPolling({}),
@@ -313,7 +325,7 @@ async function endParkedPolls({ graceMs }: { graceMs: number }): Promise<void> {
     if (error) {
         // An API from before #585 (no `stopPolling` handler), a timeout and a transport failure all
         // land here, and the error says which.
-        logger.info({ err: error }, 'Could not ask the API to end this worker\'s parked polls; they end within their poll budget, and a job one of them brings is run before the worker stops')
+        logger.info({ err: error }, 'Could not ask the API to end this worker\'s parked polls; they end within their poll budget, and a job one of them brings is run if the grace allows, or given up and redelivered')
     }
 }
 
