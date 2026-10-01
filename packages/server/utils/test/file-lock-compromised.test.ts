@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+// Imported statically rather than inside each test so that loading the module, which drags in
+// the whole @aiqadam/shared source barrel, happens at collection: inside a test it took over 5s on
+// a loaded CI runner and timed out whichever test paid for it first (same cause as #183). vi.mock
+// is hoisted above this import, so the stub still applies.
+import { fileLock } from '../src/file-lock'
 
 // proper-lockfile only reports a compromise from its mtime-refresh timer, minutes after the lock
 // was taken, so the library is stubbed to report one straight away.
@@ -15,7 +20,6 @@ vi.mock('proper-lockfile', () => ({
 
 describe('fileLock.runExclusive when the lock is compromised while held', () => {
     it('logs the compromise, lets the protected work finish, and does not fail on the release', async () => {
-        const { fileLock } = await import('../src/file-lock')
         const log = { error: vi.fn() }
 
         const result = await fileLock.runExclusive({
