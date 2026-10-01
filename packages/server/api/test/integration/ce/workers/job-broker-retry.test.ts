@@ -44,6 +44,10 @@ beforeEach(async () => {
     await queue.drain(true)
 })
 
+afterEach(() => {
+    vi.restoreAllMocks()
+})
+
 describe('Job broker retry by failure class (#584)', () => {
     it('retries a run that failed before execution within seconds, and says so on the redelivery', async () => {
         const jobId = await enqueueExecuteFlowJob()
@@ -119,17 +123,53 @@ describe('Job broker retry by failure class (#584)', () => {
         await jobBroker(app.log).completeJob({ jobId: flowRun.id, token: redelivered!.token, queueName: redelivered!.queueName, status: EngineResponseStatus.OK })
     }, 30_000)
 
-    it('leaves a run alone that a concurrent retry already re-enqueued and a worker picked up', async () => {
+    it('leaves a run alone whose job is still in flight', async () => {
         const jobId = await enqueueExecuteFlowJob()
         const polled = await jobBroker(app.log).poll()
-        // This retry read the state while the job was still failed; the other one has re-enqueued it since.
+        try {
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null })).resolves.toEqual({ alreadyInFlight: true })
+            expect(await (await queue.getJob(jobId))!.getState()).toBe('active')
+        }
+        finally {
+            await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.OK })
+        }
+    })
+
+    it('leaves a run alone that a concurrent retry re-enqueued after this one read the finished job', async () => {
+        const { platformId, projectId } = await saveNewProject()
+        const run = { runId: apId(), projectId, platformId, flowId: apId(), flowVersionId: apId() }
+        await enqueueExecuteFlowJob(run)
+        const polled = await jobBroker(app.log).poll()
+        await jobBroker(app.log).completeJob({ jobId: run.runId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
+
+        const winner = { token: '', queueName: '' }
+        vi.spyOn(Job.prototype, 'getState').mockImplementationOnce(async () => {
+            await (await queue.getJob(run.runId))!.remove()
+            await enqueueExecuteFlowJob(run)
+            const picked = await jobBroker(app.log).poll()
+            winner.token = picked!.token
+            winner.queueName = picked!.queueName
+            return 'failed'
+        })
+        try {
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId: run.runId, platformId })).resolves.toEqual({ alreadyInFlight: true })
+            expect(await (await queue.getJob(run.runId))!.getState()).toBe('active')
+        }
+        finally {
+            await jobBroker(app.log).completeJob({ jobId: run.runId, token: winner.token, queueName: winner.queueName, status: EngineResponseStatus.OK })
+        }
+    })
+
+    it('rethrows when the finished job it read could not be removed and nothing re-enqueued the run', async () => {
+        const jobId = await enqueueExecuteFlowJob()
+        const polled = await jobBroker(app.log).poll()
         vi.spyOn(Job.prototype, 'getState').mockResolvedValueOnce('failed')
-
-        await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null })).resolves.toBeUndefined()
-
-        vi.restoreAllMocks()
-        expect(await (await queue.getJob(jobId))!.getState()).toBe('active')
-        await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.OK })
+        try {
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null })).rejects.toThrow('locked by another worker')
+        }
+        finally {
+            await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.OK })
+        }
     })
 
     it('keeps the one retry after 8 minutes for every other job type', async () => {

@@ -86,28 +86,32 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
         }, '[jobQueue#removeOneTimeJob] job not found in queue')
     },
 
-    async removeFinishedOneTimeJob({ jobId, platformId }: { jobId: ApId, platformId: string | null }): Promise<void> {
+    async removeFinishedOneTimeJob({ jobId, platformId }: { jobId: ApId, platformId: string | null }): Promise<RemoveFinishedOneTimeJobResult> {
         const queueName = await getQueueName(platformId, log)
         const queue = await ensureQueueExists({ log, queueName })
         const job = await queue.getJob(jobId)
         if (isNil(job)) {
-            return
+            return { alreadyInFlight: false }
         }
         const state = await job.getState()
         if (state !== 'failed' && state !== 'completed') {
-            return
+            // An add under this id would be ignored: the job holding it is the one that will run.
+            log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] the run already has a job in flight; leaving it')
+            return { alreadyInFlight: true }
         }
-        const { error } = await tryCatch(() => job.remove())
-        if (!isNil(error)) {
-            // A concurrent retry already re-enqueued the run and a worker holds it: that retry is the
-            // one in flight, and the add after this call is a no-op under the same id.
-            if (await queue.getJob(jobId).then((current) => current?.getState()) === 'active') {
-                log.info({ jobId, queueName }, '[jobQueue#removeFinishedOneTimeJob] the run was re-enqueued and picked up meanwhile; leaving it')
-                return
+        const { error: removeError } = await tryCatch(() => job.remove())
+        if (!isNil(removeError)) {
+            // BullMQ gives a locked job and a missing one the same error, so the job's own add time
+            // tells them apart: a different one means a concurrent retry re-enqueued the run since.
+            const { data: current } = await tryCatch(() => queue.getJob(jobId))
+            if (isNil(current) || current.timestamp === job.timestamp) {
+                throw removeError
             }
-            throw error
+            log.info({ jobId, queueName }, '[jobQueue#removeFinishedOneTimeJob] a concurrent retry re-enqueued the run meanwhile; leaving it')
+            return { alreadyInFlight: true }
         }
         log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] removed a finished job so its id can be enqueued again')
+        return { alreadyInFlight: false }
     },
 
     async getOrCreateQueue({ queueName }: { queueName: string }): Promise<Queue> {
@@ -214,5 +218,9 @@ type RepeatingJobAddParams = BaseAddParams<PollingJobData | RenewWebhookJobData,
     scheduleOptions: ScheduleOptions
 }
 type OneTimeJobAddParams = BaseAddParams<ExecuteFlowJobData | WebhookJobData | UserInteractionJobData | ExecuteChatAgentJobData, JobType.ONE_TIME>
+
+type RemoveFinishedOneTimeJobResult = {
+    alreadyInFlight: boolean
+}
 
 export type AddJobParams<type extends JobType> = type extends JobType.REPEATING ? RepeatingJobAddParams : OneTimeJobAddParams

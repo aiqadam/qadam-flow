@@ -91,8 +91,8 @@ export const executeFlowJob: JobHandler<ExecuteFlowJobData, FireAndForgetJobResu
             // the install output is what tells the user which dependency to fix. Reported with a plain
             // reportFlowStatus, not best-effort: nothing has run yet, so if the report throws, the
             // quick retry that follows costs only a wasted install, while a swallowed report would
-            // leave the run QUEUED for good. On the last attempt, or on a job without the quick
-            // backoff, a throw leaves the run QUEUED either way, so the plain report is still right.
+            // leave the run QUEUED for good. On the last attempt a throw leaves the run QUEUED either
+            // way; on a pre-#584 job it buys the 8-minute retry, which reports again.
             await reportFlowStatus({ ctx, data, status: FlowRunStatus.INTERNAL_ERROR, internalError: toInternalError(RunInternalErrorSource.WORKER, provisionError), logsFileId: data.logsFileId })
             throw new ClassifiedJobFailure({ original: provisionError, retryable: false })
         }

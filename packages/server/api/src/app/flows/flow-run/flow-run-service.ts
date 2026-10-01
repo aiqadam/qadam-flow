@@ -248,7 +248,12 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const platformId = await projectService(log).getPlatformId(oldFlowRun.projectId)
                 // The retry is enqueued under the run's id, and BullMQ ignores an add under an id it
                 // still holds: a run whose job it kept after failing it would sit QUEUED forever (#584).
-                await jobQueue(log).removeFinishedOneTimeJob({ jobId: oldFlowRun.id, platformId })
+                const { alreadyInFlight } = await jobQueue(log).removeFinishedOneTimeJob({ jobId: oldFlowRun.id, platformId })
+                if (alreadyInFlight) {
+                    // The job holding the id is what will run; queuing the run again would only
+                    // repeat the status update and the retried event for a retry that is not this one.
+                    return findFlowRunOrThrow(oldFlowRun.id)
+                }
                 await flowRunRepo().update({
                     id: oldFlowRun.id,
                     projectId: oldFlowRun.projectId,
