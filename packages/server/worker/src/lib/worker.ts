@@ -617,7 +617,8 @@ async function runPollLoop({ apiClient, sbManager, workerLog, signal }: RunPollL
         // Not raced against `stop()`. A poll the loop walked away from would stay a live waiter on the
         // API, and a job handed to it would be acked to nobody (#585). `stop()` asks the API to end
         // the parked polls instead (`stopPolling`): they come back `null`, and the head of the loop
-        // sees the signal. A job that was already on its way is run, inside the drain.
+        // sees the signal. A job that was already on its way is run if the grace allows, and otherwise
+        // given up (`shutdown`) and redelivered by the stalled scan.
         const { data: job, error: pollError } = await tryCatch(() => apiClient.poll(machineInfo))
         if (pollError && connectionGeneration !== generation) {
             // socket.io fails a pending poll the moment the connection drops. That is not the API

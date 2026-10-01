@@ -17,10 +17,11 @@ import type {
 } from '@aiqadam/shared'
 import { Server as IOServer } from 'socket.io'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { logger } from '../../src/lib/config/logger'
 import { JobResultKind } from '../../src/lib/execute/types'
 import type { JobContext, JobResult } from '../../src/lib/execute/types'
 
-const { currentAppVersion, runningJobs, thrownValues } = vi.hoisted(() => {
+const { currentAppVersion, runningJobs, thrownValues, gateWaits } = vi.hoisted(() => {
     const fs: typeof import('node:fs') = require('node:fs')
     const path: typeof import('node:path') = require('node:path')
     const packageJson: { version: string } = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf-8'))
@@ -30,6 +31,8 @@ const { currentAppVersion, runningJobs, thrownValues } = vi.hoisted(() => {
         runningJobs: new Map<string, () => void>(),
         // A job whose handler throws this value instead of running, keyed the same way.
         thrownValues: new Map<string, null | undefined>(),
+        // Calls that started waiting for the connection gate while `counting` was on.
+        gateWaits: { counting: false, count: 0 },
     }
 })
 
@@ -69,12 +72,33 @@ vi.mock('../../src/lib/config/worker-settings', () => ({
     },
 }))
 
+// Makes "a call is waiting for the connection gate" observable, so a test can act once it is.
+vi.mock('../../src/lib/reconnect-safe-api-client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../src/lib/reconnect-safe-api-client')>()
+    return {
+        reconnectSafeApiClient: {
+            ...actual.reconnectSafeApiClient,
+            wrap: (params: Parameters<typeof actual.reconnectSafeApiClient.wrap>[0]) => actual.reconnectSafeApiClient.wrap({
+                ...params,
+                connection: {
+                    ...params.connection,
+                    whenReady: (whenReadyParams: { signal: AbortSignal }) => {
+                        if (gateWaits.counting) {
+                            gateWaits.count++
+                        }
+                        return params.connection.whenReady(whenReadyParams)
+                    },
+                },
+            }),
+        },
+    }
+})
+
 vi.mock('../../src/lib/config/logger', () => {
     const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), fatal: vi.fn() }
     return { logger: { ...log, child: vi.fn(() => log) } }
 })
 
-import { logger } from '../../src/lib/config/logger'
 import { worker } from '../../src/lib/worker'
 
 /**
@@ -93,6 +117,8 @@ describe('worker drain with a parked poll — #585', () => {
         vi.clearAllMocks()
         runningJobs.clear()
         thrownValues.clear()
+        gateWaits.counting = false
+        gateWaits.count = 0
         httpServer = createServer()
         ioServer = new IOServer(httpServer, { transports: ['websocket'], path: '/api/socket.io' })
         await new Promise<void>((resolve) => {
@@ -172,8 +198,10 @@ describe('worker drain with a parked poll — #585', () => {
         await waitUntil(() => machineInfo.held(), 'the loop never asked for its machine info again')
         ioServer.disconnectSockets(true)
         await waitUntil(() => vi.mocked(logger.warn).mock.calls.some(([, message]) => message === 'Disconnected from API server'), 'the worker never saw the disconnect')
+        // Nothing else of this worker calls the API during the outage: no job is in flight.
+        gateWaits.counting = true
         machineInfo.release()
-        await new Promise<void>((resolve) => setTimeout(resolve, 100))
+        await waitUntil(() => gateWaits.count > 0, 'the poll never reached the connection gate')
         const stopping = worker.stop()
         dispatcher.enqueue(buildJob(2))
         await stopping
