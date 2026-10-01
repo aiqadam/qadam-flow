@@ -5,9 +5,8 @@ import { isNil, tryCatch } from '@aiqadam/shared'
  * attempt: no retry starts after it. An attempt already started is bounded by its own timeout
  * instead, so one call can take up to about this plus `ENGINE_API_ATTEMPT_TIMEOUT_MS` (~360 s), still
  * well under the ~1200 s that fetch-retry's 4 attempts times undici's 300 s header timeout allowed on
- * `main`. It matches the worker's own
- * budget for the same outage, so a run survives an app restart on both of the legs it reports
- * through: these HTTP calls, and the RPCs the worker forwards, which wait up to `READY_TIMEOUT_MS`
+ * `main`. It matches the worker's own budget for the same outage, so a run survives an app restart
+ * on both of the legs it reports through: these HTTP calls, and the RPCs the worker forwards, which wait up to `READY_TIMEOUT_MS`
  * (60 s, `packages/server/worker/src/lib/reconnect-safe-api-client.ts`) for the reconnected API and
  * are bounded by the engine's own 60 s RPC timeout to the worker (`worker-socket.ts`). It is also
  * about as long as the job is sure to live: the worker trusts a lease for 90 s from its last renewal
@@ -44,7 +43,8 @@ const DEFAULT_POLICY: RetryPolicy = {
  * attempts keep the full 300 s timeout on purpose: a short one would abort a healthy multi-MB
  * snapshot on a modest uplink on every tick, so the live run view would never update; and `main`
  * gave the same snapshot undici's 300 s header timeout. A hung app can therefore hold the lock for
- * up to one attempt timeout, as it could before #595.
+ * up to this 9 s budget plus one attempt timeout (~309 s), less than `main`'s exposure under the
+ * same lock.
  */
 const BEST_EFFORT_POLICY: RetryPolicy = {
     budgetMs: 9_000,
@@ -80,8 +80,8 @@ export const retryingFetch = {
      */
     async fetch({ url, init, idempotent, policy = DEFAULT_POLICY }: RetryingFetchParams): Promise<Response> {
         const deadline = performance.now() + policy.budgetMs
+        const timeoutMs = Math.max(policy.attemptTimeoutMs, 0)
         for (let attempt = 1; ; attempt++) {
-            const timeoutMs = Math.max(policy.attemptTimeoutMs, 0)
             const { response, error, timedOut } = await attemptOnce({ url, init, timeoutMs })
             // An attempt that got no answer in time may have landed, and it already used up what it
             // was allowed: it ends the call rather than being retried.
@@ -92,20 +92,20 @@ export const retryingFetch = {
             const failure = classifyFailure({ response, error })
             const retryable = failure === 'NOT_SENT' || (failure === 'MAYBE_SENT' && idempotent)
             const remainingMs = deadline - performance.now()
-            if (retryable && remainingMs >= MIN_ATTEMPT_WINDOW_MS) {
-                // Never past the point where another attempt may still start.
-                await sleep({ ms: Math.min(backoffDelayMs({ attempt, policy }), remainingMs - MIN_ATTEMPT_WINDOW_MS), signal: init.signal })
+            if (!retryable || remainingMs < MIN_ATTEMPT_WINDOW_MS) {
+                return giveUp({ response, error, retryable, url, method: init.method, attempt, budgetMs: policy.budgetMs })
             }
-            // Checked again after the sleep, which a busy event loop can overrun: past the budget, the
-            // last real failure is the answer, not a doomed attempt.
-            if (!retryable || deadline - performance.now() < MIN_ATTEMPT_WINDOW_MS) {
-                if (retryable) {
-                    logGivingUp({ url, method: init.method, attempt, budgetMs: policy.budgetMs })
-                }
-                if (isNil(response)) {
-                    throw error
-                }
-                return response
+            // Never past the point where another attempt may still start.
+            const { error: sleepError } = await tryCatch(() => sleep({ ms: Math.min(backoffDelayMs({ attempt, policy }), remainingMs - MIN_ATTEMPT_WINDOW_MS), signal: init.signal }))
+            if (!isNil(sleepError)) {
+                await tryCatch(async () => response?.body?.cancel())
+                throw sleepError
+            }
+            // Checked again after the sleep, which a busy event loop can overrun. Only a sleep that
+            // ended truly past the budget gives up here: every timer fires a little late, so holding
+            // it to the window as well would drop the last attempt every time.
+            if (deadline - performance.now() < 0) {
+                return giveUp({ response, error, retryable, url, method: init.method, attempt, budgetMs: policy.budgetMs })
             }
             if (!isNil(response)) {
                 await tryCatch(async () => response.body?.cancel())
@@ -116,6 +116,17 @@ export const retryingFetch = {
 
 // Below this much budget left, no further attempt is started.
 const MIN_ATTEMPT_WINDOW_MS = 50
+
+// The last real failure is the answer: the response as it came, or the error as it was thrown.
+function giveUp({ response, error, retryable, url, method, attempt, budgetMs }: GiveUpParams): Response {
+    if (retryable) {
+        logGivingUp({ url, method, attempt, budgetMs })
+    }
+    if (isNil(response)) {
+        throw error
+    }
+    return response
+}
 
 const NOT_SENT_CODES: ReadonlySet<string> = new Set([
     'ECONNREFUSED',
@@ -283,6 +294,12 @@ type AttemptResult = {
 type SleepParams = {
     ms: number
     signal: AbortSignal | null | undefined
+}
+
+type GiveUpParams = LogGivingUpParams & {
+    response: Response | null
+    error: unknown
+    retryable: boolean
 }
 
 type LogTimedOutParams = {

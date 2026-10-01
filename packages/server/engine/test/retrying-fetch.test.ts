@@ -95,6 +95,16 @@ describe('retryingFetch', () => {
         expect(fetchSpy).toHaveBeenCalledTimes(1)
     })
 
+    it('releases a held 5xx body when the caller aborts during the backoff', async () => {
+        const cancel = vi.fn()
+        vi.spyOn(global, 'fetch').mockResolvedValue(new Response(new ReadableStream({ cancel }), { status: 503 }))
+        const caller = new AbortController()
+        setTimeout(() => caller.abort(new Error('caller gave up')), 50)
+
+        await expect(retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { signal: caller.signal }, idempotent: true, policy: { budgetMs: 10_000, attemptTimeoutMs: 10_000, initialDelayMs: 2_000, maxDelayMs: 2_000 } })).rejects.toThrow('caller gave up')
+        expect(cancel).toHaveBeenCalledTimes(1)
+    })
+
     it('passes a caller abort during an attempt straight through, as the caller\'s own error', async () => {
         vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => rejectWhenAborted(init?.signal))
         const caller = new AbortController()
@@ -203,6 +213,27 @@ describe('retryingFetch', () => {
         expect(String(error)).toContain('fetch failed')
         expect(error).not.toBeInstanceOf(DOMException)
         expect(fetchSpy).toHaveBeenCalledTimes(1)
+    })
+
+    // Timers fire late. The last backoff is clamped to end just inside the budget, so a late timer
+    // must still lead to that final attempt, or an app that comes back in the last seconds is missed.
+    it('still makes the final attempt when the clamped last sleep fires late, but within the budget', async () => {
+        let calls = 0
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => {
+            calls += 1
+            if (calls === 1) {
+                // The backoff is clamped to end at 250 ms, 50 ms before the budget. Busy from 240 ms to
+                // ~270 ms, the loop fires it ~20 ms late: past the window, still inside the budget.
+                setTimeout(() => blockEventLoop(30), 240)
+                throw fetchFailed({ code: 'ECONNREFUSED' })
+            }
+            return new Response('ok', { status: 200 })
+        })
+
+        const response = await retryingFetch.fetch({ url: URL_WITH_TOKEN, init: {}, idempotent: true, policy: { budgetMs: 300, attemptTimeoutMs: 1_000, initialDelayMs: 5_000, maxDelayMs: 5_000 } })
+
+        expect(response.status).toBe(200)
+        expect(fetchSpy).toHaveBeenCalledTimes(2)
     })
 
     it('treats a zero budget as no retries, not as no time to answer', async () => {
