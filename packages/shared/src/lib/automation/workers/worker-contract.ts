@@ -76,6 +76,12 @@ export type WorkerToApiContract = {
     getQadam(input: GetQadamRequest): Promise<unknown>
     getQadamArchive(input: { archiveId: string }): Promise<Buffer>
     extendLock(input: { jobId: string, token: string, queueName: string }): Promise<ExtendLockResponse>
+    /**
+     * Ends this connection's pending polls with `null`, and refuses any later one, so a stopping
+     * worker is handed no job it will not run. A job dequeued for one of them in the same turn goes
+     * back to the queue (#585).
+     */
+    stopPolling(input: Record<string, never>): Promise<void>
     getUsedQadams(input: Record<string, never>): Promise<QadamPackage[]>
     markQadamAsUsed(input: { pieces: QadamPackage[] }): Promise<void>
     sendChatEvent(input: SendChatEventRequest): Promise<void>

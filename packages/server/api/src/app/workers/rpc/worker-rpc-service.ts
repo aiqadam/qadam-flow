@@ -60,11 +60,16 @@ function readWorkerVersion(input: unknown): string | undefined {
 }
 
 export function createHandlers({ log, workerGroupId, disconnected }: CreateHandlersParams): WorkerToApiContract {
+    // A stopping worker keeps its socket up while it drains, so its parked polls would stay live
+    // waiters for up to WAITER_TIMEOUT_MS, and a job handed to one would be acked to a loop that has
+    // stopped taking work (#585). `stopPolling` ends them the way a disconnect does (#589).
+    const pollingStopped = new AbortController()
+    const pollsEnded = AbortSignal.any([disconnected, pollingStopped.signal])
     return {
         async poll(input) {
             // Checked before the registry upsert below, which would otherwise re-register a worker
             // that the disconnect listener has just removed (#589).
-            if (disconnected.aborted) {
+            if (pollsEnded.aborted) {
                 return null
             }
             // Third writer of the worker registry, alongside the two websocket listeners in
@@ -96,18 +101,18 @@ export function createHandlers({ log, workerGroupId, disconnected }: CreateHandl
                 return null
             }
             const pollQueueName = getPollQueueName(workerGroupId)
-            const job = await jobBroker(log).poll({ queueName: pollQueueName, signal: disconnected })
-            if (disconnected.aborted) {
-                // The dispatcher already drops the pending polls of a closed socket. This covers
-                // a job handed out in the same turn the socket closed: acking it would leave it
-                // active and unowned until the stalled check, ~139 s later (#589).
+            const job = await jobBroker(log).poll({ queueName: pollQueueName, signal: pollsEnded })
+            if (pollsEnded.aborted) {
+                // The dispatcher already drops the pending polls of a closed socket, or of a worker
+                // that stopped polling. This covers a job handed out in the same turn: acking it
+                // would leave it active and unowned until the stalled check, ~139 s later (#589).
                 if (job) {
                     const { error } = await tryCatch(() => jobBroker(log).returnToQueue(job))
                     if (error) {
                         log.error({ workerId, jobId: job.jobId, error: String(error) }, '[workerRpc#poll] Failed to return the job of a disconnected worker to the queue')
                     }
                 }
-                log.info({ workerId, jobId: job?.jobId }, '[workerRpc#poll] Worker disconnected while its poll was pending')
+                log.info({ workerId, jobId: job?.jobId, disconnected: disconnected.aborted }, '[workerRpc#poll] Worker disconnected or stopped polling while its poll was pending')
                 return null
             }
             if (job) {
@@ -117,6 +122,11 @@ export function createHandlers({ log, workerGroupId, disconnected }: CreateHandl
                 log.debug({ workerId }, '[workerRpc#poll] No job available, returning null')
             }
             return job
+        },
+
+        async stopPolling() {
+            pollingStopped.abort()
+            log.info('[workerRpc#stopPolling] Worker stopped polling: its pending polls end now')
         },
 
         async completeJob(input) {

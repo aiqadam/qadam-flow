@@ -262,15 +262,27 @@ describe('worker reconnect and drain — #585', () => {
                     void settingsAnswered(connection).then(() => callback(settingsFor(connection)))
                 }
             })
-            const handlers: Pick<WorkerToApiContract, 'poll' | 'completeJob' | 'extendLock' | 'uploadRunLog' | 'getUsedQadams' | 'markQadamAsUsed'> = {
+            // What the API does on `stopPolling` (#585): parked polls answer null, and so does every later one.
+            const parkedPolls: ((job: ConsumeJobRequest | null) => void)[] = []
+            let pollingStopped = false
+            const handlers: Pick<WorkerToApiContract, 'poll' | 'completeJob' | 'extendLock' | 'uploadRunLog' | 'getUsedQadams' | 'markQadamAsUsed' | 'stopPolling'> = {
                 poll: vi.fn(async () => {
                     pollsByConnection[connection]++
+                    if (pollingStopped) {
+                        return null
+                    }
                     if (jobsHandedOut < jobsToHandOut) {
                         jobsHandedOut++
                         return buildJob(jobsHandedOut)
                     }
-                    // Parks, as the real long-poll does.
-                    return new Promise<ConsumeJobRequest | null>(() => undefined)
+                    // Parks, as the real long-poll does, until the worker stops polling.
+                    return new Promise<ConsumeJobRequest | null>((resolve) => {
+                        parkedPolls.push(resolve)
+                    })
+                }),
+                stopPolling: vi.fn(async () => {
+                    pollingStopped = true
+                    parkedPolls.splice(0).forEach((resolve) => resolve(null))
                 }),
                 completeJob: vi.fn(async (input) => {
                     completeJobCalls.push({ ...input, connection })

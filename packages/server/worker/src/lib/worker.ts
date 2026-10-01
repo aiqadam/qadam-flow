@@ -132,15 +132,18 @@ const apiConnection: ConnectionState = {
 let rpcClient: WorkerToApiContract | null = null
 
 /**
- * Aborted by `stop()`. The poll loops park inside a long-poll whose server-side budget is
- * WAITER_TIMEOUT_MS (50s) and whose client-side RPC timeout is 60s, and they only re-read
- * `stopped` at the head of the `while` — so without something to interrupt the await, "stop
- * polling" means "stop polling in up to a minute".
+ * Aborted by `stop()`. The poll loops re-read it at the head of the `while`, and race every other
+ * wait against it: a back-off, the connection gate, the prewarm. Not the poll itself: a poll walked
+ * away from stays a waiter on the API that can still be handed a job, so `stop()` asks the API to
+ * end it instead (`stopPolling`, #585).
  */
 let stopController = new AbortController()
 
 /** The loops `startPollingWorkers` launched, so `stop()` has something to wait for. */
 let pollingWorkers: Promise<void> | null = null
+
+/** How long `stop()` waits for the API to end its parked polls before draining without it. */
+const STOP_POLLING_TIMEOUT_MS = 5_000
 
 /** Node's own default; kept as headroom so a genuine listener leak still trips the warning. */
 const DEFAULT_MAX_LISTENERS = 10
@@ -239,6 +242,7 @@ export const worker = {
         if (inFlightJobsAtStop > 0) {
             logger.info({ inFlightJobs: inFlightJobsAtStop, graceMs }, 'Stopping: no new jobs taken, waiting for in-flight jobs to finish')
         }
+        await endParkedPolls({ graceMs })
         // Before the sandbox managers go: a loop still running is a loop that can still be handed
         // a job, and it would run it against managers this call has already shut down and dropped.
         // The socket stays up meanwhile, so a draining job can still report progress and complete.
@@ -286,6 +290,32 @@ export const workerInternals = {
 }
 
 /**
+ * Asks the API to end this connection's parked polls (#585). Without it each idle slot's poll
+ * stays a waiter on the API for up to its 50 s budget while the worker drains, and a job dequeued
+ * for it would go to a loop that is about to stop. Disconnected, there is nothing to ask: the API
+ * drops a closed socket's polls by itself (#589). An API from before #585 has no `stopPolling`
+ * and answers with an error; the parked polls then end within their budget, and any job one of
+ * them brings is run inside the drain, so it is late but not lost. Bounded, so a slow API cannot
+ * hold up the stop.
+ */
+async function endParkedPolls({ graceMs }: { graceMs: number }): Promise<void> {
+    if (isNil(rpcClient) || !connectionGate.isOpen()) {
+        return
+    }
+    const asked = rpcClient.stopPolling({})
+    const { error } = await tryCatch(() => Promise.race([
+        asked,
+        unrefSleep(Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)).then(() => {
+            throw new Error(`no answer within ${Math.min(STOP_POLLING_TIMEOUT_MS, graceMs)}ms`)
+        }),
+    ]))
+    if (error) {
+        asked.catch(() => undefined)
+        logger.info({ error: String(error) }, 'The API did not end this worker\'s parked polls; they end within its poll budget, and a job one of them brings is run before the worker stops')
+    }
+}
+
+/**
  * Waits until no job is in flight and no poll loop is running, but never longer than the grace:
  * `stop()` must not hang on a job that never ends. Read off the counters rather than the loops'
  * promise, so a job whose loop is gone is still waited for.
@@ -305,10 +335,10 @@ function unrefSleep(ms: number): Promise<void> {
 }
 
 /**
- * Resolves with `whenStopped` as soon as `stop()` is requested, so a parked long-poll does not keep
- * the loop alive for the rest of its 60s RPC timeout. The losing promise is not abandoned silently
- * — an unobserved rejection from the poll we walked away from would surface as an unhandled
- * rejection and, in the API's own test harness, fail an unrelated suite.
+ * Resolves with `whenStopped` as soon as `stop()` is requested, so a back-off or a slow prewarm is
+ * not a shutdown delay. Never a poll: see `runPollLoop`. The losing promise is not abandoned
+ * silently — an unobserved rejection from it would surface as an unhandled rejection and, in the
+ * API's own test harness, fail an unrelated suite.
  */
 async function raceStopRequest<T>({ promise, whenStopped, signal }: RaceStopRequestParams<T>): Promise<T> {
     if (signal.aborted) {
@@ -566,14 +596,15 @@ async function runPollLoop({ apiClient, sbManager, workerLog, signal }: RunPollL
             continue
         }
 
-        const { data: job, error: pollError } = await tryCatch(() => raceStopRequest({
-            promise: apiClient.poll(machineInfo),
-            // `null` and not a dedicated sentinel: the loop already treats an empty poll as
-            // "nothing to do, go round again", and going round again re-reads the signal, which
-            // `stop()` has just aborted. One exit path, not two.
-            whenStopped: null,
-            signal,
-        }))
+        // Stopped while the machine info was built: this poll would reach the API after `stopPolling`.
+        if (signal.aborted) {
+            return
+        }
+        // Not raced against `stop()`. A poll the loop walked away from would stay a live waiter on the
+        // API, and a job handed to it would be acked to nobody (#585). `stop()` asks the API to end
+        // the parked polls instead (`stopPolling`): they come back `null`, and the head of the loop
+        // sees the signal. A job that was already on its way is run, inside the drain.
+        const { data: job, error: pollError } = await tryCatch(() => apiClient.poll(machineInfo))
         if (pollError && connectionGeneration !== generation) {
             // socket.io fails a pending poll the moment the connection drops. That is not the API
             // failing, so no back-off: the head of the loop waits for the reconnect instead.
