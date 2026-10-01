@@ -2,6 +2,7 @@ import { EngineGenericError, FlowAction, FlowActionType, FlowRunStatus, LoopExec
 import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 import { flowExecutor } from '../../src/lib/handler/flow-executor'
+import { loopRateLimiter } from '../../src/lib/helper/loop-rate-limiter'
 import { waitpointClient } from '../../src/lib/qadam-context/waitpoint-client'
 import { mockHttpServer } from './mock-http-server'
 import { buildQadamAction, buildSimpleLoopAction, generateMockEngineConstants } from './test-helper'
@@ -84,17 +85,42 @@ describe('concurrent loop', () => {
         expect(mockServer.concurrency.max).toBe(1)
     }, 20000)
 
+    // The pace is read off the limiter's grants, which the executor dispatches each iteration on.
+    // Arrivals at the mock server also carry each request's own latency: the first send in a
+    // process waits for the qadam to load, so iterations the limiter spaced 100 ms apart reached
+    // the server 2-3 ms apart when this test ran alone, and under load one gap read 84 ms (#630).
     it('starts iterations no faster than the declared rate', async () => {
-        const { result } = await run(loopOf({
+        const grants: number[] = []
+        const createLimiter = loopRateLimiter.create
+        vi.spyOn(loopRateLimiter, 'create').mockImplementation((params) => {
+            const limiter = createLimiter(params)
+            return {
+                ...limiter,
+                acquire: async (): Promise<void> => {
+                    await limiter.acquire()
+                    grants.push(Date.now())
+                },
+            }
+        })
+
+        const { result, loop } = await run(loopOf({
             count: 6,
             execution: { mode: LoopExecutionMode.CONCURRENT, maxConcurrency: 6, rateLimit: { count: 10, perSeconds: 1 } },
             body: request({ path: '/slow?ms=10&item={{loop.output.item}}' }),
         }))
 
         expect(result.verdict.status).toBe(FlowRunStatus.RUNNING)
-        const starts = mockServer.arrivals.map((arrival) => arrival.at).sort((a, b) => a - b)
-        const gaps = starts.slice(1).map((at, i) => at - starts[i])
+        expect(loop?.collected).toEqual([0, 1, 2, 3, 4, 5])
+        expect(mockServer.arrivals).toHaveLength(6)
+        expect(grants).toHaveLength(6)
+        const gaps = grants.slice(1).map((at, i) => at - grants[i])
         expect(Math.min(...gaps)).toBeGreaterThanOrEqual(90)
+        // Items are dispatched in order, so item i runs on grant i; no request may beat its grant.
+        const arrivals = mockServer.arrivals.map((arrival) => ({ item: Number(new URL(arrival.path, mockServer.baseUrl).searchParams.get('item')), at: arrival.at }))
+        expect(arrivals.map((arrival) => arrival.item).sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5])
+        for (const arrival of arrivals) {
+            expect(arrival.at).toBeGreaterThanOrEqual(grants[arrival.item])
+        }
     }, 20000)
 
     it('pauses every iteration for the retry-after a provider asked for, and retries the one it answered', async () => {
