@@ -255,7 +255,7 @@ export function createHandlers({ log, workerGroupId, disconnected }: CreateHandl
         },
 
         async extendLock(input) {
-            await jobBroker(log).extendLock(input)
+            return jobBroker(log).extendLock(input)
         },
 
         async getQadamArchive(input) {

@@ -6,6 +6,9 @@ import { worker } from './worker'
 
 const workerToken = system.getOrThrow(WorkerSystemProp.WORKER_TOKEN)
 
+/** Room for what `stop()` does after the drain: sandbox, socket and egress teardown. */
+const FORCED_EXIT_MARGIN_MS = 15_000
+
 async function main(): Promise<void> {
     const containerType = system.getContainerType()
 
@@ -18,10 +21,12 @@ async function main(): Promise<void> {
     const loopMonitor = eventLoopMonitor.start({ log: logger })
 
     const shutdown = async () => {
+        // Past the drain `worker.stop()` is allowed, not inside it: a forced exit that fires first
+        // kills the very jobs the drain is waiting for (#585).
         const timeout = setTimeout(() => {
             logger.warn('Graceful shutdown timed out, forcing exit')
             process.exit(1)
-        }, 30_000)
+        }, system.getShutdownGraceMs() + FORCED_EXIT_MARGIN_MS)
         loopMonitor.stop()
         await worker.stop()
         clearTimeout(timeout)

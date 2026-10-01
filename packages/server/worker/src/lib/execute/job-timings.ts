@@ -50,6 +50,7 @@ export const jobTimings = {
             invalidate: (log) => sandboxManager.invalidate(log),
             release: (log) => sandboxManager.release(log),
             shutdown: (log) => sandboxManager.shutdown(log),
+            markStale: () => sandboxManager.markStale(),
             getActiveSandbox: () => sandboxManager.getActiveSandbox(),
         }
     },

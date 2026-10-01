@@ -11,9 +11,11 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
     let currentJobContext: SandboxJobContext | null = null
     // Bumped by every invalidate, and so every shutdown: a prewarm still provisioning or starting
     // can then tell that its slot was let go, and must not leave an engine running for nobody.
-    // This relies on the worker shutting down every manager it stops using. If managers ever outlive
-    // a reconnect (#585), a prewarm abandoned by the old poll loop sees no bump and keeps its engine,
-    // so re-check that it is still the manager's only live prewarm.
+    // Managers outlive a reconnect (#585), so a reconnect is not a let-go and bumps nothing. That is
+    // safe because the manager's own poll loop is its only user: the loop prewarms once, before its
+    // first poll, and a reconnect starts no second loop, so a prewarm never overlaps a job or another
+    // prewarm on this manager. What does let a slot go (a stop, a settings change that recycles an
+    // idle slot, a lost lease) goes through invalidate.
     let generation = 0
 
     // Only reusable sandboxes: a single-use one would be thrown away by the first job's release.
@@ -63,15 +65,20 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
         }
         log.info({ boxId, sandboxId: sandbox.id, prewarmMs: Math.round(performance.now() - startedAt) }, '[sandboxManager#prewarm] Sandbox started before its first job')
     }
+    // A sandbox bakes the worker settings in at creation (env, limits, mode), so one created
+    // before the settings changed must not serve another job — but it may be mid-job right now,
+    // and killing it would fail that run (#585). Recycled on the next acquire instead.
+    let stale = false
 
     return {
         acquire(params: { log: Logger, apiClient: WorkerToApiContract, jobContext?: SandboxJobContext }): Sandbox {
             currentJobContext = params.jobContext ?? null
-            if (canReuseSandbox() && currentSandbox && currentSandbox.isReady()) {
+            if (canReuseSandbox() && currentSandbox && currentSandbox.isReady() && !stale) {
                 return currentSandbox
             }
+            stale = false
             if (currentSandbox) {
-                params.log.info('Sandbox not ready or not reusable, creating fresh one')
+                params.log.info('Sandbox not ready, not reusable or stale, creating fresh one')
                 currentSandbox.shutdown().catch((err) =>
                     params.log.error({ err }, 'Error shutting down previous sandbox'),
                 )
@@ -98,6 +105,8 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
         },
         async invalidate(log: Logger): Promise<void> {
             generation++
+            // It described the sandbox going away here; the next one is built with the current settings.
+            stale = false
             if (currentSandbox) {
                 log.info('Invalidating sandbox')
                 const sb = currentSandbox
@@ -112,6 +121,9 @@ export function createSandboxManager({ boxId, proxyPort }: { boxId: number, prox
         },
         async shutdown(log: Logger): Promise<void> {
             await this.invalidate(log)
+        },
+        markStale(): void {
+            stale = true
         },
         getActiveSandbox(): ActiveSandboxInfo | null {
             if (isNil(currentSandbox) || !currentSandbox.isReady()) {
@@ -166,6 +178,7 @@ export type SandboxManager = {
     invalidate(log: Logger): Promise<void>
     release(log: Logger): Promise<void>
     shutdown(log: Logger): Promise<void>
+    markStale(): void
     getActiveSandbox(): ActiveSandboxInfo | null
 }
 
@@ -184,6 +197,8 @@ export type SandboxJobContext = {
     environment: RunEnvironment
     workerHandlerId: string | null
     httpRequestId: string | null
+    /** Set by the worker on every job's context (`givenUpGuard`): true once the job is no longer this worker's. */
+    isGivenUp?: () => boolean
 }
 
 type PrewarmParams = {

@@ -42,6 +42,14 @@ export type SavePayloadRequest = {
     payloads: unknown[]
 }
 
+/**
+ * `leaseLost` means the worker no longer owns the job: its lock expired or passed to a redelivered
+ * copy. The worker must stop running it and must not report its completion (#585).
+ */
+export type ExtendLockResponse = {
+    leaseLost: boolean
+}
+
 export type GetQadamRequest = {
     name: string
     version?: string
@@ -61,7 +69,7 @@ export type WorkerToApiContract = {
     getFlowVersion(input: GetFlowVersionForWorkerRequest): Promise<FlowVersion | null>
     getQadam(input: GetQadamRequest): Promise<unknown>
     getQadamArchive(input: { archiveId: string }): Promise<Buffer>
-    extendLock(input: { jobId: string, token: string, queueName: string }): Promise<void>
+    extendLock(input: { jobId: string, token: string, queueName: string }): Promise<ExtendLockResponse>
     getUsedQadams(input: Record<string, never>): Promise<QadamPackage[]>
     markQadamAsUsed(input: { pieces: QadamPackage[] }): Promise<void>
     sendChatEvent(input: SendChatEventRequest): Promise<void>

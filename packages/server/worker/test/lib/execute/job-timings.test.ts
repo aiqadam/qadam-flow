@@ -23,6 +23,7 @@ function makeManager(sandbox: Sandbox): SandboxManager {
         invalidate: vi.fn().mockResolvedValue(undefined),
         release: vi.fn().mockResolvedValue(undefined),
         shutdown: vi.fn().mockResolvedValue(undefined),
+        markStale: vi.fn(),
         getActiveSandbox: vi.fn().mockReturnValue(null),
     }
 }

@@ -1,4 +1,4 @@
-import { ConsumeJobRequest, ConsumeJobResponse, EngineResponseStatus, isNil, JobData, tryCatch } from '@aiqadam/shared'
+import { ConsumeJobRequest, ConsumeJobResponse, EngineResponseStatus, ExtendLockResponse, isNil, JobData, tryCatch } from '@aiqadam/shared'
 import { Worker as BullMQWorker, Job, UnrecoverableError } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
@@ -67,6 +67,20 @@ async function fetchJobFromRedis(queueName: string, jobId: string, log: FastifyB
         return null
     }
     return job
+}
+
+/** A lock key exists only while the job is active, and holds the token of the worker it went to. */
+async function holdsLease({ queueName, jobId, token, log }: HoldsLeaseParams): Promise<boolean> {
+    const worker = await ensureBullMQWorker(queueName, log)
+    const client = await worker.client
+    const lockToken = await client.get(`${worker.toKey(jobId)}:lock`)
+    return lockToken === token
+}
+
+// BullMQ's wording for a finish attempted with a token that does not hold the job's lock
+// (`finishedErrors` in bullmq's scripts.js); it throws a plain Error, so the message is all there is.
+function isLostLockError(error: unknown): boolean {
+    return error instanceof Error && /^(Lock mismatch|Missing lock) for job /.test(error.message)
 }
 
 function ensureDispatcher(queueName: string, worker: BullMQWorker, log: FastifyBaseLogger): QueueDispatcher {
@@ -257,6 +271,14 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         if (isNil(job)) {
             return
         }
+        // A worker resends completeJob when the connection dropped while the first call was in
+        // flight, and a worker whose lease lapsed may report a job that was redelivered since
+        // (#585). Neither owns the job any more: failing the move below would publish an
+        // INTERNAL_ERROR to a sync caller and release the concurrency slot of whoever does.
+        if (!(await holdsLease({ queueName: input.queueName, jobId: input.jobId, token: input.token, log }))) {
+            log.info({ jobId: input.jobId, status: input.status }, '[jobBroker] Ignoring completeJob from a worker that no longer holds the job')
+            return
+        }
 
         const jobData = JobData.parse(job.data)
         const userJobData = isUserInteractionJobData(jobData) ? jobData : null
@@ -286,6 +308,12 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
                 })
             }
         })
+        // The lock can still expire or move between the check above and the move: the same case,
+        // caught by BullMQ instead, and as harmless once nothing is published for it.
+        if (error && isLostLockError(error)) {
+            log.info({ jobId: input.jobId, status: input.status, error: String(error) }, '[jobBroker] Ignoring completeJob from a worker that no longer holds the job')
+            return
+        }
         if (error) {
             log.error({ jobId: input.jobId, error: String(error), originalError: input.errorMessage }, '[jobBroker] Failed to move job to final state — leaving for stalled-scan recovery')
             if (userJobData) {
@@ -306,13 +334,24 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         }
     },
 
-    async extendLock(input: { jobId: string, token: string, queueName: string }): Promise<void> {
+    /**
+     * BullMQ answers 0 when the token no longer holds the lock: it expired while the worker could
+     * not reach the API, and the stalled scan may already have handed the job to another worker.
+     * Reported instead of swallowed, so the worker stops its copy rather than running it alongside
+     * the redelivered one (#585).
+     */
+    async extendLock(input: { jobId: string, token: string, queueName: string }): Promise<ExtendLockResponse> {
         const job = await fetchJobFromRedis(input.queueName, input.jobId, log)
         if (isNil(job)) {
-            return
+            return { leaseLost: true }
         }
-        await job.extendLock(input.token, LOCK_DURATION_MS)
+        const extended = await job.extendLock(input.token, LOCK_DURATION_MS)
+        if (extended === 0) {
+            log.warn({ jobId: input.jobId, queueName: input.queueName }, '[jobBroker] Lock extension refused: the worker no longer holds the job')
+            return { leaseLost: true }
+        }
         log.debug({ jobId: input.jobId }, '[jobBroker] Lock extended')
+        return { leaseLost: false }
     },
 
     async close(): Promise<void> {
@@ -336,4 +375,11 @@ type PollParams = {
     // Aborted when the socket that asked goes away; its pending poll is then dropped rather than
     // handed a job nobody will receive (#589).
     signal?: AbortSignal
+}
+
+type HoldsLeaseParams = {
+    queueName: string
+    jobId: string
+    token: string
+    log: FastifyBaseLogger
 }

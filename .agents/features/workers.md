@@ -15,15 +15,37 @@ Workers are separate Node processes that poll the app for jobs and execute flows
 ## Domain Terms
 - **`WorkerProps`** — typed worker identity sent in every heartbeat (`EXECUTION_MODE`, `WORKER_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `REUSE_SANDBOX`, `version`). Previously a free-form `Record<string,string>`.
 - **`WorkerSettingsResponse`** — runtime config the app hands a worker on connect; now includes `APP_VERSION` (the app's release).
-- **`connectionGeneration`** — worker-side counter bumped on every disconnect; in-flight poll loops exit when their captured generation goes stale, so a reconnect starts fresh loops.
+- **`connectionGeneration`** — worker-side counter bumped on every disconnect. A caller that captured it before an RPC can tell afterwards whether the call spanned a disconnect: the poll loop skips its back-off then, and `reconnectSafeApiClient` resends (#585). Loops no longer exit on it.
+- **connection gate** — worker-side flag, open while the socket is connected and that connection's settings are loaded. Poll loops wait on it across a disconnect instead of exiting.
+- **drain** — what `worker.stop()` does: stop polling at once, wait up to `AP_WORKER_SHUTDOWN_GRACE_SECONDS` (default 60) for in-flight jobs, then shut the sandboxes down.
+- **lease** — a worker's hold on a job it was handed: the BullMQ lock (120 s, `LOCK_DURATION_MS` in `job-broker.ts`) under the job's `token`. The worker renews it every 30 s with `extendLock`; a lease is **lost** when the lock expired or passed to a redelivered copy.
+- **given up** — an in-flight job that may no longer report completion: its lease was lost (`lease-lost`), or a stop's grace expired on it (`shutdown`). The `Job finished` line carries `givenUp`.
 - **version gate** — both sides refuse to exchange jobs when worker release ≠ app release (see below).
 
 ## Connection & Poll Flow
 1. Worker connects → emits `FETCH_WORKER_SETTINGS`; app's `machineService.onConnection` returns `WorkerSettingsResponse` (incl. `APP_VERSION`) and registers `createHandlers` for the socket.
-2. Worker caches settings and spawns `concurrency` `pollAndExecute` loops.
+2. Worker caches settings, opens the connection gate and, on the first connect only, spawns `concurrency` `pollAndExecute` loops, one per sandbox manager.
 3. Each loop calls `apiClient.poll(machineInfo)`; the app's `poll` handler returns the next job for the worker's queue, or `null`.
-4. On job: worker executes in a sandbox, periodically `extendLock`, then `completeJob`.
-5. On disconnect, `connectionGeneration++` stops the loops; Socket.IO auto-reconnects and the cycle repeats.
+4. On job: worker executes in a sandbox, renews the lease with `extendLock` every 30 s, then `completeJob`.
+5. On disconnect, `connectionGeneration++` closes the gate. Socket.IO reconnects (the worker drives it by hand after `io server disconnect`), and the gate reopens.
+
+## Reconnect and Drain (#585)
+- **A reconnect keeps everything.** The loops, the sandbox managers and any running job survive it. Until #585, every connect shut all managers down and started fresh ones, which killed each engine that was mid-job; the run failed as `INTERNAL_ERROR` and waited out the 8-minute retry (#584).
+  - A poll that was parked when the connection dropped fails at once (socket.io rejects pending acks with "socket has been disconnected"). The loop sees the generation change, skips the 25 s back-off, and waits on the gate.
+  - A running job's RPCs go through `reconnectSafeApiClient` (`src/lib/reconnect-safe-api-client.ts`). It resends `completeJob`, `updateRunProgress`, `updateStepProgress`, `uploadRunLog` and `sendFlowResponse` when a disconnect happened while the call was in flight, up to 3 attempts. Every call, resent or new, waits (up to 60 s) for the connection gate rather than for socket.io's send buffer: the buffer is flushed on connect, before the API has answered the settings request that attaches its RPC handlers, so a buffered call is never acknowledged. Calls that create something (`startInlineFlowRun`, `submitPayloads`, …), `poll` and `extendLock` are never resent. The engine's own RPC to the worker still gives up after 60 s, so a run reporting progress through a longer outage fails anyway.
+  - A resent `completeJob` is safe because `jobBroker.completeJob` acts only for the token that holds the job's lock: a duplicate (the first call already released it) or a completion from a worker whose lease was lost returns early, before any publish or interceptor.
+  - Sandboxes bake in the settings they were created with, the SSRF allow list among them. Every connect compares the stored settings with a snapshot of the ones the current sandboxes were built with (`sandboxSettings`, taken when the managers are created and on each recycle), not with the previous connection's: a connect that stored new settings and dropped before comparing must not make the next one look unchanged. On a change, every manager is `markStale()`d, and an idle one (no in-flight job) is invalidated at once; a busy sandbox finishes its job first.
+  - A connect that finds the generation changed or the socket down once its settings are in bails out: no recycle, no lease check, no gate. The next connect does all of it.
+  - Logged: `Reconnected: in-flight jobs keep running, polling resumes` with `inFlightJobs`.
+- **Leases are checked, not assumed.** `inFlightJobs` (a map keyed by token) records when the API last confirmed each lease, seeded at the poll. The API answers `extendLock` with `{ leaseLost }` (BullMQ's `extendLock` returns 0 when the token no longer holds the lock).
+  - On reconnect, every lease is renewed at once. A lease the API refuses, or one older than 90 s (the 120 s lock minus one renewal interval), is given up: only that job's sandbox is invalidated, and the job does not send `completeJob`. While disconnected no renewal is sent; the 30 s tick gives up a lease that passes 90 s.
+  - Logged: `Lease lost: stopping the job, the API may already have handed it to another worker` with `reason` and `leaseAgeMs`.
+- **A poll loop that throws is restarted** after 1 s, in place. `startPollingWorkers` settles on `Promise.allSettled`, so one failing loop cannot end the set and let the next connect start a second set beside the survivors. Each loop is bound to the `AbortSignal` of the `start()` that launched it, so a loop that outlived `stop()` does not come back after the next `start()` resets `stopped`.
+- **A stop drains.** `worker.stop()` stops polling at once (the parked polls are aborted) and waits up to `system.getShutdownGraceMs()` until no job is in flight and no loop runs. The grace is `AP_WORKER_SHUTDOWN_GRACE_SECONDS`: default 60, trimmed, blank or invalid → default, capped at 3600. The socket stays up meanwhile, and a draining worker still reconnects after an API restart (`closing`, set only after the drain, is what stops reconnects). Only then are sandboxes shut down.
+  - Jobs still in flight when the grace expires are given up (`shutdown`) before their engines are killed, so they skip a `completeJob` that could only time out on the closing socket. The API's stalled scan redelivers them once the lock expires.
+  - Logged: `Stopping: no new jobs taken, waiting for in-flight jobs to finish`; `Shutdown grace expired, abandoning in-flight jobs` with `abandonedJobs` when the grace ran out; `Worker stopped` with `inFlightJobsAtStop` and `abandonedJobs` always.
+  - `main.ts` forces the exit only at grace + 15 s. The shipped `docker-compose.yml` sets `stop_grace_period: 90s` on the worker, strictly above that, since Docker's default 10 s would kill the drain; the two move together. Other deployments (QA's own compose file, Kubernetes) need the same. `docker compose pull` does not change an existing install's compose file: re-running `run.sh` refreshes it, and a git checkout gets it with `git pull` (`tools/update.sh`).
+  - The API's CE suites that run a real worker pin the grace to 5 s in `vitest.setup.ts`, which is what `test/helpers/worker-teardown.ts`'s 15 s budget is sized for.
 
 **A poll belongs to its socket (#589).** The app's `poll` is a long-poll: `queue-dispatcher.ts` parks it as a waiter for up to `WAITER_TIMEOUT_MS` (50 s) and hands the next dequeued job to the oldest waiter. `machine-controller.ts` gives each socket's handlers an `AbortSignal` (`disconnected`) that aborts on the socket's `disconnect`, and `jobBroker.poll({ queueName, signal })` passes it to the dispatcher.
 - On abort, the dispatcher drops that socket's waiters (they resolve `null`), so the next job goes to a live worker. A poll that arrives on an already-closed socket returns `null` at once, before the registry upsert, so it cannot re-register a worker that `onDisconnect` just removed.
@@ -95,11 +117,13 @@ move that off the first job:
   never generate it in a dev tree, where it would go stale.
 - **Prewarm.** On by default; `AP_WORKER_PREWARM_ENGINES=false` turns it off (each engine holds about
   100 MiB from boot). Only `true`/`false` parse (`asBoolStrict`): any other value throws inside the
-  prewarm, which logs `Prewarm failed` and leaves the slot lazy. It runs on every (re)connect, since
-  each connect starts a new set of poll loops. Each slot's poll loop calls `sandboxManager.prewarm()` before its first poll
+  prewarm, which logs `Prewarm failed` and leaves the slot lazy. It runs once per `start()`: the
+  loops outlive a reconnect (#585), so a reconnect neither prewarms nor needs to. Each slot's poll
+  loop calls `sandboxManager.prewarm()` before its first poll and outside its crash restart
   (`prewarmSlot` in `worker.ts`), so no job can race it. It is skipped when the loop would not poll
-  (`loopWillPoll`, the same check the poll loop uses, or an API version mismatch) and raced against a
-  stop request.
+  (the start's signal aborted, the connection gate closed, or an API version mismatch) and raced
+  against the start's signal. A slot whose sandbox a settings change recycled or a give-up
+  invalidated is not prewarmed again: its next job starts the sandbox.
   Forked engines only: a reusable sandbox (`canReuseSandbox()`) that does not run in an isolate —
   `UNSANDBOXED`, `SANDBOX_CODE_ONLY`, and dev with either. It provisions the engine with no qadams
   and starts the sandbox with no platform and no flow version, logging
@@ -107,8 +131,8 @@ move that off the first job:
   failure is a warning, the sandbox is dropped and the slot polls as before. A prewarm abandoned by a
   stop cannot leak an engine: every `invalidate`/`shutdown` bumps the manager's generation, so a
   prewarm that sees it changed starts no sandbox after the install, and shuts down (quietly, at
-  debug) one that was already starting. That relies on the worker shutting down every manager it
-  stops using; if managers ever outlive a reconnect (#585), re-check it. Isolate modes (`isIsolateMode`
+  debug) one that was already starting. A reconnect bumps nothing, and need not: the slot's own loop
+  is the manager's only user, so a prewarm never overlaps a job or a second prewarm on it. Isolate modes (`isIsolateMode`
   — `SANDBOX_PROCESS`, `SANDBOX_CODE_AND_PROCESS`) skip it even when reused, because their mounts are
   fixed at start and a prewarmed box would have none.
 - **Engine warmup.** Only the sandbox a prewarm starts gets `AP_ENGINE_WARMUP=true` (`warmup: true` on
