@@ -2,7 +2,7 @@
  * A retry reuses the failed run's row. The runs-metadata update only ever sets `failedStep` (an
  * absent one means "leave it"), so the retry itself has to clear the previous attempt's failure (#599).
  */
-import { FlowRetryStrategy, FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
+import { FailedStep, FlowRetryStrategy, FlowRunStatus, FlowVersionState, RunEnvironment } from '@aiqadam/shared'
 import { FastifyInstance } from 'fastify'
 import { distributedStore } from '../../../../../src/app/database/redis-connections'
 import { redisMetadataKey, RunsMetadataUpsertData } from '../../../../../src/app/workers/job'
@@ -155,13 +155,13 @@ async function waitForCondition({ fn, timeoutMs = 10000 }: { fn: () => Promise<b
 }
 
 type StoredRun = {
-    status: string
-    failedStep: { name: string, displayName: string, message?: string } | null
+    status: FlowRunStatus
+    failedStep: FailedStep | null
 }
 
 type ReportAttemptParams = {
     runId: string
     status: FlowRunStatus
     finishTime?: string
-    failedStep?: { name: string, displayName: string, message?: string }
+    failedStep?: FailedStep
 }
