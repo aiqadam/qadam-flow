@@ -220,7 +220,6 @@
     "fastify-plugin": "5.0.1",
     "fastify-raw-body": "5.0.0",
     "fastify-socket": "5.1.2",
-    "fetch-retry": "6.0.0",
     "firebase-scrypt": "2.2.0",
     "flowtoken": "1.0.40",
     "font-awesome": "4.7.0",

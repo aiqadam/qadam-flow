@@ -1,5 +1,6 @@
 import { FlowsContext, ListFlowsContextParams } from '@aiqadam/qadams-framework'
 import { FetchError, PopulatedFlow, SeekPage } from '@aiqadam/shared'
+import { retryingFetch } from '../retrying-fetch'
 
 export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVersionId }: CreateFlowsServiceParams): FlowsContext => {
     return {
@@ -16,11 +17,15 @@ export const createFlowsContext = ({ engineToken, internalApiUrl, flowId, flowVe
                 }
             }
             const url = `${internalApiUrl}v1/engine/populated-flows?${queryParams.toString()}`
-            const response = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${engineToken}`,
+            const response = await retryingFetch.fetch({
+                url,
+                init: {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${engineToken}`,
+                    },
                 },
+                idempotent: true,
             })
             if (!response.ok) {
                 throw new FetchError(url, `status=${response.status}`)

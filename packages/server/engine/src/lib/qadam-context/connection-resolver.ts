@@ -1,5 +1,6 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
 import { AppConnection, AppConnectionStatus, AppConnectionType, AppConnectionValue, ConnectionExpiredError, ConnectionLoadingError, ConnectionNotFoundError, ExecutionError, FetchError } from '@aiqadam/shared'
+import { retryingFetch } from '../retrying-fetch'
 import { utils } from '../utils'
 
 export const createConnectionResolver = ({ projectId, engineToken, apiUrl, contextVersion }: CreateConnectionResolverParams): ConnectionResolver => {
@@ -8,11 +9,15 @@ export const createConnectionResolver = ({ projectId, engineToken, apiUrl, conte
             const url = `${apiUrl}v1/worker/app-connections/${encodeURIComponent(externalId)}?projectId=${projectId}`
 
             const { data: connectionValue, error: connectionValueError } = await utils.tryCatchAndThrowOnEngineError((async () => {
-                const response = await fetch(url, {
-                    method: 'GET',
-                    headers: {
-                        Authorization: `Bearer ${engineToken}`,
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        method: 'GET',
+                        headers: {
+                            Authorization: `Bearer ${engineToken}`,
+                        },
                     },
+                    idempotent: true,
                 })
 
                 if (!response.ok) {
@@ -45,7 +50,11 @@ export const createConnectionResolver = ({ projectId, engineToken, apiUrl, conte
             // delivery transport: swallowing a transient failure would silently pick the default
             // one and register a webhook on a connection that asked to be polled. The caller
             // decides where that is tolerable.
-            const response = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${engineToken}` } })
+            const response = await retryingFetch.fetch({
+                url,
+                init: { method: 'GET', headers: { Authorization: `Bearer ${engineToken}` } },
+                idempotent: true,
+            })
             if (!response.ok) {
                 throw new Error(`Could not read connection metadata: ${response.status}`)
             }

@@ -1,4 +1,5 @@
 import { EngineGenericError, ExecutionError, FetchError, VariableNotFoundError } from '@aiqadam/shared'
+import { retryingFetch } from '../retrying-fetch'
 import { utils } from '../utils'
 
 const HTTP_NOT_FOUND = 404
@@ -9,11 +10,15 @@ export const createVariableResolver = ({ projectId: _projectId, engineToken, api
             const url = `${apiUrl}v1/worker/variables/${encodeURIComponent(name)}`
 
             const { data: value, error: fetchError } = await utils.tryCatchAndThrowOnEngineError((async () => {
-                const response = await fetch(url, {
-                    method: 'GET',
-                    headers: {
-                        Authorization: `Bearer ${engineToken}`,
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        method: 'GET',
+                        headers: {
+                            Authorization: `Bearer ${engineToken}`,
+                        },
                     },
+                    idempotent: true,
                 })
 
                 if (!response.ok) {

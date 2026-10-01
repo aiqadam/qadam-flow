@@ -8,6 +8,7 @@ import dayjs from 'dayjs'
 import { engineFileApi } from '../engine-file-api'
 import { EngineConstants } from '../handler/context/engine-constants'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
+import { retryingFetch, RetryPolicy } from '../retrying-fetch'
 import { utils } from '../utils'
 import { workerSocket } from '../worker-socket'
 
@@ -117,11 +118,14 @@ export const flowRunProgressReporter = {
             },
         }
     },
-    backup: async (): Promise<void> => {
-        await flushSnapshot({ onlyIfDirty: false })
+    // The final snapshot is the run's result, so it waits out an app restart (#595). A best-effort
+    // one gives up sooner: it holds the lock every step's progress update needs, and the periodic
+    // loop uploads again on its next tick anyway.
+    backup: async ({ bestEffort = false }: BackupParams = {}): Promise<void> => {
+        await flushSnapshot({ onlyIfDirty: false, retryPolicy: bestEffort ? retryingFetch.bestEffortPolicy : retryingFetch.defaultPolicy })
     },
     flushIfDirty: async (): Promise<void> => {
-        await flushSnapshot({ onlyIfDirty: true })
+        await flushSnapshot({ onlyIfDirty: true, retryPolicy: retryingFetch.bestEffortPolicy })
     },
     nextFlushDelayMs: (): number => {
         return lastSerializedBytes > LARGE_LOG_THRESHOLD_BYTES ? LARGE_LOG_FLUSH_INTERVAL_MS : SMALL_LOG_FLUSH_INTERVAL_MS
@@ -147,7 +151,7 @@ export const flowRunProgressReporter = {
 process.on('SIGTERM', () => void flowRunProgressReporter.shutdown())
 process.on('SIGINT', () => void flowRunProgressReporter.shutdown())
 
-async function flushSnapshot({ onlyIfDirty }: FlushSnapshotParams): Promise<void> {
+async function flushSnapshot({ onlyIfDirty, retryPolicy }: FlushSnapshotParams): Promise<void> {
     await stateLock.runExclusive(async () => {
         const params = latestUpdateParams
         if (isNil(params)) {
@@ -182,6 +186,7 @@ async function flushSnapshot({ onlyIfDirty }: FlushSnapshotParams): Promise<void
             type: FileType.FLOW_RUN_LOG,
             compression: FileCompression.ZSTD,
             data: executionState,
+            retryPolicy,
         })
 
         const stepResponse = extractStepResponse({
@@ -276,6 +281,11 @@ type CreateOutputContextParams = {
 
 type FlushSnapshotParams = {
     onlyIfDirty: boolean
+    retryPolicy: RetryPolicy
+}
+
+type BackupParams = {
+    bestEffort?: boolean
 }
 
 type ExtractStepResponse = {

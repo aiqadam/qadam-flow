@@ -1,4 +1,5 @@
 import { EngineGenericError, ExecutionError, FetchError, GetTranslationsForWorkerResponse } from '@aiqadam/shared'
+import { retryingFetch } from '../retrying-fetch'
 import { utils } from '../utils'
 
 export const createTranslationResolver = ({ engineToken, apiUrl }: CreateTranslationResolverParams): TranslationResolver => {
@@ -7,11 +8,15 @@ export const createTranslationResolver = ({ engineToken, apiUrl }: CreateTransla
             const url = `${apiUrl}v1/worker/translations`
 
             const { data: translations, error: fetchError } = await utils.tryCatchAndThrowOnEngineError((async () => {
-                const response = await fetch(url, {
-                    method: 'GET',
-                    headers: {
-                        Authorization: `Bearer ${engineToken}`,
+                const response = await retryingFetch.fetch({
+                    url,
+                    init: {
+                        method: 'GET',
+                        headers: {
+                            Authorization: `Bearer ${engineToken}`,
+                        },
                     },
+                    idempotent: true,
                 })
                 if (!response.ok) {
                     throw new EngineGenericError('TranslationFetchError', `Failed to fetch project translations (HTTP ${response.status})`)

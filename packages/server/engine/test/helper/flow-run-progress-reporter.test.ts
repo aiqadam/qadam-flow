@@ -1,7 +1,6 @@
 import { FlowActionType, FlowRunStatus, GenericStepOutput, StepOutputStatus, StepRunResponse, StreamStepProgress, UpdateRunProgressRequest, UploadRunLogsRequest } from '@aiqadam/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
-import { generateMockEngineConstants } from '../handler/test-helper'
 
 const { uploadRunLogMock, updateRunProgressMock, updateStepProgressMock } = vi.hoisted(() => ({
     uploadRunLogMock: vi.fn<(request: UploadRunLogsRequest) => Promise<void>>(async () => undefined),
@@ -19,14 +18,21 @@ vi.mock('../../src/lib/worker-socket', () => ({
     },
 }))
 
-vi.mock('fetch-retry', () => ({
-    default: () => async () => new Response(JSON.stringify({ readUrl: 'https://mock.read.url/logs' }), {
+const { retryingFetchMock } = vi.hoisted(() => ({
+    retryingFetchMock: vi.fn(async (_params: { url: string | URL, policy?: RetryPolicy }) => new Response(JSON.stringify({ readUrl: 'https://mock.read.url/logs' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-    }),
+    })),
 }))
 
+vi.mock('../../src/lib/retrying-fetch', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../src/lib/retrying-fetch')>()
+    return { retryingFetch: { ...actual.retryingFetch, fetch: retryingFetchMock } }
+})
+
 import { flowRunProgressReporter } from '../../src/lib/helper/flow-run-progress-reporter'
+import { retryingFetch, RetryPolicy } from '../../src/lib/retrying-fetch'
+import { generateMockEngineConstants } from '../handler/test-helper'
 
 const buildUpdateParams = ({ status }: { status: FlowRunStatus }) => {
     const engineConstants = generateMockEngineConstants({
@@ -198,6 +204,39 @@ describe('flow-run-progress-reporter periodic flush', () => {
 
         await flowRunProgressReporter.shutdown()
         expect(flowRunProgressReporter.nextFlushDelayMs()).toBe(2000)
+    })
+})
+
+// #595: the final snapshot is the run's result and waits out an app restart; a periodic or initial
+// one holds the lock every step's progress update needs, so it gives up sooner.
+describe('flow-run-progress-reporter upload retry budget', () => {
+    beforeEach(() => {
+        retryingFetchMock.mockClear()
+    })
+
+    afterEach(async () => {
+        await flowRunProgressReporter.shutdown()
+    })
+
+    const lastUploadPolicy = (): RetryPolicy | undefined => retryingFetchMock.mock.calls.at(-1)?.[0].policy
+
+    it('gives the final backup the full budget', async () => {
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.SUCCEEDED }))
+        await flowRunProgressReporter.backup()
+
+        expect(retryingFetchMock).toHaveBeenCalledTimes(1)
+        expect(lastUploadPolicy()).toBe(retryingFetch.defaultPolicy)
+        expect(retryingFetch.defaultPolicy.budgetMs).toBe(60_000)
+    })
+
+    it('gives a periodic flush and a best-effort backup the short budget', async () => {
+        await flowRunProgressReporter.sendUpdate(buildUpdateParams({ status: FlowRunStatus.RUNNING }))
+        await flowRunProgressReporter.flushIfDirty()
+        expect(lastUploadPolicy()).toBe(retryingFetch.bestEffortPolicy)
+
+        await flowRunProgressReporter.backup({ bestEffort: true })
+        expect(lastUploadPolicy()).toBe(retryingFetch.bestEffortPolicy)
+        expect(retryingFetch.bestEffortPolicy.budgetMs).toBeLessThan(retryingFetch.defaultPolicy.budgetMs)
     })
 })
 

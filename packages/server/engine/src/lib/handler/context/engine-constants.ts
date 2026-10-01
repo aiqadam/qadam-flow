@@ -1,9 +1,16 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
 import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType, tryCatch } from '@aiqadam/shared'
+import { z } from 'zod'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { createTranslationResolver } from '../../qadam-context/translation-resolver'
+import { retryingFetch } from '../../retrying-fetch'
 import { createPropsResolver, PropsResolver, resolveInputAsync } from '../../variables/props-resolver'
 import type { FlowExecutorContext } from './flow-execution-context'
+
+// Only the fields the engine reads off its project, so a change elsewhere in the project shape cannot
+// fail a run that never looks at it.
+const EngineProject = Project.pick({ externalId: true, defaultLocale: true })
+type EngineProject = z.infer<typeof EngineProject>
 
 type RetryConstants = {
     maxAttempts: number
@@ -89,12 +96,12 @@ export class EngineConstants {
     public readonly insideConcurrentIteration: boolean
     public readonly flowVersionLocaleSource: string | null
     public readonly inheritedRunLocale: string | null
-    private project: Project | null = null
+    private project: EngineProject | null = null
     // The in-flight fetch, memoized separately from the resolved value: multiple `$t` resolutions
     // (or step contexts) racing before the first fetch lands must all await the SAME promise
     // rather than each firing their own request — cleared on rejection so a transient failure
     // isn't cached forever.
-    private projectPromise: Promise<Project> | undefined = undefined
+    private projectPromise: Promise<EngineProject> | undefined = undefined
     // A `Map` throughout, never a plain object: a translation key or locale tag equal to
     // `__proto__`/`constructor` must be an ordinary entry, not a prototype lookup.
     private translations: Map<string, Map<string, string>> | null = null
@@ -269,7 +276,7 @@ export class EngineConstants {
             constants: this,
         })
     }
-    private async getProject(): Promise<Project> {
+    private async getProject(): Promise<EngineProject> {
         if (this.project) {
             return this.project
         }
@@ -279,17 +286,29 @@ export class EngineConstants {
         return this.projectPromise
     }
 
-    private async fetchProjectOnce(): Promise<Project> {
+    private async fetchProjectOnce(): Promise<EngineProject> {
         try {
             const getWorkerProjectEndpoint = `${this.internalApiUrl}v1/worker/project`
 
-            const response = await fetch(getWorkerProjectEndpoint, {
-                headers: {
-                    Authorization: `Bearer ${this.engineToken}`,
+            const response = await retryingFetch.fetch({
+                url: getWorkerProjectEndpoint,
+                init: {
+                    headers: {
+                        Authorization: `Bearer ${this.engineToken}`,
+                    },
                 },
+                idempotent: true,
             })
 
-            this.project = await response.json() as Project
+            if (!response.ok) {
+                await tryCatch(async () => response.body?.cancel())
+                throw new EngineGenericError('ProjectFetchError', `Failed to fetch the run's project (HTTP ${response.status})`)
+            }
+            const parsed = EngineProject.safeParse(await response.json())
+            if (!parsed.success) {
+                throw new EngineGenericError('ProjectFetchError', 'The run\'s project could not be read from the API response', parsed.error)
+            }
+            this.project = parsed.data
             return this.project
         }
         catch (error) {

@@ -175,7 +175,6 @@
         "fastify-plugin": "5.0.1",
         "fastify-raw-body": "5.0.0",
         "fastify-socket": "5.1.2",
-        "fetch-retry": "6.0.0",
         "firebase-scrypt": "2.2.0",
         "flowtoken": "1.0.40",
         "font-awesome": "4.7.0",
@@ -3441,7 +3440,6 @@
         "async-mutex": "0.4.0",
         "cron-validator": "1.3.1",
         "dayjs": "1.11.9",
-        "fetch-retry": "6.0.0",
         "http-proxy-agent": "7.0.2",
         "https-proxy-agent": "7.0.6",
         "isolated-vm": "7.0.0",
@@ -7114,7 +7112,6 @@
 
     "fetch-blob": ["fetch-blob@3.2.0", "", { "dependencies": { "node-domexception": "^1.0.0", "web-streams-polyfill": "^3.0.3" } }, "sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ=="],
 
-    "fetch-retry": ["fetch-retry@6.0.0", "", {}, "sha512-BUFj1aMubgib37I3v4q78fYo63Po7t4HUPTpQ6/QE6yK6cIQrP+W43FYToeTEyg5m2Y7eFUtijUuAv/PDlWuag=="],
 
     "fflate": ["fflate@0.4.8", "", {}, "sha512-FJqqoDBR00Mdj9ppamLa/Y7vxm+PRmNWA67N846RvsoYVMKB4q3y/de5PA7gUmRMYK/8CMz2GDZQmCRN1wBcWA=="],
 
