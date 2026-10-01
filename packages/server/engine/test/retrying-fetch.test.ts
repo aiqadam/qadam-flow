@@ -141,7 +141,9 @@ describe('retryingFetch', () => {
         expect(line).not.toContain('still failing')
     })
 
-    it('holds a retry that never answers to the budget that is left, on fake time', async () => {
+    // Every attempt gets the full attempt timeout, a retry included: the budget only decides whether
+    // one starts. So one call can last about budget + attemptTimeoutMs, never longer.
+    it('bounds a retry that never answers by the attempt timeout, not by the budget left, on fake time', async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
         vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         let calls = 0
@@ -154,13 +156,53 @@ describe('retryingFetch', () => {
         })
         const startedAt = performance.now()
 
-        const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: true }).then(() => 'resolved', (e: unknown) => e)
-        await vi.advanceTimersByTimeAsync(60_000)
+        let settledAt = Number.NaN
+        const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: true }).then(() => 'resolved', (e: unknown) => {
+            settledAt = performance.now()
+            return e
+        })
+        await vi.advanceTimersByTimeAsync(301_000)
         const error = await outcome
 
         expect(error instanceof DOMException ? error.name : error).toBe('TimeoutError')
-        expect(performance.now() - startedAt).toBeLessThanOrEqual(60_000)
+        const elapsed = settledAt - startedAt
+        expect(elapsed).toBeGreaterThanOrEqual(300_000)
+        expect(elapsed).toBeLessThanOrEqual(retryingFetch.defaultPolicy.budgetMs + retryingFetch.defaultPolicy.attemptTimeoutMs)
         expect(fetchSpy).toHaveBeenCalledTimes(2)
+    })
+
+    // The #595 scenario with a large body: the app is back late in the budget, and the run-log
+    // upload that follows takes longer than what is left of it.
+    it('lets a slow but healthy retry late in the budget succeed, on fake time', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
+        const backAt = performance.now() + 50_000
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => {
+            if (performance.now() < backAt) {
+                throw fetchFailed({ code: 'ECONNREFUSED' })
+            }
+            return answerAfter({ ms: 30_000, signal: init?.signal })
+        })
+
+        const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: true }).then((r) => r.status, (e: unknown) => e)
+        await vi.advanceTimersByTimeAsync(90_000)
+
+        expect(await outcome).toBe(200)
+        expect(fetchSpy.mock.calls.length).toBeGreaterThan(1)
+    })
+
+    it('gives up with the last real error when the backoff sleep overran the budget', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => {
+            // A busy event loop: the backoff timer fires long after it was due.
+            setImmediate(() => blockEventLoop(200))
+            throw fetchFailed({ code: 'ECONNREFUSED' })
+        })
+
+        const error = await retryingFetch.fetch({ url: URL_WITH_TOKEN, init: {}, idempotent: true, policy: { ...FAST, budgetMs: 100 } }).catch((e: unknown) => e)
+
+        expect(String(error)).toContain('fetch failed')
+        expect(error).not.toBeInstanceOf(DOMException)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
     })
 
     it('treats a zero budget as no retries, not as no time to answer', async () => {
@@ -183,6 +225,13 @@ function answerAfter({ ms, signal }: { ms: number, signal: AbortSignal | null | 
             reject(signal.reason)
         }, { once: true })
     })
+}
+
+function blockEventLoop(ms: number): void {
+    const until = Date.now() + ms
+    while (Date.now() < until) {
+        // spin
+    }
 }
 
 function rejectWhenAborted(signal: AbortSignal | null | undefined): Promise<Response> {

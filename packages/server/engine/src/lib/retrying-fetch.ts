@@ -2,7 +2,10 @@ import { isNil, tryCatch } from '@aiqadam/shared'
 
 /**
  * How long an engine call to the app keeps retrying while the app is unreachable, from its first
- * attempt: no retry starts, and no attempt waits for an answer, after it. It matches the worker's own
+ * attempt: no retry starts after it. An attempt already started is bounded by its own timeout
+ * instead, so one call can take up to about this plus `ENGINE_API_ATTEMPT_TIMEOUT_MS` (~360 s), still
+ * well under the ~1200 s that fetch-retry's 4 attempts times undici's 300 s header timeout allowed on
+ * `main`. It matches the worker's own
  * budget for the same outage, so a run survives an app restart on both of the legs it reports
  * through: these HTTP calls, and the RPCs the worker forwards, which wait up to `READY_TIMEOUT_MS`
  * (60 s, `packages/server/worker/src/lib/reconnect-safe-api-client.ts`) for the reconnected API and
@@ -20,8 +23,10 @@ const ENGINE_API_RETRY_BUDGET_MS = 60_000
  * upload itself, and a healthy but slow request (a multi-MB run log over a modest link, a 25 MB
  * `files.write`) must not be cut off just because it takes longer than the budget for retries. The
  * same as undici's default `headersTimeout` (`300e3` in `lib/dispatcher/client.js`), which bounded
- * every one of these calls before #595; the explicit timer exists so a test can run it on fake time
- * and so a retry can be held to the budget that is left.
+ * every one of these calls before #595; the explicit timer exists so a test can run it on fake time.
+ * A retry gets the full timeout too, not what is left of the budget: an app back at ~50 s must still
+ * be able to take a multi-MB run log, and once a retry has a connection the worker can renew the
+ * job's lease again, so the lease no longer limits it.
  */
 const ENGINE_API_ATTEMPT_TIMEOUT_MS = 300_000
 
@@ -34,8 +39,12 @@ const DEFAULT_POLICY: RetryPolicy = {
 
 /**
  * For a call that is allowed to fail and is repeated anyway, such as the periodic run-log snapshot.
- * It runs under the progress reporter's lock, so a long budget there would stall every step that
- * reports progress for the whole outage. Same length as the old fetch-retry budget.
+ * It runs under the progress reporter's lock, so a long retry budget there would stall every step
+ * that reports progress for the whole outage. Same length as the old fetch-retry budget. Its
+ * attempts keep the full 300 s timeout on purpose: a short one would abort a healthy multi-MB
+ * snapshot on a modest uplink on every tick, so the live run view would never update; and `main`
+ * gave the same snapshot undici's 300 s header timeout. A hung app can therefore hold the lock for
+ * up to one attempt timeout, as it could before #595.
  */
 const BEST_EFFORT_POLICY: RetryPolicy = {
     budgetMs: 9_000,
@@ -58,11 +67,11 @@ export const retryingFetch = {
      *   that did land is a second request, not the first one taking effect later.
      * - Anything else, every 4xx and a plain 500 among them, is returned at once.
      *
-     * The budget only decides whether another attempt starts; `budgetMs: 0` means no retries. The
-     * first attempt may wait `attemptTimeoutMs` for its response headers, whatever the budget, so a
-     * healthy slow request is never cut short by it. A retry may wait only for the lesser of that
-     * and the budget left, so retrying cannot run past the budget. The body is not bounded, so a
-     * download that started in time is not cut off. A caller's `init.signal` still aborts an
+     * The budget only decides whether another attempt starts; `budgetMs: 0` means no retries. Every
+     * attempt, a retry included, may wait `attemptTimeoutMs` for its response headers, so a healthy
+     * slow request is never cut short by the budget. An attempt that gets no answer in time ends the
+     * call with a `TimeoutError` `DOMException`, not undici's `fetch failed`. The body is not bounded,
+     * so a download that started in time is not cut off. A caller's `init.signal` still aborts an
      * attempt, and the wait between attempts, at once.
      *
      * Goes through the global `fetch`, so the SSRF guard's undici dispatcher and socket guard still
@@ -72,7 +81,7 @@ export const retryingFetch = {
     async fetch({ url, init, idempotent, policy = DEFAULT_POLICY }: RetryingFetchParams): Promise<Response> {
         const deadline = performance.now() + policy.budgetMs
         for (let attempt = 1; ; attempt++) {
-            const timeoutMs = attempt === 1 ? policy.attemptTimeoutMs : Math.min(policy.attemptTimeoutMs, deadline - performance.now())
+            const timeoutMs = Math.max(policy.attemptTimeoutMs, 0)
             const { response, error, timedOut } = await attemptOnce({ url, init, timeoutMs })
             // An attempt that got no answer in time may have landed, and it already used up what it
             // was allowed: it ends the call rather than being retried.
@@ -83,7 +92,13 @@ export const retryingFetch = {
             const failure = classifyFailure({ response, error })
             const retryable = failure === 'NOT_SENT' || (failure === 'MAYBE_SENT' && idempotent)
             const remainingMs = deadline - performance.now()
-            if (!retryable || remainingMs < MIN_ATTEMPT_WINDOW_MS) {
+            if (retryable && remainingMs >= MIN_ATTEMPT_WINDOW_MS) {
+                // Never past the point where another attempt may still start.
+                await sleep({ ms: Math.min(backoffDelayMs({ attempt, policy }), remainingMs - MIN_ATTEMPT_WINDOW_MS), signal: init.signal })
+            }
+            // Checked again after the sleep, which a busy event loop can overrun: past the budget, the
+            // last real failure is the answer, not a doomed attempt.
+            if (!retryable || deadline - performance.now() < MIN_ATTEMPT_WINDOW_MS) {
                 if (retryable) {
                     logGivingUp({ url, method: init.method, attempt, budgetMs: policy.budgetMs })
                 }
@@ -95,13 +110,11 @@ export const retryingFetch = {
             if (!isNil(response)) {
                 await tryCatch(async () => response.body?.cancel())
             }
-            // Half the remainder at most, so the last attempt still has time to get an answer.
-            await sleep({ ms: Math.min(backoffDelayMs({ attempt, policy }), remainingMs / 2), signal: init.signal })
         }
     },
 }
 
-// Below this much budget left, another attempt could not get an answer in time anyway.
+// Below this much budget left, no further attempt is started.
 const MIN_ATTEMPT_WINDOW_MS = 50
 
 const NOT_SENT_CODES: ReadonlySet<string> = new Set([
@@ -182,7 +195,7 @@ function collectCauses({ error, depth }: { error: unknown, depth: number }): Cau
 // would also cut off a body still being read, and it does not run on a test's fake time.
 async function attemptOnce({ url, init, timeoutMs }: AttemptOnceParams): Promise<AttemptResult> {
     const deadline = new AbortController()
-    const timer = setTimeout(() => deadline.abort(new DOMException(`No answer from the app within ${Math.round(timeoutMs)} ms`, 'TimeoutError')), Math.max(timeoutMs, 0))
+    const timer = setTimeout(() => deadline.abort(new DOMException(`No answer from the app within ${Math.round(timeoutMs)} ms`, 'TimeoutError')), timeoutMs)
     const signal = isNil(init.signal) ? deadline.signal : AbortSignal.any([deadline.signal, init.signal])
     const { data: response, error } = await tryCatch(() => fetch(url, { ...init, signal }))
     clearTimeout(timer)
