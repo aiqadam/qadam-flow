@@ -37,6 +37,16 @@ vi.mock('../../src/lib/config/logger', () => ({
     },
 }))
 
+const { prewarmMock } = vi.hoisted(() => ({ prewarmMock: vi.fn() }))
+
+vi.mock('../../src/lib/execute/sandbox-manager', async (importOriginal) => {
+    const real = await importOriginal<typeof import('../../src/lib/execute/sandbox-manager')>()
+    return {
+        ...real,
+        createSandboxManager: (params: Parameters<typeof real.createSandboxManager>[0]) => ({ ...real.createSandboxManager(params), prewarm: prewarmMock }),
+    }
+})
+
 import { worker } from '../../src/lib/worker'
 
 // Both defects in #222 meet here: a worker whose release differs from the app's never completes a
@@ -124,8 +134,10 @@ describe('version-skewed worker — #222', () => {
 
         expect(heartbeats[0].workerProps.version).toBe(workerVersion)
         expect(heartbeats[0].workerId).toBe(registrations[0].workerId)
-        // The gate itself must still hold: an idling skewed worker asks for no jobs.
+        // The gate itself must still hold: an idling skewed worker asks for no jobs, and so starts
+        // no sandbox for one either (#419).
         expect(pollCalls).toBe(0)
+        expect(prewarmMock).not.toHaveBeenCalled()
     }, 30_000)
 
     // The two constants live in different packages and nothing else connects them. If the pause

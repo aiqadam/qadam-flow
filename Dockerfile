@@ -109,6 +109,10 @@ ENV TURBO_API=$TURBO_API \
 # in standalone mode (no cloud registry).
 RUN --network=host npx turbo run build --filter=web --filter=@aiqadam/engine --filter=api --filter=worker --filter='@aiqadam/qadam-*'
 
+# Index of the bundled qadams' dist folders (packages/qadams/dist-index.json). Without it every
+# fresh engine process walks the whole qadam tree before its first step can load (#419).
+RUN bun packages/server/engine/src/scripts/write-qadam-dist-index.ts packages/qadams
+
 # Generate migration manifest (ordered list of migration names) for image-tag-based rollback
 RUN node -e "\
   const {getMigrations} = require('./packages/server/api/dist/src/app/database/postgres-connection');\
@@ -139,6 +143,9 @@ COPY --from=build /usr/src/app/LICENSE .
 
 # Copy workspace package.json files (needed for bun workspace resolution)
 COPY --from=build /usr/src/app/packages ./packages
+# The engine falls back to a tree walk without it, so a manifest lost on the way here would slow
+# every fresh engine without failing anything (#419).
+RUN test -s packages/qadams/dist-index.json
 
 # Copy built engine
 COPY --from=build /usr/src/app/dist/packages/engine/ ./dist/packages/engine/

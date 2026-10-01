@@ -328,6 +328,7 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
     activePollLoops++
 
     try {
+        await prewarmSlot({ apiClient, sbManager, generation, workerLog })
         await runPollLoop({ apiClient, sbManager, generation, workerLog })
     }
     finally {
@@ -335,8 +336,28 @@ async function pollAndExecute(apiClient: WorkerToApiContract, sbManager: Sandbox
     }
 }
 
+/**
+ * Starts this slot's sandbox before its first poll, so a job can never race the prewarm for the
+ * slot (#419). Skipped for a loop that is not going to poll — stopped, already superseded by a
+ * reconnect, or about to pause on a version mismatch — and abandoned on `stop()` like a poll is.
+ * An abandoned prewarm cannot leak an engine: once its slot's manager has been shut down, the
+ * manager starts no sandbox after the install and shuts down one that was already starting.
+ */
+async function prewarmSlot({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
+    if (!loopWillPoll(generation) || workerSettings.getSettings().APP_VERSION !== AP_VERSION) {
+        return
+    }
+    await raceStopRequest({ promise: sbManager.prewarm({ log: workerLog, apiClient }), whenStopped: undefined })
+}
+
+// A loop polls while the worker does and no reconnect has started a newer set of loops. The one
+// place both the poll loop and its prewarm read that, so they cannot drift apart.
+function loopWillPoll(generation: number): boolean {
+    return polling && connectionGeneration === generation
+}
+
 async function runPollLoop({ apiClient, sbManager, generation, workerLog }: RunPollLoopParams): Promise<void> {
-    while (polling && connectionGeneration === generation) {
+    while (loopWillPoll(generation)) {
         const { data: machineInfo, error: machineError } = await tryCatch(buildMachineInfo)
         if (machineError) {
             workerLog.error({ error: machineError }, 'Failed to build machine info')
