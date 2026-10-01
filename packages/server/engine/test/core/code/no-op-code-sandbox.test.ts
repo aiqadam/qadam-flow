@@ -33,16 +33,24 @@ const exitProcess = writeFixture({
     source: 'module.exports = { code: async () => { process.exit(3) } }',
 })
 
-// Succeeds, but leaves a timer that throws well after the reply has been sent.
+// The stray fixtures below fire on a flag that only a *later* step sets, never on a delay.
+// A fixed delay races the runner's own leftover check: under CPU load a 25 ms timer is
+// already due inside the leaky step's verdict window, so it fails the leaky step itself and
+// the test goes red on a correct runner (#596). `globalThis` survives between executions only
+// when they share a process, so the flag reaches a stray exactly when a later step was served
+// by the runner the leaky step left behind — the defect these tests exist to catch.
+const LATER_STEP_STARTED = 'globalThis.__laterStepStarted'
+
+// Succeeds, but leaves a timer that throws once a later step runs in the same process.
 const strayThrowLater = writeFixture({
     name: 'stray_throw_later',
-    source: 'module.exports = { code: async () => { setTimeout(() => { throw new Error("STRAY FROM EARLIER STEP") }, 25); return { pid: process.pid } } }',
+    source: `module.exports = { code: async () => { setInterval(() => { if (${LATER_STEP_STARTED}) throw new Error("STRAY FROM EARLIER STEP") }, 5); return { pid: process.pid } } }`,
 })
 
-// Succeeds, but leaves a timer that writes to stdout after the reply has been sent.
+// Succeeds, but leaves a timer that writes to stdout once a later step runs in the same process.
 const strayLogLater = writeFixture({
     name: 'stray_log_later',
-    source: 'module.exports = { code: async () => { setTimeout(() => console.log("STDOUT FROM EARLIER STEP"), 25); return { ok: true } } }',
+    source: `module.exports = { code: async () => { setInterval(() => { if (${LATER_STEP_STARTED}) console.log("STDOUT FROM EARLIER STEP") }, 5); return { ok: true } } }`,
 })
 
 // An unref'd timer keeps nothing alive, so `process.getActiveResourcesInfo()` cannot see
@@ -50,7 +58,7 @@ const strayLogLater = writeFixture({
 // idiomatic inside npm client libraries, so this reaches flows nobody wrote it in.
 const strayUnrefThrowLater = writeFixture({
     name: 'stray_unref_throw_later',
-    source: 'module.exports = { code: async () => { const t = setTimeout(() => { throw new Error("UNREF STRAY FROM EARLIER STEP") }, 25); t.unref(); return { pid: process.pid } } }',
+    source: `module.exports = { code: async () => { const t = setInterval(() => { if (${LATER_STEP_STARTED}) throw new Error("UNREF STRAY FROM EARLIER STEP") }, 5); t.unref(); return { pid: process.pid } } }`,
 })
 
 // A step that logs heavily, and one that opens a handle and closes it properly, are both
@@ -65,14 +73,17 @@ const opensAndClosesServer = writeFixture({
     source: 'module.exports = { code: async () => { const s = require("net").createServer(); await new Promise(r => s.listen(0, r)); await new Promise(r => s.close(r)); return { pid: process.pid } } }',
 })
 
+// The 200 ms wait is not a latency budget: a 5 ms stray interval rescheduled before the flag
+// was set expires before a 200 ms timer set after it, so the timers phase runs the stray
+// first however late it runs.
 const slowThenFail = writeFixture({
     name: 'slow_then_fail',
-    source: 'module.exports = { code: async () => { await new Promise(r => setTimeout(r, 200)); throw new Error("own failure") } }',
+    source: `module.exports = { code: async () => { ${LATER_STEP_STARTED} = true; await new Promise(r => setTimeout(r, 200)); throw new Error("own failure") } }`,
 })
 
 const slowAndClean = writeFixture({
     name: 'slow_and_clean',
-    source: 'module.exports = { code: async () => { await new Promise(r => setTimeout(r, 200)); return { clean: true } } }',
+    source: `module.exports = { code: async () => { ${LATER_STEP_STARTED} = true; await new Promise(r => setTimeout(r, 200)); return { clean: true } } }`,
 })
 
 // Forges the reply the runner uses to announce it is finished, then stays alive.
