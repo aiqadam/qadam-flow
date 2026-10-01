@@ -1,4 +1,4 @@
-import { createRpcClient, FlowRunStatus, RunEnvironment } from '@aiqadam/shared'
+import { FlowRunStatus, RunEnvironment } from '@aiqadam/shared'
 import type { WorkerToApiContract } from '@aiqadam/shared'
 import pino from 'pino'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import { engineRunScope } from '../../../src/lib/execute/engine-run-scope'
 import { givenUpGuard, JobGivenUpError } from '../../../src/lib/execute/given-up-guard'
 import type { SandboxJobContext, SandboxManager } from '../../../src/lib/execute/sandbox-manager'
 import type { Sandbox } from '../../../src/lib/sandbox/types'
+import { inProcessApiClient } from '../../fixtures/in-process-api-client'
 
 const log = pino({ level: 'silent' })
 
@@ -17,7 +18,7 @@ describe('givenUpGuard', () => {
     describe('apiClient', () => {
         it('passes calls through while the job is still this worker\'s', async () => {
             const uploadRunLog = vi.fn().mockResolvedValue(undefined)
-            const client = givenUpGuard.apiClient({ apiClient: apiClientWith({ uploadRunLog }), isGivenUp: () => false })
+            const client = givenUpGuard.apiClient({ apiClient: inProcessApiClient.create({ uploadRunLog }), isGivenUp: () => false })
 
             await client.uploadRunLog(runLog())
 
@@ -27,7 +28,7 @@ describe('givenUpGuard', () => {
         it('sends nothing once the job is given up', async () => {
             let givenUp = false
             const uploadRunLog = vi.fn().mockResolvedValue(undefined)
-            const client = givenUpGuard.apiClient({ apiClient: apiClientWith({ uploadRunLog }), isGivenUp: () => givenUp })
+            const client = givenUpGuard.apiClient({ apiClient: inProcessApiClient.create({ uploadRunLog }), isGivenUp: () => givenUp })
             givenUp = true
 
             await expect(client.uploadRunLog(runLog())).rejects.toBeInstanceOf(JobGivenUpError)
@@ -40,7 +41,7 @@ describe('givenUpGuard', () => {
             const manager = fakeManager()
             const guarded = givenUpGuard.sandboxManager({ sandboxManager: manager, isGivenUp: () => true })
 
-            expect(() => guarded.acquire({ log, apiClient: apiClientWith({}), jobContext: jobContext() })).toThrow(JobGivenUpError)
+            expect(() => guarded.acquire({ log, apiClient: inProcessApiClient.create({}), jobContext: jobContext() })).toThrow(JobGivenUpError)
             expect(manager.acquire).not.toHaveBeenCalled()
         })
 
@@ -51,7 +52,7 @@ describe('givenUpGuard', () => {
             const manager = fakeManager()
             const guarded = givenUpGuard.sandboxManager({ sandboxManager: manager, isGivenUp: () => givenUp })
 
-            guarded.acquire({ log, apiClient: apiClientWith({}), jobContext: jobContext() })
+            guarded.acquire({ log, apiClient: inProcessApiClient.create({}), jobContext: jobContext() })
             const passed: SandboxJobContext = manager.acquire.mock.calls[0][0].jobContext
             expect(passed).toMatchObject(jobContext())
             expect(passed.isGivenUp?.()).toBe(false)
@@ -88,27 +89,6 @@ function jobContext(): SandboxJobContext {
 
 function runLog(): Parameters<WorkerToApiContract['uploadRunLog']>[0] {
     return { runId: 'run-1', projectId: 'proj-1', status: FlowRunStatus.INTERNAL_ERROR }
-}
-
-// The real RPC client over a socket that answers in-process: typed as the contract, no cast.
-function apiClientWith(methods: Partial<Record<keyof WorkerToApiContract, (input: unknown) => unknown>>): WorkerToApiContract {
-    return createRpcClient<WorkerToApiContract>({
-        emit: () => undefined,
-        on: () => undefined,
-        timeout: () => ({
-            emitWithAck: async (_event: string, message: unknown) => {
-                if (!isRpcMessage(message)) {
-                    throw new Error('not an RPC message')
-                }
-                const method = Object.entries(methods).find(([name]) => name === message.method)?.[1]
-                return method?.(message.payload)
-            },
-        }),
-    }, 1_000)
-}
-
-function isRpcMessage(value: unknown): value is { method: string, payload: unknown } {
-    return typeof value === 'object' && value !== null && 'method' in value && typeof value.method === 'string'
 }
 
 function fakeManager(): SandboxManager & { acquire: ReturnType<typeof vi.fn> } {

@@ -2,6 +2,7 @@ import { EngineResponseStatus } from '@aiqadam/shared'
 import type { WorkerToApiContract } from '@aiqadam/shared'
 import { describe, expect, it, vi } from 'vitest'
 import { reconnectSafeApiClient } from '../../src/lib/reconnect-safe-api-client'
+import { inProcessApiClient } from '../fixtures/in-process-api-client'
 
 /**
  * socket.io fails every acknowledgement still pending when the connection drops. A reconnect-safe
@@ -17,7 +18,7 @@ describe('reconnectSafeApiClient', () => {
                 throw new Error('RPC [completeJob] failed (timeout: 60000ms): socket has been disconnected')
             })
             .mockResolvedValueOnce(undefined)
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ completeJob }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ completeJob }), connection })
 
         await client.completeJob(completeJobInput())
 
@@ -28,7 +29,7 @@ describe('reconnectSafeApiClient', () => {
     it('does not resend a call that failed on a live connection', async () => {
         const connection = fakeConnection()
         const completeJob = vi.fn().mockRejectedValue(new Error('RPC [completeJob] failed (timeout: 60000ms): operation has timed out'))
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ completeJob }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ completeJob }), connection })
 
         await expect(client.completeJob(completeJobInput())).rejects.toThrow(/timed out/)
         expect(completeJob).toHaveBeenCalledTimes(1)
@@ -40,7 +41,7 @@ describe('reconnectSafeApiClient', () => {
             connection.disconnect()
             throw new Error('socket has been disconnected')
         })
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ startInlineFlowRun }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ startInlineFlowRun }), connection })
 
         await expect(client.startInlineFlowRun({} as never)).rejects.toThrow(/disconnected/)
         expect(startInlineFlowRun).toHaveBeenCalledTimes(1)
@@ -53,7 +54,7 @@ describe('reconnectSafeApiClient', () => {
             connection.disconnect()
             throw new Error('socket has been disconnected')
         })
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ updateRunProgress }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ updateRunProgress }), connection })
 
         await expect(client.updateRunProgress({} as never)).rejects.toThrow(/disconnected/)
         expect(updateRunProgress).toHaveBeenCalledTimes(reconnectSafeApiClient.maxAttempts)
@@ -67,7 +68,7 @@ describe('reconnectSafeApiClient', () => {
             connection.disconnect()
             throw new Error('socket has been disconnected')
         })
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ extendLock }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ extendLock }), connection })
 
         await expect(client.extendLock({ jobId: 'job-1', token: 'token-1', queueName: 'workerJobs' })).rejects.toThrow(/disconnected/)
         expect(extendLock).toHaveBeenCalledTimes(1)
@@ -79,7 +80,7 @@ describe('reconnectSafeApiClient', () => {
         const connection = fakeConnection()
         const updateRunProgress = vi.fn().mockResolvedValue(undefined)
         const getFlowVersion = vi.fn().mockResolvedValue({ id: 'fv-1' })
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ updateRunProgress, getFlowVersion }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ updateRunProgress, getFlowVersion }), connection })
         connection.drop()
 
         const progress = client.updateRunProgress({} as never)
@@ -103,7 +104,7 @@ describe('reconnectSafeApiClient', () => {
                 throw new Error('RPC [completeJob] failed (timeout: 60000ms): socket has been disconnected')
             })
             .mockResolvedValueOnce(undefined)
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ completeJob }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ completeJob }), connection })
 
         const completion = client.completeJob(completeJobInput())
         await flushMicrotasks()
@@ -119,7 +120,7 @@ describe('reconnectSafeApiClient', () => {
         try {
             const connection = fakeConnection()
             const updateRunProgress = vi.fn().mockResolvedValue(undefined)
-            const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ updateRunProgress }), connection })
+            const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ updateRunProgress }), connection })
             connection.drop()
 
             const progress = client.updateRunProgress({} as never)
@@ -137,7 +138,7 @@ describe('reconnectSafeApiClient', () => {
     it('returns what the API answered', async () => {
         const connection = fakeConnection()
         const getFlowVersion = vi.fn().mockResolvedValue({ id: 'fv-1' })
-        const client = reconnectSafeApiClient.wrap({ apiClient: fakeApiClient({ getFlowVersion }), connection })
+        const client = reconnectSafeApiClient.wrap({ apiClient: inProcessApiClient.create({ getFlowVersion }), connection })
 
         await expect(client.getFlowVersion({} as never)).resolves.toEqual({ id: 'fv-1' })
     })
@@ -179,10 +180,6 @@ async function flushMicrotasks(): Promise<void> {
     for (let i = 0; i < 10; i++) {
         await Promise.resolve()
     }
-}
-
-function fakeApiClient(methods: Partial<Record<keyof WorkerToApiContract, unknown>>): WorkerToApiContract {
-    return methods as unknown as WorkerToApiContract
 }
 
 function completeJobInput(): Parameters<WorkerToApiContract['completeJob']>[0] {
