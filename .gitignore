@@ -111,3 +111,5 @@ dump.rdb
 
 # Written by the Dockerfile (#419); a copy in a dev tree would go stale on the next qadam build.
 packages/qadams/dist-index.json
+# Written by the Dockerfile (#598), for the same reason.
+packages/qadams/bundled-qadams-metadata.json
