@@ -123,6 +123,8 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                 if (sizeOfValue > STORE_VALUE_MAX_SIZE) {
                     throw new StorageLimitError(request.key, STORE_VALUE_MAX_SIZE)
                 }
+                // Not idempotent either, though it is an upsert: a replay of a put that landed runs after
+                // whatever another run wrote in between, and puts this value back over it.
                 const response = await retryingFetch.fetch({
                     url,
                     init: {
@@ -133,7 +135,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                         },
                         body: JSON.stringify(request),
                     },
-                    idempotent: true,
+                    idempotent: false,
                 })
 
                 if (!response.ok) {
@@ -162,6 +164,8 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
             const url = buildUrl(apiUrl, request.key)
 
             const { data: storeEntry, error: storeEntryError } = await utils.tryCatchAndThrowOnEngineError((async () => {
+                // Not idempotent: a replay of a delete that landed would remove whatever was written
+                // in between, such as the entry another run's putIfAbsent just took as its lock.
                 const response = await retryingFetch.fetch({
                     url,
                     init: {
@@ -170,7 +174,7 @@ function createStoreClient({ engineToken, apiUrl }: CreateStoreClientParams): St
                             Authorization: `Bearer ${engineToken}`,
                         },
                     },
-                    idempotent: true,
+                    idempotent: false,
                 })
 
                 if (!response.ok) {

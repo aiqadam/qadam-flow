@@ -1,12 +1,13 @@
 import { SSRFBlockedError } from '@aiqadam/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { RetryPolicy, retryingFetch } from '../src/lib/retrying-fetch'
+import { retryingFetch, RetryPolicy } from '../src/lib/retrying-fetch'
 
 const FAST: RetryPolicy = { budgetMs: 1_000, initialDelayMs: 5, maxDelayMs: 20 }
 const URL_WITH_TOKEN = 'http://app/v1/files/f1?token=secret-engine-token'
 
 describe('retryingFetch', () => {
     afterEach(() => {
+        vi.useRealTimers()
         vi.restoreAllMocks()
     })
 
@@ -80,7 +81,50 @@ describe('retryingFetch', () => {
         expect(line).toContain('PUT /v1/files/f1')
         expect(line).not.toContain('secret-engine-token')
     })
+
+    it('stops waiting between attempts as soon as the caller aborts', async () => {
+        const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValue(fetchFailed({ code: 'ECONNREFUSED' }))
+        const caller = new AbortController()
+        setTimeout(() => caller.abort(new Error('caller gave up')), 50)
+
+        const startedAt = Date.now()
+        const result = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { signal: caller.signal }, idempotent: true, policy: { budgetMs: 10_000, initialDelayMs: 2_000, maxDelayMs: 2_000 } })
+
+        await expect(result).rejects.toThrow('caller gave up')
+        expect(Date.now() - startedAt).toBeLessThan(1_000)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('passes a caller abort during an attempt straight through, as the caller\'s own error', async () => {
+        vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => rejectWhenAborted(init?.signal))
+        const caller = new AbortController()
+        setTimeout(() => caller.abort(new Error('caller gave up')), 20)
+
+        await expect(retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { signal: caller.signal }, idempotent: true, policy: FAST })).rejects.toThrow('caller gave up')
+    })
+
+    it('bounds an attempt that never answers by the full default budget, on fake time', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => rejectWhenAborted(init?.signal))
+        const startedAt = performance.now()
+
+        const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: true }).then(() => 'resolved', (e: unknown) => e)
+        await vi.advanceTimersByTimeAsync(60_000)
+        const error = await outcome
+        vi.useRealTimers()
+
+        expect(error instanceof DOMException ? error.name : error).toBe('TimeoutError')
+        expect(performance.now() - startedAt).toBeLessThanOrEqual(60_000)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
+    })
 })
+
+function rejectWhenAborted(signal: AbortSignal | null | undefined): Promise<Response> {
+    return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+    })
+}
 
 function fetchFailed({ code }: { code: string }): Error {
     return new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) })

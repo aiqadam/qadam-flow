@@ -128,8 +128,9 @@ describe('engineFileApi upload across an app outage', () => {
         expect(result.status).toBe('rejected')
         expect(result.status === 'rejected' ? String(result.reason) : '').toContain('fetch failed')
         const elapsed = performance.now() - startedAt
-        expect(elapsed).toBeGreaterThanOrEqual(60_000)
-        expect(elapsed).toBeLessThan(61_000)
+        // It stops once too little budget is left for another attempt to get an answer.
+        expect(elapsed).toBeGreaterThanOrEqual(59_900)
+        expect(elapsed).toBeLessThanOrEqual(60_000)
     })
 
     it('retries a 502/503/504 from in front of the app', async () => {
@@ -176,7 +177,7 @@ describe('engineFileApi against a real app that is down, then back', () => {
             res.setHeader('content-type', 'application/json')
             res.end(JSON.stringify({ readUrl: 'http://x/y' }))
         })
-        const listening = delay(400).then(() => listen({ server: server!, port }))
+        const listening = delay(400).then(() => listen({ server: server ?? createServer(), port }))
 
         const startedAt = Date.now()
         const result = await engineFileApi.upload({ ...UPLOAD, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: FAST })
@@ -199,7 +200,7 @@ describe('engineFileApi against a real app that is down, then back', () => {
 
         expect(String(error)).toContain('fetch failed')
         const elapsed = Date.now() - startedAt
-        expect(elapsed).toBeGreaterThanOrEqual(300)
+        expect(elapsed).toBeGreaterThanOrEqual(250)
         expect(elapsed).toBeLessThan(2_500)
     })
 
@@ -225,10 +226,58 @@ describe('engineFileApi against a real app that is down, then back', () => {
         expect(Date.now() - startedAt).toBeLessThan(2_500)
     })
 
+    it('retries the signed S3 PUT the app redirects to', async () => {
+        const s3Statuses = [503, 502]
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input) => {
+            if (String(input).startsWith('http://localhost:3000/')) {
+                return new Response(null, { status: 307, headers: { 'location': 'https://s3.example/bucket/key?sig=1', 'x-ap-file-read-url': 'http://x/y' } })
+            }
+            const status = s3Statuses.shift()
+            return new Response(status === undefined ? '' : 'busy', { status: status ?? 200 })
+        })
+
+        const result = await engineFileApi.upload({ ...UPLOAD, retryPolicy: FAST })
+
+        expect(result.readUrl).toBe('http://x/y')
+        expect(fetchSpy.mock.calls.map(([input]) => new URL(String(input)).host)).toEqual(['localhost:3000', 's3.example', 's3.example', 's3.example'])
+    })
+
+    it('stops an attempt the app accepted but never answers once the budget is spent', async () => {
+        const port = await reservePort()
+        let requests = 0
+        server = createServer(() => {
+            requests += 1
+        })
+        await listen({ server, port })
+
+        const startedAt = Date.now()
+        const error = await engineFileApi.upload({ ...UPLOAD, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, budgetMs: 400 } }).catch((e: unknown) => e)
+        server.closeAllConnections()
+
+        expect(error).toBeInstanceOf(DOMException)
+        expect(error instanceof DOMException ? error.name : '').toBe('TimeoutError')
+        expect(Date.now() - startedAt).toBeLessThan(2_000)
+        expect(requests).toBe(1)
+    })
+
+    it('does not cut off a body that is still arriving when the budget ends', async () => {
+        const port = await reservePort()
+        server = createServer((_req, res) => {
+            res.writeHead(200)
+            res.write('first-')
+            setTimeout(() => res.end('second'), 400)
+        })
+        await listen({ server, port })
+
+        const bytes = await engineFileApi.download({ ...PARAMS, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, budgetMs: 100 } })
+
+        expect(new TextDecoder().decode(bytes)).toBe('first-second')
+    })
+
     it('downloads once the app is back', async () => {
         const port = await reservePort()
         server = createServer((_req, res) => res.end('payload'))
-        const listening = delay(300).then(() => listen({ server: server!, port }))
+        const listening = delay(300).then(() => listen({ server: server ?? createServer(), port }))
 
         const startedAt = Date.now()
         const bytes = await engineFileApi.download({ ...PARAMS, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: FAST })

@@ -1,16 +1,16 @@
 import { isNil, tryCatch } from '@aiqadam/shared'
 
 /**
- * How long an engine call to the app keeps retrying while the app is unreachable. It matches the
- * worker's own budget for the same outage, so a run survives an app restart on both of the legs it
- * reports through: these HTTP calls, and the RPCs the worker forwards, which wait up to
- * `READY_TIMEOUT_MS` (60 s, `packages/server/worker/src/lib/reconnect-safe-api-client.ts`) for the
- * reconnected API and are bounded by the engine's own 60 s RPC timeout to the worker
- * (`worker-socket.ts`). It is also the longest wait that cannot outlive the job: the worker trusts a
- * lease for 90 s from its last renewal and renews every 30 s (#585), so during an outage it may give
- * the job up, and kill this engine, as early as 60 s in. Before #595 this was fetch-retry's 3 retries
- * 3 s apart, about 9 s, so a routine app recreate failed every run that reached its final log upload
- * during it.
+ * How long an engine call to the app keeps retrying while the app is unreachable, from its first
+ * attempt: no retry starts, and no attempt waits for an answer, after it. It matches the worker's own
+ * budget for the same outage, so a run survives an app restart on both of the legs it reports
+ * through: these HTTP calls, and the RPCs the worker forwards, which wait up to `READY_TIMEOUT_MS`
+ * (60 s, `packages/server/worker/src/lib/reconnect-safe-api-client.ts`) for the reconnected API and
+ * are bounded by the engine's own 60 s RPC timeout to the worker (`worker-socket.ts`). It is also
+ * about as long as the job is sure to live: the worker trusts a lease for 90 s from its last renewal
+ * and renews every 30 s (#585), so during an outage it may give the job up, and kill this engine,
+ * from 60 s in. Before #595 this was fetch-retry's 3 retries 3 s apart, about 9 s, so a routine app
+ * recreate failed every run that reached its final log upload during it.
  */
 const ENGINE_API_RETRY_BUDGET_MS = 60_000
 
@@ -38,27 +38,31 @@ export const retryingFetch = {
      * `fetch` that retries a transient failure with backoff until `policy.budgetMs` has passed, then
      * returns the last response or throws the last error, exactly as a plain `fetch` would have.
      *
-     * - A connection that never opened (refused, DNS failure, unreachable) is retried for every
-     *   request: the app never saw it.
+     * - A connection that never opened (refused, DNS failure, unreachable, or an egress proxy that
+     *   could not open its tunnel to the app) is retried for every request: the app never saw it.
      * - A failure after the request may have reached the app (a reset socket, a 502/503/504 from
-     *   whatever is in front of it) is retried only when `idempotent` is set, because a replay of a
-     *   request that did land must not change the result.
+     *   whatever is in front of it) is retried only when `idempotent` is set: a replay of a request
+     *   that did land is a second request, not the first one taking effect later.
      * - Anything else, every 4xx and a plain 500 among them, is returned at once.
      *
+     * Each attempt may wait for its response headers only until the budget ends; the body is not
+     * bounded, so a large download that started in time is not cut off. A caller's `init.signal`
+     * still aborts an attempt, and the wait between attempts, at once.
+     *
      * Goes through the global `fetch`, so the SSRF guard's undici dispatcher and socket guard still
-     * see every attempt. A blocked address fails with `SSRFBlockedError`, which carries no socket
-     * error code and is therefore never retried.
+     * see every attempt. A blocked address fails with `SSRFBlockedError` (or the egress proxy's 403),
+     * which is never retried.
      */
     async fetch({ url, init, idempotent, policy = DEFAULT_POLICY }: RetryingFetchParams): Promise<Response> {
-        const startedAt = performance.now()
+        const deadline = performance.now() + policy.budgetMs
         for (let attempt = 1; ; attempt++) {
-            const { data: response, error } = await tryCatch(() => fetch(url, init))
-            const failure = classifyFailure({ response, error })
+            const { response, error, timedOut } = await attemptOnce({ url, init, timeoutMs: deadline - performance.now() })
+            const failure = timedOut ? 'NONE' : classifyFailure({ response, error })
             const retryable = failure === 'NOT_SENT' || (failure === 'MAYBE_SENT' && idempotent)
-            const remainingMs = policy.budgetMs - (performance.now() - startedAt)
-            if (!retryable || remainingMs <= 0) {
-                if (retryable) {
-                    logGivingUp({ url, method: init.method, attempt, elapsedMs: performance.now() - startedAt })
+            const remainingMs = deadline - performance.now()
+            if (!retryable || remainingMs < MIN_ATTEMPT_WINDOW_MS) {
+                if (retryable || timedOut) {
+                    logGivingUp({ url, method: init.method, attempt, budgetMs: policy.budgetMs })
                 }
                 if (isNil(response)) {
                     throw error
@@ -68,10 +72,14 @@ export const retryingFetch = {
             if (!isNil(response)) {
                 await tryCatch(async () => response.body?.cancel())
             }
-            await sleep(Math.min(backoffDelayMs({ attempt, policy }), remainingMs))
+            // Half the remainder at most, so the last attempt still has time to get an answer.
+            await sleep({ ms: Math.min(backoffDelayMs({ attempt, policy }), remainingMs / 2), signal: init.signal })
         }
     },
 }
+
+// Below this much budget left, another attempt could not get an answer in time anyway.
+const MIN_ATTEMPT_WINDOW_MS = 50
 
 const NOT_SENT_CODES: ReadonlySet<string> = new Set([
     'ECONNREFUSED',
@@ -99,35 +107,83 @@ const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504])
 // multi-address connect (happy eyeballs) fails with an AggregateError whose members carry it.
 const MAX_CAUSE_DEPTH = 4
 
+// With `AP_NETWORK_MODE=STRICT` every request goes through the worker's egress proxy as a CONNECT
+// tunnel (undici `ProxyAgent`, `network/proxy-dispatcher.ts`). When the proxy cannot reach the app
+// it answers the CONNECT itself, and undici reports only that status, in this message, as a
+// `RequestAbortedError` (`UND_ERR_ABORTED`); there is no status field to read instead. The request
+// never left the proxy, so a 5xx there (proxy-chain answers 500 when the app's name does not resolve,
+// 59x for its own upstream errors) is a connection that never opened. Anything else, the 403 the
+// proxy sends for a blocked address above all, fails at once. A caller's own abort is a DOMException
+// with no code and no such message, so it is never mistaken for this. Pinned against real undici
+// and proxy-chain in `test/retrying-fetch-egress-proxy.test.ts`.
+const PROXY_TUNNEL_REFUSED = /^Proxy response \((\d{3})\) !== 200 when HTTP Tunneling$/
+
 function classifyFailure({ response, error }: ClassifyFailureParams): Failure {
     if (!isNil(response)) {
         return RETRYABLE_STATUSES.has(response.status) ? 'MAYBE_SENT' : 'NONE'
     }
-    const codes = collectErrorCodes({ error, depth: 0 })
-    if (codes.some((code) => NOT_SENT_CODES.has(code))) {
+    const causes = collectCauses({ error, depth: 0 })
+    if (causes.some(({ code, message }) => NOT_SENT_CODES.has(code ?? '') || isProxyTunnelServerError({ code, message }))) {
         return 'NOT_SENT'
     }
-    if (codes.some((code) => MAYBE_SENT_CODES.has(code))) {
+    if (causes.some(({ code }) => MAYBE_SENT_CODES.has(code ?? ''))) {
         return 'MAYBE_SENT'
     }
     return 'NONE'
 }
 
-function collectErrorCodes({ error, depth }: { error: unknown, depth: number }): string[] {
+function isProxyTunnelServerError({ code, message }: Cause): boolean {
+    if (code !== 'UND_ERR_ABORTED' || isNil(message)) {
+        return false
+    }
+    const status = PROXY_TUNNEL_REFUSED.exec(message)?.[1]
+    return !isNil(status) && status.startsWith('5')
+}
+
+function collectCauses({ error, depth }: { error: unknown, depth: number }): Cause[] {
     if (depth > MAX_CAUSE_DEPTH || typeof error !== 'object' || isNil(error)) {
         return []
     }
-    const own = 'code' in error && typeof error.code === 'string' ? [error.code] : []
-    const fromCause = 'cause' in error ? collectErrorCodes({ error: error.cause, depth: depth + 1 }) : []
+    const own: Cause = {
+        code: 'code' in error && typeof error.code === 'string' ? error.code : undefined,
+        message: 'message' in error && typeof error.message === 'string' ? error.message : undefined,
+    }
+    const fromCause = 'cause' in error ? collectCauses({ error: error.cause, depth: depth + 1 }) : []
     const fromMembers = error instanceof AggregateError
-        ? error.errors.flatMap((member: unknown) => collectErrorCodes({ error: member, depth: depth + 1 }))
+        ? error.errors.flatMap((member: unknown) => collectCauses({ error: member, depth: depth + 1 }))
         : []
-    return [...own, ...fromCause, ...fromMembers]
+    return [own, ...fromCause, ...fromMembers]
+}
+
+// The deadline is a plain timer cleared once the headers are in, not `AbortSignal.timeout`: that
+// would also cut off a body still being read, and it does not run on a test's fake time.
+async function attemptOnce({ url, init, timeoutMs }: AttemptOnceParams): Promise<AttemptResult> {
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(new DOMException('No answer from the app within the retry budget', 'TimeoutError')), Math.max(timeoutMs, 0))
+    const signal = isNil(init.signal) ? deadline.signal : AbortSignal.any([deadline.signal, init.signal])
+    const { data: response, error } = await tryCatch(() => fetch(url, { ...init, signal }))
+    clearTimeout(timer)
+    const callerAborted = init.signal?.aborted ?? false
+    return { response, error, timedOut: deadline.signal.aborted && !callerAborted }
 }
 
 // The global timer rather than `timers/promises`, so a test can run a whole 60 s budget on fake time.
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep({ ms, signal }: SleepParams): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(signal.reason)
+            return
+        }
+        const onAbort = (): void => {
+            clearTimeout(timer)
+            reject(signal?.reason)
+        }
+        const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort)
+            resolve()
+        }, ms)
+        signal?.addEventListener('abort', onAbort, { once: true })
+    })
 }
 
 // Jittered, so the engines of every slot that lost the app at the same moment do not all knock on
@@ -138,9 +194,9 @@ function backoffDelayMs({ attempt, policy }: { attempt: number, policy: RetryPol
 }
 
 // The query string is left out on purpose: the file API carries the engine token there.
-function logGivingUp({ url, method, attempt, elapsedMs }: LogGivingUpParams): void {
+function logGivingUp({ url, method, attempt, budgetMs }: LogGivingUpParams): void {
     const { pathname } = new URL(url.toString())
-    console.warn(`[retryingFetch] ${method ?? 'GET'} ${pathname}: still failing after ${attempt} attempts over ${Math.round(elapsedMs)} ms, giving up`)
+    console.warn(`[retryingFetch] ${method ?? 'GET'} ${pathname}: still failing after ${attempt} attempts and the ${budgetMs} ms retry budget, giving up`)
 }
 
 export type RetryPolicy = {
@@ -163,9 +219,31 @@ type ClassifyFailureParams = {
     error: unknown
 }
 
+type Cause = {
+    code: string | undefined
+    message: string | undefined
+}
+
+type AttemptOnceParams = {
+    url: string | URL
+    init: RequestInit
+    timeoutMs: number
+}
+
+type AttemptResult = {
+    response: Response | null
+    error: unknown
+    timedOut: boolean
+}
+
+type SleepParams = {
+    ms: number
+    signal: AbortSignal | null | undefined
+}
+
 type LogGivingUpParams = {
     url: string | URL
     method: string | undefined
     attempt: number
-    elapsedMs: number
+    budgetMs: number
 }
