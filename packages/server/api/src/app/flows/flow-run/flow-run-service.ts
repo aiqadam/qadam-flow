@@ -268,6 +268,10 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                     status: FlowRunStatus.QUEUED,
                     startTime: apDayjs().toISOString(),
                     finishTime: null,
+                    // The metadata update only ever sets `failedStep` (an absent one means "leave it"),
+                    // so an attempt that succeeds could never clear the previous attempt's failure (#599).
+                    // Raw SQL because `FlowRun.failedStep` is typed `FailedStep | undefined`, not nullable.
+                    failedStep: () => 'NULL',
                 })
                 const updatedFlowRun = await findFlowRunOrThrow(oldFlowRun.id)
                 await flowRunSideEffects(log).onRetry(updatedFlowRun)
