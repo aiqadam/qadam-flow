@@ -14,6 +14,8 @@ const REDIS_FAILED_JOB_RETENTION_DAYS = apDayjsDuration(system.getNumberOrThrow(
 const REDIS_FAILED_JOB_RETRY_COUNT = system.getNumberOrThrow(AppSystemProp.REDIS_FAILED_JOB_RETENTION_MAX_COUNT)
 
 const dedicatedWorkersQueues = new Map<string, Queue>()
+// A job in one of these states will run, so an add under its id would be ignored.
+const IN_FLIGHT_JOB_STATES: ReadonlySet<string> = new Set(['waiting', 'prioritized', 'active', 'waiting-children'])
 
 export const jobQueue = (log: FastifyBaseLogger) => ({
     async init(): Promise<void> {
@@ -86,7 +88,7 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
         }, '[jobQueue#removeOneTimeJob] job not found in queue')
     },
 
-    async removeFinishedOneTimeJob({ jobId, platformId }: { jobId: ApId, platformId: string | null }): Promise<RemoveFinishedOneTimeJobResult> {
+    async removeFinishedOneTimeJob({ jobId, platformId, replaceDelayed }: RemoveFinishedOneTimeJobParams): Promise<RemoveFinishedOneTimeJobResult> {
         const queueName = await getQueueName(platformId, log)
         const queue = await ensureQueueExists({ log, queueName })
         const job = await queue.getJob(jobId)
@@ -94,10 +96,13 @@ export const jobQueue = (log: FastifyBaseLogger) => ({
             return { alreadyInFlight: false }
         }
         const state = await job.getState()
-        if (state !== 'failed' && state !== 'completed') {
-            // An add under this id would be ignored: the job holding it is the one that will run.
+        if (IN_FLIGHT_JOB_STATES.has(state) || (state === 'delayed' && !replaceDelayed)) {
             log.info({ jobId, queueName, state }, '[jobQueue#removeFinishedOneTimeJob] the run already has a job in flight; leaving it')
             return { alreadyInFlight: true }
+        }
+        if (state !== 'failed' && state !== 'completed' && state !== 'delayed') {
+            // 'unknown': the job went away between the two reads, so the id is free already.
+            return { alreadyInFlight: false }
         }
         const { error: removeError } = await tryCatch(() => job.remove())
         if (!isNil(removeError)) {
@@ -218,6 +223,13 @@ type RepeatingJobAddParams = BaseAddParams<PollingJobData | RenewWebhookJobData,
     scheduleOptions: ScheduleOptions
 }
 type OneTimeJobAddParams = BaseAddParams<ExecuteFlowJobData | WebhookJobData | UserInteractionJobData | ExecuteChatAgentJobData, JobType.ONE_TIME>
+
+type RemoveFinishedOneTimeJobParams = {
+    jobId: ApId
+    platformId: string | null
+    // Remove a `delayed` job too, so it is replaced rather than left to run instead.
+    replaceDelayed: boolean
+}
 
 type RemoveFinishedOneTimeJobResult = {
     alreadyInFlight: boolean

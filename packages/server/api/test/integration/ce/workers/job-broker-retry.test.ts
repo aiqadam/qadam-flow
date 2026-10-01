@@ -107,7 +107,7 @@ describe('Job broker retry by failure class (#584)', () => {
         const flowRun = createMockFlowRun({ projectId: ctx.project.id, flowId: flow.id, flowVersionId: flowVersion.id, status: FlowRunStatus.INTERNAL_ERROR, environment: RunEnvironment.TESTING })
         await db.save('flow_run', flowRun)
 
-        await enqueueExecuteFlowJob({ runId: flowRun.id, projectId: ctx.project.id, platformId: ctx.platform.id, flowId: flow.id, flowVersionId: flowVersion.id })
+        await enqueueExecuteFlowJob({ run: { runId: flowRun.id, projectId: ctx.project.id, platformId: ctx.platform.id, flowId: flow.id, flowVersionId: flowVersion.id } })
         const polled = await jobBroker(app.log).poll()
         await jobBroker(app.log).completeJob({ jobId: flowRun.id, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
         expect(await (await queue.getJob(flowRun.id))!.getState()).toBe('failed')
@@ -127,7 +127,7 @@ describe('Job broker retry by failure class (#584)', () => {
         const jobId = await enqueueExecuteFlowJob()
         const polled = await jobBroker(app.log).poll()
         try {
-            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null })).resolves.toEqual({ alreadyInFlight: true })
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: true })).resolves.toEqual({ alreadyInFlight: true })
             expect(await (await queue.getJob(jobId))!.getState()).toBe('active')
         }
         finally {
@@ -138,21 +138,21 @@ describe('Job broker retry by failure class (#584)', () => {
     it('leaves a run alone that a concurrent retry re-enqueued after this one read the finished job', async () => {
         const { platformId, projectId } = await saveNewProject()
         const run = { runId: apId(), projectId, platformId, flowId: apId(), flowVersionId: apId() }
-        await enqueueExecuteFlowJob(run)
+        await enqueueExecuteFlowJob({ run })
         const polled = await jobBroker(app.log).poll()
         await jobBroker(app.log).completeJob({ jobId: run.runId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
 
         const winner = { token: '', queueName: '' }
         vi.spyOn(Job.prototype, 'getState').mockImplementationOnce(async () => {
             await (await queue.getJob(run.runId))!.remove()
-            await enqueueExecuteFlowJob(run)
+            await enqueueExecuteFlowJob({ run })
             const picked = await jobBroker(app.log).poll()
             winner.token = picked!.token
             winner.queueName = picked!.queueName
             return 'failed'
         })
         try {
-            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId: run.runId, platformId })).resolves.toEqual({ alreadyInFlight: true })
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId: run.runId, platformId, replaceDelayed: true })).resolves.toEqual({ alreadyInFlight: true })
             expect(await (await queue.getJob(run.runId))!.getState()).toBe('active')
         }
         finally {
@@ -165,10 +165,58 @@ describe('Job broker retry by failure class (#584)', () => {
         const polled = await jobBroker(app.log).poll()
         vi.spyOn(Job.prototype, 'getState').mockResolvedValueOnce('failed')
         try {
-            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null })).rejects.toThrow('locked by another worker')
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: true })).rejects.toThrow('locked by another worker')
         }
         finally {
             await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.OK })
+        }
+    })
+
+    it('replaces a delayed automatic retry of a run that already ended with the user retry', async () => {
+        const ctx = await createTestContext(app)
+        const flow = createMockFlow({ projectId: ctx.project.id })
+        await db.save('flow', flow)
+        const flowVersion = createMockFlowVersion({ flowId: flow.id, state: FlowVersionState.LOCKED })
+        await db.save('flow_version', flowVersion)
+        const flowRun = createMockFlowRun({ projectId: ctx.project.id, flowId: flow.id, flowVersionId: flowVersion.id, status: FlowRunStatus.INTERNAL_ERROR, environment: RunEnvironment.TESTING })
+        await db.save('flow_run', flowRun)
+        // What a pre-#584 job looks like after it reported INTERNAL_ERROR: its BEGIN retry is 8 minutes away.
+        await enqueueExecuteFlowJob({ run: { runId: flowRun.id, projectId: ctx.project.id, platformId: ctx.platform.id, flowId: flow.id, flowVersionId: flowVersion.id }, delay: 8 * 60 * 1000 })
+        expect(await (await queue.getJob(flowRun.id))!.getState()).toBe('delayed')
+
+        const response = await ctx.post(`/v1/flow-runs/${flowRun.id}/retry`, { strategy: FlowRetryStrategy.FROM_FAILED_STEP, projectId: ctx.project.id })
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toMatchObject({ id: flowRun.id, status: FlowRunStatus.QUEUED })
+
+        const requeued = await queue.getJob(flowRun.id)
+        expect(['waiting', 'prioritized']).toContain(await requeued!.getState())
+        expect(requeued!.data).toMatchObject({ executionType: ExecutionType.RESUME, runId: flowRun.id })
+        const redelivered = await jobBroker(app.log).poll()
+        expect(redelivered).toMatchObject({ jobId: flowRun.id, attempsStarted: 0 })
+        await jobBroker(app.log).completeJob({ jobId: flowRun.id, token: redelivered!.token, queueName: redelivered!.queueName, status: EngineResponseStatus.OK })
+    }, 30_000)
+
+    it('leaves a delayed job alone when the run has not ended', async () => {
+        const jobId = await enqueueExecuteFlowJob({ delay: 60_000 })
+        try {
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: false })).resolves.toEqual({ alreadyInFlight: true })
+            expect(await (await queue.getJob(jobId))!.getState()).toBe('delayed')
+        }
+        finally {
+            await (await queue.getJob(jobId))?.remove()
+        }
+    })
+
+    it('lets the retry through when the job went away between the two reads', async () => {
+        const jobId = await enqueueExecuteFlowJob()
+        const polled = await jobBroker(app.log).poll()
+        await jobBroker(app.log).completeJob({ jobId, token: polled!.token, queueName: polled!.queueName, status: EngineResponseStatus.INTERNAL_ERROR, errorMessage: 'Worker exited with code 1', retryable: false })
+        vi.spyOn(Job.prototype, 'getState').mockResolvedValueOnce('unknown')
+        try {
+            await expect(jobQueue(app.log).removeFinishedOneTimeJob({ jobId, platformId: null, replaceDelayed: true })).resolves.toEqual({ alreadyInFlight: false })
+        }
+        finally {
+            await (await queue.getJob(jobId))?.remove()
         }
     })
 
@@ -187,7 +235,7 @@ describe('Job broker retry by failure class (#584)', () => {
     })
 })
 
-async function enqueueExecuteFlowJob(run?: ExistingRun): Promise<string> {
+async function enqueueExecuteFlowJob({ run, delay }: EnqueueExecuteFlowJobParams = {}): Promise<string> {
     const { platformId, projectId } = isNil(run) ? await saveNewProject() : run
     const id = run?.runId ?? apId()
     const data: ExecuteFlowJobData = {
@@ -205,7 +253,7 @@ async function enqueueExecuteFlowJob(run?: ExistingRun): Promise<string> {
         streamStepProgress: StreamStepProgress.NONE,
         logsFileId: apId(),
     }
-    await jobQueue(app.log).add({ type: JobType.ONE_TIME, id, data })
+    await jobQueue(app.log).add({ type: JobType.ONE_TIME, id, data, delay })
     return id
 }
 
@@ -232,6 +280,11 @@ async function enqueueWebhookJob(): Promise<string> {
     const id = apId()
     await jobQueue(app.log).add({ type: JobType.ONE_TIME, id, data })
     return id
+}
+
+type EnqueueExecuteFlowJobParams = {
+    run?: ExistingRun
+    delay?: number
 }
 
 type ExistingRun = {

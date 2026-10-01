@@ -314,7 +314,7 @@ describe('flowRunService().retry — a run that already has a job in flight (#58
         })
 
         expect(result).toMatchObject({ id: 'run-1', status: FlowRunStatus.FAILED })
-        expect(mockRemoveFinishedOneTimeJob).toHaveBeenCalledWith({ jobId: 'run-1', platformId: 'platform-1' })
+        expect(mockRemoveFinishedOneTimeJob).toHaveBeenCalledWith({ jobId: 'run-1', platformId: 'platform-1', replaceDelayed: true })
         expect(mockRepoUpdate).not.toHaveBeenCalled()
         expect(mockOnRetry).not.toHaveBeenCalled()
         expect(mockOffloadPayload).not.toHaveBeenCalled()

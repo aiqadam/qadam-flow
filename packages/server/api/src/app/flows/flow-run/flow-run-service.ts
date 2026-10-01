@@ -248,7 +248,14 @@ export const flowRunService = (log: FastifyBaseLogger) => ({
                 const platformId = await projectService(log).getPlatformId(oldFlowRun.projectId)
                 // The retry is enqueued under the run's id, and BullMQ ignores an add under an id it
                 // still holds: a run whose job it kept after failing it would sit QUEUED forever (#584).
-                const { alreadyInFlight } = await jobQueue(log).removeFinishedOneTimeJob({ jobId: oldFlowRun.id, platformId })
+                const { alreadyInFlight } = await jobQueue(log).removeFinishedOneTimeJob({
+                    jobId: oldFlowRun.id,
+                    platformId,
+                    // A run that already ended can still hold a delayed automatic retry (a pre-#584
+                    // job's 8-minute backoff). Left alone, it would swallow this retry and later run
+                    // from the trigger instead; replaced, the run still runs once, as the user asked.
+                    replaceDelayed: isFlowRunStateTerminal({ status: oldFlowRun.status, ignoreInternalError: false }),
+                })
                 if (alreadyInFlight) {
                     // The job holding the id is what will run; queuing the run again would only
                     // repeat the status update and the retried event for a retry that is not this one.
