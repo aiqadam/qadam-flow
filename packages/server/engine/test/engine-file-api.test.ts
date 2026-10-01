@@ -158,7 +158,7 @@ describe('engineFileApi upload across an app outage', () => {
 // The same scenario on real sockets: undici's own errors for a closed port and a reset connection,
 // with a small injected budget so nothing sleeps for a minute.
 describe('engineFileApi against a real app that is down, then back', () => {
-    const FAST: RetryPolicy = { budgetMs: 1_500, initialDelayMs: 20, maxDelayMs: 100 }
+    const FAST: RetryPolicy = { budgetMs: 1_500, attemptTimeoutMs: 1_500, initialDelayMs: 20, maxDelayMs: 100 }
     let server: Server | undefined
 
     afterEach(async () => {
@@ -242,7 +242,8 @@ describe('engineFileApi against a real app that is down, then back', () => {
         expect(fetchSpy.mock.calls.map(([input]) => new URL(String(input)).host)).toEqual(['localhost:3000', 's3.example', 's3.example', 's3.example'])
     })
 
-    it('stops an attempt the app accepted but never answers once the budget is spent', async () => {
+    it('stops an attempt the app accepted but never answers once the attempt timeout is spent', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         const port = await reservePort()
         let requests = 0
         server = createServer(() => {
@@ -251,16 +252,34 @@ describe('engineFileApi against a real app that is down, then back', () => {
         await listen({ server, port })
 
         const startedAt = Date.now()
-        const error = await engineFileApi.upload({ ...UPLOAD, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, budgetMs: 400 } }).catch((e: unknown) => e)
+        const error = await engineFileApi.upload({ ...UPLOAD, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, attemptTimeoutMs: 400 } }).catch((e: unknown) => e)
         server.closeAllConnections()
 
         expect(error).toBeInstanceOf(DOMException)
         expect(error instanceof DOMException ? error.name : '').toBe('TimeoutError')
-        expect(Date.now() - startedAt).toBeLessThan(2_000)
+        const elapsed = Date.now() - startedAt
+        expect(elapsed).toBeGreaterThanOrEqual(350)
+        expect(elapsed).toBeLessThan(2_000)
         expect(requests).toBe(1)
     })
 
-    it('does not cut off a body that is still arriving when the budget ends', async () => {
+    it('uploads to a healthy app that answers only after the whole retry budget', async () => {
+        const port = await reservePort()
+        server = createServer((req, res) => {
+            req.resume()
+            req.on('end', () => setTimeout(() => {
+                res.setHeader('content-type', 'application/json')
+                res.end(JSON.stringify({ readUrl: 'http://x/y' }))
+            }, 600))
+        })
+        await listen({ server, port })
+
+        const result = await engineFileApi.upload({ ...UPLOAD, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, budgetMs: 100 } })
+
+        expect(result.readUrl).toBe('http://x/y')
+    })
+
+    it('does not cut off a body that is still arriving when the attempt timeout ends', async () => {
         const port = await reservePort()
         server = createServer((_req, res) => {
             res.writeHead(200)
@@ -269,7 +288,7 @@ describe('engineFileApi against a real app that is down, then back', () => {
         })
         await listen({ server, port })
 
-        const bytes = await engineFileApi.download({ ...PARAMS, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, budgetMs: 100 } })
+        const bytes = await engineFileApi.download({ ...PARAMS, apiUrl: `http://127.0.0.1:${port}/`, retryPolicy: { ...FAST, attemptTimeoutMs: 100 } })
 
         expect(new TextDecoder().decode(bytes)).toBe('first-second')
     })

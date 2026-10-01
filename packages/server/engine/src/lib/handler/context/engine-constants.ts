@@ -301,6 +301,7 @@ export class EngineConstants {
             })
 
             if (!response.ok) {
+                await tryCatch(async () => response.body?.cancel())
                 throw new EngineGenericError('ProjectFetchError', `Failed to fetch the run's project (HTTP ${response.status})`)
             }
             const parsed = EngineProject.safeParse(await response.json())

@@ -47,6 +47,15 @@ describe('engine → app calls and their replay safety', () => {
         await expect(generateMockEngineConstants().externalProjectId()).rejects.toThrow('HTTP 500')
     })
 
+    it('releases the error body of a failed project read instead of leaving its socket held', async () => {
+        const cancel = vi.fn()
+        const body = new ReadableStream({ cancel })
+        vi.spyOn(retryingFetch, 'fetch').mockResolvedValue(new Response(body, { status: 503 }))
+
+        await expect(generateMockEngineConstants().externalProjectId()).rejects.toThrow('HTTP 503')
+        expect(cancel).toHaveBeenCalledTimes(1)
+    })
+
     it('rejects a project body whose fields are not what the engine reads', async () => {
         vi.spyOn(retryingFetch, 'fetch').mockResolvedValue(new Response(JSON.stringify({ externalId: 42 }), { status: 200 }))
 

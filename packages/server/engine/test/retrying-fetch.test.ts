@@ -2,7 +2,7 @@ import { SSRFBlockedError } from '@aiqadam/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { retryingFetch, RetryPolicy } from '../src/lib/retrying-fetch'
 
-const FAST: RetryPolicy = { budgetMs: 1_000, initialDelayMs: 5, maxDelayMs: 20 }
+const FAST: RetryPolicy = { budgetMs: 1_000, attemptTimeoutMs: 1_000, initialDelayMs: 5, maxDelayMs: 20 }
 const URL_WITH_TOKEN = 'http://app/v1/files/f1?token=secret-engine-token'
 
 describe('retryingFetch', () => {
@@ -88,7 +88,7 @@ describe('retryingFetch', () => {
         setTimeout(() => caller.abort(new Error('caller gave up')), 50)
 
         const startedAt = Date.now()
-        const result = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { signal: caller.signal }, idempotent: true, policy: { budgetMs: 10_000, initialDelayMs: 2_000, maxDelayMs: 2_000 } })
+        const result = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { signal: caller.signal }, idempotent: true, policy: { budgetMs: 10_000, attemptTimeoutMs: 10_000, initialDelayMs: 2_000, maxDelayMs: 2_000 } })
 
         await expect(result).rejects.toThrow('caller gave up')
         expect(Date.now() - startedAt).toBeLessThan(1_000)
@@ -103,22 +103,87 @@ describe('retryingFetch', () => {
         await expect(retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { signal: caller.signal }, idempotent: true, policy: FAST })).rejects.toThrow('caller gave up')
     })
 
-    it('bounds an attempt that never answers by the full default budget, on fake time', async () => {
+    // A healthy request that is merely slow (headers come only after the app has the whole body)
+    // must not be cut short by the retry budget: only the attempt timeout bounds a first attempt.
+    it.each([
+        ['default', retryingFetch.defaultPolicy, 75_000],
+        ['best-effort', retryingFetch.bestEffortPolicy, 12_000],
+    ])('lets a healthy first attempt that answers after the %s budget succeed, on fake time', async (_name, policy, answerAfterMs) => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
+        expect(answerAfterMs).toBeGreaterThan(policy.budgetMs)
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => answerAfter({ ms: answerAfterMs, signal: init?.signal }))
+
+        const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: false, policy }).then((r) => r.status, (e: unknown) => e)
+        await vi.advanceTimersByTimeAsync(answerAfterMs + 1)
+
+        expect(await outcome).toBe(200)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('bounds a first attempt that never answers by the 300 s attempt timeout and logs it as a timeout, on fake time', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => rejectWhenAborted(init?.signal))
+        const startedAt = performance.now()
+
+        const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: true }).then(() => 'resolved', (e: unknown) => e)
+        await vi.advanceTimersByTimeAsync(299_999)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(2)
+        const error = await outcome
+
+        expect(retryingFetch.defaultPolicy.attemptTimeoutMs).toBe(300_000)
+        expect(error instanceof DOMException ? error.name : error).toBe('TimeoutError')
+        expect(performance.now() - startedAt).toBeGreaterThanOrEqual(300_000)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
+        const line = String(warn.mock.calls[0]?.[0])
+        expect(line).toContain('no answer within 300000 ms on attempt 1')
+        expect(line).not.toContain('still failing')
+    })
+
+    it('holds a retry that never answers to the budget that is left, on fake time', async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
         vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => rejectWhenAborted(init?.signal))
+        let calls = 0
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => {
+            calls += 1
+            if (calls === 1) {
+                throw fetchFailed({ code: 'ECONNREFUSED' })
+            }
+            return rejectWhenAborted(init?.signal)
+        })
         const startedAt = performance.now()
 
         const outcome = retryingFetch.fetch({ url: URL_WITH_TOKEN, init: { method: 'PUT' }, idempotent: true }).then(() => 'resolved', (e: unknown) => e)
         await vi.advanceTimersByTimeAsync(60_000)
         const error = await outcome
-        vi.useRealTimers()
 
         expect(error instanceof DOMException ? error.name : error).toBe('TimeoutError')
         expect(performance.now() - startedAt).toBeLessThanOrEqual(60_000)
-        expect(fetchSpy).toHaveBeenCalledTimes(1)
+        expect(fetchSpy).toHaveBeenCalledTimes(2)
+    })
+
+    it('treats a zero budget as no retries, not as no time to answer', async () => {
+        const refused = vi.spyOn(global, 'fetch').mockRejectedValue(fetchFailed({ code: 'ECONNREFUSED' }))
+        await expect(retryingFetch.fetch({ url: URL_WITH_TOKEN, init: {}, idempotent: true, policy: { ...FAST, budgetMs: 0 } })).rejects.toThrow('fetch failed')
+        expect(refused).toHaveBeenCalledTimes(1)
+        vi.restoreAllMocks()
+
+        vi.spyOn(global, 'fetch').mockImplementation(async (_input, init) => answerAfter({ ms: 50, signal: init?.signal }))
+        const response = await retryingFetch.fetch({ url: URL_WITH_TOKEN, init: {}, idempotent: true, policy: { ...FAST, budgetMs: 0 } })
+        expect(response.status).toBe(200)
     })
 })
+
+function answerAfter({ ms, signal }: { ms: number, signal: AbortSignal | null | undefined }): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response('ok', { status: 200 })), ms)
+        signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(signal.reason)
+        }, { once: true })
+    })
+}
 
 function rejectWhenAborted(signal: AbortSignal | null | undefined): Promise<Response> {
     return new Promise((_resolve, reject) => {

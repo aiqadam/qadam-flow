@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EgressProxy, startEgressProxy } from '../../worker/src/lib/egress/proxy'
 import { retryingFetch, RetryPolicy } from '../src/lib/retrying-fetch'
 
-const FAST: RetryPolicy = { budgetMs: 1_500, initialDelayMs: 20, maxDelayMs: 100 }
+const FAST: RetryPolicy = { budgetMs: 1_500, attemptTimeoutMs: 1_500, initialDelayMs: 20, maxDelayMs: 100 }
 const SILENT_LOG = pino({ level: 'silent' })
 
 // With AP_NETWORK_MODE=STRICT, `installEnvProxyDispatcher` makes an undici ProxyAgent the global
@@ -54,7 +54,20 @@ describe('retryingFetch behind the STRICT-mode egress proxy', () => {
 
     // A refused port behind the proxy never reaches the classifier: proxy-chain closes the tunnel
     // without answering, and undici's ProxyAgent reconnects on its own, in a tight loop, until the
-    // app listens again or the attempt's deadline aborts it.
+    // app listens again or the attempt's deadline aborts it (#608).
+    it('bounds that reconnect loop by the attempt timeout when the app never comes back (#608)', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const port = await reservePort()
+
+        const startedAt = Date.now()
+        const error = await retryingFetch.fetch({ url: `http://127.0.0.1:${port}/v1/files/f1`, init: {}, idempotent: true, policy: { ...FAST, attemptTimeoutMs: 300 } }).catch((e: unknown) => e)
+
+        expect(error instanceof DOMException ? error.name : error).toBe('TimeoutError')
+        const elapsed = Date.now() - startedAt
+        expect(elapsed).toBeGreaterThanOrEqual(250)
+        expect(elapsed).toBeLessThan(2_000)
+    })
+
     it('reaches the app once it is back', async () => {
         const port = await reservePort()
         app = createServer((_req, res) => res.end('ok'))

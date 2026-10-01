@@ -14,8 +14,20 @@ import { isNil, tryCatch } from '@aiqadam/shared'
  */
 const ENGINE_API_RETRY_BUDGET_MS = 60_000
 
+/**
+ * How long one attempt may wait for its response headers. Separate from the retry budget on
+ * purpose: headers arrive only once the app has the whole request body, so this also counts the
+ * upload itself, and a healthy but slow request (a multi-MB run log over a modest link, a 25 MB
+ * `files.write`) must not be cut off just because it takes longer than the budget for retries. The
+ * same as undici's default `headersTimeout` (`300e3` in `lib/dispatcher/client.js`), which bounded
+ * every one of these calls before #595; the explicit timer exists so a test can run it on fake time
+ * and so a retry can be held to the budget that is left.
+ */
+const ENGINE_API_ATTEMPT_TIMEOUT_MS = 300_000
+
 const DEFAULT_POLICY: RetryPolicy = {
     budgetMs: ENGINE_API_RETRY_BUDGET_MS,
+    attemptTimeoutMs: ENGINE_API_ATTEMPT_TIMEOUT_MS,
     initialDelayMs: 500,
     maxDelayMs: 5_000,
 }
@@ -27,6 +39,7 @@ const DEFAULT_POLICY: RetryPolicy = {
  */
 const BEST_EFFORT_POLICY: RetryPolicy = {
     budgetMs: 9_000,
+    attemptTimeoutMs: ENGINE_API_ATTEMPT_TIMEOUT_MS,
     initialDelayMs: 500,
     maxDelayMs: 3_000,
 }
@@ -45,9 +58,12 @@ export const retryingFetch = {
      *   that did land is a second request, not the first one taking effect later.
      * - Anything else, every 4xx and a plain 500 among them, is returned at once.
      *
-     * Each attempt may wait for its response headers only until the budget ends; the body is not
-     * bounded, so a large download that started in time is not cut off. A caller's `init.signal`
-     * still aborts an attempt, and the wait between attempts, at once.
+     * The budget only decides whether another attempt starts; `budgetMs: 0` means no retries. The
+     * first attempt may wait `attemptTimeoutMs` for its response headers, whatever the budget, so a
+     * healthy slow request is never cut short by it. A retry may wait only for the lesser of that
+     * and the budget left, so retrying cannot run past the budget. The body is not bounded, so a
+     * download that started in time is not cut off. A caller's `init.signal` still aborts an
+     * attempt, and the wait between attempts, at once.
      *
      * Goes through the global `fetch`, so the SSRF guard's undici dispatcher and socket guard still
      * see every attempt. A blocked address fails with `SSRFBlockedError` (or the egress proxy's 403),
@@ -56,12 +72,19 @@ export const retryingFetch = {
     async fetch({ url, init, idempotent, policy = DEFAULT_POLICY }: RetryingFetchParams): Promise<Response> {
         const deadline = performance.now() + policy.budgetMs
         for (let attempt = 1; ; attempt++) {
-            const { response, error, timedOut } = await attemptOnce({ url, init, timeoutMs: deadline - performance.now() })
-            const failure = timedOut ? 'NONE' : classifyFailure({ response, error })
+            const timeoutMs = attempt === 1 ? policy.attemptTimeoutMs : Math.min(policy.attemptTimeoutMs, deadline - performance.now())
+            const { response, error, timedOut } = await attemptOnce({ url, init, timeoutMs })
+            // An attempt that got no answer in time may have landed, and it already used up what it
+            // was allowed: it ends the call rather than being retried.
+            if (timedOut) {
+                logTimedOut({ url, method: init.method, attempt, timeoutMs })
+                throw error
+            }
+            const failure = classifyFailure({ response, error })
             const retryable = failure === 'NOT_SENT' || (failure === 'MAYBE_SENT' && idempotent)
             const remainingMs = deadline - performance.now()
             if (!retryable || remainingMs < MIN_ATTEMPT_WINDOW_MS) {
-                if (retryable || timedOut) {
+                if (retryable) {
                     logGivingUp({ url, method: init.method, attempt, budgetMs: policy.budgetMs })
                 }
                 if (isNil(response)) {
@@ -155,11 +178,11 @@ function collectCauses({ error, depth }: { error: unknown, depth: number }): Cau
     return [own, ...fromCause, ...fromMembers]
 }
 
-// The deadline is a plain timer cleared once the headers are in, not `AbortSignal.timeout`: that
+// The attempt's deadline is a plain timer cleared once the headers are in, not `AbortSignal.timeout`: that
 // would also cut off a body still being read, and it does not run on a test's fake time.
 async function attemptOnce({ url, init, timeoutMs }: AttemptOnceParams): Promise<AttemptResult> {
     const deadline = new AbortController()
-    const timer = setTimeout(() => deadline.abort(new DOMException('No answer from the app within the retry budget', 'TimeoutError')), Math.max(timeoutMs, 0))
+    const timer = setTimeout(() => deadline.abort(new DOMException(`No answer from the app within ${Math.round(timeoutMs)} ms`, 'TimeoutError')), Math.max(timeoutMs, 0))
     const signal = isNil(init.signal) ? deadline.signal : AbortSignal.any([deadline.signal, init.signal])
     const { data: response, error } = await tryCatch(() => fetch(url, { ...init, signal }))
     clearTimeout(timer)
@@ -193,14 +216,22 @@ function backoffDelayMs({ attempt, policy }: { attempt: number, policy: RetryPol
     return exponential / 2 + Math.random() * (exponential / 2)
 }
 
-// The query string is left out on purpose: the file API carries the engine token there.
+// The query string is left out of both lines on purpose: the file API carries the engine token there.
 function logGivingUp({ url, method, attempt, budgetMs }: LogGivingUpParams): void {
-    const { pathname } = new URL(url.toString())
-    console.warn(`[retryingFetch] ${method ?? 'GET'} ${pathname}: still failing after ${attempt} attempts and the ${budgetMs} ms retry budget, giving up`)
+    console.warn(`[retryingFetch] ${method ?? 'GET'} ${pathOf(url)}: still failing after ${attempt} attempts and the ${budgetMs} ms retry budget, giving up`)
+}
+
+function logTimedOut({ url, method, attempt, timeoutMs }: LogTimedOutParams): void {
+    console.warn(`[retryingFetch] ${method ?? 'GET'} ${pathOf(url)}: no answer within ${Math.round(timeoutMs)} ms on attempt ${attempt}, giving up`)
+}
+
+function pathOf(url: string | URL): string {
+    return new URL(url.toString()).pathname
 }
 
 export type RetryPolicy = {
     budgetMs: number
+    attemptTimeoutMs: number
     initialDelayMs: number
     maxDelayMs: number
 }
@@ -239,6 +270,13 @@ type AttemptResult = {
 type SleepParams = {
     ms: number
     signal: AbortSignal | null | undefined
+}
+
+type LogTimedOutParams = {
+    url: string | URL
+    method: string | undefined
+    attempt: number
+    timeoutMs: number
 }
 
 type LogGivingUpParams = {
