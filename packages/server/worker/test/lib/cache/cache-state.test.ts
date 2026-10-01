@@ -1,11 +1,14 @@
-import { readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { describe, it, expect, afterEach } from 'vitest'
-import { cacheState } from '../../../src/lib/cache/cache-state'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { fileLock } from '@aiqadam/server-utils'
+import pino from 'pino'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CACHE_STATE_LOCK_SUFFIX, cacheState } from '../../../src/lib/cache/cache-state'
 
 const folders: string[] = []
+const log = pino({ level: 'silent' })
 
 function uniqueFolder(): string {
     const folder = join(tmpdir(), `cache-state-test-${randomUUID()}`)
@@ -146,5 +149,136 @@ describe('cacheState', () => {
             const raw = await readFile(join(folder, 'cache.json'), 'utf8')
             expect(JSON.parse(raw)).toEqual({ onlyKey: 'onlyVal' })
         })
+    })
+})
+
+describe('cacheState across replicas (#586)', () => {
+    it('makes a second replica wait for the first one and take its result instead of installing again', async () => {
+        const folder = uniqueFolder()
+        let releaseFirstReplica: () => void = () => undefined
+        const firstReplicaMayFinish = new Promise<void>((resolve) => {
+            releaseFirstReplica = resolve
+        })
+        let firstReplicaHoldsLock: () => void = () => undefined
+        const firstReplicaLocked = new Promise<void>((resolve) => {
+            firstReplicaHoldsLock = resolve
+        })
+
+        // Another container shares only the filesystem, so it takes the same on-disk lock
+        // directly rather than through this process's memoryLock.
+        const firstReplica = fileLock.runExclusive({
+            path: `${folder}${CACHE_STATE_LOCK_SUFFIX}`,
+            createPath: false,
+            log,
+            fn: async () => {
+                firstReplicaHoldsLock()
+                await firstReplicaMayFinish
+                await cacheState(folder).saveCache('sharedKey', 'from-first-replica')
+            },
+        })
+        await firstReplicaLocked
+
+        let installCalls = 0
+        const secondReplica = cacheState(folder).getOrSetCache({
+            key: 'sharedKey',
+            cacheMiss: () => false,
+            installFn: async () => {
+                installCalls++
+                return 'from-second-replica'
+            },
+            skipSave: () => false,
+            crossProcess: { log },
+        })
+        releaseFirstReplica()
+
+        await firstReplica
+        expect(await secondReplica).toEqual({ cacheHit: true, state: 'from-first-replica' })
+        expect(installCalls).toBe(0)
+    })
+
+    it('takes no cross-container lock unless the caller opts in', async () => {
+        const folder = uniqueFolder()
+        let releaseOtherReplica: () => void = () => undefined
+        const otherReplicaMayFinish = new Promise<void>((resolve) => {
+            releaseOtherReplica = resolve
+        })
+        let otherReplicaHoldsLock: () => void = () => undefined
+        const otherReplicaLocked = new Promise<void>((resolve) => {
+            otherReplicaHoldsLock = resolve
+        })
+        const otherReplica = fileLock.runExclusive({
+            path: `${folder}${CACHE_STATE_LOCK_SUFFIX}`,
+            createPath: false,
+            log,
+            fn: async () => {
+                otherReplicaHoldsLock()
+                await otherReplicaMayFinish
+            },
+        })
+        await otherReplicaLocked
+
+        const result = await cacheState(folder).getOrSetCache({
+            key: 'draftKey',
+            cacheMiss: () => false,
+            installFn: async () => 'fetched',
+            skipSave: () => true,
+        })
+        releaseOtherReplica()
+        await otherReplica
+
+        expect(result).toEqual({ cacheHit: false, state: 'fetched' })
+    })
+
+    it('leaves nothing but cache.json behind: no temp file, no lock', async () => {
+        const folder = uniqueFolder()
+
+        await cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn: async () => 'v',
+            skipSave: () => false,
+            crossProcess: { log },
+        })
+
+        expect(await readdir(folder)).toEqual(['cache.json'])
+        const siblings = await readdir(dirname(folder))
+        expect(siblings.filter((entry) => entry.startsWith(`${basename(folder)}${CACHE_STATE_LOCK_SUFFIX}`))).toEqual([])
+    })
+})
+
+describe('cacheState with an unreadable cache.json (#586)', () => {
+    it.each([
+        ['an empty file', ''],
+        ['truncated JSON', '{"k":'],
+        ['a non-object', '["v"]'],
+        ['a non-string value', '{"k":1}'],
+    ])('treats %s as an empty cache and rebuilds', async (_name, content) => {
+        const folder = uniqueFolder()
+        await mkdir(folder, { recursive: true })
+        await writeFile(join(folder, 'cache.json'), content)
+
+        const result = await cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn: async () => 'rebuilt',
+            skipSave: () => false,
+        })
+
+        expect(result).toEqual({ cacheHit: false, state: 'rebuilt' })
+        expect(JSON.parse(await readFile(join(folder, 'cache.json'), 'utf8'))).toEqual({ k: 'rebuilt' })
+    })
+
+    it('fails on a read error other than a missing file rather than rebuilding over it', async () => {
+        const folder = uniqueFolder()
+        await mkdir(join(folder, 'cache.json'), { recursive: true })
+        const installFn = vi.fn(async () => 'rebuilt')
+
+        await expect(cacheState(folder).getOrSetCache({
+            key: 'k',
+            cacheMiss: () => false,
+            installFn,
+            skipSave: () => false,
+        })).rejects.toMatchObject({ code: 'EISDIR' })
+        expect(installFn).not.toHaveBeenCalled()
     })
 })
