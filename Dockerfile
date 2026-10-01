@@ -160,8 +160,9 @@ ENV NODE_TLS_REJECT_UNAUTHORIZED=
 # it the app's first catalogue read require()s all 238 qadams on its event loop, which blocked every
 # request for 30–63 s on QA after each start (#598). Written here, after the production install and
 # not in the build stage, so the app's own scan code builds it against the exact tree and
-# node_modules it would scan at run time, and nothing is copied or built after it. The writer fails
-# the build when it loads no qadam; `test -s` catches a file that came out empty anyway.
+# node_modules it would scan at run time. Nothing under packages/ (qadam dists, node_modules) may
+# change after this step, or the manifest no longer describes the image. The writer fails the build
+# when it finds no built qadam or any of them fails to load; `test -s` catches an empty file anyway.
 RUN node packages/server/api/dist/src/scripts/write-bundled-qadams-manifest.js packages/qadams \
     && test -s packages/qadams/bundled-qadams-metadata.json
 

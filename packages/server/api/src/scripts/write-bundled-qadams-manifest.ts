@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     switch (result.status) {
         // The qadam build did not run. Fail the image build rather than ship it.
         case 'empty':
-            fail(`[bundledQadamsManifest] no bundled qadams loaded under ${qadamsRoot}`)
+            fail(`[bundledQadamsManifest] no built qadams under ${qadamsRoot}`)
             break
         // A dist that does not load in the image is a broken image, and it would be missing from
         // the catalogue for the image's whole life. The scan's own warning above names the error.
@@ -33,9 +33,16 @@ async function main(): Promise<void> {
         case 'written':
             console.log(`[bundledQadamsManifest] wrote ${result.count} qadams to the manifest`)
             break
+        // A status this switch does not know must fail the build, never fall through to exit 0.
+        default:
+            fail(`[bundledQadamsManifest] unexpected writer result ${JSON.stringify(assertNever(result))}`)
     }
     // Explicit, because the 238 qadam modules this just required may hold the event loop open.
     process.exit(0)
+}
+
+function assertNever(value: never): unknown {
+    return value
 }
 
 function fail(reason: unknown): never {

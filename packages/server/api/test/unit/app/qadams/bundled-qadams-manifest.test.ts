@@ -52,14 +52,14 @@ describe('bundled qadam metadata manifest (#598)', () => {
         await writeFixtureQadam({ group: 'community', name: 'beta', version: '1.4.1' })
         await writeFixtureQadam({ group: 'community', name: 'gamma', version: '0.0.3' })
         process.chdir(repoRoot)
-        process.env[TRANSLATIONS_ENV] = 'true'
+        vi.stubEnv(TRANSLATIONS_ENV, 'true')
         resetLoadCounter()
         invalidateBundledQadamCache()
     })
 
     afterEach(async () => {
         process.chdir(originalCwd)
-        delete process.env[TRANSLATIONS_ENV]
+        vi.unstubAllEnvs()
         invalidateBundledQadamCache()
         await rm(repoRoot, { recursive: true, force: true })
     })
@@ -123,7 +123,7 @@ describe('bundled qadam metadata manifest (#598)', () => {
 
     it.each(['true', 'false'])('returns i18n only when the scan would (AP_LOAD_TRANSLATIONS_FOR_DEV_QADAMS=%s)', async (flag) => {
         await writeManifestFromScan()
-        process.env[TRANSLATIONS_ENV] = flag
+        vi.stubEnv(TRANSLATIONS_ENV, flag)
 
         const fromManifest = withoutPerLoadFields(await loadBundledQadams(logger))
         expect(loadedSource()).toBe('manifest')
@@ -159,6 +159,7 @@ describe('bundled qadam metadata manifest (#598)', () => {
         it.each<RejectionCase>([
             {
                 reason: 'unreadable',
+                label: 'the manifest path is a directory',
                 breakManifest: async (): Promise<void> => {
                     await rm(manifestPath())
                     await mkdir(manifestPath())
@@ -184,10 +185,12 @@ describe('bundled qadam metadata manifest (#598)', () => {
             },
             {
                 reason: 'no entries',
+                label: 'an empty qadams list',
                 breakManifest: async (): Promise<unknown> => rewriteManifest((manifest) => ({ ...manifest, qadams: [] })),
             },
             {
                 reason: 'an entry points outside the qadams root',
+                label: 'a ../.. directoryPath',
                 breakManifest: async (): Promise<unknown> => rewriteManifest((manifest) => ({
                     ...manifest,
                     qadams: manifest.qadams.map((qadam, index) => index === 0 ? { ...qadam, directoryPath: path.join('..', '..', 'core', 'alpha', 'dist') } : qadam),
@@ -195,6 +198,7 @@ describe('bundled qadam metadata manifest (#598)', () => {
             },
             {
                 reason: 'an entry has no built dist',
+                label: 'a dist package.json deleted',
                 breakManifest: async (): Promise<unknown> => rm(path.join(qadamsRoot, 'community', 'gamma', 'dist', 'package.json')),
             },
             {
@@ -210,7 +214,7 @@ describe('bundled qadam metadata manifest (#598)', () => {
                     await writeFile(distPackageJson, JSON.stringify({ name: '@fixture/beta', version: '1.5.0' }))
                 },
             },
-        ])('$reason $label', async ({ reason, breakManifest }) => {
+        ])('$reason: $label', async ({ reason, breakManifest }) => {
             await writeManifestFromScan()
             await breakManifest()
             const expected = await fileQadamsUtils(logger).loadAllDistQadamsMetadata({ qadamsRoot, loadTranslations: true })
@@ -356,7 +360,7 @@ type ManifestFile = {
 
 type RejectionCase = {
     reason: string
-    label?: string
+    label: string
     breakManifest: () => Promise<unknown>
 }
 

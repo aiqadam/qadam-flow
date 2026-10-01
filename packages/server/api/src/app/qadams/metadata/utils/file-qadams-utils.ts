@@ -83,26 +83,28 @@ export const fileQadamsUtils = (log: FastifyBaseLogger) => ({
     // catalogue (#598). The app reaches it only when the image-build manifest is missing or rejected
     // (`bundledQadamsManifest`); the manifest writer is the other caller, at image-build time.
     loadAllDistQadamsMetadata: async ({ qadamsRoot, loadTranslations }: LoadAllDistQadamsMetadataParams): Promise<QadamMetadata[]> => {
-        try {
-            const paths = await findAllDistQadamFolders(qadamsRoot)
-            const pieces = await Promise.all(paths.map(async (p) => {
-                try {
-                    return await loadQadamFromFolder({ folderPath: p, loadTranslations })
-                }
-                catch (err) {
-                    log.warn({ err, path: p }, '[fileQadamMetadataService#loadAllDistQadamsMetadata] Skipping qadam that failed to load')
-                    return null
-                }
-            }))
-            return pieces.filter((p): p is QadamMetadata => p !== null)
-        }
-        catch (e) {
-            const err = e as Error
-            log.warn({ err }, '[fileQadamMetadataService#loadAllDistQadamsMetadata] Failed to load bundled qadams')
+        const { data: distFolders, error } = await tryCatch(() => findAllDistQadamFolders(qadamsRoot))
+        if (error) {
+            log.warn({ err: error }, '[fileQadamMetadataService#loadAllDistQadamsMetadata] Failed to load bundled qadams')
             return []
         }
+        return fileQadamsUtils(log).loadDistFoldersMetadata({ distFolders, loadTranslations })
     },
 
+    // The `require` half of the scan, for a caller that already walked the tree: the manifest
+    // writer compares what loaded against the same walk, so a tree that changes in between cannot
+    // skew its partial-catalogue check. A folder that fails to load is logged and skipped.
+    loadDistFoldersMetadata: async ({ distFolders, loadTranslations }: LoadDistFoldersMetadataParams): Promise<QadamMetadata[]> => {
+        const pieces = await Promise.all(distFolders.map(async (p) => {
+            const { data, error } = await tryCatch(() => loadQadamFromFolder({ folderPath: p, loadTranslations }))
+            if (error) {
+                log.warn({ err: error, path: p }, '[fileQadamMetadataService#loadAllDistQadamsMetadata] Skipping qadam that failed to load')
+                return null
+            }
+            return data
+        }))
+        return pieces.filter((p): p is QadamMetadata => p !== null)
+    },
 
     clearQadamModuleCache: (distFolderPath: string): void => {
         const indexPath = join(distFolderPath, 'src', 'index')
@@ -177,6 +179,11 @@ const loadQadamFromFolder = async ({ folderPath, loadTranslations }: LoadQadamFr
 
 type LoadAllDistQadamsMetadataParams = {
     qadamsRoot: string
+    loadTranslations: boolean
+}
+
+type LoadDistFoldersMetadataParams = {
+    distFolders: string[]
     loadTranslations: boolean
 }
 

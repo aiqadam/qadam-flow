@@ -74,13 +74,16 @@ export const bundledQadamsManifest = {
     writeFromScan: async ({ qadamsRoot, log }: WriteFromScanParams): Promise<WriteFromScanResult> => {
         const root = path.resolve(qadamsRoot)
         const utils = fileQadamsUtils(log)
+        // One walk for both the load and the partial check, so they cannot disagree about the tree.
         const distFolders = await utils.findDistQadamFolders({ qadamsRoot: root })
-        // Translations are always kept, whatever the flag says now: `read` drops them when it is
-        // off, so turning it on later needs no rebuild.
-        const qadams = await utils.loadAllDistQadamsMetadata({ qadamsRoot: root, loadTranslations: true })
-        if (qadams.length === 0) {
+        // No dist at all means the qadam build did not run. Dists that all failed to load are a
+        // partial catalogue like any other, and get named.
+        if (distFolders.length === 0) {
             return { status: 'empty' }
         }
+        // Translations are always kept, whatever the flag says now: `read` drops them when it is
+        // off, so turning it on later needs no rebuild.
+        const qadams = await utils.loadDistFoldersMetadata({ distFolders, loadTranslations: true })
         const loaded = new Set(qadams.map((qadam) => directoryPathOrThrow({ qadam })))
         const skipped = distFolders.filter((distFolder) => !loaded.has(distFolder)).map((distFolder) => path.relative(root, distFolder))
         if (skipped.length > 0) {

@@ -42,7 +42,7 @@ describe('write-bundled-qadams-manifest (#598)', () => {
         const { exitCode, stderr } = await runWriter()
 
         expect(exitCode).toBe(1)
-        expect(stderr).toContain('no bundled qadams loaded')
+        expect(stderr).toContain('no built qadams under')
         expect(await exists(path.join(qadamsRoot, MANIFEST_FILE))).toBe(false)
     })
 
@@ -58,6 +58,19 @@ describe('write-bundled-qadams-manifest (#598)', () => {
         expect(await exists(path.join(qadamsRoot, MANIFEST_FILE))).toBe(false)
     })
 
+    it('exits 1 and names every dist when all of them fail to load, rather than calling the tree empty', async () => {
+        await writeFixtureQadam({ name: 'broken-one', loads: false })
+        await writeFixtureQadam({ name: 'broken-two', loads: false })
+
+        const { exitCode, stderr } = await runWriter()
+
+        expect(exitCode).toBe(1)
+        expect(stderr).toContain('2 built qadam(s) failed to load, refusing a partial manifest')
+        expect(stderr).toContain(path.join('community', 'broken-one', 'dist'))
+        expect(stderr).toContain(path.join('community', 'broken-two', 'dist'))
+        expect(await exists(path.join(qadamsRoot, MANIFEST_FILE))).toBe(false)
+    })
+
     it('exits 1 without a qadams root argument', async () => {
         const { exitCode, stderr } = await runWriter({ withRoot: false })
 
@@ -70,8 +83,8 @@ async function runWriter({ withRoot = true }: { withRoot?: boolean } = {}): Prom
     const args = ['--import', 'tsx', WRITER, ...(withRoot ? [qadamsRoot] : [])]
     const { error, stdout, stderr } = await execFileAsync(process.execPath, args, { cwd: API_ROOT, env: { ...process.env, AP_LOG_LEVEL: 'silent' } })
         .then(({ stdout, stderr }) => ({ error: null, stdout, stderr }))
-        .catch((error: { code?: number, stdout?: string, stderr?: string }) => ({ error, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }))
-    return { exitCode: error === null ? 0 : error.code ?? -1, stdout, stderr }
+        .catch((error: { code?: number | string | null, stdout?: string, stderr?: string }) => ({ error, stdout: error.stdout ?? '', stderr: error.stderr ?? '' }))
+    return { exitCode: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr }
 }
 
 async function writeFixtureQadam({ name, loads }: { name: string, loads: boolean }): Promise<void> {

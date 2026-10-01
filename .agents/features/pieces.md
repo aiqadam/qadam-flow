@@ -94,10 +94,10 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   runs the same scan against the exact tree and `node_modules` the app would scan, and writes
   `packages/qadams/bundled-qadams-metadata.json`: `{ version: 1, qadams: QadamMetadata[] }` in scan
   order, `directoryPath` relative to `packages/qadams`, `i18n` always included
-  (`bundledQadamsManifest.writeFromScan`). It writes nothing and exits 1, failing the build, if it
-  loads no qadam, or if any built dist the walk finds failed to load. A partial manifest would hide
-  that qadam for the image's whole life, so the writer names the skipped dists and refuses. A
-  `test -s` follows it. The file is gitignored. Never generate it in a dev tree.
+  (`bundledQadamsManifest.writeFromScan`, one walk shared by the load and the check). It writes
+  nothing and exits 1, failing the build, if the walk finds no built dist, or if any built dist it
+  finds failed to load, all of them included. A partial manifest would hide that qadam for the
+  image's whole life, so the writer names the skipped dists and refuses. A `test -s` follows it. The file is gitignored. Never generate it in a dev tree.
 - **Read at run time.** `bundledQadamsManifest.read` does an async `readFile` and one `JSON.parse`.
   That, plus the checks below, is ~80–100 ms for the 5.8 MB file, with a ~25 ms longest event-loop
   stall, against ~2.6–3.3 s for the scan on the same box. It returns what the scan would: `directoryPath` resolved back to
@@ -116,7 +116,8 @@ fallback in `findBundledFallback`, `fetchQadamVersion`) could be that first call
   - `a built dist has no entry`: the set of entries' `directoryPath`s is not the set of `dist`
     folders on disk.
 
-  The last three are the staleness check, in both directions:
+  `the qadams tree could not be listed` is a walk failure, not staleness. The other two are the
+  staleness check, in both directions:
   - **A rebuilt dist.** The scan takes a qadam's name and version from its `dist/package.json`, and
     every qadam change bumps its version, so a dist rebuilt at a new version after the manifest was
     written is caught.
