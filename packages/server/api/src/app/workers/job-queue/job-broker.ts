@@ -1,4 +1,4 @@
-import { ConsumeJobRequest, ConsumeJobResponse, EngineResponseStatus, ExtendLockResponse, isNil, JobData, tryCatch } from '@aiqadam/shared'
+import { ConsumeJobRequest, ConsumeJobResponse, EngineResponseStatus, ExtendLockResponse, isNil, JobData, tryCatch, WORKER_JOB_LOCK_DURATION_MS } from '@aiqadam/shared'
 import { Worker as BullMQWorker, Job, UnrecoverableError } from 'bullmq'
 import { BullMQOtel } from 'bullmq-otel'
 import { FastifyBaseLogger } from 'fastify'
@@ -17,7 +17,6 @@ import { jobRetry } from './job-retry'
 import { createQueueDispatcher, QueueDispatcher } from './queue-dispatcher'
 
 const DRAIN_DELAY_SECONDS = 15
-const LOCK_DURATION_MS = 120_000
 
 const interceptors: JobInterceptor[] = [rateLimiterInterceptor, zombiePollingInterceptor]
 const workerPromises = new Map<string, Promise<BullMQWorker>>()
@@ -42,7 +41,7 @@ async function createBullMQWorker(queueName: string, log: FastifyBaseLogger): Pr
             telemetry: isOtelEnabled ? new BullMQOtel(queueName) : undefined,
             concurrency: 500,
             autorun: false,
-            lockDuration: LOCK_DURATION_MS,
+            lockDuration: WORKER_JOB_LOCK_DURATION_MS,
             stalledInterval: 30_000,
             maxStalledCount: 3,
             drainDelay: DRAIN_DELAY_SECONDS,
@@ -275,7 +274,9 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         // flight, and a worker whose lease lapsed may report a job that was redelivered since
         // (#585). Neither owns the job any more: failing the move below would publish an
         // INTERNAL_ERROR to a sync caller and release the concurrency slot of whoever does.
-        if (!(await holdsLease({ queueName: input.queueName, jobId: input.jobId, token: input.token, log }))) {
+        // A lock that cannot be read is not a lock that is not held: that is a failed move.
+        const { data: held, error: leaseError } = await tryCatch(() => holdsLease({ queueName: input.queueName, jobId: input.jobId, token: input.token, log }))
+        if (isNil(leaseError) && !held) {
             log.info({ jobId: input.jobId, status: input.status }, '[jobBroker] Ignoring completeJob from a worker that no longer holds the job')
             return
         }
@@ -283,7 +284,7 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         const jobData = JobData.parse(job.data)
         const userJobData = isUserInteractionJobData(jobData) ? jobData : null
 
-        const { error } = await tryCatch(async () => {
+        const { error } = !isNil(leaseError) ? { error: leaseError } : await tryCatch(async () => {
             if (input.status === EngineResponseStatus.INTERNAL_ERROR) {
                 await job.moveToFailed(jobRetry.toFailure({ message: buildFailedReason(input.errorMessage ?? 'Internal error', input.logs), retryable: input.retryable }), input.token)
                 jobRetry.logFailedAttempt({ log, job, jobType: jobData.jobType, retryable: input.retryable })
@@ -345,7 +346,7 @@ export const jobBroker = (log: FastifyBaseLogger) => ({
         if (isNil(job)) {
             return { leaseLost: true }
         }
-        const extended = await job.extendLock(input.token, LOCK_DURATION_MS)
+        const extended = await job.extendLock(input.token, WORKER_JOB_LOCK_DURATION_MS)
         if (extended === 0) {
             log.warn({ jobId: input.jobId, queueName: input.queueName }, '[jobBroker] Lock extension refused: the worker no longer holds the job')
             return { leaseLost: true }

@@ -50,6 +50,12 @@ export type ExtendLockResponse = {
     leaseLost: boolean
 }
 
+/**
+ * How long the API's lock on a job lasts from each `extendLock`. Past it, the API's stalled scan
+ * may hand the job to another worker, so a worker gives a lease up before then (#585).
+ */
+export const WORKER_JOB_LOCK_DURATION_MS = 120_000
+
 export type GetQadamRequest = {
     name: string
     version?: string

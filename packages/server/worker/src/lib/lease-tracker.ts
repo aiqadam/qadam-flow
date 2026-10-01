@@ -1,7 +1,4 @@
-import { isNil } from '@aiqadam/shared'
-
-/** How long the API holds a job's lock from each renewal (`LOCK_DURATION_MS` in job-broker.ts). */
-const LOCK_DURATION_MS = 120_000
+import { isNil, WORKER_JOB_LOCK_DURATION_MS } from '@aiqadam/shared'
 
 /** How often a running job renews its lease. */
 const RENEWAL_INTERVAL_MS = 30_000
@@ -12,7 +9,7 @@ const RENEWAL_INTERVAL_MS = 30_000
  * hand the job to another worker, and two engines would run it (#585); the margin absorbs a late
  * timer and a clock that is not the API's.
  */
-const TRUST_MS = LOCK_DURATION_MS - RENEWAL_INTERVAL_MS
+const TRUST_MS = WORKER_JOB_LOCK_DURATION_MS - RENEWAL_INTERVAL_MS
 
 /**
  * When each in-flight job's lease was last confirmed, and a one-shot deadline per lease that fires

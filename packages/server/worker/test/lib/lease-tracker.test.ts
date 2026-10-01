@@ -1,8 +1,8 @@
+import { WORKER_JOB_LOCK_DURATION_MS } from '@aiqadam/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { leaseTracker } from '../../src/lib/lease-tracker'
 
-/** The API's lock lifetime per renewal (`LOCK_DURATION_MS` in job-broker.ts). */
-const LOCK_MS = 120_000
+const LOCK_MS = WORKER_JOB_LOCK_DURATION_MS
 
 describe('leaseTracker (#585)', () => {
     beforeEach(() => {

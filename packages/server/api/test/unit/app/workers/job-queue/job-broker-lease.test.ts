@@ -1,15 +1,19 @@
 import { EngineResponseStatus, TriggerHookType, WorkerJobType } from '@aiqadam/shared'
-import { Job } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
 import pino from 'pino'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
-const { lockValues, fromId, publish, onJobFinished } = vi.hoisted(() => ({
-    lockValues: new Map<string, string>(),
-    fromId: vi.fn(),
-    publish: vi.fn().mockResolvedValue(undefined),
-    onJobFinished: vi.fn().mockResolvedValue(undefined),
-}))
+const { lockValues, lockRead, fromId, publish, onJobFinished } = vi.hoisted(() => {
+    // Set by a test to make reading the lock fail, as a Redis outage would.
+    const lockRead: { error: Error | null } = { error: null }
+    return {
+        lockValues: new Map<string, string>(),
+        lockRead,
+        fromId: vi.fn(),
+        publish: vi.fn().mockResolvedValue(undefined),
+        onJobFinished: vi.fn().mockResolvedValue(undefined),
+    }
+})
 
 vi.mock('bullmq', async (importOriginal) => {
     const actual = await importOriginal<typeof import('bullmq')>()
@@ -18,7 +22,7 @@ vi.mock('bullmq', async (importOriginal) => {
         startStalledCheckTimer = vi.fn().mockResolvedValue(undefined)
         on = vi.fn()
         close = vi.fn().mockResolvedValue(undefined)
-        client = Promise.resolve({ get: (key: string) => Promise.resolve(lockValues.get(key) ?? null) })
+        client = Promise.resolve({ get: (key: string) => lockRead.error ? Promise.reject(lockRead.error) : Promise.resolve(lockValues.get(key) ?? null) })
         toKey(jobId: string): string {
             return `bull:workerJobs:${jobId}`
         }
@@ -51,7 +55,8 @@ const JOB_ID = 'job-1'
 const TOKEN = 'token-original'
 const LOCK_KEY = `bull:workerJobs:${JOB_ID}:lock`
 
-function createJob(): Job {
+// Only what `completeJob` and `extendLock` touch; `Job.fromId` is mocked to return it.
+function createJob(): FakeJob {
     return {
         id: JOB_ID,
         data: {
@@ -72,7 +77,7 @@ function createJob(): Job {
         }),
         moveToFailed: vi.fn().mockResolvedValue(undefined),
         extendLock: vi.fn().mockImplementation((token: string) => Promise.resolve(lockValues.get(LOCK_KEY) === token ? 1 : 0)),
-    } as unknown as Job
+    }
 }
 
 const completion = {
@@ -84,11 +89,12 @@ const completion = {
 }
 
 describe('jobBroker lease ownership (#585)', () => {
-    let job: Job
+    let job: FakeJob
 
     beforeEach(() => {
         vi.clearAllMocks()
         lockValues.clear()
+        lockRead.error = null
         lockValues.set(LOCK_KEY, TOKEN)
         job = createJob()
         fromId.mockResolvedValue(job)
@@ -132,7 +138,7 @@ describe('jobBroker lease ownership (#585)', () => {
             ['Lock mismatch for job job-1. Cmd moveToFinished from active'],
             ['Missing lock for job job-1. moveToFinished'],
         ])('treats BullMQ refusing the move (%s) like a completion from a worker that lost the job', async (message) => {
-            vi.mocked(job.moveToCompleted).mockRejectedValueOnce(new Error(message))
+            job.moveToCompleted.mockRejectedValueOnce(new Error(message))
             const errorLog = vi.spyOn(log, 'error')
 
             await jobBroker(log).completeJob(completion)
@@ -143,13 +149,27 @@ describe('jobBroker lease ownership (#585)', () => {
         })
 
         it('still reports any other failure to move the job', async () => {
-            vi.mocked(job.moveToCompleted).mockRejectedValueOnce(new Error('Connection is closed.'))
+            job.moveToCompleted.mockRejectedValueOnce(new Error('Connection is closed.'))
 
             await jobBroker(log).completeJob(completion)
 
             expect(publish).toHaveBeenCalledWith('webserver-1', 'req-1', expect.objectContaining({ status: EngineResponseStatus.INTERNAL_ERROR }))
             expect(onJobFinished).toHaveBeenCalledWith(expect.objectContaining({ failed: true }))
         })
+    })
+
+    // A lock that cannot be read says nothing about who holds it: dropping the completion as if the
+    // worker had lost the job would leave a sync caller waiting with nothing published.
+    it('treats a failure to read the lock as a failed move, not as a lease the worker lost', async () => {
+        lockRead.error = new Error('Connection is closed.')
+        const errorLog = vi.spyOn(log, 'error')
+
+        await jobBroker(log).completeJob(completion)
+
+        expect(job.moveToCompleted).not.toHaveBeenCalled()
+        expect(publish).toHaveBeenCalledWith('webserver-1', 'req-1', expect.objectContaining({ status: EngineResponseStatus.INTERNAL_ERROR }))
+        expect(onJobFinished).toHaveBeenCalledWith(expect.objectContaining({ failed: true }))
+        expect(errorLog).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_ID }), expect.stringContaining('Failed to move job to final state'))
     })
 
     describe('extendLock', () => {
@@ -176,3 +196,11 @@ describe('jobBroker lease ownership (#585)', () => {
         })
     })
 })
+
+type FakeJob = {
+    id: string
+    data: Record<string, unknown>
+    moveToCompleted: Mock
+    moveToFailed: Mock
+    extendLock: Mock
+}
