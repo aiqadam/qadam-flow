@@ -22,6 +22,7 @@ import { UnresolvableDependencyError } from '../../cache/code/unresolvable-depen
 import { flowCache } from '../../cache/flow/flow-cache'
 import { system, WorkerSystemProp } from '../../config/configs'
 import { workerSettings } from '../../config/worker-settings'
+import { JobGivenUpError } from '../given-up-guard'
 import { ClassifiedJobFailure } from '../job-failure'
 import { FireAndForgetJobResult, JobContext, JobHandler, JobResultKind } from '../types'
 import { provisionFlowPieces } from '../utils/flow-helpers'
@@ -270,6 +271,10 @@ async function tearDownSandbox({ ctx, teardown }: TearDownSandboxParams): Promis
  */
 async function reportBestEffort(params: ReportFlowStatusParams): Promise<void> {
     const { error } = await tryCatch(() => reportFlowStatus(params))
+    // Dropped on purpose (#585): the run may already be someone else's, and the give-up is logged where it happened.
+    if (error instanceof JobGivenUpError) {
+        return
+    }
     if (!isNil(error)) {
         params.ctx.log.error({ runId: params.data.runId, status: params.status, error: inspect(error) }, 'Failed to report the run status; the verdict on the attempt stands')
     }

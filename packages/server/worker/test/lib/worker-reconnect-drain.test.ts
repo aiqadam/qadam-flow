@@ -97,7 +97,10 @@ vi.mock('../../src/lib/execute/job-registry', () => ({
                 // What execute-flow does once its engine dies: report the run as failed, then rethrow.
                 engine.failureReports++
                 await tryCatch(() => ctx.apiClient.uploadRunLog({ runId: 'run-1', projectId: 'proj-1', status: FlowRunStatus.INTERNAL_ERROR }))
-                throw error
+                // The verdict that asks the broker for a quick retry (#584): a given-up job must not send
+                // it, or the retry would run beside the copy the stalled scan already redelivered.
+                const { ClassifiedJobFailure } = await import('../../src/lib/execute/job-failure')
+                throw new ClassifiedJobFailure({ original: error, retryable: true })
             }
             return data
         },
@@ -410,7 +413,7 @@ describe('worker reconnect and drain — #585', () => {
             expect(engine.managerShutdowns, 'only the job\'s own sandbox is stopped').toBe(0)
             await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
             expect(jobFinishedLines()[0]).toMatchObject({ jobId: 'job-1', givenUp: 'lease-lost', completed: false })
-            expect(completeJobCalls).toHaveLength(0)
+            expect(completeJobCalls, 'a given-up job sent its verdict, and with it a quick retry').toHaveLength(0)
             // The failed run it would report could overwrite the redelivered copy's.
             expect(engine.failureReports, 'the handler never tried to report the dead engine').toBe(1)
             expect(runLogUploads, 'a given-up job reported its run to the API').toEqual([])

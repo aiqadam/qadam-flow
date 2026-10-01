@@ -34,6 +34,7 @@ vi.mock('../../../../src/lib/execute/utils/flow-helpers', () => ({
 }))
 
 import { UnresolvableDependencyError } from '../../../../src/lib/cache/code/unresolvable-dependency-error'
+import { JobGivenUpError } from '../../../../src/lib/execute/given-up-guard'
 import { ClassifiedJobFailure } from '../../../../src/lib/execute/job-failure'
 import { jobTimings } from '../../../../src/lib/execute/job-timings'
 import { executeFlowJob } from '../../../../src/lib/execute/jobs/execute-flow'
@@ -420,6 +421,18 @@ describe('executeFlowJob', () => {
             expect(failure.retryable).toBe(false)
             expect(failure.message).toBe('Worker exited with code 1')
             expect(ctx.log.error).toHaveBeenCalledWith(expect.objectContaining({ status: FlowRunStatus.INTERNAL_ERROR }), expect.stringContaining('Failed to report the run status'))
+        })
+
+        // #585: the guard drops every report of a job this worker gave up. That is the give-up working,
+        // not a failed report, and must not read as one in the logs.
+        it('does not log a report the given-up guard dropped as a failure', async () => {
+            const ctx = makeMockContext({ uploadRunLog: vi.fn().mockRejectedValue(new JobGivenUpError('RPC [uploadRunLog] not sent')) })
+            ctx.mockSandbox.execute.mockRejectedValueOnce(new Error('Worker exited with code null (killed by shutdown)'))
+
+            const failure = await executeExpectingFailure({ ctx, data: makeResumeJobData({ executionType: ExecutionType.BEGIN }) })
+
+            expect(failure.message).toBe('Worker exited with code null (killed by shutdown)')
+            expect(ctx.log.error).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Failed to report the run status'))
         })
 
         it('reports an engine internal error once, even when the report fails', async () => {
