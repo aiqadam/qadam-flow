@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ApEnvironment, ExecutionMode, NetworkMode } from '@aiqadam/shared'
+import { ApEnvironment, ExecutionMode, NetworkMode, RunEnvironment } from '@aiqadam/shared'
 
 const mockGetSettings = vi.fn()
 
@@ -9,11 +9,18 @@ vi.mock('../../../src/lib/config/worker-settings', () => ({
     },
 }))
 
-vi.mock('../../../src/lib/execute/create-sandbox-for-job', () => ({
+vi.mock('../../../src/lib/execute/create-sandbox-for-job', async (importOriginal) => ({
+    ...await importOriginal<typeof import('../../../src/lib/execute/create-sandbox-for-job')>(),
     createSandboxForJob: vi.fn().mockReturnValue({
         isReady: () => true,
         shutdown: vi.fn().mockResolvedValue(undefined),
     }),
+}))
+
+const { provisionMock } = vi.hoisted(() => ({ provisionMock: vi.fn() }))
+
+vi.mock('../../../src/lib/cache/provisioner', () => ({
+    provisioner: () => ({ provision: provisionMock }),
 }))
 
 vi.mock('../../../src/lib/config/logger', () => ({
@@ -32,7 +39,9 @@ vi.mock('../../../src/lib/config/logger', () => ({
 }))
 
 import { createSandboxManager } from '../../../src/lib/execute/sandbox-manager'
+import { createSandboxForJob } from '../../../src/lib/execute/create-sandbox-for-job'
 import { logger } from '../../../src/lib/config/logger'
+import { Sandbox } from '../../../src/lib/sandbox/types'
 
 function buildSettings({ executionMode, environment }: { executionMode: string, environment: string }) {
     return {
@@ -151,5 +160,227 @@ describe('sandbox-manager canReuseSandbox', () => {
         const { createSandboxForJob } = await import('../../../src/lib/execute/create-sandbox-for-job')
         manager.acquire({ log, apiClient: mockApiClient })
         expect(createSandboxForJob).toHaveBeenCalledTimes(1)
+    })
+})
+
+// #419: a slot's engine is started before its first job, so the job does not pay the cold start.
+describe('sandbox-manager prewarm', () => {
+    const log = logger
+    const apiClient = {} as never
+
+    function fakeSandbox({ start }: { start: () => Promise<void> }): Sandbox {
+        return {
+            id: 'prewarmed',
+            start: vi.fn(start),
+            execute: vi.fn(),
+            shutdown: vi.fn().mockResolvedValue(undefined),
+            isReady: vi.fn().mockReturnValue(true),
+            getPid: vi.fn().mockReturnValue(4242),
+            isBusy: vi.fn().mockReturnValue(false),
+        }
+    }
+
+    function useMode(executionMode: ExecutionMode): void {
+        mockGetSettings.mockReturnValue(buildSettings({ executionMode, environment: ApEnvironment.PRODUCTION }))
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks()
+        provisionMock.mockResolvedValue(undefined)
+    })
+
+    it('installs the engine and starts a platform-less sandbox that the first job then reuses', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const sandbox = fakeSandbox({ start: async () => undefined })
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(sandbox)
+        const manager = createSandboxManager({ boxId: 3, proxyPort: 1234 })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(provisionMock).toHaveBeenCalledWith({ pieces: [], codeSteps: [] })
+        expect(createSandboxForJob).toHaveBeenCalledWith(expect.objectContaining({ boxId: 3, reusable: true, warmup: true, proxyPort: 1234 }))
+        expect(sandbox.start).toHaveBeenCalledWith({ flowVersionId: undefined, platformId: '', mounts: [] })
+        expect(manager.acquire({ log, apiClient })).toBe(sandbox)
+        expect(createSandboxForJob).toHaveBeenCalledTimes(1)
+    })
+
+    it('reads the job context the first job sets, not a context captured at prewarm time', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(fakeSandbox({ start: async () => undefined }))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+        await manager.prewarm({ log, apiClient })
+        const { getCurrentJobContext } = vi.mocked(createSandboxForJob).mock.calls[0][0]
+        expect(getCurrentJobContext()).toBeNull()
+
+        const jobContext = { runId: 'run-1', projectId: 'p-1', platformId: 'pl-1', environment: RunEnvironment.PRODUCTION, workerHandlerId: null, httpRequestId: null }
+        manager.acquire({ log, apiClient, jobContext })
+
+        expect(getCurrentJobContext()).toBe(jobContext)
+    })
+
+    it.each([ExecutionMode.SANDBOX_PROCESS, ExecutionMode.SANDBOX_CODE_AND_PROCESS])('does nothing in %s mode, where a sandbox serves one job', async (mode) => {
+        useMode(mode)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(provisionMock).not.toHaveBeenCalled()
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+    })
+
+    // A reused isolate sandbox mounts its first job's platform's custom qadams at start; one
+    // prewarmed with no platform would never get them.
+    it('does nothing for a reused isolate sandbox (dev under SANDBOX_PROCESS)', async () => {
+        mockGetSettings.mockReturnValue(buildSettings({ executionMode: ExecutionMode.SANDBOX_PROCESS, environment: ApEnvironment.DEVELOPMENT }))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(provisionMock).not.toHaveBeenCalled()
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+    })
+
+    it('reports the start failure, not a failure of the cleanup after it', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const failed = fakeSandbox({ start: async () => { throw new Error('did not connect') } })
+        vi.mocked(failed.shutdown).mockRejectedValueOnce(new Error('kill failed'))
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(failed)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ message: 'did not connect' }) }), expect.any(String))
+    })
+
+    it('does nothing when the slot already has a sandbox', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+        manager.acquire({ log, apiClient })
+
+        await manager.prewarm({ log, apiClient })
+
+        expect(provisionMock).not.toHaveBeenCalled()
+        expect(createSandboxForJob).toHaveBeenCalledTimes(1)
+    })
+
+    it('drops a sandbox that failed to start, without throwing, so the first job starts its own', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const failed = fakeSandbox({ start: async () => { throw new Error('did not connect') } })
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(failed)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await expect(manager.prewarm({ log, apiClient })).resolves.toBeUndefined()
+
+        expect(failed.shutdown).toHaveBeenCalled()
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ boxId: 1 }), expect.stringContaining('Prewarm failed'))
+        expect(manager.acquire({ log, apiClient })).not.toBe(failed)
+        expect(createSandboxForJob).toHaveBeenCalledTimes(2)
+    })
+
+    it('starts no sandbox when the engine install fails, without throwing', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        provisionMock.mockRejectedValueOnce(new Error('ENOSPC'))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await expect(manager.prewarm({ log, apiClient })).resolves.toBeUndefined()
+
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+        expect(manager.getActiveSandbox()).toBeNull()
+    })
+
+    it('shuts down a sandbox whose slot was invalidated while it was starting', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const started: { resolve: () => void } = { resolve: () => undefined }
+        const sandbox = fakeSandbox({ start: () => new Promise<void>((resolve) => { started.resolve = resolve }) })
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(sandbox)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        const prewarming = manager.prewarm({ log, apiClient })
+        await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalled())
+        await manager.shutdown(log)
+        vi.mocked(sandbox.shutdown).mockClear()
+        started.resolve()
+        await prewarming
+
+        expect(sandbox.shutdown).toHaveBeenCalledTimes(1)
+        expect(manager.getActiveSandbox()).toBeNull()
+        expect(log.warn).not.toHaveBeenCalled()
+    })
+
+    it('never asks a sandbox a job starts to warm up, even a reusable one after a failed prewarm', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        provisionMock.mockRejectedValueOnce(new Error('ENOENT chown'))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+        await manager.prewarm({ log, apiClient })
+
+        manager.acquire({ log, apiClient })
+
+        expect(createSandboxForJob).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(createSandboxForJob).mock.calls[0][0]).toEqual(expect.objectContaining({ reusable: true }))
+        expect(vi.mocked(createSandboxForJob).mock.calls[0][0].warmup).not.toBe(true)
+    })
+
+    it('does nothing when AP_WORKER_PREWARM_ENGINES=false', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        vi.stubEnv('AP_WORKER_PREWARM_ENGINES', 'false')
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        await manager.prewarm({ log, apiClient })
+        vi.unstubAllEnvs()
+
+        expect(provisionMock).not.toHaveBeenCalled()
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+    })
+
+    it('says so, in its own words, when it cannot shut down the sandbox of a slot let go mid-start', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const started: { resolve: () => void } = { resolve: () => undefined }
+        const sandbox = fakeSandbox({ start: () => new Promise<void>((resolve) => { started.resolve = resolve }) })
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(sandbox)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        const prewarming = manager.prewarm({ log, apiClient })
+        await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalled())
+        await manager.shutdown(log)
+        vi.mocked(sandbox.shutdown).mockRejectedValueOnce(new Error('kill failed'))
+        started.resolve()
+        await prewarming
+
+        expect(log.warn).toHaveBeenCalledTimes(1)
+        expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ message: 'kill failed' }) }), expect.stringContaining('Could not shut down'))
+    })
+
+    it('starts no sandbox when the slot is shut down while the engine is still installing', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const installed: { resolve: () => void } = { resolve: () => undefined }
+        provisionMock.mockReturnValueOnce(new Promise<void>((resolve) => { installed.resolve = resolve }))
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        const prewarming = manager.prewarm({ log, apiClient })
+        await vi.waitFor(() => expect(provisionMock).toHaveBeenCalled())
+        await manager.shutdown(log)
+        installed.resolve()
+        await prewarming
+
+        expect(createSandboxForJob).not.toHaveBeenCalled()
+        expect(manager.getActiveSandbox()).toBeNull()
+        expect(log.warn).not.toHaveBeenCalled()
+    })
+
+    it('stays quiet about a start error caused by its slot being shut down mid-start', async () => {
+        useMode(ExecutionMode.UNSANDBOXED)
+        const started: { reject: (error: Error) => void } = { reject: () => undefined }
+        const sandbox = fakeSandbox({ start: () => new Promise<void>((_resolve, reject) => { started.reject = reject }) })
+        vi.mocked(createSandboxForJob).mockReturnValueOnce(sandbox)
+        const manager = createSandboxManager({ boxId: 1, proxyPort: null })
+
+        const prewarming = manager.prewarm({ log, apiClient })
+        await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalled())
+        await manager.shutdown(log)
+        started.reject(new Error('socket closed'))
+        await prewarming
+
+        expect(log.warn).not.toHaveBeenCalled()
+        expect(manager.getActiveSandbox()).toBeNull()
     })
 })

@@ -4,11 +4,11 @@ import { Action, Qadam, QadamPropertyMap, Trigger } from '@aiqadam/qadams-framew
 import { EngineGenericError, ErrorCode, extractQadamFromModule, getPackageAliasForQadam, getQadamNameFromAlias, isNil, QadamFlowError, trimVersionFromAlias, tryCatch, tryCatchSync } from '@aiqadam/shared'
 import { z } from 'zod'
 import { utils } from '../utils'
+import { qadamDistIndex } from './qadam-dist-index'
 
 // Bundled qadams are baked into the image, so a resolved path cannot change while the
-// process lives. Both caches hold the in-flight promise so concurrent steps share one walk.
+// process lives. The cache holds the in-flight promise so concurrent steps share one walk.
 const qadamPathCache = new Map<string, Promise<string>>()
-let distIndexCache: Promise<Map<string, DistPackageEntry>> | null = null
 // #419 Phase 0: which resolved qadam paths already had a cold-load line logged. Keyed by the
 // resolved path rather than the (qadamName, qadamVersion) a caller asked for, because a
 // stale-pinned alias falls back to the same bundled dist file (#503) — the import cost is paid
@@ -21,9 +21,6 @@ const loggedColdQadamPaths = new Set<string>()
 // prerelease tail could not be recovered here anyway. A dev qadam is resolved by bare name and
 // has no version to compare.
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
-// `version` tolerated as missing or null so a package.json the old name-only index accepted stays
-// resolvable; it just never wins the same-version check.
-const distPackageJsonSchema = z.object({ name: z.string(), version: z.string().nullish() })
 const resolvedQadamPackageJsonSchema = z.object({ version: z.string() })
 
 export const qadamLoader = {
@@ -216,7 +213,7 @@ function isQadamsFrameworkAlreadyLoaded(qadamPath: string): boolean {
 // name@version) — a stale-pinned alias (e.g. `qadam-tables@0.3.1`) can fall through to a newer
 // bundled dist (#503). Read from the resolved package's own `package.json`, which always sits two
 // directories above the entry point regardless of which layout resolved it: `dist/src/index.js`
-// for bundled and dev qadams (`buildDistIndex`), `<pkg>/src/index.js` for installed ones
+// for bundled and dev qadams (`qadamDistIndex`), `<pkg>/src/index.js` for installed ones
 // (`traverseAllParentFoldersToFindQadam`) — either way, `package.json` is the entry file's `src`
 // directory's own sibling. `null` when unreadable, rather than falling back to any part of
 // `qadamPath` itself: an installed/ARCHIVE qadam's path can carry a platform- or tenant-specific
@@ -238,6 +235,12 @@ function logColdQadamLoad({ qadamName, qadamVersion, resolvedVersion, resolveMs,
         importMs: roundMs(importMs),
         sharedDepsAlreadyLoaded,
     })}`)
+}
+
+// A job that is first to build the dist index is the one that paid for a rejected manifest's scan,
+// so its own log is the right place to say why.
+function warnOnConsole(line: string): void {
+    console.warn(line)
 }
 
 function roundMs(value: number): number {
@@ -278,7 +281,7 @@ async function findBundledBuildAtAliasVersion(packageName: string): Promise<stri
     if (!EXACT_VERSION_PATTERN.test(version)) {
         return null
     }
-    const distIndex = await getDistIndex({ refresh: false })
+    const distIndex = await qadamDistIndex.get({ refresh: false, warn: warnOnConsole })
     const bundled = distIndex.get(name)
     if (isNil(bundled) || bundled.version !== version) {
         return null
@@ -287,86 +290,10 @@ async function findBundledBuildAtAliasVersion(packageName: string): Promise<stri
 }
 
 async function findInDistFolder({ packageName, refreshIndex }: FindInDistFolderParams): Promise<string | null> {
-    const distIndex = await getDistIndex({ refresh: refreshIndex })
+    const distIndex = await qadamDistIndex.get({ refresh: refreshIndex, warn: warnOnConsole })
     const target = trimVersionFromAlias(packageName)
     return (distIndex.get(packageName) ?? distIndex.get(target))?.indexPath ?? null
 }
-
-async function getDistIndex({ refresh }: { refresh: boolean }): Promise<Map<string, DistPackageEntry>> {
-    if (!refresh && !isNil(distIndexCache)) {
-        return distIndexCache
-    }
-    const building = buildDistIndex()
-    distIndexCache = building
-    void building.catch(() => {
-        if (distIndexCache === building) {
-            distIndexCache = null
-        }
-    })
-    return building
-}
-
-async function buildDistIndex(): Promise<Map<string, DistPackageEntry>> {
-    const sourceQadamsPath = path.resolve('packages/qadams')
-    if (!await utils.folderExists(sourceQadamsPath)) {
-        return new Map()
-    }
-    const distPackageJsonPaths = await findDistPackageJsonFiles(sourceQadamsPath)
-    const entries = await Promise.all(distPackageJsonPaths.map(readDistPackageEntry))
-
-    const distIndex = new Map<string, DistPackageEntry>()
-    for (const entry of entries) {
-        // First match wins, matching the order the sequential scan used to return in.
-        if (!isNil(entry) && !distIndex.has(entry.name)) {
-            distIndex.set(entry.name, entry)
-        }
-    }
-    return distIndex
-}
-
-async function readDistPackageEntry(packageJsonPath: string): Promise<DistPackageEntry | null> {
-    const { data } = await utils.tryCatchAndThrowOnEngineError(async () => {
-        const content = await fs.readFile(packageJsonPath, 'utf-8')
-        const parsed = distPackageJsonSchema.safeParse(JSON.parse(content))
-        if (!parsed.success) {
-            return null
-        }
-        return {
-            name: parsed.data.name,
-            version: parsed.data.version ?? null,
-            indexPath: path.join(path.dirname(packageJsonPath), 'src', 'index.js'),
-        }
-    })
-    return data ?? null
-}
-
-async function findDistPackageJsonFiles(dirPath: string): Promise<string[]> {
-    const results: string[] = []
-    const ignoredDirs = ['node_modules', '.turbo', 'framework', 'common']
-
-    async function scanDir(currentPath: string): Promise<void> {
-        const items = await fs.readdir(currentPath, { withFileTypes: true })
-        for (const item of items) {
-            if (!item.isDirectory() || ignoredDirs.includes(item.name)) {
-                continue
-            }
-            const fullPath = path.join(currentPath, item.name)
-            if (item.name === 'dist') {
-                const pkgJson = path.join(fullPath, 'package.json')
-                if (await utils.folderExists(pkgJson)) {
-                    results.push(pkgJson)
-                }
-            }
-            else {
-                await scanDir(fullPath)
-            }
-        }
-    }
-
-    await scanDir(dirPath)
-    return results
-}
-
 
 async function traverseAllParentFoldersToFindQadam(packageName: string): Promise<string | null> {
     const customPaths = (process.env.AP_CUSTOM_PIECES_PATHS ?? '').split(':').filter(Boolean)
@@ -394,14 +321,6 @@ async function traverseAllParentFoldersToFindQadam(packageName: string): Promise
         currentDir = parentDir
     }
     return null
-}
-
-type DistPackageEntry = {
-    name: string
-    // `null` when the bundled package.json carries no usable version — such a build can never
-    // claim an alias's version, so it never wins the #503 same-version check.
-    version: string | null
-    indexPath: string
 }
 
 type LogColdQadamLoadParams = {

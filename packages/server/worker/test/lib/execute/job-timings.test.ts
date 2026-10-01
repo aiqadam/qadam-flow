@@ -19,6 +19,7 @@ function makeSandbox({ ready }: { ready: boolean }): Sandbox {
 function makeManager(sandbox: Sandbox): SandboxManager {
     return {
         acquire: vi.fn().mockReturnValue(sandbox),
+        prewarm: vi.fn().mockResolvedValue(undefined),
         invalidate: vi.fn().mockResolvedValue(undefined),
         release: vi.fn().mockResolvedValue(undefined),
         shutdown: vi.fn().mockResolvedValue(undefined),

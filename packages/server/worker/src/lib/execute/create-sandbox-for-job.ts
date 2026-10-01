@@ -18,10 +18,12 @@ export function createSandboxForJob(params: {
     apiClient: WorkerToApiContract
     boxId: number
     reusable: boolean
+    // #419: set only for the sandbox a prewarm starts before its slot polls, see warmupEnv.
+    warmup?: boolean
     proxyPort: number | null
     getCurrentJobContext: () => SandboxJobContext | null
 }): Sandbox {
-    const { log, apiClient, boxId, reusable, proxyPort, getCurrentJobContext } = params
+    const { log, apiClient, boxId, reusable, warmup = false, proxyPort, getCurrentJobContext } = params
     const settings = workerSettings.getSettings()
     const sandboxId = nanoid()
 
@@ -61,27 +63,27 @@ export function createSandboxForJob(params: {
         { hostPath: getGlobalCacheCommonPath(), sandboxPath: '/root/common' },
     ]
 
-    const executionMode = settings.EXECUTION_MODE as ExecutionMode
 
     return createSandbox(
         log,
         sandboxId,
         {
-            env: buildSandboxEnv({ settings, proxyPort }),
+            env: buildSandboxEnv({ settings, proxyPort, warmup }),
             memoryLimitMb,
             cpuMsPerSec: 1000,
             timeLimitSeconds: settings.FLOW_TIMEOUT_SECONDS,
             reusable,
             maxHttpBufferSizeBytes: maxSocketHttpBufferSizeBytes(settings.MAX_FILE_SIZE_MB),
             baseMounts,
-            wsRpcPort: isIsolateMode(executionMode) ? sandboxCapacity.wsRpcPortForBox(boxId) : undefined,
+            wsRpcPort: isIsolateMode(settings.EXECUTION_MODE) ? sandboxCapacity.wsRpcPortForBox(boxId) : undefined,
         },
         processMaker,
         workerHandlers,
     )
 }
 
-export function isIsolateMode(mode: ExecutionMode): boolean {
+// Takes the raw setting as well as the enum: `WorkerSettings.EXECUTION_MODE` is a plain string.
+export function isIsolateMode(mode: string): boolean {
     return mode === ExecutionMode.SANDBOX_PROCESS || mode === ExecutionMode.SANDBOX_CODE_AND_PROCESS
 }
 
@@ -180,9 +182,10 @@ function parseMemoryLimit(memoryLimitKb: string): number {
     return Math.floor(kb / 1024)
 }
 
-function buildSandboxEnv({ settings, proxyPort }: {
+function buildSandboxEnv({ settings, proxyPort, warmup }: {
     settings: WorkerSettings
     proxyPort: number | null
+    warmup: boolean
 }): Record<string, string> {
     // `proxyPort` reflects what the egress stack actually started at worker boot:
     // non-null means the proxy is listening AND the iptables UID-owner REJECT chain is
@@ -199,7 +202,15 @@ function buildSandboxEnv({ settings, proxyPort }: {
         ...ssrfEnv(settings),
         ...propagatedEnv({ settings, networkMode }),
         ...proxyEnv({ proxyPort }),
+        ...warmupEnv({ warmup }),
     }
+}
+
+// #419: only a prewarmed engine is idle when it connects. One a job starts is not: its warmup would
+// race that job for the same loads, and make the job's #548 `cold load` line report
+// `sharedDepsAlreadyLoaded: true` for a slot that was in fact cold.
+function warmupEnv({ warmup }: { warmup: boolean }): Record<string, string> {
+    return warmup ? { AP_ENGINE_WARMUP: 'true' } : {}
 }
 
 function baseEnv({ settings, networkMode }: { settings: WorkerSettings, networkMode: NetworkMode }): Record<string, string> {

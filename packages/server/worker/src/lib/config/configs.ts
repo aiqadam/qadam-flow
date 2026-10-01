@@ -35,6 +35,7 @@ export enum WorkerSystemProp {
     WORKER_CONCURRENCY = 'AP_WORKER_CONCURRENCY',
     EXECUTION_MODE = 'AP_EXECUTION_MODE',
     REUSE_SANDBOX = 'AP_REUSE_SANDBOX',
+    PREWARM_ENGINES = 'AP_WORKER_PREWARM_ENGINES',
 }
 
 const defaultValues: Partial<Record<WorkerSystemProp, string>> = {

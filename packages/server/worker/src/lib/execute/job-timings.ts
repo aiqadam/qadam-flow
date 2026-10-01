@@ -46,6 +46,7 @@ export const jobTimings = {
     instrumentSandboxManager({ sandboxManager, timings }: InstrumentSandboxManagerParams): SandboxManager {
         return {
             acquire: (params) => instrumentSandbox({ sandbox: sandboxManager.acquire(params), timings }),
+            prewarm: (params) => sandboxManager.prewarm(params),
             invalidate: (log) => sandboxManager.invalidate(log),
             release: (log) => sandboxManager.release(log),
             shutdown: (log) => sandboxManager.shutdown(log),

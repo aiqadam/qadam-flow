@@ -8,11 +8,13 @@ import {
     EngineResponse,
     ERROR_MESSAGES_TO_REDACT,
     NetworkMode,
+    tryCatch,
     WorkerContract,
     WorkerNotifyContract,
 } from '@aiqadam/shared'
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client'
 import { shutdownCodeSandbox } from './core/code/code-sandbox'
+import { engineWarmup } from './helper/engine-warmup'
 import { flowRunProgressReporter } from './helper/flow-run-progress-reporter'
 import { execute } from './operations'
 
@@ -97,6 +99,18 @@ export const workerSocket = {
             originalError.apply(console, sanitizedArgs)
         }
 
+        // #419: warm up while idle, writing to the process's own stdout (the worker's log) rather than
+        // the patched console: that one also feeds the notify channel, so a line written while the
+        // first job runs would land in that job's logs.
+        if (engineWarmup.isEnabled()) {
+            socket.once('connect', () => {
+                void warmUpEngine({
+                    write: (line) => originalLog.call(console, line),
+                    writeError: (line) => originalError.call(console, line),
+                })
+            })
+        }
+
         createRpcServer<EngineContract>(socket, {
             executeOperation: async ({ operationType, operation }): Promise<EngineResponse<unknown>> => {
                 flowRunProgressReporter.init()
@@ -168,4 +182,18 @@ function buildSocketOptions(sandboxId: string): Partial<ManagerOptions & SocketO
         Object.assign(base, { agent: new http.Agent() })
     }
     return base
+}
+
+// The warmup is best effort, but a failed one still has to leave a trace: without it the only sign
+// is a first job that came in slow.
+async function warmUpEngine({ write, writeError }: WarmUpEngineParams): Promise<void> {
+    const { error } = await tryCatch(() => engineWarmup.run({ write }))
+    if (error) {
+        writeError(`[engineWarmup] failed ${JSON.stringify({ error: error.message, stack: error.stack })}`)
+    }
+}
+
+type WarmUpEngineParams = {
+    write: (line: string) => void
+    writeError: (line: string) => void
 }

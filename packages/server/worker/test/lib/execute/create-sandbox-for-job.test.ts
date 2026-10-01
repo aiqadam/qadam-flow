@@ -234,6 +234,19 @@ describe('createSandboxForJob', () => {
         expect(createSandboxMock.mock.calls[0][2].reusable).toBe(true)
     })
 
+    // #419: only a prewarmed engine is idle when it connects. A reusable sandbox a job starts is not,
+    // and a warmup there would race the job and falsify its cold-load line.
+    it('turns the engine warmup on only when asked, not for every reusable sandbox', () => {
+        getSettingsMock.mockReturnValue(buildSettings())
+        createSandboxForJob({ log, apiClient, boxId: 1, reusable: true, warmup: true, proxyPort: null, getCurrentJobContext: () => null })
+        createSandboxForJob({ log, apiClient, boxId: 2, reusable: true, proxyPort: null, getCurrentJobContext: () => null })
+        createSandboxForJob({ log, apiClient, boxId: 3, reusable: false, proxyPort: null, getCurrentJobContext: () => null })
+
+        expect(createSandboxMock.mock.calls[0][2].env.AP_ENGINE_WARMUP).toBe('true')
+        expect('AP_ENGINE_WARMUP' in createSandboxMock.mock.calls[1][2].env).toBe(false)
+        expect('AP_ENGINE_WARMUP' in createSandboxMock.mock.calls[2][2].env).toBe(false)
+    })
+
     // The sandbox network env follows the egress stack's runtime state (proxyPort),
     // not the live workerSettings.NETWORK_MODE. The stack starts once at worker boot;
     // settings refresh on every reconnect. Keying off proxyPort prevents the
