@@ -460,7 +460,13 @@ async function renewLease({ apiClient, token }: { apiClient: WorkerToApiContract
     }
     const { jobId, queueName } = inFlight.job
     const sentAt = leases.now()
-    const { data, error } = await tryCatch(() => apiClient.extendLock({ jobId, token, queueName }))
+    // Through the job's own client: a renewal that waited for a reconnect and lands after the
+    // give-up would hold the lock of a job nobody runs, and delay its redelivery by a full lock.
+    const jobApiClient = buildJobApiClient({ apiClient, isGivenUp: isGivenUpFor({ token }) })
+    const { data, error } = await tryCatch(() => jobApiClient.extendLock({ jobId, token, queueName }))
+    if (givenUpGuard.isGivenUpError(error)) {
+        return
+    }
     if (error) {
         inFlight.log.warn({ error, jobId }, 'Failed to extend lock')
         return
@@ -610,8 +616,13 @@ async function runJob({ apiClient, sbManager, job, workerLog }: RunJobParams): P
     const status = execError ? EngineResponseStatus.INTERNAL_ERROR : result.status
 
     const completeStartedAt = performance.now()
-    const givenUp = inFlightJobs.get(job.token)?.givenUp ?? null
-    const { error: completeError } = !isNil(givenUp) ? { error: null } : await tryCatch(() =>
+    // Decided once, here, not again when the call is sent. The handler has returned, so the result
+    // is real; a give-up while the completion waits for a reconnect cannot make it wrong, only late.
+    // The API takes it only from the token that still holds the job's lock (`holdsLease` in
+    // job-broker.ts), so a completion that lands after the job went to a redelivered copy is
+    // ignored there, and one that lands while the lock still holds finishes the job it describes.
+    const givenUpBeforeCompletion = inFlightJobs.get(job.token)?.givenUp ?? null
+    const { error: completeError } = !isNil(givenUpBeforeCompletion) ? { error: null } : await tryCatch(() =>
         apiClient.completeJob({
             jobId: job.jobId,
             token: job.token,
@@ -639,8 +650,10 @@ async function runJob({ apiClient, sbManager, job, workerLog }: RunJobParams): P
         ...readJobRef(job.jobData),
         attemptsStarted: job.attempsStarted,
         status,
-        completed: isNil(givenUp) && isNil(completeError),
-        givenUp,
+        // Sent and answered; the API may still have ignored it, if the lock had moved on by then.
+        completed: isNil(givenUpBeforeCompletion) && isNil(completeError),
+        // Read after the completion: a give-up while it waited for a reconnect counts.
+        givenUp: inFlightJobs.get(job.token)?.givenUp ?? null,
         durationMs: Math.round(jobFinishedAt - jobStartedAt),
         completeMs: Math.round(jobFinishedAt - completeStartedAt),
         ...timings.summary(),
@@ -660,12 +673,7 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
         const apiUrl = getApiUrl()
         const { PUBLIC_URL: publicUrl } = await workerSettings.waitForSettings()
         log.debug({ apiUrl, publicUrl }, 'Worker settings resolved')
-        // A job that is over counts as given up too: its entry is gone once it finishes, given up or
-        // not, and a call it still has waiting for a reconnect is no longer this worker's to send.
-        const isGivenUp = (): boolean => {
-            const inFlight = inFlightJobs.get(job.token)
-            return isNil(inFlight) || !isNil(inFlight.givenUp)
-        }
+        const isGivenUp = isGivenUpFor({ token: job.token })
         const jobApiClient = buildJobApiClient({ apiClient, isGivenUp })
         const ctx: JobContext = {
             apiClient: jobApiClient,
@@ -687,6 +695,12 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             const handler = getHandler(jobData.jobType)
             log.debug({ handlerType: handler.jobType }, 'Executing job with handler')
             const { data: result, error } = await tryCatch(() => handler.execute(ctx, jobData))
+            // Expected, not an error: a give-up kills the job's engine or refuses its next call, and
+            // either surfaces here. The give-up itself is logged where it happened.
+            if (givenUpGuard.isGivenUpError(error) || isGivenUp()) {
+                log.info({ error: String(error) }, 'Job stopped: this worker gave it up')
+                throw error
+            }
             if (error) {
                 log.error({ err: error }, 'Job execution failed')
                 span.recordException(error)
@@ -699,6 +713,17 @@ async function executeJob({ apiClient, job, sbManager, timings }: ExecuteJobPara
             span.end()
         }
     })
+}
+
+/**
+ * A job that is over counts as given up too: its entry is gone once it finishes, given up or not,
+ * and a call it still has waiting for a reconnect is no longer this worker's to send.
+ */
+function isGivenUpFor({ token }: { token: string }): () => boolean {
+    return () => {
+        const inFlight = inFlightJobs.get(token)
+        return isNil(inFlight) || !isNil(inFlight.givenUp)
+    }
 }
 
 /**

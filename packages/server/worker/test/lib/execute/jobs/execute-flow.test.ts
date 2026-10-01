@@ -541,6 +541,18 @@ describe('executeFlowJob', () => {
                 expect.objectContaining({ status: FlowRunStatus.FAILED }),
             )
         })
+
+        // #585: the redelivered copy answers the caller; the guard refusing this one is the give-up working.
+        it('does not log a response the given-up guard dropped as a failure', async () => {
+            mockGetVersion.mockResolvedValue(null)
+            const ctx = makeMockContext({ sendFlowResponse: vi.fn().mockRejectedValue(new JobGivenUpError('RPC [sendFlowResponse] not sent')) })
+            const data = makeResumeJobData({ workerHandlerId: 'handler-1', httpRequestId: 'req-1' })
+
+            await executeFlowJob.execute(ctx, data)
+
+            expect(ctx.apiClient.sendFlowResponse).toHaveBeenCalled()
+            expect(ctx.log.error).not.toHaveBeenCalled()
+        })
     })
 
     describe('sync webhook dispatch deadline (#510)', () => {

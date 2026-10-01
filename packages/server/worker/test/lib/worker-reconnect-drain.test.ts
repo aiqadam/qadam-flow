@@ -419,6 +419,8 @@ describe('worker reconnect and drain — #585', () => {
             expect(engine.managerShutdowns, 'only the job\'s own sandbox is stopped').toBe(0)
             await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
             expect(jobFinishedLines()[0]).toMatchObject({ jobId: 'job-1', givenUp: 'lease-lost', completed: false })
+            expect(childLog.error, 'the engine the give-up killed was logged as a job failure').not.toHaveBeenCalledWith(expect.anything(), 'Job execution failed')
+            expect(childLog.info).toHaveBeenCalledWith(expect.anything(), 'Job stopped: this worker gave it up')
             expect(completeJobCalls, 'a given-up job sent its verdict, and with it a quick retry').toHaveLength(0)
             // The failed run it would report could overwrite the redelivered copy's.
             expect(engine.failureReports, 'the handler never tried to report the dead engine').toBe(1)
@@ -465,6 +467,36 @@ describe('worker reconnect and drain — #585', () => {
             await expect(report).rejects.toBeInstanceOf(JobGivenUpError)
             expect(runLogUploads, 'a held report of a given-up job reached the API').toEqual([])
             expect(completeJobCalls).toHaveLength(0)
+        }, 20_000)
+
+        // The same for a renewal: sent after the give-up, it would hold the lock of a job nobody runs,
+        // and push its redelivery back by a whole lock duration.
+        it('drops a renewal that was waiting for the reconnect when its job was given up', async () => {
+            const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+            let answerSettings = (): void => undefined
+            settingsAnswered = async (connection) => {
+                if (connection > 0) {
+                    await new Promise<void>((resolve) => {
+                        answerSettings = resolve
+                    })
+                }
+            }
+            await waitUntil(() => engine.running, 'the job never started')
+            const leaseTick = setIntervalSpy.mock.calls.find(([, ms]) => ms === leaseTracker.renewalIntervalMs)?.[0]
+            setIntervalSpy.mockRestore()
+            expect(leaseTick, 'the job never scheduled its lease renewal').toBeTypeOf('function')
+
+            ioServer.disconnectSockets(true)
+            await waitUntil(() => connections > 1, 'the worker never reconnected')
+            // Connected, settings not loaded yet: the gate is closed, so the renewal waits at it.
+            leaseTick?.()
+            leaseDeadline.expire({ token: 'token-1', leaseAgeMs: leaseTracker.trustMs })
+            await waitUntil(() => jobFinishedLines().length === 1, 'the job never finished')
+            answerSettings()
+            await waitUntil(() => reconnectedLines() >= 1, 'the reconnect never finished')
+            await sleep(200)
+
+            expect(extendLockCalls, 'a held renewal of a given-up job reached the API').not.toContain(1)
         }, 20_000)
 
         // Provisioning (installing qadams, waiting on the shared cache lock) can take minutes, all of

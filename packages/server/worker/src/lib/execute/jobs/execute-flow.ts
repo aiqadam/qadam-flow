@@ -22,7 +22,7 @@ import { UnresolvableDependencyError } from '../../cache/code/unresolvable-depen
 import { flowCache } from '../../cache/flow/flow-cache'
 import { system, WorkerSystemProp } from '../../config/configs'
 import { workerSettings } from '../../config/worker-settings'
-import { JobGivenUpError } from '../given-up-guard'
+import { givenUpGuard } from '../given-up-guard'
 import { ClassifiedJobFailure } from '../job-failure'
 import { FireAndForgetJobResult, JobContext, JobHandler, JobResultKind } from '../types'
 import { provisionFlowPieces } from '../utils/flow-helpers'
@@ -272,7 +272,7 @@ async function tearDownSandbox({ ctx, teardown }: TearDownSandboxParams): Promis
 async function reportBestEffort(params: ReportFlowStatusParams): Promise<void> {
     const { error } = await tryCatch(() => reportFlowStatus(params))
     // Dropped on purpose (#585): the run may already be someone else's, and the give-up is logged where it happened.
-    if (error instanceof JobGivenUpError) {
+    if (givenUpGuard.isGivenUpError(error)) {
         return
     }
     if (!isNil(error)) {
@@ -334,6 +334,10 @@ async function respondToSyncCallerOnFailure({ ctx, data, status }: RespondToSync
             headers: {},
         },
     }))
+    // Dropped on purpose (#585): a given-up job's caller is the redelivered copy's to answer.
+    if (givenUpGuard.isGivenUpError(error)) {
+        return
+    }
     if (!isNil(error)) {
         // The run's own status upload matters more — leaving the caller to time out is exactly the
         // behaviour that existed before this response was sent at all.

@@ -1,4 +1,5 @@
 import { isNil, WorkerToApiContract } from '@aiqadam/shared'
+import { ClassifiedJobFailure } from './job-failure'
 import { SandboxManager } from './sandbox-manager'
 
 /**
@@ -15,6 +16,11 @@ import { SandboxManager } from './sandbox-manager'
  * gets the check at send time too.
  */
 export const givenUpGuard = {
+    /** The expected outcome of a call a given-up job made, bare or carried by a handler's verdict: never an error to log. */
+    isGivenUpError(error: unknown): boolean {
+        return error instanceof JobGivenUpError
+            || (error instanceof ClassifiedJobFailure && error.original instanceof JobGivenUpError)
+    },
     apiClient({ apiClient, isGivenUp }: ApiClientParams): WorkerToApiContract {
         return new Proxy(apiClient, {
             get(target, property, receiver): unknown {
