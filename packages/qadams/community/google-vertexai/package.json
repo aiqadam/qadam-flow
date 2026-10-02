@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadam-google-vertexai",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
@@ -9,7 +9,8 @@
     "@aiqadam/shared": "workspace:*",
     "@google/genai": "1.43.0",
     "google-auth-library": "10.6.1",
-    "mime-types": "2.1.35"
+    "mime-types": "2.1.35",
+    "tslib": "2.6.2"
   },
   "devDependencies": {
     "@types/mime-types": "2.1.1"

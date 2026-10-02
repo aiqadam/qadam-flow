@@ -85,6 +85,8 @@ if ! git -C "$repo_root" worktree add --detach -q "$worktree" "$base_sha" 2>/dev
   fail_case 'git worktree setup' "could not create a worktree at ${worktree} from ${base_sha}"
 else
   ln -s "${repo_root}/node_modules" "${worktree}/node_modules"
+  # The fixtures import typeorm, which only the api declares; under the isolated linker it is not reachable from the root.
+  ln -s "${repo_root}/packages/server/api/node_modules" "${worktree}/packages/server/api/node_modules"
 
   # reset_worktree — back to base_sha with no fixture commits, so each case's
   # add_fixture() diffs base_sha...<its own commit> in isolation, not against
