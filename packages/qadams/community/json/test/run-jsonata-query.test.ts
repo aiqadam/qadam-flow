@@ -75,7 +75,9 @@ const POLLUTION_MARKER = 'qadamPollutionMarker';
  * (the first step of every code-execution chain in GHSA-8gq3-vp5j-2grp, GHSA-2943-5xfg-gq5f and
  * GHSA-66mm-25pp-rfff) or write to a shared prototype (GHSA-663r-x48j-fg8p). Each probe stops at
  * *reaching* the internal; none calls it. On jsonata 2.1.0 every probe in `REACH_ATTEMPTS` resolves to
- * a native function or object, so these cases fail there.
+ * a native function or object, so these cases fail there. The binding-override probe is what covers
+ * GHSA-663r-x48j-fg8p's vector; the Object.prototype case below is a forward regression guard only,
+ * since 2.1.0 already refuses those particular `__proto__` writes.
  */
 describe('run_jsonata_query against expressions reaching for JavaScript internals', () => {
   const REACH_ATTEMPTS = [
