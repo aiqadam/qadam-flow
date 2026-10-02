@@ -70,9 +70,11 @@ The engine is untrusted; the worker is not. The run-scoped `WorkerContract` RPCs
 - `sendFlowResponse` must name the job's own `workerHandlerId` + `httpRequestId`, so an async job
   (both null) can answer no one;
 - `resolveInlineFlow`'s `parentRunId` is held to the same run set, under the job's project, before
-  `startInlineFlowRun` is called: every inline child fails its parent on failure, and the API only
-  checks that the parent is in the caller's project, so a foreign same-project parent would let the
-  engine fail and resume an unrelated paused run (#525). A nested inline call names its own inline
+  `startInlineFlowRun` is called: the API only checks that the parent is in the caller's project, so
+  a foreign same-project parent would let the engine attach inline children, and the inline depth
+  they count from, under an unrelated run (#525). When #525 was found, those children also failed
+  their parent, which made it a way to fail and resume a foreign paused run; since #521 inline
+  children are created with `failParentOnFailure: false`. A nested inline call names its own inline
   parent, which the scope already recorded, so it still passes;
 - no flow job in the sandbox (trigger, property, validation jobs) → every such RPC is refused
   (`resolveInlineFlow` answers `{ ok: false }` without calling the API, as it always did);

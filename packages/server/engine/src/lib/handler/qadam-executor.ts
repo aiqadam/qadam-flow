@@ -19,7 +19,7 @@ import { EngineConstants } from './context/engine-constants'
 import { callFlowInline } from './inline-flow-executor'
 
 const CONCURRENT_LOOP_PAUSE_ERROR = 'This step pauses the run, which an iteration of a CONCURRENT loop cannot do. Run the loop SEQUENTIAL, or move this step out of the loop.'
-const AGENT_TOOL_PAUSE_ERROR = 'This action pauses the run (Delay, Human Input/Approval, or a Queue-mode Call Flow that waits for its response), which an agent tool cannot do. Run it as a step of its own, or, for Call Flow, use Inline execution mode.'
+const AGENT_TOOL_PAUSE_ERROR = 'This action pauses the run or registers a callback to resume it (for example Delay, an approval, or a Queue-mode Call Flow that waits for its response), which an agent tool cannot do. Run it as a step of its own; for Call Flow, Inline execution mode works as a tool.'
 
 export const qadamExecutor: BaseExecutor<QadamAction> = {
     async handle({

@@ -167,6 +167,8 @@ async function flushSnapshot({ onlyIfDirty, retryPolicy }: FlushSnapshotParams):
             return
         }
         const { flowExecutorContext, engineConstants } = params
+        // Defence in depth: nothing produces the placeholder run id since #643, but a run that is
+        // not a run must never be flushed as one.
         if (engineConstants.flowRunId === DEFAULT_MCP_DATA.flowRunId) {
             return
         }

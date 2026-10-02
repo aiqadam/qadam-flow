@@ -79,9 +79,9 @@ one-step execution through the normal `qadamExecutor`, with constants from
 - **Not a step of that run.** `isAgentToolCall` makes the progress reporter ignore the tool's step
   (`sendUpdate` and `output.update` are no-ops), so it can never replace the parent run's snapshot.
 - **Never pauses.** An action with `pauses: true` is refused before `run()`, and `createWaitpoint` /
-  `waitForWaitpoint` throw for a `'conditional'` one (a Queue-mode Call Flow with Wait for
-  Response): a tool call cannot wait, and a waitpoint on the parent's real run would be left
-  PENDING. The refusal is an ordinary FAILED step, which reaches the agent as a tool error.
+  `waitForWaitpoint` throw for any action that creates a waitpoint (a Queue-mode Call Flow with Wait
+  for Response, approval links, …): a tool call cannot wait, and a waitpoint on the parent's real
+  run would be left PENDING. The refusal is an ordinary FAILED step, which reaches the agent as a tool error.
 - **Failures stay with the agent.** A failed tool step — including a failed inline child — is
   returned to the agent as `ExecutionToolStatus.FAILED`; it does not fail the agent's run. Inline
   children are created with `failParentOnFailure: false`, so nothing fails the parent out of band

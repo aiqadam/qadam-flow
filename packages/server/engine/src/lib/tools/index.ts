@@ -253,15 +253,6 @@ ${jsonSchema}
 `
 }
 
-type ExecuteToolOperationWithModel = ExecuteToolOperation & {
-    model: LanguageModel
-}
-
-type ExecuteParams = {
-    operation: ExecuteToolOperationWithModel
-    constants: EngineConstants
-}
-
 async function propertyToSchema({ propertyName, property, operation, resolvedInput }: PropertyToSchemaParams): Promise<PropertySchemas> {
     const schemas = await baseSchemasForProperty({ propertyName, property, operation, resolvedInput })
     const strict = property.description ? schemas.strict.describe(property.description) : schemas.strict
@@ -498,6 +489,15 @@ function buildPropertyDetailsSection(propertyDetails: PropertyDetail[]): string 
 **PROPERTY DETAILS**:
 ${sections}
 `
+}
+
+type ExecuteToolOperationWithModel = ExecuteToolOperation & {
+    model: LanguageModel
+}
+
+type ExecuteParams = {
+    operation: ExecuteToolOperationWithModel
+    constants: EngineConstants
 }
 
 type ConstructToolParams = {

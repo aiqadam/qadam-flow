@@ -455,8 +455,8 @@ describe('engine RPC run scope', () => {
         await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-child', projectId: 'project-own' }))).rejects.toEqual(refused)
     })
 
-    // Every inline child fails its parent on failure, so a parent outside the job's own run tree would
-    // let the engine fail and resume an unrelated paused run in the same project (#525).
+    // A parent outside the job's own run tree would let the engine attach inline children, and their
+    // inline depth, under an unrelated run in the same project (#525).
     it('refuses resolveInlineFlow under another run in the same project without calling the API', async () => {
         const { client, handlers } = setup({ jobContext: () => JOB })
 

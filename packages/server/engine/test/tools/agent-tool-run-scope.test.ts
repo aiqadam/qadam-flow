@@ -1,5 +1,5 @@
-import { AgentQadamTool, AgentToolType, DEFAULT_MCP_DATA, ExecutionToolStatus, FieldControlMode, FlowTriggerType, FlowVersionState, ResolveInlineFlowRequest, ResolveInlineFlowResult, RunEnvironment, UploadRunLogsRequest } from '@aiqadam/shared'
-import { LanguageModel } from 'ai'
+import { AgentQadamTool, AgentToolType, DEFAULT_MCP_DATA, ExecutionToolStatus, FieldControlMode, FlowTriggerType, FlowVersionState, LoopStepOutput, ResolveInlineFlowRequest, ResolveInlineFlowResult, RunEnvironment, UploadRunLogsRequest } from '@aiqadam/shared'
+import { LanguageModel, Tool } from 'ai'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockResolveInlineFlow, mockUploadRunLog, mockUpdateRunProgress, mockUpdateStepProgress } = vi.hoisted(() => ({
@@ -34,7 +34,11 @@ vi.mock('../../src/lib/helper/trigger-helper', () => ({
 }))
 
 import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
+import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
+import { flowExecutor } from '../../src/lib/handler/flow-executor'
+import { qadamExecutor } from '../../src/lib/handler/qadam-executor'
 import { flowRunProgressReporter } from '../../src/lib/helper/flow-run-progress-reporter'
+import { qadamLoader } from '../../src/lib/helper/qadam-loader'
 import { waitpointClient } from '../../src/lib/qadam-context/waitpoint-client'
 import { agentTools } from '../../src/lib/tools'
 import { mockHttpServer } from '../handler/mock-http-server'
@@ -139,6 +143,34 @@ describe('an agent PIECE tool calling @aiqadam/qadam-subflows callFlow', () => {
         expect(dispatched[0].headers['ap-parent-run-id']).toBe(JOB_RUN_ID)
         expect(dispatched[0].headers['ap-fail-parent-on-failure']).toBe('false')
     }, 20000)
+
+    // An agent step inside a CONCURRENT loop iteration: the inline child its tool starts must run its
+    // own loops one item at a time, as a child called from that iteration directly would.
+    it.each([
+        ['inside a concurrent loop iteration', true],
+        ['outside any concurrent loop', false],
+    ])('tells the tool and its inline child whether the agent step runs %s', async (_label, concurrent) => {
+        const loadQadamAndAction = qadamLoader.getQadamAndActionOrThrow
+        vi.spyOn(qadamLoader, 'getQadamAndActionOrThrow').mockImplementation(async (params) => params.qadamName === FAKE_AGENT_QADAM
+            ? { qadam: { auth: undefined }, qadamAction: fakeAgentAction() } as never
+            : loadQadamAndAction(params))
+        const toolConstants = vi.spyOn(EngineConstants, 'fromAgentToolCall')
+        const childRuns = vi.spyOn(flowExecutor, 'executeFromTrigger')
+        const withLoop = await FlowExecutorContext.empty().upsertStep('loop', LoopStepOutput.init({ input: {} }).addIteration())
+        const executionState = withLoop.forkForIteration({ loopName: 'loop', iteration: 0, concurrent })
+
+        const result = await qadamExecutor.handle({
+            action: buildQadamAction({ name: 'agent_step', qadamName: FAKE_AGENT_QADAM, actionName: 'run_agent', input: {} }),
+            executionState,
+            constants: parentConstants(),
+        })
+
+        expect(result.verdict).toEqual({ status: 'RUNNING' })
+        expect(result.getStepOutput('agent_step')?.output).toMatchObject({ status: ExecutionToolStatus.SUCCESS })
+        expect(toolConstants.mock.results[0].value.insideConcurrentIteration).toBe(concurrent)
+        expect(childRuns).toHaveBeenCalledTimes(1)
+        expect(childRuns.mock.calls[0][0].constants).toMatchObject({ flowRunId: 'child-run-id', insideConcurrentIteration: concurrent })
+    }, 20000)
 })
 
 describe('an agent PIECE tool whose action always pauses', () => {
@@ -203,6 +235,27 @@ describe('EngineConstants.fromAgentToolCall', () => {
         })
     })
 })
+
+const FAKE_AGENT_QADAM = '@aiqadam/qadam-fake-agent'
+
+// Stands in for Run Agent: builds its tools the way the real one does and calls the inline Call Flow
+// tool once.
+function fakeAgentAction() {
+    return {
+        name: 'run_agent',
+        displayName: 'Run Agent',
+        description: 'calls one tool',
+        props: {},
+        requireAuth: false,
+        run: async (context: { agent: { tools: (params: { tools: AgentQadamTool[], model: LanguageModel }) => Promise<Record<string, Tool>> } }) => {
+            const tools = await context.agent.tools({
+                tools: [callFlowTool({ executionMode: 'inline', waitForResponse: true })],
+                model: {} as LanguageModel,
+            })
+            return tools.call_flow.execute!({ instruction: 'call the child flow' }, {} as never)
+        },
+    }
+}
 
 function callFlowTool({ executionMode, waitForResponse }: { executionMode: 'inline' | 'queue', waitForResponse: boolean }): AgentQadamTool {
     const chosen = (value: unknown) => ({ mode: FieldControlMode.CHOOSE_YOURSELF, value })
