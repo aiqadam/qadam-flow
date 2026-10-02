@@ -4,7 +4,7 @@ import cors from '@fastify/cors'
 import formBody from '@fastify/formbody'
 import fastifyMultipart, { MultipartFile } from '@fastify/multipart'
 import fastifyStatic from '@fastify/static'
-import fastify, { FastifyInstance } from 'fastify'
+import fastify, { FastifyInstance, LogController } from 'fastify'
 import { fastifyRawBody } from 'fastify-raw-body'
 import fastifySocketIO from 'fastify-socket'
 import qs from 'qs'
@@ -66,16 +66,16 @@ export const setupServer = async (): Promise<FastifyInstance> => {
         const frontendPath = path.resolve(process.cwd(), 'dist/packages/web')
         await app.register(fastifyStatic, {
             root: frontendPath,
-            setHeaders: (res, filepath) => {
+            setHeaders: (reply, filepath) => {
                 const normalized = filepath.replace(/\\/g, '/')
                 if (normalized.endsWith('.html')) {
-                    void res.setHeader('Cache-Control', 'no-cache')
+                    void reply.header('Cache-Control', 'no-cache')
                 }
                 else if (normalized.includes('/assets/')) {
-                    void res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+                    void reply.header('Cache-Control', 'public, max-age=31536000, immutable')
                 }
                 else {
-                    void res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate')
+                    void reply.header('Cache-Control', 'public, max-age=0, must-revalidate')
                 }
             },
         })
@@ -112,7 +112,7 @@ async function setupBaseApp(): Promise<FastifyInstance> {
     const fileSizeLimit = system.getNumberOrThrow(AppSystemProp.MAX_FILE_SIZE_MB)
     const flowRunLogSizeLimit = system.getNumberOrThrow(AppSystemProp.MAX_FLOW_RUN_LOG_SIZE_MB)
     const app = fastify({
-        disableRequestLogging: true,
+        logController: new LogController({ disableRequestLogging: true }),
         querystringParser: (str) => qs.parse(str, { arrayLimit: 1000 }),
         loggerInstance: system.globalLogger(),
         ignoreTrailingSlash: true,
