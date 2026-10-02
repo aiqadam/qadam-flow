@@ -48,8 +48,10 @@ export const flowRunProgressReporter = {
             // child's updates were allowed through, its progress would overwrite the
             // parent's, and a periodic/`backup()` flush could persist the child's steps
             // into the parent's own log file. Children get a full step-log snapshot of
-            // their own from `inline-flow-executor.ts` instead once they finish.
-            if (engineConstants.isInlineChild) {
+            // their own from `inline-flow-executor.ts` instead once they finish. An agent tool's
+            // one-step execution carries its parent's run id (#643) but is not a step of that run:
+            // letting it through would replace the parent's snapshot with the tool's lone step.
+            if (engineConstants.isInlineChild || engineConstants.isAgentToolCall) {
                 return
             }
             if (params.startTime) {
@@ -98,6 +100,10 @@ export const flowRunProgressReporter = {
         const { engineConstants, flowExecutorContext, stepName, stepOutput } = params
         return {
             update: async (params: { data: unknown }) => {
+                // The tool's step is not a step of the run whose id it carries (#643).
+                if (engineConstants.isAgentToolCall) {
+                    return
+                }
                 const updated = await flowExecutorContext
                     .upsertStep(stepName, stepOutput.setOutput(params.data))
 
@@ -161,6 +167,8 @@ async function flushSnapshot({ onlyIfDirty, retryPolicy }: FlushSnapshotParams):
             return
         }
         const { flowExecutorContext, engineConstants } = params
+        // Defence in depth: nothing produces the placeholder run id since #643, but a run that is
+        // not a run must never be flushed as one.
         if (engineConstants.flowRunId === DEFAULT_MCP_DATA.flowRunId) {
             return
         }

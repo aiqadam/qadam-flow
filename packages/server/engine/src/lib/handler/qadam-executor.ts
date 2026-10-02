@@ -19,6 +19,7 @@ import { EngineConstants } from './context/engine-constants'
 import { callFlowInline } from './inline-flow-executor'
 
 const CONCURRENT_LOOP_PAUSE_ERROR = 'This step pauses the run, which an iteration of a CONCURRENT loop cannot do. Run the loop SEQUENTIAL, or move this step out of the loop.'
+const AGENT_TOOL_PAUSE_ERROR = 'This action pauses the run or registers a callback to resume it (for example Delay, an approval, or a Queue-mode Call Flow that waits for its response), which an agent tool cannot do. Run it as a step of its own; for Call Flow, Inline execution mode works as a tool.'
 
 export const qadamExecutor: BaseExecutor<QadamAction> = {
     async handle({
@@ -63,8 +64,9 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
 
         // Refused before `run()`: a waitpoint created and then abandoned would stay PENDING and could
         // resume this run later with someone else's payload.
-        if (executionState.isConcurrentFork && qadamAction.pauses === true) {
-            throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
+        const pauseRefusal = pauseRefusalFor({ constants, concurrentFork: executionState.isConcurrentFork })
+        if (!isNil(pauseRefusal) && qadamAction.pauses === true) {
+            throw new Error(pauseRefusal)
         }
 
         const { processedInput, errors } = await propsProcessor.applyProcessorsAndValidators({
@@ -139,6 +141,7 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
             agent: {
                 tools: async (params: ConstructToolParams): Promise<ToolSet> => agentTools.tools({
                     engineConstants: constants,
+                    insideConcurrentIteration: executionState.isConcurrentFork,
                     tools: params.tools,
                     model: params.model,
                 }),
@@ -157,8 +160,8 @@ const executeAction: ActionHandler<QadamAction> = async ({ action, executionStat
                 id: constants.flowRunId,
                 stop: createStopHook(params),
                 respond: createRespondHook(params),
-                createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params, concurrentFork: executionState.isConcurrentFork }),
-                waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params, concurrentFork: executionState.isConcurrentFork }),
+                createWaitpoint: createWaitpointHook({ constants, stepName: action.name, hookParams: params, pauseRefusal }),
+                waitForWaitpoint: createWaitForWaitpointHook({ hookParams: params, pauseRefusal }),
                 callFlowInline: (req) => callFlowInline({ constants, executionState, flowId: req.flowId, payload: req.payload, insideConcurrentIteration: executionState.isConcurrentFork }),
                 // Lazy: resolved via `EngineConstants#getRunLocale` only when something actually
                 // calls this (today, `@aiqadam/qadam-subflows`' queued `callFlow`), using THIS
@@ -295,12 +298,21 @@ type CreateRespondHookParams = {
     hookResponse: HookResponse
 }
 
-function createWaitpointHook({ constants, stepName, hookParams, concurrentFork }: { constants: EngineConstants, stepName: string, hookParams: { hookResponse: HookResponse }, concurrentFork: boolean }): CreateWaitpointHook {
+// An agent tool carries its parent's real run id (#643), so a waitpoint it created would sit PENDING
+// on that run, which never pauses for it.
+function pauseRefusalFor({ constants, concurrentFork }: { constants: EngineConstants, concurrentFork: boolean }): string | null {
+    if (constants.isAgentToolCall) {
+        return AGENT_TOOL_PAUSE_ERROR
+    }
+    return concurrentFork ? CONCURRENT_LOOP_PAUSE_ERROR : null
+}
+
+function createWaitpointHook({ constants, stepName, hookParams, pauseRefusal }: { constants: EngineConstants, stepName: string, hookParams: { hookResponse: HookResponse }, pauseRefusal: string | null }): CreateWaitpointHook {
     return async (req: CreateWaitpointParams): Promise<CreateWaitpointResult> => {
         // A `'conditional'` action only learns it pauses here (a Queue-mode Call Flow that waits for
         // its response); refusing before the waitpoint exists leaves nothing PENDING behind (#387).
-        if (concurrentFork) {
-            throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
+        if (!isNil(pauseRefusal)) {
+            throw new Error(pauseRefusal)
         }
         pausedFlowLimits.assertResumeWithinTimeout(req.resumeDateTime)
         if (!isNil(req.join?.timeoutSeconds)) {
@@ -335,10 +347,10 @@ function createWaitpointHook({ constants, stepName, hookParams, concurrentFork }
     }
 }
 
-function createWaitForWaitpointHook({ hookParams, concurrentFork }: { hookParams: { hookResponse: HookResponse }, concurrentFork: boolean }): WaitForWaitpointHook {
+function createWaitForWaitpointHook({ hookParams, pauseRefusal }: { hookParams: { hookResponse: HookResponse }, pauseRefusal: string | null }): WaitForWaitpointHook {
     return (_waitpointId: string) => {
-        if (concurrentFork) {
-            throw new Error(CONCURRENT_LOOP_PAUSE_ERROR)
+        if (!isNil(pauseRefusal)) {
+            throw new Error(pauseRefusal)
         }
         hookParams.hookResponse = {
             ...hookParams.hookResponse,

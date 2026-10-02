@@ -1,5 +1,6 @@
 import { FlowActionType, FlowRunStatus, GenericStepOutput, StepOutputStatus, StepRunResponse, StreamStepProgress, UpdateRunProgressRequest, UploadRunLogsRequest } from '@aiqadam/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EngineConstants } from '../../src/lib/handler/context/engine-constants'
 import { FlowExecutorContext } from '../../src/lib/handler/context/flow-execution-context'
 
 const { uploadRunLogMock, updateRunProgressMock, updateStepProgressMock } = vi.hoisted(() => ({
@@ -322,5 +323,51 @@ describe('flow-run-progress-reporter slicing in single-step test mode', () => {
         expect(lastCall).toBeDefined()
         // The live UI update must carry the actual payload, never the LogSliceRef
         expect(lastCall![0].stepResponse.output).toEqual(big)
+    })
+})
+
+// #643: an agent tool's one-step execution carries its parent step's real run id, so the reporter
+// must not take it for that run.
+describe('flow-run-progress-reporter and an agent tool call', () => {
+    beforeEach(() => {
+        uploadRunLogMock.mockClear()
+        updateStepProgressMock.mockClear()
+    })
+
+    afterEach(async () => {
+        await flowRunProgressReporter.shutdown()
+    })
+
+    it('keeps the parent run\'s snapshot when a tool call reports its own step', async () => {
+        const parent = buildUpdateParams({ status: FlowRunStatus.RUNNING })
+        const toolConstants = EngineConstants.fromAgentToolCall({ parent: parent.engineConstants, insideConcurrentIteration: false })
+        const toolContext = await FlowExecutorContext.empty().upsertStep('callFlow', GenericStepOutput.create({
+            type: FlowActionType.PIECE,
+            status: StepOutputStatus.RUNNING,
+            input: {},
+        }))
+
+        await flowRunProgressReporter.sendUpdate(parent)
+        await flowRunProgressReporter.sendUpdate({ engineConstants: toolConstants, flowExecutorContext: toolContext, stepNameToUpdate: 'callFlow' })
+        await flowRunProgressReporter.backup()
+
+        expect(uploadRunLogMock).toHaveBeenCalledTimes(1)
+        expect(uploadRunLogMock.mock.calls[0][0]).toMatchObject({ runId: parent.engineConstants.flowRunId, logsFileId: 'logs-1' })
+    })
+
+    it('streams nothing for a tool call\'s step under the parent run', async () => {
+        const parent = buildUpdateParams({ status: FlowRunStatus.RUNNING })
+        const toolConstants = EngineConstants.fromAgentToolCall({ parent: parent.engineConstants, insideConcurrentIteration: false })
+        const stepOutput = GenericStepOutput.create({ type: FlowActionType.PIECE, status: StepOutputStatus.RUNNING, input: {} })
+
+        const outputContext = flowRunProgressReporter.createOutputContext({
+            engineConstants: toolConstants,
+            flowExecutorContext: FlowExecutorContext.empty(),
+            stepName: 'callFlow',
+            stepOutput,
+        })
+        await outputContext.update({ data: { partial: true } })
+
+        expect(updateStepProgressMock).not.toHaveBeenCalled()
     })
 })

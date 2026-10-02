@@ -11,7 +11,7 @@ import { qadamLoader } from '../helper/qadam-loader'
 import { tsort } from './tsort'
 
 export const agentTools = {
-    async tools({ engineConstants, tools, model }: ConstructToolParams): Promise<Record<string, Tool>> {
+    async tools({ engineConstants, insideConcurrentIteration, tools, model }: ConstructToolParams): Promise<Record<string, Tool>> {
         const qadamTools = await Promise.all(tools.map(async (tool) => {
             const { qadamAction } = await qadamLoader.getQadamAndActionOrThrow({
                 qadamName: tool.qadamMetadata.qadamName,
@@ -27,13 +27,16 @@ export const agentTools = {
                 }),
                 execute: async ({ instruction }: { instruction: string }) =>
                     execute({
-                        ...engineConstants,
-                        instruction,
-                        qadamName: tool.qadamMetadata.qadamName,
-                        qadamVersion: tool.qadamMetadata.qadamVersion,
-                        actionName: tool.qadamMetadata.actionName,
-                        predefinedInput: tool.qadamMetadata.predefinedInput,
-                        model,
+                        operation: {
+                            ...engineConstants,
+                            instruction,
+                            qadamName: tool.qadamMetadata.qadamName,
+                            qadamVersion: tool.qadamMetadata.qadamVersion,
+                            actionName: tool.qadamMetadata.actionName,
+                            predefinedInput: tool.qadamMetadata.predefinedInput,
+                            model,
+                        },
+                        constants: EngineConstants.fromAgentToolCall({ parent: engineConstants, insideConcurrentIteration }),
                     }),
             }
         }))
@@ -133,7 +136,7 @@ async function resolveProperties({
     return result
 }
 
-async function execute(operation: ExecuteToolOperationWithModel): Promise<ExecuteToolResponse> {
+async function execute({ operation, constants }: ExecuteParams): Promise<ExecuteToolResponse> {
     try {
         const { qadamAction } = await qadamLoader.getQadamAndActionOrThrow({
             qadamName: operation.qadamName,
@@ -170,7 +173,7 @@ async function execute(operation: ExecuteToolOperationWithModel): Promise<Execut
         const output = await flowExecutor.getExecutorForAction(step.type).handle({
             action: step,
             executionState: FlowExecutorContext.empty(),
-            constants: EngineConstants.fromExecuteActionInput(operation),
+            constants,
         })
         // `operation.actionName` is qadam-author-controlled, and `STEP_NAME_REGEX` admits
         // `constructor`/`toString`/`valueOf`/`hasOwnProperty`/`__proto__`. `Object.hasOwn`, not a
@@ -248,10 +251,6 @@ ${jsonSchema}
 - Do not add extra properties outside the requested ones.
 - Ensure output is parseable JSON without additional text.
 `
-}
-
-type ExecuteToolOperationWithModel = ExecuteToolOperation & {
-    model: LanguageModel
 }
 
 async function propertyToSchema({ propertyName, property, operation, resolvedInput }: PropertyToSchemaParams): Promise<PropertySchemas> {
@@ -492,8 +491,18 @@ ${sections}
 `
 }
 
+type ExecuteToolOperationWithModel = ExecuteToolOperation & {
+    model: LanguageModel
+}
+
+type ExecuteParams = {
+    operation: ExecuteToolOperationWithModel
+    constants: EngineConstants
+}
+
 type ConstructToolParams = {
     engineConstants: EngineConstants
+    insideConcurrentIteration: boolean
     tools: AgentQadamTool[]
     model: LanguageModel
 }

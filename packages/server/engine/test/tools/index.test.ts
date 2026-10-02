@@ -1,5 +1,5 @@
 import { PropertyType } from '@aiqadam/qadams-framework'
-import { AgentToolType, ExecutionToolStatus } from '@aiqadam/shared'
+import { AgentToolType, DEFAULT_MCP_DATA, ExecutionToolStatus, RunEnvironment } from '@aiqadam/shared'
 import { LanguageModel } from 'ai'
 import { MockLanguageModelV3 } from 'ai/test'
 import { describe, expect, it, vi } from 'vitest'
@@ -55,6 +55,7 @@ describe('agentTools.tools — execute()', () => {
 
         const tools = await agentTools.tools({
             engineConstants: generateMockEngineConstants(),
+            insideConcurrentIteration: false,
             tools: [buildTool('constructor')],
             model: {} as LanguageModel,
         })
@@ -78,6 +79,7 @@ describe('agentTools.tools — execute()', () => {
 
         const tools = await agentTools.tools({
             engineConstants: generateMockEngineConstants(),
+            insideConcurrentIteration: false,
             tools: [buildTool('send_channel_message')],
             model: {} as LanguageModel,
         })
@@ -86,6 +88,29 @@ describe('agentTools.tools — execute()', () => {
 
         expect(result.status).toBe(ExecutionToolStatus.SUCCESS)
         expect(result.output).toEqual({ ok: true })
+    })
+
+    // #643: the worker holds `resolveInlineFlow` to the job's own run, which the MCP placeholder run
+    // id is not, so the tool's step has to run under its parent step's real run.
+    it('runs the tool\'s step under the parent step\'s real run, not the MCP placeholder', async () => {
+        mockGetQadamAndActionOrThrow.mockReset()
+        mockGetQadamAndActionOrThrow.mockResolvedValue({ qadamAction: EMPTY_PROPS_ACTION })
+        mockHandle.mockReset()
+        mockHandle.mockResolvedValue({ steps: { callFlow: { output: {}, status: 'SUCCEEDED' } } })
+
+        const tools = await agentTools.tools({
+            engineConstants: generateMockEngineConstants({ flowRunId: 'parent-run-id', runEnvironment: RunEnvironment.PRODUCTION }),
+            insideConcurrentIteration: false,
+            tools: [buildTool('callFlow')],
+            model: {} as LanguageModel,
+        })
+        await tools.tool_1.execute!({ instruction: 'call it' }, {} as never)
+
+        const constants = mockHandle.mock.calls[0][0].constants
+        expect(constants.flowRunId).toBe('parent-run-id')
+        expect(constants.flowRunId).not.toBe(DEFAULT_MCP_DATA.flowRunId)
+        expect(constants.runEnvironment).toBe(RunEnvironment.PRODUCTION)
+        expect(constants.isAgentToolCall).toBe(true)
     })
 })
 
@@ -122,6 +147,7 @@ async function runFindRecordsTool(model: MockLanguageModelV3) {
     })
     const tools = await agentTools.tools({
         engineConstants: generateMockEngineConstants(),
+        insideConcurrentIteration: false,
         tools: [buildTool('find_records')],
         model,
     })
@@ -164,6 +190,7 @@ describe('agentTools.tools — property extraction', () => {
         mockHandle.mockResolvedValue({ steps: { send_payload: { output: {}, status: 'SUCCEEDED' } } })
         const tools = await agentTools.tools({
             engineConstants: generateMockEngineConstants(),
+            insideConcurrentIteration: false,
             tools: [buildTool('send_payload')],
             model: sequenceModel([textResult('```json\n{"payload":{"name":"a","__proto__":{"isAdmin":true}}}\n```')]),
         })
