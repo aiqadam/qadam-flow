@@ -1,27 +1,35 @@
 import { apDayjs } from '@aiqadam/server-utils'
-import { Queue } from 'bullmq'
+import { Queue, QueueEvents } from 'bullmq'
 import { FastifyInstance } from 'fastify'
+import { redisConnections } from '../../../../src/app/database/redis-connections'
 import { SystemJobData, SystemJobName } from '../../../../src/app/helper/system-jobs/common'
 import { systemJobsQueue, systemJobsSchedule } from '../../../../src/app/helper/system-jobs/system-job'
 import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 
 const TEST_PREFIX = 'test-'
+const DEPRECATED_JOB_NAME = 'pieces-sync'
 
 // BullMQ types `upsertJobScheduler`'s scheduler id as the queue's job-*name* type, so the
 // strongly-named `systemJobsQueue` cannot express the legacy `<name>::<repeat-key>` ids these
-// tests have to plant. The id is a plain string at runtime; this widened view says so.
+// tests have to plant, nor the job names `SystemJobName` no longer has (`pieces-sync`, an unknown
+// name) that the cleanup and worker tests add and look up. Both are plain strings at runtime; this
+// widened view says so.
 const legacySchedulerQueue = (): Queue<SystemJobData, unknown, string> => systemJobsQueue
 
 let app: FastifyInstance
 let schedule: ReturnType<typeof systemJobsSchedule>
+let queueEvents: QueueEvents
 
 beforeAll(async () => {
     app = await setupTestEnvironment()
     schedule = systemJobsSchedule(app.log)
     await schedule.init()
+    queueEvents = new QueueEvents(systemJobsQueue.name, { connection: await redisConnections.create() })
+    await queueEvents.waitUntilReady()
 })
 
 afterAll(async () => {
+    await queueEvents.close()
     await schedule.close()
     await teardownTestEnvironment()
 })
@@ -36,7 +44,7 @@ afterEach(async () => {
     const schedulers = await systemJobsQueue.getJobSchedulers()
     for (const s of schedulers) {
         const key = s.id ?? s.key
-        if (key.startsWith(TEST_PREFIX) || key.includes('::') || key === 'qadams-analytics') {
+        if (key.startsWith(TEST_PREFIX) || key.includes('::') || key === 'qadams-analytics' || s.name === DEPRECATED_JOB_NAME) {
             await systemJobsQueue.removeJobScheduler(key).catch(() => { /* already removed */ })
         }
     }
@@ -227,5 +235,88 @@ describe('System Jobs', () => {
         const after = await systemJobsQueue.getJob(jobId)
         expect(after).toBeDefined()
         expect(after!.name).toBe(SystemJobName.FILE_CLEANUP_TRIGGER)
+    })
+
+    // #638: pre-#136 builds scheduled `pieces-sync` through `upsertJob`, i.e.
+    // `queue.add(name, data, { repeat, jobId })`, with a random minute in the cron. `upsertJob` looks the job
+    // up by `jobId`, which never matches a repeat instance's `repeat:<key>:<millis>` id, so every boot with a
+    // different minute added one more repeatable. Plant them exactly that way.
+    it('should remove deprecated repeatables created through queue.add with a repeat option on init', async () => {
+        const legacyPatterns = ['0 */1 * * *', '1 */1 * * *', '2 */1 * * *']
+        for (const pattern of legacyPatterns) {
+            await legacySchedulerQueue().add(DEPRECATED_JOB_NAME, {}, {
+                repeat: { pattern, tz: 'UTC' },
+                jobId: DEPRECATED_JOB_NAME,
+            })
+        }
+        const keptPattern = '17 4 * * *'
+        await schedule.upsertJob({
+            job: {
+                name: SystemJobName.FILE_CLEANUP_TRIGGER,
+                data: {},
+                jobId: 'test-kept-repeated-job',
+            },
+            schedule: {
+                type: 'repeated',
+                cron: keptPattern,
+            },
+        })
+
+        const before = await systemJobsQueue.getJobSchedulers()
+        const deprecatedBefore = before.filter(s => s.name === DEPRECATED_JOB_NAME)
+        expect(deprecatedBefore).toHaveLength(legacyPatterns.length)
+        const delayedBefore = await legacySchedulerQueue().getJobs(['delayed'])
+        expect(delayedBefore.filter(j => j.name === DEPRECATED_JOB_NAME)).toHaveLength(legacyPatterns.length)
+
+        await schedule.init()
+
+        const after = await systemJobsQueue.getJobSchedulers()
+        expect(after.filter(s => s.name === DEPRECATED_JOB_NAME)).toHaveLength(0)
+        const client = await systemJobsQueue.client
+        for (const scheduler of deprecatedBefore) {
+            expect(await client.exists(`${systemJobsQueue.keys.repeat}:${scheduler.key}`)).toBe(0)
+        }
+        const jobsAfter = await legacySchedulerQueue().getJobs()
+        expect(jobsAfter.filter(j => j?.name === DEPRECATED_JOB_NAME)).toHaveLength(0)
+
+        const kept = after.filter(s => s.name === SystemJobName.FILE_CLEANUP_TRIGGER && s.pattern === keptPattern)
+        expect(kept).toHaveLength(1)
+        await systemJobsQueue.removeJobScheduler(kept[0].key)
+    })
+
+    // Older BullMQ releases stored a repeatable as a bare `name:jobId:endDate:tz:pattern` member with no
+    // hash beside it, which `getJobSchedulers()` returns with no name.
+    it('should remove a deprecated colon-format legacy repeatable on init', async () => {
+        const legacyKey = `${DEPRECATED_JOB_NAME}:${DEPRECATED_JOB_NAME}:::3 */1 * * *`
+        const client = await systemJobsQueue.client
+        await client.zadd(systemJobsQueue.keys.repeat, apDayjs().add(1, 'hour').valueOf(), legacyKey)
+
+        const before = await systemJobsQueue.getJobSchedulers()
+        expect(before.filter(s => s.key === legacyKey)).toHaveLength(1)
+
+        await schedule.init()
+
+        expect(await client.zscore(systemJobsQueue.keys.repeat, legacyKey)).toBeNull()
+    })
+})
+
+describe('System job worker', () => {
+    it('should acknowledge a job with a deprecated name instead of failing it', async () => {
+        const job = await legacySchedulerQueue().add(DEPRECATED_JOB_NAME, {}, {
+            jobId: 'test-deprecated-job',
+            attempts: 1,
+        })
+
+        // BullMQ stores the processor's `undefined` return value as `null`.
+        await expect(job.waitUntilFinished(queueEvents, 10_000)).resolves.toBeNull()
+    })
+
+    it('should still fail a job with an unknown name', async () => {
+        const job = await legacySchedulerQueue().add('test-unknown-job', {}, {
+            jobId: 'test-unknown-job',
+            attempts: 1,
+        })
+
+        await expect(job.waitUntilFinished(queueEvents, 10_000)).rejects.toThrow('No handler for job test-unknown-job')
     })
 })
