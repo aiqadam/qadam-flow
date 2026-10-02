@@ -35,7 +35,7 @@ that name (or override the env var) so the registry pull is skipped.
 - **app** (port 8080:80) — API + frontend, a single Node process under `tini`
 - **worker** ×5 — BullMQ job workers
 - **postgres** — `pgvector/pgvector:0.8.0-pg14`
-- **redis** — `redis:7.0.7`
+- **redis** — `valkey/valkey:8.1.10` (Valkey, the BSD-licensed Redis fork; the service, volume and `AP_REDIS_*` names stay `redis`)
 
 ## Key ENV vars
 - `AP_ENVIRONMENT=prod` (use `dev` only to opt into dev seeds)
@@ -50,7 +50,7 @@ docker compose down -v   # remove volumes (clean DB)
 
 ## Useful one-liners
 - `docker compose logs -f app worker` — tail app + worker output
-- `docker compose pull && docker compose up -d` — upgrade to the latest image
+- `./run.sh` (or `curl -fsSL https://flow.aiqadam.org/run.sh | sh` from the directory containing `qadam-flow/`) — upgrade: refreshes `docker-compose.yml`, keeps `.env`, pulls and restarts. `docker compose pull && docker compose up -d` alone updates only the app image and leaves Postgres/Redis on whatever images the existing compose file pins
 - `docker exec postgres psql -U postgres -d qadam_flow` — open a psql shell
 
 ## Known Issues Fixed in Local Build

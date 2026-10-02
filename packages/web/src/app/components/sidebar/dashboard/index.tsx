@@ -56,6 +56,7 @@ import { SidebarBuildInfo } from '../sidebar-build-info';
 import { AppSidebarHeader } from '../sidebar-header';
 import SidebarUsageLimits from '../sidebar-usage-limits';
 import { SidebarUser } from '../sidebar-user';
+import { useCloseMobileSidebarOnNavigation } from '../use-close-mobile-sidebar-on-navigation';
 
 export function ProjectDashboardSidebar({
   className,
@@ -63,6 +64,7 @@ export function ProjectDashboardSidebar({
   const { data: projects } = projectCollectionUtils.useAll();
   const { embedState } = useEmbedding();
   const { state } = useSidebar();
+  useCloseMobileSidebarOnNavigation();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery] = useDebounce(searchQuery, 300);
