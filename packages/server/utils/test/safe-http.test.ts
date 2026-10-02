@@ -133,6 +133,11 @@ function requestThroughDefaultAgents({ url }: { url: string }): Promise<RequestO
                 : http.request(url, { agent: httpAgent })
             req.once('error', (error) => resolve({ thrownSynchronously: false, error }))
             req.once('response', () => resolve({ thrownSynchronously: false, error: undefined }))
+            // A filter that lets the request through leaves it dialling an unroutable address; fail
+            // with a message that says so rather than as an opaque vitest timeout.
+            req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+                req.destroy(new Error(`${url} was not blocked: the request was still pending after ${REQUEST_TIMEOUT_MS}ms`))
+            })
             req.end()
         }
         catch (error) {
@@ -140,6 +145,8 @@ function requestThroughDefaultAgents({ url }: { url: string }): Promise<RequestO
         }
     })
 }
+
+const REQUEST_TIMEOUT_MS = 2000
 
 type RequestOutcome = {
     thrownSynchronously: boolean
