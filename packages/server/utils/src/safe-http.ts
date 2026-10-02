@@ -132,7 +132,7 @@ async function safeFetch(input: string | URL | Request, init?: RequestInit): Pro
     // The Response constructor throws on a body for these statuses, and axios still hands back an
     // (empty) stream for them. HEAD is in the same bucket: real `fetch` gives it a null body.
     const hasNoBody = NULL_BODY_STATUSES.includes(response.status) || request.method === 'HEAD'
-    const responseBody = hasNoBody ? null : Readable.toWeb(withIdleGuard(response.data))
+    const responseBody = hasNoBody ? null : toWebStream(withIdleGuard(response.data))
 
     // `url`, `redirected` and `type` cannot be set through the Response constructor, so they read
     // as '', false and 'default' rather than the final URL, the real redirect flag and 'basic'. No
@@ -143,6 +143,41 @@ async function safeFetch(input: string | URL | Request, init?: RequestInit): Pro
         statusText: response.statusText,
         headers: toResponseHeaders(response.headers),
     })
+}
+
+// Stands in for `Readable.toWeb` for a type reason, not a behavioural one. `toWeb` is typed as the
+// `node:stream/web` ReadableStream, while `Response` takes the *global* one, and the two stop being
+// the same type as soon as `lib.dom` is in the program: vitest 3.2's `optional-types.d.ts` imports
+// `jsdom`, bun's isolated linker makes `@types/jsdom` resolvable from there, and that drags
+// `lib.dom` into every test program even though `tsconfig.server.json` leaves it out. A stream
+// built by the global constructor is the right type under either lib. Behaviour matches `toWeb`:
+// one chunk per `pull`, so reads stay paced by the consumer; `cancel` destroys the source, which
+// aborts the socket and fires the idle guard's `close` listener; a source error, the idle guard's
+// included, rejects the pending read with that same error.
+function toWebStream(stream: Readable): ReadableStream<Uint8Array> {
+    const chunks = stream[Symbol.asyncIterator]()
+    return new ReadableStream<Uint8Array>({
+        async pull(controller): Promise<void> {
+            const next = await chunks.next()
+            if (next.done === true) {
+                controller.close()
+                return
+            }
+            controller.enqueue(toUint8Array(next.value))
+        },
+        cancel(): void {
+            stream.destroy()
+        },
+    })
+}
+
+// `toWeb` hands on a plain Uint8Array view over each Buffer rather than the Buffer itself; the same
+// here, so a consumer cannot come to rely on Buffer-only methods.
+function toUint8Array(chunk: unknown): Uint8Array {
+    if (chunk instanceof Uint8Array) {
+        return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+    }
+    throw new TypeError('safeHttp.fetch: the response stream produced a non-byte chunk')
 }
 
 // Once the response has started, a much tighter bound applies: a provider that has begun streaming
