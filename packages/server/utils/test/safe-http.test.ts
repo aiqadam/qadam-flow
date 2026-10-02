@@ -68,6 +68,23 @@ describe('safeHttp end-to-end blocking', () => {
             message: expect.stringContaining('AP_SSRF_ALLOW_LIST'),
         })
     })
+
+    // GHSA-r3r9-wp5j-pq5g: through request-filtering-agent 3.2.0 a literal private-IP host made
+    // `createConnection()` throw synchronously instead of failing the request, so `req.on('error')`
+    // never saw it — and when Node's agent opens the socket for a pending request from its own
+    // event handlers rather than inside `http.request()`, nothing catches it and the process dies.
+    // These agents also go to clients that are not axios (the AWS SDK's NodeHttpHandler), which
+    // only listen for the event. Pins the 3.2.1 shape.
+    it.each([
+        ['http', 'http://10.0.0.1/'],
+        ['https', 'https://169.254.169.254/'],
+    ])('reports a blocked literal IP on the %s request\'s error event instead of throwing', async (_label, url) => {
+        const outcome = await requestThroughDefaultAgents({ url })
+        expect(outcome).toMatchObject({
+            thrownSynchronously: false,
+            error: { message: expect.stringMatching(/is not allowed/i) },
+        })
+    })
 })
 
 // The value these resolve is no longer the server's alone — since #289 it is published on
@@ -106,3 +123,25 @@ describe('safeHttp provider timeout resolution', () => {
         expect(seconds * 1000).toBeLessThan(2 ** 31)
     })
 })
+
+function requestThroughDefaultAgents({ url }: { url: string }): Promise<RequestOutcome> {
+    const { httpAgent, httpsAgent } = safeHttp.buildDefaultAgents()
+    return new Promise((resolve) => {
+        try {
+            const req = url.startsWith('https:')
+                ? https.request(url, { agent: httpsAgent })
+                : http.request(url, { agent: httpAgent })
+            req.once('error', (error) => resolve({ thrownSynchronously: false, error }))
+            req.once('response', () => resolve({ thrownSynchronously: false, error: undefined }))
+            req.end()
+        }
+        catch (error) {
+            resolve({ thrownSynchronously: true, error })
+        }
+    })
+}
+
+type RequestOutcome = {
+    thrownSynchronously: boolean
+    error: unknown
+}
