@@ -47,12 +47,15 @@ describe('useCloseMobileSidebarOnNavigation', () => {
         <MemoryRouter initialEntries={['/impact']}>
           <Routes>
             <Route path="/impact" element={<Layout page="impact" />} />
-            <Route path="/leaderboard" element={<Layout page="leaderboard" />} />
+            <Route
+              path="/leaderboard"
+              element={<Layout page="leaderboard" />}
+            />
           </Routes>
         </MemoryRouter>,
       );
     });
-    expect(document.body.textContent).toContain('impact page');
+    expect(pageText()).toContain('impact page');
 
     await act(async () => {
       container?.querySelector('button')?.click();
@@ -64,7 +67,7 @@ describe('useCloseMobileSidebarOnNavigation', () => {
         .querySelector<HTMLAnchorElement>('a[href="/leaderboard"]')
         ?.click();
     });
-    expect(document.body.textContent).toContain('leaderboard page');
+    expect(pageText()).toContain('leaderboard page');
     expect(mobileSheet()).toBeNull();
   });
 });
@@ -90,4 +93,9 @@ function AppSidebar() {
 
 function mobileSheet(): Element | null {
   return document.querySelector('[data-slot="sidebar"][data-mobile="true"]');
+}
+
+// No jest-dom in this harness, so read the text directly.
+function pageText(): string {
+  return document.body.textContent ?? '';
 }
