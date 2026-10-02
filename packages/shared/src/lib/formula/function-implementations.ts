@@ -32,6 +32,10 @@ declare module 'expr-eval' {
         // every other key is `unknown`, forcing a type guard before anyone
         // touches one.
         binaryOps: { '||': (a: unknown, b: unknown) => unknown, [key: string]: unknown }
+        // Not in expr-eval's own `.d.ts` either. `findSecurityViolation` reads
+        // this only to test own-key membership (`hasOwnProperty`) of operator
+        // names, never to invoke an entry, so `unknown` values are enough.
+        ternaryOps: Record<string, unknown>
     }
     // `Expression.tokens` (the parsed instruction array) is not part of
     // expr-eval's published `.d.ts` either — `Expression` there declares
@@ -171,16 +175,23 @@ export function evaluateRaw(expression: string, vars: Record<string, unknown>): 
     try {
         // Parsed once, then checked, then evaluated — rather than
         // `parser.evaluate(expression, vars)` in one call — so
-        // `findForbiddenMemberAccess` can reject a dangerous member name
-        // before a single guarded function, operator, or user callback
-        // runs. See that function's comment for why this walks the parsed
-        // instruction tree instead of the raw text.
+        // `findForbiddenAccess` can reject a dangerous name before a single
+        // guarded function, operator, or user callback runs. See that
+        // function's comment for why this walks the parsed instruction tree
+        // instead of the raw text.
         const parsed = parser.parse(expression)
-        const forbiddenMember = findForbiddenMemberAccess(parsed.tokens)
-        if (forbiddenMember !== null) {
-            throw new FormulaSecurityError(`Formula cannot access ".${forbiddenMember}" — this property name is not allowed`)
+        const violation = findSecurityViolation(parsed.tokens)
+        if (violation !== null) {
+            throw new FormulaSecurityError(violation)
         }
-        return parsed.evaluate(vars)
+        // Own-property-only scope: expr-eval resolves a bare identifier with
+        // `name in expr.functions` and `values[name]`, both of which walk the
+        // prototype chain. A null-prototype `values` means `values['constructor']`
+        // (and every other Object.prototype name) is `undefined` here rather than
+        // the global `Object`, closing the identifier route to `Function` that the
+        // member-name filter alone did not cover. `parser.functions`/`parser.consts`
+        // are null-prototyped once at module load (below) for the same reason.
+        return parsed.evaluate(Object.assign(Object.create(null), vars))
     }
     finally {
         currentBuiltStringBudget = null
@@ -708,68 +719,73 @@ for (const key of Object.keys(parser.functions)) {
     }
 }
 
-// RCE FIX (this section) + KNOWN OPEN GAP (still, deliberately, below) —
-// read this before touching `Object.setPrototypeOf` on
-// `functions`/`unaryOps`/`binaryOps`/`ternaryOps`/`consts`/`vars` again:
+// RCE DEFENCE — enforced before any evaluation runs, by `findSecurityViolation`
+// (a single pass over the parsed instruction tree) plus the null-prototyping
+// below and `operators.fndef: false` on the parser. Read this before touching
+// `Object.setPrototypeOf` on any expr-eval table.
 //
-// A version of this file nulled the prototypes of all six of those, to
-// close the gap described at the end of this comment. That change enabled
-// remote code execution, confirmed with a working `child_process.execSync`
-// payload against this evaluator, and was reverted. The mechanism:
-// `unaryOps`/`binaryOps`/`ternaryOps` inheriting `Object.prototype` is not
-// only a leak — it is ALSO an accidental parse-time barrier.
-// `TokenStream.isNamedOp` tokenizes any identifier found in those three
-// tables as an OPERATOR rather than a plain member name, and because
-// `constructor` is inherited from `Object.prototype` on all three,
-// `X.constructor` tokenizes as `X` followed by an operator and the parse
-// dies. Null those three prototypes and `constructor` becomes an ORDINARY
-// member name with no special handling, and (before the fix below)
-// `IMEMBER` access was not filtered at all.
+// expr-eval resolves a bare identifier (`IVAR`) by walking the prototype
+// chain: `name in expr.functions` and then `values[name]` (evaluate() in the
+// bundled source). Because `expr.functions` and the `values` scope both
+// inherit `Object.prototype`, a bare `constructor` resolves to the global
+// `Object`, and `(constructor).getOwnPropertyDescriptor((constructor).
+// getPrototypeOf(...); "constructor").value` reaches `Function` — all through
+// plain (non-forbidden) `IMEMBER`s and ordinary calls. This was a working
+// text-only RCE on `main`: an earlier version of this file blocked only the
+// three member NAMES as `IMEMBER` instructions, which never looked at `IVAR`
+// resolution at all. The member-name filter is necessary but not sufficient.
 //
-// The owner's decision was to close the actual hole with intent rather than
-// rely on that accident: block the three dangerous member names outright
-// (`findForbiddenMemberAccess`, checked in `evaluateRaw` against the parsed
-// instruction tree before evaluation ever runs — see that function's
-// comment for why a text-level check doesn't work), and separately disable
-// expr-eval's `()=` function-definition operator via its own supported
-// `operators.fndef` switch (see the `new Parser(...)` call above) — the
-// second, independent path to `Function`'s constructor, through
-// `evaluate()`'s `IFUNDEF` branch building its callee's scope with
-// `Object.assign({}, values)`, a FRESH object this module never gets a
-// chance to touch regardless of what `vars`'s own prototype is. Both RCE
-// payloads below are pinned as regression tests in
-// function-evaluator.test.ts, confirmed to no longer evaluate:
-//   {{step_1.body}}.constructor.constructor("return 7")()
-//   (g(y) = constructor.constructor("return 7")())(1)
-// The accidental parse-time barrier (`isNamedOp` finding `constructor`
-// through the intact prototypes) still exists underneath this — this fix
-// adds a deliberate, intentional layer on top of it, and doesn't remove or
-// depend on the accident continuing to hold.
+// The layers now in force (D1/D3a/D3b are all branches of
+// `findSecurityViolation`; D2/D4 are the surrounding hardening):
 //
-// Direct member access to `.__proto__`/`.prototype` (without chaining
-// `.constructor` afterward) was found, during this investigation, to
-// ALREADY bypass the accidental barrier even before this fix —
-// `x.__proto__` and `x.prototype` parsed and evaluated successfully on
-// `main`, because `__proto__`/`prototype` are not both inherited by every
-// one of the three operator tables the same way `constructor` is. Bracket
-// notation (`x["constructor"]`) was checked too and is NOT an alternate
-// property-access path: expr-eval's `[` is `arrayIndex(array, index)`,
-// which coerces its operand to a number (`index | 0`) rather than doing a
-// generic property lookup, so a string like `"constructor"` just becomes
-// index `0`.
+// D1. CALL ALLOWLIST (the primary defence). Every `IFUNCALL`'s callee must be a
+//    bare `IVAR` naming an OWN key of `parser.functions` (our registered
+//    formula functions). A member callee (`x.exec(...)`), an indexed callee
+//    (`a[0](...)`), an inherited name, or the result of any expression
+//    (`(x=f)(...)`) is rejected. The Function chain above dies at its FIRST
+//    call, and so do `{{o}}.exec("...")` / `{{a}}[0]("...")`. No legitimate
+//    formula calls a member or indexed function — every documented call is
+//    `name(args)` to a registered function (verified against the docs and the
+//    whole test suite).
 //
-// STILL OPEN, unchanged by the above, and must not be described as closed:
-// `Object.prototype` METHODS (`toString`, `hasOwnProperty`, `valueOf`, ...)
-// remain callable as formula "functions" — `toString(1)` evaluates to the
-// string "[object Undefined]" — because `functions`/`unaryOps`/`binaryOps`/
-// `ternaryOps`/`consts`/`vars` all still inherit `Object.prototype`, and
-// expr-eval resolves names against them with `in` or bracket access, which
-// walks the whole chain. As far as two review passes could determine, this
-// specific gap — a handful of harmless methods callable with an `undefined`
-// receiver — is not itself exploitable, and is NOT closed by the
-// member-name filter above (it filters `.name` access, not bare
-// identifiers resolving to inherited methods). Nulling those six prototypes
-// remains unsafe for the reason explained above; it stays open.
+// D2. OWN-PROPERTY-ONLY RESOLUTION (defence in depth). `parser.functions` and
+//    `parser.consts` are null-prototyped below, and `evaluateRaw` evaluates
+//    against a null-prototype copy of the scope, so a bare identifier can only
+//    resolve to one of our own registered names — never to `Object`,
+//    `Function`, `globalThis`, or an inherited `Object.prototype` method.
+//
+// D3a. FORBIDDEN NAMES. `.constructor`/`.__proto__`/`.prototype` are rejected
+//    both as `IMEMBER` access and as bare `IVAR` identifiers, walking into
+//    nested `IEXPR` branches (ternary / assignment right-hand sides).
+//
+// D3b. OPERATOR OWN-KEY. An operator (`IOP1`/`IOP2`/`IOP3`) must be an OWN key
+//    of its operator table. The operator tables are deliberately NOT
+//    null-prototyped (see below), so an inherited `Object.prototype` name used
+//    in the direct-call unary-operator form — `toString(1)`, `valueOf(1)`,
+//    `constructor("...")` — would otherwise resolve and run. This own-key
+//    check is what closes that form (the previously-accepted `toString(1)` gap).
+//
+// D4. `operators.fndef: false` (the `new Parser(...)` call above) independently
+//    removes expr-eval's `()=` function-definition operator — the other path to
+//    a user-callable function body — with the `IFUNDEF` gate branch as backstop.
+//
+// Why NOT null the operator tables (`unaryOps`/`binaryOps`/`ternaryOps`):
+// their inherited `Object.prototype` is also an accidental parse-time barrier
+// (`TokenStream.isNamedOp` tokenizes `constructor`, found there through the
+// prototype, as an operator so `x.constructor` fails to parse). Nulling those
+// removes that barrier and, in a prior revision, enabled RCE; it was reverted.
+// The defences above do not depend on that accident — they work on the parsed
+// instruction tree and on the resolution tables, which is why `functions`/
+// `consts`/the scope can be null-prototyped safely while the operator tables
+// are deliberately left alone. Bracket notation (`x["constructor"]`) is not a
+// property-access path either: expr-eval's `[` is `arrayIndex`, coercing its
+// operand to a number.
+
+// Own-property-only identifier resolution (layer 2): a bare identifier can no
+// longer walk the prototype chain to `Object`/`Function`/an inherited method.
+// Done AFTER every registration and the allowlist sweep so own keys are intact.
+Object.setPrototypeOf(parser.functions, null)
+Object.setPrototypeOf(parser.consts, null)
 
 function toArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value
@@ -876,62 +892,142 @@ const FORBIDDEN_MEMBER_NAMES = new Set(['constructor', '__proto__', 'prototype']
 
 // expr-eval's own internal instruction-type tags — not part of its public
 // API, just string literals its source happens to use today. Named here,
-// once, and reused by both `findForbiddenMemberAccess` below and the
-// module-load self-check further down, so the two can't drift apart from
-// each other even if someone edits one without the other; they can still
-// drift from expr-eval itself, which is exactly what the self-check exists
-// to catch.
+// once, and reused by `findForbiddenAccess`, `findDisallowedCall` and the
+// module-load self-check further down, so they can't drift apart from each
+// other even if someone edits one without the others; they can still drift
+// from expr-eval itself, which is exactly what the self-check exists to catch.
 const IMEMBER_INSTRUCTION_TYPE = 'IMEMBER'
 const IEXPR_INSTRUCTION_TYPE = 'IEXPR'
+const IVAR_INSTRUCTION_TYPE = 'IVAR'
+const IFUNCALL_INSTRUCTION_TYPE = 'IFUNCALL'
 
-// `.constructor`/`.__proto__`/`.prototype` are the path to `Function`'s
-// constructor and arbitrary code execution once member access reaches a
-// live object (`x.constructor.constructor("return ...")()`). A text-level
-// check (regex over the raw formula string) is NOT an option here:
+// The single security gate over a parsed formula, run in `evaluateRaw` before
+// evaluation. Walks the PARSED instruction tree (`Expression.tokens`, what
+// `.evaluate()` runs) rather than the raw text, because
 // `wrapStringArgs`/`normalizeExpression` (formula-evaluator.ts) rewrite the
-// string before it is ever parsed, so a check against the raw text inspects
-// something other than what expr-eval actually runs — the exact class of
-// bug a size-DoS guard in this same file was rejected for, twice, in
-// earlier review rounds. Checked instead against the PARSED instruction
-// tree (`Expression.tokens`, walked below), which is what `.evaluate()`
-// itself runs — there is nothing left to rewrite by the time this runs.
+// string before it is parsed, so a raw-text check would inspect something other
+// than what runs. Returns a user-facing message for the first violation, or
+// null. It enforces, in one stack-simulating pass:
 //
-// `IMEMBER` is expr-eval's instruction type for `.name` access; its
-// `value` is the plain member-name string. `IEXPR` wraps a nested
-// sub-array of instructions — used for ternary (`?:`) branches and (before
-// this PR) function-definition bodies — and must be walked recursively, or
-// `x ? y.constructor : 1` would slip through unchecked. Array-literal
-// elements (`[a, b.constructor]`) do NOT need special handling: expr-eval
-// pushes them flat into the same top-level array this function already
-// scans, not into a nested one.
-function findForbiddenMemberAccess(tokens: ExprEvalInstruction[]): string | null {
+//   LAYER 1 — CALL ALLOWLIST (primary defence). Every `IFUNCALL`'s callee must
+//   be a bare `IVAR` naming an OWN key of `parser.functions` (a registered
+//   formula function). A member callee (`x.exec(...)`), indexed callee
+//   (`a[0](...)`), inherited name, or any computed value (`(x=f)(...)`) is
+//   refused. The text-only `(...).value("...")()` Function chain dies at its
+//   first call, and so do `{{o}}.exec(...)` / `{{a}}[0](...)`. No legitimate
+//   formula calls a member or indexed function (verified against the docs and
+//   the whole test suite).
+//
+//   LAYER 3a — forbidden NAMES. `.constructor`/`.__proto__`/`.prototype` are
+//   the route to `Function` once access reaches a live object; rejected as
+//   member access (`IMEMBER`) and as a bare identifier (`IVAR`). The identifier
+//   form is how the `main` RCE began — `constructor` resolving through
+//   `expr.functions`'s prototype chain to the global `Object`.
+//
+//   LAYER 3b — operator names must be OWN. A name in an operator table through
+//   `Object.prototype` (not a real operator) is rejected: `constructor(x)` and
+//   `toString(1)` parse as a UNARY OPERATOR (`IOP1 "constructor"` / `"toString"`)
+//   because `isNamedOp` finds the inherited name in `unaryOps` and
+//   `isOperatorEnabled` returns true for it. Every real operator (`+`, `-`, `!`,
+//   `sin`, `and`, `||`, `[`, `?`, ...) is an OWN key of its table, so requiring
+//   own-ness blocks the inherited Object.prototype names (constructor, toString,
+//   valueOf, hasOwnProperty, ...) while leaving real operators untouched.
+//
+// `IEXPR` wraps a nested sub-array (ternary `?:` branches, assignment right-hand
+// sides), evaluated by expr-eval on its own stack, so each is walked
+// recursively and simulated independently. Array-literal elements
+// (`[a, b.constructor]`) are pushed flat into the same array this already scans.
+// Per-instruction stack effects mirror expr-eval's own `evaluate()`.
+function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
+    const stack: boolean[] = []
+    const pop = (): boolean => stack.pop() ?? false
     for (const instruction of tokens) {
-        if (
-            instruction.type === IMEMBER_INSTRUCTION_TYPE &&
-            typeof instruction.value === 'string' &&
-            FORBIDDEN_MEMBER_NAMES.has(instruction.value)
-        ) {
-            return instruction.value
-        }
-        if (instruction.type === IEXPR_INSTRUCTION_TYPE && isInstructionArray(instruction.value)) {
-            const nested = findForbiddenMemberAccess(instruction.value)
-            if (nested !== null) return nested
+        const value = instruction.value
+        switch (instruction.type) {
+            case IMEMBER_INSTRUCTION_TYPE:
+                if (typeof value === 'string' && FORBIDDEN_MEMBER_NAMES.has(value)) {
+                    return `Formula cannot access ".${value}" — this property name is not allowed`
+                }
+                // net-zero: pops the receiver, pushes a non-callable member value
+                pop()
+                stack.push(false)
+                break
+            case IVAR_INSTRUCTION_TYPE:
+                if (typeof value === 'string' && FORBIDDEN_MEMBER_NAMES.has(value)) {
+                    return `Formula cannot use "${value}" — this name is not allowed`
+                }
+                stack.push(typeof value === 'string' && isOwnFunctionKey(value))
+                break
+            case IFUNCALL_INSTRUCTION_TYPE: {
+                const argCount = typeof value === 'number' ? value : 0
+                for (let i = 0; i < argCount; i++) pop()
+                if (!pop()) return 'Formula can only call built-in formula functions'
+                stack.push(false)
+                break
+            }
+            case 'IOP1':
+                if (!isOwnOperator(parser.unaryOps, value)) return operatorViolationMessage(value)
+                pop()
+                stack.push(false)
+                break
+            case 'IOP2':
+                if (!isOwnOperator(parser.binaryOps, value)) return operatorViolationMessage(value)
+                pop()
+                break
+            case 'IOP3':
+                if (!isOwnOperator(parser.ternaryOps, value)) return operatorViolationMessage(value)
+                pop(); pop()
+                break
+            case 'IENDSTATEMENT':
+                pop()
+                break
+            case 'IARRAY': {
+                const argCount = typeof value === 'number' ? value : 0
+                for (let i = 0; i < argCount; i++) pop()
+                stack.push(false)
+                break
+            }
+            case 'IFUNDEF':
+                // Unreachable (fndef is disabled); refuse loudly if it ever appears.
+                return 'Defining functions inside a formula is not supported'
+            case IEXPR_INSTRUCTION_TYPE: {
+                if (isInstructionArray(value)) {
+                    const nested = findSecurityViolation(value)
+                    if (nested !== null) return nested
+                }
+                stack.push(false)
+                break
+            }
+            default:
+                // INUMBER / IVARNAME / IEXPREVAL and any operand: one non-callable slot
+                stack.push(false)
+                break
         }
     }
     return null
 }
 
-// Self-check, run once at module load: parses two tiny, known expressions
-// with THIS parser instance and asserts the resulting instruction tree
-// actually contains the tags `findForbiddenMemberAccess` above assumes.
-// `'IMEMBER'`/`'IEXPR'` are expr-eval's own internal instruction-type
-// strings, not part of its published API — if a future expr-eval version
-// renames either one, the filter above would silently stop matching
-// anything and the member-access block would be defeated with zero signal,
-// the same failure shape as the `builtInConcat`/`Reflect.deleteProperty`
-// checks elsewhere in this file. Throwing here instead turns that into a
-// loud failure at startup rather than a silent one at formula-evaluation
-// time.
+function isOwnFunctionKey(name: string): boolean {
+    return Object.prototype.hasOwnProperty.call(parser.functions, name)
+}
+
+function isOwnOperator(table: Record<string, unknown>, name: unknown): boolean {
+    return typeof name === 'string' && Object.prototype.hasOwnProperty.call(table, name)
+}
+
+function operatorViolationMessage(name: unknown): string {
+    return typeof name === 'string'
+        ? `Formula cannot use "${name}" — this name is not allowed`
+        : 'Formula contains an operator that is not allowed'
+}
+
+// Self-check, run once at module load: parses tiny known expressions with THIS
+// parser instance and asserts the instruction tree carries the tags the two
+// filters above assume. These instruction-type strings are expr-eval internals,
+// not published API — if a future version renames one, a filter would silently
+// stop matching and a defence would be defeated with zero signal, the same
+// failure shape as the `builtInConcat`/`Reflect.deleteProperty` checks. Throwing
+// here turns that into a loud failure at startup.
 {
     const memberAccessProbe = parser.parse('a.b')
     if (!memberAccessProbe.tokens.some((token) => token.type === IMEMBER_INSTRUCTION_TYPE)) {
@@ -944,6 +1040,21 @@ function findForbiddenMemberAccess(tokens: ExprEvalInstruction[]): string | null
         throw new Error(
             `expr-eval no longer tags ternary/assignment branches ("a ? b.c : d") as "${IEXPR_INSTRUCTION_TYPE}" — the member-access filter's recursion into nested branches is no longer effective`,
         )
+    }
+    const identifierProbe = parser.parse('abc')
+    if (!identifierProbe.tokens.some((token) => token.type === IVAR_INSTRUCTION_TYPE)) {
+        throw new Error(
+            `expr-eval no longer tags a bare identifier ("abc") as "${IVAR_INSTRUCTION_TYPE}" — the identifier-name filter and call allowlist are no longer effective`,
+        )
+    }
+    const callProbe = parser.parse('uppercase("x")')
+    if (!callProbe.tokens.some((token) => token.type === IFUNCALL_INSTRUCTION_TYPE)) {
+        throw new Error(
+            `expr-eval no longer tags a function call ("uppercase(...)") as "${IFUNCALL_INSTRUCTION_TYPE}" — the call allowlist is no longer effective`,
+        )
+    }
+    if (findSecurityViolation(callProbe.tokens) !== null) {
+        throw new Error('the formula security gate rejects a legitimate call to a registered function — the stack simulation no longer matches expr-eval')
     }
 }
 

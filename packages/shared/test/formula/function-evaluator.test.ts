@@ -1,3 +1,4 @@
+import { Parser } from 'expr-eval'
 import { describe, expect, it } from 'vitest'
 import { formulaEvaluator } from '../../src/lib/formula/formula-evaluator'
 
@@ -1059,26 +1060,17 @@ describe('formula size bounds', () => {
         expect(result('round(3.456;1)')).toBe(3.5)
     })
 
-    // KNOWN OPEN GAP, not closed by this PR: the allowlist sweep only
-    // removes OWN keys from `parser.functions`. `Object.prototype` methods
-    // remain callable as formula "functions" today, because `functions` (and
-    // several other expr-eval internal tables) inherit `Object.prototype`
-    // and expr-eval resolves names against them with `in`/bracket access,
-    // which walks the whole chain. `toString(1)` evaluating to the string
-    // "[object Undefined]" is the CURRENT, ACCEPTED behaviour — pinning it
-    // here (rather than asserting it's blocked, which would be false) is
-    // deliberate: a version of this fix DID null those prototypes, and that
-    // was reverted after it was found to enable remote code execution (see
-    // the two regression tests below, and the long comment in
-    // function-implementations.ts right above where the sweep ends,
-    // explaining exactly why those prototypes must stay untouched until a
-    // real fix — blocking `constructor`/`__proto__`/`prototype` member
-    // access, or disabling expr-eval's `()=` operator — is deliberately
-    // designed, not retried opportunistically).
-    it('Object.prototype methods are callable as formula functions today — a known, accepted gap, not a regression', () => {
+    // Previously a KNOWN OPEN GAP, now CLOSED (#616 second review): an
+    // `Object.prototype` method called as a formula "function" (`toString(1)`,
+    // `valueOf(1)`, ...) used to evaluate, because it tokenizes as a unary
+    // operator pulling from `unaryOps`'s inherited prototype. `findSecurityViolation`
+    // now rejects any operator whose name is not an OWN key of the operator
+    // table, so these fail instead of running. See the fuller advisory suite
+    // below for the full operator/identifier/call sweep.
+    it('Object.prototype methods are no longer callable as formula functions', () => {
         const { result: r, error } = ok('toString(1)')
-        expect(error).toBeNull()
-        expect(r).toBe('[object Undefined]')
+        expect(r).toBeNull()
+        expect(error).toBe('Formula cannot use "toString" — this name is not allowed')
     })
 
     // Regression (security-critical): this was a working RCE at one point —
@@ -1201,122 +1193,170 @@ describe('formula size bounds', () => {
 //
 // `@aiqadam/shared` pins expr-eval@2.0.2, which carries three OSV advisories
 // with no fixed upstream release. Each advisory's proof of concept was
-// reproduced against this evaluator (engine path: props-resolver.ts; web
-// path: tiptap-editor.tsx — both reach formulaEvaluator.evaluate the same
-// way) during the #616 investigation; the results are recorded on that
-// issue. These tests pin the mitigations so the advisories cannot silently
-// reopen. The expression text is the only attacker-controlled surface in
-// practice: `sampleData` is JSON (a serialized step output or stored sample),
-// so it can never carry a function or a custom `toString`.
+// reproduced against this evaluator during the #616 investigation, through
+// both callers: the engine path (props-resolver.ts: resolveInputAsync →
+// preResolveFormulaVars → formulaEvaluator.evaluate) and the web builder
+// preview (tiptap-editor.tsx:444: updatePreview → formulaEvaluator.evaluate,
+// over flattenSampleData of JSON sample data). The web scope is JSON-only; the
+// engine scope is NOT strictly JSON (a token's text is evaluated as JS, so a
+// token can place an object holding a function into scope) — no extra privilege,
+// since the token author already runs JS, but the defences below do not rely on
+// the scope being function-free.
+//
+// Every test here must fail if the specific defence it names is removed — the
+// defences live in function-implementations.ts (findSecurityViolation +
+// null-prototyped tables + operators.fndef:false). The defences, by layer:
+//   D1 call allowlist: an IFUNCALL callee must be a bare identifier naming an
+//      OWN registered formula function.
+//   D3a forbidden names: constructor/__proto__/prototype as member OR identifier.
+//   D3b operator own-key: an operator must be an OWN key of its table (blocks
+//      inherited Object.prototype names used as operators, e.g. toString(1)).
+//   D4 fndef disabled: expr-eval's ()= function-definition operator.
 // ---------------------------------------------------------------------------
 describe('expr-eval advisories (#616)', () => {
+    const canary = { hit: false }
+    const canaryFn = (): string => {
+        canary.hit = true
+        return 'x'
+    }
+
     // GHSA-q9v2-7m5w-4693 / CVE-2026-12866 (critical) — code execution via the
-    // toJSFunction() API, which compiles expressions with `new Function()` and
-    // injects a scope value's `toString()` output into the generated source.
-    // Not reachable here: this module never calls toJSFunction() (it uses
-    // parser.parse().evaluate()), so there is no code-generation step, and the
-    // constructor route out of evaluate() is blocked independently.
+    // toJSFunction() API (compiles with `new Function()` and inlines a scope
+    // value's toString() into generated source). This evaluator never calls it.
     describe('GHSA-q9v2-7m5w-4693 (toJSFunction code execution)', () => {
-        it('constructor.constructor chain out of a resolved variable does not evaluate', () => {
-            const { result: r, error } = ok('{{x}}.constructor.constructor("return 7")()', { x: 'a' })
-            expect(r).toBeNull()
-            expect(error).not.toBeNull()
+        it('the evaluator never calls Expression.prototype.toJSFunction', () => {
+            // Stub toJSFunction on the shared Expression prototype to throw. If
+            // the evaluator ever compiled formulas through it, these ordinary
+            // formulas would throw; they must still evaluate normally.
+            const expressionProto = Object.getPrototypeOf(new Parser().parse('1')) as { toJSFunction: unknown }
+            const original = expressionProto.toJSFunction
+            expressionProto.toJSFunction = () => {
+                throw new Error('toJSFunction must not be used by the formula evaluator')
+            }
+            try {
+                expect(result('uppercase("hi")')).toBe('HI')
+                expect(result('add({{x}};{{y}})', { x: 2, y: 3 })).toBe(5)
+                expect(result('{{o}}.name', { o: { name: 'Bob' } })).toBe('Bob')
+            }
+            finally {
+                expressionProto.toJSFunction = original
+            }
         })
 
-        it('a function value in scope is not called as native code — it is dropped to null first', () => {
-            let called = false
-            const { result: r, error } = ok('{{fn}}("x")', { fn: () => { called = true; return 'x' } })
-            expect(called).toBe(false)
+        // The headline text-only RCE (reproduced on `main`): resolve the global
+        // Object through a bare `constructor`, walk to `Function` via plain
+        // members, and call it with a code string. Pinned with a live canary.
+        it('the constructor→Function code-execution chain does not run (canary)', () => {
+            const g = globalThis as Record<string, unknown>
+            g.__ap616_rce = undefined
+            const { result: r, error } = ok('((((constructor).getOwnPropertyDescriptor((constructor).getPrototypeOf(constructor); "constructor")).value)("globalThis.__ap616_rce = 1; return 1"))()')
             expect(r).toBeNull()
             expect(error).not.toBeNull()
-        })
-
-        it('a scope object with a custom toString is coerced as data, not compiled into code', () => {
-            // String coercion invoking toString is ordinary JS behaviour and
-            // returns a string used as data — no code generation (that is the
-            // toJSFunction-specific vector, which this module never reaches).
-            // Documented here because the toString DOES run; what matters is it
-            // cannot produce code execution via evaluate().
-            let coerced = false
-            const r = result('combine({{p}};"")', { p: { toString: () => { coerced = true; return 'cmd' } } })
-            expect(r).toBe('cmd')
-            expect(coerced).toBe(true)
+            expect(g.__ap616_rce).toBeUndefined()
         })
     })
 
-    // GHSA-jc85-fpwf-qm7x / CVE-2025-12735 (high) — evaluate() does not
-    // restrict the functions reachable through the variables object it is
-    // given (`evaluate('exec("x")', { exec })` calls exec). Closed here two
-    // ways: expression-text routes to a function (fndef `()=`, the removed
-    // built-ins map/fold/filter, the constructor chain) are already blocked,
-    // and sanitizeScopeValue now drops any function-valued resolution so a
-    // caller passing a non-JSON scope cannot reintroduce the vector.
+    // GHSA-jc85-fpwf-qm7x / CVE-2025-12735 (high) — evaluate() does not restrict
+    // the functions reachable through the scope it is given. The call allowlist
+    // (D1) refuses any callee that is not a registered formula function, so a
+    // function reached by name, member, or index cannot be invoked.
     describe('GHSA-jc85-fpwf-qm7x (functions passed to evaluate)', () => {
-        it('the canonical PoC — a dangerous function in scope called by name — does not execute', () => {
-            let executed = false
-            const { result: r, error } = ok('{{exec}}("whoami")', { exec: () => { executed = true; return 'root' } })
-            expect(executed).toBe(false)
+        it('a function reached by member is not callable (D1)', () => {
+            canary.hit = false
+            const { result: r, error } = ok('{{o}}.exec("whoami")', { o: { exec: canaryFn } })
+            expect(canary.hit).toBe(false)
             expect(r).toBeNull()
-            expect(error).not.toBeNull()
+            expect(error).toBe('Formula can only call built-in formula functions')
         })
 
-        it('the SECCON-style Object=constructor descriptor chain does not evaluate', () => {
-            const { result: r, error } = ok('Object = constructor; a() = 7*7; d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(a); "constructor"); c=d.value; f=c("return 7")()')
+        it('a function reached by index is not callable (D1)', () => {
+            canary.hit = false
+            const { result: r, error } = ok('{{a}}[0]("whoami")', { a: [canaryFn] })
+            expect(canary.hit).toBe(false)
             expect(r).toBeNull()
-            expect(error).not.toBeNull()
+            expect(error).toBe('Formula can only call built-in formula functions')
         })
 
-        it('defining a function via the ()= operator does not parse', () => {
-            const { result: r, error } = ok('(f(x) = x*x)(5)')
+        it('a function in scope is not callable by name (D1)', () => {
+            canary.hit = false
+            const { result: r, error } = ok('{{fn}}("whoami")', { fn: canaryFn })
+            expect(canary.hit).toBe(false)
+            expect(r).toBeNull()
+            expect(error).toBe('Formula can only call built-in formula functions')
+        })
+
+        it('defining a function via the ()= operator does not parse (D4)', () => {
+            const { result: r, error } = ok('(g(y) = y*y)(3)')
             expect(r).toBeNull()
             expect(error).toBe('Defining functions inside a formula is not supported')
-        })
-
-        it('map with an inline function-definition callback does not evaluate', () => {
-            const { result: r, error } = ok('map(f(x) = x*x; [1,2,3])')
-            expect(r).toBeNull()
-            expect(error).not.toBeNull()
         })
     })
 
     // GHSA-8gw3-rxh4-v6jx / CVE-2025-13204 (high) — prototype pollution via
-    // member access to __proto__/prototype/constructor reachable through
-    // evaluate(). Blocked by findForbiddenMemberAccess (member-name filter on
-    // the parsed instruction tree), by expr-eval's `[` being arrayIndex rather
-    // than a property lookup, and by build_object dropping prototype keys.
+    // member/identifier access to constructor/__proto__/prototype reachable
+    // through evaluate(). D3a rejects those names; build_object drops them too
+    // (see the build_object suite above).
     describe('GHSA-8gw3-rxh4-v6jx (prototype pollution)', () => {
-        it('assignment through .__proto__ is rejected and pollutes nothing', () => {
+        it('assignment through .__proto__ is rejected and pollutes nothing (D3a)', () => {
             const { result: r, error } = ok('({{o}}.__proto__.polluted = 1)', { o: {} })
             expect(r).toBeNull()
             expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
             expect(({} as Record<string, unknown>).polluted).toBeUndefined()
         })
 
-        it('assignment through .constructor.prototype does not evaluate and pollutes nothing', () => {
-            const { result: r, error } = ok('({{o}}.constructor.prototype.polluted2 = 1)', { o: {} })
+        it('.prototype member access is rejected (D3a)', () => {
+            const { result: r, error } = ok('{{o}}.prototype', { o: {} })
             expect(r).toBeNull()
-            expect(error).not.toBeNull()
-            expect(({} as Record<string, unknown>).polluted2).toBeUndefined()
+            expect(error).toBe('Formula cannot access ".prototype" — this property name is not allowed')
         })
 
-        it('a bare __proto__ assignment does not evaluate and pollutes nothing', () => {
-            const { result: r, error } = ok('__proto__.polluted3 = 1')
+        it('a bare __proto__ identifier is rejected (D3a)', () => {
+            const { result: r, error } = ok('__proto__')
             expect(r).toBeNull()
-            expect(error).not.toBeNull()
-            expect(({} as Record<string, unknown>).polluted3).toBeUndefined()
+            expect(error).toBe('Formula cannot use "__proto__" — this name is not allowed')
         })
 
-        it('build_object silently drops prototype-polluting keys and keeps safe ones', () => {
-            const r = result('build_object("__proto__";{{bad}};"constructor";{{bad}};"prototype";{{bad}};"safe";{{ok}})', { bad: { x: 1 }, ok: 1 })
-            expect(r).toEqual({ safe: 1 })
-            expect(({} as Record<string, unknown>).x).toBeUndefined()
-        })
-
-        it('bracket access to "constructor" is an array index, not a property lookup', () => {
+        it('bracket access with a string key is an array index, returning the first element, not a property (D)', () => {
             // expr-eval's `[` coerces its operand to a number, so "constructor"
-            // becomes index 0 — not a route to the real constructor property.
-            const { error } = ok('{{o}}["constructor"]', { o: {} })
-            expect(error).toBeNull()
+            // becomes index 0 — if `[` were a property lookup this would be the
+            // constructor function, not the array's first element.
+            expect(result('{{a}}["constructor"]', { a: ['zero', 'one'] })).toBe('zero')
+        })
+    })
+
+    // The identifier/operator resolution routes the member-name filter alone did
+    // not cover — the core of the #616 second-review finding.
+    describe('identifier and operator resolution (#616 second review)', () => {
+        it('a bare constructor identifier is rejected (D3a)', () => {
+            const { result: r, error } = ok('constructor')
+            expect(r).toBeNull()
+            expect(error).toBe('Formula cannot use "constructor" — this name is not allowed')
+        })
+
+        it('an Object.prototype method called as a unary operator is rejected — toString (D3b)', () => {
+            const { result: r, error } = ok('toString(1)')
+            expect(r).toBeNull()
+            expect(error).toBe('Formula cannot use "toString" — this name is not allowed')
+        })
+
+        it('an Object.prototype method called as a unary operator is rejected — valueOf (D3b)', () => {
+            const { result: r, error } = ok('valueOf(1)')
+            expect(r).toBeNull()
+            expect(error).toBe('Formula cannot use "valueOf" — this name is not allowed')
+        })
+
+        it('constructor invoked directly (a unary-operator form) is rejected (D3b)', () => {
+            const { result: r, error } = ok('constructor("return 7")')
+            expect(r).toBeNull()
+            expect(error).toBe('Formula cannot use "constructor" — this name is not allowed')
+        })
+
+        it('legitimate operators and calls are unaffected', () => {
+            expect(result('5 - 3')).toBe(2)
+            expect(result('(1 > 0) ? "y" : "n"')).toBe('y')
+            expect(result('uppercase("hi")')).toBe('HI')
+            expect(result('{{a}}[1]', { a: ['zero', 'one'] })).toBe('one')
+            expect(result('pluck(from_json({{t}});"a")', { t: '[{"a":1},{"a":2}]' })).toEqual([1, 2])
         })
     })
 })
