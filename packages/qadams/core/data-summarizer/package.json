@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "vitest": "3.0.8"
+    "vitest": "3.2.7"
   },
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
