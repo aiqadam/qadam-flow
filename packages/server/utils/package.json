@@ -29,7 +29,8 @@
     "proper-lockfile": "4.1.2",
     "request-filtering-agent": "3.2.0",
     "semver": "7.6.0",
-    "systeminformation": "5.31.6"
+    "systeminformation": "5.31.6",
+    "tslib": "2.6.2"
   },
   "devDependencies": {
     "@types/node": "24.11.0",
