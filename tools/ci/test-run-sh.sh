@@ -547,6 +547,14 @@ upgrade_case nested-relative apps/qadam-flow
 upgrade_case absolute "$tmp/upgrade-abs-target/qadam-flow"
 upgrade_case spaces "my installs/qadam flow"
 upgrade_case quote "it's/qadam-flow"
+# Shell syntax in the path must come back as text, never run. If quoting regresses, evaluating the
+# printed assignment would execute these, so the marker files double as the assertion.
+upgrade_case substitution "\$(touch $tmp/ran-dollar)/\`touch $tmp/ran-backtick\`/qadam-flow"
+if [ ! -e "$tmp/ran-dollar" ] && [ ! -e "$tmp/ran-backtick" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'upgrade hint (substitution): evaluating the printed command must not execute the path'
+fi
 
 echo
 echo "passed: ${pass}   failed: ${fail}"
