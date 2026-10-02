@@ -637,6 +637,44 @@ else
     "pull=$pull_line upgrade=$upgrade_line start=$start_line"
 fi
 
+echo "== upgrade_postgres stops the temporary server before it writes the marker =="
+
+# The marker lets compose start PostgreSQL 18 on the new volume. Written while the temporary server
+# still runs, an interruption in between leaves two servers on one data directory. Anchored at the
+# start of a code line, like line_of, so a comment naming either cannot satisfy the check.
+upgrade_body="$(sed -n '/^upgrade_postgres() {/,/^}/p' "$runsh")"
+upgrade_line_of() { printf '%s\n' "$upgrade_body" | grep -n "$1" | grep -v '^[0-9]*: *#' | head -1 | cut -d: -f1; }
+stop_line="$(upgrade_line_of '^  docker stop -t 120 "\$PG_UPGRADE_NEW_CONTAINER"')"
+marker_line="$(upgrade_line_of '"\$PG_MARKER_WRITE"')"
+if [ -n "$stop_line" ] && [ -n "$marker_line" ] && [ "$stop_line" -lt "$marker_line" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'upgrade_postgres(): docker stop of the temporary server < PG_MARKER_WRITE' \
+    "stop=$stop_line marker=$marker_line"
+fi
+
+echo "== upgrade_postgres traps HUP with INT and TERM, and clears them together =="
+
+# A closed terminal sends HUP. Untrapped, it ends the run without the EXIT trap, leaving the temporary
+# containers and a half-restored volume behind.
+for want in "^  trap 'exit 129' HUP\$" "^  trap 'exit 130' INT\$" "^  trap 'exit 143' TERM\$"; do
+  if printf '%s\n' "$upgrade_body" | grep -q "$want"; then
+    pass=$((pass + 1))
+  else
+    fail_case "upgrade_postgres() must contain a line matching: $want"
+  fi
+done
+clear_line="$(printf '%s\n' "$upgrade_body" | grep '^  trap - ' | head -1)"
+clear_ok=yes
+for sig in EXIT HUP INT TERM; do
+  case " ${clear_line#  trap - } " in *" $sig "*) ;; *) clear_ok=no ;; esac
+done
+if [ "$clear_ok" = yes ] && [ "$(printf '%s\n' "$upgrade_body" | grep -c '^  trap - ')" -eq 1 ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'upgrade_postgres(): one `trap - ...` line must clear EXIT, HUP, INT and TERM' "got: $clear_line"
+fi
+
 echo "== docker-compose.yml agrees with run.sh's upgrade constants =="
 
 compose_file="${here}/../../docker-compose.yml"

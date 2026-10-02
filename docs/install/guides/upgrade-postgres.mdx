@@ -38,12 +38,19 @@ The dump holds what is inside the databases. Settings that belong to the server 
 - `postgresql.conf`, `pg_hba.conf`, and settings made with `ALTER SYSTEM`, which live in
   `postgresql.auto.conf`.
 - Settings made with `ALTER DATABASE postgres SET …` or `ALTER ROLE … IN DATABASE postgres SET …`.
-  The same settings on any other database are copied.
+- Grants and comments on the `postgres` database itself (`GRANT … ON DATABASE postgres`,
+  `REVOKE CONNECT ON DATABASE postgres …`, `COMMENT ON DATABASE postgres`). They go back to
+  PostgreSQL 18's defaults.
+
+The `postgres` database is the exception because PostgreSQL 18 already has it, so its dump is
+restored into it rather than used to create it, and only creating a database carries these across.
+On every other database, all of them are copied.
 
 The bundled stack changes none of them, so most installs have nothing to redo. If you changed them
-yourself, the installer keeps a copy of the three files in the backup directory, warns when
-`postgresql.auto.conf` or the `postgres` database holds settings, and lists the latter in
-`postgres-database-settings.txt`. Apply what you still need on PostgreSQL 18.
+yourself, the installer keeps a copy of the three files in the backup directory. It warns when
+`postgresql.auto.conf` holds settings, or when the `postgres` database has settings or grants of its
+own, and lists the latter in `postgres-database-settings.txt`. It does not check comments. Apply what
+you still need on PostgreSQL 18.
 
 ### Why dump and restore instead of `pg_upgrade`
 
@@ -246,6 +253,13 @@ it for the start-up check. The empty volume takes no space and does not block th
     container is one you or another tool started. Find it with
     `docker ps --filter volume=qadam-flow_postgres_data` (or `volume=qadam-flow_pgdata`), stop it,
     and re-run the installer.
+  </Accordion>
+  <Accordion title="Two installs on one host upgrade at the same time">
+    The temporary containers have the same names for every install on a host, so two installers
+    that upgrade at the same time remove or block each other's containers, and one or both stop
+    with an error. Neither loses data. A failed run removes only the half-filled `pgdata` it created
+    itself, and each install's `postgres_data` stays as it was. Re-run the installers one after the
+    other.
   </Accordion>
   <Accordion title="What is in the backups directory">
     One `pg_dump` archive in custom format per database (`qadam_flow.dump`, `postgres.dump`), the

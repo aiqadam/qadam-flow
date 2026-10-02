@@ -273,8 +273,9 @@ PostgreSQL 14, so every install created before this change has to move its data 
   removing the volume once you no longer need it.
 - **Delete the dump once you are done with it.** The backup directory holds password hashes and the
   encrypted connection credentials.
-- **Server settings are not copied.** `postgresql.conf`, `pg_hba.conf`, `ALTER SYSTEM` settings and
-  `ALTER DATABASE postgres SET …` settings stay behind. The bundled stack sets none of them; if you
+- **Server settings are not copied.** `postgresql.conf`, `pg_hba.conf` and `ALTER SYSTEM` settings stay
+  behind. So do the settings, grants and comment of the `postgres` database itself, such as
+  `ALTER DATABASE postgres SET …`. The bundled stack sets none of them; if you
   did, the installer warns, keeps a copy in the backup directory, and you re-apply what you need on
   PostgreSQL 18. See
   [What is not copied](/install/guides/upgrade-postgres#what-is-not-copied).

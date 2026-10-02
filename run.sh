@@ -414,7 +414,9 @@ printf "%s\n" "$fingerprint" > "$DATA/$MARKER"'
 PG_DATABASES_SQL='SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname'
 PG_POSTGRES_DB_SETTINGS_SQL="SELECT coalesce(r.rolname, '(every role)') || ': ' || array_to_string(s.setconfig, ', ')
   FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase LEFT JOIN pg_roles r ON r.oid = s.setrole
-  WHERE d.datname = 'postgres' ORDER BY 1"
+  WHERE d.datname = 'postgres'
+  UNION ALL SELECT 'grants on the database: ' || datacl::text FROM pg_database WHERE datname = 'postgres' AND datacl IS NOT NULL
+  ORDER BY 1"
 
 pg_data_volume_state() {
   if ! volume_exists "$3"; then
@@ -588,12 +590,12 @@ upgrade_postgres() {
   if grep -q -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "${backup_dir}/postgresql.auto.conf" 2>/dev/null; then
     warn "postgresql.auto.conf holds ALTER SYSTEM settings, which the upgrade does not carry over. A copy is in ${backup_dir}; re-apply what you still need on PostgreSQL ${target_major} with ALTER SYSTEM."
   fi
-  # pg_restore carries a database's own settings only when it creates the database, which it does not
-  # for postgres (see pg_restore_creates_database).
+  # pg_restore carries a database's own settings and grants only when it creates the database, which
+  # it does not for postgres (see pg_restore_creates_database).
   docker exec "$PG_UPGRADE_OLD_CONTAINER" psql -X -A -t -U "$pg_user" -d postgres -c "$PG_POSTGRES_DB_SETTINGS_SQL" \
     > "${backup_dir}/postgres-database-settings.txt" || die "could not read the settings of the postgres database"
   if [ -s "${backup_dir}/postgres-database-settings.txt" ]; then
-    warn "the postgres database has ALTER DATABASE or ALTER ROLE ... IN DATABASE settings, which the upgrade does not carry over. They are listed in ${backup_dir}/postgres-database-settings.txt; re-apply what you still need on PostgreSQL ${target_major}."
+    warn "the postgres database has ALTER DATABASE or ALTER ROLE ... IN DATABASE settings, or grants on the database itself, which the upgrade does not carry over. They are listed in ${backup_dir}/postgres-database-settings.txt; re-apply what you still need on PostgreSQL ${target_major}."
   else
     rm -f "${backup_dir}/postgres-database-settings.txt"
   fi
