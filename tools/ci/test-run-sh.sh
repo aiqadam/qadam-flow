@@ -653,6 +653,76 @@ for want in "- ${data_key}:/var/lib/postgresql" "- ${legacy_key}:/var/lib/postgr
   fi
 done
 
+echo "== every database is dumped, and postgres is restored into the one initdb made =="
+
+# An install with AP_POSTGRES_DATABASE=postgres keeps everything there; leaving it out of the list
+# would mark an empty database as upgraded.
+databases_sql="$("$sut" -c '. "$1"; printf "%s" "$PG_DATABASES_SQL"' _ "$runsh")"
+case "$databases_sql" in
+  *"SELECT datname FROM pg_database"*postgres*) fail_case 'PG_DATABASES_SQL must not leave out the postgres database' "$databases_sql" ;;
+  *"SELECT datname FROM pg_database"*) pass=$((pass + 1)) ;;
+  *) fail_case 'PG_DATABASES_SQL: unexpected text' "$databases_sql" ;;
+esac
+creates_case() {
+  if "$sut" -c '. "$1"; pg_restore_creates_database "$2"' _ "$runsh" "$1"; then got=yes; else got=no; fi
+  if [ "$got" = "$2" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "pg_restore_creates_database '$1'" "want '$2', got '$got'"
+  fi
+}
+creates_case qadam_flow yes
+creates_case second_db yes
+creates_case postgres no
+
+echo "== the new volume's state, read the way the probe container reads it =="
+
+# PG_STATE_PROBE and PG_MARKER_WRITE run as-is, with $LEGACY and $DATA pointed at fixture directories
+# instead of the volume mounts.
+probe_script="$("$sut" -c '. "$1"; printf "%s" "$PG_STATE_PROBE"' _ "$runsh")"
+marker_write="$("$sut" -c '. "$1"; printf "%s" "$PG_MARKER_WRITE"' _ "$runsh")"
+probe_case() {
+  got="$(LEGACY="$tmp/probe-legacy" DATA="$tmp/probe-data" MARKER="$marker" "$sut" -c "$probe_script" 2>/dev/null)"
+  status=$?
+  if [ "$1" = fails ] && [ "$status" -ne 0 ]; then
+    pass=$((pass + 1))
+  elif [ "$1" != fails ] && [ "$status" -eq 0 ] && [ "$got" = "$1" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "probe ($2): want $1" "status=$status output=$got"
+  fi
+}
+mkdir -p "$tmp/probe-legacy/global" "$tmp/probe-data"
+printf '14\n' > "$tmp/probe-legacy/PG_VERSION"
+printf 'pg_control v1' > "$tmp/probe-legacy/global/pg_control"
+probe_case empty 'new volume holds nothing'
+mkdir -p "$tmp/probe-data/18/docker"
+printf '18\n' > "$tmp/probe-data/18/docker/PG_VERSION"
+probe_case populated 'PostgreSQL 18 layout, no marker'
+rm -r "$tmp/probe-data/18"
+printf '18\n' > "$tmp/probe-data/PG_VERSION"
+probe_case populated 'cluster at the volume root, no marker'
+rm "$tmp/probe-data/PG_VERSION"
+if LEGACY="$tmp/probe-legacy" DATA="$tmp/probe-data" MARKER="$marker" "$sut" -c "$marker_write" \
+  && [ "$(cat "$tmp/probe-data/${marker}")" = "$(cksum < "$tmp/probe-legacy/global/pg_control")" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'PG_MARKER_WRITE must write the cksum of the old pg_control'
+fi
+probe_case upgraded 'marker matches pg_control'
+printf 'pg_control v2' > "$tmp/probe-legacy/global/pg_control"
+probe_case stale 'pg_control changed after the upgrade'
+rm "$tmp/probe-legacy/global/pg_control"
+probe_case fails 'marker present, pg_control unreadable'
+rm "$tmp/probe-data/${marker}"
+if LEGACY="$tmp/probe-legacy" DATA="$tmp/probe-data" MARKER="$marker" "$sut" -c "$marker_write" 2>/dev/null; then
+  fail_case 'PG_MARKER_WRITE must fail when pg_control is unreadable'
+elif [ -e "$tmp/probe-data/${marker}" ]; then
+  fail_case 'PG_MARKER_WRITE must not leave a marker when pg_control is unreadable'
+else
+  pass=$((pass + 1))
+fi
+
 echo "== the compose guard refuses to start PostgreSQL 18 next to unmigrated data =="
 
 # The guard is the postgres service's entrypoint script. It is cut out of docker-compose.yml as-is,
@@ -691,6 +761,15 @@ cksum < "$tmp/guard-legacy/global/pg_control" > "$tmp/guard-data/${marker}"
 guard_case start 'legacy cluster, upgraded, unchanged since'
 printf 'pg_control v2' > "$tmp/guard-legacy/global/pg_control"
 guard_case refuse 'legacy cluster ran again after the upgrade'
+# The marker run.sh writes (PG_MARKER_WRITE) is the one the guard reads.
+LEGACY="$tmp/guard-legacy" DATA="$tmp/guard-data" MARKER="$marker" "$sut" -c "$marker_write"
+guard_case start 'legacy cluster, marker written by run.sh'
+# An unreadable pg_control must not compare as an empty checksum against an empty or missing marker.
+rm "$tmp/guard-legacy/global/pg_control"
+: > "$tmp/guard-data/${marker}"
+guard_case refuse 'legacy cluster without pg_control, empty marker'
+rm "$tmp/guard-data/${marker}"
+guard_case refuse 'legacy cluster without pg_control, no marker'
 
 echo
 echo "passed: ${pass}   failed: ${fail}"

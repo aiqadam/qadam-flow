@@ -382,30 +382,65 @@ legacy_pg_major() {
   docker run --rm --network none --entrypoint cat -v "$2:/legacy:ro" "$1" /legacy/PG_VERSION 2>/dev/null || true
 }
 
-# upgraded: the marker matches the old cluster's current pg_control, so the copy is current.
-# stale: the marker is there but pg_control changed, so the old major ran after the upgrade.
-# populated: a cluster with no marker, i.e. a restore that never finished.
+# The two scripts below run inside a container from the target image, with the old volume at $LEGACY,
+# the new one at $DATA and the marker file name in $MARKER. They are kept as text so that
+# tools/ci/test-run-sh.sh runs exactly these against fixture directories. The marker they write and
+# compare is the format the guard in docker-compose.yml reads, and the one the docs' manual steps write.
+#
+# The state of the new volume:
+#   upgraded: the marker matches the old cluster's current pg_control, so the copy is current.
+#   stale: the marker is there but pg_control changed, so the old major ran after the upgrade.
+#   populated: a cluster with no marker, i.e. a restore that never finished.
+#   empty: no cluster at all.
+# An unreadable pg_control fails the probe instead of comparing an empty checksum.
+# shellcheck disable=SC2016
+PG_STATE_PROBE='
+if [ -e "$DATA/$MARKER" ]; then
+  fingerprint=$(cksum < "$LEGACY/global/pg_control") || exit 1
+  if [ "$fingerprint" = "$(cat "$DATA/$MARKER")" ]; then echo upgraded; else echo stale; fi
+elif [ -s "$DATA/PG_VERSION" ] || ls "$DATA"/*/docker/PG_VERSION >/dev/null 2>&1; then
+  echo populated
+else
+  echo empty
+fi'
+# shellcheck disable=SC2016
+PG_MARKER_WRITE='
+fingerprint=$(cksum < "$LEGACY/global/pg_control") || exit 1
+umask 022
+printf "%s\n" "$fingerprint" > "$DATA/$MARKER"'
+
+# Every database a client can connect to, postgres included: an install may keep its data there
+# (AP_POSTGRES_DATABASE=postgres), and the list is also what the restore is checked against.
+PG_DATABASES_SQL='SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname'
+PG_POSTGRES_DB_SETTINGS_SQL="SELECT coalesce(r.rolname, '(every role)') || ': ' || array_to_string(s.setconfig, ', ')
+  FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase LEFT JOIN pg_roles r ON r.oid = s.setrole
+  WHERE d.datname = 'postgres' ORDER BY 1"
+
 pg_data_volume_state() {
   if ! volume_exists "$3"; then
     echo absent
     return 0
   fi
-  docker run --rm --network none --entrypoint sh -e "MARKER=${PG_UPGRADE_MARKER}" \
-    -v "$2:/legacy:ro" -v "$3:/data:ro" "$1" -c '
-      if [ -e "/data/$MARKER" ]; then
-        if [ "$(cksum < /legacy/global/pg_control)" = "$(cat "/data/$MARKER")" ]; then echo upgraded; else echo stale; fi
-      elif [ -s /data/PG_VERSION ] || ls /data/*/docker/PG_VERSION >/dev/null 2>&1; then
-        echo populated
-      else
-        echo empty
-      fi'
+  docker run --rm --network none --entrypoint sh \
+    -e LEGACY=/legacy -e DATA=/data -e "MARKER=${PG_UPGRADE_MARKER}" \
+    -v "$2:/legacy:ro" -v "$3:/data:ro" "$1" -c "$PG_STATE_PROBE"
+}
+
+# initdb has already created the postgres database in the new cluster, so its dump is restored into
+# it. Every other database is created by pg_restore --create, with the encoding, locale and settings
+# it had.
+pg_restore_creates_database() {
+  [ "$1" != postgres ]
 }
 
 dump_file_name() {
   printf '%s.dump' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_')"
 }
 
+# A stop before the removal, so a temporary server still running gets a clean shutdown rather than
+# the SIGKILL of `rm -f`.
 remove_container() {
+  docker stop -t 120 "$1" >/dev/null 2>&1 || true
   docker rm -f "$1" >/dev/null 2>&1 || true
 }
 
@@ -448,16 +483,38 @@ pg_upgrade_cleanup() {
   pg_rollback_hint "To start the stack on PostgreSQL ${legacy_major} again instead:" >&2
 }
 
+# For an install the installer cannot check: say loudly that the data may still need moving, and where
+# the postgres service says so if it does.
+warn_upgrade_not_checked() {
+  warn "$1, so the installer could not check whether ${legacy_volume} holds PostgreSQL data from before 18, or upgrade it."
+  warn "if it does, the postgres service refuses to start; see: cd $(shell_quote "$install_dir") && docker compose logs postgres"
+  warn "and upgrade by hand: https://flow.aiqadam.org/docs/install/guides/upgrade-postgres#upgrade-by-hand"
+}
+
 upgrade_postgres() {
-  pg_image=$(compose config --images postgres 2>/dev/null | head -n 1)
-  [ -n "$pg_image" ] || return 0
-  target_major=$(image_pg_major "$pg_image")
   install_dir=$(pwd)
   project=$(compose_project_name)
   legacy_volume="${project}_${PG_LEGACY_VOLUME_KEY}"
   data_volume="${project}_${PG_DATA_VOLUME_KEY}"
+  # A run killed outright (SIGKILL, a host reboot) cannot clean up after itself. Its temporary server
+  # may still be running on a volume compose is about to start, and two servers on one data directory
+  # corrupt it, so they go before anything else.
+  remove_container "$PG_UPGRADE_OLD_CONTAINER"
+  remove_container "$PG_UPGRADE_NEW_CONTAINER"
+  pg_image=$(compose config --images postgres 2>/dev/null | head -n 1)
+  if [ -z "$pg_image" ]; then
+    if volume_exists "$legacy_volume"; then
+      warn_upgrade_not_checked "docker compose config --images did not name the postgres image"
+    fi
+    return 0
+  fi
+  target_major=$(image_pg_major "$pg_image")
   legacy_major=$(legacy_pg_major "$pg_image" "$legacy_volume")
   [ -n "$legacy_major" ] || return 0
+  if [ -z "$target_major" ]; then
+    warn_upgrade_not_checked "the postgres image ${pg_image} does not declare PG_MAJOR"
+    return 0
+  fi
   data_state=$(pg_data_volume_state "$pg_image" "$legacy_volume" "$data_volume") \
     || die "could not inspect the ${data_volume} volume"
 
@@ -494,6 +551,7 @@ upgrade_postgres() {
 
   pg_upgrade_state=started
   trap pg_upgrade_cleanup EXIT
+  trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
@@ -501,11 +559,9 @@ upgrade_postgres() {
   compose stop
   for busy_volume in "$legacy_volume" "$data_volume"; do
     if [ -n "$(docker ps -q --filter "volume=${busy_volume}")" ]; then
-      die "a running container still uses ${busy_volume}; stop it and re-run the installer"
+      die "a running container still uses ${busy_volume}; stop it and re-run the installer. To list it: docker ps --filter volume=${busy_volume}"
     fi
   done
-  remove_container "$PG_UPGRADE_OLD_CONTAINER"
-  remove_container "$PG_UPGRADE_NEW_CONTAINER"
   # The dumps hold every credential the app stores, so they get the same treatment as .env. The umask
   # covers the files the redirections below create, and is put back once the upgrade has finished.
   pg_saved_umask=$(umask)
@@ -521,9 +577,26 @@ upgrade_postgres() {
   log "dumping into ${backup_dir}"
   docker exec "$PG_UPGRADE_OLD_CONTAINER" pg_dumpall -U "$pg_user" --roles-only > "${backup_dir}/roles.sql" \
     || die "pg_dumpall --roles-only failed"
-  docker exec "$PG_UPGRADE_OLD_CONTAINER" psql -X -A -t -U "$pg_user" -d postgres -c \
-    "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname <> 'postgres' ORDER BY datname" \
+  docker exec "$PG_UPGRADE_OLD_CONTAINER" psql -X -A -t -U "$pg_user" -d postgres -c "$PG_DATABASES_SQL" \
     > "${backup_dir}/databases.txt" || die "could not list the databases to dump"
+  # The server's own configuration lives in the data directory, not in any database, so the restore
+  # does not carry it across. A copy is kept for reference.
+  for conf_file in postgresql.conf postgresql.auto.conf pg_hba.conf; do
+    docker exec "$PG_UPGRADE_OLD_CONTAINER" cat "/var/lib/postgresql/data/${conf_file}" > "${backup_dir}/${conf_file}" 2>/dev/null \
+      || rm -f "${backup_dir}/${conf_file}"
+  done
+  if grep -q -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "${backup_dir}/postgresql.auto.conf" 2>/dev/null; then
+    warn "postgresql.auto.conf holds ALTER SYSTEM settings, which the upgrade does not carry over. A copy is in ${backup_dir}; re-apply what you still need on PostgreSQL ${target_major} with ALTER SYSTEM."
+  fi
+  # pg_restore carries a database's own settings only when it creates the database, which it does not
+  # for postgres (see pg_restore_creates_database).
+  docker exec "$PG_UPGRADE_OLD_CONTAINER" psql -X -A -t -U "$pg_user" -d postgres -c "$PG_POSTGRES_DB_SETTINGS_SQL" \
+    > "${backup_dir}/postgres-database-settings.txt" || die "could not read the settings of the postgres database"
+  if [ -s "${backup_dir}/postgres-database-settings.txt" ]; then
+    warn "the postgres database has ALTER DATABASE or ALTER ROLE ... IN DATABASE settings, which the upgrade does not carry over. They are listed in ${backup_dir}/postgres-database-settings.txt; re-apply what you still need on PostgreSQL ${target_major}."
+  else
+    rm -f "${backup_dir}/postgres-database-settings.txt"
+  fi
   while IFS= read -r db; do
     [ -n "$db" ] || continue
     log "  ${db}"
@@ -532,10 +605,6 @@ upgrade_postgres() {
   done < "${backup_dir}/databases.txt"
   docker stop -t 120 "$PG_UPGRADE_OLD_CONTAINER" >/dev/null
   remove_container "$PG_UPGRADE_OLD_CONTAINER"
-  # Taken after the old server has shut down, which is its last write to pg_control. The compose
-  # file's guard compares against this value on every start of PostgreSQL 18.
-  legacy_fingerprint=$(docker run --rm --network none --entrypoint sh -v "${legacy_volume}:/legacy:ro" "$pg_image" \
-    -c 'cksum < /legacy/global/pg_control') || die "could not read ${legacy_volume}/global/pg_control"
 
   log "starting PostgreSQL ${target_major} on a new ${data_volume} volume"
   # Compose creates the volume, so it carries Compose's labels and `up` adopts it without a warning.
@@ -556,33 +625,45 @@ upgrade_postgres() {
   while IFS= read -r db; do
     [ -n "$db" ] || continue
     log "  ${db}"
-    docker exec -i "$PG_UPGRADE_NEW_CONTAINER" pg_restore -U "$pg_user" --exit-on-error --create -d postgres \
-      < "${backup_dir}/$(dump_file_name "$db")" || die "pg_restore of ${db} failed"
+    # No --clean for postgres: this run initialised the cluster a moment ago, so the database is empty.
+    if pg_restore_creates_database "$db"; then
+      docker exec -i "$PG_UPGRADE_NEW_CONTAINER" pg_restore -U "$pg_user" --exit-on-error --create -d postgres \
+        < "${backup_dir}/$(dump_file_name "$db")" || die "pg_restore of ${db} failed"
+    else
+      docker exec -i "$PG_UPGRADE_NEW_CONTAINER" pg_restore -U "$pg_user" --exit-on-error -d "$db" \
+        < "${backup_dir}/$(dump_file_name "$db")" || die "pg_restore of ${db} failed"
+    fi
   done < "${backup_dir}/databases.txt"
-  docker exec "$PG_UPGRADE_NEW_CONTAINER" psql -X -A -t -U "$pg_user" -d postgres -c \
-    "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname <> 'postgres' ORDER BY datname" \
+  docker exec "$PG_UPGRADE_NEW_CONTAINER" psql -X -A -t -U "$pg_user" -d postgres -c "$PG_DATABASES_SQL" \
     > "${backup_dir}/databases-restored.txt" || die "could not list the restored databases"
   cmp -s "${backup_dir}/databases.txt" "${backup_dir}/databases-restored.txt" \
     || die "the restored databases do not match the dumped ones (compare ${backup_dir}/databases.txt and databases-restored.txt)"
   rm -f "${backup_dir}/databases-restored.txt"
 
-  docker exec -e "FINGERPRINT=${legacy_fingerprint}" -e "MARKER=${PG_UPGRADE_MARKER}" "$PG_UPGRADE_NEW_CONTAINER" \
-    sh -c 'umask 022 && printf "%s\n" "$FINGERPRINT" > "/var/lib/postgresql/$MARKER"' || die "could not record the finished upgrade"
   docker stop -t 120 "$PG_UPGRADE_NEW_CONTAINER" >/dev/null
   remove_container "$PG_UPGRADE_NEW_CONTAINER"
+  # Only now that no server runs on the new volume: the marker is what lets compose start one there,
+  # and two servers on one data directory corrupt it.
+  docker run --rm --network none --entrypoint sh \
+    -e LEGACY=/legacy -e DATA=/data -e "MARKER=${PG_UPGRADE_MARKER}" \
+    -v "${legacy_volume}:/legacy:ro" -v "${data_volume}:/data" "$pg_image" -c "$PG_MARKER_WRITE" \
+    || die "could not record the finished upgrade"
 
   pg_upgrade_state=finished
-  trap - EXIT INT TERM
+  trap - EXIT HUP INT TERM
   umask "$pg_saved_umask"
   log "PostgreSQL ${legacy_major} → ${target_major} upgrade finished"
   PG_UPGRADE_SUMMARY=$(
     printf '%s\n' \
       "PostgreSQL was upgraded from ${legacy_major} to ${target_major}. The data now lives in ${data_volume}." \
       "The dump taken before the upgrade is in ${backup_dir}." \
+      "It holds password hashes and the encrypted connection credentials: keep it safe, and delete it once you no longer need a way back." \
       "${legacy_volume} still holds the PostgreSQL ${legacy_major} data. Once you are satisfied, free its space with:" \
       "  cd $(shell_quote "$install_dir") && docker compose down && docker volume rm ${legacy_volume} && docker compose up -d"
     pg_rollback_hint "To go back to PostgreSQL ${legacy_major} with the data as it was before the upgrade (anything written since is only in ${data_volume}):"
   )
+  # Printed here as well as in the final banner, which a failed start never reaches.
+  printf '\n%s\n\n' "$PG_UPGRADE_SUMMARY"
 }
 
 wait_for_app() {
@@ -596,7 +677,7 @@ wait_for_app() {
     fi
     sleep 2
   done
-  err "app didn't respond within 3 min — check: cd $QADAM_FLOW_DIR && docker compose logs app"
+  err "app didn't respond within 3 min — check: cd $QADAM_FLOW_DIR && docker compose logs app postgres"
   return 1
 }
 
