@@ -17,14 +17,36 @@ const settings = vi.hoisted(() => ({
     officialQadamsInstallEnabled: false,
 }))
 const mockVerifyOfficialQadams = vi.hoisted(() => vi.fn())
+const mockRefusedKeysIn = vi.hoisted(() => vi.fn())
+// Lets a test act at the moment the installer removes a directory.
+const fsHook = vi.hoisted(() => ({
+    onRm: async (_target: string): Promise<void> => undefined,
+}))
 
 // Distinct bytes: what a rollback must not do is put the first back over the second.
 const SNAPSHOTTED_LOCKFILE = '{ "lockfileVersion": 1, "packages": { "snapshotted-before-install": [] } }\n'
 const NEW_HOLDER_LOCKFILE = '{ "lockfileVersion": 1, "packages": { "written-by-the-new-holder": [] } }\n'
 const NEW_HOLDER_FILE = 'written-by-the-new-holder'
+// An official-scope alias the integrity pass refuses, brought in by the qadam being installed.
+const REFUSED_KEY = 'decoy-alias'
+const CLEAN_LOCKFILE = '{ "lockfileVersion": 1, "packages": { "left-by-another-tenant": [] } }\n'
+const INSTALLED_LOCKFILE = '{ "lockfileVersion": 1, "packages": { "left-by-another-tenant": [], "@acme/qadam-x": [] } }\n'
+const POISONED_LOCKFILE = `{ "lockfileVersion": 1, "packages": { "left-by-another-tenant": [], "@acme/qadam-x": [], "${REFUSED_KEY}": [] } }\n`
 
 const mockInstall = vi.fn()
 let testWorkspace = ''
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    return {
+        ...actual,
+        default: actual,
+        rm: async (target: string, options?: { recursive?: boolean, force?: boolean }): Promise<void> => {
+            await fsHook.onRm(String(target))
+            return actual.rm(target, options)
+        },
+    }
+})
 
 vi.mock('@aiqadam/server-utils', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@aiqadam/server-utils')>()
@@ -47,7 +69,7 @@ vi.mock('../src/lib/cache/code/bun-runner', () => ({
 vi.mock('../src/lib/cache/qadams/qadam-integrity', () => ({
     qadamIntegrity: () => ({
         verifyOfficialQadams: mockVerifyOfficialQadams,
-        refusedKeysIn: vi.fn(() => new Set()),
+        refusedKeysIn: mockRefusedKeysIn,
     }),
 }))
 
@@ -73,6 +95,9 @@ beforeEach(async () => {
     settings.officialQadamsInstallEnabled = false
     mockInstall.mockReset()
     mockVerifyOfficialQadams.mockReset()
+    mockRefusedKeysIn.mockReset()
+    mockRefusedKeysIn.mockImplementation(() => new Set())
+    fsHook.onRm = async () => undefined
 })
 
 afterEach(async () => {
@@ -201,6 +226,25 @@ describe('qadamInstaller when the workspace lock is compromised', () => {
         })
     })
 
+    it('a lock lost while the qadam directory is being removed restores no lockfile', async () => {
+        settings.officialQadamsInstallEnabled = true
+        const qadam = makeQadam('@acme/qadam-a')
+        await writeFile(lockfilePath(), SNAPSHOTTED_LOCKFILE)
+        mockInstall.mockImplementation(async () => {
+            throw new Error('batch install failed')
+        })
+        fsHook.onRm = async (target) => {
+            if (target === qadamDirPath(qadam)) {
+                lockStub.compromised = true
+                await writeFile(lockfilePath(), NEW_HOLDER_LOCKFILE)
+            }
+        }
+
+        await expect(install([qadam])).rejects.toThrow('batch install failed')
+
+        expect(await readFile(lockfilePath(), 'utf8')).toBe(NEW_HOLDER_LOCKFILE)
+    })
+
     it('does not mark an install ready when the lock was lost while verification ran', async () => {
         settings.officialQadamsInstallEnabled = true
         const qadam = makeQadam('@acme/qadam-a')
@@ -215,6 +259,123 @@ describe('qadamInstaller when the workspace lock is compromised', () => {
         expect(await pathExists(join(qadamDirPath(qadam), 'ready'))).toBe(false)
     })
 })
+
+// #593: what an abandoned install leaves behind (a member with no `ready` marker, and a lockfile
+// nothing verified) is handled by the next install to take the lock.
+describe('qadamInstaller after an install that stopped without rolling back', () => {
+    // The path a skipped rollback opens: the lock is lost while the integrity pass runs, the pass
+    // refuses the alias X brought in, and nothing is rolled back. When X is requested again — X is
+    // then in the batch — the alias is already in bun.lock before that install runs, and counting
+    // it as "refused before this install" would excuse it and mark X ready.
+    it('fails the re-request of the same qadam closed, and keeps failing it after the rollback', async () => {
+        settings.officialQadamsInstallEnabled = true
+        const qadam = makeQadam('@acme/qadam-x')
+        await writeFile(lockfilePath(), CLEAN_LOCKFILE)
+        mockRefusedKeysIn.mockImplementation(({ lockfileContents }: { lockfileContents: string | undefined }) =>
+            new Set(lockfileContents?.includes(REFUSED_KEY) ? [REFUSED_KEY] : []))
+        mockInstall.mockImplementation(async () => {
+            await writeFile(lockfilePath(), POISONED_LOCKFILE)
+            return { output: '' }
+        })
+        mockVerifyOfficialQadams.mockImplementation(refuseUnlessAlreadyRefused)
+        mockVerifyOfficialQadams.mockImplementationOnce(async (params: VerifyParams) => {
+            lockStub.compromised = true
+            return refuseUnlessAlreadyRefused(params)
+        })
+
+        await expect(install([qadam])).rejects.toThrow('refusing to install')
+        expect(await readFile(lockfilePath(), 'utf8')).toBe(POISONED_LOCKFILE)
+        expect(await pathExists(qadamDirPath(qadam))).toBe(true)
+
+        lockStub.compromised = false
+        await expect(install([qadam])).rejects.toThrow('refusing to install')
+        // The rollback of the re-request must not put the alias back where a third attempt, with
+        // the leftover gone by then, would read it as already refused.
+        await expect(install([qadam])).rejects.toThrow('refusing to install')
+
+        expect(await pathExists(join(qadamDirPath(qadam), 'ready'))).toBe(false)
+    })
+
+    it('still retries a leftover of the same batch normally when the lockfile holds no refusal', async () => {
+        settings.officialQadamsInstallEnabled = true
+        const qadam = makeQadam('@acme/qadam-x')
+        await writeFile(lockfilePath(), CLEAN_LOCKFILE)
+        await writeLeftoverMember({ qadam })
+        mockInstall.mockImplementation(async () => {
+            await writeFile(lockfilePath(), INSTALLED_LOCKFILE)
+            return { output: '' }
+        })
+        mockVerifyOfficialQadams.mockImplementation(refuseUnlessAlreadyRefused)
+
+        await install([qadam])
+
+        expect(await pathExists(join(qadamDirPath(qadam), 'ready'))).toBe(true)
+    })
+
+    // Distrusting a lockfile with no refusal in it changes no verdict, so it must not cost the
+    // shared lockfile either: removing it forces every tenant's qadams to re-resolve.
+    it('restores the lockfile after a failed install when the leftover sits beside no refusal', async () => {
+        settings.officialQadamsInstallEnabled = true
+        const qadam = makeQadam('@acme/qadam-x')
+        await writeFile(lockfilePath(), CLEAN_LOCKFILE)
+        await writeLeftoverMember({ qadam })
+        mockInstall.mockImplementation(async () => {
+            await writeFile(lockfilePath(), INSTALLED_LOCKFILE)
+            throw new Error('batch install failed')
+        })
+
+        await expect(install([qadam])).rejects.toThrow('batch install failed')
+
+        expect(await readFile(lockfilePath(), 'utf8')).toBe(CLEAN_LOCKFILE)
+    })
+
+    // bun 1.3.14 fails every install in a workspace with a member whose dependencies do not
+    // resolve, `--filter` or not, so the leftover has to be gone before this install's bun runs.
+    it('removes a leftover outside its batch before bun install, and leaves ready qadams alone', async () => {
+        const leftover = makeQadam('@acme/qadam-left-behind')
+        const readyQadam = makeQadam('@acme/qadam-ready')
+        const qadam = makeQadam('@acme/qadam-x')
+        await writeLeftoverMember({ qadam: leftover })
+        await writeLeftoverMember({ qadam: readyQadam })
+        await writeFile(join(qadamDirPath(readyQadam), 'ready'), 'true')
+        const seenByBun: { leftover: boolean, ready: boolean }[] = []
+        mockInstall.mockImplementation(async () => {
+            seenByBun.push({
+                leftover: await pathExists(qadamDirPath(leftover)),
+                ready: await pathExists(qadamDirPath(readyQadam)),
+            })
+            return { output: '' }
+        })
+
+        await install([qadam])
+
+        expect(seenByBun).toEqual([{ leftover: false, ready: true }])
+    })
+
+    it('does not remove a leftover once the lock is lost', async () => {
+        const leftover = makeQadam('@acme/qadam-left-behind')
+        await writeLeftoverMember({ qadam: leftover })
+        lockStub.compromised = true
+
+        await expect(install([makeQadam('@acme/qadam-x')])).rejects.toThrow('Lost the lock')
+
+        expect(await pathExists(qadamDirPath(leftover))).toBe(true)
+    })
+})
+
+// Stands in for `reportRefusals`: a refusal fails the install unless it was refused before it ran.
+async function refuseUnlessAlreadyRefused({ rootWorkspace, refusedBeforeInstall }: VerifyParams): Promise<void> {
+    const lockfile = await readFile(join(rootWorkspace, 'bun.lock'), 'utf8')
+    if (lockfile.includes(REFUSED_KEY) && !refusedBeforeInstall.has(REFUSED_KEY)) {
+        throw new Error(`[qadamIntegrity] refusing to install: ${REFUSED_KEY}`)
+    }
+}
+
+// What a worker killed mid-install, or one that lost the lock, leaves: a member and no `ready`.
+async function writeLeftoverMember({ qadam }: { qadam: QadamPackage }): Promise<void> {
+    await mkdir(qadamDirPath(qadam), { recursive: true })
+    await writeFile(join(qadamDirPath(qadam), 'package.json'), JSON.stringify({ name: `${qadam.qadamName}-${qadam.qadamVersion}` }))
+}
 
 // What another replica does once it has taken the stale lock over: install into the same
 // workspace, writing its own lockfile and its own files into the member directory.
@@ -255,4 +416,9 @@ function makeQadam(name: string): QadamPackage {
         qadamVersion: '1.0.0',
         platformId: 'platform_1',
     }
+}
+
+type VerifyParams = {
+    rootWorkspace: string
+    refusedBeforeInstall: Set<string>
 }
