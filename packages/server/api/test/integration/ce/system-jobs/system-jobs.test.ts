@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { apDayjs } from '@aiqadam/server-utils'
 import { Queue, QueueEvents } from 'bullmq'
 import { FastifyInstance } from 'fastify'
@@ -285,18 +286,31 @@ describe('System Jobs', () => {
     })
 
     // Older BullMQ releases stored a repeatable as a bare `name:jobId:endDate:tz:pattern` member with no
-    // hash beside it, which `getJobSchedulers()` returns with no name.
+    // hash beside it, which `getJobSchedulers()` returns with no name. `removeJobScheduler` deletes the
+    // member but not its delayed instance, whose id follows the older scheme, so the sweep has to.
     it('should remove a deprecated colon-format legacy repeatable on init', async () => {
         const legacyKey = `${DEPRECATED_JOB_NAME}:${DEPRECATED_JOB_NAME}:::3 */1 * * *`
+        const nextMillis = apDayjs().add(1, 'hour').valueOf()
         const client = await systemJobsQueue.client
-        await client.zadd(systemJobsQueue.keys.repeat, apDayjs().add(1, 'hour').valueOf(), legacyKey)
+        await client.zadd(systemJobsQueue.keys.repeat, nextMillis, legacyKey)
+        // The id BullMQ's legacy `Repeat.getRepeatJobId` gives a bare key's next instance:
+        // `repeat:<md5(name + data.id + md5(key))>:<millis>`. The job data is `{}`, so `data.id` is ''.
+        const namespace = md5(legacyKey)
+        const delayedJobId = `repeat:${md5(`${DEPRECATED_JOB_NAME}${namespace}`)}:${nextMillis}`
+        await legacySchedulerQueue().add(DEPRECATED_JOB_NAME, {}, {
+            jobId: delayedJobId,
+            delay: apDayjs(nextMillis).diff(apDayjs(), 'milliseconds'),
+            repeatJobKey: legacyKey,
+        })
 
         const before = await systemJobsQueue.getJobSchedulers()
         expect(before.filter(s => s.key === legacyKey)).toHaveLength(1)
+        expect(await systemJobsQueue.getJob(delayedJobId)).toBeDefined()
 
         await schedule.init()
 
         expect(await client.zscore(systemJobsQueue.keys.repeat, legacyKey)).toBeNull()
+        expect(await systemJobsQueue.getJob(delayedJobId)).toBeUndefined()
     })
 })
 
@@ -320,3 +334,7 @@ describe('System job worker', () => {
         await expect(job.waitUntilFinished(queueEvents, 10_000)).rejects.toThrow('No handler for job test-unknown-job')
     })
 })
+
+function md5(value: string): string {
+    return createHash('md5').update(value).digest('hex')
+}

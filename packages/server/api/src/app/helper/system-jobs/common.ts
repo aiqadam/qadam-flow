@@ -2,6 +2,22 @@ import { Flow, FlowId, FlowRunId, Metadata, PlatformId, ProjectId, UserId } from
 import { Job, JobsOptions } from 'bullmq'
 import { Dayjs } from 'dayjs'
 
+// Names no handler exists for any more, possibly still scheduled in Redis by an older version.
+// The boot-time cleanup and the system-job worker both read this list; nothing else should keep
+// its own copy. Matched exactly, so a new `SystemJobName` can never be swallowed by an old name.
+export const DEPRECATED_SYSTEM_JOB_NAMES: readonly string[] = [
+    'trigger-data-cleaner',
+    'logs-cleanup-trigger',
+    'usage-report',
+    'archive-old-issues',
+    'platform-usage-report',
+    'seven-days-in-trial',
+    'issue-reminder',
+    'update-flow-status',
+    'expire-pending-sso-domains',
+    'pieces-sync',
+]
+
 export enum SystemJobName {
     PIECES_ANALYTICS = 'qadams-analytics',
     FILE_CLEANUP_TRIGGER = 'file-cleanup-trigger',

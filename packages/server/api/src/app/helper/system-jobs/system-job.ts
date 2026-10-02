@@ -4,26 +4,12 @@ import { Job, JobSchedulerJson, JobsOptions, Queue, Worker } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
 import { redisConnections } from '../../database/redis-connections'
 import { exceptionHandler } from '../exception-handler'
-import { JobSchedule, SystemJobData, SystemJobName, SystemJobSchedule } from './common'
+import { DEPRECATED_SYSTEM_JOB_NAMES, JobSchedule, SystemJobData, SystemJobName, SystemJobSchedule } from './common'
 import { systemJobHandlers } from './job-handlers'
 
 const FIFTEEN_MINUTES = apDayjsDuration(15, 'minute').asMilliseconds()
 const ONE_MONTH = apDayjsDuration(1, 'month').asSeconds()
 const SYSTEM_JOB_QUEUE = 'system-job-queue'
-// Names no handler exists for any more, possibly still scheduled in Redis by an older version.
-// Both the boot-time cleanup and the worker read this list; nothing else should keep its own copy.
-const DEPRECATED_JOB_NAMES = [
-    'trigger-data-cleaner',
-    'logs-cleanup-trigger',
-    'usage-report',
-    'archive-old-issues',
-    'platform-usage-report',
-    'seven-days-in-trial',
-    'issue-reminder',
-    'update-flow-status',
-    'expire-pending-sso-domains',
-    'pieces-sync',
-]
 
 export let systemJobsQueue: Queue<SystemJobData, unknown, SystemJobName>
 let systemJobWorker: Worker<SystemJobData, unknown, SystemJobName>
@@ -132,14 +118,16 @@ async function removeDeprecatedJobs(): Promise<void> {
         const name = getSchedulerJobName(f)
         return isDeprecatedJobName(name) || (knownJobNames.includes(name) && f.key.includes('::'))
     })
-    // Filter on the name alone. `getJobSchedulers()` never sets `id` on a scheduler created through
-    // `queue.add(name, data, { repeat, jobId })`, which is how `upsertJob` schedules every repeated
-    // system job, so requiring an `id` here is what let `pieces-sync` survive every boot (#638).
+    // Filter on the name alone. `getJobSchedulers()` never sets `id`: it builds every entry from the
+    // `repeat:<key>` hash, which holds no id, and ioredis returns `{}` rather than null for a missing
+    // hash, so BullMQ's colon-key fallback that would set one is never reached. Requiring an `id` here
+    // matched nothing at all, which is what let `pieces-sync` survive every boot (#638).
     await Promise.all(staleSchedulers.map(job => systemJobsQueue.removeJobScheduler(job.key)))
 
     // Runs after the schedulers are gone: BullMQ refuses to remove a scheduler's current delayed
-    // instance while the scheduler still exists.
-    const oneTimeJobs = await systemJobsQueue.getJobs()
+    // instance while the scheduler still exists. Only states a job can still be picked up from;
+    // a failed or completed one never runs again and ages out on its own.
+    const oneTimeJobs = await systemJobsQueue.getJobs(['delayed', 'waiting', 'prioritized'])
     const deprecatedOneTimeJobs = oneTimeJobs.filter(f => !isNil(f) && !isNil(f.id) && !isNil(f.name) && isDeprecatedJobName(f.name))
     await Promise.all(
         deprecatedOneTimeJobs.map(job => {
@@ -157,7 +145,7 @@ function getSchedulerJobName(scheduler: JobSchedulerJson): string {
 }
 
 function isDeprecatedJobName(name: string): boolean {
-    return DEPRECATED_JOB_NAMES.some(deprecatedName => name.startsWith(deprecatedName))
+    return DEPRECATED_SYSTEM_JOB_NAMES.includes(name)
 }
 
 const configureJobOptions = ({ schedule, jobId, customConfig }: { schedule: JobSchedule, jobId: string, customConfig?: JobsOptions }): JobsOptions => {
