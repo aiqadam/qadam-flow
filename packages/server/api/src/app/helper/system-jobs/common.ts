@@ -18,6 +18,12 @@ export const DEPRECATED_SYSTEM_JOB_NAMES: readonly string[] = [
     'pieces-sync',
 ]
 
+export const deprecatedSystemJobs = {
+    isDeprecated(name: string): boolean {
+        return DEPRECATED_SYSTEM_JOB_NAMES.includes(name)
+    },
+}
+
 export enum SystemJobName {
     PIECES_ANALYTICS = 'qadams-analytics',
     FILE_CLEANUP_TRIGGER = 'file-cleanup-trigger',

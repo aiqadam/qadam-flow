@@ -312,6 +312,33 @@ describe('System Jobs', () => {
         expect(await client.zscore(systemJobsQueue.keys.repeat, legacyKey)).toBeNull()
         expect(await systemJobsQueue.getJob(delayedJobId)).toBeUndefined()
     })
+
+    // A bare legacy key for a job name that still exists is removed too, and so must its delayed
+    // instance be: left alone, the worker keeps re-creating it beside the re-upserted schedule.
+    it('should remove the delayed instance of a bare legacy key for a current job name on init', async () => {
+        const name = SystemJobName.FILE_CLEANUP_TRIGGER
+        const legacyKey = `${name}:::UTC:0 3 * * *`
+        const nextMillis = apDayjs().add(1, 'hour').valueOf()
+        const client = await systemJobsQueue.client
+        await client.zadd(systemJobsQueue.keys.repeat, nextMillis, legacyKey)
+        const delayedJobId = `repeat:${md5(`${name}${md5(legacyKey)}`)}:${nextMillis}`
+        await systemJobsQueue.add(name, {}, {
+            jobId: delayedJobId,
+            delay: apDayjs(nextMillis).diff(apDayjs(), 'milliseconds'),
+            repeatJobKey: legacyKey,
+        })
+        const unrelatedJobId = 'test-unrelated-current-job'
+        await schedule.upsertJob({
+            job: { name, data: {}, jobId: unrelatedJobId },
+            schedule: { type: 'one-time', date: apDayjs().add(1, 'hour') },
+        })
+
+        await schedule.init()
+
+        expect(await client.zscore(systemJobsQueue.keys.repeat, legacyKey)).toBeNull()
+        expect(await systemJobsQueue.getJob(delayedJobId)).toBeUndefined()
+        expect(await systemJobsQueue.getJob(unrelatedJobId)).toBeDefined()
+    })
 })
 
 describe('System job worker', () => {

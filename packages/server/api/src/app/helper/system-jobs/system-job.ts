@@ -4,7 +4,7 @@ import { Job, JobSchedulerJson, JobsOptions, Queue, Worker } from 'bullmq'
 import { FastifyBaseLogger } from 'fastify'
 import { redisConnections } from '../../database/redis-connections'
 import { exceptionHandler } from '../exception-handler'
-import { DEPRECATED_SYSTEM_JOB_NAMES, JobSchedule, SystemJobData, SystemJobName, SystemJobSchedule } from './common'
+import { deprecatedSystemJobs, JobSchedule, SystemJobData, SystemJobName, SystemJobSchedule } from './common'
 import { systemJobHandlers } from './job-handlers'
 
 const FIFTEEN_MINUTES = apDayjsDuration(15, 'minute').asMilliseconds()
@@ -44,7 +44,7 @@ export const systemJobsSchedule = (log: FastifyBaseLogger): SystemJobSchedule =>
         systemJobWorker = new Worker(
             SYSTEM_JOB_QUEUE,
             async (job) => {
-                if (isDeprecatedJobName(job.name)) {
+                if (deprecatedSystemJobs.isDeprecated(job.name)) {
                     log.info({ jobName: job.name, jobId: job.id }, '[systemJob#worker] Dropping job with a deprecated name')
                     return
                 }
@@ -116,7 +116,7 @@ async function removeDeprecatedJobs(): Promise<void> {
             return false
         }
         const name = getSchedulerJobName(f)
-        return isDeprecatedJobName(name) || (knownJobNames.includes(name) && f.key.includes('::'))
+        return deprecatedSystemJobs.isDeprecated(name) || (knownJobNames.includes(name) && f.key.includes('::'))
     })
     // Filter on the name alone. `getJobSchedulers()` never sets `id`: it builds every entry from the
     // `repeat:<key>` hash, which holds no id, and ioredis returns `{}` rather than null for a missing
@@ -127,10 +127,16 @@ async function removeDeprecatedJobs(): Promise<void> {
     // Runs after the schedulers are gone: BullMQ refuses to remove a scheduler's current delayed
     // instance while the scheduler still exists. Only states a job can still be picked up from;
     // a failed or completed one never runs again and ages out on its own.
+    // A bare legacy key's instance has an id `removeJobScheduler` does not derive, and when the worker
+    // picks it up it schedules the next one regardless, so for a current job name it would keep firing
+    // beside the re-upserted schedule. Match those by the removed key, whatever their name.
+    const removedSchedulerKeys = new Set(staleSchedulers.map(job => job.key))
     const oneTimeJobs = await systemJobsQueue.getJobs(['delayed', 'waiting', 'prioritized'])
-    const deprecatedOneTimeJobs = oneTimeJobs.filter(f => !isNil(f) && !isNil(f.id) && !isNil(f.name) && isDeprecatedJobName(f.name))
+    const staleJobs = oneTimeJobs.filter(f => !isNil(f) && !isNil(f.id) && !isNil(f.name) && (
+        deprecatedSystemJobs.isDeprecated(f.name) || (!isNil(f.repeatJobKey) && removedSchedulerKeys.has(f.repeatJobKey))
+    ))
     await Promise.all(
-        deprecatedOneTimeJobs.map(job => {
+        staleJobs.map(job => {
             assertNotNullOrUndefined(job.id, 'Job id is required')
             return job.remove()
         }),
@@ -142,10 +148,6 @@ async function removeDeprecatedJobs(): Promise<void> {
 // the only place the name survives.
 function getSchedulerJobName(scheduler: JobSchedulerJson): string {
     return scheduler.name ?? scheduler.key.split(':')[0]
-}
-
-function isDeprecatedJobName(name: string): boolean {
-    return DEPRECATED_SYSTEM_JOB_NAMES.includes(name)
 }
 
 const configureJobOptions = ({ schedule, jobId, customConfig }: { schedule: JobSchedule, jobId: string, customConfig?: JobsOptions }): JobsOptions => {
