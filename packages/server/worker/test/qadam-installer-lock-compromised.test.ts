@@ -301,7 +301,11 @@ describe('qadamInstaller after an install that stopped without rolling back', ()
         const qadam = makeQadam('@acme/qadam-x')
         await writeFile(lockfilePath(), CLEAN_LOCKFILE)
         await writeLeftoverMember({ qadam })
+        // What bun needs to install the member at all: its own package.json, the one this install
+        // wrote, still in place when bun runs.
+        const memberSeenByBun: string[] = []
         mockInstall.mockImplementation(async () => {
+            memberSeenByBun.push(await readFile(join(qadamDirPath(qadam), 'package.json'), 'utf8').catch(() => 'missing'))
             await writeFile(lockfilePath(), INSTALLED_LOCKFILE)
             return { output: '' }
         })
@@ -309,6 +313,9 @@ describe('qadamInstaller after an install that stopped without rolling back', ()
 
         await install([qadam])
 
+        expect(memberSeenByBun).toHaveLength(1)
+        expect(JSON.parse(memberSeenByBun[0])).toMatchObject({ dependencies: { [qadam.qadamName]: qadam.qadamVersion } })
+        expect(await readFile(lockfilePath(), 'utf8')).toBe(INSTALLED_LOCKFILE)
         expect(await pathExists(join(qadamDirPath(qadam), 'ready'))).toBe(true)
     })
 
@@ -352,6 +359,87 @@ describe('qadamInstaller after an install that stopped without rolling back', ()
         expect(seenByBun).toEqual([{ leftover: false, ready: true }])
     })
 
+    // The leftovers are the only record that bun.lock holds a refusal nothing verified. An install
+    // whose own setup fails before it has written members of its own must leave them in place, or
+    // the next one trusts the lockfile and excuses the refusal.
+    it('keeps the leftovers when the install fails before writing members of its own', async () => {
+        settings.officialQadamsInstallEnabled = true
+        const qadam = makeQadam('@acme/qadam-x')
+        await writeLeftoverMember({ qadam })
+        await writeFile(lockfilePath(), POISONED_LOCKFILE)
+        mockRefusedKeysIn.mockImplementation(({ lockfileContents }: { lockfileContents: string | undefined }) =>
+            new Set(lockfileContents?.includes(REFUSED_KEY) ? [REFUSED_KEY] : []))
+        mockInstall.mockImplementation(async () => {
+            await writeFile(lockfilePath(), POISONED_LOCKFILE)
+            return { output: '' }
+        })
+        mockVerifyOfficialQadams.mockImplementation(refuseUnlessAlreadyRefused)
+        // A write that fails in `createInstallWorkspaceFiles`, as ENOSPC or EIO would.
+        await mkdir(join(testWorkspace, 'bunfig.toml'))
+
+        await expect(install([makeQadam('@other/qadam-y')])).rejects.toThrow()
+        expect(mockInstall).not.toHaveBeenCalled()
+        expect(await pathExists(qadamDirPath(qadam))).toBe(true)
+
+        await rm(join(testWorkspace, 'bunfig.toml'), { recursive: true })
+        await expect(install([qadam])).rejects.toThrow('refusing to install')
+        expect(await pathExists(join(qadamDirPath(qadam), 'ready'))).toBe(false)
+    })
+
+    // bun installs an ARCHIVE dependency named `foo/bar` at `qadams/foo/bar-1.0.0`, so
+    // `qadams/foo` is not a member and must survive an unrelated install, flag off or on.
+    it('keeps a ready qadam whose name holds a slash through an unrelated install', async () => {
+        const slashed = makeQadam('foo/bar')
+        await writeReadyMember({ qadam: slashed })
+        mockInstall.mockResolvedValue({ output: '' })
+
+        await install([makeQadam('@acme/qadam-x')])
+
+        expect(await pathExists(join(qadamDirPath(slashed), 'ready'))).toBe(true)
+    })
+
+    // A qadam name is not checked against npm's naming rules on the way here, so the layout under
+    // `qadams/` cannot be read off the first path segment: `a/b` puts a ready member inside a
+    // directory that is not a member, and a bare `@foo` is a member, not a scope.
+    it('removes only directories that are members, and never one holding a ready member', async () => {
+        const slashed = makeQadam('acme/tools')
+        const bareAt = makeQadam('@foo')
+        const outer = makeQadam('@acme/qadam-outer')
+        const nested = { ...makeQadam(`${outer.qadamName}-${outer.qadamVersion}/inner`), qadamVersion: '2.0.0' }
+        const bareAtLeftover = makeQadam('@bar')
+        await writeReadyMember({ qadam: slashed })
+        await writeReadyMember({ qadam: bareAt })
+        await mkdir(join(qadamDirPath(bareAt), 'node_modules'), { recursive: true })
+        await writeLeftoverMember({ qadam: outer })
+        await writeReadyMember({ qadam: nested })
+        await writeLeftoverMember({ qadam: bareAtLeftover })
+        mockInstall.mockResolvedValue({ output: '' })
+
+        await install([makeQadam('@acme/qadam-x')])
+
+        expect(await pathExists(join(qadamDirPath(slashed), 'ready'))).toBe(true)
+        expect(await pathExists(join(qadamDirPath(bareAt), 'node_modules'))).toBe(true)
+        expect(await pathExists(join(qadamDirPath(nested), 'ready'))).toBe(true)
+        expect(await pathExists(qadamDirPath(bareAtLeftover))).toBe(false)
+    })
+
+    // The `@scope` directory above every scoped qadam has no `ready` of its own. Taking it for an
+    // unfinished install would stop excusing a refusal every finished install in the workspace
+    // already lives with.
+    it('does not take a scope directory for an unfinished install', async () => {
+        settings.officialQadamsInstallEnabled = true
+        await writeReadyMember({ qadam: makeQadam('@acme/qadam-ready') })
+        await writeFile(lockfilePath(), POISONED_LOCKFILE)
+        mockRefusedKeysIn.mockImplementation(({ lockfileContents }: { lockfileContents: string | undefined }) =>
+            new Set(lockfileContents?.includes(REFUSED_KEY) ? [REFUSED_KEY] : []))
+        mockInstall.mockResolvedValue({ output: '' })
+        mockVerifyOfficialQadams.mockImplementation(refuseUnlessAlreadyRefused)
+
+        await install([makeQadam('@other/qadam-y')])
+
+        expect(mockVerifyOfficialQadams).toHaveBeenCalledWith(expect.objectContaining({ refusedBeforeInstall: new Set([REFUSED_KEY]) }))
+    })
+
     it('does not remove a leftover once the lock is lost', async () => {
         const leftover = makeQadam('@acme/qadam-left-behind')
         await writeLeftoverMember({ qadam: leftover })
@@ -369,6 +457,11 @@ async function refuseUnlessAlreadyRefused({ rootWorkspace, refusedBeforeInstall 
     if (lockfile.includes(REFUSED_KEY) && !refusedBeforeInstall.has(REFUSED_KEY)) {
         throw new Error(`[qadamIntegrity] refusing to install: ${REFUSED_KEY}`)
     }
+}
+
+async function writeReadyMember({ qadam }: { qadam: QadamPackage }): Promise<void> {
+    await writeLeftoverMember({ qadam })
+    await writeFile(join(qadamDirPath(qadam), 'ready'), 'true')
 }
 
 // What a worker killed mid-install, or one that lost the lock, leaves: a member and no `ready`.

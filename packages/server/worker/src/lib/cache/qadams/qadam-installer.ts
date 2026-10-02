@@ -145,10 +145,6 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
             // read just before `bun install` would see.
             const before = await readWorkspaceBeforeInstall({ rootWorkspace, officialQadamsInstallEnabled, hasUnmarkedMembers: unmarkedMembers.length > 0, log })
 
-            // After the snapshot, which has to see these leftovers to distrust the lockfile.
-            assertLockHeld()
-            await removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsToInstall, log })
-
             await createInstallWorkspaceFiles({
                 path: rootWorkspace,
                 qadamsToInstall,
@@ -160,6 +156,14 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                 rootWorkspace,
                 qadamPackage: piece,
             })))
+
+            // The leftovers are the only record that bun.lock may hold refusals nothing verified, so
+            // they go only once this batch's own unmarked members are on disk to carry that record
+            // on: after the snapshot that reads them, and after the writes above, any of which can
+            // fail or be cut short by a kill. Removing them first would let the next install trust
+            // the lockfile again.
+            assertLockHeld()
+            await removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsToInstall, log })
 
             await tracer.startActiveSpan('qadamInstaller.bunInstall', async (span) => {
                 try {
@@ -252,8 +256,12 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 // notices, up to one refresh interval (stale / 2, i.e. 150 s for the 5 min lock) after another
 // replica could already have taken the lock over, and with no bound at all if the refresh I/O
 // hangs. There is no fencing, so every check here narrows the window in which two holders write
-// the workspace at once; none closes it. The writes before the first check (the workspace files,
-// archives and member package.json) are not guarded at all.
+// the workspace at once; none closes it. Inside it the integrity gate can be bypassed too. A
+// former holder's restore or still-running `bun install` can rewrite this holder's `bun.lock`
+// between its install and its verification. `assertBatchIsCovered` catches that only for official
+// qadams, so a custom-only batch is then marked ready unverified. The first check comes after this
+// install's own setup writes (the workspace files, archives and member package.json), and before
+// it removes abandoned members; those setup writes are not guarded.
 function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspaceLockHeldParams): void {
     if (isCompromised()) {
         throw new Error(`[qadamInstaller] Lost the lock on ${rootWorkspace} mid-install; another replica may be installing into it`)
@@ -533,7 +541,9 @@ async function removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsTo
 }): Promise<void> {
     // This batch's own leftovers are rewritten by `createQadamPackageJson` and reinstalled.
     const batchMembers = new Set(qadamsToInstall.map((piece) => qadamPath(rootWorkspace, piece)))
-    const abandoned = unmarkedMembers.filter((member) => !batchMembers.has(member))
+    const candidates = unmarkedMembers.filter((member) => !batchMembers.has(member))
+    const holdsReadyMember = await Promise.all(candidates.map((member) => containsReadyMarker({ directory: member })))
+    const abandoned = candidates.filter((_, index) => !holdsReadyMember[index])
     if (abandoned.length === 0) {
         return
     }
@@ -541,18 +551,36 @@ async function removeAbandonedMembers({ rootWorkspace, unmarkedMembers, qadamsTo
     await Promise.all(abandoned.map((member) => rm(member, { recursive: true, force: true })))
 }
 
-// `relativeQadamPath` puts a scoped qadam one level deeper, under its `@scope` directory.
+// A member is a directory holding the `package.json` that `createQadamPackageJson` writes; without
+// one, bun does not treat a directory as a workspace member at all. Nothing else about the layout
+// is assumed: a qadam name is not checked against npm's naming rules here, so the directories on
+// the way down to a member (an `@scope`, or the `a` of a name like `a/b`) are not members, and a
+// member can sit inside another one. The walk therefore descends into every directory except
+// `node_modules`, which is bun's tree rather than ours.
 async function listMemberDirectories({ rootWorkspace }: { rootWorkspace: string }): Promise<string[]> {
-    const qadamsRoot = join(rootWorkspace, QADAMS_DIR)
-    const entries = await listDirectories({ directory: qadamsRoot })
-    const members = await Promise.all(entries.map(async (entry) => {
-        if (!entry.startsWith('@')) {
-            return [join(qadamsRoot, entry)]
-        }
-        const scoped = await listDirectories({ directory: join(qadamsRoot, entry) })
-        return scoped.map((name) => join(qadamsRoot, entry, name))
+    return findMembersBelow({ directory: join(rootWorkspace, QADAMS_DIR) })
+}
+
+async function findMembersBelow({ directory }: { directory: string }): Promise<string[]> {
+    const children = (await listDirectories({ directory })).filter((child) => child !== 'node_modules')
+    const found = await Promise.all(children.map(async (child) => {
+        const childPath = join(directory, child)
+        const below = await findMembersBelow({ directory: childPath })
+        const isMember = await fileSystemUtils.fileExists(join(childPath, 'package.json'))
+        return isMember ? [childPath, ...below] : below
     }))
-    return members.flat()
+    return found.flat()
+}
+
+// Members can nest (see `listMemberDirectories`), so removing an unmarked one could take a `ready`
+// one with it. Any `ready` file below keeps the directory; so does a directory that cannot be read
+// in full, since keeping a leftover costs a failed install and removing a ready qadam costs more.
+async function containsReadyMarker({ directory }: { directory: string }): Promise<boolean> {
+    const { data, error } = await tryCatch(async () => readdir(directory, { withFileTypes: true, recursive: true }))
+    if (!isNil(error)) {
+        return !isFileNotFound(error)
+    }
+    return (data ?? []).some((entry) => entry.isFile() && entry.name === 'ready')
 }
 
 async function listDirectories({ directory }: { directory: string }): Promise<string[]> {
