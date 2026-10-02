@@ -18,6 +18,7 @@ import { exceptionHandler } from './helper/exception-handler'
 import { networkUtils } from './helper/network-utils'
 import { rejectedPromiseHandler } from './helper/promise-handler'
 import { requestValidator } from './helper/request-validator'
+import { staticAssetCache } from './helper/static-asset-cache'
 import { system } from './helper/system/system'
 import { AppSystemProp } from './helper/system/system-props'
 import { mcpOAuthHttpController, mcpPlatformHttpController } from './mcp/oauth/mcp-oauth.controller'
@@ -67,16 +68,7 @@ export const setupServer = async (): Promise<FastifyInstance> => {
         await app.register(fastifyStatic, {
             root: frontendPath,
             setHeaders: (reply, filepath) => {
-                const normalized = filepath.replace(/\\/g, '/')
-                if (normalized.endsWith('.html')) {
-                    void reply.header('Cache-Control', 'no-cache')
-                }
-                else if (normalized.includes('/assets/')) {
-                    void reply.header('Cache-Control', 'public, max-age=31536000, immutable')
-                }
-                else {
-                    void reply.header('Cache-Control', 'public, max-age=0, must-revalidate')
-                }
+                void reply.header('Cache-Control', staticAssetCache.cacheControlFor({ root: frontendPath, filepath }))
             },
         })
     }
