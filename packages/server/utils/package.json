@@ -27,7 +27,7 @@
     "check-disk-space": "3.4.0",
     "dayjs": "1.11.9",
     "proper-lockfile": "4.1.2",
-    "request-filtering-agent": "3.2.0",
+    "request-filtering-agent": "3.2.1",
     "semver": "7.6.0",
     "systeminformation": "5.31.6",
     "tslib": "2.6.2"
