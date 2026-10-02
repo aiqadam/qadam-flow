@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadam-google-sheets",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
@@ -13,7 +13,7 @@
     "googleapis": "129.0.0",
     "googleapis-common": "7.2.0",
     "lodash": "4.18.1",
-    "nanoid": "3.3.8",
+    "nanoid": "3.3.18",
     "zod": "4.3.6",
     "tslib": "2.6.2"
   },

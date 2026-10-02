@@ -1,13 +1,13 @@
 {
   "name": "@aiqadam/qadam-graphql",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
     "@aiqadam/qadams-common": "workspace:*",
     "@aiqadam/qadams-framework": "workspace:*",
     "@aiqadam/shared": "workspace:*",
-    "axios": "1.15.2",
+    "axios": "1.20.0",
     "https-proxy-agent": "7.0.4",
     "tslib": "2.6.2"
   },
