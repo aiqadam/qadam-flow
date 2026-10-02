@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { access, mkdir, rm } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PackageType, QadamType } from '@aiqadam/shared'
@@ -13,6 +13,15 @@ import { qadamInstaller } from '../src/lib/cache/qadams/qadam-installer'
 const lockStub = vi.hoisted(() => ({
     compromised: false,
 }))
+const settings = vi.hoisted(() => ({
+    officialQadamsInstallEnabled: false,
+}))
+const mockVerifyOfficialQadams = vi.hoisted(() => vi.fn())
+
+// Distinct bytes: what a rollback must not do is put the first back over the second.
+const SNAPSHOTTED_LOCKFILE = '{ "lockfileVersion": 1, "packages": { "snapshotted-before-install": [] } }\n'
+const NEW_HOLDER_LOCKFILE = '{ "lockfileVersion": 1, "packages": { "written-by-the-new-holder": [] } }\n'
+const NEW_HOLDER_FILE = 'written-by-the-new-holder'
 
 const mockInstall = vi.fn()
 let testWorkspace = ''
@@ -37,7 +46,7 @@ vi.mock('../src/lib/cache/code/bun-runner', () => ({
 
 vi.mock('../src/lib/cache/qadams/qadam-integrity', () => ({
     qadamIntegrity: () => ({
-        verifyOfficialQadams: vi.fn(),
+        verifyOfficialQadams: mockVerifyOfficialQadams,
         refusedKeysIn: vi.fn(() => new Set()),
     }),
 }))
@@ -47,7 +56,7 @@ vi.mock('../src/lib/config/worker-settings', () => ({
         getSettings: () => ({
             EXECUTION_MODE: 'UNSANDBOXED',
             DEV_QADAMS: [],
-            OFFICIAL_QADAMS_INSTALL_ENABLED: false,
+            OFFICIAL_QADAMS_INSTALL_ENABLED: settings.officialQadamsInstallEnabled,
         }),
     },
 }))
@@ -61,7 +70,9 @@ beforeEach(async () => {
     testWorkspace = join(tmpdir(), `qadam-installer-compromised-test-${randomUUID()}`)
     await mkdir(testWorkspace, { recursive: true })
     lockStub.compromised = false
+    settings.officialQadamsInstallEnabled = false
     mockInstall.mockReset()
+    mockVerifyOfficialQadams.mockReset()
 })
 
 afterEach(async () => {
@@ -110,7 +121,125 @@ describe('qadamInstaller when the workspace lock is compromised', () => {
         await expect(install([makeQadam('@aiqadam/qadam-a'), makeQadam('@aiqadam/qadam-b')])).rejects.toThrow('Lost the lock')
         expect(mockInstall).toHaveBeenCalledTimes(2)
     })
+    // #593: every rollback writes the shared workspace, and once the lock is lost the files it
+    // would remove or restore are the new holder's. Each test below lets a "new holder" write its
+    // own lockfile and member file at the moment the lock is lost, then checks both survive.
+    describe('leaves the workspace to the new holder on every rollback path', () => {
+        it('a single-qadam batch failure removes no directory and restores no lockfile', async () => {
+            settings.officialQadamsInstallEnabled = true
+            const qadam = makeQadam('@acme/qadam-a')
+            await writeFile(lockfilePath(), SNAPSHOTTED_LOCKFILE)
+            mockInstall.mockImplementation(async () => {
+                await takeOverWorkspace({ qadam })
+                throw new Error('batch install failed')
+            })
+
+            await expect(install([qadam])).rejects.toThrow('batch install failed')
+
+            expect(await readFile(lockfilePath(), 'utf8')).toBe(NEW_HOLDER_LOCKFILE)
+            expect(await pathExists(newHolderFilePath(qadam))).toBe(true)
+        })
+
+        it('a failed one-by-one retry does not remove that qadam\'s directory', async () => {
+            const qadamA = makeQadam('@acme/qadam-a')
+            const qadamB = makeQadam('@acme/qadam-b')
+            mockInstall
+                .mockImplementationOnce(async () => {
+                    throw new Error('batch install failed')
+                })
+                .mockImplementationOnce(async () => {
+                    await takeOverWorkspace({ qadam: qadamA })
+                    throw new Error('retry failed')
+                })
+
+            await expect(install([qadamA, qadamB])).rejects.toThrow('Lost the lock')
+
+            expect(mockInstall).toHaveBeenCalledTimes(2)
+            expect(await pathExists(newHolderFilePath(qadamA))).toBe(true)
+        })
+
+        it('no survivor after the one-by-one retry restores no lockfile', async () => {
+            settings.officialQadamsInstallEnabled = true
+            const qadamA = makeQadam('@acme/qadam-a')
+            const qadamB = makeQadam('@acme/qadam-b')
+            await writeFile(lockfilePath(), SNAPSHOTTED_LOCKFILE)
+            mockInstall
+                .mockImplementationOnce(async () => {
+                    throw new Error('batch install failed')
+                })
+                .mockImplementationOnce(async () => {
+                    throw new Error('retry failed')
+                })
+                // Lost on the last retry, so the loop ends without another lock check and the
+                // no-survivor restore is what runs next.
+                .mockImplementationOnce(async () => {
+                    await takeOverWorkspace({ qadam: qadamB })
+                    throw new Error('retry failed')
+                })
+
+            await expect(install([qadamA, qadamB])).rejects.toThrow('Failed to install')
+
+            expect(mockInstall).toHaveBeenCalledTimes(3)
+            expect(await readFile(lockfilePath(), 'utf8')).toBe(NEW_HOLDER_LOCKFILE)
+            expect(await pathExists(newHolderFilePath(qadamB))).toBe(true)
+        })
+
+        it('an integrity failure after the last lock check removes no directory and restores no lockfile', async () => {
+            settings.officialQadamsInstallEnabled = true
+            const qadam = makeQadam('@acme/qadam-a')
+            await writeFile(lockfilePath(), SNAPSHOTTED_LOCKFILE)
+            mockInstall.mockResolvedValue({ output: '' })
+            mockVerifyOfficialQadams.mockImplementation(async () => {
+                await takeOverWorkspace({ qadam })
+                throw new Error('[qadamIntegrity] refusing to install: @acme/qadam-a')
+            })
+
+            await expect(install([qadam])).rejects.toThrow('refusing to install')
+
+            expect(await readFile(lockfilePath(), 'utf8')).toBe(NEW_HOLDER_LOCKFILE)
+            expect(await pathExists(newHolderFilePath(qadam))).toBe(true)
+        })
+    })
+
+    it('does not mark an install ready when the lock was lost while verification ran', async () => {
+        settings.officialQadamsInstallEnabled = true
+        const qadam = makeQadam('@acme/qadam-a')
+        mockInstall.mockResolvedValue({ output: '' })
+        mockVerifyOfficialQadams.mockImplementation(async () => {
+            lockStub.compromised = true
+        })
+
+        await expect(install([qadam])).rejects.toThrow('Lost the lock')
+
+        expect(mockVerifyOfficialQadams).toHaveBeenCalledTimes(1)
+        expect(await pathExists(join(qadamDirPath(qadam), 'ready'))).toBe(false)
+    })
 })
+
+// What another replica does once it has taken the stale lock over: install into the same
+// workspace, writing its own lockfile and its own files into the member directory.
+async function takeOverWorkspace({ qadam }: { qadam: QadamPackage }): Promise<void> {
+    lockStub.compromised = true
+    await writeFile(lockfilePath(), NEW_HOLDER_LOCKFILE)
+    await mkdir(qadamDirPath(qadam), { recursive: true })
+    await writeFile(newHolderFilePath(qadam), 'true')
+}
+
+function lockfilePath(): string {
+    return join(testWorkspace, 'bun.lock')
+}
+
+function qadamDirPath(qadam: QadamPackage): string {
+    return join(testWorkspace, 'qadams', `${qadam.qadamName}-${qadam.qadamVersion}`)
+}
+
+function newHolderFilePath(qadam: QadamPackage): string {
+    return join(qadamDirPath(qadam), NEW_HOLDER_FILE)
+}
+
+async function pathExists(target: string): Promise<boolean> {
+    return access(target).then(() => true, () => false)
+}
 
 async function install(pieces: QadamPackage[]): Promise<void> {
     // REGISTRY qadams never ask the API client for an archive.

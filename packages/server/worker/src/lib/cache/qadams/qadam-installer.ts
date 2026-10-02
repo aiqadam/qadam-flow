@@ -165,7 +165,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     if (isNil(batchError)) {
                         assertLockHeld()
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, officialQadamsInstallEnabled, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed: qadamsToInstall, before, officialQadamsInstallEnabled, isCompromised, span, log })
                         log.info({
                             rootWorkspace,
                             qadamsCount: qadamsToInstall.length,
@@ -177,7 +177,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
                     if (qadamsToInstall.length === 1) {
                         log.error({ rootWorkspace, error: batchError }, '[qadamInstaller] Qadam installation failed, rolling back')
-                        await rollbackInstallation({ rootWorkspace, pieces: qadamsToInstall, before })
+                        await rollbackInstallation({ rootWorkspace, pieces: qadamsToInstall, before, isCompromised, log })
                         throw batchError
                     }
 
@@ -187,7 +187,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                         error: batchError,
                     }, '[qadamInstaller] Batch install failed, retrying qadams individually')
 
-                    const failedQadams = await tryInstallQadamsIndividually({ rootWorkspace, pieces: qadamsToInstall, log, assertLockHeld })
+                    const failedQadams = await tryInstallQadamsIndividually({ rootWorkspace, pieces: qadamsToInstall, log, isCompromised })
 
                     // Verification happens here rather than per iteration, and the survivors are
                     // marked usable only once it has passed. Per iteration was wrong twice over:
@@ -201,7 +201,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                     const installed = qadamsToInstall.filter((piece) => !failedQadams.includes(piece))
                     if (installed.length > 0) {
                         assertLockHeld()
-                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log })
+                        await verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, isCompromised, span, log })
                     }
                     else {
                         // No survivor, so nothing is marked `ready` and the next job reinstalls the
@@ -211,7 +211,7 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
                         // "already refused before this install" baseline. The per-piece rollbacks
                         // in the loop above deliberately do not restore, because a survivor's
                         // entries are legitimate; this is the abandoning case they do not cover.
-                        await restoreLockfile({ rootWorkspace, before })
+                        await restoreLockfile({ rootWorkspace, before, isCompromised, log })
                     }
 
                     if (failedQadams.length > 0) {
@@ -234,13 +234,33 @@ async function installQadams(rootWorkspace: string, pieces: QadamPackage[], incl
 
 // Unlike the cache.json and code-build writers, bun installs in place into the shared workspace,
 // so a second holder would corrupt it rather than just lose work. Once the lock is lost, the
-// install stops before the next `bun install` (the batch, or any one of the one-by-one retries)
-// and before verification, which is what vouches for the workspace. It does not restore the
-// lockfile on the way out: the workspace is no longer this replica's to write.
+// install stops before the next `bun install` (the batch, or any one of the one-by-one retries),
+// before verification, which is what vouches for the workspace, and before the `ready` markers.
+// On no path does it roll back or restore the lockfile on the way out — see
+// `isRollbackForbidden`: the workspace is no longer this replica's to write.
 function assertWorkspaceLockHeld({ isCompromised, rootWorkspace }: AssertWorkspaceLockHeldParams): void {
     if (isCompromised()) {
         throw new Error(`[qadamInstaller] Lost the lock on ${rootWorkspace} mid-install; another replica may be installing into it`)
     }
+}
+
+// Every rollback writes the shared workspace: it removes qadam directories and restores or removes
+// `bun.lock`. Once the lock is lost those are the new holder's files, so a rollback would delete
+// its half-written `qadams/<name>-<version>` (which its `markQadamsAsUsed` then recreates holding
+// only a `ready` marker) or write an older snapshot over the `bun.lock` its own `bun install` just
+// wrote, before its verification reads it (#593). The rollback is skipped instead and the caller
+// throws its own error. What this replica wrote is left for the holder: a member directory with no
+// `ready` marker is reinstalled the next time it is asked for, under a held lock.
+//
+// Checked again before the lockfile write rather than once per rollback, since the lock can be
+// lost while the directories are being removed. The window between a check and the write after it
+// is not closed — `proper-lockfile` gives no fencing — only narrowed.
+function isRollbackForbidden({ isCompromised, rootWorkspace, log }: IsRollbackForbiddenParams): boolean {
+    if (!isCompromised()) {
+        return false
+    }
+    log.warn({ rootWorkspace }, '[qadamInstaller] Lost the lock mid-install; skipping the rollback, the workspace is another replica\'s to write now')
+    return true
 }
 
 // Official qadams are compiled into the image (`Dockerfile`: "Qadams must be pre-compiled because
@@ -313,24 +333,29 @@ function needsInstalling({ piece, officialQadamsInstallEnabled }: {
 // lockfile, and restoring mid-loop would discard the entries of the qadams that just succeeded.
 // That loop is still covered — the integrity pass runs once over whatever bun finally wrote, and
 // if it throws, the abandoning rollback above it restores the snapshot.
-async function rollbackInstallation({ rootWorkspace, pieces, before }: {
+async function rollbackInstallation({ rootWorkspace, pieces, before, isCompromised, log }: {
     rootWorkspace: string
     pieces: QadamPackage[]
     before?: WorkspaceBeforeInstall
+    isCompromised: () => boolean
+    log: Logger
 }): Promise<void> {
+    if (isRollbackForbidden({ isCompromised, rootWorkspace, log })) {
+        return
+    }
     await Promise.all(pieces.map(piece => rm(path.resolve(rootWorkspace, relativeQadamPath(piece)), {
         recursive: true,
         force: true,
     })))
     if (!isNil(before)) {
-        await restoreLockfile({ rootWorkspace, before })
+        await restoreLockfile({ rootWorkspace, before, isCompromised, log })
     }
 }
 
-async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assertLockHeld }: TryInstallQadamsIndividuallyParams): Promise<QadamPackage[]> {
+async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, isCompromised }: TryInstallQadamsIndividuallyParams): Promise<QadamPackage[]> {
     const failures: QadamPackage[] = []
     for (const piece of pieces) {
-        assertLockHeld()
+        assertWorkspaceLockHeld({ isCompromised, rootWorkspace })
         const { error } = await tryCatch(async () =>
             bunRunner(log).install({
                 path: rootWorkspace,
@@ -342,7 +367,7 @@ async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assert
                 piece: `${piece.qadamName}@${piece.qadamVersion}`,
                 error,
             }, '[qadamInstaller] Individual qadam installation failed, rolling back')
-            await rollbackInstallation({ rootWorkspace, pieces: [piece] })
+            await rollbackInstallation({ rootWorkspace, pieces: [piece], isCompromised, log })
             failures.push(piece)
         }
     }
@@ -364,11 +389,12 @@ async function tryInstallQadamsIndividually({ rootWorkspace, pieces, log, assert
 // a plain custom install too, and verifying them fail-closed would turn a brief registry outage
 // into a failed install where today there is none. The flag is also the documented escape hatch
 // for an npmjs key rotation, which only means anything if it gates this.
-async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, span, log }: {
+async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before, officialQadamsInstallEnabled, isCompromised, span, log }: {
     rootWorkspace: string
     installed: QadamPackage[]
     before: WorkspaceBeforeInstall
     officialQadamsInstallEnabled: boolean
+    isCompromised: () => boolean
     span: Span
     log: Logger
 }): Promise<void> {
@@ -383,9 +409,13 @@ async function verifyIntegrityThenMarkAsUsed({ rootWorkspace, installed, before,
         if (!isNil(error)) {
             span.recordException(error instanceof Error ? error : new Error(String(error)))
             log.error({ rootWorkspace, error }, '[qadamInstaller] Integrity verification failed, rolling back')
-            await rollbackInstallation({ rootWorkspace, pieces: installed, before })
+            await rollbackInstallation({ rootWorkspace, pieces: installed, before, isCompromised, log })
             throw error
         }
+        // The pass reads the registry under a shared deadline, long enough for the lock to be lost
+        // after the check that preceded it. Its verdict then covers a lockfile another replica may
+        // be rewriting, so it vouches for nothing the `ready` markers below would record.
+        assertWorkspaceLockHeld({ isCompromised, rootWorkspace })
     }
     await markQadamsAsUsed(rootWorkspace, installed)
 }
@@ -445,13 +475,18 @@ function isFileNotFound(error: unknown): boolean {
     return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
-async function restoreLockfile({ rootWorkspace, before }: {
+async function restoreLockfile({ rootWorkspace, before, isCompromised, log }: {
     rootWorkspace: string
     before: WorkspaceBeforeInstall
+    isCompromised: () => boolean
+    log: Logger
 }): Promise<void> {
     // Nothing was snapshotted, so there is nothing this rollback is entitled to assert about the
     // lockfile — least of all that it should not exist.
     if (!before.captured) {
+        return
+    }
+    if (isRollbackForbidden({ isCompromised, rootWorkspace, log })) {
         return
     }
     const lockfilePath = join(rootWorkspace, LOCKFILE_NAME)
@@ -674,10 +709,16 @@ type TryInstallQadamsIndividuallyParams = {
     rootWorkspace: string
     pieces: QadamPackage[]
     log: Logger
-    assertLockHeld: () => void
+    isCompromised: () => boolean
 }
 
 type AssertWorkspaceLockHeldParams = {
     isCompromised: () => boolean
     rootWorkspace: string
+}
+
+type IsRollbackForbiddenParams = {
+    isCompromised: () => boolean
+    rootWorkspace: string
+    log: Logger
 }
