@@ -72,16 +72,47 @@ describe('MarkdownInput markdown round trip', () => {
     expect(reloaded.getMarkdown()).toBe(stored);
   });
 
-  it('treats an empty note as empty for the placeholder', async () => {
-    const editor = await mountEditor({ initialValue: '' });
-    expect(editor.getMarkdown().trim().replaceAll('<br>', '')).toBe('');
+  // Notes saved before the tiptap bump were serialised without escaping, so the
+  // stored markdown holds these characters raw.
+  it.each([
+    'snake_case 2 < 3 & ok',
+    'snake_case and a*b',
+    'a * b = c and [brackets]',
+    'a literal \\ backslash',
+    '2 < 3 & 4 > 1 "quoted"',
+  ])('displays note %j stored before the bump unchanged', async (stored) => {
+    const editor = await mountEditor({ initialValue: stored });
+    expect(editor.getText()).toBe(stored);
+  });
+
+  it('shows the placeholder for an empty note and stores it as <br>', async () => {
+    const editor = await mountEditor({
+      initialValue: '',
+      placeholder: 'P',
+      onlyEditableOnDoubleClick: true,
+    });
+    expect(container?.textContent).toContain('P');
+    expect(editor.getMarkdown()).toBe('<br>');
+  });
+
+  it('hides the placeholder for a note with content', async () => {
+    await mountEditor({
+      initialValue: 'Hello',
+      placeholder: 'P',
+      onlyEditableOnDoubleClick: true,
+    });
+    expect(container?.textContent).toBe('Hello');
   });
 });
 
 async function mountEditor({
   initialValue,
+  placeholder,
+  onlyEditableOnDoubleClick,
 }: {
   initialValue: string;
+  placeholder?: string;
+  onlyEditableOnDoubleClick?: boolean;
 }): Promise<Editor> {
   await act(async () => {
     root?.unmount();
@@ -96,6 +127,8 @@ async function mountEditor({
       <MarkdownInput
         ref={ref}
         initialValue={initialValue}
+        placeholder={placeholder}
+        onlyEditableOnDoubleClick={onlyEditableOnDoubleClick}
         onChange={() => undefined}
       />,
     );
