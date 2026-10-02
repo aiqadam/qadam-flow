@@ -66,6 +66,27 @@ both take `providerId ?? provider` as the route's `providerRef`, and then build 
 from the **answering row's** `provider`, not from the name the step stored — the row's `auth` and
 `config` are shaped by its own type.
 
+## PIECE Tool Execution (engine)
+`agentTools.tools` (`packages/server/engine/src/lib/tools/index.ts`) runs each PIECE tool call as a
+one-step execution through the normal `qadamExecutor`, with constants from
+`EngineConstants.fromAgentToolCall`:
+
+- **Run identity is the parent step's.** `flowRunId` and `runEnvironment` come from the agent step's
+  own constants, so run-scoped engine RPCs the worker checks against the job's run (an inline
+  `callFlow`'s `resolveInlineFlow`, #643) pass unchanged. `flowId`/`flowVersionId` stay the
+  `DEFAULT_MCP_DATA` placeholders, so a tool's FLOW-scoped store keys and `flows.current` are what
+  they were before #643.
+- **Not a step of that run.** `isAgentToolCall` makes the progress reporter ignore the tool's step
+  (`sendUpdate` and `output.update` are no-ops), so it can never replace the parent run's snapshot.
+- **Never pauses.** An action with `pauses: true` is refused before `run()`, and `createWaitpoint` /
+  `waitForWaitpoint` throw for a `'conditional'` one (a Queue-mode Call Flow with Wait for
+  Response): a tool call cannot wait, and a waitpoint on the parent's real run would be left
+  PENDING. The refusal is an ordinary FAILED step, which reaches the agent as a tool error.
+- **Failures stay with the agent.** A failed tool step — including a failed inline child — is
+  returned to the agent as `ExecutionToolStatus.FAILED`; it does not fail the agent's run. Inline
+  children are created with `failParentOnFailure: false`, so nothing fails the parent out of band
+  either.
+
 ## Tool Validation
 External MCP servers configured as agent tools are validated server-side via `POST /v1/projects/:projectId/agent-tools/mcp/validate` (see `packages/server/api/src/app/agents/`). The handler performs the JSON-RPC `initialize` → `notifications/initialized` → `tools/list` handshake against the target and returns its tool names. The outbound call is routed through `safeHttp.axios` from `@aiqadam/server-utils` (see `packages/server/utils/src/safe-http.ts`), whose http/https agents are built on `request-filtering-agent` to reject private / loopback / link-local / meta IPs by default. Operators can allow specific ranges via `AP_SSRF_ALLOW_LIST` (CIDR supported). All error paths collapse to a single generic message to avoid leaking reachability signal.
 

@@ -1,4 +1,4 @@
-import { ApEnvironment, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
+import { ApEnvironment, DEFAULT_MCP_DATA, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMock, getGlobalCacheCommonPathMock, getGlobalCodeCachePathMock, getEnginePathMock, provisionFlowPiecesMock } = vi.hoisted(() => ({
@@ -463,6 +463,15 @@ describe('engine RPC run scope', () => {
         await expect(handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-foreign' })).rejects.toEqual(refused)
         expect(client.startInlineFlowRun).not.toHaveBeenCalled()
         expect(provisionFlowPiecesMock).not.toHaveBeenCalled()
+    })
+
+    // #643: an agent tool now presents its parent step's real run; the placeholder it used to send
+    // must stay outside every job's run scope rather than be allow-listed.
+    it('refuses resolveInlineFlow under the MCP placeholder run id', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: DEFAULT_MCP_DATA.flowRunId })).rejects.toEqual(refused)
+        expect(client.startInlineFlowRun).not.toHaveBeenCalled()
     })
 
     it('starts an inline child under the job\'s own run', async () => {
