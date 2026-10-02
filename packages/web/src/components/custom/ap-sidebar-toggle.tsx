@@ -12,8 +12,7 @@ import {
 
 export const ApSidebarToggle = () => {
   const { open, openMobile, isMobile, toggleSidebar } = useSidebar();
-  // Mobile renders the sidebar as a Sheet driven by `openMobile`; `open` is
-  // the desktop state, which nothing renders from below the breakpoint.
+  // `open` is the desktop rail state; the mobile Sheet opens from `openMobile`.
   const isOpen = isMobile ? openMobile : open;
   return (
     <Tooltip>
