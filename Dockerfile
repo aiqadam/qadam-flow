@@ -13,9 +13,9 @@ RUN if [ -n "$SKIP_SSL_VERIFY" ]; then npm config set strict-ssl false; fi
 # Those binaries existed for AP_REDIS_TYPE=MEMORY, the embedded-Redis mode of the all-in-one
 # container. That container mode was removed in #210 and now refuses to start, and every shipped
 # install path uses a real Redis (run.sh and .env.dev set STANDALONE; docker-compose.yml runs
-# redis:7.0.7). So the mode this compile served is already gone, while the compile still breaks the
-# image build for everyone. If MEMORY is ever restored as a supported mode, this needs revisiting:
-# without the baked binaries it downloads and compiles Redis at container start.
+# valkey/valkey:8.1.10). So the mode this compile served is already gone, while the compile still
+# breaks the image build for everyone. If MEMORY is ever restored as a supported mode, this needs
+# revisiting: without the baked binaries it downloads and compiles Redis at container start.
 ENV REDISMS_DISABLE_POSTINSTALL=1
 
 # Set environment variables early for better layer caching
