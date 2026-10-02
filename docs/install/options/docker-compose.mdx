@@ -99,7 +99,7 @@ Use this if you want the stack under version control, or you intend to modify `d
     docker compose up -d
     ```
 
-    Compose starts four services: `app` (published on `${QADAM_FLOW_PORT:-8080}:80` — set `QADAM_FLOW_PORT` in `.env` to use a different host port), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.0-pg14`), and `redis` (`redis:7.0.7`). PostgreSQL and Redis data live in the named volumes `postgres_data` and `redis_data`.
+    Compose starts four services: `app` (published on `${QADAM_FLOW_PORT:-8080}:80` — set `QADAM_FLOW_PORT` in `.env` to use a different host port), five `worker` replicas, `postgres` (`pgvector/pgvector:0.8.0-pg14`), and `redis` (`valkey/valkey:8.1.10` — [Valkey](https://valkey.io), the BSD-licensed Redis fork). PostgreSQL and Redis data live in the named volumes `postgres_data` and `redis_data`.
   </Step>
   <Step title="Sign up">
     Open [http://localhost:8080/sign-up](http://localhost:8080/sign-up) — the first account owns the platform.
@@ -137,8 +137,11 @@ Review the [breaking changes](../configuration/breaking-changes) for your target
     If you only downloaded `docker-compose.yml`, download it again:
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml
+    curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml.new \
+      && mv docker-compose.yml.new docker-compose.yml
     ```
+
+    This replaces the file, so keep local changes in a `docker-compose.override.yml` beside it, which Compose merges automatically.
   </Step>
   <Step title="Pull the new image">
     ```bash

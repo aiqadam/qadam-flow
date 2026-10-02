@@ -514,6 +514,48 @@ for after in validate_port check_compose_port; do
   fi
 done
 
+echo "== the upgrade hint re-targets the same install (#612) =="
+
+# final_banner prints the command to re-run for an upgrade. Re-running it against a different
+# directory makes a fresh install there, with new secrets, under the same compose project name, so
+# the app can no longer open the existing postgres volume. Each case runs prepare_dir from a start
+# directory exactly as main() does, takes the QADAM_FLOW_DIR assignment off the printed line, has
+# the interpreter evaluate it from an unrelated directory, and requires it to name the install.
+upgrade_case() {
+  name="$1" start="$tmp/upgrade-$1" dir="$2"
+  mkdir -p "$start" "$tmp/elsewhere"
+  line="$("$sut" -c '
+    . "$1"
+    cd "$2" || exit 1
+    QADAM_FLOW_DIR=$3
+    QADAM_FLOW_PORT=8080
+    prepare_dir >/dev/null 2>&1
+    final_banner
+  ' _ "$runsh" "$start" "$dir" | grep 'run.sh | QADAM_FLOW_DIR=')"
+  want="$(cd "$start" && cd "$dir" && pwd)"
+  assignment="${line#*| }"
+  assignment="${assignment% sh}"
+  got="$(cd "$tmp/elsewhere" && "$sut" -c "$assignment"'; printf "%s" "$QADAM_FLOW_DIR"')"
+  if [ -n "$line" ] && [ "$got" = "$want" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "upgrade hint ($name): must name the install dir absolutely" "line=$line" "want=$want" "got=$got"
+  fi
+}
+upgrade_case default qadam-flow
+upgrade_case nested-relative apps/qadam-flow
+upgrade_case absolute "$tmp/upgrade-abs-target/qadam-flow"
+upgrade_case spaces "my installs/qadam flow"
+upgrade_case quote "it's/qadam-flow"
+# Shell syntax in the path must come back as text, never run. If quoting regresses, evaluating the
+# printed assignment would execute these, so the marker files double as the assertion.
+upgrade_case substitution "\$(touch $tmp/ran-dollar)/\`touch $tmp/ran-backtick\`/qadam-flow"
+if [ ! -e "$tmp/ran-dollar" ] && [ ! -e "$tmp/ran-backtick" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'upgrade hint (substitution): evaluating the printed command must not execute the path'
+fi
+
 echo
 echo "passed: ${pass}   failed: ${fail}"
 if [ "$fail" -ne 0 ]; then
