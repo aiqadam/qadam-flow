@@ -232,7 +232,7 @@ carries those fixes from 8.1.4 onwards
   `redis_data` volume and the same `AP_REDIS_*` settings. Valkey 8.1 loads the RDB and AOF files that
   `redis:7.0.7` wrote, so queued, delayed and scheduled jobs survive the switch.
 - **`docker compose pull` alone does not switch you.** The image is pinned in `docker-compose.yml`, so
-  refresh that file first, as the [upgrade steps](../options/docker-compose#upgrade) describe, or re-run
+  refresh that file first, as the [upgrade steps](/install/options/docker-compose#upgrade) describe, or re-run
   the installer.
 - **Going back to `redis:7.0.7` on the same volume does not work.** Once Valkey has saved, the data is in
   RDB format 11, and Redis 7.0 refuses to start on it (`Can't handle RDB format version 11`). Rolling
