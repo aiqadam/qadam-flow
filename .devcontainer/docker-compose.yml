@@ -45,7 +45,7 @@ services:
       - "5432:5432"
 
   redis:
-    image: redis:7.0.7
+    image: valkey/valkey:8.1.10
     networks:
       - qadamflow
     volumes:

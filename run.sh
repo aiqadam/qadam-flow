@@ -330,6 +330,14 @@ ${C_RESET}${C_DIM}an AI Qadam Build project — https://flow.aiqadam.org${C_RESE
 EOF
 }
 
+# The upgrade hint prints the install dir as an absolute QADAM_FLOW_DIR: a relative one only
+# resolves from the directory the first run started in. From anywhere else it creates a second install
+# with fresh secrets, which takes over this one's fixed container names and, when the directory name
+# matches, its compose project and postgres volume, which the new password cannot open.
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 final_banner() {
   cat <<EOF
 
@@ -345,7 +353,10 @@ ${C_DIM}Common commands (from $(pwd)):${C_RESET}
   docker compose logs -f app worker   follow logs
   docker compose down                 stop (keep data)
   docker compose down -v              stop AND wipe data
-  docker compose pull && docker compose up -d   update to latest image
+
+${C_DIM}To upgrade, re-run the installer against this directory. It refreshes docker-compose.yml, which${C_RESET}
+${C_DIM}pins the Postgres and Redis images, and keeps .env; docker compose pull alone updates only the app.${C_RESET}
+  curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_DIR=$(shell_quote "$(pwd)") sh
 
 ${C_DIM}an AI Qadam Build project — https://flow.aiqadam.org${C_RESET}
 EOF
