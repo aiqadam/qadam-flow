@@ -124,7 +124,7 @@
     "@aiqadam/qadam-intercom": "workspace:*",
     "@aiqadam/qadam-slack": "workspace:*",
     "@aiqadam/qadam-telegram-bot": "workspace:*",
-    "@faker-js/faker": "8.2.0",
+    "@faker-js/faker": "10.6.0",
     "@types/bcrypt": "5.0.0",
     "@types/content-disposition": "0.5.9",
     "@types/deep-equal": "1.0.1",
@@ -140,7 +140,7 @@
     "@types/tinycolor2": "1.4.5",
     "form-data": "4.0.4",
     "smtp-server": "3.19.2",
-    "vitest": "3.0.8",
+    "vitest": "3.2.7",
     "webpack-ignore-dynamic-require": "1.0.0"
   },
   "scripts": {

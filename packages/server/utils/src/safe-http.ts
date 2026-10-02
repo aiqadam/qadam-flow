@@ -1,7 +1,7 @@
 import http from 'node:http'
 import https from 'node:https'
 import { Readable } from 'node:stream'
-import { httpTimeouts, isNil } from '@aiqadam/shared'
+import { httpTimeouts, isNil, tryCatch } from '@aiqadam/shared'
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
@@ -132,7 +132,7 @@ async function safeFetch(input: string | URL | Request, init?: RequestInit): Pro
     // The Response constructor throws on a body for these statuses, and axios still hands back an
     // (empty) stream for them. HEAD is in the same bucket: real `fetch` gives it a null body.
     const hasNoBody = NULL_BODY_STATUSES.includes(response.status) || request.method === 'HEAD'
-    const responseBody = hasNoBody ? null : Readable.toWeb(withIdleGuard(response.data))
+    const responseBody = hasNoBody ? null : toWebStream(withIdleGuard(response.data))
 
     // `url`, `redirected` and `type` cannot be set through the Response constructor, so they read
     // as '', false and 'default' rather than the final URL, the real redirect flag and 'basic'. No
@@ -143,6 +143,65 @@ async function safeFetch(input: string | URL | Request, init?: RequestInit): Pro
         statusText: response.statusText,
         headers: toResponseHeaders(response.headers),
     })
+}
+
+// Stands in for `Readable.toWeb` for a type reason, not a behavioural one. `toWeb` is typed as the
+// `node:stream/web` ReadableStream, while `Response` takes the *global* one, and the two stop being
+// the same type as soon as `lib.dom` is in the program: vitest 3.2's `optional-types.d.ts` imports
+// `jsdom`, bun's isolated linker makes `@types/jsdom` resolvable from there, and that drags
+// `lib.dom` into every test program even though `tsconfig.server.json` leaves it out. A stream
+// built by the global constructor is the right type under either lib.
+//
+// Kept from `toWeb`: one chunk per `pull`, so reads stay paced by the consumer; each chunk copied
+// out of its backing buffer; `cancel` destroys the source, which aborts the socket and fires the
+// idle guard's `close` listener; a premature close reads as an AbortError. Deliberately different:
+// any other source error reaches the reader sanitised like a request-phase error (an axios
+// `CanceledError` on a mid-body abort carries the request config, i.e. the provider API key), and
+// the cancel reason is not forwarded to `destroy`, so cancelling never emits a stray `error`.
+function toWebStream(stream: Readable): ReadableStream<Uint8Array> {
+    const chunks = stream[Symbol.asyncIterator]()
+    return new ReadableStream<Uint8Array>({
+        async pull(controller): Promise<void> {
+            const { data: chunk, error } = await tryCatch<Uint8Array | null, unknown>(() => readChunk(chunks))
+            if (error !== null) {
+                // Also covers a throw on this side of the bridge, which would otherwise leave the
+                // socket open until the idle guard fired.
+                stream.destroy()
+                controller.error(sanitizeBodyError(error))
+                return
+            }
+            if (chunk === null) {
+                controller.close()
+                return
+            }
+            controller.enqueue(chunk)
+        },
+        cancel(): void {
+            stream.destroy()
+        },
+    })
+}
+
+async function readChunk(chunks: AsyncIterator<unknown>): Promise<Uint8Array | null> {
+    const next = await chunks.next()
+    return next.done === true ? null : toUint8Array(next.value)
+}
+
+// A copy, as `toWeb` makes, never a view: a decompressed chunk is a slice of zlib's whole output
+// buffer, and a small socket chunk can be a slice of Node's shared Buffer pool, which also holds
+// unrelated allocations. A view would hand the consumer that whole backing store.
+function toUint8Array(chunk: unknown): Uint8Array {
+    if (chunk instanceof Uint8Array) {
+        return new Uint8Array(chunk)
+    }
+    throw new TypeError('safeHttp.fetch: the response stream produced a non-byte chunk')
+}
+
+function sanitizeBodyError(error: unknown): Error {
+    if (error instanceof Error && 'code' in error && error.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+        return new DOMException('The operation was aborted', 'AbortError')
+    }
+    return sanitizeTransportError(error)
 }
 
 // Once the response has started, a much tighter bound applies: a provider that has begun streaming
@@ -170,6 +229,10 @@ function withIdleGuard(stream: Readable): Readable {
     }
 
     stream.on('data', arm)
+    // Attaching a 'data' listener switches the stream to flowing mode, and anything it emits before
+    // the consumer attaches is lost. Pausing keeps the bytes buffered for whoever reads them, so it
+    // no longer matters what runs between this and the bridge; 'data' still fires on every read.
+    stream.pause()
     stream.once('end', stop)
     stream.once('close', stop)
     stream.once('error', stop)
@@ -217,15 +280,21 @@ async function requestWithoutLeakingCredentials(config: AxiosRequestConfig): Pro
         return await safeHttp.axios.request<Readable>(config)
     }
     catch (error) {
-        // The SDK's retry loop asks `isAbortError`, which only recognises DOMException/AbortError —
-        // axios' `CanceledError` would make a user-cancelled turn look like a provider failure and
-        // get retried. Re-shaping it here is also why the sanitising catch has to sit around the
-        // request rather than in the caller.
-        if (axios.isCancel(error)) {
-            throw new DOMException('The operation was aborted', 'AbortError')
-        }
-        throw new Error(error instanceof Error ? error.message : String(error))
+        throw sanitizeTransportError(error)
     }
+}
+
+// Shared by the request phase and the body phase (`toWebStream`): an abort or socket failure after
+// the headers carries the same axios config as one before them.
+function sanitizeTransportError(error: unknown): Error {
+    // The SDK's retry loop asks `isAbortError`, which only recognises DOMException/AbortError —
+    // axios' `CanceledError` would make a user-cancelled turn look like a provider failure and get
+    // retried. Re-shaping it here is also why the sanitising catch has to sit around the request
+    // rather than in the caller.
+    if (axios.isCancel(error)) {
+        return new DOMException('The operation was aborted', 'AbortError')
+    }
+    return new Error(error instanceof Error ? error.message : String(error))
 }
 
 // Takes the axios header bag rather than a normalised record so the union of shapes axios can hand
