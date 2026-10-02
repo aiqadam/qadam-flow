@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadam-confluence",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
@@ -9,7 +9,8 @@
     "@aiqadam/shared": "workspace:*",
     "xml2js": "0.6.2",
     "tslib": "2.6.2",
-    "form-data": "4.0.4"
+    "form-data": "4.0.4",
+    "zod": "4.3.6"
   },
   "scripts": {
     "build": "tsc -p tsconfig.lib.json && cp package.json dist/",

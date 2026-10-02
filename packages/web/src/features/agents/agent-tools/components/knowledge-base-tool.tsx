@@ -93,6 +93,9 @@ export const KnowledgeBaseSection = ({
     ? PROVIDER_EMBEDDING_MODELS[selectedProvider]
     : undefined;
   const supportsEmbeddings = !!embeddingModel;
+  const hasFileSources = tools.some(
+    (tool) => tool.sourceType === KnowledgeBaseSourceType.FILE,
+  );
 
   return (
     <div className="mt-6">
@@ -107,14 +110,16 @@ export const KnowledgeBaseSection = ({
               removeTool={removeTool}
             />
 
-            {supportsEmbeddings ? (
-              <div className="mt-4">
-                <AddKnowledgeBaseDropdown disabled={disabled} />
-              </div>
-            ) : (
+            <div className="mt-4">
+              <AddKnowledgeBaseDropdown
+                disabled={disabled}
+                fileSourcesDisabled={!supportsEmbeddings}
+              />
+            </div>
+            {!supportsEmbeddings && hasFileSources && (
               <p className="text-xs text-muted-foreground mt-3">
                 {t(
-                  'The selected provider does not support embeddings. Switch to a provider like OpenAI or Google for knowledge base to work.',
+                  'The selected provider does not support embeddings, so file sources will not work. Switch to a provider like OpenAI or Google.',
                 )}
               </p>
             )}
@@ -124,19 +129,19 @@ export const KnowledgeBaseSection = ({
             <div className="flex items-center justify-center h-10 w-10 rounded-full border bg-background">
               <BookOpen className="size-5" />
             </div>
-            {supportsEmbeddings ? (
-              <>
-                <p className="text-sm font-medium text-muted-foreground">
-                  {t(
-                    'Add files or tables as knowledge sources for your agent.',
-                  )}
-                </p>
-                <AddKnowledgeBaseDropdown disabled={disabled} />
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
+              {supportsEmbeddings
+                ? t('Add files or tables as knowledge sources for your agent.')
+                : t('Add tables as knowledge sources for your agent.')}
+            </p>
+            <AddKnowledgeBaseDropdown
+              disabled={disabled}
+              fileSourcesDisabled={!supportsEmbeddings}
+            />
+            {!supportsEmbeddings && (
+              <p className="text-xs text-muted-foreground">
                 {t(
-                  'Knowledge base requires a provider that supports embeddings, such as OpenAI or Google.',
+                  'File sources require a provider that supports embeddings, such as OpenAI or Google.',
                 )}
               </p>
             )}
