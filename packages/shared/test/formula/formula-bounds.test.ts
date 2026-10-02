@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { exceedsSizeBudget } from '../../src/lib/formula/formula-bounds'
+import { exceedsSizeBudget, measureSize } from '../../src/lib/formula/formula-bounds'
 
 describe('exceedsSizeBudget', () => {
     it('accepts a string exactly at maxSize', () =>
@@ -48,18 +48,35 @@ describe('exceedsSizeBudget', () => {
         expect(Date.now() - start).toBeLessThan(1000)
     })
 
-    it('array early-abort is real: a huge oversized array is rejected in well under the time a full walk of its elements would take', () => {
+    // `.length` is O(1), so rejecting a 3,000,000-element array against a
+    // maxSize of 100 must not touch its elements at all. A regression back to
+    // "push everything, then check" reads every one of them.
+    it('array early-abort is real: a huge oversized array is rejected without reading any of its elements', () => {
         const hugeArray = Array.from({ length: 3_000_000 }, (_, i) => i)
-        const start = performance.now()
-        const exceeds = exceedsSizeBudget({ value: hugeArray, maxSize: 100 })
-        const elapsed = performance.now() - start
-        expect(exceeds).toBe(true)
-        // `.length` is O(1), so rejecting a 3,000,000-element array against a
-        // maxSize of 100 must not cost anywhere near what visiting all 3
-        // million elements would (that takes hundreds of ms in this suite's
-        // environment) — a generous 50ms still catches a regression back to
-        // "push everything, then check".
-        expect(elapsed).toBeLessThan(50)
+        let elementReads = 0
+        const counted = new Proxy(hugeArray, {
+            get(target, property, receiver): unknown {
+                if (typeof property === 'string' && /^\d+$/.test(property)) elementReads++
+                return Reflect.get(target, property, receiver)
+            },
+        })
+
+        expect(exceedsSizeBudget({ value: counted, maxSize: 100 })).toBe(true)
+        expect(elementReads).toBe(0)
+    })
+
+    // The same property in wall-clock terms. Measured against a real full walk
+    // of the same array on the same machine, not an absolute budget: one GC
+    // pause or descheduling landing inside a sub-millisecond window on a busy
+    // CI runner is longer than any fixed threshold that is still meaningful
+    // (a 50ms budget once read 75ms there). Best of several attempts on each
+    // side, so a single stall cannot decide the outcome either way.
+    it('array early-abort is real: rejecting a huge oversized array costs a small fraction of a full walk of it', () => {
+        const hugeArray = Array.from({ length: 3_000_000 }, (_, i) => i)
+        const earlyAbort = bestOf({ attempts: 5, run: () => expect(exceedsSizeBudget({ value: hugeArray, maxSize: 100 })).toBe(true) })
+        const fullWalk = bestOf({ attempts: 3, run: () => measureSize({ value: hugeArray, cap: Number.POSITIVE_INFINITY }) })
+
+        expect(earlyAbort).toBeLessThan(fullWalk / 10)
     })
 
     it('a within-budget nested structure (arrays of small objects) is accepted', () => {
@@ -72,3 +89,13 @@ describe('exceedsSizeBudget', () => {
         expect(exceedsSizeBudget({ value, maxSize: 1000 })).toBe(true)
     })
 })
+
+function bestOf({ attempts, run }: { attempts: number, run: () => unknown }): number {
+    let best = Number.POSITIVE_INFINITY
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        const start = performance.now()
+        run()
+        best = Math.min(best, performance.now() - start)
+    }
+    return best
+}
