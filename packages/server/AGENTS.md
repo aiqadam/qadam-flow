@@ -72,6 +72,8 @@ To run a single file: `cd packages/server/api && export $(cat .env.tests | xargs
 
 Stop deps when done: `docker compose -f docker-compose.dev.yml down` (or `... down -v` to also drop the DB volume).
 
+The dev `redis` service runs Valkey 8.1 (#612), which saves RDB format 11. A branch from before #612 still pins `redis:7.0.7`, and that image restarts in a loop on a volume Valkey has written to (`Can't handle RDB format version 11`). The same goes for the devcontainer's `redis_data`. Before running `up` on such a branch, drop the Redis volume: `docker compose -f docker-compose.dev.yml down`, then `docker volume rm <project>_redis_data_dev` (`docker volume ls | grep redis_data` shows the name). Redis holds only queue and cache state, so the Postgres data is unaffected.
+
 ## Where a Test Belongs
 
 - **Unit** (`vitest`, per-package `test/unit/`) — pure functions, no I/O.

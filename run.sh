@@ -345,7 +345,11 @@ ${C_DIM}Common commands (from $(pwd)):${C_RESET}
   docker compose logs -f app worker   follow logs
   docker compose down                 stop (keep data)
   docker compose down -v              stop AND wipe data
-  docker compose pull && docker compose up -d   update to latest image
+
+${C_DIM}To upgrade, re-run this installer from $(dirname "$(pwd)") with the same QADAM_FLOW_* settings.${C_RESET}
+${C_DIM}It refreshes docker-compose.yml, which pins the Postgres and Redis images, and keeps .env;${C_RESET}
+${C_DIM}docker compose pull alone updates only the Qadam Flow image.${C_RESET}
+  curl -fsSL https://flow.aiqadam.org/run.sh | sh
 
 ${C_DIM}an AI Qadam Build project — https://flow.aiqadam.org${C_RESET}
 EOF

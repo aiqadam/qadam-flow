@@ -80,11 +80,12 @@ restarted the process in place and left the container reporting `Up` while sign-
 Run these from your install directory (`qadam-flow` by default):
 
 ```bash
-docker compose logs -f app worker             # follow logs
-docker compose down                           # stop, keep data
-docker compose pull && docker compose up -d   # upgrade to the latest image
-docker compose down -v                        # stop AND delete all data
+docker compose logs -f app worker   # follow logs
+docker compose down                 # stop, keep data
+docker compose down -v              # stop AND delete all data
 ```
+
+To upgrade, re-run the installer as described under [Upgrade](#upgrade). `docker compose pull` on its own does not refresh `docker-compose.yml`, so it leaves PostgreSQL and Redis on whatever images your existing file pins.
 
 ### Check the install is working
 
@@ -136,16 +137,29 @@ Review the [breaking changes](../configuration/breaking-changes) before upgradin
 
 ### One-line installer
 
-From your install directory:
+Run the installer again, from the directory you first ran it in (the one that contains `qadam-flow/`), with the same `QADAM_FLOW_*` settings you used then:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | sh
+```
+
+It refreshes `docker-compose.yml`, keeps your `.env`, pulls the images and restarts the stack. Your PostgreSQL and Redis volumes are untouched.
+
+To do the same by hand, from the directory that contains `qadam-flow/`:
 
 ```bash
 cd qadam-flow
-curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml.new
+mv docker-compose.yml.new docker-compose.yml
 docker compose pull
 docker compose up -d --remove-orphans
 ```
 
-Your `.env` and the PostgreSQL and Redis volumes are untouched. The `curl` line refreshes `docker-compose.yml` (overwriting any local edits to it), which pins the PostgreSQL and Redis images: `docker compose pull` on its own updates Qadam Flow but keeps whatever database images your existing file names. Re-running the installer from the directory that contains `qadam-flow/` does the same refresh and reuses your `.env`.
+The compose file pins the PostgreSQL and Redis images, so `docker compose pull` on its own updates Qadam Flow but keeps the database images your existing file names. The URL tracks `main`. If you installed with a custom `QADAM_FLOW_REF`, use that ref in place of `main`.
+
+<Warning>
+Refreshing replaces `docker-compose.yml`, so any edits you made to it are lost. Keep local changes in a `docker-compose.override.yml` next to it instead. Compose merges that file automatically, and neither the installer nor this step touches it.
+</Warning>
 
 ### Coming from the all-in-one container
 
