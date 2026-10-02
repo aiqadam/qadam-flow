@@ -48,7 +48,10 @@ services:
     networks:
       - qadam-flow
   redis:
-    image: 'redis:7.0.7'
+    # Valkey, the BSD-licensed Redis fork (#612). It reads the RDB/AOF files redis:7.0.7 wrote into
+    # redis_data, but writes RDB format 11, which redis:7.0.7 cannot load: going back to the old image
+    # on this volume needs the volume emptied first. The 8.1 line has the 2025 Lua RCE fixes (8.1.4+).
+    image: 'valkey/valkey:8.1.10'
     container_name: redis
     restart: unless-stopped
     volumes:

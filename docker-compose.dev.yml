@@ -21,7 +21,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:7.0.7
+    image: valkey/valkey:8.1.10
     container_name: qadam-flow-redis-dev
     restart: unless-stopped
     ports:
@@ -31,7 +31,7 @@ services:
     networks:
       - qadam_flow_dev
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD', 'valkey-cli', 'ping']
       interval: 3s
       timeout: 3s
       retries: 20
