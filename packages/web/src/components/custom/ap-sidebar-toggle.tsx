@@ -11,12 +11,14 @@ import {
 } from '@/components/ui/tooltip';
 
 export const ApSidebarToggle = () => {
-  const { open, setOpen } = useSidebar();
+  const { open, openMobile, isMobile, toggleSidebar } = useSidebar();
+  // `open` is the desktop rail state; the mobile Sheet opens from `openMobile`.
+  const isOpen = isMobile ? openMobile : open;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" onClick={() => setOpen(!open)}>
-          {open ? (
+        <Button variant="ghost" size="icon" onClick={toggleSidebar}>
+          {isOpen ? (
             <PanelLeftCloseIcon size={16} />
           ) : (
             <PanelLeftOpenIcon size={16} />
@@ -24,7 +26,7 @@ export const ApSidebarToggle = () => {
         </Button>
       </TooltipTrigger>
       <TooltipContent>
-        {open ? t('Close Sidebar') : t('Open Sidebar')}
+        {isOpen ? t('Close Sidebar') : t('Open Sidebar')}
       </TooltipContent>
     </Tooltip>
   );
