@@ -571,7 +571,7 @@ upgrade_postgres() {
   docker stop -t 120 "$PG_UPGRADE_NEW_CONTAINER" >/dev/null
   remove_container "$PG_UPGRADE_NEW_CONTAINER"
 
-  pg_upgrade_state=done
+  pg_upgrade_state=finished
   trap - EXIT INT TERM
   umask "$pg_saved_umask"
   log "PostgreSQL ${legacy_major} → ${target_major} upgrade finished"
