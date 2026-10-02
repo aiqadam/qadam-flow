@@ -1195,3 +1195,128 @@ describe('formula size bounds', () => {
     it('if() with exactly 3 arguments still works', () =>
         expect(result('if(1500 > 1000;"High";"Standard")')).toBe('High'))
 })
+
+// ---------------------------------------------------------------------------
+// expr-eval advisory regression tests (#616)
+//
+// `@aiqadam/shared` pins expr-eval@2.0.2, which carries three OSV advisories
+// with no fixed upstream release. Each advisory's proof of concept was
+// reproduced against this evaluator (engine path: props-resolver.ts; web
+// path: tiptap-editor.tsx — both reach formulaEvaluator.evaluate the same
+// way) during the #616 investigation; the results are recorded on that
+// issue. These tests pin the mitigations so the advisories cannot silently
+// reopen. The expression text is the only attacker-controlled surface in
+// practice: `sampleData` is JSON (a serialized step output or stored sample),
+// so it can never carry a function or a custom `toString`.
+// ---------------------------------------------------------------------------
+describe('expr-eval advisories (#616)', () => {
+    // GHSA-q9v2-7m5w-4693 / CVE-2026-12866 (critical) — code execution via the
+    // toJSFunction() API, which compiles expressions with `new Function()` and
+    // injects a scope value's `toString()` output into the generated source.
+    // Not reachable here: this module never calls toJSFunction() (it uses
+    // parser.parse().evaluate()), so there is no code-generation step, and the
+    // constructor route out of evaluate() is blocked independently.
+    describe('GHSA-q9v2-7m5w-4693 (toJSFunction code execution)', () => {
+        it('constructor.constructor chain out of a resolved variable does not evaluate', () => {
+            const { result: r, error } = ok('{{x}}.constructor.constructor("return 7")()', { x: 'a' })
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+        })
+
+        it('a function value in scope is not called as native code — it is dropped to null first', () => {
+            let called = false
+            const { result: r, error } = ok('{{fn}}("x")', { fn: () => { called = true; return 'x' } })
+            expect(called).toBe(false)
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+        })
+
+        it('a scope object with a custom toString is coerced as data, not compiled into code', () => {
+            // String coercion invoking toString is ordinary JS behaviour and
+            // returns a string used as data — no code generation (that is the
+            // toJSFunction-specific vector, which this module never reaches).
+            // Documented here because the toString DOES run; what matters is it
+            // cannot produce code execution via evaluate().
+            let coerced = false
+            const r = result('combine({{p}};"")', { p: { toString: () => { coerced = true; return 'cmd' } } })
+            expect(r).toBe('cmd')
+            expect(coerced).toBe(true)
+        })
+    })
+
+    // GHSA-jc85-fpwf-qm7x / CVE-2025-12735 (high) — evaluate() does not
+    // restrict the functions reachable through the variables object it is
+    // given (`evaluate('exec("x")', { exec })` calls exec). Closed here two
+    // ways: expression-text routes to a function (fndef `()=`, the removed
+    // built-ins map/fold/filter, the constructor chain) are already blocked,
+    // and sanitizeScopeValue now drops any function-valued resolution so a
+    // caller passing a non-JSON scope cannot reintroduce the vector.
+    describe('GHSA-jc85-fpwf-qm7x (functions passed to evaluate)', () => {
+        it('the canonical PoC — a dangerous function in scope called by name — does not execute', () => {
+            let executed = false
+            const { result: r, error } = ok('{{exec}}("whoami")', { exec: () => { executed = true; return 'root' } })
+            expect(executed).toBe(false)
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+        })
+
+        it('the SECCON-style Object=constructor descriptor chain does not evaluate', () => {
+            const { result: r, error } = ok('Object = constructor; a() = 7*7; d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(a); "constructor"); c=d.value; f=c("return 7")()')
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+        })
+
+        it('defining a function via the ()= operator does not parse', () => {
+            const { result: r, error } = ok('(f(x) = x*x)(5)')
+            expect(r).toBeNull()
+            expect(error).toBe('Defining functions inside a formula is not supported')
+        })
+
+        it('map with an inline function-definition callback does not evaluate', () => {
+            const { result: r, error } = ok('map(f(x) = x*x; [1,2,3])')
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+        })
+    })
+
+    // GHSA-8gw3-rxh4-v6jx / CVE-2025-13204 (high) — prototype pollution via
+    // member access to __proto__/prototype/constructor reachable through
+    // evaluate(). Blocked by findForbiddenMemberAccess (member-name filter on
+    // the parsed instruction tree), by expr-eval's `[` being arrayIndex rather
+    // than a property lookup, and by build_object dropping prototype keys.
+    describe('GHSA-8gw3-rxh4-v6jx (prototype pollution)', () => {
+        it('assignment through .__proto__ is rejected and pollutes nothing', () => {
+            const { result: r, error } = ok('({{o}}.__proto__.polluted = 1)', { o: {} })
+            expect(r).toBeNull()
+            expect(error).toBe('Formula cannot access ".__proto__" — this property name is not allowed')
+            expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+        })
+
+        it('assignment through .constructor.prototype does not evaluate and pollutes nothing', () => {
+            const { result: r, error } = ok('({{o}}.constructor.prototype.polluted2 = 1)', { o: {} })
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+            expect(({} as Record<string, unknown>).polluted2).toBeUndefined()
+        })
+
+        it('a bare __proto__ assignment does not evaluate and pollutes nothing', () => {
+            const { result: r, error } = ok('__proto__.polluted3 = 1')
+            expect(r).toBeNull()
+            expect(error).not.toBeNull()
+            expect(({} as Record<string, unknown>).polluted3).toBeUndefined()
+        })
+
+        it('build_object silently drops prototype-polluting keys and keeps safe ones', () => {
+            const r = result('build_object("__proto__";{{bad}};"constructor";{{bad}};"prototype";{{bad}};"safe";{{ok}})', { bad: { x: 1 }, ok: 1 })
+            expect(r).toEqual({ safe: 1 })
+            expect(({} as Record<string, unknown>).x).toBeUndefined()
+        })
+
+        it('bracket access to "constructor" is an array index, not a property lookup', () => {
+            // expr-eval's `[` coerces its operand to a number, so "constructor"
+            // becomes index 0 — not a route to the real constructor property.
+            const { error } = ok('{{o}}["constructor"]', { o: {} })
+            expect(error).toBeNull()
+        })
+    })
+})

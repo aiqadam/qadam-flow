@@ -159,7 +159,7 @@ function preprocessExpression({ expression, sampleData }: EvaluateExpressionPara
     const withVars = expression.replace(/\{\{([^}]+)\}\}/g, (_, path: string) => {
         const key = `__ap_v${idx++}__`
         const resolved = resolveVariable(path.trim(), sampleData)
-        vars[key] = resolved === undefined ? null : resolved
+        vars[key] = sanitizeScopeValue(resolved)
         return key
     })
     const withJsonVars = replaceInlineJsonArrays(withVars, vars, { value: idx })
@@ -471,6 +471,22 @@ function resolveVariable(path: string, sampleData: Record<string, unknown>): unk
         value = (value as Record<string, unknown>)[part]
     }
     return value
+}
+
+// expr-eval evaluates a bare `{{var}}(...)` by CALLING whatever the variable
+// resolves to, and does not restrict functions reachable through the scope it
+// is handed (CVE-2025-12735 / GHSA-jc85-fpwf-qm7x). The scope built here comes
+// from resolveVariable over JSON-shaped sampleData — a serialized step output
+// (engine) or stored sample data (web) — which can never carry a function, so
+// dropping a function-valued resolution to null changes no legitimate formula.
+// It only removes the defense-in-depth path a future or third-party caller of
+// the published `formulaEvaluator.evaluate` API would otherwise open by passing
+// a non-JSON value whose field is a function; the guarantee then holds at this
+// API boundary rather than resting on every caller passing JSON. `undefined`
+// is also normalised to null here so the scope never holds `undefined`, which
+// the previous inline expression did.
+function sanitizeScopeValue(value: unknown): unknown {
+    return value === undefined || typeof value === 'function' ? null : value
 }
 
 function splitArgsBySemicolon(content: string): string[] {
