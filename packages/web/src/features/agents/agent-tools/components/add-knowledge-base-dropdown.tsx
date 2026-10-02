@@ -15,10 +15,13 @@ import { useKnowledgeBaseToolDialogStore } from '../stores/knowledge-base-tools'
 
 type AddKnowledgeBaseDropdownProps = {
   disabled?: boolean;
+  /** File sources are embedded at run time; table sources are not, so only files are gated. */
+  fileSourcesDisabled?: boolean;
 };
 
 export const AddKnowledgeBaseDropdown = ({
   disabled,
+  fileSourcesDisabled,
 }: AddKnowledgeBaseDropdownProps) => {
   const [open, setOpen] = useState(false);
   const { setShowAddKbDialog } = useKnowledgeBaseToolDialogStore();
@@ -34,6 +37,7 @@ export const AddKnowledgeBaseDropdown = ({
 
       <DropdownMenuContent align="start">
         <DropdownMenuItem
+          disabled={fileSourcesDisabled}
           onSelect={() =>
             setShowAddKbDialog(true, undefined, KnowledgeBaseSourceType.FILE)
           }
@@ -50,6 +54,14 @@ export const AddKnowledgeBaseDropdown = ({
           <Table2 className="size-3.5 me-2" />
           <span>{t('Connect Table')}</span>
         </DropdownMenuItem>
+
+        {fileSourcesDisabled && (
+          <p className="max-w-60 px-2 py-1.5 text-xs text-muted-foreground">
+            {t(
+              'File sources require a provider that supports embeddings, such as OpenAI or Google.',
+            )}
+          </p>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
