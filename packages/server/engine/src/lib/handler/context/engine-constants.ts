@@ -1,5 +1,5 @@
 import { ContextVersion } from '@aiqadam/qadams-framework'
-import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteToolOperation, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType, tryCatch } from '@aiqadam/shared'
+import { BeginExecuteFlowOperation, DEFAULT_EXECUTE_PROPERTY_RUN_ID, DEFAULT_MCP_DATA, DEFAULT_TRIGGER_EXECUTION_RUN_ID, EngineGenericError, ExecutePropsOptions, ExecuteTriggerOperation, ExecutionState, ExecutionType, flowStructureUtil, FlowVersionState, isNil, isString, localeUtil, PlatformId, Project, ProjectId, ResumeExecuteFlowOperation, ResumePayload, RunEnvironment, StreamStepProgress, TriggerHookType, tryCatch } from '@aiqadam/shared'
 import { z } from 'zod'
 import { logRedaction, StepLogPolicy } from '../../helper/log-redaction'
 import { createTranslationResolver } from '../../qadam-context/translation-resolver'
@@ -54,6 +54,9 @@ type EngineConstantsParams = {
     // The parent run's resolved locale, for a subflow (inline or queued `callFlow`). Only consulted
     // when this run's own `flowVersionLocaleSource` does not resolve to anything usable.
     inheritedRunLocale?: string | null
+    // An agent's PIECE tool call: it carries its parent step's run id, but its one-step execution is
+    // not a step of that run and must never pause it (#643).
+    isAgentToolCall?: boolean
 }
 
 const DEFAULT_RETRY_CONSTANTS: RetryConstants = {
@@ -96,6 +99,7 @@ export class EngineConstants {
     public readonly insideConcurrentIteration: boolean
     public readonly flowVersionLocaleSource: string | null
     public readonly inheritedRunLocale: string | null
+    public readonly isAgentToolCall: boolean
     private project: EngineProject | null = null
     // The in-flight fetch, memoized separately from the resolved value: multiple `$t` resolutions
     // (or step contexts) racing before the first fetch lands must all await the SAME promise
@@ -163,6 +167,7 @@ export class EngineConstants {
         this.insideConcurrentIteration = params.insideConcurrentIteration ?? false
         this.flowVersionLocaleSource = params.flowVersionLocaleSource ?? null
         this.inheritedRunLocale = params.inheritedRunLocale ?? null
+        this.isAgentToolCall = params.isAgentToolCall ?? false
     }
   
     public static fromExecuteFlowInput(input: ResolvedExecuteFlowOperation): EngineConstants {
@@ -193,27 +198,35 @@ export class EngineConstants {
         })
     }
 
-    public static fromExecuteActionInput(input: ExecuteToolOperation): EngineConstants {
+    // The tool runs inside its parent step's own job, so it presents that run's id: the worker holds
+    // every run-scoped RPC (`resolveInlineFlow` for an inline Call Flow among them) to the job's own
+    // run tree, which the MCP placeholder run id never belonged to (#643). The flow and version stay
+    // placeholders, so a tool's FLOW-scoped store keys and `flows.current` are what they always were.
+    public static fromAgentToolCall({ parent, insideConcurrentIteration }: FromAgentToolCallParams): EngineConstants {
         return new EngineConstants({
             flowId: DEFAULT_MCP_DATA.flowId,
             flowVersionId: DEFAULT_MCP_DATA.flowVersionId,
             flowVersionState: DEFAULT_MCP_DATA.flowVersionState,
             triggerQadamName: DEFAULT_MCP_DATA.triggerQadamName,
-            flowRunId: DEFAULT_MCP_DATA.flowRunId,
-            publicApiUrl: input.publicApiUrl,
-            internalApiUrl: addTrailingSlashIfMissing(input.internalApiUrl),
-            retryConstants: DEFAULT_RETRY_CONSTANTS,
-            engineToken: input.engineToken,
-            projectId: input.projectId,
+            flowRunId: parent.flowRunId,
+            publicApiUrl: parent.publicApiUrl,
+            internalApiUrl: parent.internalApiUrl,
+            retryConstants: parent.retryConstants,
+            engineToken: parent.engineToken,
+            projectId: parent.projectId,
             streamStepProgress: StreamStepProgress.NONE,
             workerHandlerId: null,
             httpRequestId: null,
             resumePayload: undefined,
-            runEnvironment: undefined,
+            runEnvironment: parent.runEnvironment,
             stepNameToTest: undefined,
-            timeoutInSeconds: input.timeoutInSeconds,
-            platformId: input.platformId,
+            timeoutInSeconds: parent.timeoutInSeconds,
+            platformId: parent.platformId,
             stepNames: [],
+            inlineDepth: parent.inlineDepth,
+            executionStartedAt: parent.executionStartedAt,
+            insideConcurrentIteration: parent.insideConcurrentIteration || insideConcurrentIteration,
+            isAgentToolCall: true,
         })
     }
 
@@ -448,6 +461,11 @@ export class EngineConstants {
 
 const addTrailingSlashIfMissing = (url: string): string => {
     return url.endsWith('/') ? url : url + '/'
+}
+
+type FromAgentToolCallParams = {
+    parent: EngineConstants
+    insideConcurrentIteration: boolean
 }
 
 export type ResolvedBeginExecuteFlowOperation = Omit<BeginExecuteFlowOperation, 'triggerPayload'> & {

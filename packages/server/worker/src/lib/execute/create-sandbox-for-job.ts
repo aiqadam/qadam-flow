@@ -123,10 +123,11 @@ async function resolveInlineFlow(params: {
     // child inline) is nested under the immediate parent's run, not the outermost
     // job's — using the job-level value here would let cyclic inline flows recurse
     // unbounded, since every nested call would report the same ancestor to the depth
-    // guard. The API only checks that `parentRunId` is a run in `callerProjectId`, and
-    // every child it creates fails its parent on failure, so the parent must also be
-    // held to this job's own run tree here: otherwise the engine could fail and resume
-    // any other paused run in the project (#525).
+    // guard. The API only checks that `parentRunId` is a run in `callerProjectId`, so the
+    // parent must also be held to this job's own run tree here: otherwise the engine
+    // could attach inline children, and the depth they count from, under any other run
+    // in the project (#525). Inline children no longer fail their parent (#521), which
+    // is what made that a way to fail and resume a foreign paused run.
     runScope.assertOwnsRun({ rpc: 'resolveInlineFlow', runId: input.parentRunId, projectId: jobContext.projectId })
     const started = await apiClient.startInlineFlowRun({
         callerProjectId: jobContext.projectId,

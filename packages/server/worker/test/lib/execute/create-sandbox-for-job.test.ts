@@ -1,4 +1,4 @@
-import { ApEnvironment, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
+import { ApEnvironment, DEFAULT_MCP_DATA, ErrorCode, ExecutionMode, FlowRunStatus, NetworkMode, RunEnvironment, UpdateRunProgressRequest, WorkerContract } from '@aiqadam/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { getSettingsMock, createSandboxMock, isolateProcessMock, simpleProcessMock, getGlobalCacheCommonPathMock, getGlobalCodeCachePathMock, getEnginePathMock, provisionFlowPiecesMock } = vi.hoisted(() => ({
@@ -455,14 +455,23 @@ describe('engine RPC run scope', () => {
         await expect(handlers.uploadRunLog(uploadFor({ runId: 'run-child', projectId: 'project-own' }))).rejects.toEqual(refused)
     })
 
-    // Every inline child fails its parent on failure, so a parent outside the job's own run tree would
-    // let the engine fail and resume an unrelated paused run in the same project (#525).
+    // A parent outside the job's own run tree would let the engine attach inline children, and their
+    // inline depth, under an unrelated run in the same project (#525).
     it('refuses resolveInlineFlow under another run in the same project without calling the API', async () => {
         const { client, handlers } = setup({ jobContext: () => JOB })
 
         await expect(handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: 'run-foreign' })).rejects.toEqual(refused)
         expect(client.startInlineFlowRun).not.toHaveBeenCalled()
         expect(provisionFlowPiecesMock).not.toHaveBeenCalled()
+    })
+
+    // #643: an agent tool now presents its parent step's real run; the placeholder it used to send
+    // must stay outside every job's run scope rather than be allow-listed.
+    it('refuses resolveInlineFlow under the MCP placeholder run id', async () => {
+        const { client, handlers } = setup({ jobContext: () => JOB })
+
+        await expect(handlers.resolveInlineFlow({ flowId: 'child-flow', payload: {}, parentRunId: DEFAULT_MCP_DATA.flowRunId })).rejects.toEqual(refused)
+        expect(client.startInlineFlowRun).not.toHaveBeenCalled()
     })
 
     it('starts an inline child under the job\'s own run', async () => {

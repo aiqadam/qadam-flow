@@ -229,6 +229,11 @@ are populated the same way `queueOrCreateInstantly` populates them for the queue
   check. It gained exactly two rows on freezing — Slack's `request_action_message` /
   `request_action_direct_message`, which wait through `common/request-action.ts` and were missed
   by the grep that built the original list; the marker scan is what would have caught that.
+- From an agent PIECE tool (#643), an inline call nests under the agent step's own run (the tool
+  carries that run id; see "PIECE Tool Execution" in `agents.md`). The child does not inherit the
+  parent's resolved run locale on this path — the tool's constants have no `localeSource` — so it
+  falls back to its own `localeSource`, then the project default. A Queue-mode call that waits for
+  its response is refused there, since a tool call cannot pause.
 - No live step-by-step streaming for an inline child in "Test Flow" mode — only the parent's own
   steps stream live; the child's full step history is still persisted and visible once it finishes.
 - Narrow race: the child `FlowRun` row is created by the API (`inlineFlowRunService.start`) before
