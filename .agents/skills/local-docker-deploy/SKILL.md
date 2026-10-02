@@ -34,7 +34,7 @@ that name (or override the env var) so the registry pull is skipped.
 ## Stack
 - **app** (port 8080:80) — API + frontend, a single Node process under `tini`
 - **worker** ×5 — BullMQ job workers
-- **postgres** — `pgvector/pgvector:0.8.0-pg14`
+- **postgres** — `pgvector/pgvector:0.8.7-pg18`, data in the `pgdata` volume. An install from before #611 also has `postgres_data` with its PostgreSQL 14 data: `run.sh` dumps and restores it into `pgdata` and keeps it for rollback, and the service's entrypoint refuses to start next to it until that has happened (`docs/install/guides/upgrade-postgres.mdx`)
 - **redis** — `valkey/valkey:8.1.10` (Valkey, the BSD-licensed Redis fork; the service, volume and `AP_REDIS_*` names stay `redis`)
 
 ## Key ENV vars

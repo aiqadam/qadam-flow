@@ -100,7 +100,8 @@ function buildCellCondition({ predicate, alias }: { predicate: CellPredicate, al
 // reached the table by direct DB manipulation, bypassing the API, is the one way to
 // violate that and make this cast raise a Postgres error instead of a JS "no match" —
 // there is no portable, extension-free safe-cast for text→jsonb before Postgres 16's
-// `IS JSON` predicate, and this repo runs pg14. Accepted as a documented limitation
+// `IS JSON` predicate. The bundled stack runs 18 since #611, but an install may point
+// AP_POSTGRES_HOST at its own older server. Accepted as a documented limitation
 // rather than adding a database function for it.
 // `array_remove(..., '')` matches the JS matcher's own
 // `.split('.').filter((segment) => segment.length > 0)` exactly. Without it the two

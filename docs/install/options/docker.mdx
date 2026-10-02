@@ -37,6 +37,8 @@ When it finishes, open [http://localhost:8080/sign-up](http://localhost:8080/sig
   </Step>
   <Step title="Pulls the image and starts the stack">
     Runs `docker compose pull` followed by `docker compose up -d`, using `ghcr.io/aiqadam/qadam-flow:latest` (roughly 400 MB on first pull).
+
+    On an install whose PostgreSQL data was written by PostgreSQL 14, it first copies that data to PostgreSQL 18 with a dump and restore, and keeps the old volume and the dump. See [Upgrade PostgreSQL 14 to 18](/install/guides/upgrade-postgres).
   </Step>
   <Step title="Waits for the API">
     Polls `http://localhost:8080/api/v1/flags` for up to 3 minutes, then prints the URL.
@@ -143,7 +145,7 @@ Run the installer again, from the directory you first ran it in (the one that co
 curl -fsSL https://flow.aiqadam.org/run.sh | sh
 ```
 
-It refreshes `docker-compose.yml`, keeps your `.env`, pulls the images and restarts the stack. Your PostgreSQL and Redis volumes are untouched.
+It refreshes `docker-compose.yml`, keeps your `.env`, pulls the images and restarts the stack. Your Redis volume is reused as it is. If your PostgreSQL data is still on PostgreSQL 14, the installer copies it to PostgreSQL 18 in a new volume first and leaves the old volume in place, as [Upgrade PostgreSQL 14 to 18](/install/guides/upgrade-postgres) describes.
 
 You can also run it from anywhere with `QADAM_FLOW_DIR` set to the install's absolute path. The installer prints that exact command when it finishes. Pointing it at any other directory does not upgrade this install. It creates a second one with new secrets, and that second install can collide with this one's containers and volumes.
 
@@ -162,6 +164,10 @@ docker compose up -d --remove-orphans
 ```
 
 The compose file pins the PostgreSQL and Redis images, so `docker compose pull` on its own updates Qadam Flow but keeps the database images your existing file names. The URL tracks `main`. If you installed with a custom `QADAM_FLOW_REF`, use that ref in place of `main`.
+
+<Warning>
+If this install still has its data on PostgreSQL 14, the manual refresh does not move it, and the `postgres` service then refuses to start until it has been moved. Re-run the installer instead, or follow [Upgrade by hand](/install/guides/upgrade-postgres#upgrade-by-hand) before `docker compose up`.
+</Warning>
 
 ### Coming from the all-in-one container
 

@@ -35,7 +35,19 @@ services:
     networks:
       - qadam-flow
   postgres:
-    image: 'pgvector/pgvector:0.8.0-pg14'
+    # PostgreSQL 18 (#611). The 18 image keeps its data in /var/lib/postgresql/18/docker, so the volume
+    # is mounted one level up, and it is a new volume: postgres_data holds the PostgreSQL 14 data of an
+    # install that predates this change, which 18 cannot open. run.sh copies that data across with a dump
+    # and restore and never writes to postgres_data afterwards, which is what keeps a rollback possible.
+    #
+    # postgres_data stays mounted, read-only, for the guard in `entrypoint` alone. Without it, an install
+    # refreshed by hand would boot an empty PostgreSQL 18 database and look like a fresh install, its flows
+    # still sitting in the old volume. When a restore finishes, run.sh writes the checksum of the old
+    # cluster's pg_control into QADAM_FLOW_UPGRADED. The guard starts the server only if postgres_data
+    # holds no cluster, or that checksum still matches: PostgreSQL 14 rewrites pg_control whenever it
+    # runs, so a mismatch means the old volume was used after the upgrade (a rollback) and the 18 copy
+    # is stale.
+    image: 'pgvector/pgvector:0.8.7-pg18'
     container_name: postgres
     restart: unless-stopped
     env_file: .env
@@ -43,8 +55,24 @@ services:
       - 'POSTGRES_DB=${AP_POSTGRES_DATABASE}'
       - 'POSTGRES_PASSWORD=${AP_POSTGRES_PASSWORD}'
       - 'POSTGRES_USER=${AP_POSTGRES_USERNAME}'
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        legacy=/var/lib/postgresql-legacy
+        if [ -s "$$legacy/PG_VERSION" ] \
+          && [ "$$(cksum < "$$legacy/global/pg_control")" != "$$(cat /var/lib/postgresql/QADAM_FLOW_UPGRADED 2>/dev/null)" ]; then
+          echo "The postgres_data volume holds PostgreSQL $$(cat "$$legacy/PG_VERSION") data that has not been upgraded to PostgreSQL 18, or that changed after the upgrade. Nothing was started or changed." >&2
+          echo "Upgrade by re-running the installer for this install: curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_DIR=<install directory> sh" >&2
+          echo "Manual steps and rollback: https://flow.aiqadam.org/docs/install/guides/upgrade-postgres" >&2
+          exit 1
+        fi
+        exec docker-entrypoint.sh "$$@"
+      - docker-entrypoint.sh
+    command: ['postgres']
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql-legacy:ro
     networks:
       - qadam-flow
   redis:
@@ -59,6 +87,7 @@ services:
     networks:
       - qadam-flow
 volumes:
+  pgdata:
   postgres_data:
   redis_data:
 networks:

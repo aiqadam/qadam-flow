@@ -1,0 +1,219 @@
+---
+title: "Upgrade PostgreSQL 14 to 18"
+description: "Move the data of a Docker Compose install from the bundled PostgreSQL 14 to PostgreSQL 18, and roll back if you need to"
+icon: "database"
+---
+
+The bundled `postgres` service now runs PostgreSQL 18 (`pgvector/pgvector:0.8.7-pg18`). Earlier
+compose files ran PostgreSQL 14, which reaches end of life on 2026-11-12 and gets no security fixes
+after that ([#611](https://github.com/aiqadam/qadam-flow/issues/611)).
+
+PostgreSQL cannot open a data directory written by another major version, so an existing install
+has to move its data across once. This page is for installs that use the bundled `postgres` service
+and were created before the change. A new install starts on PostgreSQL 18 and needs nothing here.
+If `AP_POSTGRES_HOST` points at your own server, the compose change does not touch your data, but
+plan the same upgrade for that server if it runs PostgreSQL 14.
+
+## How the data moves
+
+The data is copied, never converted in place:
+
+- The PostgreSQL 14 data stays in the `postgres_data` volume. PostgreSQL 18 uses a new volume,
+  `pgdata`. Nothing deletes `postgres_data`, which is what makes a [rollback](#roll-back) possible.
+- The data is dumped with the PostgreSQL 14 image and restored with the PostgreSQL 18 image. The
+  dump files are kept in `backups/` in the install directory.
+- Every database except the built-in `postgres` database is copied, along with the roles.
+- When the restore has finished, a marker file (`QADAM_FLOW_UPGRADED`) is written into `pgdata`.
+  Until it exists, the `postgres` service refuses to start next to an old `postgres_data`, so an
+  install refreshed by hand never boots an empty database by mistake.
+
+<Info>
+The stack is stopped while the data is copied, and that takes longer the larger the database is.
+You also need free disk space for the dump and for the second copy of the database, up to twice the
+size of the database.
+</Info>
+
+## Upgrade with the installer
+
+Re-run the installer for the install, as described under [Upgrade](/install/options/docker#upgrade).
+Pass the same `QADAM_FLOW_DIR` and `QADAM_FLOW_REF` you installed with:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_DIR=/path/to/qadam-flow sh
+```
+
+The installer refreshes `docker-compose.yml`, pulls the images, and then finds the PostgreSQL 14
+data. It stops the stack, dumps the data, restores it into `pgdata` and starts the stack on
+PostgreSQL 18. The output names the backup directory and prints the rollback command:
+
+```text
+▸ PostgreSQL 14 data found in qadam-flow_postgres_data: upgrading it to PostgreSQL 18 in qadam-flow_pgdata
+▸ qadam-flow_postgres_data is kept, not deleted, so you can go back
+▸ stopping the stack
+▸ starting PostgreSQL 14 (pgvector/pgvector:0.8.0-pg14) on qadam-flow_postgres_data to dump it
+▸ dumping into /path/to/qadam-flow/backups/postgres14-20261102-091500
+▸   qadam_flow
+▸ starting PostgreSQL 18 on a new qadam-flow_pgdata volume
+▸ restoring into PostgreSQL 18
+▸   qadam_flow
+▸ PostgreSQL 14 → 18 upgrade finished
+```
+
+Later runs of the installer see the marker and skip this step.
+
+If the upgrade fails or is interrupted, the installer removes the half-filled `pgdata` volume,
+leaves the stack stopped and tells you where the dump is. `postgres_data` is unchanged. Fix the
+reported problem and run the installer again, or [roll back](#roll-back).
+
+### Check the result
+
+Sign in and open a few flows and runs. To compare the server version and the migrations directly:
+
+```bash
+cd /path/to/qadam-flow
+docker exec postgres psql -U postgres -d qadam_flow -c 'SELECT version()' -c 'SELECT count(*) FROM migrations'
+```
+
+## Upgrade by hand
+
+Use this if you run the stack from a clone of the repository or from your own copy of
+`docker-compose.yml`. The commands assume the defaults from `.env`: user `postgres` and database
+`qadam_flow`. Replace them if yours differ, and run every command from the directory that holds
+`docker-compose.yml` and `.env`.
+
+<Steps>
+  <Step title="Refresh the compose file and stop the stack">
+    Update `docker-compose.yml` as the [Docker Compose upgrade steps](/install/options/docker-compose#upgrade)
+    describe, but do not start the stack yet. Then stop it and note the Compose project name, which
+    prefixes the volume names:
+
+    ```bash
+    docker compose pull
+    docker compose stop
+    PROJECT=$(docker compose config | sed -n 's/^name: //p')
+    ```
+  </Step>
+  <Step title="Dump the data with PostgreSQL 14">
+    ```bash
+    docker run -d --name pg14-upgrade --network none \
+      -v "${PROJECT}_postgres_data:/var/lib/postgresql/data" pgvector/pgvector:0.8.0-pg14
+    until docker exec pg14-upgrade pg_isready -q -h 127.0.0.1; do sleep 1; done
+    mkdir -m 700 -p backups
+    docker exec pg14-upgrade pg_dumpall -U postgres --roles-only > backups/roles.sql
+    docker exec pg14-upgrade pg_dump -U postgres -Fc -d qadam_flow > backups/qadam_flow.dump
+    docker stop pg14-upgrade && docker rm pg14-upgrade
+    ```
+  </Step>
+  <Step title="Restore it into PostgreSQL 18">
+    `docker compose up --no-start` creates the `pgdata` volume without starting the service. The
+    temporary container initialises it with the password from `.env`:
+
+    ```bash
+    docker compose up --no-start postgres
+    docker run -d --name pg18-upgrade --network none \
+      -e POSTGRES_PASSWORD="$(sed -n 's/^AP_POSTGRES_PASSWORD=//p' .env)" -e POSTGRES_DB=postgres \
+      -v "${PROJECT}_pgdata:/var/lib/postgresql" pgvector/pgvector:0.8.7-pg18
+    until docker exec pg18-upgrade pg_isready -q -h 127.0.0.1; do sleep 1; done
+    grep -vx 'CREATE ROLE postgres;' backups/roles.sql \
+      | docker exec -i pg18-upgrade psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres
+    docker exec -i pg18-upgrade pg_restore -U postgres --exit-on-error --create -d postgres < backups/qadam_flow.dump
+    docker stop pg18-upgrade && docker rm pg18-upgrade
+    ```
+
+    If `pg_restore` stops with an error, delete the new volume (`docker compose rm -f postgres`, then
+    `docker volume rm "${PROJECT}_pgdata"`) and repeat this step after fixing the cause.
+  </Step>
+  <Step title="Record the finished upgrade and start the stack">
+    The marker holds the checksum of the old cluster's `pg_control` file. The `postgres` service
+    starts only while that checksum still matches, so it notices if PostgreSQL 14 is ever started
+    on `postgres_data` again:
+
+    ```bash
+    docker run --rm --network none --entrypoint sh \
+      -v "${PROJECT}_postgres_data:/legacy:ro" -v "${PROJECT}_pgdata:/data" pgvector/pgvector:0.8.7-pg18 \
+      -c 'cksum < /legacy/global/pg_control > /data/QADAM_FLOW_UPGRADED'
+    docker compose up -d
+    ```
+  </Step>
+</Steps>
+
+## Roll back
+
+Rolling back starts PostgreSQL 14 on `postgres_data` again, with the data as it was when you
+upgraded. Anything written after the upgrade exists only in `pgdata`.
+
+With the installer, point it at the last compose file that ran PostgreSQL 14. The installer prints
+this command at the end of the upgrade:
+
+```bash
+curl -fsSL https://flow.aiqadam.org/run.sh | QADAM_FLOW_DIR=/path/to/qadam-flow QADAM_FLOW_REF=ef4f230d5263712480a1a7e5fb9f752be15995ee sh
+```
+
+By hand, download `docker-compose.yml` from that commit and run `docker compose up -d`.
+
+Rolling back does not delete `pgdata`. Because PostgreSQL 14 rewrites `pg_control` when it runs, the
+marker no longer matches afterwards. When you upgrade again, the installer stops and asks you to
+remove the older PostgreSQL 18 copy first:
+
+```bash
+docker compose down && docker volume rm qadam-flow_pgdata
+```
+
+Then run the installer again to copy the current PostgreSQL 14 data.
+
+## Free the old volume
+
+Once the install has run on PostgreSQL 18 long enough for you to trust it, remove the old volume to
+free its space. After this, the only way back to PostgreSQL 14 is the dump in `backups/`.
+
+```bash
+docker compose down
+docker volume rm qadam-flow_postgres_data
+docker compose up -d
+```
+
+Compose creates an empty `postgres_data` volume on the next start, because the service still mounts
+it for the start-up check. The empty volume takes no space and does not block the start.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="The postgres container restarts and logs that postgres_data has not been upgraded">
+    The compose file was refreshed, but the data was never copied, or PostgreSQL 14 ran on
+    `postgres_data` after the upgrade. Nothing was started or changed. Re-run the installer, or follow
+    [Upgrade by hand](#upgrade-by-hand).
+  </Accordion>
+  <Accordion title="The installer says the PostgreSQL 18 copy is out of date">
+    PostgreSQL 14 ran on `postgres_data` after the upgrade, usually because of a rollback. Remove the
+    older copy as described under [Roll back](#roll-back), then re-run the installer. To stay on
+    PostgreSQL 14 instead, re-run it with the rollback `QADAM_FLOW_REF`.
+  </Accordion>
+  <Accordion title="The installer says an earlier upgrade was interrupted">
+    `pgdata` holds a cluster without the marker, so a restore stopped before it finished. Your data is
+    still in `postgres_data`. Remove the incomplete copy with
+    `docker compose down && docker volume rm qadam-flow_pgdata`, then re-run the installer.
+  </Accordion>
+  <Accordion title="What is in the backups directory">
+    One `pg_dump` archive in custom format per database (`qadam_flow.dump`), the roles
+    (`roles.sql`) and the list of databases that were dumped (`databases.txt`). `pg_restore` from
+    PostgreSQL 14 or newer reads the archives. They hold everything the app stores, including
+    encrypted connection credentials, so the directory is readable by its owner only. Keep it
+    somewhere safe, or delete it once you no longer need a way back.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+Volume names start with the Compose project name, which is the name of the install directory
+unless you set `COMPOSE_PROJECT_NAME`. The examples use `qadam-flow`, the installer's default.
+`docker volume ls` lists the names on your host.
+</Note>
+
+### Why dump and restore instead of `pg_upgrade`
+
+`pg_upgrade` converts a data directory in place and is faster on large databases, but it needs the
+PostgreSQL 14 and 18 binaries side by side in one container, each with the pgvector extension built
+for it. The pgvector images hold one major version each, and the community images that hold two do
+not include pgvector. `pg_upgrade` also requires both clusters to agree on data checksums, which
+PostgreSQL 18's `initdb` turns on by default and the PostgreSQL 14 images left off. A dump and
+restore works between any two images, rebuilds every index on the new server, and leaves the old
+data untouched.
