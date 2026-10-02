@@ -301,7 +301,7 @@ export async function constructAgentTools(
     const flowsTools = await agentUtils.constructFlowsTools({
       tools: agentTools.filter(tool => tool.type === AgentToolType.FLOW),
       fetchFlows: context.flows.list,
-      publicUrl: context.server.publicUrl,
+      apiUrl: context.server.apiUrl,
       token: context.server.token
     })
     const agentMcpTools = agentTools.filter((tool): tool is AgentMcpTool => tool.type === AgentToolType.MCP);

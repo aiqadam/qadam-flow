@@ -1,3 +1,5 @@
+import { httpClient } from '@aiqadam/qadams-common'
+import { ActionContext } from '@aiqadam/qadams-framework'
 import {
   AgentFlowTool,
   AgentToolType,
@@ -6,13 +8,21 @@ import {
   PopulatedFlow,
   SeekPage,
 } from '@aiqadam/shared'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { agentOutputBuilder } from '../../src/lib/actions/agents/agent-output-builder'
+import { constructAgentTools } from '../../src/lib/actions/agents/tools'
 import { agentUtils } from '../../src/lib/actions/agents/utils'
+
+// Deliberately different hosts: the bug (#637) was the flow tool dialling the public URL, which a
+// worker on an internal-only network cannot reach, so the assertions must be able to tell them apart.
+const API_URL = 'http://app.internal:3000/'
+const PUBLIC_URL = 'https://public.example.test/api/'
 
 type FlowFixture = {
   id: string
   externalId: string
   description: string
+  returnsResponse?: boolean
 }
 
 /**
@@ -48,7 +58,7 @@ function buildPopulatedFlow(flow: FlowFixture): PopulatedFlow {
             toolName: 'weather',
             toolDescription: flow.description,
             inputSchema: [{ name: 'city', type: McpPropertyType.TEXT, required: true }],
-            returnsResponse: true,
+            returnsResponse: flow.returnsResponse ?? true,
           },
         },
       },
@@ -72,13 +82,14 @@ async function construct({ tools, flows }: { tools: AgentFlowTool[], flows: Flow
   const result = await agentUtils.constructFlowsTools({
     tools,
     fetchFlows,
-    publicUrl: 'https://example.test/api/',
+    apiUrl: API_URL,
     token: 'token',
   })
   return { result, fetchFlows }
 }
 
 const TOOL_KEY = mcpToolNameUtils.createToolName('weather')
+const TOOL_CALL_OPTIONS = { toolCallId: 'call-1', messages: [] }
 
 describe('agentUtils.constructFlowsTools', () => {
   it('resolves a tool whose externalFlowId holds a flow primary-key id', async () => {
@@ -151,3 +162,77 @@ describe('agentUtils.constructFlowsTools', () => {
     }
   })
 })
+
+describe('agent FLOW tool webhook call', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('posts to the internal apiUrl sync webhook when the flow returns a response', async () => {
+    const sendRequest = stubWebhookResponse()
+    const { result } = await construct({
+      tools: [buildFlowTool('flow-pk-1')],
+      flows: [{ id: 'flow-pk-1', externalId: 'ext-1', description: 'SYNC', returnsResponse: true }],
+    })
+
+    await result[TOOL_KEY].execute?.({ city: 'Tashkent' }, TOOL_CALL_OPTIONS)
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest.mock.calls[0][0]).toMatchObject({
+      url: `${API_URL}v1/webhooks/flow-pk-1/sync`,
+      body: { city: 'Tashkent' },
+    })
+  })
+
+  it('posts to the internal apiUrl async webhook when the flow does not return a response', async () => {
+    const sendRequest = stubWebhookResponse()
+    const { result } = await construct({
+      tools: [buildFlowTool('flow-pk-1')],
+      flows: [{ id: 'flow-pk-1', externalId: 'ext-1', description: 'ASYNC', returnsResponse: false }],
+    })
+
+    await result[TOOL_KEY].execute?.({ city: 'Tashkent' }, TOOL_CALL_OPTIONS)
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest.mock.calls[0][0]).toMatchObject({ url: `${API_URL}v1/webhooks/flow-pk-1` })
+  })
+
+  it('constructAgentTools wires context.server.apiUrl, not publicUrl, into the flow tool', async () => {
+    const sendRequest = stubWebhookResponse()
+    const fetchFlows = fakeFetchFlows([{ id: 'flow-pk-1', externalId: 'ext-1', description: 'SYNC' }])
+    const { tools } = await constructAgentTools({
+      outputBuilder: agentOutputBuilder('do the thing'),
+      agentTools: [buildFlowTool('flow-pk-1')],
+      context: agentToolsContext({ fetchFlows }),
+      model: 'stub-model',
+    })
+
+    const flowTool = tools[TOOL_KEY]
+    expect(flowTool.execute).toBeDefined()
+    await flowTool.execute?.({ city: 'Tashkent' }, TOOL_CALL_OPTIONS)
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    const { url } = sendRequest.mock.calls[0][0]
+    expect(url).toBe(`${API_URL}v1/webhooks/flow-pk-1/sync`)
+    expect(url.startsWith(PUBLIC_URL)).toBe(false)
+  })
+})
+
+function stubWebhookResponse() {
+  return vi.spyOn(httpClient, 'sendRequest').mockResolvedValue({
+    status: 200,
+    headers: {},
+    body: { ok: true },
+  })
+}
+
+function agentToolsContext({ fetchFlows }: { fetchFlows: ReturnType<typeof fakeFetchFlows> }): ActionContext {
+  const context = {
+    server: { token: 'engine-token', apiUrl: API_URL, publicUrl: PUBLIC_URL },
+    flows: { list: fetchFlows },
+    agent: { tools: vi.fn(async () => ({})) },
+  }
+  // constructAgentTools only touches server, flows.list and agent.tools when the agent has no MCP or
+  // knowledge-base tools; a full ActionContext would be fixture noise with no extra coverage.
+  return context as unknown as ActionContext
+}

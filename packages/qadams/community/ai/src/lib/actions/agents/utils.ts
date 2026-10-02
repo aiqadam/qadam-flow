@@ -143,7 +143,7 @@ export const agentUtils = {
         execute: async (inputs: unknown) => {
           return callMcpFlowTool({
             flowId: tool.flow.id,
-            publicUrl: params.publicUrl,
+            apiUrl: params.apiUrl,
             token: params.token,
             async: !returnsResponse,
             inputs,
@@ -165,7 +165,7 @@ function isOkSuccess(status: number) {
 
 async function callMcpFlowTool(params: CallMcpFlowToolParams): Promise<ExecuteToolResponse> {
   const syncSuffix = params.async ? '' : '/sync';
-  const url = `${params.publicUrl}v1/webhooks/${params.flowId}${syncSuffix}`;
+  const url = `${params.apiUrl}v1/webhooks/${params.flowId}${syncSuffix}`;
 
   try {
     const response = await httpClient.sendRequest({
@@ -236,14 +236,14 @@ function mcpPropertyToSchema(property: McpProperty): z.ZodTypeAny {
 type ConstructFlowsToolsParams = {
   tools: AgentFlowTool[]
   fetchFlows: (params: { externalIdsOrIds: string[] }) => Promise<SeekPage<PopulatedFlow>>
-  publicUrl: string;
+  apiUrl: string;
   token: string
 }
 
 type CallMcpFlowToolParams = {
   flowId: string;
   token: string;
-  publicUrl: string;
+  apiUrl: string;
   async: boolean;
   inputs: unknown;
 }
