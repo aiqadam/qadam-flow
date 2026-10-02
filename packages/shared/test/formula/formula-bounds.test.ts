@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { exceedsSizeBudget, measureSize } from '../../src/lib/formula/formula-bounds'
+import { exceedsSizeBudget } from '../../src/lib/formula/formula-bounds'
 
 describe('exceedsSizeBudget', () => {
     it('accepts a string exactly at maxSize', () =>
@@ -65,20 +65,6 @@ describe('exceedsSizeBudget', () => {
         expect(elementReads).toBe(0)
     })
 
-    // The same property in wall-clock terms. Measured against a real full walk
-    // of the same array on the same machine, not an absolute budget: one GC
-    // pause or descheduling landing inside a sub-millisecond window on a busy
-    // CI runner is longer than any fixed threshold that is still meaningful
-    // (a 50ms budget once read 75ms there). Best of several attempts on each
-    // side, so a single stall cannot decide the outcome either way.
-    it('array early-abort is real: rejecting a huge oversized array costs a small fraction of a full walk of it', () => {
-        const hugeArray = Array.from({ length: 3_000_000 }, (_, i) => i)
-        const earlyAbort = bestOf({ attempts: 5, run: () => expect(exceedsSizeBudget({ value: hugeArray, maxSize: 100 })).toBe(true) })
-        const fullWalk = bestOf({ attempts: 3, run: () => measureSize({ value: hugeArray, cap: Number.POSITIVE_INFINITY }) })
-
-        expect(earlyAbort).toBeLessThan(fullWalk / 10)
-    })
-
     it('a within-budget nested structure (arrays of small objects) is accepted', () => {
         const value = Array.from({ length: 50 }, (_, i) => ({ id: i, name: `item-${i}` }))
         expect(exceedsSizeBudget({ value, maxSize: 100_000 })).toBe(false)
@@ -89,13 +75,3 @@ describe('exceedsSizeBudget', () => {
         expect(exceedsSizeBudget({ value, maxSize: 1000 })).toBe(true)
     })
 })
-
-function bestOf({ attempts, run }: { attempts: number, run: () => unknown }): number {
-    let best = Number.POSITIVE_INFINITY
-    for (let attempt = 0; attempt < attempts; attempt++) {
-        const start = performance.now()
-        run()
-        best = Math.min(best, performance.now() - start)
-    }
-    return best
-}
