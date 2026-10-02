@@ -35,7 +35,7 @@ that name (or override the env var) so the registry pull is skipped.
 - **app** (port 8080:80) — API + frontend, a single Node process under `tini`
 - **worker** ×5 — BullMQ job workers
 - **postgres** — `pgvector/pgvector:0.8.0-pg14`
-- **redis** — `redis:7.0.7`
+- **redis** — `valkey/valkey:8.1.10` (Valkey, the BSD-licensed Redis fork; the service, volume and `AP_REDIS_*` names stay `redis`)
 
 ## Key ENV vars
 - `AP_ENVIRONMENT=prod` (use `dev` only to opt into dev seeds)

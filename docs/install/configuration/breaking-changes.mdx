@@ -219,6 +219,29 @@ happened. The assignment has been removed.
   environment — which restores exactly the old behaviour, but does so deliberately and visibly
   instead of as a side effect of one qadam making one request.
 
+#### The bundled Redis is now Valkey 8.1, and no action is required — but it is one-way
+
+The `redis` service in `docker-compose.yml` ran `redis:7.0.7`. The Redis 7.0 line has been end of
+life since July 2024 and never received the 2025 Lua-engine fixes, including CVE-2025-49844, a
+use-after-free that a Lua script can turn into remote code execution. The service now runs
+`valkey/valkey:8.1.10`. [Valkey](https://valkey.io) is the BSD-licensed fork of Redis, and its 8.1 line
+carries those fixes from 8.1.4 onwards
+([#612](https://github.com/aiqadam/qadam-flow/issues/612)).
+
+- **Upgrading needs no action.** The service is still called `redis`, on the same port, with the same
+  `redis_data` volume and the same `AP_REDIS_*` settings. Valkey 8.1 loads the RDB and AOF files that
+  `redis:7.0.7` wrote, so queued, delayed and scheduled jobs survive the switch.
+- **`docker compose pull` alone does not switch you.** The image is pinned in `docker-compose.yml`, so
+  refresh that file first, as the [upgrade steps](../options/docker-compose#upgrade) describe, or re-run
+  the installer.
+- **Going back to `redis:7.0.7` on the same volume does not work.** Once Valkey has saved, the data is in
+  RDB format 11, and Redis 7.0 refuses to start on it (`Can't handle RDB format version 11`). Rolling
+  back the Qadam Flow image is unaffected, because it does not change the `redis` service. If you do need
+  the old Redis image back, remove the `redis_data` volume first. That loses queued jobs and run state
+  held in Redis, but not your flows, connections or run history, which live in PostgreSQL.
+- **If you run your own Redis** (`AP_REDIS_HOST` pointing outside the bundled stack), nothing changes.
+  Check that it is a supported release with the 2025 Lua fixes.
+
 ## 2.0.0
 
 ### What has changed?

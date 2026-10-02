@@ -140,11 +140,12 @@ From your install directory:
 
 ```bash
 cd qadam-flow
+curl -fsSL https://raw.githubusercontent.com/aiqadam/qadam-flow/main/docker-compose.yml -o docker-compose.yml
 docker compose pull
 docker compose up -d --remove-orphans
 ```
 
-Your `.env` and the PostgreSQL and Redis volumes are untouched.
+Your `.env` and the PostgreSQL and Redis volumes are untouched. The `curl` line refreshes `docker-compose.yml` (overwriting any local edits to it), which pins the PostgreSQL and Redis images: `docker compose pull` on its own updates Qadam Flow but keeps whatever database images your existing file names. Re-running the installer from the directory that contains `qadam-flow/` does the same refresh and reuses your `.env`.
 
 ### Coming from the all-in-one container
 
