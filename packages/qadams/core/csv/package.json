@@ -1,6 +1,6 @@
 {
   "name": "@aiqadam/qadam-csv",
-  "version": "0.4.15",
+  "version": "0.5.0",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "dependencies": {
@@ -9,9 +9,10 @@
     "@aiqadam/shared": "workspace:*",
     "csv-parse": "5.6.0",
     "csv-stringify": "6.5.2",
+    "exceljs": "4.4.0",
+    "numfmt": "3.2.6",
     "safe-flat": "2.1.0",
-    "tslib": "2.6.2",
-    "xlsx": "0.18.5"
+    "tslib": "2.6.2"
   },
   "scripts": {
     "build": "tsc -p tsconfig.lib.json && cp package.json dist/",
