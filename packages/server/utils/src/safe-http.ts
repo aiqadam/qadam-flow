@@ -5,6 +5,7 @@ import { httpTimeouts, isNil, tryCatch } from '@aiqadam/shared'
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
 import { RequestFilteringHttpAgent, RequestFilteringHttpsAgent } from 'request-filtering-agent'
+import { safeHttpProxy } from './safe-http-proxy'
 
 // Shared across every allow-list this process reads (SSRF's own `AP_SSRF_ALLOW_LIST` and the LDAP
 // host guard's separate `AP_LDAP_ALLOW_LIST` in `packages/server/api`) so there is exactly one
@@ -31,7 +32,10 @@ function buildAgents({ allowList, httpsAgentOptions }: BuildAgentsParams): SsrfA
     }
     return {
         httpAgent: new RequestFilteringHttpAgent(filteringOptions),
-        httpsAgent: new RequestFilteringHttpsAgent({ ...filteringOptions, ...httpsAgentOptions }),
+        // `proxyEnv` last, so no caller option can turn on Node's built-in proxy support for this
+        // agent: that would tunnel to the proxy from inside the agent, and the filter would then
+        // check the proxy's address instead of the target's.
+        httpsAgent: new RequestFilteringHttpsAgent({ ...filteringOptions, ...httpsAgentOptions, proxyEnv: undefined }),
     }
 }
 
@@ -41,6 +45,9 @@ function buildAgents({ allowList, httpsAgentOptions }: BuildAgentsParams): SsrfA
 // the process still holds exactly one SSRF implementation. `buildAgents` alone is not enough for
 // a caller outside this file: the allow list would have to be re-parsed there, and a second copy
 // of that parse is precisely how the live filter and the configured one drift apart.
+//
+// These agents always connect directly and never read `HTTP(S)_PROXY`, so the filter sees the real
+// target. Only the axios instances below route through an egress proxy.
 function buildDefaultAgents({ httpsAgentOptions }: SafeAxiosOptions = {}): SsrfAgents {
     return buildAgents({ allowList: parseAllowListFromEnv(), httpsAgentOptions })
 }
@@ -65,15 +72,24 @@ function attachSsrfErrorInterceptor(instance: AxiosInstance): AxiosInstance {
 }
 
 function createAxios(config?: AxiosRequestConfig, { httpsAgentOptions }: SafeAxiosOptions = {}): AxiosInstance {
-    const { httpAgent, httpsAgent } = buildAgents({
-        allowList: parseAllowListFromEnv(),
+    const allowList = parseAllowListFromEnv()
+    const { httpAgent, httpsAgent } = safeHttpProxy.buildProxyAwareAgents({
+        direct: buildAgents({ allowList, httpsAgentOptions }),
+        allowList,
         httpsAgentOptions,
     })
-    return attachSsrfErrorInterceptor(axios.create({
+    // `proxy: false` keeps proxying inside the agents above, the one place the target is checked
+    // before anything goes to a proxy; axios' own proxy support would put a tunnelling agent of its
+    // own in place of `httpsAgent`. The interceptor pins it per request as well, because a request's
+    // own config overrides the instance default.
+    const instance = axios.create({
         ...config,
         httpAgent,
         httpsAgent,
-    }))
+        proxy: false,
+    })
+    instance.interceptors.request.use((requestConfig) => ({ ...requestConfig, proxy: false }))
+    return attachSsrfErrorInterceptor(instance)
 }
 
 function createRetryingAxios(config?: AxiosRequestConfig, options?: SafeAxiosOptions): AxiosInstance {

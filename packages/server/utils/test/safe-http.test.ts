@@ -26,16 +26,19 @@ describe('safeHttp.buildAgents', () => {
 })
 
 describe('safeHttp.createAxios', () => {
-    it('attaches filtering http and https agents to the axios instance', () => {
-        const instance = safeHttp.createAxios()
-        expect(instance.defaults.httpAgent).toBeInstanceOf(RequestFilteringHttpAgent)
-        expect(instance.defaults.httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
+    // Left to axios, an egress proxy replaces the configured `httpsAgent` with axios' own tunnel.
+    // safeHttp's agents handle proxying themselves, so axios' must stay off whatever the caller says.
+    it('keeps axios proxying off so the instance\'s own agents carry every request', () => {
+        const instance = safeHttp.createAxios({ proxy: { host: '127.0.0.1', port: 3128 } })
+        expect(instance.defaults.proxy).toBe(false)
+        expect(instance.defaults.httpAgent).toBeInstanceOf(http.Agent)
+        expect(instance.defaults.httpsAgent).toBeInstanceOf(http.Agent)
     })
 
     it('merges caller config (e.g. baseURL) with the filtering agents', () => {
         const instance = safeHttp.createAxios({ baseURL: 'https://example.com' })
         expect(instance.defaults.baseURL).toBe('https://example.com')
-        expect(instance.defaults.httpsAgent).toBeInstanceOf(RequestFilteringHttpsAgent)
+        expect(instance.defaults.httpsAgent).toBeInstanceOf(http.Agent)
     })
 })
 

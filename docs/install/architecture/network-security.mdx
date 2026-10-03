@@ -29,7 +29,7 @@ Every flow eventually runs **user-supplied code** — Code steps, qadam actions,
 Related env vars:
 
 - `AP_SSRF_ALLOW_LIST` — comma-separated IPs that bypass the block (e.g. an internal DB or sidecar).
-- `HTTP_PROXY` / `HTTPS_PROXY` — if set, the engine routes all outbound HTTP(S) through the proxy. Loopback proxy ports are auto-exempted.
+- `HTTP_PROXY` / `HTTPS_PROXY` — if set, the engine routes all outbound HTTP(S) through the proxy. Loopback proxy ports are auto-exempted. The API server and workers honour the same variables for their own requests; see [Egress through a proxy](#egress-through-a-proxy).
 
 ## How Isolation Works
 
@@ -136,6 +136,22 @@ If Vault, Conjur, an on-prem OAuth2 token endpoint, or an internal webhook resol
 ```
 AP_SSRF_ALLOW_LIST=10.0.5.12,192.168.10.0/24
 ```
+
+### Egress through a proxy
+
+The API server and workers honour `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` for their own outbound HTTP. Sending a request through the proxy does not change what the filter allows:
+
+- Before a request goes to the proxy, the server resolves the target hostname and checks every address it returns against the blocked ranges and `AP_SSRF_ALLOW_LIST`. A request with a blocked target is refused and never reaches the proxy.
+- The server must be able to resolve target hostnames itself. A target it cannot resolve is refused, even when the proxy could resolve it.
+- HTTPS targets are reached through a `CONNECT` tunnel, so TLS runs end to end between the server and the target.
+- A request that matches `NO_PROXY` connects directly and is filtered as usual. `NO_PROXY` accepts hostnames, `.example.com` suffixes, `host:port` entries and CIDR ranges.
+- The proxy address does not need to be on `AP_SSRF_ALLOW_LIST`. Leave it off unless user-supplied URLs should be able to reach that address too.
+- Only `http://` and `https://` proxy URLs are supported.
+- Amazon Bedrock requests are the exception: the AWS SDK connects directly and does not read these variables.
+
+<Warning>
+The proxy resolves the hostname again when it connects, so the server-side check cannot rule out a DNS answer that changes between the two lookups. Enforce your egress policy on the proxy as well, and block private, loopback, link-local and cloud-metadata ranges there too.
+</Warning>
 
 ### Relaxed TLS is still filtered
 
