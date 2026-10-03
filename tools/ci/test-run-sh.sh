@@ -556,6 +556,259 @@ else
   fail_case 'upgrade hint (substitution): evaluating the printed command must not execute the path'
 fi
 
+echo "== the PostgreSQL upgrade decision (#611) =="
+
+# pg_upgrade_action is the whole decision upgrade_postgres acts on: whether a volume left by an older
+# major gets dumped and restored, is left alone, or makes the installer stop. The docker side (reading
+# PG_VERSION, the marker and pg_control out of the volumes) feeds it these strings.
+upgrade_action_case() {
+  got="$("$sut" -c '. "$1"; pg_upgrade_action "$2" "$3" "$4"' _ "$runsh" "$1" "$2" "$3")"
+  if [ "$got" = "$4" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "pg_upgrade_action legacy='$1' target='$2' state='$3'" "want '$4', got '$got'"
+  fi
+}
+# A fresh install, or one whose postgres_data never held a cluster: nothing to move.
+upgrade_action_case '' 18 absent none
+upgrade_action_case '' 18 empty none
+# An install from before #611 meeting the PostgreSQL 18 compose file for the first time.
+upgrade_action_case 14 18 absent upgrade
+upgrade_action_case 14 18 empty upgrade
+# Already upgraded, and the old cluster has not run since: start as usual.
+upgrade_action_case 14 18 upgraded none
+# The old cluster ran after the upgrade (a rollback), so the copy is stale. Booting it would hide
+# everything written since; deleting it would lose what was written on 18. Stop and say so.
+upgrade_action_case 14 18 stale stale
+# A cluster with no marker: a restore that was interrupted. Never boot it as if it were complete.
+upgrade_action_case 14 18 populated partial
+upgrade_action_case 14 18 something-unexpected partial
+# QADAM_FLOW_REF at a compose file from before #611: postgres_data is the live data directory.
+upgrade_action_case 14 14 absent none
+upgrade_action_case 14 17 absent none
+# Other old majors take the same path; equal or newer data never does.
+upgrade_action_case 16 18 absent upgrade
+upgrade_action_case 18 18 absent none
+upgrade_action_case 19 18 absent none
+# An image without PG_MAJOR, or a garbled PG_VERSION, must not be guessed at.
+upgrade_action_case 14 '' absent none
+upgrade_action_case '14x' 18 absent none
+
+echo "== the fallback compose project name matches Compose's normalisation =="
+
+project_case() {
+  got="$("$sut" -c '. "$1"; normalize_project_name "$2"' _ "$runsh" "$1")"
+  if [ "$got" = "$2" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "normalize_project_name '$1'" "want '$2', got '$got'"
+  fi
+}
+project_case qadam-flow qadam-flow
+project_case 'Qadam Flow' qadamflow
+project_case 'my.install_1' myinstall_1
+project_case '_-qadam' qadam
+
+echo "== dump file names cannot escape the backup directory =="
+
+dump_case() {
+  got="$("$sut" -c '. "$1"; dump_file_name "$2"' _ "$runsh" "$1")"
+  if [ "$got" = "$2" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "dump_file_name '$1'" "want '$2', got '$got'"
+  fi
+}
+dump_case qadam_flow qadam_flow.dump
+dump_case '../etc/x y' '.._etc_x_y.dump'
+
+echo "== main() upgrades PostgreSQL after the pull and before the start =="
+
+# The upgrade needs the new image (pulled) and must finish before compose starts PostgreSQL 18 on
+# the new volume; anywhere else in main() it either cannot run or runs too late.
+pull_line="$(line_of pull_images)"
+upgrade_line="$(line_of upgrade_postgres)"
+start_line="$(line_of start_stack)"
+if [ -n "$pull_line" ] && [ -n "$upgrade_line" ] && [ -n "$start_line" ] \
+  && [ "$pull_line" -lt "$upgrade_line" ] && [ "$upgrade_line" -lt "$start_line" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'main(): pull_images < upgrade_postgres < start_stack' \
+    "pull=$pull_line upgrade=$upgrade_line start=$start_line"
+fi
+
+echo "== upgrade_postgres stops the temporary server before it writes the marker =="
+
+# The marker lets compose start PostgreSQL 18 on the new volume. Written while the temporary server
+# still runs, an interruption in between leaves two servers on one data directory. Anchored at the
+# start of a code line, like line_of, so a comment naming either cannot satisfy the check.
+upgrade_body="$(sed -n '/^upgrade_postgres() {/,/^}/p' "$runsh")"
+upgrade_line_of() { printf '%s\n' "$upgrade_body" | grep -n "$1" | grep -v '^[0-9]*: *#' | head -1 | cut -d: -f1; }
+stop_line="$(upgrade_line_of '^  docker stop -t 120 "\$PG_UPGRADE_NEW_CONTAINER"')"
+marker_line="$(upgrade_line_of '"\$PG_MARKER_WRITE"')"
+if [ -n "$stop_line" ] && [ -n "$marker_line" ] && [ "$stop_line" -lt "$marker_line" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'upgrade_postgres(): docker stop of the temporary server < PG_MARKER_WRITE' \
+    "stop=$stop_line marker=$marker_line"
+fi
+
+echo "== upgrade_postgres traps HUP with INT and TERM, and clears them together =="
+
+# A closed terminal sends HUP. Untrapped, it ends the run without the EXIT trap, leaving the temporary
+# containers and a half-restored volume behind.
+for want in "^  trap 'exit 129' HUP\$" "^  trap 'exit 130' INT\$" "^  trap 'exit 143' TERM\$"; do
+  if printf '%s\n' "$upgrade_body" | grep -q "$want"; then
+    pass=$((pass + 1))
+  else
+    fail_case "upgrade_postgres() must contain a line matching: $want"
+  fi
+done
+clear_line="$(printf '%s\n' "$upgrade_body" | grep '^  trap - ' | head -1)"
+clear_ok=yes
+for sig in EXIT HUP INT TERM; do
+  case " ${clear_line#  trap - } " in *" $sig "*) ;; *) clear_ok=no ;; esac
+done
+if [ "$clear_ok" = yes ] && [ "$(printf '%s\n' "$upgrade_body" | grep -c '^  trap - ')" -eq 1 ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'upgrade_postgres(): one `trap - ...` line must clear EXIT, HUP, INT and TERM' "got: $clear_line"
+fi
+
+echo "== docker-compose.yml agrees with run.sh's upgrade constants =="
+
+compose_file="${here}/../../docker-compose.yml"
+constants="$("$sut" -c '. "$1"; printf "%s %s %s\n" "$PG_DATA_VOLUME_KEY" "$PG_LEGACY_VOLUME_KEY" "$PG_UPGRADE_MARKER"' _ "$runsh")"
+data_key="${constants%% *}"
+rest="${constants#* }"
+legacy_key="${rest%% *}"
+marker="${rest#* }"
+for want in "- ${data_key}:/var/lib/postgresql" "- ${legacy_key}:/var/lib/postgresql-legacy:ro" "/var/lib/postgresql/${marker}"; do
+  if grep -qF -- "$want" "$compose_file"; then
+    pass=$((pass + 1))
+  else
+    fail_case "docker-compose.yml must contain '$want'"
+  fi
+done
+
+echo "== every database is dumped, and postgres is restored into the one initdb made =="
+
+# An install with AP_POSTGRES_DATABASE=postgres keeps everything there; leaving it out of the list
+# would mark an empty database as upgraded.
+databases_sql="$("$sut" -c '. "$1"; printf "%s" "$PG_DATABASES_SQL"' _ "$runsh")"
+case "$databases_sql" in
+  *"SELECT datname FROM pg_database"*postgres*) fail_case 'PG_DATABASES_SQL must not leave out the postgres database' "$databases_sql" ;;
+  *"SELECT datname FROM pg_database"*) pass=$((pass + 1)) ;;
+  *) fail_case 'PG_DATABASES_SQL: unexpected text' "$databases_sql" ;;
+esac
+creates_case() {
+  if "$sut" -c '. "$1"; pg_restore_creates_database "$2"' _ "$runsh" "$1"; then got=yes; else got=no; fi
+  if [ "$got" = "$2" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "pg_restore_creates_database '$1'" "want '$2', got '$got'"
+  fi
+}
+creates_case qadam_flow yes
+creates_case second_db yes
+creates_case postgres no
+
+echo "== the new volume's state, read the way the probe container reads it =="
+
+# PG_STATE_PROBE and PG_MARKER_WRITE run as-is, with $LEGACY and $DATA pointed at fixture directories
+# instead of the volume mounts.
+probe_script="$("$sut" -c '. "$1"; printf "%s" "$PG_STATE_PROBE"' _ "$runsh")"
+marker_write="$("$sut" -c '. "$1"; printf "%s" "$PG_MARKER_WRITE"' _ "$runsh")"
+probe_case() {
+  got="$(LEGACY="$tmp/probe-legacy" DATA="$tmp/probe-data" MARKER="$marker" "$sut" -c "$probe_script" 2>/dev/null)"
+  status=$?
+  if [ "$1" = fails ] && [ "$status" -ne 0 ]; then
+    pass=$((pass + 1))
+  elif [ "$1" != fails ] && [ "$status" -eq 0 ] && [ "$got" = "$1" ]; then
+    pass=$((pass + 1))
+  else
+    fail_case "probe ($2): want $1" "status=$status output=$got"
+  fi
+}
+mkdir -p "$tmp/probe-legacy/global" "$tmp/probe-data"
+printf '14\n' > "$tmp/probe-legacy/PG_VERSION"
+printf 'pg_control v1' > "$tmp/probe-legacy/global/pg_control"
+probe_case empty 'new volume holds nothing'
+mkdir -p "$tmp/probe-data/18/docker"
+printf '18\n' > "$tmp/probe-data/18/docker/PG_VERSION"
+probe_case populated 'PostgreSQL 18 layout, no marker'
+rm -r "$tmp/probe-data/18"
+printf '18\n' > "$tmp/probe-data/PG_VERSION"
+probe_case populated 'cluster at the volume root, no marker'
+rm "$tmp/probe-data/PG_VERSION"
+if LEGACY="$tmp/probe-legacy" DATA="$tmp/probe-data" MARKER="$marker" "$sut" -c "$marker_write" \
+  && [ "$(cat "$tmp/probe-data/${marker}")" = "$(cksum < "$tmp/probe-legacy/global/pg_control")" ]; then
+  pass=$((pass + 1))
+else
+  fail_case 'PG_MARKER_WRITE must write the cksum of the old pg_control'
+fi
+probe_case upgraded 'marker matches pg_control'
+printf 'pg_control v2' > "$tmp/probe-legacy/global/pg_control"
+probe_case stale 'pg_control changed after the upgrade'
+rm "$tmp/probe-legacy/global/pg_control"
+probe_case fails 'marker present, pg_control unreadable'
+rm "$tmp/probe-data/${marker}"
+if LEGACY="$tmp/probe-legacy" DATA="$tmp/probe-data" MARKER="$marker" "$sut" -c "$marker_write" 2>/dev/null; then
+  fail_case 'PG_MARKER_WRITE must fail when pg_control is unreadable'
+elif [ -e "$tmp/probe-data/${marker}" ]; then
+  fail_case 'PG_MARKER_WRITE must not leave a marker when pg_control is unreadable'
+else
+  pass=$((pass + 1))
+fi
+
+echo "== the compose guard refuses to start PostgreSQL 18 next to unmigrated data =="
+
+# The guard is the postgres service's entrypoint script. It is cut out of docker-compose.yml as-is,
+# with Compose's \$\$ escape undone, its two paths pointed at fixture directories and the final exec
+# replaced by a marker, so these cases run the shipped text rather than a copy of it.
+guard_script="$tmp/guard.sh"
+sed -n '/^    entrypoint:/,/^      - docker-entrypoint.sh/p' "$compose_file" \
+  | sed -n '/^      - |$/,/^      - docker-entrypoint.sh$/p' | sed '1d;$d' \
+  | sed 's/^        //; s/\$\$/$/g' \
+  | sed "s#/var/lib/postgresql-legacy#$tmp/guard-legacy#g; s#/var/lib/postgresql/#$tmp/guard-data/#g" \
+  | sed 's/^exec docker-entrypoint.sh .*/echo STARTED/' > "$guard_script"
+
+guard_case() {
+  out="$("$sut" "$guard_script" 2>&1)"
+  status=$?
+  if [ "$1" = start ] && [ "$status" -eq 0 ] && [ "$out" = STARTED ]; then
+    pass=$((pass + 1))
+  elif [ "$1" = refuse ] && [ "$status" -ne 0 ] && ! printf '%s' "$out" | grep -q STARTED \
+    && printf '%s' "$out" | grep -q 'upgrade-postgres'; then
+    pass=$((pass + 1))
+  else
+    fail_case "guard ($2): want $1" "status=$status output=$out" "script:" "$(cat "$guard_script")"
+  fi
+}
+if grep -q 'echo STARTED' "$guard_script" && grep -q "$tmp/guard-legacy" "$guard_script"; then
+  pass=$((pass + 1))
+else
+  fail_case 'guard: could not cut the entrypoint script out of docker-compose.yml' "$(cat "$guard_script")"
+fi
+mkdir -p "$tmp/guard-legacy/global" "$tmp/guard-data"
+guard_case start 'fresh install: empty legacy volume'
+printf '14\n' > "$tmp/guard-legacy/PG_VERSION"
+printf 'pg_control v1' > "$tmp/guard-legacy/global/pg_control"
+guard_case refuse 'legacy cluster, not upgraded'
+cksum < "$tmp/guard-legacy/global/pg_control" > "$tmp/guard-data/${marker}"
+guard_case start 'legacy cluster, upgraded, unchanged since'
+printf 'pg_control v2' > "$tmp/guard-legacy/global/pg_control"
+guard_case refuse 'legacy cluster ran again after the upgrade'
+# The marker run.sh writes (PG_MARKER_WRITE) is the one the guard reads.
+LEGACY="$tmp/guard-legacy" DATA="$tmp/guard-data" MARKER="$marker" "$sut" -c "$marker_write"
+guard_case start 'legacy cluster, marker written by run.sh'
+# An unreadable pg_control must not compare as an empty checksum against an empty or missing marker.
+rm "$tmp/guard-legacy/global/pg_control"
+: > "$tmp/guard-data/${marker}"
+guard_case refuse 'legacy cluster without pg_control, empty marker'
+rm "$tmp/guard-data/${marker}"
+guard_case refuse 'legacy cluster without pg_control, no marker'
+
 echo
 echo "passed: ${pass}   failed: ${fail}"
 if [ "$fail" -ne 0 ]; then

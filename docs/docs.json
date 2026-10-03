@@ -177,6 +177,7 @@
                      "install/guides/setup-s3",
                      "install/guides/separate-workers",
                      "install/guides/setup-app-webhooks",
+                     "install/guides/upgrade-postgres",
                      "install/guides/rollback"
                   ]
                },
