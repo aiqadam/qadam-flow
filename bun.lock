@@ -3260,7 +3260,7 @@
     },
     "packages/shared": {
       "name": "@aiqadam/shared",
-      "version": "0.153.0",
+      "version": "0.154.0",
       "dependencies": {
         "dayjs": "1.11.9",
         "deepmerge-ts": "8.0.2",
