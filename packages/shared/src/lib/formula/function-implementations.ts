@@ -738,13 +738,17 @@ for (const key of Object.keys(parser.functions)) {
 // The layers now in force (D1/D2's identifier check/D3a/D3b are branches of
 // `findSecurityViolation`; D2's tables and D4 are the surrounding hardening):
 //
-// D1. CALL ALLOWLIST (the primary defence). Every `IFUNCALL`'s callee must be a
-//    bare `IVAR` naming an OWN key of `parser.functions` (our registered
-//    formula functions). A member callee, an indexed callee, an inherited
-//    name, or the result of any operator, call or nested expression is
-//    rejected. No legitimate formula calls a member or indexed function —
-//    every documented call is `name(args)` to a registered function (verified
-//    against the docs and the whole test suite).
+// D1. FUNCTION VALUES ARE CALL-ONLY (the primary defence). A function value
+//    can only come from a bare `IVAR` naming an OWN key of `parser.functions`
+//    (our registered formula functions), and it can only be consumed as the
+//    callee of the call that immediately uses it — never stored, passed,
+//    operated on or returned. Every `IFUNCALL`'s callee must be such a value.
+//    Invariant: no function value that a formula produces ever reaches the
+//    evaluator's runtime data, so no library code path that inspects or
+//    invokes such data can be handed one by the formula. (Values the caller
+//    places in the scope are the caller's own data and are outside this
+//    guarantee.) No legitimate formula uses a function other than
+//    as `name(args)` (verified against the docs and the whole test suite).
 //
 // D2. OWN-PROPERTY-ONLY RESOLUTION. Each table on the identifier path is
 //    covered separately, because they cannot all be handled the same way:
@@ -781,9 +785,9 @@ for (const key of Object.keys(parser.functions)) {
 // Why NOT null the operator tables (`unaryOps`/`binaryOps`/`ternaryOps`):
 // their inherited `Object.prototype` is also an accidental parse-time barrier
 // (`TokenStream.isNamedOp` tokenizes `constructor`, found there through the
-// prototype, as an operator so `x.constructor` fails to parse). Nulling those
-// removes that barrier and, in a prior revision, reopened a sandbox escape; it
-// was reverted.
+// prototype, as an operator so `x.constructor` fails to parse). Invariant:
+// the operator tables keep `Object.prototype` and are checked by own-key, so
+// that parse barrier stays in place in addition to the defences below.
 // The defences above do not depend on that accident — they work on the parsed
 // instruction tree and on the resolution tables, which is why `functions`/
 // `consts`/the scope can be null-prototyped safely while the operator tables
@@ -915,6 +919,7 @@ const IVARNAME_INSTRUCTION_TYPE = 'IVARNAME'
 const INUMBER_INSTRUCTION_TYPE = 'INUMBER'
 const IFUNCALL_INSTRUCTION_TYPE = 'IFUNCALL'
 const UNKNOWN_CONSTRUCT_MESSAGE = 'Formula contains a construct that is not allowed'
+const FUNCTION_VALUE_MESSAGE = 'Formula functions can only be called, not used as values'
 
 // The single security gate over a parsed formula, run in `evaluateRaw` before
 // evaluation. Walks the PARSED instruction tree (`Expression.tokens`, what
@@ -924,32 +929,38 @@ const UNKNOWN_CONSTRUCT_MESSAGE = 'Formula contains a construct that is not allo
 // than what runs. Returns a user-facing message for the first violation, or
 // null. It enforces, in one stack-simulating pass:
 //
-//   LAYER 1 — CALL ALLOWLIST (primary defence). Every `IFUNCALL`'s callee must
-//   be a bare `IVAR` naming an OWN key of `parser.functions` (a registered
-//   formula function). A member callee, an indexed callee, an inherited name,
-//   or the result of any operator, call or nested expression is refused. No
-//   legitimate formula calls anything but `name(args)` (verified against the
-//   docs and the whole test suite).
+//   LAYER 1 — FUNCTION VALUES ARE CALL-ONLY (primary defence). The only way a
+//   formula can name a function is a bare `IVAR` that resolves to an OWN key of
+//   `parser.functions` (a registered formula function), and that value may be
+//   consumed only as the callee of the `IFUNCALL` that immediately uses it. It
+//   can never be passed as an argument, stored in an array, object or
+//   variable, used as an operand or member-access target, or left as the
+//   result of a statement or branch. Every `IFUNCALL` callee must be such a
+//   value. A name that resolves to a unary-operator implementation instead
+//   (`abs`, `sqrt`, ... written as a value rather than applied as an operator)
+//   is refused outright. Consequently a formula can never produce a function
+//   value at runtime, so nothing downstream — expr-eval's own per-access
+//   function checks, or its handling of values shaped like its internal
+//   deferred-expression objects — can be steered by one the formula built.
+//   (Values in the caller-supplied scope are the caller's data.) No
+//   legitimate formula uses a function other than as `name(args)` (verified
+//   against the docs and the whole test suite).
 //
 //   The simulated stack holds one boolean per value expr-eval's evaluator would
-//   hold: `true` only for a bare identifier that resolves to a registered
-//   function. Every instruction pops exactly as many operands as expr-eval's
-//   `evaluate()` pops for it and pushes `false` for its result — no operator,
-//   member access, call, array or nested expression is ever treated as
-//   yielding a callable, because none can be proven to yield one of ours (a
-//   conditional or binary operator can return either of its operands, so
-//   letting an operand's flag survive the operator would let `IFUNCALL` invoke
-//   whatever the operator picked). An instruction type this pass does not know
-//   is refused rather than guessed at, so a new expr-eval instruction cannot
+//   hold: `true` only for such a registered-function value. Every instruction
+//   pops exactly as many operands as expr-eval's `evaluate()` pops for it and
+//   pushes `false` for its result; popping a `true` anywhere but as an
+//   `IFUNCALL` callee is a violation, as is a `true` still on the stack when a
+//   (sub)expression ends. An instruction type this pass does not know is
+//   refused rather than guessed at, so a new expr-eval instruction cannot
 //   desynchronise the simulation silently.
 //
 //   LAYER 2 (identifier half) — an identifier must resolve through OWN
 //   properties only. See `isInheritedIdentifier`.
 //
-//   LAYER 3a — forbidden NAMES. `constructor`/`__proto__`/`prototype` are the
-//   route to `Function` once access reaches a live object; rejected as member
-//   access (`IMEMBER`), as a bare identifier (`IVAR`) and as an assignment
-//   target (`IVARNAME`).
+//   LAYER 3a — forbidden NAMES. `constructor`/`__proto__`/`prototype` are
+//   rejected as member access (`IMEMBER`), as a bare identifier (`IVAR`) and as
+//   an assignment target (`IVARNAME`).
 //
 //   LAYER 3b — operator names must be OWN. A unary-operator token whose name
 //   is only inherited from `Object.prototype` (`toString`, `valueOf`, ...) is
@@ -962,9 +973,10 @@ const UNKNOWN_CONSTRUCT_MESSAGE = 'Formula contains a construct that is not allo
 // walked recursively and simulated independently.
 function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
     const stack: boolean[] = []
-    const discard = (count: number): void => {
-        stack.splice(Math.max(0, stack.length - count))
-    }
+    // Removes the top `count` slots; reports whether any of them held a
+    // function value, which may only ever be consumed as a callee.
+    const discardHoldsFunction = (count: number): boolean =>
+        stack.splice(Math.max(0, stack.length - count)).includes(true)
     for (const instruction of tokens) {
         const value = instruction.value
         switch (instruction.type) {
@@ -987,34 +999,34 @@ function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
                 if (typeof value !== 'string' || FORBIDDEN_MEMBER_NAMES.has(value)) {
                     return `Formula cannot access ".${String(value)}" — this property name is not allowed`
                 }
-                discard(1)
+                if (discardHoldsFunction(1)) return FUNCTION_VALUE_MESSAGE
                 stack.push(false)
                 break
             case IFUNCALL_INSTRUCTION_TYPE:
-                discard(typeof value === 'number' ? value : 0)
+                if (discardHoldsFunction(typeof value === 'number' ? value : 0)) return FUNCTION_VALUE_MESSAGE
                 if (stack.pop() !== true) return 'Formula can only call built-in formula functions'
                 stack.push(false)
                 break
             case 'IOP1':
                 if (!isOwnOperator({ table: parser.unaryOps, name: value })) return operatorViolationMessage(value)
-                discard(1)
+                if (discardHoldsFunction(1)) return FUNCTION_VALUE_MESSAGE
                 stack.push(false)
                 break
             case 'IOP2':
                 if (!isOwnOperator({ table: parser.binaryOps, name: value })) return operatorViolationMessage(value)
-                discard(2)
+                if (discardHoldsFunction(2)) return FUNCTION_VALUE_MESSAGE
                 stack.push(false)
                 break
             case 'IOP3':
                 if (!isOwnOperator({ table: parser.ternaryOps, name: value })) return operatorViolationMessage(value)
-                discard(3)
+                if (discardHoldsFunction(3)) return FUNCTION_VALUE_MESSAGE
                 stack.push(false)
                 break
             case 'IENDSTATEMENT':
-                discard(1)
+                if (discardHoldsFunction(1)) return FUNCTION_VALUE_MESSAGE
                 break
             case 'IARRAY':
-                discard(typeof value === 'number' ? value : 0)
+                if (discardHoldsFunction(typeof value === 'number' ? value : 0)) return FUNCTION_VALUE_MESSAGE
                 stack.push(false)
                 break
             case 'IFUNDEF':
@@ -1031,13 +1043,16 @@ function findSecurityViolation(tokens: ExprEvalInstruction[]): string | null {
                 return UNKNOWN_CONSTRUCT_MESSAGE
         }
     }
-    return null
+    return stack.includes(true) ? FUNCTION_VALUE_MESSAGE : null
 }
 
 function identifierViolation(name: unknown): string | null {
     if (typeof name !== 'string') return UNKNOWN_CONSTRUCT_MESSAGE
     if (FORBIDDEN_MEMBER_NAMES.has(name) || isInheritedIdentifier(name)) {
         return `Formula cannot use "${name}" — this name is not allowed`
+    }
+    if (!isOwnFunctionKey(name) && Object.hasOwn(parser.unaryOps, name)) {
+        return FUNCTION_VALUE_MESSAGE
     }
     return null
 }

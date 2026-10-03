@@ -1,6 +1,7 @@
 import { Parser } from 'expr-eval-fork'
 import { describe, expect, it, vi } from 'vitest'
 import { formulaEvaluator } from '../../src/lib/formula/formula-evaluator'
+import { evaluateRaw } from '../../src/lib/formula/function-implementations'
 
 const ok = (expr: string, data: Record<string, unknown> = {}) =>
     formulaEvaluator.evaluate({ expression: formulaEvaluator.wrap(expr), sampleData: data })
@@ -1169,23 +1170,20 @@ describe('formula size bounds', () => {
 // defences below are kept on top and do not depend on the fork: every test here
 // asserts the in-tree gate's own message, so it fails if the in-tree defence it
 // names is removed even while the fork's runtime checks are still present.
-// Each advisory's proof of concept was
-// reproduced against this evaluator during the #616 investigation, through
-// both callers: the engine path (props-resolver.ts: resolveInputAsync →
-// preResolveFormulaVars → formulaEvaluator.evaluate) and the web builder
-// preview (tiptap-editor.tsx:444: updatePreview → formulaEvaluator.evaluate,
-// over flattenSampleData of JSON sample data). The web scope is JSON-only; the
-// engine scope is NOT strictly JSON (a token's text is evaluated as JS, so a
-// token can place an object holding a function into scope) — no extra privilege,
-// since the token author already runs JS, but the defences below do not rely on
-// the scope being function-free.
+// Both callers reach the same entry point, formulaEvaluator.evaluate: the
+// engine path (props-resolver.ts) and the web builder preview
+// (tiptap-editor.tsx). Invariant: whatever the scope holds, a formula can only
+// call a registered formula function, and it can never itself produce, store
+// or pass a function value. Values a caller places in the scope are evaluated
+// as that caller's data: the web preview passes JSON sample data, and the
+// engine passes values resolved from the flow's own tokens.
 //
 // Every test here must fail if the specific defence it names is removed — the
 // defences live in function-implementations.ts (findSecurityViolation +
 // null-prototyped tables + operators.fndef:false). The defences, by layer:
-//   D1 call allowlist: an IFUNCALL callee must be a bare identifier naming an
-//      OWN registered formula function; no operator, member access, call or
-//      nested expression ever yields a callable.
+//   D1 function values are call-only: an IFUNCALL callee must be a bare
+//      identifier naming an OWN registered formula function, and such a value
+//      can never be stored, passed, operated on or returned.
 //   D2 own-property resolution: identifiers and {{path}} references never
 //      resolve to an inherited Object.prototype member.
 //   D3a forbidden names: constructor/__proto__/prototype as member, identifier
@@ -1344,21 +1342,70 @@ describe('expr-eval advisories (#616)', () => {
         })
     })
 
-    describe('call allowlist stack simulation (D1)', () => {
+    describe('function values are call-only (D1)', () => {
+        const FUNCTION_VALUE_ERROR = 'Formula functions can only be called, not used as values'
+
         it('a conditional expression never yields a callable value', () => {
             canary.hit = false
-            const { result: r, error } = ok('(uppercase ? {{fn}} : 0)("x")', { fn: canaryFn })
+            for (const expr of ['(uppercase ? {{fn}} : 0)("x")', '((1 > 0) ? uppercase : lowercase)("x")']) {
+                const { result: r, error } = ok(expr, { fn: canaryFn })
+                expect(r).toBeNull()
+                expect(error).toBe(FUNCTION_VALUE_ERROR)
+            }
             expect(canary.hit).toBe(false)
-            expect(r).toBeNull()
-            expect(error).toBe('Formula can only call built-in formula functions')
         })
 
         it('a binary operator never yields a callable value', () => {
             for (const expr of ['(uppercase || "a")("x")', '(uppercase and 1)("x")', '(uppercase == 1)("x")']) {
                 const { result: r, error } = ok(expr)
                 expect(r).toBeNull()
-                expect(error).toBe('Formula can only call built-in formula functions')
+                expect(error).toBe(FUNCTION_VALUE_ERROR)
             }
+        })
+
+        it('a function value can only be called, never stored or passed', () => {
+            const cases = [
+                'uppercase',
+                'uppercase + 1',
+                'uppercase.name',
+                'first_item([uppercase])',
+                'first_item([(abs)])',
+                'x = uppercase',
+                '(1 > 0) ? uppercase : lowercase',
+                'count(m = build_object("f"; first_item([(abs)]))) + m.f',
+            ]
+            for (const expr of cases) {
+                const { result: r, error } = ok(expr)
+                expect(r).toBeNull()
+                expect(error).toBe(FUNCTION_VALUE_ERROR)
+            }
+        })
+
+        it('a value shaped like an internal deferred expression can never carry a function', () => {
+            expect(() => evaluateRaw('build_object("type", "IEXPREVAL", "value", to_json)', {})).toThrow(FUNCTION_VALUE_ERROR)
+            const { result: r, error } = ok('item_at([to_json]; 0)')
+            expect(r).toBeNull()
+            expect(error).toBe(FUNCTION_VALUE_ERROR)
+        })
+
+        it('unary operators still apply normally', () => {
+            expect(result('abs(-3)')).toBe(3)
+            expect(result('abs -3')).toBe(3)
+            expect(result('sqrt 16')).toBe(4)
+            expect(result('-{{x}}', { x: 4 })).toBe(-4)
+            expect(result('not {{f}}', { f: true })).toBe(false)
+            expect(result('length({{s}})', { s: 'abcd' })).toBe(4)
+        })
+
+        it('repeated member access on a stored value finishes or is refused quickly', () => {
+            const big: Record<string, number> = {}
+            for (let i = 0; i < 50000; i++) big[`k${i}`] = i
+            const started = Date.now()
+            const stored = ok(`count(m = build_object("f"; 1))${' + m.f'.repeat(1000)} + count({{big}})`, { big })
+            const refused = ok(`count(m = build_object("f"; first_item([(abs)])))${' + m.f'.repeat(1000)} + count({{big}})`, { big })
+            expect(stored).toEqual({ result: 1002, error: null })
+            expect(refused).toEqual({ result: null, error: FUNCTION_VALUE_ERROR })
+            expect(Date.now() - started).toBeLessThan(2000)
         })
 
         it('a call result is never callable', () => {
